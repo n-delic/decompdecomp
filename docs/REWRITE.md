@@ -6,6 +6,18 @@ says a rewrite is coming. Delete this file when the branch merges.
 
 Status per item: **open** (agreed, not started), **ask** (needs the owner's answer), **done**.
 
+## The principle: plug and play
+
+decompdecomp is powerful, but whoever opens it should understand every screen without knowing how matching
+decompilation works. Explain like they're five: say what a thing does for them and what to do next, in plain words.
+People with technical knowledge (the owner included) can open the details and dabble: every advanced control is
+there, one step further in, never in the way. If the owner can't tell what a button does, it's wrong.
+
+Known offender: the **Compiler** panel of the overview. "Survey again", "Check applied ranges", suggestions, range
+checks and auto-adjust sit side by side, and nobody (the owner and the agent who built them included) can say what
+each one does or when to press it. The user should see one answer ("This game was built with GCC 2.9; parts of it
+with another compiler: here they are") and the app should do the checking itself.
+
 ## 0. Rules for the rewritten code
 
 Everything in [CONVENTIONS.md](CONVENTIONS.md) still holds, plus:
