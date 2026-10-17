@@ -40,8 +40,20 @@ server, helpers, tools. Nothing starts it but the user.
 - **MCP stays as internal plumbing only.** The CLI agents the app runs (Claude Code, Codex, opencode, Antigravity)
   take custom tools only through MCP. Each helper gets the app's endpoint on 127.0.0.1 with its own token, set up
   by the app for that run. The user never sees or configures it. API helpers keep calling the tools directly.
-- The first run of the new version removes the `decomp` entries the old `decomp connect` added to the user's agent
-  configs (and says so), so old registrations can't start anything.
+- The first run of the new version removes every registration of the old bridge, and lists what it removed, so
+  nothing old can start the app:
+  - What `decomp connect` added (Linux and macOS: `app/connect.py`; Windows: `decomp-connect.ps1` from
+    `install.ps1`, which registers the WSL bridge on the Windows side):
+    - Claude Code: `claude mcp remove -s user decomp` (the entry lives in `~/.claude.json`).
+    - Codex: `codex mcp remove decomp` (`~/.codex/config.toml`, `[mcp_servers.decomp]`).
+    - Antigravity CLI: `agy mcp remove decomp`.
+    - opencode: the `mcp.decomp` key in `~/.config/opencode/opencode.json`.
+  - What users added by hand from the README, in any MCP client that keeps a config file: Gemini CLI, Claude
+    Desktop, Cursor, VS Code, Windsurf, Zed, Cline and the like. An entry counts only when its command runs
+    `decomp mcp` (or the WSL bridge); anything else in those files stays as it is.
+  - On Windows the cleanup runs on the Windows side too, where the WSL bridge was registered.
+- Also goes: `decomp connect` in `install.sh` and `install.ps1`, and the "connect your agent" text in the README,
+  docs/GUIDE.md and the website.
 - Window: a native window (pywebview), not a browser. The UI stays HTML, served only to that window.
 - Quit means quit: stop helpers (their whole process group), jobs, and the server.
 - Remove the `--service` mode (`app/service.py`) and the browser fallback.
@@ -58,7 +70,9 @@ things exist twice.
 - **"Next in line"** (Settings) is the priority list: functions with ★ that agents take first. Nobody could tell
   that from its name. Rename it or fold it into the Functions view (star a function there).
 - **Keep the Overview map.** It's the best part: you see the game fill in.
-- A full redesign pass (tokens, layout, dark mode) for the new structure.
+- A full redesign pass for the new structure: layout, navigation, tokens, light and dark mode, in the native
+  window. It comes after the agents work (§4) and the notification centre (§3), so it's designed around how they
+  really behave. More UI issues the owner finds go here.
 
 ## 3. One notification centre for the whole app
 
