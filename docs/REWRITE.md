@@ -129,6 +129,39 @@ Guard rails:
 to judge a function, which compilers and flags, what the map shows, its demo game. Adding a console means adding
 its package, without touching the engine.
 
+## 7. Moving projects to another computer
+
+**Problem.** Changing distribution (or computer) loses the work. A project's progress lives in the app's database
+(`~/Decomp/.decomp/decomp.db`), not only in its folder.
+
+**Goal.**
+- A project's folder holds everything that is the user's work: matched C, attempts worth keeping, notes, names,
+  compiler ranges, the agents' shared knowledge, settings. Saved as plain files that diff well in git.
+- **Re-import** from a folder, or from a git repository the user pushed it to. The app rebuilds its database rows
+  from those files. The game itself is never in the folder: re-import asks for the user's own copy of the game, and
+  checks it's the same one (its hash).
+- Re-importing a project that's already there updates it instead of making a second one.
+
+## 8. Startup and loading speed
+
+**Problem.** When the app starts, the project list appears only after a lag. Opening a project shows an empty ROM
+map at first, which fills in later.
+
+**What's there today** (the owner's database, read-only): 172 MB plus a 90 MB write-ahead log, about 30,000
+functions across four games (GTA San Andreas 12,627, one other game 11,877), 15,867 attempts, 10,521 events.
+
+**Suspects, to measure before changing anything:**
+- The ROM map's request (`engine/gui.py`, `function_map`) runs the compiler map for every function of the game
+  (`_map_columns`) each time, as part of the same answer as the map itself.
+- Each project's settings are one JSON column, parsed again by most requests (`cfg(proj)`); suggestions, range
+  checks and notes grow inside it.
+- The overview asks for the latest event with `WHERE project_id=?`, and no index has `project_id` first.
+- The write-ahead log isn't checkpointed, so it grew to 90 MB.
+
+**Goal.** The window shows the project list at once, and a project's map at once. Slow extras (the compiler map's
+colours, statistics) arrive afterwards without blocking. Measured with timings on the owner's real projects (on a
+copy), before and after.
+
 ## Questions
 
 Answers go here as they come.
