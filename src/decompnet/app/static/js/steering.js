@@ -98,6 +98,7 @@ function renderSteering(ov) {
   $("spendLine").textContent = sp && sp.usd ? `· ${money(sp.usd)} spent${n ? ` · ${money(sp.usd / n)}/match` : ""}`
     : sp && sp.tokens ? `· ${(sp.tokens / 1000).toFixed(0)}k tokens` : "";
   $("instrState").textContent = ov.instructions ? "agents get these" : "none yet";
+  $("savePanel").hidden = ov.kind === "fork";  // a project-mode game's work is the files of its own git project
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];

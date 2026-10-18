@@ -992,7 +992,10 @@ class Manager:
             "SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS matches, "
             "SUM(compiles) AS compiles FROM helper_sessions WHERE project=? GROUP BY kind, model", slug)
         out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0} for r in rows]
-        return sorted(out, key=lambda r: (r["matches"] == 0, (r["usd"] / r["matches"]) if r["matches"] else 0))
+        # a model without a price (the API helper counts only tokens) isn't free: priced models by dollars a match,
+        # then the rest by tokens a match, then those that matched nothing
+        return sorted(out, key=lambda r: (r["matches"] == 0, r["usd"] == 0,
+                                          (r["usd"] or r["tokens"]) / r["matches"] if r["matches"] else 0))
 
     def forget_project(self, slug: str) -> None:
         """A project is removed: its helpers stop and their records go with it."""
@@ -1336,10 +1339,9 @@ class Manager:
             cmd.append("-")  # the prompt comes from stdin
         elif s.kind == "antigravity":
             # The workspace's own MCP config; tool permission comes from the user's rule for decomp's tools (AGY_ALLOW).
-            # TODO: Antigravity CLI 1.1.3 ignored a workspace's .agents/mcp_config.json and loaded only the MCP servers
-            # in the user's settings (the old `decomp connect` entry, which the rewrite removes). If agy still does,
-            # its helpers get no tools ("the agent never used the decomp tools", then paused): find agy's way to give
-            # one run its own MCP server (a flag, or a settings folder of its own that keeps the user's sign-in).
+            # Antigravity CLI 1.1.3 ignored it and loaded only the user's settings; 1.4.2 reads it (October 2026: its
+            # helpers compiled and matched through it on the owner's machine). An older agy gets no tools: its
+            # helpers then pause after five failures, saying the agent never used the decomp tools.
             (workdir / ".agents").mkdir(exist_ok=True)
             (workdir / ".agents" / "mcp_config.json").write_text(json.dumps({"mcpServers": {"decomp": {
                 "serverUrl": self.mcp_url, "headers": {"Authorization": f"Bearer {token}"}}}}), encoding="utf-8")

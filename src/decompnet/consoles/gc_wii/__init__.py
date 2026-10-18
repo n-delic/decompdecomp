@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from .. import PROJECT, REBUILD_CHECK, RECOMMENDED, Compiler, Console
+from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 GC_VERSIONS = ["GC/1.0", "GC/1.1", "GC/1.1p1", "GC/1.2.5", "GC/1.2.5n", "GC/1.3", "GC/1.3.2", "GC/1.3.2r", "GC/2.0",
                "GC/2.0p1", "GC/2.5", "GC/2.6", "GC/2.7", "GC/3.0a3", "GC/3.0a3.2", "GC/3.0a3.3", "GC/3.0a3.4",
@@ -29,7 +29,8 @@ class GameCube(Console):
     id = "gc"
     name = "GameCube"
     short = "GameCube"
-    status = RECOMMENDED  # the same kind of project as the community's, linked file by file as it's finished
+    status = BETA  # BETA until its conformance test passes and one real game rebuilt byte for byte (CodeWarrior and dtk
+    # can't run in public CI, and nothing has been tested end to end yet)
     arch = "ppc"
     big_endian = True
     mode = PROJECT

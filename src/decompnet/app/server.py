@@ -55,19 +55,15 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     settings = Settings(home / "settings.json")
     net.auto_compiler = bool(settings.data.get("auto_compiler"))
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
-    # the project each agent you talk to opened stays theirs after a restart: they used to fall back to the project the
-    # GUI showed last (opencode sessions on GTA San Andreas found its functions missing from another game)
-    for agent_id, slug in (settings.data.get("agent_projects") or {}).items():
-        manager.assignments.setdefault(int(agent_id), slug)
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     def agent_of(ctx: Context):
         headers = ctx.headers or {}
         auth = headers.get("authorization") or headers.get("Authorization") or ""
         agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
-        slug = manager.project_of(agent.id) or settings.data.get("last_project")
+        slug = manager.project_of(agent.id)  # only helpers the app starts have tokens, each for one project
         if not slug:
-            raise NetworkError("no project is open in decompdecomp; open a ROM in the app first")
+            raise NetworkError("this agent isn't one of this app's helpers: start helpers from the app")
         return agent, slug
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
@@ -109,7 +105,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
         except NetworkError:
             return ListToolsResult(tools=[])
-        slug = manager.project_of(agent.id) or settings.data.get("last_project")
+        slug = manager.project_of(agent.id)
         keep = set(tools.tool_names(bool(slug and net.fork_slug(slug))))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
 

@@ -388,8 +388,12 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                                            str(d.get("new_name", "")))}
 
     def note(room, member, d):
+        """A note on a function; one on no function is knowledge for every agent, so it needs two models' agreement
+        like any agent's (knowledge.py), a member's agents included."""
         agent = room.agent_for(member, d.get("agent"))
-        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d.get("function") or None)}
+        if not d.get("function"):
+            return {"text": net.knowledge.share(agent, room.slug, str(d.get("text", "")))}
+        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d["function"])}
 
     def edit(room, member, d):
         """A member's edit of a git project's file (a header, a new or shared source file): made and checked here."""

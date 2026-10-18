@@ -206,8 +206,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/log", methods=["GET"])
     async def api_log(request: Request) -> Response:
-        """The end of decompdecomp's log, to read or attach to a bug report (the app's data folder isn't always at
-        hand: in Docker it's inside the container)."""
+        """The end of decompdecomp's log, to read in the app or attach to a bug report."""
         if (bad := guard(request)):
             return bad
         path = home / "logs" / "decomp.log"

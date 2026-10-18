@@ -164,22 +164,6 @@ def register(app: App) -> None:
         return JSONResponse({"ok": True, "link": share["links"].get(slug), "members": room.members(),
                              "pending": room.pending(), "settings": room.settings})
 
-    @mcp.custom_route("/api/service", methods=["GET", "POST"])
-    async def api_service(request: Request) -> Response:
-        """Run decompdecomp as a service that starts with the computer (keeps a team's room open)."""
-        from . import service
-
-        if (bad := guard(request, write=request.method == "POST")):
-            return bad
-        if request.method == "POST":
-            action = str((await body(request)).get("action", ""))
-            try:
-                msg = await anyio.to_thread.run_sync(service.install if action == "install" else service.remove)
-            except (RuntimeError, OSError) as e:
-                return fail(e)
-            return JSONResponse({"message": msg, "installed": service.installed()})
-        return JSONResponse({"installed": await anyio.to_thread.run_sync(service.installed)})
-
     @mcp.custom_route("/api/collab/stop", methods=["POST"])
     async def api_collab_stop(request: Request) -> Response:
         if (bad := guard(request, write=True)):

@@ -474,8 +474,10 @@ def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
     with net.store.tx() as db:
-        for model, usd, matches in (("claude-opus-5.5", 3.0, 10), ("deepseek-v4.1-flash", 0.5, 10), ("muse-1.3", 1.0, 0)):
-            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, matches) "
-                       "VALUES(1, 'game', 'api', ?, 'a', 0, ?, ?)", (model, usd, matches))
-    assert [r["model"] for r in m.costs("game")] == ["deepseek-v4.1-flash", "claude-opus-5.5", "muse-1.3"]
+        for model, usd, tokens, matches in (("claude-opus-5.5", 3.0, 0, 10), ("deepseek-v4.1-flash", 0.5, 0, 10),
+                                            ("muse-1.3", 1.0, 0, 0), ("local-qwen", 0.0, 900_000, 9)):
+            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, tokens, "
+                       "matches) VALUES(1, 'game', 'api', ?, 'a', 0, ?, ?, ?)", (model, usd, tokens, matches))
+    # a model counted only in tokens isn't the cheapest: it comes after the priced ones
+    assert [r["model"] for r in m.costs("game")] == ["deepseek-v4.1-flash", "claude-opus-5.5", "local-qwen", "muse-1.3"]
     assert m.costs("other") == []

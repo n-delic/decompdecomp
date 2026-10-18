@@ -374,17 +374,6 @@ def test_fit_keeps_the_task_and_the_latest_exchange():
     assert "trimmed" in msgs[3]["content"]
 
 
-def test_an_agents_open_project_survives_a_restart(tmp_path):
-    """An agent you talk to opened GTA San Andreas; after the app restarted (an update), its calls went to the project
-    the GUI showed last, where none of its functions exist. The project it opened is saved and comes back."""
-    (tmp_path / ".decomp").mkdir()
-    (tmp_path / ".decomp" / "settings.json").write_text(json.dumps({"agent_projects": {"7": "sles-52541"},
-                                                                     "last_project": "king-king"}))
-    net = RomNetwork(tmp_path / ".decomp" / "decomp.db", tmp_path)
-    _, manager, _, _ = build(net, tmp_path / ".decomp", PORT, SECRET)
-    assert manager.project_of(7) == "sles-52541" and manager.project_of(8) is None
-
-
 def test_settings_saved_from_many_threads_stay_whole(tmp_path):
     """Helpers' threads and the page save the settings at once while the app reads them: a file caught half-written
     came back as empty settings, and with them the helpers to resume."""

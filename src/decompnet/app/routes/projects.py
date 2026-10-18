@@ -6,7 +6,6 @@ Each is fn(slug, request, data) wrapped by with_project, which checks the reques
 from __future__ import annotations
 
 import json
-import secrets
 import shutil
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from . import App
 
 
 def register(app: App) -> None:
-    net, mcp, mcp_url, manager, jobs = app.net, app.mcp, app.mcp_url, app.manager, app.jobs
+    net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
     def with_project(fn):
@@ -90,17 +89,6 @@ def register(app: App) -> None:
             settings.data["last_project"] = None
             settings.save()
         return {"ok": True}
-
-    def p_manual(slug, request, data):
-        name = f"manual-{secrets.token_hex(2)}"
-        agent, token = net.local_agent(name)
-        manager.assignments[agent.id] = slug
-        settings.data.setdefault("agent_projects", {})[str(agent.id)] = slug
-        settings.save()
-        return {"agent": name, "url": mcp_url, "token": token,
-                "claude": f'claude mcp add --transport http decomp {mcp_url} --header "Authorization: Bearer {token}"',
-                "json": json.dumps({"mcpServers": {"decomp": {"type": "http", "url": mcp_url,
-                                                              "headers": {"Authorization": f"Bearer {token}"}}}}, indent=2)}
 
     def p_try(slug, request, data):
         """You, editing a function in the GUI: judged like an agent's attempt (and credited to "you")."""
@@ -174,7 +162,7 @@ def register(app: App) -> None:
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
-        "/api/delete": (p_delete, ["POST"]), "/api/agents/manual": (p_manual, ["POST"]),
+        "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),

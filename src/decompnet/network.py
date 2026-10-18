@@ -410,11 +410,6 @@ class Network:
         if notes:
             lines += ["", "### Notes from previous agents on this function"]
             lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {n['text']}" for n in notes]
-        pnotes = self.store.all(
-            "SELECT n.text, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-            "WHERE n.project_id=? AND n.function_id IS NULL ORDER BY n.id DESC LIMIT 5", proj["id"])
-        if pnotes:
-            lines += ["", "### Project-wide notes (latest)"] + [f"- ({n['name']}) {n['text']}" for n in pnotes]
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":

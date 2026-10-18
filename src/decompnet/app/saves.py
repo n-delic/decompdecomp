@@ -51,7 +51,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-                         "best_agent_id FROM functions WHERE project_id=? ORDER BY vram", pid)
+                         "best_agent_id, readable FROM functions WHERE project_id=? ORDER BY vram", pid)
     for sub in ("src", "best", "include"):
         shutil.rmtree(folder / sub, ignore_errors=True)
         (folder / sub).mkdir(parents=True, exist_ok=True)
@@ -59,7 +59,8 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     for r in rows:
         if r["status"] == "matched" and r["matched_source"]:
             (folder / "src" / f"{r['name']}.c").write_text(r["matched_source"].strip() + "\n", encoding="utf-8")
-            functions[r["name"]] = {"vram": r["vram"], "matched_by": names.get(r["matched_agent_id"], "")}
+            functions[r["name"]] = {"vram": r["vram"], "matched_by": names.get(r["matched_agent_id"], ""),
+                                    "readable": bool(r["readable"])}
         elif r["best_source"] and r["best_score"] is not None:
             (folder / "best" / f"{r['name']}.c").write_text(r["best_source"].strip() + "\n", encoding="utf-8")
             functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"], "best_by": names.get(r["best_agent_id"], "")}
@@ -185,6 +186,9 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
             with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
                 db.execute("DELETE FROM claims WHERE agent_id=?", (agent.id,))
         if kind == "src":
+            if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+                with net.store.tx() as db:
+                    db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
             matched += bool(result.get("matched"))
             if not result.get("matched"):
                 lost.append(name)

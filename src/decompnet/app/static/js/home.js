@@ -257,6 +257,15 @@ function importFailed(name, e, logText) {
   $("errName").textContent = name || "the game";
   $("errMsg").textContent = e.message;
   $("errLog").textContent = [log, job.trace].filter(Boolean).join("\n\n") || "(nothing was logged)";
+  // the log shows here: a link would leave the app's window for the user's browser, which the app doesn't answer
+  $("errLogLink").onclick = async () => {
+    try {
+      const res = await fetch("/api/log");
+      $("errLog").textContent = await res.text();
+      $("errLog").closest("details").open = true;
+      $("errLog").scrollTop = $("errLog").scrollHeight;
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
   $("errCopy").onclick = async () => {
     if (await copyText(bugReport([`Importing: ${name}`, `Error: ${e.message}`], [log, job.trace].filter(Boolean).join("\n")))) toast("Copied: paste it into a GitHub issue");
     else toast("Couldn't reach the clipboard: select the text under What happened instead", "err");

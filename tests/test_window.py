@@ -1,6 +1,7 @@
 """The app's own window (app/window.py runs app/gtkwindow.py, here a stand-in that writes down what it's told), who
 the GUI answers (only that window), and what a computer without the window's system packages is told."""
 
+import functools
 import sys
 import time
 
@@ -24,7 +25,7 @@ def fake_window(tmp_path, monkeypatch):
     program.write_text(FAKE_WINDOW)
     monkeypatch.setattr(window, "WINDOW_PROGRAM", program)
     monkeypatch.setattr(window, "SYSTEM_PYTHON", sys.executable)
-    monkeypatch.setattr(window, "missing", lambda: None)
+    monkeypatch.setattr(window, "missing", functools.cache(lambda: None))  # (open() asks it to look again)
     monkeypatch.delenv("DECOMP_WINDOW", raising=False)
     log = tmp_path / "said.txt"
     closed = []

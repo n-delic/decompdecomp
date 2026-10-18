@@ -100,8 +100,11 @@ def test_guest_edits_go_through_the_host(room):
     assert out.startswith("✅")
     assert host._function("player_take_damage", slug)["status"] == "matched"
     assert guest._function("player_take_damage", gslug)
-    guest.add_note(agent, gslug, "player struct is at 0x8004AE34")
-    assert "0x8004AE34" in host.search_notes(slug, "player struct")
+    guest.add_note(agent, gslug, "this player's struct is at 0x8004AE34", "player_take_damage")
+    assert "0x8004AE34" in host.search_notes(slug, "player's struct")
+    # a note on no function is knowledge for every agent: through the host, it needs two models' agreement too
+    guest.links[gslug].call("/collab/note", agent, text="Every menu screen has Init, Update and Draw functions")
+    assert [k["status"] for k in host.knowledge.listing(slug)["items"]] == ["proposed"]
 
 
 ABS = "s32 func_800007F4(s32 v) { return v < 0 ? -v : v; }"

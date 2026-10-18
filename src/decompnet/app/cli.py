@@ -164,7 +164,10 @@ def run(args) -> int:
         log.error("no window: %s", why)
         print(why, file=sys.stderr)
         window.tell_desktop(f"{edition.NAME} can't open its window", why)
-        return 1
+        if not restarted:
+            return 1
+        # an update from 1.0.2 landed here: quitting would stop the helpers mid-work; they carry on, and `decomp`
+        # opens the window once the packages are in (Window.open looks again)
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted))
     port = sock.getsockname()[1]
@@ -183,13 +186,25 @@ def run(args) -> int:
     if not restarted or restarted.get("window", True):
         _open_when_ready(port)
     try:
-        uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])
+        uvicorn.Server(server_config(app)).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
         log.exception("the server stopped")
         traceback.print_exc()
     finally:
         quit_app()
     return 0
+
+
+def server_config(app):
+    """The web server's settings. Its own logging setup gives its loggers a terminal of their own, so an error
+    inside it ("Exception in ASGI application") never reached the app's log: none of its own setup, then, and
+    its messages go where every other one goes (support.file_log). No line per request: the page asks every second."""
+    import logging
+
+    import uvicorn
+
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    return uvicorn.Config(app, log_config=None, access_log=False)
 
 
 def update_cmd(args) -> int:

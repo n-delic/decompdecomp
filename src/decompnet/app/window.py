@@ -105,6 +105,7 @@ class Window:
         with self._lock:
             if self.is_open():
                 return self._say("present")
+            missing.cache_clear()  # the packages may have been installed since the app started
             if not wanted() or missing():
                 return False
             icon = self.internal / "window-icon.svg"

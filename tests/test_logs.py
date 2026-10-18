@@ -22,3 +22,18 @@ def test_the_log_holds_debug_messages_other_libraries_and_crashes_in_threads(tmp
     assert "uncaught error in thread doomed" in text and "ZeroDivisionError" in text
     assert file_log(path) is log  # once: a second call adds no second handler
     assert sum(getattr(h, "baseFilename", None) == str(path) for h in logging.getLogger().handlers) == 1
+
+
+def test_the_web_servers_errors_reach_the_log(tmp_path):
+    """uvicorn's own logging setup kept its errors in a terminal of their own, never in the app's log."""
+    from decompnet.app import cli
+
+    path = tmp_path / "logs" / "decomp.log"
+    file_log(path)
+    cli.server_config(lambda *a: None)  # what the app runs the server with (it sets logging up as it's made)
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application")
+    logging.getLogger("uvicorn.access").info("GET /api/live 200")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    text = path.read_text()
+    assert "Exception in ASGI application" in text and "GET /api/live" not in text
