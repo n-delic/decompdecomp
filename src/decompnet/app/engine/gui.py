@@ -246,8 +246,10 @@ class GuiMixin:
 
     def live(self, slug: str, since_event: int = 0, since_attempt: int = 0) -> dict:
         proj = self._project(slug)
-        with self.store.tx() as db:
-            self._expire_claims(db)
+        # the GUI asks every second: the writer's lock only when a claim really ran out, not on every poll
+        if self.store.one("SELECT 1 FROM claims WHERE expires_at < ? LIMIT 1", time.time()):
+            with self.store.tx() as db:
+                self._expire_claims(db)
         events = self.store.all(
             "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
             "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT 60", proj["id"], since_event)
