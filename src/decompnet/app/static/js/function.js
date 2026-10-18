@@ -274,7 +274,8 @@ $("fnPrev").onclick = () => stepFn(-1);
 $("fnNext").onclick = () => stepFn(1);
 
 /* ------------------------------------------------------------------ function list */
-const L = { q: "", filter: "all", sort: "i", dir: 1, limit: 200, rows: [] };
+const FUNCTION_ROWS = 200, MORE_ROWS = 500;  // rows the list shows at first, and "Show more" adds: a big game has tens of thousands
+const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows: [] };
 const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["first", "★ First"]];
 // ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
@@ -318,9 +319,9 @@ function renderList() {
     th.classList.toggle("desc", (th.dataset.sort === L.sort || (th.dataset.sort === "vram" && L.sort === "i")) && L.dir < 0);
   });
 }
-$("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = 200; renderList(); } });
-$("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = 200; renderList(); });
-$("fnMore").onclick = () => { L.limit += 500; renderList(); };
+$("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = FUNCTION_ROWS; renderList(); } });
+$("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = FUNCTION_ROWS; renderList(); });
+$("fnMore").onclick = () => { L.limit += MORE_ROWS; renderList(); };
 $("fnRows").addEventListener("click", (e) => {
   const star = e.target.closest("[data-star]");
   if (star) { togglePrio(star.dataset.star, star.getAttribute("aria-pressed") !== "true"); return; }

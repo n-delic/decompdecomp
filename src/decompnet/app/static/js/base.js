@@ -23,14 +23,17 @@ const pctText = (p) => (p >= 0.99 ? `${(Math.floor(p * 1000) / 10).toFixed(1)}%`
 const pctNum = (p) => (p < 10 ? p.toFixed(2) : p.toFixed(1));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
+const MINUTE = 60, HOUR = 3600, DAY = 86400;  // seconds
+const KIB = 1024, MIB = 1024 * 1024;
 function since(t) {
   if (!t) return "";
   const s = Date.now() / 1000 - t;
-  return s < 60 ? "just now" : s < 3600 ? `${Math.round(s / 60)} min ago` : s < 86400 ? `${Math.round(s / 3600)} h ago`
-    : s < 172800 ? "yesterday" : `${Math.round(s / 86400)} days ago`;
+  return s < MINUTE ? "just now" : s < HOUR ? `${Math.round(s / MINUTE)} min ago` : s < DAY ? `${Math.round(s / HOUR)} h ago`
+    : s < 2 * DAY ? "yesterday" : `${Math.round(s / DAY)} days ago`;
 }
+/* Hours as people say them: minutes under one, days past two. */
 function duration(h) { return h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)} h` : `${Math.round(h / 24)} days`; }
-function bytes(n) { return n >= 1 << 20 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} bytes`; }
+function bytes(n) { return n >= MIB ? `${(n / MIB).toFixed(1)} MB` : n >= KIB ? `${(n / KIB).toFixed(1)} KB` : `${n} bytes`; }
 function money(usd) { return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`; }
 
 async function api(path, { method = "GET", body, raw } = {}) {
@@ -53,15 +56,21 @@ function reportPageError(message, where, stack) {
 window.addEventListener("error", (e) => reportPageError(e.message, `${e.filename}:${e.lineno}:${e.colno}`, e.error && e.error.stack));
 window.addEventListener("unhandledrejection", (e) => reportPageError(e.reason && e.reason.message || e.reason, "a promise", e.reason && e.reason.stack));
 
+const TOAST_MS = 4200, TOAST_ERROR_MS = 7000, TOAST_FADE_MS = 500;  // how long a toast shows, and fades
+const TOASTS_SHOWN = 3;  // at most this many at once, newest first: more covered the page
 function toast(html, kind = "") {
   const t = document.createElement("div");
   t.className = "toast " + kind;
   t.innerHTML = html;
-  $("toasts").append(t);
-  setTimeout(() => { t.style.opacity = "0"; t.style.transition = "opacity .4s"; }, kind === "err" ? 7000 : 4200);
-  setTimeout(() => t.remove(), kind === "err" ? 7500 : 4700);
+  const box = $("toasts");
+  box.prepend(t);
+  while (box.children.length > TOASTS_SHOWN) box.lastChild.remove();
+  const shown = kind === "err" ? TOAST_ERROR_MS : TOAST_MS;
+  setTimeout(() => { t.style.opacity = "0"; t.style.transition = `opacity ${TOAST_FADE_MS}ms`; }, shown);
+  setTimeout(() => t.remove(), shown + TOAST_FADE_MS);
 }
 
+const JOB_POLL_MS = 500;
 async function followJob(id, logEl, onUpdate) {
   for (;;) {
     const job = await api(`/api/job?id=${id}`);
@@ -69,7 +78,7 @@ async function followJob(id, logEl, onUpdate) {
     if (onUpdate) onUpdate(job.log);
     if (job.state === "done") return job.result;
     if (job.state === "error") { const err = new Error(job.error); err.job = job; throw err; }
-    await sleep(500);
+    await sleep(JOB_POLL_MS);
   }
 }
 

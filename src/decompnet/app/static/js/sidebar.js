@@ -103,7 +103,7 @@ $("reportLink").addEventListener("click", () => {
     : "A new issue opens in your browser. The report couldn't be copied: the log is at Settings → This computer."));
 });
 
-/* ------------------------------------------------------------------ the notification centre (REWRITE.md §3)
+/* ------------------------------------------------------------------ the notification centre
    One feed for the whole app (/api/events): every project's news, each in its project's colour with its name, the
    agent and what happened. A burst (an agent's or the autopilot's run of matches) is one line that counts up ("+12
    more matches"). The feed starts where it is when the window opens: what happened before is history in the panel,
@@ -114,12 +114,18 @@ const HISTORY_KEEP = 300;  // events the panel keeps
 const NOTE_TOAST_MS = 6000, NOTE_TOASTS_SHOWN = 3;
 const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false };
 
+/* The autopilot's summary ("20 of 95 functions matched from machine drafts") ends the burst of its own matches: one
+   line, not a line of matches and another saying the same thing. */
+const endsAutopilotRun = (g, ev) => ev.kind === "autopilot" && g.kind === "match" && !g.summary
+  && g.events.every((e) => e.agent === AUTO) && ev.created_at - g.t <= BURST_SECONDS;
 /* Events into lines: news of one kind from one project, close in time, is one line. Oldest first. */
 function burstLines(events) {
   const lines = [];
   for (const ev of events) {
+    const run = lines.findLast((x) => x.slug === ev.slug && x.kind === "match");
+    if (run && endsAutopilotRun(run, ev)) { run.summary = ev; run.t = ev.created_at; continue; }
     const g = lines.findLast((x) => x.slug === ev.slug && x.kind === ev.kind);
-    if (g && ev.created_at - g.t <= BURST_SECONDS) { g.events.push(ev); g.t = ev.created_at; continue; }
+    if (g && !g.summary && ev.created_at - g.t <= BURST_SECONDS) { g.events.push(ev); g.t = ev.created_at; continue; }
     lines.push({ slug: ev.slug, project: ev.project, kind: ev.kind, t: ev.created_at, events: [ev] });
   }
   return lines;
@@ -142,6 +148,7 @@ function noteHtml(g) {
     paused: () => `${who} paused: ${esc(d)}`,
     stopped: () => `${who} stopped: ${esc(d)}`,
   }[g.kind] || (() => `${who} ${esc(g.kind)} ${esc(d)}`);
+  if (g.summary) return `Autopilot: ${esc(g.summary.detail)}`;
   const n = g.events.length - 1, more = MORE[g.kind] || ["more", "more"];
   return `${what()}${n ? ` <span class="n-more">+${n.toLocaleString()} ${n === 1 ? more[0] : more[1]}</span>` : ""}`;
 }
@@ -157,14 +164,16 @@ function noteLine(g, tag = "li") {
 function showNews(events) {
   for (const g of burstLines(events)) {
     const key = g.slug + "\u0000" + g.kind;
-    let t = N.live.find((x) => x.key === key && g.events[0].created_at - x.g.t <= BURST_SECONDS && x.el.isConnected);
-    if (t) { t.g.events.push(...g.events); t.g.t = g.t; }
+    let t = N.live.find((x) => x.key === key && !x.g.summary && g.events[0].created_at - x.g.t <= BURST_SECONDS && x.el.isConnected);
+    const run = g.kind === "autopilot" && N.live.find((x) => x.el.isConnected && x.g.slug === g.slug && endsAutopilotRun(x.g, g.events[0]));
+    if (run) { run.g.summary = g.events[0]; run.g.t = g.t; t = run; }  // (its matches came in an earlier poll)
+    else if (t) { t.g.events.push(...g.events); t.g.t = g.t; }
     else {
       N.unread++;
       t = { key, g, el: document.createElement("div") };
       t.el.className = "toast note";
       N.live.push(t);
-      $("toasts").append(t.el);
+      $("toasts").prepend(t.el);  // newest first, as toast() does
       const shown = N.live.filter((x) => x.el.isConnected);
       for (const old of shown.slice(0, Math.max(0, shown.length - NOTE_TOASTS_SHOWN))) old.el.remove();
     }

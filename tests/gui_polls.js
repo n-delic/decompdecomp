@@ -122,6 +122,13 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     join: [{ link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "a b", copy: "/x.iso", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "/x.iso", own: true }].map(joinProblem),
+    autopilot: burstLines([
+      { id: 1, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_1", created_at: 100 },
+      { id: 2, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_2", created_at: 101 },
+      { id: 3, slug: "a", project: "Demo", kind: "autopilot", agent: "", detail: "2 of 95 functions matched from machine drafts", created_at: 102 },
+      { id: 4, slug: "a", project: "Demo", kind: "match", agent: "claude-1", detail: "func_3", created_at: 103 },
+      { id: 5, slug: "a", project: "Demo", kind: "autopilot", agent: "", detail: "0 of 1 functions matched from machine drafts", created_at: 104 },
+    ]).map((g) => noteHtml(g).replace(/<[^>]+>/g, "")),
   })`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

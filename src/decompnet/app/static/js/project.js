@@ -1,5 +1,8 @@
 "use strict";  // each script is strict on its own (see base.js)
 /* ------------------------------------------------------------------ project */
+const POLL_MS = 1000;  // the open project's live poll: claims, attempts, events
+const STATS_EVERY_MS = 8000;  // its numbers that change slowly (pace, cost)
+const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it changed
 async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
@@ -23,7 +26,7 @@ async function openProject(slug, tab = "overview") {
   $("mapHint").textContent = fork ? "Every square is a function, grouped by source file. Click one to see it." : "Every square is a function, in ROM order. Click one to see it.";
   $("thAddr").textContent = fork ? "File" : "Address";
   groups.clear(); S.claimSig = "";
-  L.q = ""; L.filter = "all"; L.limit = 200; $("fnSearch").value = "";
+  L.q = ""; L.filter = "all"; L.limit = FUNCTION_ROWS; $("fnSearch").value = "";
   $("instrEdit").value = S.ov.instructions || "";
   renderHeader(S.ov);
   markNav();
@@ -38,8 +41,8 @@ async function openProject(slug, tab = "overview") {
   if (gen !== S.gen) return;
   await poll();
   if (gen !== S.gen) return;  // (or its timers would poll the next project too)
-  S.timer = setInterval(poll, 1000);
-  S.statsTimer = setInterval(loadStats, 8000);
+  S.timer = setInterval(poll, POLL_MS);
+  S.statsTimer = setInterval(loadStats, STATS_EVERY_MS);
   loadStats();
 }
 
@@ -66,7 +69,7 @@ function setTab(tab) {
 document.querySelectorAll("[data-goto]").forEach((a) => {
   a.onclick = (e) => {
     e.preventDefault();
-    if (a.dataset.filter) { L.filter = a.dataset.filter; L.limit = 200; }
+    if (a.dataset.filter) { L.filter = a.dataset.filter; L.limit = FUNCTION_ROWS; }
     location.hash = `#/p/${S.slug}/${a.dataset.goto}`;
   };
 });
@@ -135,7 +138,7 @@ async function poll() {
     renderNow(live.claims);
     renderStats(live.overview);
     const claimSig = live.claims.map((c) => c.name + "\u0000" + c.agent).join("\n");
-    if (mapDirty || Date.now() - S.lastMapFetch > 20000) await refreshMap(mapDirty);
+    if (mapDirty || Date.now() - S.lastMapFetch > MAP_EVERY_MS) await refreshMap(mapDirty);
     else {
       applyClaims();
       if (claimSig !== S.claimSig || live.attempts.length) renderList();
@@ -236,6 +239,7 @@ $("phExport").onclick = () => openExport();
    tab with all of them, and nobody knew which to use). */
 let teamTimer = null;
 const TEAM_HOST_EVERY_MS = 5000, TEAM_GUEST_EVERY_MS = 4000;
+const ROOM_PORT = 6481;  // the port a room shared at your own address listens on, unless you pick another
 function openTeam() {
   const box = dialog("Decompile together", `<p class="muted">Looking at this computer's network…</p>`, "team");
   renderTeam(box);
@@ -451,7 +455,7 @@ function renderHost(box, info) {
         <label class="check"><input type="radio" name="mode" value="tunnel" ${info.mode !== "address" ? "checked" : ""} ${info.tunnel_supported ? "" : "disabled"}><span><b>Quick tunnel</b>: works from anywhere, nothing to set up (Cloudflare's free tunnel). The address changes when the app restarts; members then paste the new link.</span></label>
         <label class="check"><input type="radio" name="mode" value="address" ${info.mode === "address" ? "checked" : ""}><span><b>An address you control</b>: this network, Tailscale, or a server with its own domain. It stays the same, so the room reopens by itself after a restart.</span></label>
         <div id="addrBox" ${info.mode === "address" ? "" : "hidden"}>
-          <label class="field"><span>The address teammates use (the room listens on port <input id="addrPort" class="mono port" type="number" value="${info.port || 6481}">)</span><input id="addrIn" class="mono" placeholder="http://192.168.1.20:6481" value="${esc(info.address || "")}"></label>
+          <label class="field"><span>The address teammates use (the room listens on port <input id="addrPort" class="mono port" type="number" value="${info.port || ROOM_PORT}">)</span><input id="addrIn" class="mono" placeholder="http://192.168.1.20:6481" value="${esc(info.address || "")}"></label>
           <div class="chips">${sugg}</div></div></div>
       ${opts(info)}
       <div class="row"><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`);
@@ -466,7 +470,7 @@ function renderHost(box, info) {
       try {
         const { job } = await api("/api/collab/start", { method: "POST", body: { slug: S.slug, mode, visibility,
           approve: box.querySelector("#apprChk").checked, address: box.querySelector("#addrIn")?.value || "",
-          port: Number(box.querySelector("#addrPort")?.value) || 6481, keep: info.was_sharing } });
+          port: Number(box.querySelector("#addrPort")?.value) || ROOM_PORT, keep: info.was_sharing } });
         await followJob(job, box.querySelector("#shareLog"));
         renderHost(box, await api(`/api/collab?slug=${S.slug}`));
       } catch (e) { showJobError(box.querySelector("#shareLog"), e.message); box.querySelector("#startShare").disabled = false; }

@@ -607,7 +607,10 @@ a.ghost, a.primary { text-decoration: none; }
 
 /* toasts: paper on paper with an ink hairline, in both themes (an error's white text on the dark theme's light red was
    unreadable): an error in the danger colours, every one with text at AA on its own surface */
-.toasts { position: fixed; right: 18px; bottom: 18px; z-index: 60; display: grid; gap: 8px; justify-items: end; }
+/* top right, under the project's buttons, at most three (base.js): at the bottom they covered the lists people read;
+   clicks go through the space between them */
+.toasts { position: fixed; right: 18px; top: 64px; z-index: 60; display: grid; gap: 8px; justify-items: end; pointer-events: none; }
+.toasts > * { pointer-events: auto; }
 .toast {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--r); background: var(--color-surface-overlay); color: var(--ink);
   border: var(--border-width-hairline) solid var(--faint); font-size: 13.5px; box-shadow: var(--shadow-overlay); animation: toast .3s cubic-bezier(.2, .9, .3, 1.2); max-width: 440px;
@@ -615,7 +618,7 @@ a.ghost, a.primary { text-decoration: none; }
 .toast.match::before { content: ""; width: 9px; height: 9px; border-radius: 2px; background: var(--match); flex: none; }
 .toast.err { background: var(--miss-bg); color: var(--miss); border-color: color-mix(in oklch, var(--miss) 55%, transparent); }
 .toast code { font-size: 12.5px; }
-@keyframes toast { from { transform: translateY(12px) scale(.98); opacity: 0; } }
+@keyframes toast { from { transform: translateY(-12px) scale(.98); opacity: 0; } }
 
 /* ------------------------------------------------------------------ narrower screens */
 @media (max-width: 1280px) {
@@ -800,24 +803,25 @@ input[type="file"]::file-selector-button:hover { background: var(--bg-alt); bord
 .ph-rename:hover, .ph-rename:focus-visible { opacity: 1; }
 #phExport svg { width: 14px; height: 14px; fill: currentColor; }
 
-/* ================================================================== the 2026 structure (REWRITE.md §2, §3)
+/* ================================================================== the 2026 structure
    Four views per project, the team and the export in the header, one notification centre for the whole app. */
 
 /* each project's colour: the same swatch in the sidebar and in every notification (never the only sign: the name is
-   always beside it). Six hues away from the highlighter's yellow and from green, which means "matched", ordered so
+   always beside it). Six hues away from the highlighter's yellow, from green, which means "matched", and from red,
+   which means something went wrong (a red first project looked like an error), ordered so
    that the first projects' colours differ most */
 :root {
-  --pc-0: oklch(0.55 0.17 25); --pc-1: oklch(0.55 0.1 200); --pc-2: oklch(0.52 0.17 300);
-  --pc-3: oklch(0.56 0.13 60); --pc-4: oklch(0.52 0.15 255); --pc-5: oklch(0.55 0.18 345);
+  --pc-0: oklch(0.52 0.15 255); --pc-1: oklch(0.56 0.13 60); --pc-2: oklch(0.52 0.17 300);
+  --pc-3: oklch(0.55 0.1 200); --pc-4: oklch(0.55 0.18 345); --pc-5: oklch(0.5 0.04 250);
 }
 :root[data-theme="dark"] {
-  --pc-0: oklch(0.72 0.15 25); --pc-1: oklch(0.75 0.1 200); --pc-2: oklch(0.72 0.14 300);
-  --pc-3: oklch(0.76 0.12 60); --pc-4: oklch(0.72 0.13 255); --pc-5: oklch(0.73 0.15 345);
+  --pc-0: oklch(0.72 0.13 255); --pc-1: oklch(0.76 0.12 60); --pc-2: oklch(0.72 0.14 300);
+  --pc-3: oklch(0.75 0.1 200); --pc-4: oklch(0.73 0.15 345); --pc-5: oklch(0.72 0.04 250);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --pc-0: oklch(0.72 0.15 25); --pc-1: oklch(0.75 0.1 200); --pc-2: oklch(0.72 0.14 300);
-    --pc-3: oklch(0.76 0.12 60); --pc-4: oklch(0.72 0.13 255); --pc-5: oklch(0.73 0.15 345);
+    --pc-0: oklch(0.72 0.13 255); --pc-1: oklch(0.76 0.12 60); --pc-2: oklch(0.72 0.14 300);
+    --pc-3: oklch(0.75 0.1 200); --pc-4: oklch(0.73 0.15 345); --pc-5: oklch(0.72 0.04 250);
   }
 }
 .pc-0 { --pc: var(--pc-0); } .pc-1 { --pc: var(--pc-1); } .pc-2 { --pc: var(--pc-2); }

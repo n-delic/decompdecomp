@@ -40,6 +40,9 @@ function renderNow(claims) {
 const LIVE = ["starting", "working", "waiting"];
 const STATE_ORDER = { working: 0, starting: 1, waiting: 2, paused: 3, stopped: 4 };
 const FEED_KEEP = 400;  // lines of each helper's log kept here (the app keeps as many)
+const ACTIVITY_ROWS = 300;  // lines "What's happening" keeps: older ones scroll away
+const SAID_SHOWN = 1600, THOUGHT_SHOWN = 1200;  // characters of a helper's message and thought its log shows
+const MAX_PER_SESSION = 20;  // functions a helper takes in one session, at most
 const hhmm = (t) => clock(t).slice(0, 5);
 const sentence = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
 
@@ -220,7 +223,7 @@ function renderLauncher(box, compact = true) {
     <div class="lz-body">${body}
       ${ready ? `<div class="lz-row">
         <div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
-        <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="20" value="${LZ.per || S.st.settings.per_session}"></label>
+        <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count))}</button></div>
         <p class="muted small">${a.id === "api" ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
@@ -237,7 +240,7 @@ function renderLauncher(box, compact = true) {
   if (eff) eff.onchange = () => { LZ.effort = eff.value; label(); };
   box.querySelectorAll("[data-step]").forEach((b) => { b.onclick = () => { LZ.count = Math.max(1, Math.min(8, LZ.count + Number(b.dataset.step))); box.querySelector(".stepper output").textContent = LZ.count; label(); }; });
   const per = box.querySelector('[data-f="per"]');
-  if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(20, Number(per.value) || S.st.settings.per_session)); };
+  if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(MAX_PER_SESSION, Number(per.value) || S.st.settings.per_session)); };
   wireEndpointFields(box);
   box.querySelectorAll("[data-ep]").forEach((c) => { c.onchange = () => { LZ.eps = [...box.querySelectorAll("[data-ep]:checked")].map((x) => x.dataset.ep); label(); }; });
   const addEp = box.querySelector('[data-act="add-ep"]'), pickEp = box.querySelector('[data-act="pick-ep"]');
@@ -419,7 +422,7 @@ function addActivity(events, attempts, first) {
     else addLine(it.t, eventHtml(it.ev), first);
   }
   const list = $("activity");
-  while (list.children.length > 300) list.lastChild.remove();
+  while (list.children.length > ACTIVITY_ROWS) list.lastChild.remove();
   list.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
   if (!list.children.length) list.innerHTML = `<li class="placeholder"><time></time><span class="muted">Nothing yet. Start an agent and its work shows up here.</span></li>`;
 }
@@ -440,8 +443,8 @@ function logLine(f, fresh) {
   if (fresh) li.className = "fresh";
   const time = document.createElement("time"); time.textContent = clock(f.t);
   const body = document.createElement("span"); body.className = "t-" + f.type;
-  if (f.type === "text") body.innerHTML = miniMarkdown(f.text.slice(0, 1600));
-  else body.textContent = f.type === "think" ? f.text.slice(0, 1200) : f.text;
+  if (f.type === "text") body.innerHTML = miniMarkdown(f.text.slice(0, SAID_SHOWN));
+  else body.textContent = f.type === "think" ? f.text.slice(0, THOUGHT_SHOWN) : f.text;
   li.append(time, body);
   return li;
 }

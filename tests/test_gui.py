@@ -51,3 +51,11 @@ def test_fork_and_join_say_what_is_wrong_before_anything_starts(gui):
     assert bad_link.startswith("That isn't an invite link") and invite == bare_room == ""
     no_copy, bad_name, ready = gui["checks"]["join"]
     assert "copy of the game" in no_copy and "letters, digits" in bad_name and ready == ""
+
+
+def test_the_autopilots_run_and_its_summary_are_one_notification(gui):
+    """The autopilot's matches and its summary ("20 of 95 functions matched from machine drafts") were two lines saying
+    the same thing. The summary ends the run's line; an agent's match after it is a line of its own."""
+    run, agent, alone = gui["checks"]["autopilot"]
+    assert run == "Autopilot: 2 of 95 functions matched from machine drafts"
+    assert agent == "claude-1 matched func_3" and alone.startswith("Autopilot: 0 of 1")
