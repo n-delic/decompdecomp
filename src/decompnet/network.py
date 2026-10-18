@@ -419,10 +419,14 @@ class Network:
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":
-            lines += ["", "Next: read context.h with get_context, write C for this function, and iterate with "
-                          "compile_and_diff until score is 0. Submit only the function body (plus any helper "
-                          "declarations); context.h is included automatically."]
+            lines += ["", self._next_step(proj, ctx)]
         return "\n".join(lines)
+
+    def _next_step(self, proj, ctx) -> str:
+        """The brief's last line for the agent that claimed the function."""
+        return ("Next: read context.h with get_context, write C for this function, and iterate with "
+                "compile_and_diff until score is 0. Submit only the function body (plus any helper "
+                "declarations); context.h is included automatically.")
 
     # --------------------------------------------------------- compile & diff
 

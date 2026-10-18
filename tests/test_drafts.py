@@ -8,7 +8,7 @@ import pytest
 
 from decompnet import classes, seeds, toolchains
 from decompnet.app import drafts, tools
-from decompnet.app.engine import RomNetwork
+from decompnet.app.engine import RomNetwork, briefs
 from decompnet.network import NetworkError
 
 from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
@@ -225,6 +225,23 @@ def test_redraft_uses_an_agents_declarations_and_records_nothing(net):
         net.redraft(SLUG, name, "struct Broken { s32 hp }")  # a missing semicolon: m2c says so
     with pytest.raises(NetworkError, match="pass the declarations"):
         net.redraft(SLUG, name, "  ")
+
+
+@needs_demo
+@needs_m2c
+def test_a_big_header_brief_carries_only_the_declarations_used(net, monkeypatch):
+    agent, _ = net.local_agent("drafter-test-3")
+    name, callee = _calling(net)
+    monkeypatch.setattr(briefs, "BIG_HEADER_BYTES", 600)
+    filler = "\n".join(f"typedef struct Filler{i} {{ s32 a, b, c; }} Filler{i};" for i in range(40))
+    assert net.edit_context(agent, SLUG, "", filler, "debug types").startswith("✅")
+    brief = net.claim(agent, SLUG, name)
+    assert "### Declarations it uses, from the shared header" in brief and "get_context has all of it" in brief
+    section = brief.split("### Declarations it uses", 1)[1].split("###", 1)[0]
+    assert callee in section and "Filler" not in section
+    assert "the declarations it uses are above" in brief  # instead of "read context.h with get_context"
+    assert "Filler39" in net.get_context(SLUG)  # the whole header is still there, and every compile includes it
+    net.release(agent, name, "test", SLUG)
 
 
 @needs_demo
