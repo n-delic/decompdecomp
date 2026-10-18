@@ -437,9 +437,9 @@ class Manager:
                 self._save(s)
             self.sessions[s.id] = s
         _end_groups(crashed | self._strays())
-        with self.net.store.tx() as db:  # helpers, and the runners from before records (named like helpers)
-            db.execute("DELETE FROM claims WHERE agent_id IN (SELECT id FROM agents WHERE origin='local' "
-                       "AND name NOT IN ('you', 'autopilot', 'permuter'))")
+        # helpers, and the runners from before records (named like helpers): with a note on each function, and a
+        # 'stopped' event that ends their run (what they released in it no longer keeps them off it)
+        self.net.release_local_claims("the app restarted")
 
     def _save(self, s: Session) -> None:
         pid = s.proc.pid if s.proc is not None and s.proc.poll() is None else None
@@ -891,8 +891,8 @@ class Manager:
                 link.call("/collab/release", agent, function=held["name"], notes="")
             except Exception:  # the host lets the claim expire
                 pass
-        with self.net.store.tx() as db:
-            db.execute("DELETE FROM claims WHERE agent_id=?", (agent_id,))
+        # its claims go now, with a note, rather than when their lease runs out; and its next run starts afresh
+        self.net.release_stopped([agent_id], (s.why or "it stopped")[:200])
 
     def _session_begin(self, s: Session) -> int:
         s.usage = _fresh_usage()

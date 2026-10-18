@@ -358,6 +358,8 @@ def test_stopping_a_helper_frees_its_function_at_once(tmp_path, quiet):
     m.stop(sid)
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
     assert net.store.one("SELECT stopped_by FROM helpers WHERE id=?", sid)["stopped_by"] == agents.BY_YOU
+    # its run is over: what it released in it no longer keeps it off those functions next time
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE agent_id=? AND kind='freed'", helper.id)["n"] >= 1
 
 
 def test_removing_a_room_helper_releases_its_function_at_the_host(tmp_path, quiet, monkeypatch):

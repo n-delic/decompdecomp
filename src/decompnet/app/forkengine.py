@@ -1859,7 +1859,7 @@ class ForkEngine:
         fn = self.net.claim_row(agent, slug, function, strategy)
         if fn is None:
             left = (self.get(slug)[2].get("uncovered") or {}).get("functions")
-            return ("Nothing left to claim: every function with a source file matches or someone is on it. 🎉"
+            return (self.net.nothing_to_claim(agent, self.net._project(slug), " with a source file")
                     + (f"\n{left} more functions are in code no source file covers yet. The user can give them files "
                        "(the project's overview in decompdecomp: Give them source files); then there's more to claim."
                        if left else ""))
