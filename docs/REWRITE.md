@@ -230,6 +230,10 @@ Guard rails:
 to judge a function, which compilers and flags, what the map shows, its demo game. Adding a console means adding
 its package, without touching the engine.
 
+**Why one folder each** (the owner): code that's easy to separate is easy to read, for people and for agents
+alike. Someone fixing PS2 support opens `consoles/ps2/` and finds all of it there, without reading the engine.
+New console code already goes there (`consoles/ps2/syscalls.py`).
+
 **What's there today** (research, October 2026):
 
 | Console | Import | Judge | Compilers | Compiler map | Classes | Export | Tested where |
@@ -388,7 +392,7 @@ how much code never needs an agent. Ranked:
     - The prompt says what the draft is good for: control flow and arithmetic are usually right, types and names
       usually wrong; start from it and fix those.
 
-11. **Name PS2 system calls.** The kernel's stubs (`addiu v1, N; syscall; jr ra`) are already found and marked
+11. **Name PS2 system calls.** *(done: `consoles/ps2/syscalls.py`; 154 stubs in GTA San Andreas, 129 in Ridge Racer V)* The kernel's stubs (`addiu v1, N; syscall; jr ra`) are already found and marked
     hand-written (`handwritten.py`), but they keep names like `func_0012A0`. The number in `v1` says which kernel
     call it is: a table of our own (the numbers are public, documented e.g. in ps2sdk's permissively licensed
     headers) names every stub (FlushCache, CreateThread, ...) for free, and every function that calls one shows the

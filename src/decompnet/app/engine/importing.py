@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from ... import scoring, seeds, toolchains
+from ...consoles.ps2 import syscalls
 from ...network import NetworkError
 from ...rom import detect, match, split
 from ...rom.symbols import Symbol, SymbolTable
@@ -120,8 +121,28 @@ class ImportMixin:
             self._event(db, pid, None, "import", f"{len(res.functions)} functions from {info['title']}")
         if test_compilers and not flags:
             self.test_compilers(slug, log=log)
+        self.name_kernel_calls(slug, log=log)
         log(f"ready: {len(res.functions)} functions to decompile")
         return slug
+
+    def name_kernel_calls(self, slug: str, log=print) -> int:
+        """PS2: the kernel's call stubs get their names (consoles/ps2/syscalls.py), once per project: at import, and
+        for projects imported before this existed, when the app starts. Returns how many were named."""
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        if cfg.get("kind") != "rom" or cfg.get("platform") != "ps2" or cfg.get("kernel_calls_named") or self._link(slug):
+            return 0  # (a room's guest: the host names them)
+        rows = self.store.all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+        pairs = syscalls.stub_names([(r["name"], r["target"]) for r in rows], set(self.symbols(proj["id"]).by_name))
+        if pairs:
+            agent, _ = self.local_agent("autopilot")
+            said = self.rename_symbols(agent, slug, pairs, f"name the {len(pairs)} kernel calls (syscall stubs)")
+            named = said.startswith("✅")
+            log(f"named {len(pairs)} kernel calls (FlushCache, CreateThread, ...)" if named
+                else f"the kernel calls keep their names: {said}")
+        # once either way: a check that fails (it compiles every matched function again) would fail at every start
+        self._update_cfg(slug, lambda c: c.__setitem__("kernel_calls_named", True))
+        return len(pairs) if not pairs or named else 0
 
     def test_compilers(self, slug: str, sample: int = 24, log=print) -> dict[str, int]:
         """Which of the platform's installed compilers builds this game: m2c drafts of small functions from all over

@@ -84,6 +84,14 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     # rooms this computer belongs to reconnect (members keep their place; their agents wait while the host is away)
     net.restore_links()
 
+    def name_kernel_calls() -> None:  # PS2 projects imported before their kernel calls were named at import
+        for row in net.store.all("SELECT slug FROM projects"):
+            try:
+                net.name_kernel_calls(row["slug"], log=jobs.logger.info)
+            except Exception:  # never stands between the user and the app
+                jobs.logger.exception("naming %s's kernel calls failed", row["slug"])
+    threading.Thread(target=name_kernel_calls, daemon=True, name="kernel-calls").start()
+
     # helpers that were working when the app last stopped carry on
     resume = [r for r in settings.data.get("running_agents", []) if isinstance(r, dict)]
     for r in resume:

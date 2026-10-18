@@ -196,33 +196,47 @@ class EditMixin:
             if text.startswith("✅"):
                 link.sync()
             return text
-        old, new = old.strip(), new.strip()
-        if not (IDENT.match(old) and IDENT.match(new)):
-            raise NetworkError("old and new must be C identifiers")
+        return self.rename_symbols(agent, project, [(old, new)], message)
+
+    def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "") -> str:
+        """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
+        change together, after one check that every matched function still matches. One rename is the agents'
+        rename_symbol; many at once are the PS2 kernel stubs named at import (rom/ps2syscalls.py)."""
+        proj = self._project(project)
+        pairs = [(old.strip(), new.strip()) for old, new in pairs]
+        if not pairs:
+            return "nothing to rename"
         syms = self.symbols(proj["id"])
-        addr = syms.resolve(old)
-        if addr is None:
-            raise NetworkError(f"`{old}` is not a symbol of this ROM: use a name from the assembly (func_/D_...) "
-                               f"or one given earlier")
-        taken = syms.resolve(new)
-        if taken is not None and taken != addr:
-            raise NetworkError(f"`{new}` already names 0x{taken:08X}")
-        word = re.compile(rf"\b{re.escape(old)}\b")
         trial = SymbolTable([Symbol(s.name, s.address, s.size, s.kind) for s in syms.by_name.values()])
-        if old in trial.by_name:
-            trial.rename(old, new)
-        else:
-            fnrow = self.store.one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
-            current, _ = syms.name_at(addr)
-            base = syms.by_name.get(current) if current != f"D_{addr:08X}" else None
-            trial.add(Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
-                             "func" if fnrow else (base.kind if base else "data")))
+        addresses = {}
+        for old, new in pairs:
+            if not (IDENT.match(old) and IDENT.match(new)):
+                raise NetworkError("old and new must be C identifiers")
+            addr = syms.resolve(old)
+            if addr is None:
+                raise NetworkError(f"`{old}` is not a symbol of this ROM: use a name from the assembly (func_/D_...) "
+                                   f"or one given earlier")
+            taken = trial.resolve(new)
+            if taken is not None and taken != addr:
+                raise NetworkError(f"`{new}` already names 0x{taken:08X}")
+            addresses[old] = addr
+            if old in trial.by_name:
+                trial.rename(old, new)
+            else:
+                fnrow = self.store.one("SELECT size FROM functions WHERE project_id=? AND vram=?", proj["id"], addr)
+                current, _ = syms.name_at(addr)
+                base = syms.by_name.get(current) if current != f"D_{addr:08X}" else None
+                trial.add(Symbol(new, addr, fnrow["size"] if fnrow else (base.size if base and base.address == addr else 0),
+                                 "func" if fnrow else (base.kind if base else "data")))
+        new_of = dict(pairs)
+        word = re.compile(r"\b(" + "|".join(re.escape(old) for old in new_of) + r")\b")
+        swap = lambda text: word.sub(lambda m: new_of[m.group(1)], text)
         units = self._unit_contexts(proj["id"])
         current_ctx = {u: self._context(proj["id"], u) for u in ({""} | units)}
-        changed = {u: word.sub(new, c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
+        changed = {u: swap(c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
         matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
-        rewritten = {r["id"]: word.sub(new, r["matched_source"]) for r in matched}
-        renamed_rows = [dict(r) | {"name": new if r["name"] == old else r["name"]} for r in matched]
+        rewritten = {r["id"]: swap(r["matched_source"]) for r in matched}
+        renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in matched]
         header_for = lambda fn: changed.get(self._effective_unit(fn, units),
                                             current_ctx[self._effective_unit(fn, units)]["header"])
         self._sym_override[proj["id"]] = trial
@@ -233,13 +247,15 @@ class EditMixin:
         if broken:
             listing = "\n".join(f"- {n}: {why}" for n, why in broken[:10])
             return f"❌ REJECTED: renaming breaks {len(broken)} matched function(s).\n{listing}"
-        msg = message.strip() or f"rename {old} -> {new}"
+        msg = message.strip() or ", ".join(f"rename {old} -> {new}" for old, new in pairs[:3]) + (" ..." if len(pairs) > 3 else "")
         with self.store.tx() as db:
-            if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (new, proj["id"], old)).rowcount == 0:
-                s = trial.by_name[new]
-                db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
-                           (proj["id"], new, s.address, s.size, s.kind))
-            db.execute("UPDATE functions SET name=? WHERE project_id=? AND (name=? OR vram=?)", (new, proj["id"], old, addr))
+            for old, new in pairs:
+                addr = addresses[old]
+                if db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=?", (new, proj["id"], old)).rowcount == 0:
+                    s = trial.by_name[new]
+                    db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                               (proj["id"], new, s.address, s.size, s.kind))
+                db.execute("UPDATE functions SET name=? WHERE project_id=? AND (name=? OR vram=?)", (new, proj["id"], old, addr))
             for u, header in changed.items():
                 version = self._next_version(db, proj["id"])
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
@@ -248,10 +264,14 @@ class EditMixin:
                 db.execute("UPDATE functions SET matched_source=?, best_source=? WHERE id=?", (src, src, fid))
             for r in db.execute("SELECT id, best_source FROM functions WHERE project_id=? AND status='open' "
                                 "AND best_source IS NOT NULL", (proj["id"],)).fetchall():
-                db.execute("UPDATE functions SET best_source=? WHERE id=?", (word.sub(new, r["best_source"]), r["id"]))
-            self._event(db, proj["id"], agent.id, "rename", f"{old} → {new}")
+                db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
+            self._event(db, proj["id"], agent.id, "rename", msg if len(pairs) > 1 else f"{pairs[0][0]} → {pairs[0][1]}")
         self._syms.pop(proj["id"], None)
-        return f"✅ 0x{addr:08X} is now `{new}` (was `{old}`); {len(rewritten)} matched sources updated, all still match."
+        if len(pairs) == 1:
+            (old, new), = pairs
+            return (f"✅ 0x{addresses[old]:08X} is now `{new}` (was `{old}`); {len(rewritten)} matched sources updated, "
+                    f"all still match.")
+        return f"✅ renamed {len(pairs)} symbols; {len(rewritten)} matched sources updated, all still match."
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
                      function: str | None = None) -> str:
