@@ -392,7 +392,7 @@ how much code never needs an agent. Ranked:
    attempt; the chance falls fast after the third. Ties in with §4's measurements. (S-M)
 6. *(done for ROM projects: `network.py` _what_changed)* **Diffs that teach.** Show what the last change did against the attempt before (a three-way diff), the
    matching prefix, and where the first mismatch is. One small change per attempt works best. (S)
-7. **Search over flags, not just compilers.** A search over compiler × flags scored by the judge's distance, only
+7. *(done as a grid, `search_flags`: each flag changed once, up to 12 compiles)* **Search over flags, not just compilers.** A search over compiler × flags scored by the judge's distance, only
    with compilers the user accepted. Today's compiler map varies compilers only. (M)
 8. **Better look-alikes.** A second similarity measure (edit distance over opcodes) next to today's, and
    "submatch": shared runs of instructions, which find inlined helpers and macros (coddog, MIT/Apache, does this).

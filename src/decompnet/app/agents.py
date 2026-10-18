@@ -1676,6 +1676,9 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
         "list_functions": ("List functions by status.", s(status=st("open | matched | all"), limit=it("max rows"))),
         "add_note": ("Leave a note on a function for the next agent on it.", s(text=st("note", True), function=st("function"))),
+        "search_flags": ("Build the function's C with each flag variant of its compiler, ranked: for C that looks right "
+                         "but won't match.", s(function=st("function", True), compiler=st("another compiler"),
+                                                source=st("C (default: the best attempt)"))),
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),

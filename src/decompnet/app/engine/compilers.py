@@ -16,6 +16,17 @@ from ...network import Agent, NetworkError
 from ...project import compiler_for
 from .common import PLATFORM_COMPILERS, SHORT_NAMES, _default_flags, parse_ranges
 
+# Flag search (search_flags): the flags of each compiler family worth trying, at most MAX_FLAG_VARIANTS compiles
+FLAG_FAMILIES = (("ido", "ido"), ("mwcps2", "mwcps2"), ("ee-gcc", "ee"), ("gcc", "gcc"))
+FLAG_LEVELS = {"gcc": ("-O1", "-O2", "-O3", "-Os"), "ee": ("-O1", "-O2", "-O3", "-Os"),
+               "ido": ("-O1", "-O2", "-O3", "-g"), "mwcps2": ("-O1", "-O2", "-O3", "-O4")}
+FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns"),
+               "ee": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-common"),
+               "ido": (), "mwcps2": ()}
+SMALL_DATA_SIZES = (0, 8)
+MAX_FLAG_VARIANTS = 12
+FLAGS_SHOWN = 6
+
 
 class CompilerMixin:
     # Settings: auto-adjust compiler. A suggested compiler is applied without asking once it's proven (a function's
@@ -381,6 +392,68 @@ class CompilerMixin:
             return (f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags=\"{' '.join(flag_list)}\", "
                     f"function=\"{fn['name']}\", ranges=<the address range it built>, source=<this C>)")
         return f"{what}: score {d.score} ({d.percent:.1f}%), not a match\n{d.render(context=1, max_rows=40)}"
+
+    def flag_variants(self, toolchain: str, base: list[str]) -> list[list[str]]:
+        """The flags worth trying for a function on this compiler: its optimisation levels, small data on and off
+        (MIPS GCC's -G; CodeWarrior's -sdatathreshold), and the few options that change the shape of code most.
+        Each variant changes the project's flags in one place, so what matches says which flag it was."""
+        family = next((f for prefix, f in FLAG_FAMILIES if toolchain.startswith(prefix)), "gcc")
+        levels, extras = FLAG_LEVELS[family], FLAG_EXTRAS[family]
+        current = next((f for f in base if f in levels), None)
+        out = [base]
+        for level in levels:
+            if level != current:
+                out.append([level if f == current else f for f in base] if current else [*base, level])
+        if family in ("gcc", "ee"):
+            small = next((f for f in base if f.startswith("-G") and f[2:].isdigit()), None)
+            for g in SMALL_DATA_SIZES:
+                if small and small != f"-G{g}":
+                    out.append([f"-G{g}" if f == small else f for f in base])
+        elif family == "mwcps2" and "-sdatathreshold" in base:
+            at = base.index("-sdatathreshold") + 1
+            for g in SMALL_DATA_SIZES:
+                if base[at] != str(g):
+                    out.append(base[:at] + [str(g)] + base[at + 1:])
+        out += [[*base, extra] for extra in extras if extra not in base]
+        return out[:MAX_FLAG_VARIANTS]
+
+    def search_flags(self, agent: Agent, slug: str, function: str, compiler: str = "", source: str = "") -> str:
+        """A function's C (its best attempt, or `source`) built with the variants of its compiler's flags
+        (flag_variants), each judged like an attempt and recorded nowhere: when the C looks right but won't match,
+        the flags are often what's wrong, and agents tried them one compile at a time."""
+        if self.fork_slug(slug):
+            raise NetworkError("a fork builds with its project's own compilers and flags")
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        fn = self._function(function, slug)
+        own = compiler_for(cfg, fn["vram"])
+        tc = self._toolchain_named(cfg, compiler) if compiler else own["toolchain"]
+        base = list(own["flags"]) if tc == own["toolchain"] else _default_flags(tc, cfg.get("platform", ""), cfg.get("gp"))
+        source = source.strip() or self._source_of(fn)
+        if not source:
+            raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
+        results = []
+        for flags in self.flag_variants(tc, base):
+            ok, d, _ = self._judge_with(proj, fn, tc, flags, source)
+            if d is not None:
+                results.append((0 if ok else max(1, d.score), flags))
+        if not results:
+            return f"{SHORT_NAMES.get(tc, tc)}: the C doesn't compile with any of its flag variants"
+        results.sort(key=lambda r: r[0])
+        lines = [f"- score {score:>5}  {' '.join(flags)}" + ("   ← the project's flags" if flags == base else "")
+                 for score, flags in results[:FLAGS_SHOWN]]
+        best_score, best = results[0]
+        head = f"{SHORT_NAMES.get(tc, tc)}, {len(results)} flag variants for {fn['name']} (lower is better):\n"
+        if best_score == 0 and best != base:
+            if tc == own["toolchain"]:
+                self.rangechecks.tried(proj, fn, tc, best, source, True)
+            return (head + "\n".join(lines) + f"\nIt MATCHES with {' '.join(best)}. Suggest it: suggest(compiler=\"{tc}\", "
+                    f"flags=\"{' '.join(best)}\", function=\"{fn['name']}\", ranges=<the address range it built>, "
+                    f"source=<this C>)")
+        own_score = next((score for score, flags in results if flags == base), None)
+        verdict = ("The flags aren't the problem: the project's are as good as any." if own_score == best_score
+                   else "Other flags come closer, but none matches: look at the C again first.")
+        return head + "\n".join(lines) + "\n" + verdict
 
     def resolve_suggestion(self, slug: str, sid: int, apply: bool, guard: bool = False) -> None:
         """The user's answer to a suggestion: apply it (a compiler: the project switches to it) or dismiss it."""

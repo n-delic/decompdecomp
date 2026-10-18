@@ -74,8 +74,8 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
 4. Score 0 = matched and saved. Before moving on, share what you learned: edit_context for prototypes and
    structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
    for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
-   Right C that can't match because the project's compiler or flags look wrong? try_compiler(...) others, then
-   suggest(...) the one that matches to the user. The function runs on past its end into padding, linker
+   Right C that can't match because the project's compiler or flags look wrong? search_flags(function) tries
+   its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
 5. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next one.
@@ -231,6 +231,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "add_note": lambda net, agent, slug, text, function="": (net.add_note(agent, slug, text, function) if function
                                                              else net.knowledge.share(agent, slug, text)),
     "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
+    "search_flags": lambda net, agent, slug, function, compiler="", source="":
+        net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
@@ -251,7 +253,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 }
 
 ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
-            "compiler_map", "claim_readable", "make_readable"}
+            "compiler_map", "claim_readable", "make_readable", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
 
 
@@ -407,6 +409,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def add_note(ctx: Context, text: str, function: str = "") -> str:
         """Leave a note on a function for the next agent on it (a note on no function is share_knowledge)."""
         return await run(ctx, "add_note", text=text, function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "") -> str:
+        """The function's C (its best attempt, or source) built with each of its compiler's flag variants
+        (optimisation levels, small data, code-shape options), judged and ranked. For C that looks right but won't
+        match: the flags may be what's wrong. compiler: another one to try instead of the project's."""
+        return await run(ctx, "search_flags", function=function, compiler=compiler, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def claim_readable(ctx: Context) -> str:
