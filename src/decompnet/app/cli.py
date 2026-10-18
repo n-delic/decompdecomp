@@ -179,7 +179,8 @@ def run(args) -> int:
     window.IN_TRAY = tray.start(window.open_app, quit_app)
     print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
           + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
-    if not restarted or restarted.get("window"):
+    # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
+    if not restarted or restarted.get("window", True):
         _open_when_ready(port)
     try:
         uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])
@@ -277,6 +278,8 @@ def shortcut(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="decomp", description="decompdecomp: AI agents decompile the games you own, byte for byte")
     ap.add_argument("--port", type=int, default=edition.FIRST_PORT, help=argparse.SUPPRESS)
+    # what 1.0.2 and older pass when they restart into an update: refusing it would end the app mid-update
+    ap.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("setup", help="install the compilers and tools this computer needs")
     sub.add_parser("stop", help="quit the running app (and every helper it started)")

@@ -199,3 +199,18 @@ def test_an_install_from_main_updates_on_releases_only():
     assert updates.installed()["channel"] == "release"
     updates.record("branch", branch="window-fix", commit="abc123")
     assert updates.installed()["channel"] == "branch"
+
+
+def test_an_update_from_1_0_2_restarts_into_the_new_version_with_a_window(monkeypatch):
+    """1.0.2's updater restarts into the new version with `--no-browser --port N` and no word about a window (it had
+    a browser tab): the new `decomp` must take those arguments, or the update ends the app, and open its window."""
+    import json
+
+    from decompnet.app import cli
+
+    ran = {}
+    monkeypatch.setattr(cli, "run", lambda args: ran.update(port=args.port) or 0)
+    assert cli.main(["--no-browser", "--port", "6464"]) == 0 and ran == {"port": 6464}
+    monkeypatch.setenv("DECOMP_RESTART", json.dumps({"port": 6464, "secret": "s"}))
+    restarted = cli._restart_state()
+    assert restarted.get("window", True) is True  # how run() reads it: open the window

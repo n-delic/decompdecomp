@@ -26,7 +26,8 @@ def register(app: App) -> None:
         if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
             return HTMLResponse("<!doctype html><meta charset=utf-8><title>decompdecomp</title>"
                                 "<body style='font:16px system-ui;background:#0b0c0e;color:#e8e6e1;padding:3rem'>"
-                                "decompdecomp opens in its own window: use its app icon, or run <code>decomp</code>.",
+                                "decompdecomp now opens in a window of its own (it just did, if it was updated): you can close this one. "
+                                "Next time, use its app icon or run <code>decomp</code>.",
                                 status_code=401)
         return HTMLResponse(_static("index.html").decode(), headers={"Cache-Control": "no-store"})
 
