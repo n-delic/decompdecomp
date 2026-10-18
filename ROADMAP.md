@@ -18,6 +18,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Judge | link · compare | link · compare | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | — | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | — | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | — | MIPS, PowerPC |

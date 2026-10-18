@@ -11,6 +11,7 @@ import time
 
 from ... import scoring, seeds
 from ...network import Agent, NetworkError
+from ...project import compiler_for
 
 
 class AutopilotMixin:
@@ -142,7 +143,9 @@ class AutopilotMixin:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
 
     def _autopilot_one(self, agent, proj, fid: int) -> str:
-        """match | near | far | fail | skip, for one function's draft."""
+        """match | near | far | fail | skip, for one function's draft. A draft autopilot already judged with the same
+        header is skipped: autopilot tries a function again when its draft changed (the background drafter asks it
+        to after the header or the compiler changed, app/drafts.py), not to judge the same C twice."""
         now = time.time()
         with self.store.tx() as db:
             self._expire_claims(db)
@@ -153,12 +156,18 @@ class AutopilotMixin:
         try:
             self._seed_for(fn, proj)  # the readable draft, for the agents that come after
             ctx = self._context(proj["id"], fn["unit"])
+            _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
+            own = compiler_for(self.cfg(proj), fn["vram"])
             data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], self.cfg(proj)["compiler"]["toolchain"],
-                                            ctx["header"], data_asm, valid=True)
+            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context, data_asm, valid=True)
             if not draft:
                 return "fail"
-            source = f"/* machine draft (m2c), tried by autopilot */\n{seeds.M2C_MACROS}\n{draft}\n"
+            # (its compiler named in it: the same draft is worth judging again with another compiler)
+            source = (f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
+                      f"{seeds.M2C_MACROS}\n{draft}\n")
+            if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
+                              "AND source=?", fid, agent.id, ctx["version"], source):
+                return "skip"
             result = self._compile(proj, ctx["header"], source, fn)
             if not result.ok:
                 return "fail"

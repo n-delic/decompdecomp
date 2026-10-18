@@ -51,8 +51,11 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
    structs it's handed (guess_struct shows one as C), the best previous attempt and notes (start from those!), a
-   machine-generated draft, and identical matched code if any.
-2. get_context() shows the shared header every compile includes.
+   machine draft (m2c), and identical matched code if any. The machine draft's control flow and arithmetic are
+   usually right, its types and names usually wrong: start from it and fix those. redraft(function, context)
+   makes it again with a struct or prototype you worked out.
+2. get_context() shows the shared header every compile includes (when it's big, the brief has the
+   declarations the function uses).
 3. Write the C functions (same names as the assembly) and judge them: compile_and_diff(function="a, b, c",
    source=all the definitions) for a batch, one name for one. Read the diff: '<' '>' missing/extra
    instructions, 'i' operands, 'o' order, 'r' registers, 's' stack. Fix structure first, registers last.
@@ -222,6 +225,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
+    "redraft": lambda net, agent, slug, function, context: net.redraft(slug, function, context),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
@@ -250,7 +254,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class", "guess_struct",
+ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
+            "guess_struct", "redraft",
             "compiler_map", "claim_readable", "make_readable", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
 
@@ -380,6 +385,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Hex dump of the original's data: an address or symbol (ROM projects), a data symbol such as
         lbl_1_data_10 (forks); text, pointers and floats decoded."""
         return await run(ctx, "read_data", what=what, length=length)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def redraft(ctx: Context, function: str, context: str) -> str:
+        """m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
+        you worked out) added to the shared header's; yours replace the header's where they declare the same
+        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped."""
+        return await run(ctx, "redraft", function=function, context=context)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:
