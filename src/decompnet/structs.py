@@ -113,51 +113,55 @@ class _Types:
         self.widths.append({})
         return len(self.parent) - 1
 
-    def access(self, t: int, offset: int, size: int, kind: str, function: int) -> None:
-        root = self.find(t)
+    def access(self, type_id: int, offset: int, size: int, kind: str, function: int) -> None:
+        root = self.find(type_id)
         self.accesses[root].append((offset, size, kind, function))
         self.widths[root].setdefault(offset, set()).add(size)
 
-    def agree(self, a: int, b: int) -> bool:
+    def agree(self, one: int, other: int) -> bool:
         """Whether two types could be one: no offset that one reads with a width the other never uses there."""
-        a, b = self.find(a), self.find(b)
-        small, large = sorted((self.widths[a], self.widths[b]), key=len)
+        one, other = self.find(one), self.find(other)
+        small, large = sorted((self.widths[one], self.widths[other]), key=len)
         return all(not (offset in large and sizes.isdisjoint(large[offset])) for offset, sizes in small.items())
 
-    def find(self, t: int) -> int:
-        while self.parent[t] != t:
-            self.parent[t] = self.parent[self.parent[t]]
-            t = self.parent[t]
-        return t
+    def find(self, type_id: int) -> int:
+        """The root of a type's set: the type it is one with."""
+        while self.parent[type_id] != type_id:
+            self.parent[type_id] = self.parent[self.parent[type_id]]
+            type_id = self.parent[type_id]
+        return type_id
 
-    def child(self, t: int, offset: int) -> int:
-        root = self.find(t)
-        c = self.children[root].get(offset)
-        if c is None:
-            c = self.children[root][offset] = self.new()
-        return c
+    def child(self, type_id: int, offset: int) -> int:
+        """The type of the pointer field at `offset` of a type (made when it's new)."""
+        root = self.find(type_id)
+        field_type = self.children[root].get(offset)
+        if field_type is None:
+            field_type = self.children[root][offset] = self.new()
+        return field_type
 
-    def union(self, a: int, b: int) -> None:
-        work = [(a, b)]
+    def union(self, one: int, other: int) -> None:
+        """Make two types one, and so their pointer fields at the same offsets too."""
+        work = [(one, other)]
         while work:
-            a, b = (self.find(t) for t in work.pop())
-            if a == b:
+            keep, merged = (self.find(type_id) for type_id in work.pop())
+            if keep == merged:
                 continue
-            if len(self.accesses[a]) + len(self.children[a]) < len(self.accesses[b]) + len(self.children[b]):
-                a, b = b, a
-            self.parent[b] = a
-            self.accesses[a] += self.accesses[b]
-            self.accesses[b] = []
-            for offset, sizes in self.widths[b].items():
-                self.widths[a].setdefault(offset, set()).update(sizes)
-            self.widths[b] = {}
-            mine = self.children[a]
-            for offset, c in self.children[b].items():
+            if (len(self.accesses[keep]) + len(self.children[keep])
+                    < len(self.accesses[merged]) + len(self.children[merged])):
+                keep, merged = merged, keep  # the bigger set stays the root: less to move
+            self.parent[merged] = keep
+            self.accesses[keep] += self.accesses[merged]
+            self.accesses[merged] = []
+            for offset, sizes in self.widths[merged].items():
+                self.widths[keep].setdefault(offset, set()).update(sizes)
+            self.widths[merged] = {}
+            mine = self.children[keep]
+            for offset, field_type in self.children[merged].items():
                 if offset in mine:
-                    work.append((mine[offset], c))
+                    work.append((mine[offset], field_type))
                 else:
-                    mine[offset] = c
-            self.children[b] = {}
+                    mine[offset] = field_type
+            self.children[merged] = {}
 
 
 class Structs:
@@ -172,34 +176,34 @@ class Structs:
     def type_of(self, key: tuple, path: Iterable[int] = ()) -> int | None:
         """The type of a named thing: (ARGUMENT, function, n), (RETURN, function) or (GLOBAL, address); `path`
         follows pointer fields (arg0+0x14: the struct the pointer at 0x14 points to)."""
-        t = self._named.get(key)
+        type_id = self._named.get(key)
         for offset in path:
-            if t is None:
+            if type_id is None:
                 return None
-            t = self._types.children[self._types.find(t)].get(offset)
-        return None if t is None else self._types.find(t)
+            type_id = self._types.children[self._types.find(type_id)].get(offset)
+        return None if type_id is None else self._types.find(type_id)
 
     def _index(self) -> None:
         if self._members is not None:
             return
         members: dict[int, list[tuple]] = defaultdict(list)
-        for key, t in self._named.items():
-            members[self._types.find(t)].append(key)
+        for key, type_id in self._named.items():
+            members[self._types.find(type_id)].append(key)
         pointed: dict[int, list[tuple[int, int]]] = defaultdict(list)
-        for t, children in enumerate(self._types.children):
-            if children and self._types.find(t) == t:
-                for offset, c in children.items():
-                    pointed[self._types.find(c)].append((t, offset))
+        for type_id, children in enumerate(self._types.children):
+            if children and self._types.find(type_id) == type_id:
+                for offset, field_type in children.items():
+                    pointed[self._types.find(field_type)].append((type_id, offset))
         self._members, self._pointed = members, pointed
 
-    def layout(self, t: int) -> Layout:
-        """What the code says about type `t`: a field for each offset its functions access."""
+    def layout(self, type_id: int) -> Layout:
+        """What the code says about type `type_id`: a field for each offset its functions access."""
         self._index()
         types = self._types
         readings: dict[int, dict[tuple[int, str], set[int]]] = defaultdict(lambda: defaultdict(set))
         signs: dict[int, list[str]] = defaultdict(list)
         functions = set()
-        for offset, size, kind, function in types.accesses[t]:
+        for offset, size, kind, function in types.accesses[type_id]:
             letter = kind[:1] if kind else ""
             group = "f" if letter == "f" else "v" if letter == "v" else "i"
             readings[offset][(size, group)].add(function)
@@ -209,7 +213,7 @@ class Structs:
         fields = []
         for offset in sorted(readings):
             by = readings[offset]
-            pointee = types.children[t].get(offset)
+            pointee = types.children[type_id].get(offset)
             pointer = pointee is not None and bool(types.accesses[types.find(pointee)])
             for (size, group) in [k for k in by if k[1] == "f"]:  # an int read of a float field is a copy of it
                 if (size, "i") in by and not (pointer and size == POINTER_BYTES):
@@ -229,24 +233,24 @@ class Structs:
             if pointer and group == "i" and size == POINTER_BYTES:
                 guess.points_to = types.find(pointee)
             fields.append(guess)
-        return Layout(t, fields, functions, sorted(self._members.get(t, []), key=_member_order),
-                      self._pointed.get(t, []))
+        return Layout(type_id, fields, functions, sorted(self._members.get(type_id, []), key=_member_order),
+                      self._pointed.get(type_id, []))
 
-    def name(self, t: int, label: Callable[[int], str]) -> str:
+    def name(self, type_id: int, label: Callable[[int], str]) -> str:
         """A name for the type that every function sharing it shows the same: after a global that is one, else the
         first function (by address) that takes it as an argument or returns it."""
         self._index()
-        for kind, *rest in sorted(self._members.get(t, []), key=_member_order):
+        for kind, *rest in sorted(self._members.get(type_id, []), key=_member_order):
             if kind == GLOBAL:
                 return f"S_{label(rest[0])}"
             if kind == ARGUMENT:
                 return f"S_{label(rest[0])}_arg{rest[1]}"
             if kind == RETURN:
                 return f"S_{label(rest[0])}_ret"
-        for parent, offset in self._pointed.get(t, []):  # else after a pointer field to it: S_func_0012A0_arg0_14
+        for parent, offset in self._pointed.get(type_id, []):  # else after a pointer field to it: S_func_0012A0_arg0_14
             if any(m[0] in NAMED for m in self._members.get(parent, [])):
                 return f"{self.name(parent, label)}_{offset:X}"
-        return f"S_type{t}"
+        return f"S_type{type_id}"
 
 
 def _member_order(member: tuple) -> tuple:
@@ -259,13 +263,13 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[.
     """Types from (address, code, relocations) of every function, read by the processor's reader:
     `read_facts(address, code, relocations, datum=...)`. `datum(address)`: where the global containing a data address
     starts (the symbol table's)."""
-    funcs = sorted(functions, key=lambda f: f[0])
+    funcs = sorted(functions, key=lambda function: function[0])
     starts = [addr for addr, _, _ in funcs]
     ends = [addr + len(code) for addr, code, _ in funcs]
 
     def data_start(addr: int) -> int | None:
-        i = bisect.bisect_right(starts, addr) - 1
-        return None if i >= 0 and addr < ends[i] else datum(addr)
+        below = bisect.bisect_right(starts, addr) - 1
+        return None if below >= 0 and addr < ends[below] else datum(addr)
 
     facts = {addr: read_facts(addr, code, relocs, datum=data_start) for addr, code, relocs in funcs}
     types = _Types()
@@ -277,42 +281,41 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[.
             return types.child(node(term[1], function), term[2])
         key = (ARGUMENT, function, term[1]) if kind == ARGUMENT else \
             (CALL, function, term[1], term[2]) if kind == CALL else term
-        t = named.get(key)
-        if t is None:
-            t = named[key] = types.new()
-        return t
+        return named_node(key)
 
     def named_node(key: tuple) -> int:
-        t = named.get(key)
-        if t is None:
-            t = named[key] = types.new()
-        return t
+        type_id = named.get(key)
+        if type_id is None:
+            type_id = named[key] = types.new()
+        return type_id
 
     callers: dict[int, set[int]] = defaultdict(set)
     edges = []  # (caller, its term, the callee's side: (ARGUMENT, callee, n) or (RETURN, callee))
     walked = set()
-    for function, f in facts.items():
-        for term, offset, size, kind in f.accesses:
+    for function, said in facts.items():
+        for term, offset, size, kind in said.accesses:
             if 0 <= offset < MAX_OFFSET:
                 types.access(node(term, function), offset, size, kind, function)
-        for term, offset, value in f.stores:
+        for term, offset, value in said.stores:
             if 0 <= offset < MAX_OFFSET:
                 types.union(types.child(node(term, function), offset), node(value, function))
-        for term in f.returns:
+        for term in said.returns:
             types.union(named_node((RETURN, function)), node(term, function))
-        for callee, n, term in f.calls:
+        for callee, argument, term in said.calls:
             if callee in facts and callee != function:
                 callers[callee].add(function)
-                edges.append((function, term, (RETURN, callee) if n == RETURNED else (ARGUMENT, callee, n)))
-        walked |= {(ARGUMENT, function, term[1]) for term in f.walked if term[0] == ARGUMENT}
+                edges.append((function, term,
+                              (RETURN, callee) if argument == RETURNED else (ARGUMENT, callee, argument)))
+        walked |= {(ARGUMENT, function, term[1]) for term in said.walked if term[0] == ARGUMENT}
 
     # A callee's side joins its callers' types once the callee itself uses it: repeated, because handing a pointer
     # to a callee that uses it is a use too (a function that only passes its argument on learns that from below).
     def used(key: tuple) -> bool:
-        t = named.get(key)
-        return t is not None and bool(types.accesses[types.find(t)])
+        type_id = named.get(key)
+        return type_id is not None and bool(types.accesses[types.find(type_id)])
 
-    pending = [e for e in edges if e[2] not in walked and len(callers[e[2][1]]) <= HUB_CALLERS]
+    pending = [(caller, term, key) for caller, term, key in edges
+               if key not in walked and len(callers[key[1]]) <= HUB_CALLERS]
     while True:
         waiting = []
         for function, term, key in pending:
@@ -333,36 +336,36 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read_facts: Callable[.
 def summary(layout: Layout, limit: int = SHOWN_FIELDS) -> str:
     """One line for a brief: "+0x04 s32 (12 functions), +0x10 f32 (3), ..."."""
     parts = []
-    for i, f in enumerate(layout.fields[:limit]):
-        n = len(f.functions)
-        unit = (" functions" if n != 1 else " function") if i == 0 else ""
-        disagree = f"; {sum(len(w) for w in f.others.values())} disagree" if f.others else ""
-        kind = "pointer" if f.points_to is not None else f.ctype()
-        parts.append(f"+0x{f.offset:X} {kind} ({n}{unit}{disagree})")
+    for number, guess in enumerate(layout.fields[:limit]):
+        count = len(guess.functions)
+        unit = (" functions" if count != 1 else " function") if number == 0 else ""
+        disagree = f"; {sum(len(w) for w in guess.others.values())} disagree" if guess.others else ""
+        kind = "pointer" if guess.points_to is not None else guess.ctype()
+        parts.append(f"+0x{guess.offset:X} {kind} ({count}{unit}{disagree})")
     more = f", and {len(layout.fields) - limit} more" if len(layout.fields) > limit else ""
     return ", ".join(parts) + more
 
 
 def c_text(layout: Layout, name: str, type_name: Callable[[int], str]) -> str:
-    """The guessed struct as C, offsets in comments, the gaps as unk_ arrays; a field that overlaps an earlier one
+    """The guessed struct as C, offsets in comments, the gaps as unk_ arrays; a guess that overlaps an earlier one
     (a word also read as a byte) is in the earlier one's comment. `type_name` names the types pointer fields point to."""
     lines = [f"typedef struct {name} {{"]
     at = 0
-    for f in layout.fields:
-        if f.offset < at:
-            continue  # inside the previous field: said in its comment
-        if f.offset > at:
-            lines.append(f"    /* 0x{at:02X} */ u8 unk_{at:02X}[0x{f.offset - at:X}];")
-        ctype = f"struct {type_name(f.points_to)} *" if f.points_to is not None else f.ctype()
+    for guess in layout.fields:
+        if guess.offset < at:
+            continue  # inside the previous guess: said in its comment
+        if guess.offset > at:
+            lines.append(f"    /* 0x{at:02X} */ u8 unk_{at:02X}[0x{guess.offset - at:X}];")
+        ctype = f"struct {type_name(guess.points_to)} *" if guess.points_to is not None else guess.ctype()
         ctype, bracket, count = ctype.partition("[")  # an array: f32[4], or an odd width's bytes
         array = bracket + count
-        notes = [f"{len(f.functions)} function{'s' if len(f.functions) != 1 else ''}"]
-        notes += [f"{len(who)} read it as {other}" for other, who in sorted(f.others.items())]
-        notes += [f"also {g.ctype()} at 0x{g.offset:X}" for g in layout.fields
-                  if f.offset < g.offset < f.offset + f.size]
+        notes = [f"{len(guess.functions)} function{'s' if len(guess.functions) != 1 else ''}"]
+        notes += [f"{len(who)} read it as {other}" for other, who in sorted(guess.others.items())]
+        notes += [f"also {inner.ctype()} at 0x{inner.offset:X}" for inner in layout.fields
+                  if guess.offset < inner.offset < guess.offset + guess.size]
         space = "" if ctype.endswith("*") else " "
-        lines.append(f"    /* 0x{f.offset:02X} */ {ctype}{space}unk_{f.offset:02X}{array}; /* {'; '.join(notes)} */")
-        at = f.offset + f.size
+        lines.append(f"    /* 0x{guess.offset:02X} */ {ctype}{space}unk_{guess.offset:02X}{array}; /* {'; '.join(notes)} */")
+        at = guess.offset + guess.size
     lines.append(f"}} {name}; /* at least 0x{at:X} bytes */")
     return "\n".join(lines)
 
