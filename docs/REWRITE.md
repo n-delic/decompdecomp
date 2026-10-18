@@ -134,6 +134,10 @@ things exist twice.
   window. It comes after the agents work (§4) and the notification centre (§3), so it's designed around how they
   really behave. More UI issues the owner finds go here.
 
+- **Report a problem**, reachable from every page: opens a new GitHub issue in the user's browser with the
+  version, the platform and a short template, and copies the bug report (version, error, log) to paste in.
+- **Save and restore** (§7) and **make readable** (§10) get their buttons in the new structure.
+
 ## 3. One notification centre for the whole app
 
 **Problem.** With two projects running agents, the app stalls. Opening the other project freezes it for a moment,
@@ -208,6 +212,11 @@ project never replays anything.
   11. Source already compiled for a function answers "identical to attempt N" without compiling (about 3% of
       compiles).
   12. Bug: `read_data` (`engine/briefs.py`) only decodes N64 addresses as pointers, never PS2 ones.
+
+- **The API helper first** (the owner's answer below): the helper that calls a model's API with the user's key is
+  the one decompdecomp controls end to end, so the app recommends it first when starting helpers, explains it
+  plainly (any provider: Anthropic, OpenAI, DeepSeek, OpenRouter, a local model), and its loop gets the same care
+  as the CLI helpers' (prompt caching done; cost per model shown).
 
 ## 5. Shared knowledge agents keep up to date
 
@@ -487,6 +496,21 @@ When everything above is done, an agent uses the app the way a new user would, w
 the development copy, opens the demo game, starts helpers, closes and reopens the window, exports, breaks things on
 purpose. It reports everything it finds in detail: bugs, confusing screens, missing features, anything a stranger
 gets stuck on. Its findings go into issues or straight into fixes.
+
+## 14. Finishing the rewrite
+
+In this order, nothing skipped:
+1. Merge the UI overhaul (§2, §3) and the consoles (§6) when their agents finish; the suite passes after each.
+2. The real permuter (§9.2, researched and prototyped above), then what's left of §9 (struct layouts, library
+   decomps built locally, the m2c items of §9.10, the brief's types per function from §12's risks).
+3. The stranger's test (§13), its findings fixed.
+4. The release's version: 1.0.3-alpha (the owner told the issue reporters so), bumped in the four places.
+5. Every Markdown file describes the new decompdecomp: README, AGENTS.md, CONTRIBUTING.md, docs/CONVENTIONS.md,
+   docs/GUIDE.md, ROADMAP.md (its table and what's done). This file is deleted.
+6. The app, started as the development copy for the owner to try before anything is released.
+7. Squash-merged into main by the owner, released; the owner answers #3 and #4 when it's out.
+8. After the release: an agent researches how to support Windows well (§1).
+9. On the owner's computer: the old 1.0.0-alpha .deb removed (`sudo apt remove decompdecomp`), if it isn't yet.
 
 ## Questions
 
