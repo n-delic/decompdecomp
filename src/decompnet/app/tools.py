@@ -51,8 +51,11 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
    structs it's handed (guess_struct shows one as C), the best previous attempt and notes (start from those!), a
-   machine-generated draft, and identical matched code if any.
-2. get_context() shows the shared header every compile includes.
+   machine draft (m2c), and identical matched code if any. The machine draft's control flow and arithmetic are
+   usually right, its types and names usually wrong: start from it and fix those. redraft(function, context)
+   makes it again with a struct or prototype you worked out.
+2. get_context() shows the shared header every compile includes (when it's big, the brief has the
+   declarations the function uses).
 3. Write the C functions (same names as the assembly) and judge them: compile_and_diff(function="a, b, c",
    source=all the definitions) for a batch, one name for one. Read the diff: '<' '>' missing/extra
    instructions, 'i' operands, 'o' order, 'r' registers, 's' stack. Fix structure first, registers last.

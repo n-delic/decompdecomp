@@ -402,9 +402,8 @@ class Network:
                               f"{self._agent_name(fn['best_agent_id'])} ({fn['attempts']} attempts total) — "
                               f"start from this", "```c", fn["best_source"].strip(), "```"]
             elif fn["seed"]:
-                lines += ["", "### Machine-generated starting point (m2c: expect wrong types and names; "
-                              "the context header helps)", "```c",
-                          fn["seed"].strip(), "```"]
+                lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
+                              "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
         notes = self.store.all(
             "SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
             "WHERE n.function_id=? ORDER BY n.id DESC LIMIT 8", fn["id"])

@@ -1,6 +1,7 @@
 # Reading the m2c draft
 
-m2c translates the assembly to C mechanically. It is a starting point, never a match.
+m2c translates the assembly to C mechanically. It is a starting point, never a match. Its control flow and
+arithmetic are usually right; its types and names usually wrong. Start from it and fix those.
 
 - The draft is made from the shared header's declarations the function uses, and made again when they change.
   Worked out a struct or a prototype? `redraft(function, context)` runs m2c again with your declarations and

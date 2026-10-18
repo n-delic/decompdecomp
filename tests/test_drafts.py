@@ -94,6 +94,7 @@ def test_a_method_draft_is_cplusplus_with_this_and_the_fields_it_uses():
 
 def test_redraft_is_a_tool_of_rom_projects_only():
     assert "redraft" in tools.tool_names(fork=False) and "redraft" not in tools.tool_names(fork=True)
+    assert "start from it and fix those" in tools.WORK_PROMPT and "redraft(function, context)" in tools.WORK_PROMPT
 
 
 @pytest.fixture(scope="module")
@@ -121,7 +122,8 @@ def _calling(net):
 def test_a_draft_is_made_again_when_the_declarations_it_uses_change(net):
     agent, _ = net.local_agent("drafter-test")
     name, callee = _calling(net)
-    net.get_function(name, SLUG)
+    brief = net.get_function(name, SLUG)
+    assert "control flow and arithmetic are usually right" in brief
     before = net._function(name, SLUG)
     assert before["seed"] and before["seed_key"] and f"{callee}(" in before["seed"]
     # something it doesn't use: the same draft, not made again
