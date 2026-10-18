@@ -2,12 +2,17 @@
 /* ------------------------------------------------------------------ project */
 async function openProject(slug, tab = "overview") {
   show("project");
+  const gen = ++S.gen;
   S.slug = slug; S.e = 0; S.a = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = [];
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
+  S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; $("expLog").hidden = true; $("expResult").innerHTML = ""; $("teamBox").innerHTML = "";
   try {
-    [S.ov] = await Promise.all([api(`/api/project?slug=${slug}`), S.st ? null : loadState()]);
+    const [ov] = await Promise.all([api(`/api/project?slug=${slug}`), S.st ? null : loadState()]);
+    if (gen !== S.gen) return;  // another project opened meanwhile
+    S.ov = ov;
   } catch (e) {
+    if (gen !== S.gen) return;
     toast(esc(e.message), "err");
     location.hash = "#/";
     return;
@@ -30,8 +35,10 @@ async function openProject(slug, tab = "overview") {
   setTab(tab);
   renderStats(S.ov);
   await refreshMap();
-  await poll(true);
-  S.timer = setInterval(() => poll(false), 1000);
+  if (gen !== S.gen) return;
+  await poll();
+  if (gen !== S.gen) return;  // (or its timers would poll the next project too)
+  S.timer = setInterval(poll, 1000);
   S.statsTimer = setInterval(loadStats, 8000);
   loadStats();
 }
@@ -107,31 +114,36 @@ function toastStopped(before, now) {
   }
 }
 
-let polling = false;
-async function poll(first) {
-  if (polling || !S.slug) return;
-  polling = true;
-  const slug = S.slug;
+/* A poll belongs to the opening of the project it was made for (S.gen). With one flag for all of them, the left
+   project's slow poll (agents at work on two games) kept the new project's first poll from running; its next poll
+   then fetched the last 60 events with nothing seen yet and toasted each as new. Only what happened after the
+   project opened is toasted. */
+let pollingGen = -1;
+async function poll() {
+  if (pollingGen === S.gen || !S.slug) return;
+  const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
     const live = await api(`/api/live?slug=${slug}&e=${S.e}&a=${S.a}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
-    if (slug !== S.slug) return;
+    if (gen !== S.gen) return;
     S.ov = live.overview;
     let mapDirty = false;
     for (const ev of live.events) {
       S.e = Math.max(S.e, ev.id);
       if (["match", "split", "rename", "compiler", "reopen"].includes(ev.kind)) mapDirty = true;
-      if (ev.kind === "match" && !first) {
+      const fresh = !first && ev.created_at >= S.openedAt;
+      if (ev.kind === "match" && fresh) {
         S.flash.set(ev.detail, performance.now());
         if (ev.agent !== AUTO && ev.agent !== "@" + AUTO) toast(`<code>${esc(ev.detail)}</code>&nbsp;matched by ${esc(ev.agent || "an agent")}`, "match");
       }
-      if (ev.kind === "autopilot" && !first) toast(`Autopilot: ${esc(ev.detail)}`, "match");
-      if (ev.kind === "link" && !first) toast(`🔗 <code>${esc(ev.detail)}</code>&nbsp;is linked into the game`, "match");
+      if (ev.kind === "autopilot" && fresh) toast(`Autopilot: ${esc(ev.detail)}`, "match");
+      if (ev.kind === "link" && fresh) toast(`🔗 <code>${esc(ev.detail)}</code>&nbsp;is linked into the game`, "match");
     }
     for (const at of live.attempts) {
       S.a = Math.max(S.a, at.id);
       if (!S.scores.has(at.function)) S.scores.set(at.function, []);
       S.scores.get(at.function).push({ score: at.score, t: at.created_at, insns: at.n_insns });
     }
+    S.primed = true;
     if (!first) applyAttempts(live.attempts);
     addActivity(live.events, live.attempts, first);
     S.claims = live.claims;
@@ -159,7 +171,7 @@ async function poll(first) {
   } catch (e) {
     if (String(e.message).includes("Failed to fetch")) $("feedHint").textContent = "app not reachable";
   } finally {
-    polling = false;
+    if (pollingGen === gen) pollingGen = -1;
   }
 }
 
