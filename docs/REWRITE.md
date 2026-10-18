@@ -421,6 +421,21 @@ console (§6), tests that run in CI, CONTRIBUTING.md that says where to start, s
 and a development copy that never touches anyone's real projects (§1). People who enjoy the app can give their own
 agents and tokens to improve it.
 
+## 12. PS2 debug symbols (GitHub #3)
+
+**Problem.** Some PS2 games ship with their debug information still in the ELF (Champions of Norrath, reported in
+#3). decompdecomp notices the symbol table (`rom/ps2.py`: `"symbols"`) and then ignores it: every function is
+func_..., every size is guessed by splat.
+
+**Goal, for the rewrite's release** (the owner):
+1. **The symbol table** (`.symtab`): real names and exact sizes for functions and data, given to splat as
+   `symbol_addrs.txt` before it splits. C++ names stay mangled when they aren't valid C identifiers.
+2. **The debug sections** (`.mdebug`, STABS inside ECOFF, what Sony's GCC and SN Systems wrote; DWARF where a game
+   has it): types, structs and classes with their fields, function prototypes, local variable names, source file
+   names. Types go into the shared header; source files become the project's units; prototypes and locals go into
+   each function's brief. This is what agents guess worst today (§9.3).
+3. Tested on the homemade PS2 demo built with `-g`, never on a real game in the repository.
+
 ## Questions
 
 Answers go here as they come.
