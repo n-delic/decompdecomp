@@ -49,8 +49,9 @@ Your job: turn functions of this game into C that compiles to *exactly* the orig
 Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
-   functions mostly match on the first try): assembly, location, calls, data it uses, the best previous
-   attempt and notes (start from those!), a machine-generated draft, and identical matched code if any.
+   functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
+   structs it's handed (guess_struct shows one as C), the best previous attempt and notes (start from those!), a
+   machine-generated draft, and identical matched code if any.
 2. get_context() shows the shared header every compile includes.
 3. Write the C functions (same names as the assembly) and judge them: compile_and_diff(function="a, b, c",
    source=all the definitions) for a batch, one name for one. Read the diff: '<' '>' missing/extra
@@ -220,6 +221,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "read_data": lambda net, agent, slug, what, length=64: (net.forks.read_data(agent, slug, what, length)
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
+    "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
@@ -248,7 +250,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
+ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class", "guess_struct",
             "compiler_map", "claim_readable", "make_readable", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
 
@@ -385,6 +387,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         constructor or destructor for its class's fields (offset, type, which functions use them) and virtual
         functions by slot; nothing lists them all. A layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:
+        """The likely struct behind a function's pointer (ROM projects, MIPS), as C with offsets: from the loads and
+        stores of every function the same pointer reaches, with how many agree on each field, where else the type
+        flows, and the type matched code already uses for it. argument: arg0-arg3, return, or a global; add +0x14
+        to follow the pointer at 0x14. The game's own type when its debug information has one. Put what you confirm
+        into context.h with edit_context."""
+        return await run(ctx, "guess_struct", function=function, argument=argument)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def compiler_map(ctx: Context, survey: bool = False, check_ranges: bool = False) -> str:

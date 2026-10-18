@@ -37,7 +37,7 @@ class BriefMixin:
         with self._warming.setdefault(proj["id"], threading.Lock()):
             if self._warmed.get(proj["id"]) == layout:
                 return
-            for build in (self.xrefs, self.classes, self._rom_ops, self.twins.prints, self.compiler_map):
+            for build in (self.xrefs, self.classes, self.structs, self._rom_ops, self.twins.prints, self.compiler_map):
                 try:
                     build(proj)
                 except Exception:  # a heuristic that fails is missing from briefs, never in their way
@@ -232,6 +232,7 @@ class BriefMixin:
                 lines.append(f"- {syms.label(a)} (0x{a:08X}; {desc})")
         lines += (self.console(proj).debug_brief(debug) if debug else []) + self._class_brief(fn, proj) + \
             self._compiler_brief(fn, proj)
+        lines += self._struct_brief(fn, proj)  # layouts.py: its pointer arguments' likely structs
         twin = self._twin_lines(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         alike = [] if twin else [(r, sim) for r, sim in self.similar(proj, fn, top=3) if r["status"] == "matched"]

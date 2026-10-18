@@ -2,9 +2,16 @@
 hand-assembled MIPS code, so no compiler is needed."""
 
 import functools
+import json
+import re
 import struct
+import subprocess
+import sys
 
-from decompnet import arch, structs
+import pytest
+
+from decompnet import arch, consoles, structs, toolchains
+from decompnet.app.engine import RomNetwork
 from decompnet.arch import mips_fields
 
 ZERO, V0, V1, A0, A1, S0, GP, SP, RA = 0, 2, 3, 4, 5, 16, 28, 29, 31
@@ -135,3 +142,67 @@ def test_mips_has_the_reader():
     mips = arch.get("mips")
     assert arch.STRUCTS in mips.features and mips.field_accesses is mips_fields.read_facts
     assert arch.get("ppc").field_accesses is None
+
+
+def test_a_header_gives_a_types_definition():
+    header = "typedef struct CPed CPed;\nstruct CPed {\n    s32 hp; /* 0x00 */\n};\ntypedef struct {\n    u8 a;\n} Pool;\n"
+    assert structs.definition(header, "CPed") == "struct CPed {\n    s32 hp; /* 0x00 */\n};"
+    assert structs.definition(header, "Pool") == "typedef struct {\n    u8 a;\n} Pool;"
+    assert structs.definition(header, "CVehicle") is None
+    assert structs.type_name("const struct CPed *") == "CPed" and structs.type_name("u8 *") is None
+    assert structs.type_name("s32") is None
+
+
+# ----------------------------------------------------------------------------- the demo games, with their compilers
+# Demo Quest's Entity (projects/demo-n64/original/game.h), built by each MIPS console's compiler: the guess for
+# entity_update_physics's argument is the struct the source has, field for field.
+
+ENTITY = {0x00: "s16", 0x02: "u16", 0x04: "s32", 0x08: "s32", 0x0C: "s32", 0x10: "s32", 0x14: "s16", 0x16: "s16",
+          0x18: "s32"}
+MIPS_DEMOS = [c for c in consoles.startable() if c.demo and arch.STRUCTS in c.features]
+
+
+@pytest.fixture(scope="module", params=MIPS_DEMOS, ids=[c.id for c in MIPS_DEMOS])
+def demo_game(request, tmp_path_factory):
+    from .test_consoles import ROOT, _missing
+
+    console = request.param
+    if (missing := _missing(console)):
+        pytest.skip(f"{console.name}'s demo needs {', '.join(missing)}")
+    folder = ROOT / "projects" / console.demo
+    if not (folder / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(folder / "build.py")], check=True)
+    built = json.loads((folder / "build" / "demo.json").read_text())
+    work = tmp_path_factory.mktemp(console.id)
+    net = RomNetwork(work / "app.db", work)
+    slug = net.import_rom(folder / "build" / built["game"], confirmed=True, log=lambda *_: None)
+    return net, slug, built["symbols"]
+
+
+def _name(net, slug, symbols, name):
+    pid = net.project_row(slug)["id"]
+    return net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", pid, symbols[name])["name"]
+
+
+def test_the_guess_for_a_demos_struct_is_the_struct_its_source_has(demo_game):
+    net, slug, symbols = demo_game
+    name = _name(net, slug, symbols, "entity_update_physics")
+    text = net.guess_struct(slug, name, "arg0")
+    guessed = {int(offset, 16): ctype for offset, ctype in re.findall(r"/\* 0x([0-9A-F]+) \*/ (\w+) unk_", text)}
+    assert guessed == ENTITY, text
+    assert "The same type: the global" in text  # g_entities, the array entity_update's loop walks
+    brief = net.get_function(name, slug)
+    assert "### Likely struct layouts" in brief and "- arg0: S_" in brief and "+0x2 u16" in brief
+    assert "No loads or stores through arg0" in net.guess_struct(slug, _name(net, slug, symbols, "abs_s32"))
+    assert "typedef struct S_" in net.likely_structs(net.project_row(slug), net._function(name, slug))
+
+
+@pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None or toolchains.installed("binutils-mips") is None,
+                    reason="needs ee-gcc-2.96 and binutils-mips to build the PS2 demo")
+def test_a_game_with_debug_information_gets_its_real_type(tmp_path):
+    from .test_ps2_debug import _import_debug_game
+
+    net, slug, _ = _import_debug_game(tmp_path)
+    text = net.guess_struct(slug, "entity_update_physics", "arg0")
+    assert "`Entity *`: the real type" in text and "struct Entity {" in text, text
+    assert "### Likely struct layouts" not in net.get_function("entity_update_physics", slug)

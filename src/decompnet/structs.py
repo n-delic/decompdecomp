@@ -384,6 +384,35 @@ def parameter_types(source: str, function: str) -> list[str]:
     return out
 
 
+DEFINITION = re.compile(r"\b(typedef\s+)?(?:struct|union|class)\s*(\w*)[^;{}()]*\{")
+BASIC_TYPES = re.compile(r"^(void|char|short|int|long|float|double|unsigned|signed|bool|[su](8|16|32|64)|f(32|64)|"
+                         r"[su]32_bool|vu?[su]?(8|16|32))$")
+
+
+def type_name(ctype: str) -> str | None:
+    """The struct a pointer type points to ("const CPed *" -> "CPed"), None for a basic type or not a pointer."""
+    if "*" not in ctype and "&" not in ctype:
+        return None
+    name = " ".join(re.sub(r"\b(struct|union|class|const|volatile)\b|[*&]", " ", ctype).split())
+    return None if not name or " " in name or BASIC_TYPES.match(name) else name
+
+
+def definition(header: str, name: str) -> str | None:
+    """`name`'s struct, union or class definition in C text (a header), braces and all; None when it isn't there."""
+    for m in DEFINITION.finditer(header):
+        depth = 0
+        for at in range(m.end() - 1, len(header)):
+            depth += {"{": 1, "}": -1}.get(header[at], 0)
+            if depth == 0:
+                break
+        else:
+            return None
+        end = header.find(";", at)
+        if end >= 0 and (m.group(2) == name or (m.group(1) and re.search(rf"\b{re.escape(name)}\b", header[at:end]))):
+            return header[m.start():end + 1]
+    return None
+
+
 def argument_type(source: str, function: str, n: int) -> str | None:
     """The type matched code gives argument register n (a0 + n), when no float comes before it: floats travel in
     registers of their own, and whether that moves the integer ones depends on the console's calling convention."""
