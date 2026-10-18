@@ -17,6 +17,6 @@ Beyond this project: games built on the same SDK or engine share code (libultra 
 Revolution SDKs, NitroSDK on DS, PSY-Q on PS1, sead/nn on Switch, RenderWare, Havok...). Those library
 functions are usually matched already in other public decomps.
 
-Scheduling that works (from people who ran agents on decomps before): easiest functions first, then
-functions similar to ones already matched. Cap the effort per function (around 25-30 compiles) and
-release with notes rather than grinding.
+Scheduling that works: easiest functions first, then functions similar to ones already matched.
+Don't grind on one function. compile_and_diff tells you when to move on: after 3 compiles in a row
+without a better score for small functions, up to 10 for the biggest. Then release it with notes.
