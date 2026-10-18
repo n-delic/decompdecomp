@@ -264,6 +264,11 @@ New console code already goes there (`consoles/ps2/syscalls.py`).
   `consoles/__init__.py` registers them; the engine calls `consoles.get(platform)` and never compares platform
   names. The GUI gets names, compilers and features from `/api/consoles` and drops its own tables.
 
+**Docs, at the end** (the owner): once the consoles live in their folders, CONTRIBUTING.md, AGENTS.md and
+docs/CONVENTIONS.md say where each console's code is (`consoles/<console>/`, what each file does), how to improve an
+existing console, and how to write a new one: copy the template package, fill in the connector's parts, add its demo
+game, make the conformance test pass, add its column to ROADMAP.md's table. Written for people and agents alike.
+
 **Trust.** One conformance test runs for every console: build its demo, detect it, import, judge known-matching C
 (score 0) and wrong C (not 0), draft, export and rebuild byte for byte. CI installs the free compilers (pinned,
 cached) so N64 (KMC), PS1, PS2 and GBA really run there. Proprietary compilers (mwcc, mwccarm, MSVC, mwcps2, IDO)
