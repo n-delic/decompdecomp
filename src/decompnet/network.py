@@ -39,12 +39,22 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 # ones get few; big ones get more, as long as the score keeps falling.
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
+STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
+BRIEF_NOTES = 8  # the newest notes on a function its brief shows
+NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
+NOTES_FOUND = 20  # search_notes' answer at most
 MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
 # Twins first (see app/twins.py): a function whose code the game has more than once (boost: how many more times)
 # and isn't too big or given up on, best value per instruction first; its twins (boost -1) last, as they match for
 # free once it does.
-_TWINS = ("(f.boost > 0 AND f.n_insns <= 400 AND f.abandons < 2) DESC, "
-          "CASE WHEN f.boost > 0 THEN (f.boost + 1) * 64 / (f.n_insns + 16) ELSE 0 END DESC, f.boost < 0, ")
+TWIN_MAX_INSNS = 400  # a bigger function waits its turn by size, twins or not: one match of it takes long
+TWIN_MAX_ABANDONS = 2  # agents gave it back this often: it's hard, twins or not
+# value per instruction: the copies a match brings, over the size; SQL divides integers, so it's scaled up, and a few
+# instructions are added so a two-instruction twin doesn't beat a real function with many copies
+TWIN_VALUE_SCALE, TWIN_SIZE_FLOOR = 64, 16
+_TWINS = (f"(f.boost > 0 AND f.n_insns <= {TWIN_MAX_INSNS} AND f.abandons < {TWIN_MAX_ABANDONS}) DESC, "
+          f"CASE WHEN f.boost > 0 THEN (f.boost + 1) * {TWIN_VALUE_SCALE} / (f.n_insns + {TWIN_SIZE_FLOOR}) ELSE 0 "
+          f"END DESC, f.boost < 0, ")
 # Where in the game a function is says much about its chances: on GTA San Andreas small functions matched 19-28% of
 # the time in most of the game and 87% in one part of it; on Mario Kart 64 one part 19%, the rest 71-85% (October
 # 2026). Mostly another compiler or flags built the bad parts. So among functions of about the same size, the one
@@ -55,6 +65,7 @@ REGION_BYTES = 0x40000  # one part of the game: 256 KB of code
 REGION_PRIOR = 8  # tries' worth of the game's overall share, so a part judged on two functions isn't judged yet
 FAILING_SHARE, FAILING_TRIED = 0.15, 20
 SIZE_STEP = 64  # instructions: functions within one step are "about the same size"
+FINISH_SIZE_STEP = 32  # the same for "finish", in finer steps: there the file closest to done decides within one
 _REGION = (f"(SELECT vram / {REGION_BYTES} AS region, SUM(status = 'matched') AS won, "
            f"SUM(status = 'matched' OR attempts > 0) AS tried FROM functions WHERE project_id = :pid "
            f"AND status != 'asm' AND vram IS NOT NULL GROUP BY region)")
@@ -67,7 +78,8 @@ STRATEGIES = {
     # what nobody gave up on, small first; among functions of about the same size, the files closest to done (a
     # file is linked into the game once all of it matches). Leftovers agents released again and again come last,
     # or a crowd of agents spends its time passing the hardest functions around.
-    "finish": f"{_FAILING}, " + _TWINS + "f.abandons ASC, (f.n_insns + 31) / 32 ASC, (SELECT COUNT(*) FROM functions g WHERE "
+    "finish": f"{_FAILING}, " + _TWINS + f"f.abandons ASC, (f.n_insns + {FINISH_SIZE_STEP - 1}) / {FINISH_SIZE_STEP} ASC, "
+                       "(SELECT COUNT(*) FROM functions g WHERE "
                        "g.project_id=f.project_id AND g.unit=f.unit AND g.status='open') ASC, f.n_insns ASC",
     # near-misses, the ones given up on least first (else every agent resumes the same stuck one)
     "closest": "f.best_score IS NULL, f.abandons ASC, CAST(f.best_score AS REAL) / (f.n_insns * 100) ASC",
@@ -387,7 +399,7 @@ class Network:
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
         notes = self.store.all(
             "SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-            "WHERE n.function_id=? ORDER BY n.id DESC LIMIT 8", fn["id"])
+            f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES}", fn["id"])
         if notes:
             lines += ["", "### Notes from previous agents on this function"]
             lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {n['text']}" for n in notes]
@@ -496,7 +508,7 @@ class Network:
         if after is None:
             row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
             after = stall_budget((row["n_insns"] if row else 0) or 0)
-        rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 16",
+        rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT {STALL_LOOKBACK}",
                               function_id, agent_id)
         best, since = None, 0
         for r in reversed(rows):
@@ -670,7 +682,7 @@ class Network:
             raise NetworkError("empty note")
         with self.store.tx() as db:
             db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:4000], time.time()))
+                       (proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], time.time()))
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:
@@ -678,7 +690,7 @@ class Network:
         rows = self.store.all(
             "SELECT n.text, n.created_at, a.name AS agent, f.name AS fn FROM notes n "
             "LEFT JOIN agents a ON a.id=n.agent_id LEFT JOIN functions f ON f.id=n.function_id "
-            "WHERE n.project_id=? AND n.text LIKE ? ORDER BY n.id DESC LIMIT 20", proj["id"], f"%{query}%")
+            f"WHERE n.project_id=? AND n.text LIKE ? ORDER BY n.id DESC LIMIT {NOTES_FOUND}", proj["id"], f"%{query}%")
         if not rows:
             return f"No notes matching {query!r}."
         return "\n".join(f"- [{r['fn'] or 'project'}] ({r['agent']}, {_ago(r['created_at'])}) {r['text']}" for r in rows)

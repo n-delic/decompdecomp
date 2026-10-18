@@ -42,6 +42,11 @@ MISS_TTL = 24 * 3600
 # Across games, functions this small are the same everywhere (a return, a stub): they match on their own anyway
 ACROSS_MIN_BYTES = 32
 FORK_PRINTS_TTL = 10 * 60  # a fork's target objects are looked at again after this long (they can be rebuilt)
+WHOLE_WORD = (0, 4, 0xFFFFFFFF)  # a relocation of a type _MASKS doesn't know: its whole word is masked
+LABELS_BACK, LABEL_REACH = 64, 0x10000  # rom_renames looks this many labels down, at most this many bytes below
+SQL_CHUNK = 500  # ids per IN (...): under SQLite's limit of variables in one statement
+WHY_CHARS = 300  # how much of a compiler's message a miss keeps
+UNDECLARED_RETRIES = 4  # names a fork twin's file declares later, declared and built again, at most
 _GENERATED = ("__dt__", "__ct__", "__sinit", "__vt__")  # C++ code the compiler writes: nothing to copy
 
 
@@ -57,7 +62,7 @@ class Print:
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
     for off, rtype in relocs:
-        delta, length, mask = _MASKS.get((arch, rtype), _MASKS.get(("thumb", rtype), (0, 4, 0xFFFFFFFF)))
+        delta, length, mask = _MASKS.get((arch, rtype), _MASKS.get(("thumb", rtype), WHOLE_WORD))
         at = off + delta
         if at < 0 or at + length > len(code):
             continue
@@ -66,9 +71,9 @@ def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str)
 
 
 def _key(code: bytes, layout: list[tuple[int, int]]) -> str:
-    h = hashlib.sha1(code)
-    h.update(repr(layout).encode())
-    return h.hexdigest()
+    digest = hashlib.sha1(code)
+    digest.update(repr(layout).encode())
+    return digest.hexdigest()
 
 
 def object_prints(data: bytes) -> dict[str, Print]:
@@ -136,21 +141,21 @@ def rom_renames(syms, source: str, a: Print, b: Print, a_name: str, b_name: str,
     out: dict[str, str] = {}
     if a_name != b_name:
         out[a_name] = b_name
-    for x, y in zip(a.addrs, b.addrs):
-        if x == y and syms_b is None:
+    for in_a, in_b in zip(a.addrs, b.addrs):
+        if in_a == in_b and syms_b is None:
             continue
-        i = bisect.bisect_right(syms._starts, x) - 1
+        below = bisect.bisect_right(syms.starts, in_a) - 1
         base = None
-        for k in range(i, max(-1, i - 64), -1):  # back to the symbol the C writes (at most 64 labels down)
-            sym = syms.by_addr[syms._starts[k]]
-            if x - sym.address > 0x10000:
+        for k in range(below, max(-1, below - LABELS_BACK), -1):  # back to the symbol the C writes
+            sym = syms.by_addr[syms.starts[k]]
+            if in_a - sym.address > LABEL_REACH:
                 break
             if sym.name in words:
                 base = sym
                 break
         if base is None:
             continue  # the C doesn't name it (a literal, a string it defines): the judge compares the values
-        to = y - (x - base.address)
+        to = in_b - (in_a - base.address)
         other = (syms_b or syms).by_addr.get(to)
         name = other.name if other is not None else f"D_{to:08X}"
         if out.setdefault(base.name, name) != name:
@@ -384,8 +389,8 @@ class Twins:
         prints = self.prints(proj)
         found = [fid for fid, p in prints.items() if p.asm]
         n = 0
-        for at in range(0, len(found), 500):
-            chunk = found[at:at + 500]
+        for at in range(0, len(found), SQL_CHUNK):
+            chunk = found[at:at + SQL_CHUNK]
             for r in self.net.store.all(f"SELECT * FROM functions WHERE id IN ({','.join('?' * len(chunk))}) "
                                         "AND status='open'", *chunk):
                 self.net.forks.mark_asm(r, reason=prints[r["id"]].asm)
@@ -574,7 +579,7 @@ class Twins:
         try:
             source = self.source_for(proj, a, b)
         except (NetworkError, OSError, ValueError) as e:
-            log.info("twins: %s from %s not tried: %s", b["name"], a["name"], str(e)[:300])
+            log.info("twins: %s from %s not tried: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip"
         if not source:
             if self.net.fork_slug(proj["slug"]) and self.net.forks.is_asm(proj, a):
@@ -601,8 +606,8 @@ class Twins:
         if res.get("score") is None:
             lines = [ln.strip(" #") for ln in (res.get("text") or "").splitlines()
                      if re.search(r"undefined|undeclared|expected|illegal|redefin|not a |declaration|conversion", ln)]
-            return (lines[0] if lines else "it didn't build")[:300]
-        return (res.get("text") or "").splitlines()[0][:300] if res.get("text") else f"score {res.get('score')}"
+            return (lines[0] if lines else "it didn't build")[:WHY_CHARS]
+        return (res.get("text") or "").splitlines()[0][:WHY_CHARS] if res.get("text") else f"score {res.get('score')}"
 
     def _attempt_twin(self, agent, proj, a, b, source: str, origin: str = "") -> tuple[str, str]:
         note = f"/* identical to {a['name']}{origin} (matched), with its names changed by decompdecomp */\n"
@@ -623,7 +628,7 @@ class Twins:
                 # declared as the files declare it, then built again
                 prints, decls = self.prints(proj), []
                 names = self._fork_names(prints[a["id"]], prints[b["id"]], a, b) if a["id"] in prints and b["id"] in prints else None
-                for _ in range(4):
+                for _ in range(UNDECLARED_RETRIES):
                     m = names is not None and res.get("score") is None and \
                         re.search(r"undefined identifier '(\w+)'", res.get("text") or "")
                     if not m:
@@ -637,7 +642,7 @@ class Twins:
             else:
                 res = self.net.try_quietly(agent, proj, b, note + source)
         except NetworkError as e:
-            log.info("twins: %s from %s: %s", b["name"], a["name"], str(e)[:300])
+            log.info("twins: %s from %s: %s", b["name"], a["name"], str(e)[:WHY_CHARS])
             return "skip", ""
         return ("match", "") if res.get("matched") else ("miss", self._why(res))
 
