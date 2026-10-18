@@ -70,6 +70,22 @@ server, helpers, tools. Nothing starts it but the user.
 - Quit means quit: stop helpers (their whole process group), jobs, and the server.
 - Remove the `--service` mode (`app/service.py`) and the browser fallback.
 
+### `decomp` is the app, and a development copy never touches the release
+
+- `decomp` (from the installer, the .deb or the AppImage) opens the standalone window. That's the only way to run
+  the app; there are no other modes to remember.
+- **Dev and release are separate apps.** A copy run from a git checkout (`uv run decomp`) is "decompdecomp dev":
+  - its own home, `~/Decomp-dev` (its own database, projects and settings), unless `DECOMP_HOME` says otherwise;
+  - its own port and window class, its own name in the window title, tray and notifications ("decompdecomp dev"),
+    and a different icon colour;
+  - no launcher in the app menu.
+  - Release and dev never quit or replace each other: "one instance" means one per home. Today a newer copy
+    finding an older one running quits it (`app/cli.py`, `replace_older`): that's how a test run once stopped the
+    owner's app.
+- One install at a time: the installer, the .deb and the AppImage each find and remove an older install of another
+  kind (the old uv tool `decompnet`, `/opt/decompdecomp`, launchers named `decomp-wtf.desktop`), so the app menu
+  shows one decompdecomp.
+
 ### Windows as the computer the app runs on: removed
 
 Removed for this release: `site/public/install.ps1`, `src/decompnet/hostenv.py`, the WSL distribution set-up, the
