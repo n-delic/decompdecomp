@@ -70,6 +70,26 @@ server, helpers, tools. Nothing starts it but the user.
 - Quit means quit: stop helpers (their whole process group), jobs, and the server.
 - Remove the `--service` mode (`app/service.py`) and the browser fallback.
 
+### Windows as the computer the app runs on: removed
+
+Removed for this release: `site/public/install.ps1`, `src/decompnet/hostenv.py`, the WSL distribution set-up, the
+Edge window through WSL, `tests/test_wsl.py`, and every branch that exists only for running on Windows.
+
+Why:
+- It was labelled experimental, and nobody tests it: the owner uses Linux, and CI runs none of it.
+- Most of it served what the rewrite removes anyway: registering the MCP bridge with agents on the Windows side,
+  and opening a browser window from WSL.
+- It's a lot of code (hostenv.py, the 319-line installer, branches in 32 files) that every change has to work
+  around.
+- Windows 11 users still have a way: WSL shows Linux apps' windows (WSLg), so installing the Linux version inside
+  WSL should work, unsupported. The README says so.
+
+**Not removed: Windows PC games.** Decompiling a Windows game's `.exe` (the `win32` platform, MSVC through wibo,
+`forks/scratch_pe.py`) is a console like any other, and it runs on Linux. Only Windows as the host goes.
+
+The README, docs/GUIDE.md, ROADMAP.md's platform table and the website say Linux, with macOS and Windows "not
+supported in this version".
+
 ## 2. UI/UX overhaul
 
 **Problem.** A project has too many tabs (Overview, Functions, Agents, Activity, Team, Source, Settings), and some
