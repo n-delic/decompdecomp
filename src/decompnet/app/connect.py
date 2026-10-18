@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .agents import KINDS, _which, argv, kind_id
+from .agents import KINDS, _which, kind_id
 
 NAME = "decomp"
 LABEL = {"claude": "claude-code", "codex": "codex", "antigravity": "antigravity", "opencode": "opencode"}
@@ -27,8 +27,8 @@ def bridge_command() -> list[str]:
 
 
 def _run(cmd: list[str], timeout: float) -> subprocess.CompletedProcess:
-    """Run an agent's own CLI (on Windows an npm .cmd through node, see agents.argv), reading its output as UTF-8."""
-    return subprocess.run(argv(cmd), capture_output=True, text=True, stdin=subprocess.DEVNULL,
+    """Run an agent's own CLI, reading its output as UTF-8."""
+    return subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL,
                           encoding="utf-8", errors="replace", timeout=timeout)
 
 

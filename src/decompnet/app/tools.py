@@ -77,8 +77,8 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
    Right C that can't match because the project's compiler or flags look wrong? try_compiler(...) others, then
    suggest(...) the one that matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
-5. compile_and_diff says when to move on (no better after 4 compiles in a row; up to 10 for big functions):
-   then release_function with precise notes (what you tried, what is left) and claim the next one.
+5. compile_and_diff says when to move on ({budget}): then
+   release_function with precise notes (what you tried, what is left) and claim the next one.
 
 Write plausible original code, pure C (no inline asm). Be brief in your messages: work, don't narrate.
 """
@@ -109,8 +109,8 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
 5. The goal is linked files: the game built from the C, byte for byte. When a match finishes a file's
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
-6. compile_and_diff says when to move on (no better after 4 compiles in a row; up to 10 for big functions):
-   then release_function with precise notes (what you tried, what is left) and claim the next. Very large
+6. compile_and_diff says when to move on ({budget}): then
+   release_function with precise notes (what you tried, what is left) and claim the next. Very large
    functions: get the structure right first; a near miss is worth the extra compiles.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build

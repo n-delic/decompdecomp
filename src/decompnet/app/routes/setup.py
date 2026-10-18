@@ -1,28 +1,25 @@
-"""Compilers and tools (Setup), agents: installing them, starting and stopping helpers, connecting an agent the
-user runs (MCP), their sign-in tokens, and the settings.
+"""Compilers and tools (Setup), agents: installing them, finding which are installed, starting, stopping and
+restarting helpers, and the settings.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 
-import anyio
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import hostenv, toolchains
+from ... import toolchains
 from ...network import NetworkError
-from .. import agents, connect
+from .. import agents
 from ..support import _session_options, _spread
 from . import App
 
 
 def register(app: App) -> None:
-    net, mcp, mcp_url, manager, jobs = app.net, app.mcp, app.mcp_url, app.manager, app.jobs
-    settings, guard, body, fail = app.settings, app.guard, app.body, app.fail
+    net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
+    settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
     @mcp.custom_route("/api/toolchain", methods=["POST"])
     async def api_toolchain(request: Request) -> Response:
@@ -40,32 +37,30 @@ def register(app: App) -> None:
         kind = agents.KINDS.get(agents.kind_id(str((await body(request)).get("kind", ""))))
         if kind is None or not kind.install:
             return fail(ValueError("nothing to install"))
-        cmd = kind.install["windows" if sys.platform == "win32" else "unix"]
-        env = None
-        if sys.platform == "win32":
-            env = dict(os.environ, PATH=agents.search_path())  # Node.js installed since the app started counts
-            if cmd.startswith("npm ") and not shutil.which("npm", path=env["PATH"]):
-                return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
-                                       "first (the LTS version), then try again"))
+        if kind.install.startswith("npm ") and not shutil.which("npm"):
+            return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
+                                   "first (the LTS version), then try again"))
 
         def work(log):
-            log(f"$ {cmd}")
-            if sys.platform == "win32":
-                # Node.js's npm is a PowerShell script (npm.ps1) that Windows' default execution policy won't run;
-                # output as UTF-8 so it reads right here; never wait at a prompt nobody sees
-                argv = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-                        f"[Console]::OutputEncoding = [Text.Encoding]::UTF8; {cmd}"]
-            else:
-                argv = ["bash", "-lc", cmd]
-            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                    errors="replace", env=env)
+            log(f"$ {kind.install}")
+            proc = subprocess.Popen(["bash", "-lc", kind.install], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace")
             for line in proc.stdout:
                 log(line.rstrip())
             if proc.wait() != 0:
                 raise RuntimeError(f"the installer exited with code {proc.returncode}")
             agents._versions.pop(kind.id, None)
+            manager.refresh_detected(wait=True)  # the launcher shows it, with its models, when the job is done
             return {"kind": kind.id}
         return JSONResponse({"job": jobs.start("agent-install", work)})
+
+    @mcp.custom_route("/api/agents/detect", methods=["POST"])
+    async def api_agents_detect(request: Request) -> Response:
+        """Look again which agents are installed and their models (a sign-in since): in the background."""
+        if (bad := guard(request, write=True)):
+            return bad
+        manager.refresh_detected()
+        return JSONResponse({"detecting": True})
 
     @mcp.custom_route("/api/agents/start", methods=["POST"])
     async def api_agents_start(request: Request) -> Response:
@@ -76,7 +71,7 @@ def register(app: App) -> None:
         given = data.get("options") or {}
         options = {k: v for k, v in given.items() if k in ("model", "per_session")}
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
-        count = max(1, min(int(data.get("count", 1)), 8))
+        count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         picked: list[str] = []
         try:
             net.project_row(slug)
@@ -97,56 +92,29 @@ def register(app: App) -> None:
         settings.save()
         return JSONResponse({"started": ids})
 
-    @mcp.custom_route("/api/connect", methods=["GET", "POST"])
-    async def api_connect(request: Request) -> Response:
-        """Your agents (Claude Code, Codex, ...) with decompdecomp's tools: whether they have them, and adding them."""
-        if (bad := guard(request, write=request.method == "POST")):
-            return bad
-        if request.method == "POST":
-            kind = str((await body(request)).get("id", ""))
-            try:
-                msg = await anyio.to_thread.run_sync(lambda: connect.connect(kind))
-            except (ValueError, OSError, subprocess.TimeoutExpired) as e:
-                return fail(e)
-            return JSONResponse({"ok": True, "message": msg})
-
-        def rows():
-            from concurrent.futures import ThreadPoolExecutor
-
-            found = [a for a in agents.detect() if a["id"] in connect.LABEL]
-            with ThreadPoolExecutor(len(found) or 1) as pool:  # each agent's own CLI answers; ask them all at once
-                linked = list(pool.map(lambda a: a["installed"] and connect.status(a["id"]), found))
-            return [{"id": a["id"], "name": a["name"], "installed": a["installed"], "connected": ok,
-                     "command": connect.shown(a["id"])} for a, ok in zip(found, linked)]
-        if (host := hostenv.host_bridge()) is not None:  # the user's agents live outside decompdecomp's Linux
-            return JSONResponse({"agents": [], "bridge": host, "host_bridge": host, **hostenv.info()})
-        return JSONResponse({"agents": await anyio.to_thread.run_sync(rows), "bridge": connect.bridge_command()})
-
-    @mcp.custom_route("/api/agents/token", methods=["POST"])
-    async def api_agents_token(request: Request) -> Response:
-        """An identity for an agent the user talks to, connecting through `decomp mcp`."""
-        if (bad := guard(request, write=True)):
-            return bad
-        data = await body(request)
-        try:
-            agent, token = net.chat_agent(str(data.get("name") or "chat"))
-        except NetworkError as e:
-            return fail(e)
-        return JSONResponse({"agent": agent.name, "token": token, "url": mcp_url})
-
     @mcp.custom_route("/api/agents/stop", methods=["POST"])
     async def api_agents_stop(request: Request) -> Response:
+        """Stop a helper (`id`), forget it (`remove`), or stop every helper on a project (`slug`)."""
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
         if data.get("remove"):
-            manager.remove(str(data.get("id")))
-        elif data.get("slug"):  # every helper on one project
-            for s in list(manager.sessions.values()):
-                if s.slug == data["slug"] and s.state in ("starting", "working", "waiting"):
-                    manager.stop(s.id)
-        else:
-            manager.stop(data.get("id") or None)
+            await call(manager.remove, str(data.get("id")))
+        elif data.get("slug"):
+            await call(manager.stop_project, str(data["slug"]))
+        elif data.get("id"):
+            await call(manager.stop, str(data["id"]))
+        return JSONResponse({"ok": True})
+
+    @mcp.custom_route("/api/agents/restart", methods=["POST"])
+    async def api_agents_restart(request: Request) -> Response:
+        """Start a stopped or paused helper again."""
+        if (bad := guard(request, write=True)):
+            return bad
+        try:
+            await call(manager.restart, str((await body(request)).get("id", "")))
+        except ValueError as e:
+            return fail(e)
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/settings", methods=["POST"])
@@ -162,7 +130,8 @@ def register(app: App) -> None:
         if data.get("remove_endpoint"):
             settings.remove_endpoint(str(data["remove_endpoint"]))
             for sid, sess in list(manager.sessions.items()):  # its sessions stop with it
-                if sess.kind == "api" and sess.options.get("endpoint") == str(data["remove_endpoint"]):
+                if sess.kind == "api" and sess.options.get("endpoint") == str(data["remove_endpoint"]) \
+                        and sess.state in agents.LIVE:
                     manager.stop(sid)
         if "per_session" in data:
             settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))

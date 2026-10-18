@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from decompnet.app import agents
+from decompnet.app.engine import RomNetwork
 from decompnet.app.support import Settings, _session_options, _spread
 
 
@@ -80,12 +81,13 @@ def test_a_saved_key_never_goes_to_an_address_typed_in(tmp_path):
 def test_sessions_are_numbered_per_endpoint(tmp_path, monkeypatch):
     monkeypatch.setattr(agents.Manager, "_run", lambda self, s: None)
     monkeypatch.setattr(agents.Manager, "_prepare", lambda self, slug: None)
-    m = agents.Manager(SimpleNamespace(), tmp_path, "http://127.0.0.1:1/mcp")
-    m.start("api", "p", 2, {"provider_name": "gpu-box", "endpoint": "e1"})
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    m = agents.Manager(net, tmp_path, "http://127.0.0.1:1/mcp")
+    m.start("api", "p", 2, {"provider_name": "gpu-box", "endpoint": "e1", "api_key": "sk-1"})
     m.start("api", "p", 1, {"provider_name": "laptop", "endpoint": "e2"})
-    m.start("api", "p", 1, {"provider_name": "gpu-box", "endpoint": "e1"})
+    m.start("api", "p", 1, {"provider_name": "gpu-box", "endpoint": "e1", "api_key": "sk-1"})
     assert sorted(s.label for s in m.sessions.values()) == ["gpu-box #1", "gpu-box #2", "gpu-box #3", "laptop #1"]
-    assert all("api_key" not in r["options"] for r in m.running())
+    assert "sk-1" not in json.dumps([dict(r) for r in net.store.all("SELECT * FROM helpers")])  # keys stay in settings
 
 
 @pytest.mark.parametrize("base, local", [

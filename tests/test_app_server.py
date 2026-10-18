@@ -126,7 +126,7 @@ def test_builtin_api_agent_matches_a_function(app, monkeypatch):
 
 def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
     """Claude Code without a sign-in exits at once: say that (not "exited with code 1") and don't keep retrying."""
-    manager = agents.Manager(None, tmp_path, "http://127.0.0.1:9/mcp")
+    manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
     code = "print('Not logged in \\u00b7 Please run /login'); raise SystemExit(1)"
     monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
     s = agents.Session("claude-1", "claude", "Claude Code #1", "game", "claude-1", {})
@@ -137,7 +137,7 @@ def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
 def test_an_agent_out_of_credit_stops_and_says_so(tmp_path, monkeypatch):
     """DeepSeek's "Insufficient Balance" (here through opencode): stop at once and say what to do. "Too many
     requests" is the provider's limit of requests at once: not a failure, the session waits and tries again."""
-    manager = agents.Manager(None, tmp_path, "http://127.0.0.1:9/mcp")
+    manager = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, "http://127.0.0.1:9/mcp")
     s = agents.Session("opencode-1", "opencode", "opencode #1", "game", "opencode-1", {})
 
     def says(text: str) -> None:
@@ -168,27 +168,21 @@ def test_builtin_api_agent_out_of_credit(app, monkeypatch):
 
 
 def test_agent_spend_is_read_from_their_output():
-    claude = agents.parse_line("claude", json.dumps({"type": "result", "total_cost_usd": 0.42, "num_turns": 9}))
-    assert ("usage", json.dumps({"usd": 0.42})) in claude and any(k == "info" for k, _ in claude)
-    codex = agents.parse_line("codex", json.dumps({"type": "turn.completed", "usage": {"input_tokens": 900, "output_tokens": 100}}))
-    assert ("usage", json.dumps({"tokens": 1000})) in codex
-    opencode = agents.parse_line("opencode", json.dumps({"type": "step_finish", "part": {"cost": 0.01}}))
-    assert ("usage", json.dumps({"usd": 0.01})) in opencode
-
-
-@needs_demo
-def test_helpers_are_remembered_to_resume(app):
-    client, net, manager = app
-    slug = net.store.one("SELECT slug FROM projects")["slug"]
-    seen = []
-    manager.persist = lambda running: seen.append([r["kind"] for r in running])
-    (sid,) = manager.start("api", slug, 1, {"base_url": "http://127.0.0.1:9/v1", "model": "m"})
-    assert seen[-1] == ["api"]
-    manager.stop()  # the app quitting: nothing is forgotten, they resume next time
-    assert seen[-1] == ["api"]
-    manager.stop(sid)  # you stopping it: forgotten
-    assert seen[-1] == []
-    manager.remove(sid)
+    """What each session spent, its tokens (those served from the provider's cache apart) and turns, as each agent
+    reports them: recorded per session and model, to compare models on cost per match."""
+    def usage(kind, obj):
+        return [json.loads(text) for k, text in agents.parse_line(kind, json.dumps(obj)) if k == "usage"]
+    claude = {"type": "result", "total_cost_usd": 0.42, "num_turns": 9, "usage": {
+        "input_tokens": 30, "output_tokens": 900, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 4000}}
+    assert usage("claude", claude) == [{"usd": 0.42, "input": 30, "output": 900, "cache_read": 50000,
+                                        "cache_write": 4000, "turns": 9}]
+    codex = {"type": "turn.completed", "usage": {"input_tokens": 900, "cached_input_tokens": 600, "output_tokens": 100}}
+    assert usage("codex", codex) == [{"input": 300, "cache_read": 600, "output": 100, "turns": 1}]
+    opencode = {"type": "step_finish", "part": {"cost": 0.01, "tokens": {"input": 10, "output": 5, "reasoning": 7,
+                                                                         "cache": {"read": 400, "write": 0}}}}
+    assert usage("opencode", opencode) == [{"usd": 0.01, "input": 10, "output": 12, "cache_read": 400, "turns": 1}]
+    assert agents.api_usage({"prompt_tokens": 1000, "completion_tokens": 50, "prompt_cache_hit_tokens": 700}) == \
+        {"input": 300, "cache_read": 700, "output": 50, "turns": 1}
 
 
 def test_an_older_app_still_running_after_an_upgrade_is_replaced(tmp_path):

@@ -68,8 +68,7 @@ def register(app: App) -> None:
 
         def bye():
             window.close_app()
-            manager.stop()
-            manager.on_stop()
+            manager.shutdown()
             time.sleep(0.5)
             os._exit(0)
         threading.Thread(target=bye, daemon=True).start()

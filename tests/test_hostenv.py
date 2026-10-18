@@ -53,16 +53,6 @@ def test_native_changes_nothing(runtime):
     assert str(hostenv.local_path("~/x")).endswith("/x") and "~" not in str(hostenv.local_path("~/x"))
 
 
-def test_agent_signin_says_where_to_sign_in(runtime):
-    from decompnet.app import agents
-
-    runtime("native")
-    assert agents.signin(agents.KINDS["claude"]) == agents.KINDS["claude"].signin
-    runtime("wsl")
-    text = agents.signin(agents.KINDS["claude"])
-    assert "decomp shell" in text and "/login" in text
-
-
 def _no_wslpath(*args, **kwargs):  # this test machine has no WSL
     raise FileNotFoundError("wslpath")
 

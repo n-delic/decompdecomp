@@ -87,7 +87,7 @@ def register(app: App) -> None:
         return {"ok": why is None, "message": why}
 
     def p_delete(slug, request, data):
-        manager.stop()
+        manager.forget_project(slug)  # (it stopped every project's helpers)
         proj = net.project_row(slug)
         net.remove_project(slug)
         if data.get("files"):
