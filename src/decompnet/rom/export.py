@@ -314,7 +314,7 @@ A matching decompilation of {title} for the {console_name}, started with [decomp
 ## Build
 
 1. Put your own copy of the game here as `{base}` (it is in `.gitignore`; never commit it).
-2. `python build.py` (needs decompdecomp installed for the period compiler and assembler).
+2. `python3 build.py` (it uses decompdecomp's period compiler and assembler, so decompdecomp must be installed).
 
 ## Layout
 
@@ -337,7 +337,7 @@ share it.{chr(10) + chr(10) + '## Notes' + notes if notes else ''}
 """, encoding="utf-8")
     (out / "AGENTS.md").write_text("""# Working on this decompilation
 
-- Goal: C that the original compiler turns into exactly the original bytes. `python build.py` must end with
+- Goal: C that the original compiler turns into exactly the original bytes. `python3 build.py` must end with
   "identical".
 - Pick a function from `asm/nonmatchings/`, write it as `src/<segment>/<name>.c` (one function, `#include
   "common.h"` first), add an entry `{"kind": "c", "src": ..., "obj": ...}` to `build.json` objects and point the

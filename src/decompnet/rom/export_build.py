@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Build this decompilation and check the result against your own copy of the game, byte for byte.
 
-    python build.py              extract what's needed from your copy (first run), build, compare
-    python build.py check NAME   check one function's C (src/<segment>/NAME.c) against the original
-    python build.py status       how many functions are C so far
+    python3 build.py             extract what's needed from your copy (first run), build, compare
+    python3 build.py check NAME  check one function's C (src/<segment>/NAME.c) against the original
+    python3 build.py status      how many functions are C so far
 
 Every function is its own object: C from src/<segment>/<name>.c when that file exists, otherwise the function's
 assembly. game.ld (generated on every build from build.json) puts each one at its original address.
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -25,6 +26,22 @@ OWN = ".rodata .rodata.* .data .data.* .sdata .rdata .lit4 .lit8 .bss .sbss"
 DISCARD = ("*(.reginfo) *(.MIPS.abiflags) *(.MIPS.options) *(.pdr) *(.comment) *(.mdebug*) *(.gnu.attributes) "
            "*(.note*) *(.gptab.*)")
 
+def decompdecomps_python() -> str | None:
+    """The Python decompdecomp is installed in: the system's python3 doesn't have it (a uv install keeps it in an
+    environment of its own; the .deb and the .rpm in /opt). Read from the `decomp` command: its first line, or the
+    python it runs (the packages' launcher is a shell script)."""
+    import re
+    import shutil
+
+    command = shutil.which("decomp") or next((str(p) for p in (Path.home() / ".local/bin/decomp",) if p.exists()), None)
+    try:
+        text = Path(command).read_text(encoding="utf-8", errors="replace")[:4096] if command else ""
+    except OSError:
+        return None
+    found = re.search(r"^#!\s*(\S*python[\d.]*)\s*$", text, re.M) or re.search(r"(/\S+/python[\d.]*)\b", text)
+    return found.group(1) if found and Path(found.group(1)).exists() else None
+
+
 try:
     from decompnet import toolchains
     from decompnet.compiler import run_in
@@ -32,6 +49,9 @@ try:
     from decompnet.project import compiler_config, compiler_for
     from decompnet.rom.symbols import AUTO_NAME
 except ImportError:
+    python = decompdecomps_python()
+    if python and Path(python).resolve() != Path(sys.executable).resolve():
+        os.execv(python, [python, __file__, *sys.argv[1:]])  # decompdecomp's own Python runs this build
     sys.exit("This build uses decompdecomp's pinned compilers: install decompdecomp first (https://github.com/n-delic/decompdecomp).")
 
 

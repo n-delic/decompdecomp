@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -28,6 +29,7 @@ from pathlib import Path
 from . import edition
 
 CLI_TIMEOUT_SECONDS = 30
+AGENT_DIRS = (".local/bin", ".claude/local", ".npm-global/bin", ".opencode/bin")  # under the home folder
 DONE_MARKER = "registrations-removed"  # in the app's own folder: the cleanup runs once
 OWN_URL = re.compile(r"^https?://(127\.0\.0\.1|localhost):\d+/mcp/?$")
 
@@ -77,20 +79,61 @@ def _json_client(name: str, path: Path, key: str) -> list[str]:
     return [f"{name}: removed the old decompdecomp bridge ({', '.join(gone)}) from {path}"]
 
 
-def _cli_client(name: str, exe: str, servers: list[str], extra: list[str]) -> list[str]:
-    found = shutil.which(exe)
-    if not found:
-        return []
+def _find(exe: str, home: Path) -> str | None:
+    """An agent's command, on PATH or where its installer puts it: started from the apps menu, the app's PATH often
+    lacks ~/.local/bin, and a "not installed" Claude Code kept its old entry."""
+    return shutil.which(exe) or next((str(d / exe) for d in (home / rel for rel in AGENT_DIRS) if (d / exe).exists()), None)
+
+
+def _cli_client(name: str, exe: str, servers: list[str], extra: list[str], home: Path, by_hand) -> list[str]:
+    """Remove `servers` with the agent's own `mcp remove`; without the agent installed, from its file by hand
+    (`by_hand(server)`: nothing else writes that file then)."""
+    found = _find(exe, home)
     said = []
     for server in servers:
-        try:
-            res = subprocess.run([found, "mcp", "remove", *extra, server], capture_output=True, text=True,
-                                 timeout=CLI_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if res.returncode == 0:
+        if found is None:
+            removed = by_hand(server)
+        else:
+            try:
+                removed = subprocess.run([found, "mcp", "remove", *extra, server], capture_output=True, text=True,
+                                         timeout=CLI_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                removed = False
+        if removed:
             said.append(f"{name}: removed the old decompdecomp bridge ({server})")
     return said
+
+
+def _claude_by_hand(home: Path, server: str) -> bool:
+    path = home / ".claude.json"
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        del settings["mcpServers"][server]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    return True
+
+
+def _codex_by_hand(home: Path, server: str) -> bool:
+    """[mcp_servers.<server>] and its sub-tables ([mcp_servers.<server>.env]) out of Codex's TOML, the rest as it is
+    (Python reads TOML but can't write it: the lines go, nothing else changes)."""
+    path = home / ".codex" / "config.toml"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except OSError:
+        return False
+    table = re.compile(rf"^\s*\[\s*mcp_servers\.{re.escape(server)}(\.[^\]]*)?\s*\]\s*$")
+    out, skipping, removed = [], False, False
+    for line in lines:
+        if line.lstrip().startswith("["):
+            skipping = bool(table.match(line))
+            removed |= skipping
+        if not skipping:
+            out.append(line)
+    if removed:
+        path.write_text("".join(out), encoding="utf-8")
+    return removed
 
 
 def _claude_servers(home: Path) -> list[str]:
@@ -111,27 +154,39 @@ def _codex_servers(home: Path) -> list[str]:
 
 def remove_registrations(home: Path) -> list[str]:
     """Remove the old bridge from every agent of this user (`home`: their home folder). Returns what was removed."""
-    said = _cli_client("Claude Code", "claude", _claude_servers(home), ["-s", "user"])
-    said += _cli_client("Codex", "codex", _codex_servers(home), [])
+    said = _cli_client("Claude Code", "claude", _claude_servers(home), ["-s", "user"], home,
+                       lambda server: _claude_by_hand(home, server))
+    said += _cli_client("Codex", "codex", _codex_servers(home), [], home, lambda server: _codex_by_hand(home, server))
     for name, rel, key in JSON_CLIENTS:
         said += _json_client(name, home / rel, key)
     return said
 
 
 def old_registrations(internal: Path) -> None:
-    """Once, in the installed app (a development copy leaves the user's agents alone), in the background so the
-    window doesn't wait for the agents' commands."""
+    """Once, in the installed app on the user's own projects (a development copy, or an app given a home of its own
+    with DECOMP_HOME, a test or an experiment, leaves the user's agents alone), in the background so the window
+    doesn't wait for the agents' commands. What it removed is kept beside the marker for the app to show (report)."""
     marker = internal / DONE_MARKER
-    if edition.DEV or marker.exists():
+    if edition.DEV or os.environ.get("DECOMP_HOME") or marker.exists():
         return
 
     def run():
         log = logging.getLogger("decompdecomp")
         try:
-            for line in remove_registrations(Path.home()):
+            said = remove_registrations(Path.home())
+            for line in said:
                 log.info(line)
                 print(line, flush=True)
-            marker.write_text("done\n", encoding="utf-8")
+            marker.write_text(json.dumps(said) + "\n", encoding="utf-8")
         except Exception:  # never stands between the user and the app
             log.exception("removing the old agent bridge failed")
     threading.Thread(target=run, daemon=True, name="cleanup").start()
+
+
+def report(internal: Path) -> list[str]:
+    """What the cleanup removed, for the app to show once (an older marker said only "done")."""
+    try:
+        said = json.loads((internal / DONE_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return said if isinstance(said, list) else []

@@ -76,3 +76,30 @@ def test_a_development_copy_leaves_the_users_agents_alone(monkeypatch, tmp_path)
     monkeypatch.setattr(edition, "DEV", True)
     cleanup.old_registrations(tmp_path)
     assert ran == [] and not (tmp_path / cleanup.DONE_MARKER).exists()
+
+
+def test_agents_that_arent_installed_lose_the_old_bridge_from_their_files(monkeypatch, tmp_path):
+    """Started from the apps menu, the app's PATH lacked ~/.local/bin: Claude Code and Codex counted as not installed
+    and kept their old entries, which then failed in every session ("invalid choice: 'mcp'")."""
+    monkeypatch.setattr(cleanup.shutil, "which", lambda exe: None)
+    bridge = {"command": str(tmp_path / ".local/bin/decomp"), "args": ["mcp"]}
+    (tmp_path / ".claude.json").write_text(json.dumps({"mcpServers": {"decomp": bridge, "other": {"command": "x"}},
+                                                       "projects": {}}))
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "config.toml").write_text(
+        'model = "gpt"\n\n[mcp_servers.decomp]\ncommand = "/home/me/.local/bin/decomp"\nargs = ["mcp"]\n\n'
+        '[mcp_servers.decomp.env]\nDECOMP_AGENT_NAME = "codex"\n\n[mcp_servers.github]\ncommand = "gh"\n')
+    said = cleanup.remove_registrations(tmp_path)
+    assert [line.split(":")[0] for line in said] == ["Claude Code", "Codex"]
+    assert json.loads((tmp_path / ".claude.json").read_text())["mcpServers"] == {"other": {"command": "x"}}
+    codex = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "decomp" not in codex and 'model = "gpt"' in codex and "[mcp_servers.github]" in codex
+
+
+def test_an_app_given_its_own_home_leaves_the_users_agents_alone(monkeypatch, tmp_path):
+    ran = []
+    monkeypatch.setattr(cleanup, "remove_registrations", lambda home: ran.append(home) or ["Codex: removed"])
+    monkeypatch.setattr(edition, "DEV", False)
+    monkeypatch.setenv("DECOMP_HOME", str(tmp_path))
+    cleanup.old_registrations(tmp_path)
+    assert ran == []

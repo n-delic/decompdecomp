@@ -179,6 +179,15 @@ def test_a_helpers_identity_says_its_model_so_records_never_mix():
     assert len(long) <= 40 and all(c.isalnum() or c in "-_." for c in long)
 
 
+def test_claude_offers_each_version_as_well_as_the_latest():
+    """The launcher offered only "Opus", "Sonnet", "Haiku" (always the newest): the owner wanted e.g. Opus 4.6."""
+    offered = {m["id"]: m["name"] for m in agents.models("claude", "claude")}
+    assert offered["opus"] == "Opus" and offered["claude-opus-4-6"] == "Opus 4.6"
+    assert offered["claude-sonnet-5-5"] == "Sonnet 5.5" and offered["claude-fable-5"] == "Fable 5"
+    assert agents.helper_name("claude", "claude-opus-4-6", set()) == "claude-opus-4-6-1"
+    assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
+
+
 # ---------------------------------------------------------------------------------- helpers as records
 
 URL = "http://127.0.0.1:1/mcp"
