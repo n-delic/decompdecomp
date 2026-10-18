@@ -633,7 +633,8 @@ In this order, nothing skipped:
    can find their way through from AGENTS.md and CONTRIBUTING.md. Its gaps are fixed before step 5.
 4. The release's version: 1.0.3-alpha (the owner told the issue reporters so), bumped in the four places.
 5. Every Markdown file describes the new decompdecomp: README, AGENTS.md, CONTRIBUTING.md, docs/CONVENTIONS.md,
-   docs/GUIDE.md, ROADMAP.md (its table and what's done). This file is deleted.
+   docs/GUIDE.md, ROADMAP.md (its table and what's done; §1's Windows plan for 1.0.4-alpha moves there). This
+   file is deleted.
 6. The app, started as the development copy for the owner to try before anything is released.
 7. Squash-merged into main by the owner, released; the owner answers #3 and #4 when it's out.
 8. After the release: an agent researches how to support Windows well (§1). `wsl.py` (running Linux compilers through WSL
