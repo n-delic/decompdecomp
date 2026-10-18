@@ -93,6 +93,7 @@ def test_install_runs_uv_then_the_new_setup(tmp_path, monkeypatch):
     for f in (uv, bindir / "decomp"):
         f.chmod(f.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(updates, "uv", lambda: str(uv))
+    monkeypatch.setattr(updates.edition, "DEV", False)  # (the tests run from a checkout: a development copy)
     updates.record("branch", "cross-platform", "1" * 40)
     found = {"current": updates.installed(), "available": True, "latest": {"version": "0.10.0", "commit": "2" * 40},
              "spec": "decompnet @ https://github.com/n-delic/decompdecomp/archive/" + "2" * 40 + ".tar.gz"}
@@ -214,3 +215,13 @@ def test_an_update_from_1_0_2_restarts_into_the_new_version_with_a_window(monkey
     monkeypatch.setenv("DECOMP_RESTART", json.dumps({"port": 6464, "secret": "s"}))
     restarted = cli._restart_state()
     assert restarted.get("window", True) is True  # how run() reads it: open the window
+
+
+def test_a_development_copy_never_updates_itself(monkeypatch):
+    """A checkout's Settings said updates came from GitHub's releases, and "Update now" would have installed a release
+    beside it: a second app. It updates with git; the app says so."""
+    from decompnet.app import edition
+    monkeypatch.delenv("DECOMP_PACKAGE", raising=False)
+    monkeypatch.setattr(edition, "DEV", True)
+    ok, why = updates.can_apply()
+    assert not ok and "development copy" in why

@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 from ... import __version__, consoles, hostenv, toolchains
 from ...network import NetworkError
-from .. import agents, saves, updates
+from .. import agents, edition, saves, updates
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, _static, job_error
 from . import App
@@ -40,7 +40,7 @@ def register(app: App) -> None:
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
-        return {"version": __version__, "build": build_id, "install": updates.installed(),
+        return {"version": __version__, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),

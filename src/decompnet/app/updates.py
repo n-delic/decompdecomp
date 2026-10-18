@@ -25,7 +25,7 @@ import urllib.request
 from pathlib import Path
 
 from .. import __version__, toolchains
-from . import window
+from . import edition, window
 
 REPO = "n-delic/decompdecomp"
 RECHECK = {"release": 3 * 3600, "branch": 15 * 60}  # GitHub allows 60 unauthenticated API calls an hour
@@ -160,6 +160,8 @@ def can_apply() -> tuple[bool, str]:
     if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's and the AppImage's launchers
         kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
         return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
+    if edition.DEV:  # installing a release from a checkout would put a second, installed app beside it
+        return False, "this is a development copy (a git checkout): update it with git pull"
     if not uv():
         return False, "uv isn't installed here, so decompdecomp can't update itself: run the installer again"
     return True, ""

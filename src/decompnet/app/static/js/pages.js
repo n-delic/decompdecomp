@@ -99,9 +99,10 @@ async function showSettingsPage() {
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
   $("setAbout").innerHTML = `<p class="small">decompdecomp ${esc(st.version)} on ${esc(st.platform)}. Free and open source (AGPL-3.0): <a class="link" href="https://github.com/n-delic/decompdecomp" target="_blank" rel="noopener">its source</a>. Everything runs on this computer: no account, nothing sent to us.</p>
     <p class="small muted">A continuation of <a class="link" href="https://github.com/i12bp8/decomp.wtf" target="_blank" rel="noopener">decomp.wtf</a> by Sam Wolfs, who built it up to 0.10.6. Thank you, Sam.</p>
+    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">A development copy: no updates. Update it with <code>git pull</code>.</p></div>` : `
     <div class="field"><span>Updates come from ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>
-    <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>
+    <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>`}
     <div class="row"><a class="link small" href="https://github.com/n-delic/decompdecomp" target="_blank" rel="noopener">Source code</a></div>`;
   const showUpdate = (u) => {
     if (!$("upText") || !u) return;
@@ -113,10 +114,12 @@ async function showSettingsPage() {
       $("upCheck").before(b);
     }
   };
-  checkUpdate(false, false).then(showUpdate);
-  $("upCheck").onclick = async () => { $("upText").textContent = "Checking…"; showUpdate(await checkUpdate(true, false)); };
-  $("checkUpdateSet").onchange = () => save({ check_updates: $("checkUpdateSet").checked }, $("checkUpdateSet").checked ? "decompdecomp looks for updates." : "decompdecomp won't look for updates (Check now still does).");
-  $("autoUpdateSet").onchange = () => save({ auto_update: $("autoUpdateSet").checked }, $("autoUpdateSet").checked ? "decompdecomp installs updates by itself." : "decompdecomp asks before updating.");
+  if (!st.dev) {  // (a development copy shows no update controls)
+    checkUpdate(false, false).then(showUpdate);
+    $("upCheck").onclick = async () => { $("upText").textContent = "Checking…"; showUpdate(await checkUpdate(true, false)); };
+    $("checkUpdateSet").onchange = () => save({ check_updates: $("checkUpdateSet").checked }, $("checkUpdateSet").checked ? "decompdecomp looks for updates." : "decompdecomp won't look for updates (Check now still does).");
+    $("autoUpdateSet").onchange = () => save({ auto_update: $("autoUpdateSet").checked }, $("autoUpdateSet").checked ? "decompdecomp installs updates by itself." : "decompdecomp asks before updating.");
+  }
   wireCopies($("setComputer"));
   $("themeSeg").querySelectorAll("[data-theme]").forEach((b) => { b.onclick = () => { setTheme(b.dataset.theme); $("themeSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); }; });
   const save = (body, msg) => api("/api/settings", { method: "POST", body }).then((s) => { S.st.settings = s; toast(msg); }).catch((e) => toast(esc(e.message), "err"));
@@ -137,6 +140,7 @@ function updateName(u) {
   return `decompdecomp ${l.version}`;
 }
 async function checkUpdate(refresh = false, ask = true) {
+  if (S.st && S.st.dev) return null;  // a development copy never offers an update (Settings says so)
   try { updateInfo = await api(`/api/update${refresh ? "?refresh=1" : ""}`); } catch { return null; }
   $("navUpdate").hidden = !updateInfo.available;
   const job = updateInfo.job || {};
