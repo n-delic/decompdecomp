@@ -11,10 +11,8 @@ import re
 import time
 from pathlib import Path
 
-from ... import compilermap, scoring, toolchains
+from ... import compilermap, consoles, scoring, toolchains
 from ...project import compiler_for
-from ...rom import detect
-from .common import PLATFORM_COMPILERS, SHORT_NAMES
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
 NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "knowledge", "collab", "import", "files",
@@ -33,7 +31,7 @@ class GuiMixin:
         from ...rom.export import export_rom
 
         proj = self._project(slug)
-        res = export_rom(self, slug, Path(proj["root"]) / "source", log=log)
+        res = export_rom(self, slug, Path(proj["root"]) / "source", self.console(proj), log=log)
         with self.store.tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),
@@ -74,12 +72,13 @@ class GuiMixin:
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
             "FROM functions WHERE project_id=?", proj["id"])
         tc = toolchains.get(cfg["compiler"]["toolchain"])
+        console = self.console(proj)
         return {
             "slug": proj["slug"], "title": proj["name"], "description": proj["description"],
-            "platform": cfg.get("platform", "n64"), "platform_name": detect.PLATFORMS.get(cfg.get("platform", "n64"), ""),
-            "compilers": PLATFORM_COMPILERS.get(cfg.get("platform", "n64"), []),
+            **console.project_facts(),
+            "compilers": [c.id for c in console.compilers],
             "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")},
-            "compiler": {"toolchain": tc.id, "name": SHORT_NAMES.get(tc.id, tc.name), "flags": cfg["compiler"]["flags"],
+            "compiler": {"toolchain": tc.id, "name": consoles.compiler_name(tc.id), "flags": cfg["compiler"]["flags"],
                          "installed": toolchains.installed(tc.id) is not None, "proprietary": tc.proprietary,
                          "supported": tc.supported, "wsl": tc.via_wsl,
                          "why": None if tc.supported else toolchains.unsupported_cpu()},
@@ -88,7 +87,7 @@ class GuiMixin:
             "context_version": self._context(proj["id"])["version"],
             "folder": proj["root"],
             "export": cfg.get("export"),
-            "exportable": cfg.get("platform", "n64") in ("n64", "ps2"),
+            "exportable": consoles.EXPORT in console.features,
             "room": self._room_info(proj["slug"]),
         }
 
@@ -96,26 +95,21 @@ class GuiMixin:
         """A project for the project list (the sidebar asks every 5 s, for every project): what it is and how far it
         got, from the database alone. It used to be each project's whole overview, a fork's files included, and with
         agents at work the list took 2.5-3.7 s."""
-        from ...forks import catalog
-
         proj = self._project(slug)
         cfg = self.cfg(proj)
         agg = self.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions WHERE project_id=?",
             proj["id"])
-        platform = cfg.get("platform", "n64")
+        console = self.console(proj)
         if cfg.get("kind") == "fork":
-            name = catalog.PLATFORMS.get(platform, platform or "")
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
-                     "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": name},
+                     "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": console.name},
                      "compiler": {"name": "Project's own build"}}
         else:
-            name = detect.PLATFORMS.get(platform, "")
-            tc = cfg["compiler"]["toolchain"]
             about = {"rom": {k: cfg["rom"].get(k) for k in ("game_code", "region")},
-                     "compiler": {"name": SHORT_NAMES.get(tc, toolchains.get(tc).name)}}
-        return {"slug": proj["slug"], "title": proj["name"], "platform": platform, "platform_name": name,
+                     "compiler": {"name": consoles.compiler_name(cfg["compiler"]["toolchain"])}}
+        return {"slug": proj["slug"], "title": proj["name"], **console.project_facts(),
                 "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
                 "matched_bytes": agg["matched_bytes"] or 0,
                 "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
@@ -166,7 +160,7 @@ class GuiMixin:
         for addr, looks in cmap.of.items():
             own = compiler_for(cfg, addr)
             tc, small = compilermap.kind(looks)
-            out.append([addr, f"{SHORT_NAMES.get(tc, tc)} {small}".strip(),
+            out.append([addr, f"{consoles.compiler_name(tc)} {small}".strip(),
                         compilermap.kind(looks) != compilermap.kind((own["toolchain"], tuple(own["flags"])))
                         or addr in cmap.contradicted])
         return out
@@ -174,7 +168,7 @@ class GuiMixin:
     def _range_rows(self, cfg: dict) -> list[dict]:
         """The project's compiler ranges for the GUI, each with what checking it again said (rangecheck.py)."""
         said = {tuple(map(tuple, c["spans"])): c.get("said", "") for c in cfg.get("range_checks", []) if c.get("audit")}
-        return [r | {"name": SHORT_NAMES.get(r["toolchain"], r["toolchain"]), "check": said.get(((r["start"], r["end"]),), "")}
+        return [r | {"name": consoles.compiler_name(r["toolchain"]), "check": said.get(((r["start"], r["end"]),), "")}
                 for r in cfg.get("compiler_ranges", [])]
 
     def map_signature(self, slug: str) -> str:

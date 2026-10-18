@@ -10,8 +10,7 @@ import re
 import struct
 import threading
 
-from ... import classes, seeds, similarity
-from ...consoles.ps2 import debuginfo
+from ... import arch, classes, seeds, similarity
 from ...network import NetworkError
 from ...rom import match
 from .common import _ADDRESS
@@ -144,7 +143,7 @@ class BriefMixin:
     def classes(self, proj) -> classes.Classes | None:
         """The C++ classes found in a MIPS game's code (classes.py), kept with the cross-references (renames keep
         addresses; splits and cuts drop both). None: not MIPS code."""
-        if not self.is_rom(proj) or (proj["arch"] or "mips") != "mips":
+        if not self.is_rom(proj) or arch.CLASSES not in self.console(proj).features:
             return None
         x = self.xrefs(proj)
         if "classes" not in x:
@@ -209,7 +208,7 @@ class BriefMixin:
         self.warm_briefs(proj)
         syms = self.symbols(proj["id"])
         x = self.xrefs(proj)
-        debug = json.loads(fn["meta"] or "{}").get("debug") if "meta" in fn.keys() else None  # PS2 debug symbols
+        debug = json.loads(fn["meta"] or "{}").get("debug") if "meta" in fn.keys() else None  # Console.debug_info
         segment = fn["unit"] in {s.get("name") for s in self.cfg(proj).get("segments", [])}  # else its source file
         lines = ["", "### Where it lives",
                  f"address 0x{fn['vram']:08X}, ROM offset 0x{fn['rom_offset']:X}, "
@@ -231,7 +230,8 @@ class BriefMixin:
                 if r and r["preview"]:
                     desc += f": {r['preview']}"
                 lines.append(f"- {syms.label(a)} (0x{a:08X}; {desc})")
-        lines += (debuginfo.brief_lines(debug) if debug else []) + self._class_brief(fn, proj) + self._compiler_brief(fn, proj)
+        lines += (self.console(proj).debug_brief(debug) if debug else []) + self._class_brief(fn, proj) + \
+            self._compiler_brief(fn, proj)
         twin = self._twin_lines(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         alike = [] if twin else [(r, sim) for r, sim in self.similar(proj, fn, top=3) if r["status"] == "matched"]
@@ -346,7 +346,8 @@ class BriefMixin:
             out.append(f"  {addr + i:08X}: {chunk.hex(' '):<47}  {text}")
         e = ">" if self.cfg(proj).get("big_endian", True) else "<"
         words = [w for (w,) in struct.iter_unpack(e + "I", data[:len(data) // 4 * 4])]
-        ptrs = [f"+0x{4 * i:X}: {syms.label(w)}" for i, w in enumerate(words) if 0x80000400 <= w < 0x80800000]
+        low, high = self.console(proj).ram  # #4.12: N64 addresses only, before, never a PS2 game's
+        ptrs = [f"+0x{4 * i:X}: {syms.label(w)}" for i, w in enumerate(words) if low <= w < high]
         if ptrs:
             out.append("words that look like addresses: " + ", ".join(ptrs[:16]))
         floats = [struct.unpack(e + "f", struct.pack(e + "I", w))[0] for w in words[:8]]

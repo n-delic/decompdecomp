@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import capstone
 
+from . import arch
 from .elfobj import FunctionObj, mask_relocs
 
 PENALTY_STACKDIFF = 1
@@ -22,16 +23,7 @@ PENALTY_REORDER = 60
 PENALTY_INSERTION = 100
 PENALTY_DELETION = 100
 
-_CS = {
-    ("x86_64", False): (capstone.CS_ARCH_X86, capstone.CS_MODE_64),
-    ("x86", False): (capstone.CS_ARCH_X86, capstone.CS_MODE_32),
-    # MIPS64 decoding also covers MIPS I/II; N64 (MIPS III) and PS2 (R5900) code uses 64-bit instructions.
-    ("mips", True): (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 | capstone.CS_MODE_BIG_ENDIAN),
-    ("mips", False): (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 | capstone.CS_MODE_LITTLE_ENDIAN),
-    ("ppc", True): (capstone.CS_ARCH_PPC, capstone.CS_MODE_32 | capstone.CS_MODE_BIG_ENDIAN),
-    ("arm", False): (capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM),
-    ("thumb", False): (capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB),
-}
+_CS = arch.capstone_modes()  # (arch, big-endian) -> capstone's (architecture, mode), from arch/
 
 _REG = re.compile(
     r"^\$?(r[a-z0-9]+|e[a-z]{2}|[a-d][lhx]|[sd]il?|[bs]pl?|[xyz]mm\d+|r\d+[dwb]?"  # x86

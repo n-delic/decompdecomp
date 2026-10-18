@@ -13,10 +13,10 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import __version__, hostenv, toolchains
+from ... import __version__, consoles, hostenv, toolchains
 from ...network import NetworkError
 from .. import agents, saves, updates
-from ..engine import COMPILERS, MW_VERSIONS, PLATFORM_STATUS, SHORT_NAMES, TOOLS
+from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, _static, job_error
 from . import App
 
@@ -39,15 +39,14 @@ def register(app: App) -> None:
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
-            t["name"] = SHORT_NAMES.get(t["id"], t["name"])
+            t["name"] = consoles.compiler_name(t["id"]) if t["id"] in COMPILERS else t["name"]
         return {"version": __version__, "build": build_id, "install": updates.installed(),
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "api_presets": agents.API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
-                "platform_status": PLATFORM_STATUS,
-                "codewarrior": {"installed": toolchains.installed("mwcc") is not None,
-                                "msvc_installed": toolchains.installed("msvc") is not None, **MW_VERSIONS}}
+                # every console: names, status, compilers, layout, features (consoles/, Console.describe)
+                "consoles": [c.describe() for c in consoles.CONSOLES]}
 
     def autopilot(slug: str) -> None:
         """Free matches first, in the background, when the user wants that (the default): a game started from

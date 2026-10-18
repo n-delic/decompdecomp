@@ -28,12 +28,6 @@ from ..project import compiler_for
 from . import match
 from .symbols import AUTO_NAME
 
-AS_FLAGS = {
-    "n64": ["-EB", "-march=vr4300", "-mabi=32"],
-    "ps2": ["-EL", "-march=r5900", "-mabi=eabi"],
-}
-LD_ENDIAN = {"n64": "-EB", "ps2": "-EL"}
-IMAGE_EXT = {"n64": ".z64", "ps2": ".bin"}
 _ADDR_COMMENT = re.compile(r"/\*\s*([0-9A-F]+)\s+([0-9A-F]{8})\b")
 _BSS_COMMENT = re.compile(r"/\*\s*([0-9A-F]{8})\s*\*/\s*\.space")
 _DEFINES = re.compile(r"^\s*(?:glabel|dlabel|jlabel|alabel|ehlabel)\s+(\w+)|^\s*\.globl\s+(\w+)|^\s*(\w+):", re.M)
@@ -100,13 +94,15 @@ def _segments(config: dict) -> list[dict]:
     return out
 
 
-def export_rom(net, slug: str, out: Path, log=print) -> dict:
-    """Write the rebuildable tree to `out`, build it once and report: {"path", "identical", "matched", ...}."""
+def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
+    """Write the rebuildable tree to `out`, build it once and report: {"path", "identical", "matched", ...}.
+    `console` (consoles/) says its processor's assembler flags, the image's extension, its assembly's preamble."""
+    from ..consoles import EXPORT
+
     proj = net._project(slug)
     cfg = net.cfg(proj)
-    platform = cfg.get("platform", "n64")
-    if platform not in AS_FLAGS:
-        raise ExportError(f"exporting a rebuildable project isn't supported for {platform} yet")
+    if EXPORT not in console.features:
+        raise ExportError(f"exporting a rebuildable project isn't supported for {console.name or 'this console'} yet")
     work = Path(proj["root"])
     configs = sorted(work.glob("*.yaml"))
     if not configs:
@@ -263,19 +259,19 @@ def export_rom(net, slug: str, out: Path, log=print) -> dict:
         fn_json.append(entry)
 
     # 5. build description, build script, objdiff, docs
-    ext = IMAGE_EXT[platform]
+    ext = console.image_ext
     base = f"baserom{ext}"
     (out / image_name).rename(out / base)
     yml = out / "splat.yaml"
     yml.write_text(re.sub(r"(^\s*target_path:\s*).*$", rf"\g<1>{base}", yml.read_text(encoding="utf-8"), count=1, flags=re.M),
                    encoding="utf-8")
     build = {
-        "title": proj["name"], "platform": platform, "image": base, "output": f"build/game{ext}",
+        "title": proj["name"], "platform": console.id, "image": base, "output": f"build/game{ext}",
         "sha1": hashlib.sha1(image).hexdigest(), "compiler": cfg["compiler"],
         "compiler_ranges": cfg.get("compiler_ranges") or [], "gp": cfg.get("gp") or 0,
-        "big_endian": platform == "n64",
-        "as_flags": [*AS_FLAGS[platform], "-G0", "-no-pad-sections", "-I", "include"],
-        "ld_flags": [LD_ENDIAN[platform], "--no-check-sections"],
+        "big_endian": console.big_endian, "asm_preamble": console.asm_preamble,
+        "as_flags": [*console.as_flags, "-G0", "-no-pad-sections", "-I", "include"],
+        "ld_flags": ["-EB" if console.big_endian else "-EL", "--no-check-sections"],
         "assembly": objects, "segments": layout, "functions": fn_json,
         "symbols": {k: v for k, v in sorted(absolute.items(), key=lambda kv: kv[1])},
     }
@@ -291,7 +287,7 @@ def export_rom(net, slug: str, out: Path, log=print) -> dict:
     (out / "objdiff.json").write_text(json.dumps({"build_base": False, "build_target": False, "units": units_json}, indent=2),
                                       encoding="utf-8")
     matched = sum(1 for f in functions if f["kind"] == "c")
-    _write_docs(out, proj["name"], platform, base, matched, len(functions), as_fallback)
+    _write_docs(out, proj["name"], console.name, base, matched, len(functions), as_fallback)
     # everything made from the game itself stays local: build.py regenerates it from your copy
     (out / ".gitignore").write_text("build/\nbaserom*\nasm/\nassets/\n*.ld\n*_auto.txt\n.splat/\n*.d\n",
                                     encoding="utf-8")
@@ -307,12 +303,11 @@ def export_rom(net, slug: str, out: Path, log=print) -> dict:
             "fallback": as_fallback, "log": (proc.stdout + proc.stderr)[-3000:]}
 
 
-def _write_docs(out: Path, title: str, platform: str, base: str, matched: int, total: int, fallback) -> None:
-    names = {"n64": "Nintendo 64", "ps2": "PlayStation 2"}
+def _write_docs(out: Path, title: str, console_name: str, base: str, matched: int, total: int, fallback) -> None:
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 
-A matching decompilation of {title} for the {names[platform]}, started with [decompdecomp](https://github.com/n-delic/decompdecomp).
+A matching decompilation of {title} for the {console_name}, started with [decompdecomp](https://github.com/n-delic/decompdecomp).
 {matched} of {total} functions are C that compiles to exactly the original code; the rest are still assembly.
 `build.py` rebuilds the game from this tree and checks it against your original, byte for byte.
 

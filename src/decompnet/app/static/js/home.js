@@ -84,12 +84,15 @@ function parseRom(buf) {
 }
 
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
-const PLATFORM_NAME = { n64: "Nintendo 64", ps2: "PlayStation 2", gc: "GameCube", wii: "Wii", gcwii: "GameCube or Wii",
-  win32: "Windows PC" };
+const platformName = (p) => (p === "gcwii" ? "GameCube or Wii" : consoleOf(p)?.name || "");
+/* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
 const CW_PACK = {
-  gcwii: { id: "mwcc", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that." },
-  win32: { id: "msvc", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that." },
+  mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
+  msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
 };
+const packOf = (p) => CW_PACK[consoleOf(p)?.packs[0]] ? consoleOf(p).packs[0] : "mwcc";
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
 
 function identifyHead(head, file) {
@@ -159,16 +162,16 @@ async function pickFile(file) {
   const facts = p === "n64"
     ? [["Game code", info.code || "—"], ["Region", info.region], ["Size", MB(info.size)], ["Format", info.order],
        ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
-    : [["Platform", PLATFORM_NAME[p]], ["Format", info.order], ["Size", MB(info.size)],
+    : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
        info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
-       ["Project", ["gc", "wii", "gcwii"].includes(p) ? "dtk-template" : p === "win32" ? "Ghidra + objdiff" : "splat"]];
+       ["Project", consoleOf(p)?.layout || ""]];
   $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
   const level = platformStatus(p);
   $("romStatus").hidden = !level;
   $("romStatus").className = `plat-status ${level || ""}`;
   $("romStatus").innerHTML = level === "recommended"
     ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod.`
-    : `<b>Beta.</b> ${esc(PLATFORM_NAME[p] || "This platform")} works and is tested on homemade games, less so on real ones yet. Problems are worth <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">reporting</a>.`;
+    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works and is tested on homemade games, less so on real ones yet. Problems are worth <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">reporting</a>.`;
   setupCompilers(info);
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = false;
@@ -177,28 +180,24 @@ async function pickFile(file) {
 
 function setupCompilers(info) {
   const p = info.platform, select = $("compilerPick"), note = $("compilerNote");
-  const cw = S.st?.codewarrior || { installed: false, gc: [], wii: [] };
+  const con = consoleOf(p) || { mode: "", compilers: [], packs: [], default_compiler: "" };
   $("compilerRow").hidden = false; note.hidden = true; $("mwConsent").hidden = true; $("mwAccept").checked = false;
-  if (p === "n64") fillCompilers(select, info.compiler === "IDO" ? "ido-7.1" : "gcc-2.7.2-kmc", "N64");
-  else if (p === "ps2" && info.order.endsWith("disc image")) {
-    $("compilerRow").hidden = true; note.hidden = false;
-    note.textContent = "The compiler is picked from the disc's program, then tested on its code. You can change it later.";
-  } else if (p === "ps2") fillCompilers(select, "ee-gcc-2.96", "PS2");
-  else if (p === "win32") {
-    select.innerHTML = `<optgroup label="Windows PC">${(cw.msvc || []).map((v) => `<option value="${esc(v)}" ${v === "MSVC/6.0" ? "selected" : ""}>Visual C++ ${esc(v.slice(5))}</option>`).join("")}</optgroup><option value="">Let decompdecomp pick (from the program's Rich header)</option>`;
-    select.value = "";
-    note.hidden = false;
-    note.textContent = "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+).";
-    $("mwText").textContent = CW_PACK.win32.text;
-    $("mwConsent").hidden = cw.msvc_installed;
-  } else {
-    $("mwText").textContent = CW_PACK.gcwii.text;
-    const group = (label, list, dflt) => `<optgroup label="${label}">${list.map((v) => `<option value="${esc(v)}" ${v === dflt ? "selected" : ""}>CodeWarrior ${esc(v)}</option>`).join("")}</optgroup>`;
-    select.innerHTML = (p !== "wii" ? group("GameCube", cw.gc, "GC/1.3.2") : "") + (p !== "gc" ? group("Wii", cw.wii, p === "wii" ? "Wii/1.0" : "") : "");
-    note.hidden = false;
-    note.textContent = "Not sure? Keep the default; you can change it later in configure.py if functions don't match.";
-    $("mwConsent").hidden = cw.installed;
+  if (con.mode === "rom") {
+    if (info.order.endsWith("disc image")) {
+      $("compilerRow").hidden = true; note.hidden = false;
+      note.textContent = "The compiler is picked from the disc's program, then tested on its code. You can change it later.";
+    } else fillCompilers(select, info.compiler === "IDO" ? "ido-7.1" : con.default_compiler, con.id);
+    return;
   }
+  // a project of the community's kind: the compiler versions its build knows (a compressed GameCube or Wii disc: both)
+  const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
+  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
+    + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
+  const pack = packOf(p);
+  note.hidden = false;
+  note.textContent = CW_PACK[pack].note;
+  $("mwText").textContent = CW_PACK[pack].text;
+  $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
 
 function updateAnalyse() {
@@ -208,7 +207,8 @@ function updateAnalyse() {
 $("mwAccept").addEventListener("change", updateAnalyse);
 
 function fillCompilers(select, current, platform) {
-  const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!platform || !t.platform || t.platform === platform));
+  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id);  // the console's compilers
+  const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
   select.innerHTML = tcs.map((t) => {
     const note = !t.supported ? " (not available on this computer)" : t.installed ? "" : t.license === "proprietary" ? " (install in Compilers & tools)" : " (will be installed)";
     return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)} · ${esc(t.use)}${note}</option>`;
@@ -266,9 +266,9 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
-  $("busyTitle").textContent = picked?.info.platform === "win32" ? "Installing Visual C++…" : "Installing CodeWarrior…";
-  const pack = CW_PACK[picked?.info.platform] || CW_PACK.gcwii;
-  const { job } = await api("/api/toolchain", { method: "POST", body: { id: pack.id, accept_license: true } });
+  const id = packOf(picked?.info.platform);
+  $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
+  const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
   await loadState();
 }
@@ -279,7 +279,7 @@ $("analyse").onclick = async () => {
   const title = `Analysing ${picked.info.title}…`;
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
-    try { await ensureCodeWarrior(); } catch (e) { importFailed(picked.info.platform === "win32" ? "Visual C++" : "CodeWarrior", e, $("jobLog").textContent); return; }
+    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info.platform)].title, e, $("jobLog").textContent); return; }
   }
   const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
   runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}`, body, title, picked.name);

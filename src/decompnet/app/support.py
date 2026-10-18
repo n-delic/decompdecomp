@@ -16,7 +16,7 @@ from pathlib import Path
 
 from .. import hostenv, toolchains
 from ..network import NetworkError
-from ..rom.n64 import RomError
+from ..rom import RomError
 from . import agents
 
 COOKIE = "decomp_live"

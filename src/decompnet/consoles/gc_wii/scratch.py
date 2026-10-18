@@ -28,11 +28,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .. import toolchains
-from ..limits import capped
-from .project import ForkError, ForkProject
+from ... import toolchains
+from ...forks.project import ForkError, ForkProject
+from ...limits import capped
+from . import GAMECUBE, WII
 
-GC_DEFAULT, WII_DEFAULT = "GC/1.3.2", "Wii/1.0"
+GC_DEFAULT, WII_DEFAULT = GAMECUBE.usual, WII.usual
 REL_EMPTY = "REL/empty.c"
 DISC_MAGIC = {b"RVZ\x01": "rvz", b"WIA\x01": "wia", b"WBFS": "wbfs", b"CISO": "ciso"}
 GCZ_MAGIC = 0xB10BC001

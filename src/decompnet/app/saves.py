@@ -21,9 +21,8 @@ import threading
 import time
 from pathlib import Path
 
-from .. import toolchains
+from .. import consoles, toolchains
 from ..network import NetworkError
-from ..rom import detect
 from ..rom.symbols import AUTO_NAME
 
 FORMAT = 1
@@ -125,7 +124,7 @@ def restore(net, source: str, game: Path, log=print) -> dict:
         if manifest.get("format") != FORMAT:
             raise NetworkError("this save was written by another version of decompdecomp: update it, then try again")
         data = Path(game).expanduser()
-        if detect.identify(data, data.name).info["sha1"] != manifest["game"]["sha1"]:
+        if consoles.identify(data).read_game(data, data.name).info["sha1"] != manifest["game"]["sha1"]:
             raise NetworkError(f"that's not the same game: this save is for {manifest['title']} "
                                f"({manifest['game'].get('file') or 'its original file'}); pick your copy of that one")
         slug = net.import_rom(data, confirmed=True, name=data.name, log=log)

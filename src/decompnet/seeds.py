@@ -16,19 +16,6 @@ from pathlib import Path
 from . import scoring, toolchains
 from .elfobj import FunctionObj
 
-# m2c target triple per toolchain (platform-compiler-language).
-M2C_TARGETS = {
-    "gcc-2.7.2-kmc": "mips-gcc-c",
-    "ee-gcc-2.96": "mipsee-gcc-c",
-    "ee-gcc-2.9-991111": "mipsee-gcc-c",
-    "ee-gcc-2.95.2": "mipsee-gcc-c",
-    "ee-gcc-2.95.3": "mipsee-gcc-c",
-    "ee-gcc-3.2": "mipsee-gcc-c",
-    "mwcps2-2.3.3": "mipsee-gcc-c",  # m2c has no CodeWarrior MIPS target: the EE one reads its code as well
-    "mwcps2-3.0.1": "mipsee-gcc-c",
-    "ido-7.1": "mips-ido-c",
-    "ido-5.3": "mips-ido-c",
-}
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
 # keeps the code's meaning (written for decompdecomp; the names are m2c's interface).
 M2C_MACROS = """\
@@ -47,6 +34,16 @@ typedef s32 M2C_UNK32;
 """
 _BRANCH = re.compile(r"^(b|beq|bne|beqz|bnez|bgtz|blez|bltz|bgez|bltzal|bgezal|beql|bnel|beqzl|bnezl|bgtzl|blezl|"
                      r"bltzl|bgezl|bc1t|bc1f|bc1tl|bc1fl|j)$")
+
+
+def m2c_target(toolchain_id: str) -> str | None:
+    """m2c's target for C that `toolchain_id` built ("mips-ido-c"): the console that lists the compiler says m2c's
+    dialect (consoles/). None when m2c can't read its code."""
+    from . import consoles  # (here, not at the top: consoles reach the engine, which reaches this module)
+
+    found = consoles.compiler(toolchain_id)
+    target = found[0].m2c_target(toolchain_id) if found else ""
+    return f"{target}-c" if target else None
 
 
 def available() -> bool:
@@ -89,7 +86,7 @@ def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, contex
                       data_asm: str | None = None, timeout: float = 20, valid: bool = False) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
     m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is."""
-    target = M2C_TARGETS.get(toolchain_id or "")
+    target = m2c_target(toolchain_id or "")
     if not target:
         return None
     return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid)

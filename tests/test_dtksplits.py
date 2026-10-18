@@ -84,7 +84,7 @@ def test_a_program_with_two_sections_of_one_name_gets_unique_names(tmp_path):
     writes that into splits.txt and then can't read it back ("Multiple sections with name .rodata"). The extra one
     gets a name of its own (letters and digits: dtk reads no other section names in symbols.txt), the usual name
     stays on the section where the standard layout has it, and dtk analyses the program again (its symbols start over)."""
-    from decompnet.forks.scratch_dtk import _unique_sections
+    from decompnet.consoles.gc_wii.scratch import _unique_sections
 
     config = tmp_path / "config" / "GM4P01"
     config.mkdir(parents=True)
@@ -104,7 +104,7 @@ def test_a_program_with_two_sections_of_one_name_gets_unique_names(tmp_path):
 def test_hand_written_code_gets_a_function_hint(tmp_path):
     """Mario Kart Wii's copy routine has branch targets dtk takes for a function inside a function ("Overlapping
     functions"): the first is declared to end where the second starts, and the analysis runs again."""
-    from decompnet.forks.scratch_dtk import _overlap_hint
+    from decompnet.consoles.gc_wii.scratch import _overlap_hint
 
     (tmp_path / "config" / "RMCP01").mkdir(parents=True)
     tail = "Caused by:\n    Overlapping functions 3:0x800E9D34-3:0x800E9DA0 -> 3:0x800E9D44\nninja: error"
@@ -116,7 +116,7 @@ def test_hand_written_code_gets_a_function_hint(tmp_path):
 
 
 def test_a_link_failure_tries_the_next_newer_linker(monkeypatch, tmp_path):
-    from decompnet.forks import scratch_dtk
+    from decompnet.consoles.gc_wii import scratch as scratch_dtk
 
     for v in ("GC/1.3.2", "GC/2.7"):  # 2.6 isn't installed here: skipped
         (tmp_path / v).mkdir(parents=True)
@@ -134,7 +134,7 @@ def test_hand_written_code_cut_in_two_becomes_one_function(tmp_path):
     """dtk's first analysis of Mario Kart Wii cuts DWCi_Np_CPUCopyFast (0x800E941C, 0x984 bytes) in two and then can't
     read that back ("Overlapping functions 0x800E9D34-0x800E9DA0 -> 0x800E9D44"): the two become one function again,
     as in the community's project, and dtk analyses the whole game."""
-    from decompnet.forks.scratch_dtk import _overlap_hint
+    from decompnet.consoles.gc_wii.scratch import _overlap_hint
 
     (tmp_path / "config" / "RMCP01").mkdir(parents=True)
     path = tmp_path / "config" / "RMCP01" / "symbols.txt"
@@ -156,7 +156,7 @@ def test_a_function_dtk_stops_short_of_is_declared_from_the_exception_table(tmp_
     table's size, and the analysis runs again."""
     import struct
 
-    from decompnet.forks import scratch_dtk
+    from decompnet.consoles.gc_wii import scratch as scratch_dtk
 
     text, index = 0x80004000, 0x80008000
     entries = struct.pack(">6I", 0x8004C000, 0x13C, 0x80007000, 0x8004C13C, 0x128, 0x80007008)
@@ -192,7 +192,7 @@ def test_modules_that_need_a_module_the_disc_keeps_compressed_are_left_out_at_on
     """#20: Sonic Adventure DX's event modules all import from a module the disc keeps compressed (SaCompGC), so
     decomp-toolkit stopped on one after another ("Failed to locate module 1") and the import gave up after 40
     analyses. Every module that needs the missing one goes in one step; the others stay."""
-    from decompnet.forks import scratch_dtk
+    from decompnet.consoles.gc_wii import scratch as scratch_dtk
 
     gid, base = "GXSP8P", tmp_path / "orig" / "GXSP8P"
     (base / "files").mkdir(parents=True)

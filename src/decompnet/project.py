@@ -182,7 +182,7 @@ def import_project(store: Store, root: Path, log=print) -> int:
     # Functions without a hand-written seed get a machine-generated starting point (m2c), when available.
     tc_id = cfg["compiler"].get("toolchain")
     missing = [f for f in funcs if f[4] is None]
-    if missing and tc_id in seeds.M2C_TARGETS and seeds.available():
+    if missing and seeds.m2c_target(tc_id) and seeds.available():
         with ThreadPoolExecutor(max_workers=4) as pool:
             drafts = list(pool.map(lambda f: seeds.generate(f[1], tc_id, header_of(f)), missing))
         for f, draft in zip(missing, drafts):

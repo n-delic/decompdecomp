@@ -167,14 +167,19 @@ function workingAgents() {
   return { running, outside, n: running.length + outside.length };
 }
 
-/* recommended | beta | "" for a platform key, as the browser or a project names it. */
-function platformStatus(p) {
-  const st = (S.st && S.st.platform_status) || {};
+/* A console (consoles/ in the app: its name, status, layout, compilers), by the id or an old id a project or the
+   browser's look at a file names it with. */
+function consoleOf(p) {
   const key = { gcwii: "gc" }[p] || p;
-  return st[key] || "";
+  return ((S.st && S.st.consoles) || []).find((c) => c.id === key || c.aliases.includes(key));
+}
+/* recommended | beta | "" for a platform key. */
+function platformStatus(p) {
+  const status = consoleOf(p)?.status;
+  return status === "recommended" || status === "beta" ? status : "";
 }
 function markPlatforms() {
-  const any = Object.keys((S.st && S.st.platform_status) || {}).length;
+  const any = ((S.st && S.st.consoles) || []).length;
   document.querySelectorAll("#platRow [data-p]").forEach((s) => {
     const rec = platformStatus(s.dataset.p) === "recommended";
     s.classList.toggle("rec", rec);
@@ -189,7 +194,7 @@ function renderHeader(ov) {
   const chips = [`<span class="plat">${esc(ov.platform_name || "?")}</span>`];
   if (platformStatus(ov.platform) === "beta") chips.push(`<span class="chip-s beta" title="This platform works and is tested on homemade games, less so on real ones yet">beta</span>`);
   if (ov.rom && ov.rom.game_code) chips.push(`<span class="chip-s mono">${esc(ov.rom.game_code)}</span>`);
-  if (fork) chips.push(`<span class="chip-s">${ov.origin === "scratch" ? `from scratch · ${esc(LAYOUT[ov.platform] || "decomp")}` : "public decomp"}</span>`);
+  if (fork) chips.push(`<span class="chip-s">${ov.origin === "scratch" ? `from scratch · ${esc(ov.layout || "decomp")}` : "public decomp"}</span>`);
   else if (ov.rom && ov.rom.region) chips.push(`<span class="chip-s">${esc(ov.rom.region)}</span>`);
   const comp = fork ? (ov.compiler_name ? cwName(ov.compiler_name) : "") : ov.compiler.name;
   if (comp) chips.push(`<span class="chip-s" title="${esc(fork ? "" : ov.compiler.flags.join(" "))}">${esc(comp)}</span>`);
@@ -557,7 +562,6 @@ async function installToolchain(id, proprietary) {
 }
 
 /* ------------------------------------------------------------------ public decomps */
-const PLAT_SHORT = { gc: "GameCube", wii: "Wii", ps: "PS1", psx: "PS1", ps2: "PS2", n64: "N64", gba: "GBA", nds: "DS", switch: "Switch", win32: "PC", xbox360: "Xbox 360", "3ds": "3DS", xbox: "Xbox", psp: "PSP" };
 
 /* A community decomp, forked by its repository address (decomp.dev, which listed them, is gone). */
 function showCatalog() {

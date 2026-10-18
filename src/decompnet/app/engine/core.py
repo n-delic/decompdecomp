@@ -9,6 +9,7 @@ import secrets
 import threading
 from pathlib import Path
 
+from ... import consoles
 from ...network import Agent, Network, NetworkError, _hash_token
 from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
@@ -85,6 +86,10 @@ class Core(Network):
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"
+
+    def console(self, proj) -> consoles.Console:
+        """The project's console (consoles/): what the engine asks, instead of comparing platform names."""
+        return consoles.of(self.cfg(proj))
 
     def project_row(self, slug: str):
         return self._project(slug)

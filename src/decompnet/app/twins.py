@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
 
+from .. import arch
 from ..elfobj import _MASKS, Reloc, mask_relocs
-from ..handwritten import mips_reason, ppc_reason
 from ..network import NetworkError
 from ..project import compiler_for
 
@@ -52,7 +52,7 @@ class Print:
     refs: list[str]  # the name each relocation refers to, in order (sections as ".data" etc.)
     size: int
     addrs: list[int] = field(default_factory=list)  # ROM projects: the address each relocation fills in
-    asm: str = ""  # why no compiler makes this code (see handwritten.py), or ""
+    asm: str = ""  # why no compiler makes this code (asm_reason: consoles/, arch/), or ""
 
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
@@ -72,17 +72,19 @@ def _key(code: bytes, layout: list[tuple[int, int]]) -> str:
 
 
 def object_prints(data: bytes) -> dict[str, Print]:
-    """Fingerprints of every function an object file defines, by symbol (with, for PowerPC, whether its code is
-    hand-written assembly)."""
+    """Fingerprints of every function an object file defines, by symbol, with whether its code is hand-written
+    assembly where its processor tells that without its console's facts (PowerPC: arch/)."""
     from elftools.elf.elffile import ELFFile
     from elftools.elf.relocation import RelocationSection
 
     elf = ELFFile(BytesIO(data))
-    arch, order = _MACHINE.get(elf["e_machine"], ("", None))
+    arch_id, order = _MACHINE.get(elf["e_machine"], ("", None))
     order = order or ("little" if elf.little_endian else "big")
     symtab = elf.get_section_by_name(".symtab")
-    if symtab is None or not arch:
+    if symtab is None or not arch_id:
         return {}
+    processor = arch.get(arch_id)
+    reason = processor.asm_reason if not processor.asm_needs_console else None
     by_section: dict[int, list] = defaultdict(list)
     for s in symtab.iter_symbols():
         if s["st_info"]["type"] == "STT_FUNC" and isinstance(s["st_shndx"], int) and s["st_size"] > 0 and s.name:
@@ -105,13 +107,13 @@ def object_prints(data: bytes) -> dict[str, Print]:
                     isinstance(sym["st_shndx"], int) else sym.name
                 rels.append((r["r_offset"], r["r_info_type"], name))
         rels.sort()
-        _mask(code, [(o, t) for o, t, _ in rels], arch, order)
+        _mask(code, [(o, t) for o, t, _ in rels], arch_id, order)
         for s in syms:
-            lo = s["st_value"] & ~1 if arch == "arm" else s["st_value"]
+            lo = s["st_value"] & ~1 if arch_id == "arm" else s["st_value"]  # (bit 0: a Thumb function)
             mine = [(o - lo, t, n) for o, t, n in rels if lo <= o < lo + s["st_size"]]
             out[s.name] = Print(_key(bytes(code[lo:lo + s["st_size"]]), [(o, t) for o, t, _ in mine]),
                                 [n for _, _, n in mine], s["st_size"],
-                                asm=(ppc_reason(raw[lo:lo + s["st_size"]]) or "") if arch == "ppc" else "")
+                                asm=(reason(raw[lo:lo + s["st_size"]], order == "big") or "") if reason else "")
     return out
 
 
@@ -394,7 +396,7 @@ class Twins:
         return sum(1 for b, _ in updates if b > 0)
 
     def set_aside_asm(self, proj) -> int:
-        """Unmatched functions whose code no compiler makes (see handwritten.py) get status 'asm': out of agents'
+        """Unmatched functions whose code no compiler makes (Console.asm_reason) get status 'asm': out of agents'
         way. Returns how many."""
         if not self.net.fork_slug(proj["slug"]):
             return self._set_aside_rom_asm(proj)
@@ -410,13 +412,11 @@ class Twins:
         return n
 
     def _set_aside_rom_asm(self, proj) -> int:
-        """ROM projects on MIPS (N64, PlayStation, PlayStation 2): mips_reason on each open function's code."""
-        if (proj["arch"] or "mips") != "mips":
-            return 0
-        platform, big = self.net.cfg(proj).get("platform", ""), bool(proj["big_endian"])
+        """ROM projects: the console's asm_reason on each open function's code."""
+        console = self.net.console(proj)
         marks = []
         for r in self.net.store.all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
-            if (why := mips_reason(r["target"] or b"", big, platform)):
+            if (why := console.asm_reason(r["target"] or b"")):
                 marks.append((json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]))
         if marks:
             with self.net.store.tx() as db:

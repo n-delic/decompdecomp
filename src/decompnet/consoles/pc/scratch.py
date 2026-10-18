@@ -33,11 +33,11 @@ from pathlib import Path
 import capstone
 from capstone import x86
 
-from .. import toolchains
-from .project import ForkError, ForkProject
+from ... import toolchains
+from ...forks.project import ForkError, ForkProject
 
 UNIT_BYTES = 0x1000
-TEMPLATE = Path(__file__).with_name("pc_template")
+TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
 DIR32, REL32 = 0x06, 0x14
 PAD = 0x90  # what Visual C++ 6 pads a function's section with (the linker pads between objects with 0xCC or zeros)
@@ -179,7 +179,7 @@ def game_info(path: Path) -> dict:
     pe = read_pe(data)
     stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game"
     version, why = guess_compiler(data)
-    return {"platform": "win32", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
+    return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why}
 
 
@@ -422,7 +422,7 @@ def _run(cmd: list[str], root: Path, what: str, log) -> None:
 
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
     """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game."""
-    from . import ghidra
+    from ...forks import ghidra
 
     info = game_info(game)
     version = info["id"]
@@ -480,7 +480,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         raise ForkError("the first build finished without writing objdiff.json")
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
-        "created": "from scratch", "platform": "win32", "version": version, "compiler": f"MSVC/{compiler}",
+        "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
     }, indent=2), encoding="utf-8")
@@ -504,5 +504,5 @@ function's address, size, symbol and relocations.
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
             subprocess.run(cmd, cwd=root, capture_output=True)
-    return {"platform": "win32", "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
+    return {"platform": "pc", "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
             "sources": len(groups), "sha1": info["sha1"]}

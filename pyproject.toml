@@ -45,7 +45,7 @@ dev = [
 line-length = 120
 target-version = "py312"
 # the website's tooling isn't decompdecomp's code; ninja_syntax.py is ninja's own, copied into the project templates
-extend-exclude = ["site", "src/decompnet/forks/*_template/tools/ninja_syntax.py"]
+extend-exclude = ["site", "src/decompnet/consoles/*/project_template/tools/ninja_syntax.py"]
 
 [tool.ruff.lint]
 # Only rules that find real problems or real inconsistencies: no formatter, no line length (docs/CONVENTIONS.md, "Linting")

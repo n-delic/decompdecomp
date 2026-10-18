@@ -259,7 +259,7 @@ def _dtk_project(root: Path, version: str, config: str) -> None:
 def test_a_project_that_reads_an_extracted_disc_gets_its_files_from_the_disc_image(tmp_path, monkeypatch):
     """Older dtk projects read orig/<version>/sys/main.dol and files/... (the README says "extract the disc with
     Dolphin"); decompdecomp copies exactly those files out of the user's disc image, picking the disc of that version."""
-    from decompnet.forks import scratch_dtk
+    from decompnet.consoles.gc_wii import scratch as scratch_dtk
     from decompnet.forks.project import ForkProject
 
     _dtk_project(tmp_path, "GP6E01", "object: orig/GP6E01/sys/main.dol\nmodules:\n- object: orig/GP6E01/files/dll/a.rel\n"
@@ -287,7 +287,7 @@ def test_a_project_that_reads_an_extracted_disc_gets_its_files_from_the_disc_ima
 
 
 def test_a_disc_of_another_version_switches_the_project_or_is_refused(tmp_path, monkeypatch):
-    from decompnet.forks import scratch_dtk
+    from decompnet.consoles.gc_wii import scratch as scratch_dtk
 
     net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
     root = tmp_path / "ws" / "mp6"
@@ -308,7 +308,7 @@ def test_a_disc_of_another_version_switches_the_project_or_is_refused(tmp_path, 
 
 def test_a_project_made_from_scratch_builds_with_this_computers_tools(tmp_path, monkeypatch):
     """The manifest of a generated project records the tools of the computer that made it; setup uses this one's."""
-    from decompnet.forks import scratch_pe
+    from decompnet.consoles.pc import scratch as scratch_pe
     from decompnet.forks.project import ForkProject
 
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({

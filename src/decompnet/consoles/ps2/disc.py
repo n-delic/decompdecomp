@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import struct
 
-from .n64 import RomError
+from ...rom import RomError
 
 
 def region_of(serial: str) -> str:

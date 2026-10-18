@@ -8,6 +8,7 @@ import json
 import re
 import time
 
+from ... import arch
 from ...network import Agent, NetworkError
 from ...rom import split
 from ...rom.symbols import IDENT, Symbol, SymbolTable
@@ -81,8 +82,8 @@ class EditMixin:
             raise NetworkError("in a team room the host's project decides where functions end: tell the host (add_note)")
         fn = self._function(function, slug)
         proj = self._project(slug)
-        if (proj["arch"] or "mips") != "mips":
-            raise NetworkError("boundary reports are for MIPS games (N64, PlayStation, PlayStation 2) for now")
+        if arch.BOUNDARIES not in self.console(proj).features:
+            raise NetworkError(f"boundary reports are for MIPS games (N64, PlayStation 2) for now, not {self.console(proj).name}")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} is matched: its boundaries are proven")
         m = _ADDRESS.match(str(end).strip())
@@ -140,7 +141,7 @@ class EditMixin:
     def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "") -> str:
         """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
         change together, after one check that every matched function still matches. One rename is the agents'
-        rename_symbol; many at once are the PS2 kernel stubs named at import (rom/ps2syscalls.py)."""
+        rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py)."""
         proj = self._project(project)
         pairs = [(old.strip(), new.strip()) for old, new in pairs]
         if not pairs:

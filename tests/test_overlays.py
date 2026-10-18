@@ -1,4 +1,4 @@
-"""PlayStation 2 overlays (rom/overlays.py): code in other files of a disc, placed at the address it's loaded at
+"""PlayStation 2 overlays (consoles/ps2/overlays.py): code in other files of a disc, placed at the address it's loaded at
 from its own calls, and split with the program, as a segment of its own."""
 
 import struct
@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from decompnet import toolchains
-from decompnet.rom import overlays, split
+from decompnet import consoles, toolchains
+from decompnet.consoles.ps2 import overlays
+from decompnet.rom import Picked, split
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-ps2"
@@ -61,7 +62,8 @@ def test_overlays_are_split_with_the_program(tmp_path, exe):
     (tmp_path / "game.elf").write_bytes(exe)
     # two overlays that load at the same address (only one is in memory at a time)
     found = [("battle", _overlay(OVERLAY_AT, 30), OVERLAY_AT, 0), ("field", _overlay(OVERLAY_AT, 20), OVERLAY_AT, 0)]
-    res = split.split_rom(tmp_path, "game.elf", log=lambda *_: None, overlays=found)
+    picked = Picked("ps2", exe, "game.elf", {}, False, overlays=found)
+    res = split.split_rom(tmp_path, "game.elf", consoles.get("ps2"), picked, log=lambda *_: None)
     names = {f.name for f in res.functions}
     assert "func_00400000" in names or "ovl_battle_func_00400000" in names
     battle = [f for f in res.functions if f.segment == "ovl_battle"]

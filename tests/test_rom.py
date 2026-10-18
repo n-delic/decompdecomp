@@ -16,8 +16,9 @@ from elftools.elf.elffile import ELFFile
 
 from decompnet import toolchains
 from decompnet.compiler import CompilerConfig, compile_source
+from decompnet.consoles.n64 import rom as n64
 from decompnet.elfobj import _canonical, list_functions
-from decompnet.rom import match, n64, split
+from decompnet.rom import match, split
 from decompnet.rom.symbols import Symbol, SymbolTable
 
 ROOT = Path(__file__).resolve().parent.parent

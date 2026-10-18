@@ -23,8 +23,7 @@ from decompnet.consoles.ps2 import debuginfo, mdebug, stabs, symtab
 from decompnet.consoles.ps2.cheader import Header
 from decompnet.elfobj import unmangle
 from decompnet.forks import csource
-from decompnet.rom import split
-from decompnet.rom.n64 import RomError
+from decompnet.rom import RomError, split
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-ps2"

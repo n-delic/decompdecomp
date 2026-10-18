@@ -4,7 +4,7 @@ Many PlayStation 2 games load part of their code from other files when they need
 logic, a minigame): overlays. The community's projects list them by hand with the address each is loaded at, found
 in the code that loads them or with an emulator. Here the code says it: every file on the disc is checked for MIPS
 code, and its load address is the one that makes its own calls (jal: absolute addresses) land on its own functions'
-starts (n64code.py does the same for N64 segments).
+starts (arch/mips.py's place, which finds the N64's segments too).
 
 - A PS2 overlay that is an ELF program says where it goes: its loadable segments are taken as they are. IOP modules
   (.IRX: the I/O processor's code, relocatable) are left out.
@@ -18,7 +18,8 @@ import re
 import struct
 from pathlib import Path
 
-from .n64code import JR_RA, _frame, _place
+from ...arch import mips
+from ...arch.mips import JR_RA, is_frame
 
 MAX_FILE = 16 << 20
 PEEK = 64 << 10  # how much of a file is read first: code shows in its first 64 KiB
@@ -27,7 +28,7 @@ RAM = (0x00080000, 0x02000000)  # where the EE's programs load: above the kernel
 
 
 def _swap(data: bytes) -> bytes:
-    """Little-endian words as big-endian ones, for n64code's search (offsets and addresses stay the same)."""
+    """Little-endian words as big-endian ones, for mips.place (offsets and addresses stay the same)."""
     n = len(data) // 4
     return struct.pack(f">{n}I", *struct.unpack(f"<{n}I", data[:n * 4]))
 
@@ -36,7 +37,7 @@ def _code_like(data: bytes, least: int = 16) -> bool:
     if data.count(JR_RA_LE) < least:  # quick: most files (graphics, sound, levels) stop here
         return False
     words = struct.unpack(f"<{len(data) // 4}I", data[:len(data) // 4 * 4])
-    return sum(w == JR_RA for w in words) >= least and sum(_frame(w) for w in words) >= least
+    return sum(w == JR_RA for w in words) >= least and sum(is_frame(w) for w in words) >= least
 
 
 def _walk(disc, lba: int, length: int, path: str = ""):
@@ -75,7 +76,7 @@ def _elf_segments(data: bytes) -> list[tuple[int, bytes]] | None:
 def place(data: bytes, known: list[tuple[int, int]]) -> tuple[int, int] | None:
     """(the address a raw overlay file is loaded at, where in it its code starts), or None if it can't be told."""
     swapped = _swap(data)
-    seg = _place(swapped, 0, len(swapped), 0, [], known, regions=(RAM,))
+    seg = mips.place(swapped, 0, len(swapped), 0, [], known, regions=(RAM,))
     if seg is None:
         return None
     start, _, vram, _ = seg
@@ -116,4 +117,33 @@ def find(disc, boot: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, 
         if placed is not None:
             out.append((name, data, *placed))
             names.add(name)
+    return out
+
+
+def add_to_config(config: Path, workdir: Path, image: str, found: list[tuple[str, bytes, int, int]], log=print) -> str:
+    """The overlays `find` found, each appended to a working copy of the program's image, as a code segment of its
+    own at the address it's loaded at, in splat's config. Returns the image splat reads."""
+    import hashlib
+
+    import yaml
+
+    data = bytearray((workdir / image).read_bytes())
+    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    segs = [s for s in cfg["segments"] if not isinstance(s, list)]
+    for name, code, vram, code_at in found:
+        data += bytes(-len(data) % 0x10 + 0x10)
+        start = len(data)
+        data += code
+        subs = [[start, "data", f"ovl_{name}_header"]] if code_at else []  # what comes before its code: a header
+        segs.append({"name": f"ovl_{name}", "type": "code", "start": start, "vram": vram,
+                     "subsegments": subs + [[start + code_at, "c", f"ovl_{name}"]]})
+    data += bytes(-len(data) % 0x10)
+    segs.append([len(data)])
+    out = f"{Path(image).stem}.overlays{Path(image).suffix}"
+    (workdir / out).write_bytes(data)
+    cfg["segments"] = segs
+    cfg.setdefault("options", {})["target_path"] = out
+    cfg["sha1"] = hashlib.sha1(bytes(data)).hexdigest()
+    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
+    log(f"added {len(found)} overlay{'s' if len(found) != 1 else ''} ({sum(len(o[1]) for o in found) // 1024} KiB of code)")
     return out

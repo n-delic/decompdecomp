@@ -1,4 +1,4 @@
-"""Code no compiler makes (handwritten.py): CodeWarrior's runtime helpers, which take their input in r11/r12 (each
+"""Code no compiler makes (arch/ppc.py, arch/mips.py): CodeWarrior's runtime helpers, which take their input in r11/r12 (each
 Mario Party 6 module links copies of them), are taken out of agents' way; compiled code never is."""
 
 import struct
@@ -8,7 +8,7 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app.twins import object_prints
-from decompnet.handwritten import ppc_reason
+from decompnet.arch.ppc import asm_reason as ppc_reason
 
 
 def code(*words: int) -> bytes:
@@ -75,7 +75,13 @@ def le(*words: int) -> bytes:
 def test_mips_code_no_compiler_makes():
     """#22: agents spent their turns on a one-instruction piece that runs into the next function, and on code that
     drives a coprocessor C can't reach without inline asm."""
-    from decompnet.handwritten import mips_reason
+    from decompnet import consoles
+    from decompnet.arch.mips import asm_reason
+
+    ps2 = consoles.get("ps2").asm_reason  # the PS2's facts: EABI arguments, VU0 as coprocessor 2
+
+    def mips_reason(code, big_endian, console):
+        return ps2(code) if console == "ps2" else asm_reason(code, big_endian)
 
     assert mips_reason(le(0x8D110024), False, "ps2").startswith("ends without a return")  # lw s1, 0x24(t0)
     assert "VU0" in mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "ps2")  # ctc2 a0, $26; jr ra; nop

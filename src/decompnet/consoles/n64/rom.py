@@ -11,6 +11,8 @@ from dataclasses import asdict, dataclass
 
 import rabbitizer
 
+from ...rom import RomError
+
 MAGIC = {
     b"\x80\x37\x12\x40": "z64",  # big-endian, the native byte order
     b"\x37\x80\x40\x12": "v64",  # 16-bit byte-swapped (Doctor V64)
@@ -23,10 +25,6 @@ REGIONS = {
 }
 MIN_SIZE = 0x40000  # 256 KiB: smaller than any cartridge, but leaves room for homebrew
 MAX_SIZE = 64 * 1024 * 1024
-
-
-class RomError(ValueError):
-    pass
 
 
 @dataclass

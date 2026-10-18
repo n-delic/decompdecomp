@@ -51,6 +51,16 @@ def test_import(ps2):
     assert "WITHOUT" in net.get_context(slug)  # the gp-relative globals advice
 
 
+def test_read_data_reads_a_ps2_games_pointers(ps2):
+    """§4.12: read_data took only N64 addresses (0x80...) for pointers, never a PS2 game's: zlib's table of error
+    messages is ten pointers to its strings."""
+    net, slug = ps2
+    table = next(s["st_value"] for s in ELFFile(open(ELF, "rb")).get_section_by_name(".symtab").iter_symbols()
+                 if s.name == "z_errmsg")
+    said = net.read_data(slug, f"0x{table:08X}", 40)
+    assert "words that look like addresses" in said, said
+
+
 def test_a_removed_game_can_be_imported_again(tmp_path):
     """Issue #18: removing a project left its symbols behind, and importing the game again (the new project gets
     the same id) failed on them. A database that has such leftovers loses them when decompdecomp opens it."""
@@ -161,7 +171,7 @@ def test_the_import_finds_the_compiler(toolchain, tmp_path):
 def test_a_librarys_note_does_not_name_the_compiler(monkeypatch):
     """GTA San Andreas keeps one "MW MIPS C Compiler" note, from a library: its own code is EE-GCC 2.96's, and
     agents could match nothing until the compiler was switched. The code's style outweighs the note."""
-    from decompnet.rom import ps2
+    from decompnet.consoles.ps2 import elf as ps2
 
     if not EXE.exists():
         pytest.skip("needs the PS2 demo built")

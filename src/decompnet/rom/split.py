@@ -1,4 +1,4 @@
-"""Split an N64 ROM into functions and data with splat (MIT) and read back what it found.
+"""Split a game's program (an N64 ROM, a PS2 ELF) into functions and data with splat (MIT) and read back what it found.
 
 splat's own create_config finds the boot entry point, the main code segment, .bss and the compiler;
 `splat split` then disassembles every function (spimdisasm, MIT) with symbols for every address it
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import rabbitizer
 
-from .n64 import RomError
+from . import Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
 _LABEL = re.compile(r"^\s*(?:jlabel\s+)?(\.?L[0-9A-F]{8}):?\s*$")
@@ -321,116 +321,15 @@ def parse_data(path: Path) -> list[DataSymbol]:
     return [s for s in syms if s.vram]
 
 
-def _gp_from_entry(image: bytes, entry: int, segments: list[Segment]) -> int:
-    """$gp as the program's start-up code sets it (`lui $gp, hi` + `addiu $gp, $gp, lo`)."""
-    import rabbitizer
-
-    seg = next((s for s in segments if s.contains(entry, 4)), None)
-    if seg is None:
-        return 0
-    at = seg.rom_start + entry - seg.vram
-    hi = None
-    for i in range(0, 0x400, 4):
-        word = int.from_bytes(image[at + i:at + i + 4], "little")
-        ins = rabbitizer.Instruction(word, entry + i)
-        name = ins.getOpcodeName()
-        if name == "lui" and ins.rt.value == 28:
-            hi = (word & 0xFFFF) << 16
-        elif hi is not None and name in ("addiu", "daddiu") and ins.rt.value == 28 and ins.rs.value == 28:
-            return (hi + ((word & 0xFFFF) ^ 0x8000) - 0x8000) & 0xFFFFFFFF
-        elif hi is not None and name == "ori" and ins.rt.value == 28 and ins.rs.value == 28:
-            return hi | (word & 0xFFFF)
-    return 0
-
-
-def _add_code_segments(config: Path, workdir: Path, image: str, log=print) -> str:
-    """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
-    own. Compressed code (Rare's, Yaz0) is unpacked first and appended to a working copy of the ROM, which splat then
-    reads instead (and an export rebuilds). Returns the image splat reads."""
-    import hashlib
-
+def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Picked | None = None, log=print,
+              symbols: list[str] | None = None) -> SplitResult:
+    """Run splat on workdir/rom_name and return every function and data symbol it found. `console` (the one splat
+    names, if not given) adds code splat's own look misses (Console.add_code: the N64's segments loaded later, a PS2
+    disc's overlays in `picked`). `symbols`: symbol_addrs.txt lines for the names the program itself has (a PS2
+    game's symbol table), which splat splits by."""
     import yaml
 
-    from .n64code import find_segments, unpack_code
-
-    original = image
-    rom = (workdir / image).read_bytes()
-    packed = unpack_code(rom)
-    if packed:
-        work = bytearray(rom)
-        for _, data in packed:  # each after a gap, so pieces of different blocks never run together
-            work += bytes(-len(work) % 0x10 + 0x2000)
-            work += data
-        work += bytes(-len(work) % 0x10)
-        image = f"{Path(image).stem}.unpacked{Path(image).suffix}"
-        (workdir / image).write_bytes(work)
-        rom = bytes(work)
-        kib = sum(len(d) for _, d in packed) // 1024
-        log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
-    taken = code_ranges(config)
-    found = find_segments(rom, taken) if taken else []
-    if not found:
-        return original
-    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
-    if packed:
-        cfg.setdefault("options", {})["target_path"] = image
-        cfg["sha1"] = hashlib.sha1(rom).hexdigest()
-
-    def start_of(seg):
-        return seg[0] if isinstance(seg, list) else seg.get("start")
-
-    starts = {st for st, _, _ in found}
-    segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin" and start_of(s) in starts)
-            and not isinstance(s, list)]  # the end marker comes back at the image's end
-    for st, en, vram in found:
-        name = f"code_{vram:08X}"
-        segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
-        if en < len(rom) and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
-            segs.append({"type": "bin", "start": en})
-    segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
-    segs.append([len(rom)])
-    cfg["segments"] = segs
-    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
-    kib = sum(en - st for st, en, _ in found) // 1024
-    log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
-    return image
-
-
-def _add_overlays(config: Path, workdir: Path, image: str, found: list[tuple[str, bytes, int, int]], log=print) -> str:
-    """PlayStation overlays (overlays.py): each appended to a working copy of the program's image, as a code segment
-    of its own at the address it's loaded at. Returns the image splat reads."""
-    import hashlib
-
-    import yaml
-
-    data = bytearray((workdir / image).read_bytes())
-    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
-    segs = [s for s in cfg["segments"] if not isinstance(s, list)]
-    for name, code, vram, code_at in found:
-        data += bytes(-len(data) % 0x10 + 0x10)
-        start = len(data)
-        data += code
-        subs = [[start, "data", f"ovl_{name}_header"]] if code_at else []  # what comes before its code: a header
-        segs.append({"name": f"ovl_{name}", "type": "code", "start": start, "vram": vram,
-                     "subsegments": subs + [[start + code_at, "c", f"ovl_{name}"]]})
-    data += bytes(-len(data) % 0x10)
-    segs.append([len(data)])
-    out = f"{Path(image).stem}.overlays{Path(image).suffix}"
-    (workdir / out).write_bytes(data)
-    cfg["segments"] = segs
-    cfg.setdefault("options", {})["target_path"] = out
-    cfg["sha1"] = hashlib.sha1(bytes(data)).hexdigest()
-    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
-    log(f"added {len(found)} overlay{'s' if len(found) != 1 else ''} ({sum(len(o[1]) for o in found) // 1024} KiB of code)")
-    return out
-
-
-def split_rom(workdir: Path, rom_name: str = "rom.z64", log=print,
-              overlays: list[tuple[str, bytes, int, int]] | None = None, symbols: list[str] | None = None) -> SplitResult:
-    """Run splat on workdir/rom_name and return every function and data symbol it found. `overlays`: code from
-    other files of a PlayStation disc, each with the address it's loaded at. `symbols`: symbol_addrs.txt lines for
-    the names the program itself has (a PS2 game's symbol table), which splat splits by."""
-    import yaml
+    from .. import consoles
 
     log("finding the code segments")
     args = ["create_config", rom_name]
@@ -447,13 +346,11 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", log=print,
     config = configs[0]
     image = (yaml.safe_load(config.read_text(encoding="utf-8")).get("options") or {}).get("target_path") or rom_name
     compiler, platform, gp = _patch_config(config)
-    big_endian = platform == "n64"
+    console = console or consoles.get(platform)
+    big_endian = console.big_endian
     if symbols:
         _add_symbols(workdir / "symbol_addrs.txt", symbols)
-    if platform == "n64":
-        image = _add_code_segments(config, workdir, image, log)
-    elif overlays:
-        image = _add_overlays(config, workdir, image, overlays, log)
+    image = console.add_code(config, workdir, image, picked or Picked(console.id, b"", rom_name, {}, big_endian), log)
     log("disassembling every function")
     out += "\n" + _splat(["split", config.name], workdir)
 
@@ -486,8 +383,6 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", log=print,
     if not unique:
         raise RomError("splat found no functions; the code may be compressed or use an unusual boot layout")
     segments = segments_from_config(config)
-    if platform == "ps2" and not gp:
-        program = (workdir / rom_name).read_bytes()
-        gp = _gp_from_entry(rom, int.from_bytes(program[24:28], "little"), segments)
+    gp = gp or console.find_gp(rom, (workdir / rom_name).read_bytes(), segments)
     log(f"found {len(unique)} functions and {len(data)} data symbols")
-    return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, platform, gp, image)
+    return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image)

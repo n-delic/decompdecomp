@@ -24,26 +24,22 @@ from __future__ import annotations
 import collections
 import struct
 import zlib
+from pathlib import Path
 
-JR_RA = 0x03E00008
-BLOCK = 0x400
+from ...arch.mips import JR_RA, SCAN_BLOCK, is_frame, jal_targets, place
+from ...rom import split
+
+BLOCK = SCAN_BLOCK
 # where code can run: KSEG0 (RAM), or mapped through the TLB (GoldenEye's game code runs at 0x7F000000). A jal keeps
 # the top four bits of the address it's at, so the region decides what its targets are.
 REGIONS = ((0x80000000, 0x81000000), (0x70000000, 0x80000000))
-
-
-def _frame(word: int) -> bool:
-    return (word & 0xFFFF8000) == 0x27BD8000  # addiu $sp, $sp, -N
-
-
-def _jal_targets(words: tuple[int, ...], region: int = 0x80000000) -> list[int]:
-    return [((w & 0x03FFFFFF) << 2) | (region & 0xF0000000) for w in words if (w >> 26) == 3]
+KSEG0 = REGIONS[0][0]  # where the known code (the main segment) runs
 
 
 def _code_like(words: tuple[int, ...]) -> bool:
     """A return or a stack frame: either is rare in anything but code (a large function can go a while without the
     other)."""
-    return any(w == JR_RA or _frame(w) for w in words)
+    return any(w == JR_RA or is_frame(w) for w in words)
 
 
 def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
@@ -53,7 +49,7 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
     calls: list[int] = []  # every call the known code makes outside itself: some go into the code found here
     known_vram = [(v, v + e - s) for s, e, v in taken]
     for s, e in known_code:
-        calls += [t for t in _jal_targets(struct.unpack(f">{(e - s) // 4}I", rom[s:e - (e - s) % 4]))
+        calls += [t for t in jal_targets(struct.unpack(f">{(e - s) // 4}I", rom[s:e - (e - s) % 4]), KSEG0)
                   if not any(a <= t < b for a, b in known_vram)]
     gaps, pos = [], 0x1000
     for s, e in sorted(known_code):
@@ -78,7 +74,7 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
         floor = g_lo
         for lo, hi in regions:
             stretches.append((lo, hi, floor))
-            seg = _place(rom, lo, hi, floor, calls, known_vram)
+            seg = place(rom, lo, hi, floor, calls, known_vram, REGIONS)
             if seg:
                 candidates.append(seg)
                 floor = seg[1]
@@ -99,21 +95,21 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
     # already, in the same segment: try the mappings found (address minus ROM offset), counting calls that land on
     # a function start anywhere in the image.
     mappings = collections.Counter(v - s for s, _, v in found)
-    frame_at = {i * 4 for i, w in enumerate(struct.unpack(f">{size // 4}I", rom[:size])) if _frame(w)}
+    frame_at = {i * 4 for i, w in enumerate(struct.unpack(f">{size // 4}I", rom[:size])) if is_frame(w)}
     for lo, hi, floor in stretches:
         if any(a <= lo < b or a < hi <= b for a, b, _ in found):
             continue
         words = struct.unpack(f">{(hi - lo) // 4}I", rom[lo:hi])
         best = None
         for mapping in mappings:
-            own = _jal_targets(words, mapping + lo)
+            own = jal_targets(words, mapping + lo)
             hits = sum(1 for t in own if (t - mapping) in frame_at)
             if hits >= 3 and (best is None or hits > best[0]):
                 best = (hits, mapping)
         if best is None:
             continue
         mapping = best[1]
-        frames = [i * 4 for i, w in enumerate(words) if _frame(w)]
+        frames = [i * 4 for i, w in enumerate(words) if is_frame(w)]
         returns = [i * 4 for i, w in enumerate(words) if w == JR_RA]
         if not frames or not returns:
             continue
@@ -123,49 +119,11 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
     return sorted(found)
 
 
-def _place(rom: bytes, lo: int, hi: int, floor: int, calls: list[int],
-           known: list[tuple[int, int]] = (), regions=REGIONS) -> tuple[int, int, int, int] | None:
-    """(start, end, vram, calls that landed on a function start) for one stretch of code, or None."""
-    words = struct.unpack(f">{(hi - lo) // 4}I", rom[lo:hi])
-    frames = [i * 4 for i, w in enumerate(words) if _frame(w)]
-    returns = [i * 4 for i, w in enumerate(words) if w == JR_RA]
-    if len(frames) < 8 or len(returns) < 8:
-        return None
-    best: tuple[int, int, set[int]] | None = None  # (hits, base, the calls' targets)
-    for lo_addr, hi_addr in regions:
-        own = set(_jal_targets(words, lo_addr))
-        votes: collections.Counter = collections.Counter()
-        for t in own:
-            for f in frames:
-                base = t - f
-                if lo_addr <= base < hi_addr and base % 4 == 0:
-                    votes[base] += 1
-        if votes:
-            base, hits = votes.most_common(1)[0]
-            if best is None or hits > best[0]:
-                best = (hits, base, own)
-    if best is None:
-        return None
-    hits, base, own = best  # the address ROM `lo` is loaded at
-    if hits < max(8, len(frames) // 10):
-        return None
-    # the first function: the lowest address called in it (from itself or the known code). Every function returns,
-    # so code before `lo` is at most a little: a stray "call" from data words can't drag the start further back.
-    back = max(floor, lo - 2 * BLOCK) - lo
-    called = [t - base for t in own | set(calls) if back <= t - base < hi - lo
-              and not any(a <= t < b for a, b in known)]  # a call into known code says nothing about this one
-    first = min([frames[0], *called])
-    start = lo + first
-    end = lo + returns[-1] + 8  # the last return and its delay slot
-    end = min((end + 0xF) & ~0xF, len(rom))
-    return (start, end, base + first, hits)
-
-
 # ---------------------------------------------------------------------------------------------- compressed code
 
 def _looks_like_code(data: bytes) -> bool:
     words = struct.unpack(f">{len(data) // 4}I", data[:len(data) // 4 * 4])
-    return sum(w == JR_RA for w in words) >= 16 and sum(_frame(w) for w in words) >= 16
+    return sum(w == JR_RA for w in words) >= 16 and sum(is_frame(w) for w in words) >= 16
 
 
 def _rare(rom: bytes, at: int) -> tuple[bytes, int] | None:
@@ -254,3 +212,56 @@ def unpack_code(rom: bytes) -> list[tuple[int, bytes]]:
                 found.append((at, out))
         at = rom.find(b"Yaz0", at + 4)
     return sorted(found)
+
+
+# ---------------------------------------------------------------------------------------------- into splat's config
+
+def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
+    """An N64 game's code outside the main segment (n64code.py), added to splat's config as code segments of their
+    own. Compressed code (Rare's, Yaz0) is unpacked first and appended to a working copy of the ROM, which splat then
+    reads instead (and an export rebuilds). Returns the image splat reads."""
+    import hashlib
+
+    import yaml
+
+    original = image
+    rom = (workdir / image).read_bytes()
+    packed = unpack_code(rom)
+    if packed:
+        work = bytearray(rom)
+        for _, data in packed:  # each after a gap, so pieces of different blocks never run together
+            work += bytes(-len(work) % 0x10 + 0x2000)
+            work += data
+        work += bytes(-len(work) % 0x10)
+        image = f"{Path(image).stem}.unpacked{Path(image).suffix}"
+        (workdir / image).write_bytes(work)
+        rom = bytes(work)
+        kib = sum(len(d) for _, d in packed) // 1024
+        log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
+    taken = split.code_ranges(config)
+    found = find_segments(rom, taken) if taken else []
+    if not found:
+        return original
+    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    if packed:
+        cfg.setdefault("options", {})["target_path"] = image
+        cfg["sha1"] = hashlib.sha1(rom).hexdigest()
+
+    def start_of(seg):
+        return seg[0] if isinstance(seg, list) else seg.get("start")
+
+    starts = {st for st, _, _ in found}
+    segs = [s for s in cfg["segments"] if not (isinstance(s, dict) and s.get("type") == "bin" and start_of(s) in starts)
+            and not isinstance(s, list)]  # the end marker comes back at the image's end
+    for st, en, vram in found:
+        name = f"code_{vram:08X}"
+        segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
+        if en < len(rom) and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
+            segs.append({"type": "bin", "start": en})
+    segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
+    segs.append([len(rom)])
+    cfg["segments"] = segs
+    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
+    kib = sum(en - st for st, en, _ in found) // 1024
+    log(f"found {len(found)} more code segment{'s' if len(found) != 1 else ''} the game loads later ({kib} KiB)")
+    return image
