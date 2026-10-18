@@ -388,6 +388,12 @@ how much code never needs an agent. Ranked:
     - The prompt says what the draft is good for: control flow and arithmetic are usually right, types and names
       usually wrong; start from it and fix those.
 
+11. **Name PS2 system calls.** The kernel's stubs (`addiu v1, N; syscall; jr ra`) are already found and marked
+    hand-written (`handwritten.py`), but they keep names like `func_0012A0`. The number in `v1` says which kernel
+    call it is: a table of our own (the numbers are public, documented e.g. in ps2sdk's permissively licensed
+    headers) names every stub (FlushCache, CreateThread, ...) for free, and every function that calls one shows the
+    real name in its brief. Stubs that only differ in `v1` are told apart by it. (S)
+
 Not now: fine-tuned decompilation models. They're built for modern x86 and "does the same thing", not byte
 matching, and frontier CLI agents do better here.
 
