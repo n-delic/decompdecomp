@@ -6,7 +6,7 @@ Where updates come from depends on how decompdecomp was installed (install.json,
 - "branch":  the newest commit of a branch on GitHub (for testing a branch before it's released), installed from
              GitHub's archive of that commit
 Installing is `uv tool install --force` of the new version, then its `decomp setup` (new pinned tools), then the
-running app becomes the new version with exec (the process, its console window and its port stay the same).
+running app becomes the new version with exec (the process and its port stay the same, and it opens its window again).
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def uv() -> str | None:
 
 
 def can_apply() -> tuple[bool, str]:
-    if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's and the AppImage's launchers
+    if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's, the .rpm's and the AppImage's launchers
         kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
         return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
     if not uv():

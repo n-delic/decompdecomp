@@ -1,8 +1,8 @@
-"""Reputation and rate limits for an open network.
+"""Reputation and compile budgets for the agents working on a project: the app's helpers, and visitors in a room.
 
 Reputation is earned only through verified matches, so it cannot be faked. It unlocks shared-header
 edits (the one place a careless agent can disrupt everyone) and a larger compile budget. The budget
-is what keeps the coordinator cheap to run: every compile costs CPU on the operator's machine.
+keeps a runaway agent from taking the computer: every compile costs CPU on the computer that hosts the project.
 """
 
 from __future__ import annotations

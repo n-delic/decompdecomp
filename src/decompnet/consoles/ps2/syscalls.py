@@ -2,7 +2,7 @@
 
 A PS2 game calls the kernel through tiny stubs from Sony's libkernl, `addiu v1, $zero, N; syscall; jr ra; nop`, one
 per call. They're hand-written assembly (handwritten.py marks them so), and in a stripped game they're just
-func_0012A0 like everything else: 162 of them in GTA San Andreas, 135 in Ridge Racer V. The number in v1 says which
+func_0012A0 like everything else (this table names 154 of them in GTA San Andreas, 129 in Ridge Racer V). The number in v1 says which
 kernel call each one is, and the names are public knowledge (the PS2 homebrew SDK documents them), so each stub gets
 its real name at import, and every function that calls one reads FlushCache() instead of func_0012A0().
 

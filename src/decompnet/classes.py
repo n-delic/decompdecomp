@@ -1,4 +1,4 @@
-"""C++ classes, recovered from the game's own machine code (MIPS: PS2, PS1, N64).
+"""C++ classes, recovered from the game's own machine code (MIPS: PS2, N64).
 
 Agents matched 7% of GTA San Andreas's functions that make virtual calls against 62% of the rest: without the class
 layouts, every `this->field` is a guess. The code holds most of what a layout is:

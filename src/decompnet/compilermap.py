@@ -1,4 +1,4 @@
-"""Which compiler built each part of a game (MIPS: PS2, PS1, N64), from evidence the judge stands behind.
+"""Which compiler built each part of a game (MIPS: PS2, N64), from evidence the judge stands behind.
 
 Big games mix compilers: GTA San Andreas is EE-GCC 2.95 with CodeWarrior and GCC 2.9x libraries linked in. The import
 guesses one compiler for the whole game (rom/ps2.py: guess_compiler), and agents found the exceptions by hand, one
