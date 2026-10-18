@@ -104,6 +104,17 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
 
 
+def test_the_generator_gets_the_header_as_c(monkeypatch):
+    """GTA San Andreas's header keeps its classes in an `#ifdef __cplusplus` block, which pycparser can't read: the
+    generator gets the header a C compiler sees."""
+    net = FakeNet()
+    net._context = lambda project_id, unit: {"header": HEADER + "#ifdef __cplusplus\nclass C { public: s32 x; };\n"
+                                                         "#endif\n", "version": 1}
+    jobs = batches(monkeypatch, [])
+    ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert jobs[0]["header"].rstrip() == HEADER.rstrip() and "class" not in jobs[0]["header"]
+
+
 def test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites(monkeypatch):
     net = FakeNet()
     p = ScriptedPermuter(net, {})

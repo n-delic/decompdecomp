@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, scoring, toolchains
+from .. import consoles, scoring, seeds, toolchains
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
@@ -255,7 +255,8 @@ class Permuter:
         gen = None
         try:
             if available():
-                header = "" if fork else self.net._context(proj["id"], fn["unit"])["header"]
+                # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
+                header = "" if fork else seeds.c_only(self.net._context(proj["id"], fn["unit"])["header"])
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
                 try:
                     gen = Generator()
