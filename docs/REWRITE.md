@@ -372,7 +372,7 @@ Still slow under load: a claim of a function with no machine draft yet runs m2c 
 The judge is strict, so even cheap models can do well; what decides the rate is how much each attempt learns and
 how much code never needs an agent. Ranked:
 
-1. **Whole libraries for free.** A fingerprint index of library functions, tried as twins: across the user's own
+1. *(the user's own games: done, `Twins.across_games`; library decomps built locally: not yet)* **Whole libraries for free.** A fingerprint index of library functions, tried as twins: across the user's own
    games, and from matching library decomps and libgcc/newlib built locally with the project's compiler (libultra
    on N64, the PS1 and PS2 SDK libraries). No agent tokens at all. Library sources are fetched only when the user
    asks, never bundled: SDK code is the console maker's copyright. Builds on `app/twins.py` and
