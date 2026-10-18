@@ -36,6 +36,7 @@ class WindowsPC(Console):
     compiler_guide = "x86"
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
     demo = "demo-pc"
+    demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_pe

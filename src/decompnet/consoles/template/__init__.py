@@ -37,7 +37,8 @@ class Example(Console):
     compiler_guide = ""  # the guide every helper gets up front (a file in guides/: guides/example.md)
     m2c = ""  # m2c's target for drafts ("mipsel-gcc"), "" when m2c can't read the code
     ram = (0, 0)  # FILL IN: where its programs' code and data live (words in this range read as pointers)
-    demo = "demo-example"  # FILL IN: its folder in projects/ (build.py makes the game)
+    demo = "demo-example"  # FILL IN: its folder in projects/ (build.py makes the game and build/demo.json)
+    demo_tools = ("example-gcc",)  # what building and importing the demo needs (toolchains, programs on PATH)
 
     def sniff(self, head: bytes, file) -> bool:
         """FILL IN: how sure this file is this console's game, from its first bytes (a magic number, a header that

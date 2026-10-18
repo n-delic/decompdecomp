@@ -68,6 +68,7 @@ class Console:
     compiler_guide = ""  # the guide on matching what most of its games were built with ("mwcc"): see up_front_guide
     ram = (0, 0)  # where its programs' code and data live: words in this range read as pointers
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
+    demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with

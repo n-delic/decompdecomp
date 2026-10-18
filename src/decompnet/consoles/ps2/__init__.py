@@ -53,6 +53,7 @@ class PlayStation2(Console):
     m2c = "mipsee-gcc"  # m2c has no CodeWarrior MIPS target: the EE one reads its code as well
     ram = (0x00080000, 0x02000000)  # where the EE's programs live: above the kernel, within its 32 MiB
     demo = "demo-ps2"
+    demo_tools = ("ee-gcc-2.96", "binutils-mips")
     own_features = frozenset({EXPORT})
     as_flags = ("-EL", "-march=r5900", "-mabi=eabi")
 

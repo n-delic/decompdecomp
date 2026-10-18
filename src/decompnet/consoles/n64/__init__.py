@@ -33,6 +33,7 @@ class Nintendo64(Console):
     m2c = "mips-gcc"
     ram = (0x80000400, 0x80800000)  # KSEG0 above the exception vectors, up to the Expansion Pak's 8 MiB
     demo = "demo-rom"
+    demo_tools = ("gcc-2.7.2-kmc", "binutils-mips", "ld.lld", "llvm-objcopy")
     own_features = frozenset({EXPORT})
     as_flags = ("-EB", "-march=vr4300", "-mabi=32")
     image_ext = ".z64"
