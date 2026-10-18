@@ -712,7 +712,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     """Guest: check the invite, check the ROM is the same game, join, import it locally, link. Returns the slug.
     If this game is already linked to that room here, reconnect instead (no ROM needed). `rom`: the game's bytes or
     the file (a GameCube or Wii disc is gigabytes: never read whole)."""
-    from ..rom import detect
+    from .. import consoles
 
     http = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
     url, code, hello = _hello(http, link)
@@ -725,7 +725,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         return _join_fork(net, http, url, code, hello, name, rom, log, client, start)
     if isinstance(rom, Path):
         rom = rom.read_bytes()
-    picked = detect.identify(rom)
+    picked = consoles.identify(rom).read_game(rom)
     if picked.info["sha1"] != hello["sha1"]:
         raise NetworkError(f"this ROM isn't the same as the host's: the room is for {hello['title']} "
                            f"({hello['game_code']}, {hello['region']}), and every member needs their own copy of exactly that version")
@@ -748,7 +748,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
     the project wants it and built with the member's own tools, then linked."""
     import tempfile
 
-    from ..forks.catalog import PLATFORMS
+    from .. import consoles
 
     tmp = None
     if not isinstance(game, Path):
@@ -759,7 +759,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
     try:
         if hello.get("sha1") and forkroom.game_identity(game) != hello["sha1"]:
             raise NetworkError(f"this isn't the same game as the host's: the room is for {hello['title']} "
-                               f"({PLATFORMS.get(hello.get('platform'), hello.get('platform') or '')}, "
+                               f"({consoles.name(hello.get('platform'))}, "
                                f"{hello.get('version') or 'the same version'}), and every member needs their own copy of "
                                "exactly that version")
         log(f"joining {hello['title']} ({hello['functions']} functions, {hello['matched']} matched)")

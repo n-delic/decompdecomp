@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from .autopilot import AutopilotMixin
 from .briefs import BriefMixin
-from .common import COMPILERS, MW_VERSIONS, PLATFORM_STATUS, SHORT_NAMES, TOOLS, parse_ranges
+from .common import COMPILERS, TOOLS, parse_ranges
 from .compilers import CompilerMixin
 from .core import Core
 from .editing import EditMixin
@@ -35,7 +35,7 @@ from .importing import ImportMixin
 from .judging import JudgeMixin
 from .rooms import RoomMixin
 
-__all__ = ["RomNetwork", "COMPILERS", "MW_VERSIONS", "PLATFORM_STATUS", "SHORT_NAMES", "TOOLS", "parse_ranges"]
+__all__ = ["RomNetwork", "COMPILERS", "TOOLS", "parse_ranges"]
 
 
 class RomNetwork(ImportMixin, JudgeMixin, BriefMixin, CompilerMixin, EditMixin, RoomMixin, GuiMixin, AutopilotMixin,

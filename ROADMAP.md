@@ -9,35 +9,34 @@ Want to work on one? Open an issue first, so two people don't build the same thi
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
-start). Keep this table true when a feature ships or reaches another platform.
+start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
+folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS1 | PS2 | GBA | GameCube · Wii | DS | Windows PC | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | ✓ | — | — | MIPS, PowerPC |
-| Kernel and BIOS stubs set aside | — | ✓ | ✓ | — | — | — | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project | — | the project |
-| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | N64 | PS2 | GameCube · Wii | Windows PC | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ | fork by address |
+| Judge | link · compare | link · compare | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | MIPS, PowerPC |
+| Kernel stubs set aside | — | ✓ | — | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | — | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | the project's build | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | — | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | — | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | ✓ symbol table, STABS | — | — | — |
+| Rebuildable export | ✓ | ✓ | the project | — | the project |
+| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
-- **ARM (GBA, DS)**: assembly detection is `handwritten.py` (`mips_reason` and `ppc_reason` show the shape); the
-  compiler map and class recovery read MIPS in `compilermap.quirks` and `classes.scan`, and want an ARM reader.
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0).
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects).
-- **Function-end reports** cut MIPS functions (`engine._cut`); GBA has its own splitter (`_split_gba`).
+- **Function-end reports** cut MIPS functions (`engine._cut`).
 
 ## Recently done
 
@@ -48,14 +47,14 @@ Where to start on a gap:
   applied ranges can be checked again the same way (a report). On GTA San Andreas's 72 ranges: 12 confirmed, about
   25 resting on one function, about 36 with no function whose C needs their compiler.
 
-- **Compiler map** (MIPS: PlayStation 2, PlayStation, N64): which compiler built each part of the game. Measured on
+- **Compiler map** (MIPS: PlayStation 2, N64): which compiler built each part of the game. Measured on
   GTA San Andreas, compilers' habits only rule compilers out (-G0 code never reads through `$gp`; its CodeWarrior
   code never uses branch-likely), so what rules a compiler in is the judge: the survey builds agents' C for unmatched
   functions with each compiler the project uses, and C that matches with another compiler (and not today's)
   confirms it. Confirmations spread over their neighbours (one object file is one compiler) up to the furthest
   evidence; a run big enough becomes a suggestion, checked against every matched function. The ROM map shows it
   (Compiler view); agents read it with `compiler_map` and in `get_function`.
-- **C++ classes from the game's code** (MIPS: PlayStation 2, PlayStation, N64). Constructors store their class's
+- **C++ classes from the game's code** (MIPS: PlayStation 2, N64). Constructors store their class's
   vtable into the object; from those stores decompdecomp finds each class, its virtual functions, its base class and
   every field its functions touch (offset, type). Agents read them with `get_class`; `get_function` names the fields
   of `this` a function uses. On GTA San Andreas: 507 classes, and the recovered entity layout (position at +4, matrix

@@ -1,13 +1,14 @@
-"""CHD disc images (rom/chd.py): read in place, a hunk at a time. Checked on a real PlayStation CHD where one is at
-hand (the developer's own copy of Crash Bandicoot); the bit reader and Huffman tree everywhere."""
+"""CHD disc images (consoles/ps2/chd.py): read in place, a hunk at a time. The bit reader and Huffman tree; a whole PlayStation
+2 CHD only where the developer has their own copy at hand."""
 
 from pathlib import Path
 
 import pytest
 
-from decompnet.rom import chd, detect, psx
+from decompnet import consoles
+from decompnet.consoles.ps2 import chd, disc
 
-CRASH = Path.home() / "Downloads" / "Crash Bandicoot (USA).chd"
+DISC = Path.home() / "Downloads" / "ps2-game.chd"
 
 
 def test_bits_and_huffman():
@@ -16,11 +17,8 @@ def test_bits_and_huffman():
     assert bits.read(8) == 0  # past the end: zeros
 
 
-@pytest.mark.skipif(not CRASH.exists(), reason="needs a PlayStation CHD (the developer's own copy)")
-def test_a_playstation_chd_reads_like_its_disc():
-    with chd.Chd(CRASH) as disc:
-        assert disc.codecs[:2] == [b"cdlz", b"cdzl"]
-        image = psx._Disc(disc)
-        assert image.size == 2448 and image.find("SYSTEM.CNF").startswith(b"BOOT")
-    picked = detect.identify(CRASH)
-    assert picked.platform == "psx" and picked.info["game_code"] == "SCUS-94900"
+@pytest.mark.skipif(not DISC.exists(), reason="needs a PlayStation 2 CHD (the developer's own copy)")
+def test_a_playstation_2_chd_reads_like_its_disc():
+    with chd.Chd(DISC) as image:
+        assert disc._Disc(image).find("SYSTEM.CNF").startswith(b"BOOT2")
+    assert consoles.identify(DISC).id == "ps2"

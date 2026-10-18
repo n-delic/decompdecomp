@@ -1,10 +1,10 @@
-"""N64 code outside the main segment (rom/n64code.py): found, and placed at the address it runs from, from its own
+"""N64 code outside the main segment (consoles/n64/code.py): found, and placed at the address it runs from, from its own
 calls. Super Mario 64's engine (0x80378800) and goddard (0x8016F000) segments are found this way; here a synthetic
 ROM stands in for a game."""
 
 import struct
 
-from decompnet.rom.n64code import find_segments
+from decompnet.consoles.n64.code import find_segments
 
 NOP, JR_RA = 0, 0x03E00008
 
@@ -53,7 +53,7 @@ def test_packed_code_at_a_tlb_address_is_unpacked_and_placed():
     through the TLB: unpacked, appended, and placed at its address."""
     import zlib
 
-    from decompnet.rom.n64code import unpack_code
+    from decompnet.consoles.n64.code import unpack_code
 
     code = _code(0x7F000000, 160)  # its calls are 0x7F... addresses: a jal keeps the top four bits
     packer = zlib.compressobj(9, zlib.DEFLATED, -15)
@@ -70,7 +70,7 @@ def test_packed_code_at_a_tlb_address_is_unpacked_and_placed():
 
 
 def test_yaz0():
-    from decompnet.rom.n64code import yaz0
+    from decompnet.consoles.n64.code import yaz0
 
     # "abcabcabc": three literals, then a back-reference 3 back, 6 long (0x40 >> 4 = 4, + 2)
     data = b"Yaz0" + (9).to_bytes(4, "big") + bytes(8) + bytes([0b11100000]) + b"abc" + bytes([0x40, 0x02])

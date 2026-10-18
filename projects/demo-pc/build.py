@@ -11,6 +11,8 @@ MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain instal
 
 from __future__ import annotations
 
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +32,14 @@ def run(argv, cwd=BUILD):
         sys.exit(f"failed: {' '.join(map(str, argv))}\n{res.stdout}{res.stderr}")
 
 
+def write_key() -> None:
+    """build/demo.json: the game this build made and the address of every symbol in the linker's map, so
+    tests/test_consoles.py knows which of the project's functions is which."""
+    symbols = {m.group(1): int(m.group(2), 16)
+               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", (BUILD / "demoquest.map").read_text(), re.M)}
+    (BUILD / "demo.json").write_text(json.dumps({"game": "demoquest.exe", "symbols": symbols}, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
@@ -42,6 +52,7 @@ def main() -> None:
         run([*wibo, msvc / "CL.EXE", *CFLAGS, src])
     run([*wibo, msvc / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF",
          "/MAP:demoquest.map", "/OUT:demoquest.exe", "pcmain.obj", "game.obj"])
+    write_key()
     print(f"built build/demoquest.exe ({(BUILD / 'demoquest.exe').stat().st_size} bytes)")
 
 

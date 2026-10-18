@@ -286,6 +286,23 @@ Guard rails:
 
 ## 6. Plug-and-play consoles
 
+*Done: PS1, GBA and DS removed (forks of their public decomps still open). The connector is
+`consoles/__init__.py` (the `Console` class and the list of consoles); `consoles/n64/`, `consoles/ps2/`,
+`consoles/gc_wii/` and `consoles/pc/` hold each console's code and guides, `consoles/public.py` the consoles only
+public decomps cover, `consoles/template/` the package to copy; `arch/` (mips, ppc, x86, arm) the processor's facts.
+The engine, briefs, twins, tools, prompts, the fork engine, rooms, saves, the export and the GUI's API go through the
+console; the GUI takes names, status, layouts and compilers from `/api/state`'s `consoles`. PC's id is `pc`, with
+`win32` as its alias for older projects. `tests/test_consoles.py` is the conformance test (N64, PS2 and PC pass on
+the owner's machine; CI installs KMC GCC, EE-GCC, binutils-mips and m2c, so N64 and PS2 run there). CONTRIBUTING.md,
+AGENTS.md and docs/CONVENTIONS.md say where a console's code is, how to improve one, add one, and add a compiler.*
+
+*Left:* the drop zone's quick look at a file (`home.js`, `identifyHead`) still knows each console's magic numbers (a
+new console adds its file there, or an `/api/identify` that asks `consoles.identify` replaces it); the shared
+judge reads MIPS only (`rom/match.py`, `elfobj.py`'s HI16/LO16 pairing), so a ROM console on another processor needs
+a judge too; `search_flags`' compiler families (`FLAG_FAMILIES`) and the compiler map's habits are by compiler, in
+the engine; GameCube/Wii still has no end-to-end test anywhere (CodeWarrior is proprietary), and Wii no demo; PC no
+export; the `decomp selftest` for proprietary compilers, whose result would become a console's status, isn't written.
+
 **Problem.** Console support is spread over the engine, the importers, the judges and the GUI.
 
 **Goal.** One connector the app knows, and one package per console that plugs into it: how to import a game, how

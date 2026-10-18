@@ -17,30 +17,14 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 from elftools.elf.sections import SymbolTableSection
 
+from . import arch
+
 # e_machine -> arch key used throughout decompnet
 MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_ARM": "arm"}
 
-# (arch, reloc type) -> (byte offset from r_offset, length, big-endian bitmask to clear)
-# Anything not listed masks the 4 bytes at r_offset, which is right for most absolute/PC32 relocs.
-_MASKS: dict[tuple[str, int], tuple[int, int, int]] = {
-    ("x86_64", 1): (0, 8, 0xFFFFFFFFFFFFFFFF),  # R_X86_64_64
-    ("mips", 4): (0, 4, 0x03FFFFFF),  # R_MIPS_26
-    ("mips", 5): (0, 4, 0x0000FFFF),  # R_MIPS_HI16
-    ("mips", 6): (0, 4, 0x0000FFFF),  # R_MIPS_LO16
-    ("mips", 7): (0, 4, 0x0000FFFF),  # R_MIPS_GPREL16
-    ("mips", 21): (0, 4, 0x0000FFFF),  # R_MIPS_GOT16 (IDO -KPIC)
-    ("ppc", 4): (0, 2, 0xFFFF),  # R_PPC_ADDR16_LO
-    ("ppc", 5): (0, 2, 0xFFFF),  # R_PPC_ADDR16_HI
-    ("ppc", 6): (0, 2, 0xFFFF),  # R_PPC_ADDR16_HA
-    ("ppc", 10): (0, 4, 0x03FFFFFC),  # R_PPC_REL24
-    ("ppc", 109): (0, 4, 0x001FFFFF),  # R_PPC_EMB_SDA21
-    ("thumb", 10): (0, 4, 0x07FF07FF),  # R_ARM_THM_CALL (both halves of a Thumb bl)
-    ("thumb", 2): (0, 4, 0xFFFFFFFF),  # R_ARM_ABS32 (a literal-pool word)
-    ("arm", 28): (0, 4, 0x00FFFFFF),  # R_ARM_CALL
-    ("arm", 29): (0, 4, 0x00FFFFFF),  # R_ARM_JUMP24
-    ("arm", 43): (0, 4, 0x000F0FFF),  # R_ARM_MOVW_ABS_NC
-    ("arm", 44): (0, 4, 0x000F0FFF),  # R_ARM_MOVT_ABS
-}
+# (arch, reloc type) -> (byte offset from r_offset, length, big-endian bitmask to clear), from each processor's
+# module in arch/. Anything not listed masks the 4 bytes at r_offset, which is right for most absolute/PC32 relocs.
+_MASKS: dict[tuple[str, int], tuple[int, int, int]] = arch.reloc_masks()
 
 
 @dataclass(frozen=True)

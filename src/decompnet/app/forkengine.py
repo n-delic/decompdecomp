@@ -24,8 +24,8 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import similarity, toolchains
-from ..forks import catalog, csource, datadiff, drafts, dtksplits, ghidra, scratch_dsd, scratch_dtk, scratch_pe
+from .. import consoles, similarity, toolchains
+from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
 from ..network import Agent, Network, NetworkError
@@ -447,14 +447,12 @@ class ForkEngine:
                        "VALUES(?,?,?,?,?,?,?)", (pid, 1, "", None, "projects keep their headers in the tree", time.time(), ""))
             self.net._event(db, pid, None, "fork", event)
 
-    def create_scratch(self, game: Path, *, compiler: str | None = None, log=print) -> str:
-        """A GameCube, Wii, DS or PC game, from scratch: generate the community's project layout for it (dtk-template,
-        ds-decomp; for PC, decompdecomp's own from Ghidra's analysis) and open it like a fork."""
-        with open(game, "rb") as f:
-            head = f.read(0x1000)
-        maker = scratch_dsd if scratch_dsd.is_nds(head) else scratch_pe if scratch_pe.is_pe(head) else scratch_dtk
-        info = maker.game_info(game)
-        sha1 = info["sha1"] if maker is not scratch_dtk else hashlib.sha1(info["dol"]).hexdigest()
+    def create_scratch(self, game: Path, console: consoles.Console, *, compiler: str | None = None, log=print) -> str:
+        """A game of a PROJECT-mode console (GameCube, Wii, PC), from scratch: the console generates the community's
+        kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from Ghidra's
+        analysis), opened like a fork."""
+        info = console.game_info(game)
+        sha1 = info["sha1"]
         for p in self.net.store.all("SELECT slug, config FROM projects"):
             if json.loads(p["config"]).get("program_sha1") == sha1:
                 log(f"already set up as {p['slug']}")
@@ -462,7 +460,7 @@ class ForkEngine:
         slug = self._free_slug(_slug(f"{info['title']} {info['id']}" if info.get("kind") != "dol" else info["title"]))
         dest = self.net.workspace / slug
         try:
-            facts = maker.create(dest, game, compiler=compiler, log=log)
+            facts = console.create_project(dest, game, compiler=compiler, log=log)
         except BaseException:
             shutil.rmtree(dest, ignore_errors=True)
             raise
@@ -472,7 +470,7 @@ class ForkEngine:
                "legal": {"basis": "personal-copy", "license": "personal use only",
                          "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
                          "confirmed_at": time.time()}}
-        self._register(slug, facts["title"], f"{catalog.PLATFORMS[facts['platform']]} game {facts['id']}, from scratch",
+        self._register(slug, facts["title"], f"{consoles.name(facts['platform'])} game {facts['id']}, from scratch",
                        dest, cfg, f"started {facts['id']} from scratch")
         self.check(slug, log=log)
         return slug
@@ -512,7 +510,9 @@ class ForkEngine:
         if fp.kind() != "dtk":
             return
         versions = fp.versions()
-        gid = scratch_dtk.disc_id(game)
+        from ..consoles.gc_wii import scratch as dtk  # dtk projects are GameCube and Wii ones
+
+        gid = dtk.disc_id(game)
         if not gid or not versions or gid == cfg.get("version"):
             return
         if gid in versions:
@@ -524,20 +524,15 @@ class ForkEngine:
                                "pick your copy of one of those versions")
 
     def check_rom(self, slug: str, log=print) -> dict:
-        """A DS game started from scratch: rebuild its ROM and compare it with the user's copy (scratch_dsd.check_rom);
-        what it says is kept in the project's .decomp.wtf.json and shown on the project."""
+        """A game started from scratch: rebuild its program and compare it with the user's copy (its console's
+        check_rebuild); what it says is kept in the project's .decomp.wtf.json and shown on the project."""
         proj, fp, cfg = self.get(slug)
         manifest = fp.manifest or {}
-        if cfg.get("origin") != "scratch" or manifest.get("platform") not in ("nds", "gc", "wii"):
-            raise NetworkError("only games started from scratch rebuild here")
+        console = consoles.get(manifest.get("platform"))
+        if cfg.get("origin") != "scratch" or consoles.REBUILD_CHECK not in console.features:
+            raise NetworkError(f"{console.name or 'this'} projects started from scratch don't rebuild here")
         with self._build_locks[proj["id"]]:  # not while an agent's compile builds in the same tree
-            if manifest.get("platform") == "nds":
-                result = scratch_dsd.check_rom(fp.root, manifest["version"], log=log)
-            else:
-                ok, tail = fp.verify(log=log)
-                diff = scratch_dtk._differing(fp.root, manifest["version"], tail) or []
-                result = {"identical": ok, "detail": "identical" if ok else
-                          f"{len(diff)} files differ: {', '.join(diff[:8])}" if diff else (tail.strip().splitlines() or ["the build failed"])[-1][-300:]}
+            result = console.check_rebuild(fp, manifest["version"], log=log)
         manifest["rebuild"] = result | {"t": time.time()}
         (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return result
@@ -1445,7 +1440,7 @@ class ForkEngine:
 
     def mark_asm(self, fn, twin_name: str | None = None, reason: str | None = None) -> None:
         """fn's code is a matched assembly function's (runtime helpers each module links its own copy of), or code
-        no compiler makes (`reason`: see handwritten.py): agents can't write it in C, so it's out of their way."""
+        no compiler makes (`reason`: Console.asm_reason, arch/): agents can't write it in C, so it's out of their way."""
         meta = self._meta(fn)
         if twin_name:
             meta["asm_twin"] = twin_name
@@ -1461,7 +1456,7 @@ class ForkEngine:
         m = cfg.get("measures") or {}
         units = fp.units() if cfg.get("ready") else []
         scratch = next((u.scratch for u in units if u.scratch), None) or {}
-        platform = catalog.PLATFORMS.get(cfg.get("platform"), cfg.get("platform") or "unknown platform")
+        platform = consoles.name(cfg.get("platform")) or "unknown platform"
         return (f"{proj['name']}: a fork of {cfg['repo_url']} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
                 f"progress: {m.get('matched_functions', '?')}/{m.get('total_functions', '?')} functions, "
                 f"{float(m.get('matched_code_percent', 0) or 0):.2f}% of code, in {len(units)} source files\n"
@@ -2058,8 +2053,8 @@ class ForkEngine:
 
         proj, fp, _ = self.get(slug)
         name = what.strip().strip("`'\"")
-        if (fp.manifest or {}).get("platform") == "win32":  # the program's data isn't in the target objects
-            return scratch_pe.read_data(fp.root, fp.manifest, name, length)
+        if (text := consoles.get((fp.manifest or {}).get("platform")).read_data(fp, name, length)) is not None:
+            return text  # the console reads it (PC: the program's data isn't in the target objects)
         held = agent and self.net.store.one("SELECT f.unit FROM claims c JOIN functions f ON f.id=c.function_id "
                                             "WHERE c.agent_id=?", agent.id)
         units = [held["unit"]] if held else []
@@ -2337,11 +2332,11 @@ class ForkEngine:
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
             "slug": slug, "title": proj["name"], "description": proj["description"], "kind": "fork",
-            "platform": cfg.get("platform"), "platform_name": catalog.PLATFORMS.get(cfg.get("platform"), cfg.get("platform") or ""),
+            **consoles.get(cfg.get("platform")).project_facts(),
             "repo_url": cfg.get("repo_url"), "fork_kind": cfg.get("fork_kind"), "version": cfg.get("version"),
             "origin": cfg.get("origin"), "compiler_name": cfg.get("compiler"),
             "versions": fp.versions(), "ready": bool(cfg.get("ready")), "needs": need,
-            "rom": {"game_code": cfg.get("version") or "", "region": catalog.PLATFORMS.get(cfg.get("platform"), ""),
+            "rom": {"game_code": cfg.get("version") or "", "region": consoles.name(cfg.get("platform")),
                     "title": proj["name"]},
             "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
                          "proprietary": False, "supported": True},

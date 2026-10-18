@@ -3,26 +3,22 @@
 Community projects keep the assembly of undecompiled functions in the tree: splat projects one file per
 function (`asm/nonmatchings/<file>/<function>.s`, referenced by `INCLUDE_ASM`), dtk projects one file per
 unit under `build/<version>/asm/`. m2c turns that into a C draft for MIPS (N64, PS1, PS2), PowerPC
-(GameCube, Wii), ARM and Thumb (GBA, DS).
+(GameCube, Wii), ARM and Thumb (public GBA and DS decomps).
 """
 
 from __future__ import annotations
 
 import re
-import subprocess
-import threading
 from pathlib import Path
 
-from .. import seeds, toolchains
+from .. import consoles, seeds, toolchains
 
-# platform -> m2c target, without the language
-M2C = {"n64": "mips", "ps": "mipsel-gcc", "psp": "mipsel-gcc", "ps2": "mipsee-gcc", "gc": "ppc-mwcc",
-       "wii": "ppc-mwcc", "gba": "gba", "nds": "arm", "3ds": "arm"}
 MAX_ASM = 2 * 1024 * 1024
 
 
 def supported(platform: str) -> bool:
-    return platform in M2C
+    """Whether m2c reads the code of this platform's console (its m2c target: consoles/)."""
+    return bool(consoles.get(platform).m2c_target())
 
 
 def find_asm(root: Path, unit_name: str, symbol: str, source_text: str | None) -> Path | None:
@@ -57,65 +53,19 @@ def draft(root: Path, platform: str, unit_name: str, symbol: str, source_path: s
           compiler_hint: str = "", timeout: float = 30, valid: bool = False) -> str | None:
     """m2c's draft of one function; `valid`: in a form that compiles (m2c's macros for what it couldn't tell, which
     from-scratch projects define in common.h)."""
-    target = M2C.get(platform)
+    target = consoles.get(platform).m2c_target(compiler_hint)
     if not target or toolchains.installed("m2c") is None:
         return None
     src = root / source_path if source_path else None
     source_text = src.read_text(errors="replace", encoding="utf-8") if src and src.exists() else None
     asm = find_asm(root, unit_name, symbol, source_text)
     lang = "c++" if source_path and Path(source_path).suffix.lower() in (".cpp", ".cc", ".cxx", ".cp") else "c"
-    if asm is None and platform == "nds":  # ds-decomp keeps code as objects: its own disassembly, per source file
-        block = _dsd_block(root, unit_name, symbol)
-        if block is None:
-            return None
-        text, thumb = block
-        return seeds.run_m2c(text, symbol, f"{'gba' if thumb else 'arm'}-mwcc-{lang}", timeout=timeout, valid=valid)
     if asm is None:
         return None
     text = asm.read_text(errors="replace", encoding="utf-8")
     if len(text) > MAX_ASM or ".fn " in text:
         text = _block(text, symbol)
-    if platform == "n64":
-        target += "-ido" if "ido" in compiler_hint.lower() else "-gcc"
     return seeds.run_m2c(text, symbol, f"{target}-{lang}", timeout=timeout, valid=valid)
-
-
-_DSD_LOCK = threading.Lock()
-
-
-def _dsd_asm(root: Path) -> Path | None:
-    """`dsd dis` of a ds-decomp project (one .s per source file), made again when its splits change."""
-    from .project import STATE
-
-    configs = sorted(root.glob("config/*/arm9/config.yaml"))
-    if not configs or toolchains.installed("dsd") is None:
-        return None
-    out = root / STATE / "dsd-asm"
-    stamp = out / ".made"
-    newest = max((p.stat().st_mtime for p in root.glob("config/**/*.txt")), default=0)
-    with _DSD_LOCK:
-        if not stamp.exists() or stamp.stat().st_mtime < newest:
-            subprocess.run([str(toolchains.binary("dsd")), "dis", "-c", str(configs[0].relative_to(root)), "-a",
-                            str(out)], cwd=root, capture_output=True, timeout=600)
-            out.mkdir(parents=True, exist_ok=True)
-            stamp.touch()
-    return out
-
-
-def _dsd_block(root: Path, unit_name: str, symbol: str) -> tuple[str, bool] | None:
-    """(the function's assembly as m2c reads it, is Thumb) from ds-decomp's disassembly."""
-    asm = _dsd_asm(root)
-    path = asm / f"{unit_name}.s" if asm else None
-    if path is None or not path.is_file():
-        return None
-    text = path.read_text(errors="replace", encoding="utf-8")
-    m = re.search(rf"^\s*(arm|thumb)_func_start {re.escape(symbol)}\n(.*?)^\s*\1_func_end {re.escape(symbol)}\b",
-                  text, re.M | re.S)
-    if not m:
-        return None
-    body = re.sub(r"\s*;.*$", "", m.group(2), flags=re.M)  # dsd's comments (addresses)
-    lines = [ln for ln in body.splitlines() if ln.strip() and not ln.strip().startswith(f"{symbol}:")]
-    return f".text\nglabel {symbol}\n" + "\n".join(lines) + "\n", m.group(1) == "thumb"
 
 
 def add_m2c_macros(header: Path) -> bool:

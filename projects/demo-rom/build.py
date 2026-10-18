@@ -6,7 +6,7 @@ Everything is compiled with the pinned KMC-compatible GCC 2.7.2, exactly like a 
 and linked to run from 0x80000400. The boot code area (IPL3) is left empty: this ROM exists to be
 decompiled, not played, and the real IPL3 is Nintendo's code.
 
-    uv run python projects/demo-rom/build.py      ->  build/demo-quest-64.z64 (+ .elf with symbols)
+    uv run python projects/demo-rom/build.py      ->  build/demo-quest-64.z64 (+ .elf with symbols, demo.json)
 """
 
 from __future__ import annotations
@@ -72,6 +72,18 @@ def n64_crc(rom: bytes) -> tuple[int, int]:
     return t6 ^ t4 ^ t3, t5 ^ t2 ^ t1
 
 
+def write_key(build: Path, game: Path, elf: Path) -> None:
+    """build/demo.json: the game this build made and the address of every symbol, so tests/test_consoles.py knows
+    which of the project's functions is which (the game itself is stripped, like a real one)."""
+    import json
+
+    from elftools.elf.elffile import ELFFile
+
+    with open(elf, "rb") as f:
+        symbols = {s.name: s["st_value"] for s in ELFFile(f).get_section_by_name(".symtab").iter_symbols() if s.name}
+    (build / "demo.json").write_text(json.dumps({"game": game.name, "symbols": symbols}, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
@@ -96,6 +108,7 @@ def main() -> None:
     out = BUILD / "demo-quest-64.z64"
     out.write_bytes(rom)
     code.unlink()
+    write_key(BUILD, out, elf)
     print(f"built {out.relative_to(HERE)}: {len(body)} bytes of code+data, CRC {crc1:08X} {crc2:08X}")
 
 

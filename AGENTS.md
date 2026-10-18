@@ -47,19 +47,30 @@ Compilers and tools (splat, objdiff, dtk, wibo, Ghidra, period compilers) are pi
 `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. Proprietary
 compilers are only installed after the user accepts that in Setup; don't add code that fetches them silently.
 
-## Two ways a game is decompiled
+## Consoles, and the two ways a game is decompiled
 
-1. **ROM mode** (N64, PS1, PS2, GBA): `src/decompnet/rom/` splits the game (splat/spimdisasm, luvdis), and
-   `rom/match.py` (MIPS) / `rom/match_arm.py` (ARM) *link* each compiled candidate at the function's real address
-   and compare bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them). Exported as a rebuildable tree by `rom/export*.py`.
-2. **Fork mode** (public decomps forked by repository address, and GameCube/Wii/DS/PC started from scratch): a community-shaped
-   project on disk with an `objdiff.json`; objdiff judges each unit. `forks/project.py` detects and builds projects,
-   `app/forkengine.py` drives them. From-scratch importers generate such a project:
-   `forks/scratch_dtk.py` (GameCube/Wii, dtk-template), `forks/scratch_dsd.py` (DS, ds-decomp, template in
-   `forks/ds_template/`) and `forks/scratch_pe.py` (Windows PC: Ghidra finds functions, decompdecomp delinks them
-   into COFF objects itself, template in `forks/pc_template/`). A new from-scratch platform that has a
-   delinker/objdiff story belongs here. Fork-mode helpers that read objects with pyelftools must tolerate COFF
-   (PC, Xbox): treat an `ELFError` as "no verdict".
+Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps2/`, `gc_wii/` (GameCube and
+Wii), `pc/` (Windows games). Its `__init__.py` makes the console (its facts and parts) and its docstring lists its
+files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
+list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never
+compares console names: a console-specific `if` outside `consoles/` is a bug. What depends only on the processor
+(relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`,
+`x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
+
+1. **ROM mode** (N64, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
+   code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
+   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them). Exported as a
+   rebuildable tree by `rom/export*.py`.
+2. **PROJECT mode** (GameCube/Wii/PC started from scratch, and public decomps forked by repository address): a
+   community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
+   (`consoles/gc_wii/scratch.py`: dtk-template; `consoles/pc/scratch.py`: Ghidra finds functions, decompdecomp
+   delinks them into COFF objects itself, from `consoles/pc/project_template/`). `forks/project.py` detects and
+   builds projects, `app/forkengine.py` drives them. Fork-mode helpers that read objects with pyelftools must
+   tolerate COFF (PC, Xbox): treat an `ELFError` as "no verdict".
+
+Improving a console, adding a console (copy `consoles/template/`, fill in the connector's parts, add a demo game,
+pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to a console: CONTRIBUTING.md,
+"Consoles", step by step.
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
@@ -69,7 +80,7 @@ from the vtables constructors store, MIPS: the `get_class` tool and the class li
 tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
 + `app/gtkwindow.py` + `app/tray.py` (the window: GTK and WebKitGTK from the system, run by the system's python3; the
 page answers only it, by the secret in its user agent; and the tray icon; tests set `DECOMP_WINDOW=0` and
-`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/guide/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
+`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
 
 ## Conventions
 

@@ -69,10 +69,7 @@
     <label><input type="radio" name="platform" value="n64" checked><span>Nintendo 64</span></label>
     <label><input type="radio" name="platform" value="gc"><span>GameCube</span></label>
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
-    <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
-    <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
-    <label><input type="radio" name="platform" value="nds"><span>DS</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
   </fieldset>
   <output class="answer js-only" id="answer" for="platform" aria-live="polite" hidden></output>
@@ -108,16 +105,6 @@
         <li><small>You get</small><b>A dtk-template project</b><span>the shape community decomps use</span></li>
       </ol>
     </article>
-    <article class="pipeline" data-platform="ps1" data-file="game.chd">
-      <h3><span class="pl-name">PlayStation</span> <span class="status beta">Beta</span></h3>
-      <ol class="stations">
-        <li><small>Your file</small><b>Disc or EXE</b><span>.bin/.cue, .iso or .chd</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm; overlays in the disc's other files too</span></li>
-        <li><small>Built by</small><b>GCC 2.7.2 / 2.8.1</b><span>the PSY-Q era compilers</span></li>
-        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
-        <li><small>You get</small><b>A rebuildable project</b><span>that builds your EXE again, byte for byte</span></li>
-      </ol>
-    </article>
     <article class="pipeline" data-platform="ps2" data-file="game.iso">
       <h3><span class="pl-name">PlayStation 2</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
@@ -126,26 +113,6 @@
         <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2, CodeWarrior 2.3.3 / 3.0.1; C and C++; one compiler per address range when a game mixes them</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
-      </ol>
-    </article>
-    <article class="pipeline" data-platform="gba" data-file="game.gba">
-      <h3><span class="pl-name">Game Boy Advance</span> <span class="status beta">Beta</span></h3>
-      <ol class="stations">
-        <li><small>Your file</small><b>ROM</b><span>.gba</span></li>
-        <li><small>Split by</small><b>luvdis</b><span>plus a pass for code nothing calls</span></li>
-        <li><small>Built by</small><b>agbcc</b><span>the compiler GBA games were built with</span></li>
-        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
-        <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
-      </ol>
-    </article>
-    <article class="pipeline" data-platform="nds" data-file="game.nds">
-      <h3><span class="pl-name">DS</span> <span class="status beta">Beta</span></h3>
-      <ol class="stations">
-        <li><small>Your file</small><b>ROM</b><span>.nds</span></li>
-        <li><small>Split by</small><b>ds-decomp</b><span>ARM9, ITCM, DTCM and overlays</span></li>
-        <li><small>Built by</small><b>CodeWarrior for DS</b><span>1.2 to DSi 1.6</span></li>
-        <li><small>Judged by</small><b>objdiff</b><span>in the project's own build</span></li>
-        <li><small>You get</small><b>A ds-decomp project</b><span>that builds the ROM again on each build</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="pc" data-file="game.exe">
@@ -233,7 +200,7 @@ jr      $ra
 </main>
 
 <footer class="foot">
-  <p>decompdecomp continues <a href="https://github.com/i12bp8/decomp.wtf">decomp.wtf</a> by Sam Wolfs. It is built on splat, spimdisasm, objdiff, decomp-toolkit, ds-decomp, luvdis, m2c, Ghidra and the decompals compilers.</p>
+  <p>decompdecomp continues <a href="https://github.com/i12bp8/decomp.wtf">decomp.wtf</a> by Sam Wolfs. It is built on splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra and the decompals compilers.</p>
   <nav aria-label="Site"><a href="https://github.com/n-delic/decompdecomp">GitHub</a><a href="https://github.com/n-delic/decompdecomp/blob/main/docs/GUIDE.md">Guide</a><a href="https://github.com/n-delic/decompdecomp/issues">Issues</a><a href="privacy.html">Privacy</a></nav>
   <p class="foot-small">AGPL-3.0 · Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</p>
 </footer>

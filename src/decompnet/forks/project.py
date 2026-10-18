@@ -239,13 +239,13 @@ class ForkProject:
 
     @staticmethod
     def _from_disc(data: bytes, name: str) -> bytes | None:
-        """A file (e.g. SLUS_013.95) taken from a PlayStation disc image."""
-        from ..rom import psx
+        """A file (e.g. SLUS_013.95) taken from a PlayStation disc image (ISO 9660)."""
+        from ..consoles.ps2 import disc
 
-        if not psx.is_disc(data):
+        if not disc.is_disc(data):
             return None
         try:
-            return psx._Disc(data).find(name)
+            return disc._Disc(data).find(name)
         except (ValueError, IndexError, KeyError):
             return None
 
@@ -255,9 +255,9 @@ class ForkProject:
             m = self.manifest
             cmds = m.get("setup", [])
             if m.get("created") == "from scratch" and cmds:  # point at this computer's tools, not the creator's
-                from . import scratch_dsd, scratch_dtk, scratch_pe
+                from .. import consoles
 
-                args = {"nds": scratch_dsd, "win32": scratch_pe}.get(m.get("platform"), scratch_dtk).tool_args()
+                args = consoles.get(m.get("platform")).tool_args()
                 first = cmds[0]
                 keep = next((i for i, c in enumerate(first) if c.startswith("--")), len(first))
                 cmds = [[*first[:keep], *args], *cmds[1:]]
@@ -331,9 +331,9 @@ class ForkProject:
         missing = [w for w in wanted if not w.endswith("/") and ".." not in w and not (orig / w).exists()]
         if not missing:
             return 0
-        from . import scratch_dtk
+        from ..consoles.gc_wii import scratch as dtk  # dtk projects are GameCube and Wii ones
 
-        discs = [(p, scratch_dtk.disc_id(p)) for p in sorted(orig.iterdir()) if p.is_file() and p.stat().st_size > 1 << 20]
+        discs = [(p, dtk.disc_id(p)) for p in sorted(orig.iterdir()) if p.is_file() and p.stat().st_size > 1 << 20]
         discs = [(p, gid) for p, gid in discs if gid]
         disc = next((p for p, gid in discs if gid == version), None) or (discs[0][0] if len(discs) == 1 else None)
         if disc is None:
@@ -343,7 +343,7 @@ class ForkProject:
         for w in missing:
             by_dir.setdefault(str(Path(w).parent), []).append(w)
         for parent, files in by_dir.items():
-            scratch_dtk.vfs_copy(disc, files, orig / parent)
+            dtk.vfs_copy(disc, files, orig / parent)
         return len(missing)
 
     def setup(self, version: str | None = None, log=print) -> None:

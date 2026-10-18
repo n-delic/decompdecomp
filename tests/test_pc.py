@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 
 from decompnet import toolchains
-from decompnet.forks import csource, ghidra, scratch_pe
+from decompnet.consoles.pc import scratch as scratch_pe
+from decompnet.forks import csource, ghidra
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -70,7 +71,7 @@ def pc(tmp_path_factory):
 def test_every_function_is_found_with_its_extent(pc):
     net, slug = pc
     ov = net.overview(slug)
-    assert ov["kind"] == "fork" and ov["origin"] == "scratch" and ov["platform"] == "win32" and ov["ready"]
+    assert ov["kind"] == "fork" and ov["origin"] == "scratch" and ov["platform"] == "pc" and ov["ready"]
     syms = {a: s for s, a in _map().items() if not s.startswith("??") and a < 0x402000}
     rows = net.store.all("SELECT name, size FROM functions WHERE project_id=?", net.project_row(slug)["id"])
     assert len(rows) == len(syms) == 19  # clamp_s32, which nothing calls, too: Ghidra misses it, the gap doesn't

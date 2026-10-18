@@ -21,8 +21,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from ..forks import scratch_dsd, scratch_dtk
-from ..forks.project import ForkError, ForkProject
+from .. import consoles
+from ..forks.project import ForkProject
 from ..network import NetworkError
 
 MAX_BUNDLE = 512 * 1024 * 1024
@@ -37,18 +37,11 @@ def _git(root: Path, *args: str, check: bool = True, timeout: float = 600) -> st
 
 
 def game_identity(path: Path) -> str:
-    """Which game a file is, whatever form it comes in: a DS ROM's own bytes; a GameCube/Wii disc's main program
-    (any disc format; a DOL on its own too); any other game file's bytes."""
-    with open(path, "rb") as f:
-        head = f.read(0x440)
-    if scratch_dsd.is_nds(head):
-        return _sha1_file(path)
-    try:
-        if scratch_dtk.is_dol(head if path.stat().st_size >= 64 << 20 else path.read_bytes()) or \
-                scratch_dtk.disc_kind(head) is not None:
-            return hashlib.sha1(scratch_dtk.game_info(path)["dol"]).hexdigest()
-    except ForkError:
-        pass
+    """Which game a file is, whatever form it comes in: what its console says (Console.identity: a GameCube/Wii disc's
+    main program, in any disc format), else the file's own bytes."""
+    for console in consoles.startable():
+        if (sha1 := console.identity(path)):
+            return sha1
     return _sha1_file(path)
 
 

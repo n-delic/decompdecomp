@@ -39,7 +39,7 @@ from pathlib import Path
 
 import httpx
 
-from .. import network
+from .. import consoles, network
 from ..network import NetworkError
 from . import tools
 from .engine import RomNetwork
@@ -1266,13 +1266,9 @@ class Manager:
         text = self._prompt(s)
         # the know-how every session reads first, given up front (saves each session its first tool calls)
         ov = self.net.overview(s.slug)
-        if ov.get("kind") == "fork":
-            # CodeWarrior's register and stack rules decide most of what's left on GameCube, Wii and DS
-            topics = ["fork", "objdiff", *(["mwcc"] if ov.get("platform") in ("gc", "wii", "nds") else
-                                           ["x86"] if ov.get("platform") == "win32" else [])]
-        else:
-            topics = ["workflow", {"psx": "psx", "ps2": "ps2", "gba": "agbcc"}.get(ov.get("platform")) or (
-                "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")]
+        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])  # matching its compiler
+        topics = ["fork", "objdiff"] if ov.get("kind") == "fork" else ["workflow"]
+        topics += [guide] if guide else []
         text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(
             tools._guide(t) for t in topics)
         if (known := self.net.knowledge.for_prompt(s.slug)):
@@ -1285,14 +1281,13 @@ class Manager:
         ov = self.net.overview(s.slug)
         count = s.options.get("per_session", PER_SESSION)
         if ov.get("kind") == "fork":
-            guides = ["fork", "objdiff", *tools.PLATFORM_GUIDES.get(ov.get("platform") or "", [])]
+            guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
             return tools.FORK_PROMPT.format(title=ov["title"], platform=ov.get("platform_name") or "its platform",
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
         if s.options.get("task") == "readable":
             return tools.READABLE_PROMPT.format(title=ov["title"], count=count)
-        guide = {"psx": "psx", "ps2": "ps2", "gba": "agbcc"}.get(ov.get("platform")) or (
-            "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")
+        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
 

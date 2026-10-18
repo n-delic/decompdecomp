@@ -102,7 +102,7 @@ every project in it. To take a single project, or to keep it in git:
 | Nintendo 64 | Works: tested on real games |
 | GameCube, Wii | Works, but not yet tested from start to end |
 | Windows PC games | Beta |
-| 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
+| PlayStation, Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
 

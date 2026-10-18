@@ -74,13 +74,13 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     # rooms this computer belongs to reconnect (members keep their place; their agents wait while the host is away)
     net.restore_links()
 
-    def name_kernel_calls() -> None:  # PS2 projects imported before their kernel calls were named at import
-        for row in net.store.all("SELECT slug FROM projects"):
+    def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
+        for row in net.store.all("SELECT slug, config FROM projects"):
             try:
-                net.name_kernel_calls(row["slug"], log=jobs.logger.info)
+                net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
             except Exception:  # never stands between the user and the app
-                jobs.logger.exception("naming %s's kernel calls failed", row["slug"])
-    threading.Thread(target=name_kernel_calls, daemon=True, name="kernel-calls").start()
+                jobs.logger.exception("%s's console work at start failed", row["slug"])
+    threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
     saves.Autosave(net).start()  # each ROM project's work as plain files in its progress/ folder (app/saves.py)
 
     def options_now(kind: str, options: dict) -> dict | None:

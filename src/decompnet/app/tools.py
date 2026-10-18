@@ -11,41 +11,27 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .. import __version__
+from .. import __version__, consoles
 from ..network import Agent, NetworkError
 from .engine import RomNetwork
 
+# The guides every console shares (app/guide/); each console's own are in its package (consoles/<id>/guides/)
 GUIDES = {
     "workflow": "the matching loop, reading diffs, priorities",
     "mips": "MIPS registers, calling convention, delay slots, types from instructions",
-    "gcc-kmc": "matching KMC GCC 2.7.2 code",
-    "ido": "matching IDO 5.3/7.1 code",
     "m2c": "reading the machine-generated draft",
     "data": "globals, strings, tables, floats, data you define",
     "structs": "working out struct layouts from offsets",
-    "n64": "N64 memory map, OS library, graphics/audio data",
     "naming": "naming functions and data",
     "fork": "working in a fork of a public decomp: the loop, conventions, what's allowed",
     "objdiff": "reading objdiff's diffs and match percentages",
     "ppc": "PowerPC (GameCube, Wii): registers, calling convention, common patterns",
-    "mwcc": "matching Metrowerks CodeWarrior code (GameCube, Wii, DS)",
     "cpp": "decompiling C++: classes, vtables, constructors, inlines, name mangling",
-    "psx": "matching PlayStation (PSY-Q GCC + maspsx) code",
-    "ps2": "matching PlayStation 2 (EE-GCC, MWCC PS2) code",
     "arm": "ARM and Thumb (GBA, DS, 3DS): registers, conditional code, literal pools",
-    "agbcc": "matching Game Boy Advance code built with agbcc",
-    "x86": "x86 and MSVC (PC, Xbox): calling conventions, SEH, matching MSVC output",
     "aarch64": "AArch64 and Clang (Switch): registers, matching Clang output",
     "similarity": "finding similar functions and reusing matched code",
 }
 
-# Guides worth reading first on each platform.
-PLATFORM_GUIDES = {
-    "n64": ["mips"], "ps": ["mips", "psx"], "ps2": ["mips", "ps2"], "psp": ["mips"],
-    "gc": ["ppc", "mwcc", "cpp"], "wii": ["ppc", "mwcc", "cpp"], "nds": ["arm", "mwcc"], "3ds": ["arm", "cpp"],
-    "gba": ["arm", "agbcc"], "switch": ["aarch64", "cpp"], "win32": ["x86", "cpp"], "xbox": ["x86", "cpp"],
-    "xbox360": ["ppc", "cpp"],
-}
 
 INSTRUCTIONS = """\
 decompdecomp: you are decompiling a game ROM that the user owns into C that compiles to exactly the same
@@ -139,10 +125,20 @@ Guides: {guides}. Be brief in your messages: work, don't narrate.
 """
 
 
+def _console_guides() -> dict:
+    """topic -> file of the guides consoles keep in their packages (consoles/<id>/guides/<topic>.md)."""
+    return {path.stem: path for folder in consoles.guide_dirs() for path in sorted(folder.glob("*.md"))}
+
+
 def _guide(topic: str = "") -> str:
     topic = topic.strip().lower()
+    own = _console_guides()
+    if topic in own:
+        return own[topic].read_text(encoding="utf-8")
     if topic not in GUIDES:
-        listing = "\n".join(f"- {k}: {v}" for k, v in GUIDES.items())
+        # a console's guide is described by its title, the first line of its file
+        about = GUIDES | {k: p.read_text(encoding="utf-8").split("\n", 1)[0].lstrip("# ") for k, p in own.items()}
+        listing = "\n".join(f"- {k}: {v}" for k, v in about.items())
         return f"Guides (call guide with one of these topics):\n{listing}"
     return resources.files("decompnet.app").joinpath("guide", f"{topic}.md").read_text(encoding="utf-8")
 

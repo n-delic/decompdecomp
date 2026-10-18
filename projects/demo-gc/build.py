@@ -34,6 +34,18 @@ def run(argv, cwd=BUILD):
         sys.exit(f"failed: {' '.join(map(str, argv))}\n{res.stdout}{res.stderr}")
 
 
+def write_key(build: Path, game: Path, elf: Path) -> None:
+    """build/demo.json: the game this build made and the address of every symbol, so tests/test_consoles.py knows
+    which of the project's functions is which (the game itself is stripped, like a real one)."""
+    import json
+
+    from elftools.elf.elffile import ELFFile
+
+    with open(elf, "rb") as f:
+        symbols = {s.name: s["st_value"] for s in ELFFile(f).get_section_by_name(".symtab").iter_symbols() if s.name}
+    (build / "demo.json").write_text(json.dumps({"game": game.name, "symbols": symbols}, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     if BUILD.exists():
         shutil.rmtree(BUILD)
@@ -66,6 +78,7 @@ def main() -> None:
     (BUILD / "demo.lcf").write_text(lcf)
     run([*wibo, mw.with_name("mwldeppc.exe"), "-fp", "hardware", "-nodefaults", "-lcf", "demo.lcf", "-o", "demoq_gc.elf", *objs])
     run([toolchains.binary("dtk"), "elf2dol", "demoq_gc.elf", "main.dol"])
+    write_key(BUILD, BUILD / "main.dol", BUILD / "demoq_gc.elf")
     print(f"built build/main.dol ({(BUILD / 'main.dol').stat().st_size} bytes)")
 
 

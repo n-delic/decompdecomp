@@ -6,7 +6,7 @@ import json
 import struct
 
 from decompnet.app.engine import RomNetwork
-from decompnet.consoles.ps2 import syscalls
+from decompnet.consoles.ps2 import name_kernel_calls, syscalls
 
 SET_V1 = 0x24030000
 
@@ -49,10 +49,10 @@ def test_a_ps2_game_names_its_kernel_calls_once(tmp_path):
                    "VALUES(?, 1, 'void func_00100000(void);', 'basic types', 0, '')", (pid,))
         best = "void f(void) { func_00100000(); func_00100010(); }"
         db.execute("UPDATE functions SET best_source=? WHERE name='func_00100020'", (best,))
-    assert net.name_kernel_calls("game", log=lambda *_: None) == 2
+    assert name_kernel_calls(net, "game", log=lambda *_: None) == 2
     names = [r["name"] for r in net.store.all("SELECT name FROM functions ORDER BY vram")]
     assert names == ["FlushCache", "CreateThread", "func_00100020"]
     best = net.store.one("SELECT best_source FROM functions WHERE name='func_00100020'")["best_source"]
     assert best == "void f(void) { FlushCache(); CreateThread(); }"
     assert net._context(net._project("game")["id"], "")["header"] == "void FlushCache(void);"  # the shared header too
-    assert net.name_kernel_calls("game", log=lambda *_: None) == 0  # once
+    assert name_kernel_calls(net, "game", log=lambda *_: None) == 0  # once

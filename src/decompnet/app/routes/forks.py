@@ -1,5 +1,5 @@
 """Public decomps forked by their repository address, and the projects started from scratch on the same build
-(GameCube, Wii, DS, PC): the project's AI policy, the clone, the game files, setup and its checks.
+(GameCube, Wii, PC): the project's AI policy, the clone, the game files, setup and its checks.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/fork/rom-check", methods=["POST"])
     async def api_fork_rom_check(request: Request) -> Response:
-        """A DS game from scratch: rebuild the ROM and compare it with the user's copy."""
+        """A GameCube or Wii game from scratch: rebuild the program and compare it with the user's copy."""
         if (bad := guard(request, write=True)):
             return bad
         slug = str((await body(request)).get("slug", ""))

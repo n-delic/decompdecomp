@@ -33,7 +33,7 @@ class AutopilotMixin:
                     raise NetworkError("autopilot's drafts need m2c, the draft decompiler: install it in Setup")
                 proj = self._project(slug)
                 tc = self.cfg(proj)["compiler"]["toolchain"]
-                if not seeds.M2C_TARGETS.get(tc):
+                if not seeds.m2c_target(tc):
                     raise NetworkError("m2c can't read this project's code (no draft decompiler for it yet)")
                 ids = [r["id"] for r in self.store.all("SELECT id FROM functions WHERE project_id=? AND status='open' "
                                                        "ORDER BY n_insns, vram", proj["id"])]

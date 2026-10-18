@@ -21,11 +21,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 B = json.loads((ROOT / "build.json").read_text(encoding="utf-8"))
-PREAMBLE = {
-    "n64": '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n',
-    "psx": '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n',
-    "ps2": '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n',
-}
 OWN = ".rodata .rodata.* .data .data.* .sdata .rdata .lit4 .lit8 .bss .sbss"
 DISCARD = ("*(.reginfo) *(.MIPS.abiflags) *(.MIPS.options) *(.pdr) *(.comment) *(.mdebug*) *(.gnu.attributes) "
            "*(.note*) *(.gptab.*)")
@@ -95,7 +90,7 @@ def objects() -> tuple[list[tuple[str, str, str]], dict[str, str]]:
         else:
             wrap = ROOT / "build" / "wrap" / f"{fn['name']}.s"
             wrap.parent.mkdir(parents=True, exist_ok=True)
-            wrap.write_text(PREAMBLE[B["platform"]] + f'.include "{fn["asm"]}"\n', encoding="utf-8")
+            wrap.write_text(B["asm_preamble"] + f'.include "{fn["asm"]}"\n', encoding="utf-8")
             obj = f"build/{Path(fn['asm']).with_suffix('.o').as_posix()}"
             out.append(("asm", wrap.relative_to(ROOT).as_posix(), obj))
         provides[fn["name"]] = obj

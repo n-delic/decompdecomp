@@ -47,6 +47,18 @@ def out_dir(toolchain: str, debug: bool = False) -> Path:
     return BUILD if toolchain == "ee-gcc-2.96" else BUILD / toolchain
 
 
+def write_key(build: Path, game: Path, elf: Path) -> None:
+    """build/demo.json: the game this build made and the address of every symbol, so tests/test_consoles.py knows
+    which of the project's functions is which (the game itself is stripped, like a real one)."""
+    import json
+
+    from elftools.elf.elffile import ELFFile
+
+    with open(elf, "rb") as f:
+        symbols = {s.name: s["st_value"] for s in ELFFile(f).get_section_by_name(".symtab").iter_symbols() if s.name}
+    (build / "demo.json").write_text(json.dumps({"game": game.name, "symbols": symbols}, indent=1), encoding="utf-8")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("toolchain", nargs="?", default="ee-gcc-2.96")
@@ -99,6 +111,7 @@ def main() -> None:
         shutil.copy(elf, game)
     else:
         run([ld.replace("-ld", "-objcopy"), "--strip-all", str(elf), str(game)])
+    write_key(build, game, elf)
     print(f"built {game.relative_to(HERE)} ({game.stat().st_size} bytes)")
 
 

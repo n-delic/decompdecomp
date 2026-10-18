@@ -1,4 +1,4 @@
-"""Code no compiler makes (handwritten.py): CodeWarrior's runtime helpers, which take their input in r11/r12 (each
+"""Code no compiler makes (arch/ppc.py, arch/mips.py): CodeWarrior's runtime helpers, which take their input in r11/r12 (each
 Mario Party 6 module links copies of them), are taken out of agents' way; compiled code never is."""
 
 import struct
@@ -8,7 +8,7 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app.twins import object_prints
-from decompnet.handwritten import ppc_reason
+from decompnet.arch.ppc import asm_reason as ppc_reason
 
 
 def code(*words: int) -> bytes:
@@ -73,22 +73,27 @@ def le(*words: int) -> bytes:
 
 
 def test_mips_code_no_compiler_makes():
-    """#22 (a PS1 game): agents spent their turns on a one-instruction piece that runs into the next function, and on
-    PSY-Q's libgte (ctc2: the GTE, which C can't drive without inline asm)."""
-    from decompnet.handwritten import mips_reason
+    """#22: agents spent their turns on a one-instruction piece that runs into the next function, and on code that
+    drives a coprocessor C can't reach without inline asm."""
+    from decompnet import consoles
+    from decompnet.arch.mips import asm_reason
 
-    assert mips_reason(le(0x8D110024), False, "psx").startswith("ends without a return")  # lw s1, 0x24(t0)
-    assert "GTE" in mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "psx")  # ctc2 a0, $26; jr ra; nop
+    ps2 = consoles.get("ps2").asm_reason  # the PS2's facts: EABI arguments, VU0 as coprocessor 2
+
+    def mips_reason(code, big_endian, console):
+        return ps2(code) if console == "ps2" else asm_reason(code, big_endian)
+
+    assert mips_reason(le(0x8D110024), False, "ps2").startswith("ends without a return")  # lw s1, 0x24(t0)
+    assert "VU0" in mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "ps2")  # ctc2 a0, $26; jr ra; nop
+    assert mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "n64") is None  # no VU0 there
     assert "coprocessor 0" in mips_reason(le(0x40026000, 0x03E00008, 0), False, "n64")  # mfc0 v0, Status
-    assert mips_reason(le(0x8D020000, 0x03E00008, 0), False, "psx").startswith("reads t0")  # lw v0, 0(t0); jr ra
+    assert mips_reason(le(0x8D020000, 0x03E00008, 0), False, "n64").startswith("reads t0")  # lw v0, 0(t0); jr ra
     # compiled code: a prologue, a call, the epilogue; on the PS2, t0-t3 carry arguments
     prologue = le(0x27BDFFE8, 0xAFBF0010, 0x0C000000, 0, 0x8FBF0010, 0x03E00008, 0x27BD0018)
-    assert mips_reason(prologue, False, "psx") is None
+    assert mips_reason(prologue, False, "n64") is None
     assert mips_reason(le(0x8D020000, 0x03E00008, 0), False, "ps2") is None  # lw v0, 0(t0) on the PS2: an argument
-    assert mips_reason(le(0x03E00008, 0, 0, 0), False, "psx") is None  # alignment padding after jr ra
-    # kernel entry stubs: the PS2's libkernl (GTA San Andreas has a run of them at 0x53BC60) and the PS1's BIOS calls
+    assert mips_reason(le(0x03E00008, 0, 0, 0), False, "n64") is None  # alignment padding after jr ra
+    # kernel entry stubs: the PS2's libkernl (GTA San Andreas has a run of them at 0x53BC60)
     assert "system call" in mips_reason(le(0x24030010, 0x0000000C, 0x03E00008, 0), False, "ps2")  # li v1, 0x10; syscall
-    assert "BIOS" in mips_reason(le(0x240A00A0, 0x01400008, 0x24090044), False, "psx")  # li t2, 0xa0; jr t2; li t1, 0x44
-    assert mips_reason(le(0x240A00A0, 0x01400008, 0x24090044), False, "n64") is None  # no BIOS table there
     # but break is GCC's own: a divide with its divide-by-zero check is compiled code
-    assert mips_reason(le(0x0085001A, 0x14A00002, 0, 0x0007000D, 0x00001012, 0x03E00008, 0), False, "psx") is None
+    assert mips_reason(le(0x0085001A, 0x14A00002, 0, 0x0007000D, 0x00001012, 0x03E00008, 0), False, "ps2") is None

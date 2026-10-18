@@ -1,5 +1,6 @@
-"""Importing a game: identify it, split it (splat), make every function's target and the project's first header,
-and test which compiler built it.
+"""Importing a game: its console (consoles/: the connector) says what the file is and how its games are imported.
+ROM mode's import is here: split the program (splat), make every function's target and the project's first
+header, with what the console adds (more code to split, the game's own symbols, a test of which compiler built it).
 """
 
 from __future__ import annotations
@@ -10,22 +11,11 @@ import shutil
 import time
 from pathlib import Path
 
-from ... import scoring, seeds, toolchains
-from ...consoles.ps2 import debuginfo, syscalls
+from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
-from ...rom import detect, match, split
-from ...rom.n64 import RomError
+from ...rom import Picked, RomError, match, split
 from ...rom.symbols import Symbol, SymbolTable
-from .common import (
-    BASE_HEADER,
-    DEFAULT_TOOLCHAIN,
-    GP_NOTE,
-    PLATFORM_COMPILERS,
-    SHORT_NAMES,
-    _default_flags,
-    _preview,
-    _slugify,
-)
+from .common import BASE_HEADER, GP_NOTE, _preview, _slugify
 
 # what the first header defines already: the game's typedefs of these names are left out (consoles/ps2/cheader.py)
 _HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", BASE_HEADER) for name in pair if name}
@@ -44,11 +34,22 @@ class ImportMixin:
         as a target. Returns the slug."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
-        project_file = self._community_layout(data, name)
-        if project_file is not None:  # a dtk-template or ds-decomp project, worked on like a fork
-            compiler = toolchain if toolchain and toolchain.startswith(("GC/", "Wii/", "DS/", "MSVC/")) else None
-            return self.forks.create_scratch(project_file, compiler=compiler, log=log)
-        picked = detect.identify(data, name)
+        console = consoles.identify(data)
+        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log)
+
+    def saved_file(self, data: bytes | Path, name: str) -> Path:
+        """A game sent as bytes, saved to a file first (PROJECT mode's tools read files); a file stays where it is."""
+        if isinstance(data, (str, Path)):
+            return Path(data)
+        uploads = self.workspace / ".decomp" / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        path = uploads / Path(name).name
+        path.write_bytes(data)
+        return path
+
+    def import_split(self, console: consoles.Console, picked: Picked, *, toolchain: str | None = None,
+                     flags: list[str] | None = None, log=print) -> str:
+        """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         rom, info = picked.data, picked.info
         for p in self.store.all("SELECT slug, config FROM projects"):
             if json.loads(p["config"]).get("rom", {}).get("sha1") == info["sha1"]:
@@ -62,19 +63,17 @@ class ImportMixin:
         workdir.mkdir(parents=True)
         (workdir / picked.filename).write_bytes(rom)
         size = f"{info['size'] // (1024 * 1024)} MiB" if info["size"] >= 1 << 20 else f"{info['size'] // 1024} KiB"
-        log(f"{detect.PLATFORMS[picked.platform]}: {info['title']} ({info['game_code'] or 'no game code'}, "
+        log(f"{console.name}: {info['title']} ({info['game_code'] or 'no game code'}, "
             f"{info['region']}), {size}, looks built with {info['compiler_guess']}")
-        if picked.platform == "gba":
-            return self._import_gba(picked, slug, workdir, toolchain, flags, log)
         if picked.overlays:
             log(f"{len(picked.overlays)} overlay{'s' if len(picked.overlays) != 1 else ''} on the disc: "
                 + ", ".join(f"{o[0]} at 0x{o[2]:08X}" for o in picked.overlays[:6]) + (", ..." if len(picked.overlays) > 6 else ""))
-        # PS2: a program that kept its symbols names its functions, and its debug sections give their types (#3)
-        debug = debuginfo.read(rom, _HEADER_NAMES) if picked.platform == "ps2" else None
+        # a program that kept its symbols names its functions, and its debug sections give their types (#3)
+        debug = console.debug_info(rom, _HEADER_NAMES)
         if debug is not None:
             log(debug.summary())
         try:
-            res = split.split_rom(workdir, picked.filename, log=log, overlays=picked.overlays,
+            res = split.split_rom(workdir, picked.filename, console, picked, log=log,
                                   symbols=debug.symbol_addrs() if debug is not None and debug.named else None)
         except RomError:
             if debug is None or not debug.named:
@@ -82,18 +81,15 @@ class ImportMixin:
             # the game's own names are a help, never the reason an import fails: split as if it had none
             log("splat refused the game's own names: splitting without them")
             shutil.rmtree(workdir / "asm", ignore_errors=True)
-            res = split.split_rom(workdir, picked.filename, log=log, overlays=picked.overlays)
+            res = split.split_rom(workdir, picked.filename, console, picked, log=log)
         if res.image and res.image != picked.filename:  # splat works on a flat image made from the program
             rom = (workdir / res.image).read_bytes()
 
-        guess = info["compiler_guess"] if picked.platform == "ps2" else res.compiler  # PS2: what the program says
-        # the user's own choice stands; the test picks among the GCCs (m2c's drafts are GCC-style: CodeWarrior never
-        # matches them, so the test can't speak for it)
-        test_compilers = picked.platform == "ps2" and not toolchain and info["compiler_guess"].startswith("EEGCC")
-        toolchain = toolchain or DEFAULT_TOOLCHAIN.get(guess, DEFAULT_TOOLCHAIN[info["compiler_guess"]])
-        default_flags = _default_flags(toolchain, picked.platform, res.gp)
+        chosen = bool(toolchain or flags)  # the user's own choice stands
+        toolchain = toolchain or console.default_compiler(info, res.compiler)
+        default_flags = console.default_flags(toolchain, res.gp)
         cfg = {
-            "kind": "rom", "platform": picked.platform, "big_endian": picked.big_endian, "gp": res.gp,
+            "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
             "segments": [vars(s) for s in res.segments],
             "compiler": {"toolchain": toolchain, "flags": flags or default_flags, "timeout": 20},
@@ -130,7 +126,7 @@ class ImportMixin:
         with self.store.tx() as db:
             pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
                              (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
-                              "mips", int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
+                              console.arch, int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
             for fn in res.functions:
                 target = match.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
                 known = debug.functions.get(fn.vram) if debug is not None else None
@@ -148,9 +144,7 @@ class ImportMixin:
                        "VALUES(?,?,?,?,?,?,?)", (pid, 1, header, None, "basic types" + (
                            " and the game's own, from its debug information" if DEBUG_TYPES_NOTE in header else ""), now, ""))
             self._event(db, pid, None, "import", f"{len(res.functions)} functions from {info['title']}")
-        if test_compilers and not flags:
-            self.test_compilers(slug, log=log)
-        self.name_kernel_calls(slug, log=log)
+        console.after_import(self, slug, chosen=chosen, log=log)
         log(f"ready: {len(res.functions)} functions to decompile")
         return slug
 
@@ -169,32 +163,13 @@ class ImportMixin:
             base = BASE_HEADER.format(title="") + (GP_NOTE if cfg.get("gp") else "")
             if not compile_source(compiler_config(workdir, cfg), base + types, HEADER_CHECK).ok:
                 (workdir / DEBUG_TYPES_FILE).write_text(debug.header, encoding="utf-8")
-                log(f"the game's types don't compile with {SHORT_NAMES.get(toolchain, toolchain)}: they're in "
+                log(f"the game's types don't compile with {consoles.compiler_name(toolchain)}: they're in "
                     f"{DEBUG_TYPES_FILE} in the project folder, not in the shared header")
                 return ""
         return types
 
-    def name_kernel_calls(self, slug: str, log=print) -> int:
-        """PS2: the kernel's call stubs get their names (consoles/ps2/syscalls.py), once per project: at import, and
-        for projects imported before this existed, when the app starts. Returns how many were named."""
-        proj = self._project(slug)
-        cfg = self.cfg(proj)
-        if cfg.get("kind") != "rom" or cfg.get("platform") != "ps2" or cfg.get("kernel_calls_named") or self._link(slug):
-            return 0  # (a room's guest: the host names them)
-        rows = self.store.all("SELECT name, target FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
-        pairs = syscalls.stub_names([(r["name"], r["target"]) for r in rows], set(self.symbols(proj["id"]).by_name))
-        if pairs:
-            agent, _ = self.local_agent("autopilot")
-            said = self.rename_symbols(agent, slug, pairs, f"name the {len(pairs)} kernel calls (syscall stubs)")
-            named = said.startswith("✅")
-            log(f"named {len(pairs)} kernel calls (FlushCache, CreateThread, ...)" if named
-                else f"the kernel calls keep their names: {said}")
-        # once either way: a check that fails (it compiles every matched function again) would fail at every start
-        self._update_cfg(slug, lambda c: c.__setitem__("kernel_calls_named", True))
-        return len(pairs) if not pairs or named else 0
-
-    def test_compilers(self, slug: str, sample: int = 24, log=print) -> dict[str, int]:
-        """Which of the platform's installed compilers builds this game: m2c drafts of small functions from all over
+    def test_compilers(self, slug: str, compilers: list[str], sample: int = 24, log=print) -> dict[str, int]:
+        """Which of `compilers` (the installed ones) builds this game: m2c drafts of small functions from all over
         it, compiled with each and judged like any attempt. The one that matches the most becomes the project's (a
         tie keeps the current one). What a program says about its compiler can mislead: GTA San Andreas keeps one
         library's "MW MIPS C Compiler" note, and its own code is EE-GCC 2.96's. Returns compiler -> matches."""
@@ -206,9 +181,9 @@ class ImportMixin:
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
         current = cfg["compiler"]["toolchain"]
-        tcs = [t for t in PLATFORM_COMPILERS.get(cfg.get("platform"), []) if toolchains.installed(t) is not None
-               and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)
-               and not t.startswith("mwcps2")]  # drafts are GCC-style: see import_rom
+        console = self.console(proj)
+        tcs = [t for t in compilers if toolchains.installed(t) is not None
+               and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
         rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 6 AND 30 ORDER BY vram",
                               proj["id"])
         rows = rows[::max(1, len(rows) // sample)][:sample]  # spread over the whole game, not one library
@@ -225,7 +200,7 @@ class ImportMixin:
 
         def matches(job) -> bool:
             tc, (fn, source) = job
-            settings = {"toolchain": tc, "flags": _default_flags(tc, cfg["platform"], cfg.get("gp")), "timeout": 20}
+            settings = {"toolchain": tc, "flags": console.default_flags(tc, cfg.get("gp")), "timeout": 20}
             result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, source)
             if not result.ok:
                 return False
@@ -238,78 +213,15 @@ class ImportMixin:
             found = list(pool.map(matches, jobs))
         counts = {tc: sum(ok for (t, _), ok in zip(jobs, found) if t == tc) for tc in tcs}
         best = max(tcs, key=lambda t: (counts[t], t == current))
-        log("compiler test: " + ", ".join(f"{SHORT_NAMES.get(t, t)} {counts[t]}" for t in tcs))
+        log("compiler test: " + ", ".join(f"{consoles.compiler_name(t)} {counts[t]}" for t in tcs))
         if counts[best] >= 3 and counts[best] > counts.get(current, 0):  # 1-2: trivial code any compiler makes
-            cfg["compiler"] = {"toolchain": best, "flags": _default_flags(best, cfg["platform"], cfg.get("gp")),
+            cfg["compiler"] = {"toolchain": best, "flags": console.default_flags(best, cfg.get("gp")),
                                "timeout": 20}
             with self.store.tx() as db:
                 db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
-            log(f"{SHORT_NAMES.get(best, best)} builds this game's code ({counts[best]} of {len(drafts)} drafts match "
-                f"byte for byte, {counts.get(current, 0)} with {SHORT_NAMES.get(current, current)}): using it")
+            log(f"{consoles.compiler_name(best)} builds this game's code ({counts[best]} of {len(drafts)} drafts match "
+                f"byte for byte, {counts.get(current, 0)} with {consoles.compiler_name(current)}): using it")
         return counts
-
-    def _import_gba(self, picked, slug: str, workdir: Path, toolchain: str | None, flags: list[str] | None, log) -> str:
-        """Game Boy Advance: functions found by luvdis (plus a pass for code nothing calls), judged by the ARM matcher."""
-        from ...rom import gba
-
-        info = picked.info
-        fns = gba.split(workdir / picked.filename, workdir, log=log)
-        toolchain = toolchain or "agbcc"
-        tc = toolchains.get(toolchain)
-        cfg = {
-            "kind": "rom", "platform": "gba", "big_endian": False, "gp": 0, "arch": "thumb",
-            "rom": {**info, "file": picked.filename, "program": picked.filename},
-            "segments": [{"name": "rom", "rom_start": 0, "rom_end": info["size"], "vram": gba.BASE}],
-            "compiler": {"toolchain": toolchain, "flags": flags or tc.flags, "timeout": 20},
-            "legal": {"basis": "personal-copy", "license": "personal use only",
-                      "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
-                      "confirmed_at": time.time()},
-            "context": {"file": None},
-        }
-        now = time.time()
-        with self.store.tx() as db:
-            pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                             (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(fns)} functions",
-                              "arm", 0, str(workdir), json.dumps(cfg))).lastrowid
-            names: set[str] = set()
-            for f in fns:
-                name = f.asm_only or f.name  # known hand-written helpers keep their real name and stay assembly
-                if name in names:  # a game can link a helper twice (Spyro Orange has two of _call_via_r3)
-                    name = f"{name}_{f.vram:08X}"
-                names.add(name)
-                db.execute(
-                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,status) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (pid, name, len(f.code), f.n_insns, f.code, json.dumps([list(r) for r in f.refs or []]),
-                     f.asm.replace(f.name, name), None, "rom", f.vram, f.rom, "asm" if f.asm_only else "open"))
-                db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
-                           (pid, name, f.vram, len(f.code), "func", None))
-            db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
-                       "VALUES(?,?,?,?,?,?,?)", (pid, 1, BASE_HEADER.format(title=info["title"]), None, "basic types", now, ""))
-            self._event(db, pid, None, "import", f"{len(fns)} functions from {info['title']}")
-        log(f"ready: {len(fns)} functions to decompile")
-        return slug
-
-    def _community_layout(self, data: bytes | Path, name: str = "") -> Path | None:
-        """The file, when the game starts as a community-layout project: a GameCube/Wii program (DOL) or disc image
-        (dtk-template), a DS ROM (ds-decomp), or a Windows program (.exe, see scratch_pe). Bytes are saved to a file
-        first."""
-        from ...forks import scratch_dsd, scratch_dtk, scratch_pe
-
-        head = Path(data).open("rb").read(0x1000) if isinstance(data, (str, Path)) else bytes(data[:0x1000])
-        small = Path(data).read_bytes() if isinstance(data, (str, Path)) and Path(data).stat().st_size < 64 << 20 else data
-        nds, pe = scratch_dsd.is_nds(head), scratch_pe.is_pe(head)
-        if not nds and not pe and scratch_dtk.disc_kind(head) is None and not (isinstance(small, (bytes, bytearray))
-                                                                              and scratch_dtk.is_dol(small)):
-            return None
-        if isinstance(data, (str, Path)):
-            return Path(data)
-        uploads = self.workspace / ".decomp" / "uploads"
-        uploads.mkdir(parents=True, exist_ok=True)
-        path = uploads / (Path(name).name or ("game.nds" if nds else "game.exe" if pe else "main.dol"
-                                              if scratch_dtk.is_dol(data) else "game.iso"))
-        path.write_bytes(data)
-        return path
 
     @staticmethod
     def _asm_source(fn: split.RomFunction) -> str:
