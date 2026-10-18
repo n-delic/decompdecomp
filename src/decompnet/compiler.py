@@ -40,6 +40,8 @@ class SourceRejected(ValueError):
 
 
 def check_source(source: str) -> None:
+    """Refuse C that could match without being C (inline asm, asm-include macros, pragmas) or reach outside the
+    sandbox (absolute or `..` includes): what the judge accepts must come from a compiler."""
     if len(source.encode()) > MAX_SOURCE_BYTES:
         raise SourceRejected(f"source too large (max {MAX_SOURCE_BYTES} bytes)")
     for inc in _INCLUDE.findall(source):
@@ -55,8 +57,7 @@ def check_source(source: str) -> None:
 class CompilerConfig:
     cmd: list[str]
     timeout: float = 15.0
-    sandbox: str = "auto"  # auto | bwrap | docker | none
-    image: str | None = None  # for sandbox = "docker"
+    sandbox: str = "auto"  # auto | bwrap | none
     ro_paths: tuple[str, ...] = ()
     include_dirs: tuple[str, ...] = ()  # absolute paths of extra (static) header dirs
     runtime32: str | None = None  # 32-bit x86 C runtime for old i386 compiler binaries (see toolchains)
@@ -84,7 +85,7 @@ def _sandbox_mode(cfg: CompilerConfig) -> str:
 def _root(cfg: CompilerConfig, work: Path) -> str:
     """How the compiler sees the work folder (in WSL it works on a copy, see wsl.run)."""
     mode = _sandbox_mode(cfg)
-    return "/work" if mode in ("bwrap", "docker") else wsl.stage_dir() if mode == "wsl" else str(work)
+    return "/work" if mode == "bwrap" else wsl.stage_dir() if mode == "wsl" else str(work)
 
 
 def _wrap(cfg: CompilerConfig, work: Path, argv: list[str]) -> list[str]:
@@ -93,11 +94,7 @@ def _wrap(cfg: CompilerConfig, work: Path, argv: list[str]) -> list[str]:
         argv = ["prlimit", *LIMITS, "--", *argv]
     if mode == "none":
         return argv
-    if mode == "docker":
-        if not cfg.image:
-            raise RuntimeError("sandbox = 'docker' needs compiler.image")
-        return ["docker", "run", "--rm", "--network", "none", "--memory", "512m", "--pids-limit", "64",
-                "-v", f"{work}:/work", "-w", "/work", cfg.image, *argv]
+
     if mode == "bwrap":
         # /tmp first, so read-only mounts of paths that live under /tmp are not hidden by it.
         cmd = ["bwrap", "--tmpfs", "/tmp", "--ro-bind", "/usr", "/usr", "--symlink", "usr/lib64", "/lib64",
@@ -121,7 +118,7 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     if _sandbox_mode(cfg) == "wsl":
         return wsl.run(argv, cwd or work, timeout, **stage)
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
-    # current directory is / ("Bad file descriptor"), which it is for decompdecomp started by a service or in Docker
+    # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout)
 
@@ -136,6 +133,9 @@ def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 30
 
 
 def compile_source(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
+    """Compile one function's C with the project's compiler in the sandbox, with the shared header as context.h.
+    Agents' C (not `trusted`) is checked first. C++ is tried for what doesn't compile as C when the toolchain builds
+    both."""
     if not trusted:
         try:
             check_source(source)

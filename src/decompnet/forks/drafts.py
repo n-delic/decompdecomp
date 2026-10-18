@@ -2,8 +2,8 @@
 
 Community projects keep the assembly of undecompiled functions in the tree: splat projects one file per
 function (`asm/nonmatchings/<file>/<function>.s`, referenced by `INCLUDE_ASM`), dtk projects one file per
-unit under `build/<version>/asm/`. m2c turns that into a C draft for MIPS (N64, PS1, PS2), PowerPC
-(GameCube, Wii), ARM and Thumb (public GBA and DS decomps).
+unit under `build/<version>/asm/`. m2c turns that into a C draft for MIPS (N64, PS2, and public PS1 decomps),
+PowerPC (GameCube, Wii), ARM and Thumb (public GBA and DS decomps).
 """
 
 from __future__ import annotations

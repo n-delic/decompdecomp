@@ -25,7 +25,7 @@ from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
-from .support import Jobs, Settings, _session_options
+from .support import Jobs, Settings, session_options
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str):
@@ -88,7 +88,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))
         if saved is None and options.get("endpoint"):
             return None
-        return options | (_session_options(saved) if saved is not None else {})
+        return options | (session_options(saved) if saved is not None else {})
     manager.options_now = options_now
     manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 

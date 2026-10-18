@@ -100,7 +100,7 @@ class PlayStation2(Console):
             raise RomError(f"the disc's program {boot} isn't a PlayStation 2 program this app can read")
         program, info = elf.read_elf(raw, boot)
         picked = Picked(self.id, program, "game.elf", info, False)
-        segs = overlays._elf_segments(raw) or []
+        segs = overlays.elf_segments(raw) or []
         main = (min((a for a, _ in segs), default=0), max((a + len(d) for a, d in segs), default=0))
         try:
             picked.overlays = overlays.find(disc._Disc(src), boot, main)

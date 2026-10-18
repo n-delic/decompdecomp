@@ -405,17 +405,6 @@ class CompilerMixin:
 
     RANGE_PROOF_BYTES, RANGE_PROOF_FUNCTIONS = 256, 3
 
-    def _functions_in(self, proj, spans: list[list[int]]) -> int:
-        return sum(self.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND vram>=? AND vram<?",
-                                  proj["id"], a, b)["n"] for a, b in spans)
-
-    def _range_proof(self, proj, spans: list[list[int]]) -> bool:
-        """Whether address ranges are big enough to say another compiler built them: GTA San Andreas gathered 43
-        ranges of one tiny function each, matched by trying compilers until one fit, which is overfitting, not
-        evidence. A block of code (a library) or several functions is."""
-        return (sum(b - a for a, b in spans) >= self.RANGE_PROOF_BYTES
-                or self._functions_in(proj, spans) >= self.RANGE_PROOF_FUNCTIONS)
-
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "") -> str:
         """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an

@@ -33,7 +33,7 @@ STARTABLE = consoles.startable()
 
 
 def _guide_exists(topic: str) -> bool:
-    return not tools._guide(topic).startswith("Guides (call guide")
+    return not tools.guide_text(topic).startswith("Guides (call guide")
 
 
 @pytest.mark.parametrize("console", STARTABLE, ids=[c.id for c in STARTABLE])

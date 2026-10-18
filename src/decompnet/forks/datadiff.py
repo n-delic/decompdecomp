@@ -122,6 +122,7 @@ def compare(target: Path, base: Path | None) -> list[Section]:
 
 
 def show(item: Item | None) -> str:
+    """One data item as an agent reads it in a data diff: pointers, a float, a string or bytes."""
     if item is None:
         return ""
     if item.data is None:

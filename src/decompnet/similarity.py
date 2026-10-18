@@ -1,7 +1,6 @@
 """Find functions that look alike: same instructions in a similar order.
 
-The idea behind coddog, which decomp communities use to spot copy-pasted code, shared inlined helpers and
-template instantiations. A matched look-alike is the best starting point there is: its C often needs only
+Copy-pasted code, shared inlined helpers and template instantiations compile to look-alikes. A matched look-alike is the best starting point there is: its C often needs only
 small changes. Comparison is on mnemonic sequences (operands differ between copies), pre-filtered by length
 and instruction mix so that ranking a whole game stays fast.
 """
@@ -16,6 +15,7 @@ MAX_OPS = 800  # compare at most this many instructions of very large functions
 
 
 def mips_mnemonics(code: bytes, big_endian: bool = True, vram: int = 0) -> list[str]:
+    """A MIPS function's instructions by name (operands differ between copies of the same code)."""
     import rabbitizer
 
     order = "big" if big_endian else "little"

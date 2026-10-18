@@ -52,7 +52,7 @@ def test_import(ps2):
 
 
 def test_read_data_reads_a_ps2_games_pointers(ps2):
-    """§4.12: read_data took only N64 addresses (0x80...) for pointers, never a PS2 game's: zlib's table of error
+    """read_data took only N64 addresses (0x80...) for pointers, never a PS2 game's: zlib's table of error
     messages is ten pointers to its strings."""
     net, slug = ps2
     table = next(s["st_value"] for s in ELFFile(open(ELF, "rb")).get_section_by_name(".symtab").iter_symbols()

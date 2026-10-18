@@ -13,7 +13,7 @@ from starlette.responses import JSONResponse, Response
 from ... import toolchains
 from ...network import NetworkError
 from .. import agents
-from ..support import _session_options, _spread
+from ..support import session_options, spread_sessions
 from . import App
 
 
@@ -49,7 +49,7 @@ def register(app: App) -> None:
                 log(line.rstrip())
             if proc.wait() != 0:
                 raise RuntimeError(f"the installer exited with code {proc.returncode}")
-            agents._versions.pop(kind.id, None)
+            agents.known_versions.pop(kind.id, None)
             manager.refresh_detected(wait=True)  # the launcher shows it, with its models, when the job is done
             return {"kind": kind.id}
         return JSONResponse({"job": jobs.start("agent-install", work)})
@@ -78,8 +78,8 @@ def register(app: App) -> None:
             net.warm_briefs_soon(slug)  # ready before the helpers' first claims
             if kind == "api":
                 picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
-                plan = _spread(settings, manager, picked, count, given)
-                ids = [sid for entry, n in plan for sid in manager.start(kind, slug, n, options | _session_options(entry))]
+                plan = spread_sessions(settings, manager, picked, count, given)
+                ids = [sid for entry, n in plan for sid in manager.start(kind, slug, n, options | session_options(entry))]
             else:
                 ids = manager.start(kind, slug, count, options)
         except (NetworkError, ValueError) as e:

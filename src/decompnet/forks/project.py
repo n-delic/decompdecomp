@@ -109,6 +109,8 @@ class ForkProject:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
     def kind(self) -> str:
+        """What kind of build the project has: decompdecomp's own manifest, dtk-template, a configure.py, splat
+        with a Makefile, an objdiff.json alone, or something else."""
         if self.manifest:
             return "manifest"
         if (self.root / "configure.py").exists() and list(self.root.glob("config/*/config.yml")):
@@ -250,6 +252,7 @@ class ForkProject:
             return None
 
     def setup_commands(self, version: str | None = None) -> list[list[str]]:
+        """The commands that set the project up for a version of its game, as its kind of build does it."""
         kind = self.kind()
         if kind == "manifest":
             m = self.manifest
@@ -347,6 +350,8 @@ class ForkProject:
         return len(missing)
 
     def setup(self, version: str | None = None, log=print) -> None:
+        """Set the project up for the user's copy of the game: unpack it, run the setup commands, and build
+        every source once so objdiff can measure each unit."""
         self.unpack_disc(version, log=log)
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
@@ -426,6 +431,7 @@ class ForkProject:
         return objdiff.judge_options(self.objdiff_config().get("options"), unit.options)
 
     def build_unit(self, unit: Unit, log=lambda *_: None) -> tuple[bool, str]:
+        """Build one unit's object with the project's own build, as objdiff.json says."""
         if unit.base is None:
             return False, "this unit has no source object to build"
         cfg = self.objdiff_config()
@@ -449,6 +455,8 @@ class ForkProject:
             return False
 
     def build_all(self, log=lambda *_: None, failed: list[str] | None = None) -> tuple[bool, str]:
+        """Build every object, going on past sources that don't compile yet (work in progress); `failed`
+        collects the ones that didn't."""
         cfg = self.objdiff_config()
         make = cfg.get("custom_make") or "make"
         if (make == "ninja" or Path(make).name.startswith("ninja")) and self._all_source():
@@ -530,6 +538,8 @@ class ForkProject:
     # ------------------------------------------------------------------ files agents may touch
 
     def safe_path(self, rel: str, write: bool = False) -> Path:
+        """A path inside the project an agent may read, or write (`write`: only C and C++ sources and headers,
+        never the build setup, targets, assembly or tools)."""
         p = (self.root / rel).resolve()
         if self.root.resolve() not in p.parents:
             raise ForkError("that path is outside the project")

@@ -32,7 +32,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from .. import toolchains
-from ..network import Agent, NetworkError, _hash_token
+from ..network import Agent, NetworkError, hash_token
 from ..rom.symbols import AUTO_NAME
 from . import forkroom
 
@@ -184,7 +184,7 @@ class Room:
         waiting = self.settings["approve"]
         with self.net.store.tx() as db:
             db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
-                       (name, None, _hash_token(token), time.time(), self.origin + (":pending" if waiting else "")))
+                       (name, None, hash_token(token), time.time(), self.origin + (":pending" if waiting else "")))
             if waiting:
                 self.net._event(db, self.proj["id"], None, "collab", f"{name} asks to join")
             else:
@@ -470,7 +470,7 @@ class Tunnel:
     def start(self, log=print, timeout: float = 45) -> str:
         if toolchains.installed("cloudflared") is None:
             toolchains.install("cloudflared", log=log)
-        exe = toolchains.path("cloudflared") / ("cloudflared.exe" if (toolchains.path("cloudflared") / "cloudflared.exe").exists() else "cloudflared")
+        exe = toolchains.path("cloudflared") / "cloudflared"
         self.proc = subprocess.Popen([str(exe), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{self.port}"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                      errors="replace")

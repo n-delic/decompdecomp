@@ -1,7 +1,7 @@
 """Struct layouts guessed from a game's code (structs.py), for agents: the guess_struct tool, the brief's lines about
 a function's pointer arguments (briefs.py calls `_struct_brief`), and declarations a draft's context can use.
 
-Where the game's own debug information gives a function's prototype (§12), its real types are shown instead of a
+Where the game's own debug information gives a function's prototype (consoles/ps2/debuginfo.py), its real types are shown instead of a
 guess, and where matched code already gave the type a name, agents are told to use that one.
 """
 
@@ -142,7 +142,7 @@ class LayoutMixin:
         return lines
 
     def _debug_type(self, fn, key, path, what, proj) -> str | None:
-        """What the game's own debug information (§12) says the argument is, when it says: the real type, so no
+        """What the game's own debug information says the argument is, when it says: the real type, so no
         guess is needed."""
         debug = json.loads(fn["meta"] or "{}").get("debug") if "meta" in fn.keys() else None
         if not debug or not debug.get("prototype") or key[0] != structs.ARGUMENT or path:
@@ -184,19 +184,3 @@ class LayoutMixin:
             return []
         return ["", f"### Likely struct layouts (from loads and stores across the game; guess_struct("
                     f"\"{fn['name']}\", \"arg0\") has one as C)"] + lines
-
-    def likely_structs(self, proj, fn) -> str:
-        """C declarations of the likely structs behind a function's pointer arguments, "" when there are none: for a
-        machine draft's context (m2c writes arg0->unk_10 when the function's prototype takes S_... *arg0)."""
-        found = self.structs(proj)
-        if found is None:
-            return ""
-        syms = self.symbols(proj["id"])
-        out, done = [], set()
-        for n in range(ARGUMENT_REGISTERS):
-            t = found.type_of((structs.ARGUMENT, fn["vram"], n))
-            lay = found.layout(t) if t is not None and t not in done else None
-            if lay and lay.fields:
-                done.add(t)
-                out.append(structs.c_text(lay, found.name(t, syms.label), lambda c: found.name(c, syms.label)))
-        return "\n\n".join(out)

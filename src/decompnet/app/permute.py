@@ -15,8 +15,8 @@ only what the judge says settles anything: a match is the same machine code as t
 only closer code for an agent to start from. Without the tool, or for C it can't read (a macro call of the source's
 own), the six simple rewrites of permuter.py make the variants instead.
 
-One worker per spare core (WORKERS), shared by every project, each at a lower CPU priority that the compilers it
-runs inherit: the app and the agents' compiles come first.
+It runs on the background workers every project shares with the machine drafts (workers.py: one per spare core, up
+to four), each at a lower CPU priority that the compilers it runs inherit: the app and the agents' compiles come first.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import select
 import subprocess
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +37,7 @@ from .. import consoles, scoring, seeds, toolchains
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
+from . import workers
 
 log = logging.getLogger("decompdecomp")
 NEAR = 0.06  # a near miss: at most this much of the function differs (best_score <= 6% of n_insns * 100)
@@ -50,13 +51,10 @@ GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer ret
 READ_BYTES = 1 << 16
 MAX_SEED = 2**31  # seeds of the generator's runs: the same function and turn write the same variants
 REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none applies to the C
-RESERVED_CORES = 2  # left to the app itself and the agents' compiles
-# Past four, the judge's own Python work (about 5 ms of a variant's 16, under the interpreter's one lock) is the
-# limit, not the cores, and the app itself waits for that lock. Demo ROM, 12 cores: 1 worker judged 80 variants a
-# second, 2 129, 4 172, 8 193; a GUI request took 0.1 ms alone, 6 ms beside 4 workers, 31 ms beside 8.
-MAX_WORKERS = 4
-WORKERS = max(1, min(MAX_WORKERS, (os.cpu_count() or 1) - RESERVED_CORES))
-NICE = 10  # how much lower the workers' CPU priority is
+MAX_INSNS = 400  # bigger near misses are left to agents: one variant takes too long to judge
+IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
+IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
+HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
 FAMILIES = (("ido", "ido"), ("gcc", "gcc"), ("ee-gcc", "gcc"), ("mwc", "mwcc"))
 
@@ -166,8 +164,6 @@ class Permuter:
     def __init__(self, net):
         self.net = net
         self.jobs: dict[str, State] = {}
-        self._pool: ThreadPoolExecutor | None = None
-        self._pool_lock = threading.Lock()
 
     def status(self, slug: str) -> dict | None:
         st = self.jobs.get(slug)
@@ -191,18 +187,9 @@ class Permuter:
     def candidates(self, proj, limit: int = CANDIDATES) -> list:
         return self.net.store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
-            "AND best_score > 0 AND best_score <= n_insns * 100 * ? AND n_insns <= 400 AND permuted < ? "
+            "AND best_score > 0 AND best_score <= n_insns * 100 * ? AND n_insns <= ? AND permuted < ? "
             "AND id NOT IN (SELECT function_id FROM claims) ORDER BY CAST(best_score AS REAL) / (n_insns * 100) LIMIT ?",
-            proj["id"], NEAR, MAX_TURNS, limit)
-
-    def _workers(self) -> ThreadPoolExecutor:
-        """The workers every project's permuter shares. Each lowers its own CPU priority as it starts (on Linux a
-        thread's own, and inherited by what it runs: the compiler, the linker, the generator)."""
-        with self._pool_lock:
-            if self._pool is None:
-                self._pool = ThreadPoolExecutor(WORKERS, thread_name_prefix="permuter-worker", initializer=os.nice,
-                                                initargs=(NICE,))
-            return self._pool
+            proj["id"], NEAR, MAX_INSNS, MAX_TURNS, limit)
 
     def _loop(self, slug: str, st: State) -> None:
         agent, _ = self.net.local_agent("permuter")
@@ -216,12 +203,12 @@ class Permuter:
                 todo = self.candidates(proj)
                 if not todo:
                     idle += 1
-                    if idle > 20:  # nothing for an hour: done until agents start again
+                    if idle > IDLE_LOOKS:
                         return
-                    st.stop.wait(180)
+                    st.stop.wait(IDLE_SECONDS)
                     continue
                 idle = 0
-                wait([self._workers().submit(self._turn, agent, proj, fn, st) for fn in todo])
+                wait([workers.pool().submit(self._turn, agent, proj, fn, st) for fn in todo])
         finally:
             st.state = "stopped" if st.stop.is_set() else "done"
 
@@ -229,7 +216,7 @@ class Permuter:
         try:
             self._permute(agent, proj, fn, st)
         except Exception as e:  # one odd function must not stop the rest
-            log.info("permuter: %s: %s", fn["name"], e)
+            log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 
     def _hold(self, agent, fn) -> bool:
         now = time.time()
@@ -237,7 +224,7 @@ class Permuter:
             self.net._expire_claims(db)
             if db.execute("SELECT 1 FROM claims WHERE function_id=?", (fn["id"],)).fetchone():
                 return False
-            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + 120))
+            db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + SECONDS + HOLD_SPARE_SECONDS))
             db.execute("UPDATE functions SET permuted = permuted + 1 WHERE id=?", (fn["id"],))
         return True
 

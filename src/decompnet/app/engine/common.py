@@ -64,12 +64,12 @@ typedef int s32_bool;
 """
 
 
-def _slugify(title: str) -> str:
+def slugify(title: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     return slug[:40] or "rom"
 
 
-def _preview(data: bytes | None, kind: str) -> str:
+def data_preview(data: bytes | None, kind: str) -> str:
     if not data:
         return ""
     text = data.split(b"\0", 1)[0]

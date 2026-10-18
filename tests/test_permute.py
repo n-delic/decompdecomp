@@ -11,7 +11,7 @@ import time
 import pytest
 
 from decompnet import toolchains
-from decompnet.app import permute
+from decompnet.app import permute, workers
 from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
 from decompnet.network import Agent
 from decompnet.store import IN_MEMORY, Store
@@ -172,9 +172,28 @@ def test_workers_yield_the_cpu_to_the_app():
     app = priority()
     if app >= 19:
         pytest.skip("this test already runs at the lowest priority")
-    p = Permuter(FakeNet())
-    assert p._workers().submit(priority).result() == min(19, app + permute.NICE) and priority() == app
-    assert 1 <= permute.WORKERS <= permute.MAX_WORKERS
+    assert workers.pool().submit(priority).result() == min(19, app + workers.NICE) and priority() == app
+    assert 1 <= workers.WORKERS <= workers.MAX_WORKERS
+
+
+def test_drafts_and_the_permuter_share_one_pool_of_workers(monkeypatch):
+    """Two pools of four made eight background threads beside the agents' compiles: both submit to the one pool."""
+    from decompnet.app import drafts
+
+    used = []
+    monkeypatch.setattr(workers, "pool", lambda: used.append("pool") or workers.ThreadPoolExecutor(1))
+    net = FakeNet()
+    net.local_agent = lambda name: (AGENT, "")
+    p = Permuter(net)
+    p.candidates = lambda proj: [net.function()]
+    p._turn = lambda *args: p.stop("game")
+    p._loop("game", p.jobs.setdefault("game", State()))
+    d = drafts.Drafter(net)
+    net.draft_mark, net.can_draft, net.stale_drafts = (lambda proj: 1), (lambda proj: True), (lambda proj: [1])
+    d._one = lambda *args: d.stop("game")
+    d._loop("game", d.jobs.setdefault("game", drafts.State()))
+    assert used == ["pool", "pool"]
+    assert workers.WORKERS <= workers.MAX_WORKERS == 4
 
 
 def test_compilers_pick_decomp_permuters_weights():

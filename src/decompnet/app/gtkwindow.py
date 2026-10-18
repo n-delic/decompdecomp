@@ -6,7 +6,7 @@ decompdecomp's: everything it needs comes in its arguments and environment.
 
 - The page is only served to this window: the window's user agent carries the app's per-launch secret
   (DECOMP_WINDOW_TOKEN), and the server answers no request without it. The address alone opens nothing in a browser.
-- Closing the window asks the page first (decompClose() in static/js/base.js): it quits the app, or asks whether
+- Closing the window asks the page first (decompClose() in static/js/steering.js): it quits the app, or asks whether
   helpers that are working stop or keep working in the background. Without an answer from the page, it just closes.
 - The app talks to it on stdin, one word per line: "present" (bring it to the front), "close".
 - Links to other sites open in the user's own browser.

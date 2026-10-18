@@ -203,7 +203,7 @@ class Console:
                 "layout": self.layout}
 
     def describe(self) -> dict:
-        """What the GUI shows about it (/api/consoles)."""
+        """What the GUI shows about it (the `consoles` list of /api/state)."""
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "readiness": self.readiness, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],

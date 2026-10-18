@@ -29,13 +29,13 @@ class SymbolTable:
     def __init__(self, symbols: list[Symbol] | None = None):
         self.by_name: dict[str, Symbol] = {}
         self.by_addr: dict[int, Symbol] = {}
-        self._starts: list[int] = []
+        self.starts: list[int] = []  # every symbol's address, sorted (for bisect)
         for s in symbols or []:
             self.add(s, reindex=False)
-        self._reindex()
+        self.reindex_symbols()
 
-    def _reindex(self) -> None:
-        self._starts = sorted(self.by_addr)
+    def reindex_symbols(self) -> None:
+        self.starts = sorted(self.by_addr)
 
     def add(self, sym: Symbol, reindex: bool = True) -> None:
         old = self.by_addr.get(sym.address)
@@ -44,7 +44,7 @@ class SymbolTable:
         self.by_name[sym.name] = sym
         self.by_addr[sym.address] = sym
         if reindex:
-            self._reindex()
+            self.reindex_symbols()
 
     def rename(self, old: str, new: str) -> Symbol:
         sym = self.by_name.pop(old)
@@ -65,9 +65,9 @@ class SymbolTable:
         sym = self.by_addr.get(address)
         if sym is not None:
             return sym.name, 0
-        i = bisect.bisect_right(self._starts, address) - 1
+        i = bisect.bisect_right(self.starts, address) - 1
         if i >= 0:
-            start = self._starts[i]
+            start = self.starts[i]
             sym = self.by_addr[start]
             if address < start + sym.size:
                 return sym.name, address - start
@@ -75,8 +75,8 @@ class SymbolTable:
 
     def next_after(self, address: int) -> int | None:
         """The first symbol's address above `address` (where the ROM's next datum starts, as splat labels it)."""
-        i = bisect.bisect_right(self._starts, address)
-        return self._starts[i] if i < len(self._starts) else None
+        i = bisect.bisect_right(self.starts, address)
+        return self.starts[i] if i < len(self.starts) else None
 
     def label(self, address: int) -> str:
         name, off = self.name_at(address)

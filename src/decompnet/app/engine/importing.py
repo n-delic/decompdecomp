@@ -15,7 +15,7 @@ from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
 from ...rom import Picked, RomError, match, split
 from ...rom.symbols import Symbol, SymbolTable
-from .common import BASE_HEADER, GP_NOTE, _preview, _slugify
+from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
 
 # what the first header defines already: the game's typedefs of these names are left out (consoles/ps2/cheader.py)
 _HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", BASE_HEADER) for name in pair if name}
@@ -55,7 +55,7 @@ class ImportMixin:
             if json.loads(p["config"]).get("rom", {}).get("sha1") == info["sha1"]:
                 log(f"already imported as {p['slug']}")
                 return p["slug"]
-        base = _slugify(info["title"])
+        base = slugify(info["title"])
         slug, n = base, 2
         while self.store.one("SELECT 1 FROM projects WHERE slug=?", slug) or (self.workspace / slug).exists():
             slug, n = f"{base}-{n}", n + 1
@@ -119,8 +119,8 @@ class ImportMixin:
             if d.name in symbols.by_name:
                 continue
             symbols.add(Symbol(d.name, d.vram, d.size, d.kind), reindex=False)
-            data_rows.append((d.name, d.vram, d.size, d.kind, _preview(read(d.vram, min(d.size, 48)), d.kind) if d.kind != "bss" else ""))
-        symbols._reindex()
+            data_rows.append((d.name, d.vram, d.size, d.kind, data_preview(read(d.vram, min(d.size, 48)), d.kind) if d.kind != "bss" else ""))
+        symbols.reindex_symbols()
 
         now = time.time()
         with self.store.tx() as db:

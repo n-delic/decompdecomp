@@ -82,11 +82,43 @@ class PE:
         return self.image_base <= addr < self.image_base + self.image_size
 
 
+# a Windows program: the DOS header ("MZ") says where the PE header is; after it the COFF header, then the optional
+# header (PE32's: a 32-bit program), then the section table
+DOS_HEADER_BYTES, PE_OFFSET_AT = 0x40, 0x3C
+PE_HEADER_BYTES = 0x18  # "PE\0\0" and the COFF header
+MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT = 4, 6, 8  # in the COFF header, from "PE\0\0"
+OPTIONAL_HEADER_AT = PE_HEADER_BYTES
+MACHINE_I386, PE32_MAGIC = 0x14C, 0x10B
+ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104  # in the optional header
+SECTION_HEADER_BYTES, SECTION_FLAGS_AT = 40, 36
+CODE_AND_EXECUTABLE = 0x20000020  # IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE
+PE_PROBE_BYTES, PE_HEADERS_BYTES = 0x1000, 0x200  # is_pe reads this much of a file, or the PE header and this much more
+# the import directory: 20-byte descriptors, each with a table of 4-byte entries (a name's address, or an ordinal)
+IMPORT_DESCRIPTOR_BYTES = 20
+MAX_IMPORT_DLLS, MAX_IMPORTS_PER_DLL = 4096, 65536  # a broken table stops here
+BY_ORDINAL, ORDINAL_BITS = 0x80000000, 0xFFFF
+DLL_NAME_BYTES, IMPORT_NAME_BYTES = 64, 256
+IMPORT_HINT_BYTES = 2  # an import's name follows its 2-byte hint
+# the Rich header: the tools that built the program, XORed with a key, between the DOS stub and "Rich"
+RICH_START = 0x80
+RICH_ENTRIES_AT, RICH_ENTRY_BYTES = 16, 8  # after "DanS" and its padding: (product << 16 | build, count)
+# read_data
+READ_DEFAULT_BYTES, READ_MIN_BYTES, READ_MAX_BYTES = 64, 4, 512
+HEX_ROW_BYTES = 16
+POINTERS_SHOWN, FLOATS_SHOWN = 24, 8
+PLAUSIBLE_FLOAT = (1e-6, 1e7)  # magnitudes a float in game data has; other words aren't floats
+MIN_STRING_CHARS = 3
+PRINTABLE = range(32, 127)
+TOOL_SECONDS = 3600  # Ghidra on a big game, the project's build
+ERROR_TAIL = 1500  # how much of a tool's output an error shows
+JAVA_NEEDED = 21  # what the pinned Ghidra needs
+
+
 def _pe_header(head: bytes) -> int | None:
-    if len(head) < 0x40 or head[:2] != b"MZ":
+    if len(head) < DOS_HEADER_BYTES or head[:2] != b"MZ":
         return None
-    at = struct.unpack_from("<I", head, 0x3C)[0]
-    if at + 0x18 > len(head) or head[at:at + 4] != b"PE\0\0":
+    at = struct.unpack_from("<I", head, PE_OFFSET_AT)[0]
+    if at + PE_HEADER_BYTES > len(head) or head[at:at + 4] != b"PE\0\0":
         return None
     return at
 
@@ -94,24 +126,26 @@ def _pe_header(head: bytes) -> int | None:
 def is_pe(head: bytes) -> bool:
     """A 32-bit x86 Windows program (the first 4 KiB of the file are enough)."""
     at = _pe_header(head)
-    return at is not None and struct.unpack_from("<H", head, at + 4)[0] == 0x14C and \
-        struct.unpack_from("<H", head, at + 24)[0] == 0x10B
+    return at is not None and struct.unpack_from("<H", head, at + MACHINE_AT)[0] == MACHINE_I386 and \
+        struct.unpack_from("<H", head, at + OPTIONAL_HEADER_AT)[0] == PE32_MAGIC
 
 
 def read_pe(data: bytes) -> PE:
     at = _pe_header(data)
-    if at is None or not is_pe(data[:max(0x1000, at + 0x200)]):
+    if at is None or not is_pe(data[:max(PE_PROBE_BYTES, at + PE_HEADERS_BYTES)]):
         raise ForkError("this isn't a 32-bit Windows program (.exe): PC games start from their x86 .exe")
-    count, _, _, _, opt_size = struct.unpack_from("<HIIIH", data, at + 6)
-    timestamp = struct.unpack_from("<I", data, at + 8)[0]
-    opt = at + 24
-    entry_rva, base, image_size = (struct.unpack_from("<I", data, opt + o)[0] for o in (16, 28, 56))
+    count, _, _, _, opt_size = struct.unpack_from("<HIIIH", data, at + SECTION_COUNT_AT)
+    timestamp = struct.unpack_from("<I", data, at + TIMESTAMP_AT)[0]
+    opt = at + OPTIONAL_HEADER_AT
+    entry_rva, base, image_size = (struct.unpack_from("<I", data, opt + field)[0]
+                                   for field in (ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT))
     sections = []
-    for i in range(count):
-        name, vsize, va, size, offset = struct.unpack_from("<8sIIII", data, opt + opt_size + 40 * i)
-        flags = struct.unpack_from("<I", data, opt + opt_size + 40 * i + 36)[0]
+    for number in range(count):
+        header = opt + opt_size + SECTION_HEADER_BYTES * number
+        name, vsize, va, size, offset = struct.unpack_from("<8sIIII", data, header)
+        flags = struct.unpack_from("<I", data, header + SECTION_FLAGS_AT)[0]
         sections.append(Section(name.rstrip(b"\0").decode("latin-1"), base + va, vsize, offset,
-                                min(size, max(0, len(data) - offset)), bool(flags & 0x20000020)))  # code, executable
+                                min(size, max(0, len(data) - offset)), bool(flags & CODE_AND_EXECUTABLE)))
     pe = PE(data, base, image_size, base + entry_rva, timestamp, sections)
     pe.imports = _imports(pe, opt)
     return pe
@@ -119,45 +153,46 @@ def read_pe(data: bytes) -> PE:
 
 def _imports(pe: PE, opt: int) -> dict[int, str]:
     """Import address table slot -> the function's name (or DLL ordinal), from the import directory."""
-    rva = struct.unpack_from("<I", pe.data, opt + 104)[0]
+    rva = struct.unpack_from("<I", pe.data, opt + IMPORTS_AT)[0]
     out: dict[int, str] = {}
     if not rva:
         return out
     at = pe.image_base + rva
-    for _ in range(4096):
-        desc = pe.read(at, 20)
-        if len(desc) < 20 or desc == bytes(20):
+    for _ in range(MAX_IMPORT_DLLS):
+        desc = pe.read(at, IMPORT_DESCRIPTOR_BYTES)
+        if len(desc) < IMPORT_DESCRIPTOR_BYTES or desc == bytes(IMPORT_DESCRIPTOR_BYTES):
             break
         lookup, _, _, name_rva, iat = struct.unpack("<IIIII", desc)
-        dll = pe.read(pe.image_base + name_rva, 64).split(b"\0", 1)[0].decode("latin-1")
+        dll = pe.read(pe.image_base + name_rva, DLL_NAME_BYTES).split(b"\0", 1)[0].decode("latin-1")
         lookup = lookup or iat
-        for k in range(65536):
+        for k in range(MAX_IMPORTS_PER_DLL):
             entry = pe.read(pe.image_base + lookup + 4 * k, 4)
             if len(entry) < 4 or not struct.unpack("<I", entry)[0]:
                 break
             value = struct.unpack("<I", entry)[0]
-            if value & 0x80000000:
-                name = f"{Path(dll).stem}_{value & 0xFFFF}"
+            if value & BY_ORDINAL:
+                name = f"{Path(dll).stem}_{value & ORDINAL_BITS}"
             else:
-                name = pe.read(pe.image_base + value + 2, 256).split(b"\0", 1)[0].decode("latin-1")
+                address = pe.image_base + value + IMPORT_HINT_BYTES
+                name = pe.read(address, IMPORT_NAME_BYTES).split(b"\0", 1)[0].decode("latin-1")
             out[pe.image_base + iat + 4 * k] = name if _IDENT.fullmatch(name) else f"{Path(dll).stem}_{k}"
-        at += 20
+        at += IMPORT_DESCRIPTOR_BYTES
     return out
 
 
 def rich_builds(data: bytes) -> list[tuple[int, int, int]]:
     """(product id, build number, count) of every tool the Rich header says built a part of the program."""
     at = _pe_header(data)
-    end = data.find(b"Rich", 0x80, at)
+    end = data.find(b"Rich", RICH_START, at)
     if end < 0:
         return []
     key = data[end + 4:end + 8]
-    plain = bytes(b ^ key[i % 4] for i, b in enumerate(data[0x80:end]))
+    plain = bytes(byte ^ key[i % 4] for i, byte in enumerate(data[RICH_START:end]))
     if not plain.startswith(b"DanS"):
         return []
     out = []
-    for i in range(16, len(plain) - 7, 8):
-        comp, count = struct.unpack_from("<II", plain, i)
+    for entry in range(RICH_ENTRIES_AT, len(plain) - RICH_ENTRY_BYTES + 1, RICH_ENTRY_BYTES):
+        comp, count = struct.unpack_from("<II", plain, entry)
         out.append((comp >> 16, comp & 0xFFFF, count))
     return out
 
@@ -381,7 +416,7 @@ typedef int BOOL;
 """
 
 
-def read_data(root: Path, manifest: dict, name: str, length: int = 64) -> str:
+def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_BYTES) -> str:
     """What read_data shows on a PC project: the bytes at a D_<address> (or any address) in the user's copy, the
     addresses its words point to, and a string or floats when it reads as one."""
     m = re.fullmatch(r"_?D_([0-9A-Fa-f]{8})|(?:0x)?([0-9A-Fa-f]{6,8})", name)
@@ -393,31 +428,32 @@ def read_data(root: Path, manifest: dict, name: str, length: int = 64) -> str:
     if sec is None:
         raise ForkError(f"0x{addr:08X} isn't in the game's program (it spans 0x{pe.image_base:08X}-"
                         f"0x{pe.image_base + pe.image_size:08X})")
-    n = max(4, min(int(length or 64), 512))
+    n = max(READ_MIN_BYTES, min(int(length or READ_DEFAULT_BYTES), READ_MAX_BYTES))
     data = pe.read(addr, n)
     out = [f"D_{addr:08X} ({sec.name}+0x{addr - sec.va:X}, {n} bytes)"]
     if not data:
         return out[0] + f": uninitialized data ({sec.name}), zeros at start-up."
-    for i in range(0, len(data), 16):
-        chunk = data[i:i + 16]
-        out.append(f"  +0x{i:03X}: {chunk.hex(' '):<47}  {''.join(chr(c) if 32 <= c < 127 else '.' for c in chunk)}")
+    for i in range(0, len(data), HEX_ROW_BYTES):
+        chunk = data[i:i + HEX_ROW_BYTES]
+        out.append(f"  +0x{i:03X}: {chunk.hex(' '):<47}  {''.join(chr(c) if c in PRINTABLE else '.' for c in chunk)}")
     words = [w for (w,) in struct.iter_unpack("<I", data[:len(data) // 4 * 4])]
     ptrs = [(4 * i, w) for i, w in enumerate(words) if pe.contains(w)]
     if ptrs:
-        out.append("pointers in it: " + ", ".join(f"+0x{at:X} -> 0x{w:08X}" for at, w in ptrs[:24]))
-    floats = [struct.unpack("<f", struct.pack("<I", w))[0] for w in words[:8]]
-    if words and any(1e-6 < abs(x) < 1e7 for x in floats):
+        out.append("pointers in it: " + ", ".join(f"+0x{at:X} -> 0x{w:08X}" for at, w in ptrs[:POINTERS_SHOWN]))
+    floats = [struct.unpack("<f", struct.pack("<I", w))[0] for w in words[:FLOATS_SHOWN]]
+    smallest, biggest = PLAUSIBLE_FLOAT
+    if words and any(smallest < abs(x) < biggest for x in floats):
         out.append("as f32: " + ", ".join(f"{x:g}" for x in floats))
     text = data.split(b"\0", 1)[0]
-    if len(text) >= 3 and all(32 <= c < 127 or c in (9, 10) for c in text) and not (ptrs and ptrs[0][0] == 0):
+    if len(text) >= MIN_STRING_CHARS and all(c in PRINTABLE or c in b"\t\n" for c in text) and not (ptrs and ptrs[0][0] == 0):
         out.append(f"as a string: {json.dumps(text.decode('latin-1'))}")
     return "\n".join(out)
 
 
 def _run(cmd: list[str], root: Path, what: str, log) -> None:
-    ok, tail = ForkProject(root).run(cmd, log=log, timeout=3600)
+    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS)
     if not ok:
-        raise ForkError(f"{what} failed:\n{tail[-1500:]}")
+        raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
 
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
@@ -431,7 +467,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     if not (toolchains.path("msvc") / compiler).is_dir():
         raise ForkError(f"Visual C++ {compiler} isn't in the installed compiler pack")
     if not ghidra.available():
-        if toolchains.java_version() < 21:
+        if toolchains.java_version() < JAVA_NEEDED:
             raise ForkError("PC games are analysed with Ghidra, which needs Java 21 or newer: install it from "
                             "https://adoptium.net, then try again")
         log("installing Ghidra (540 MB, once): it finds the functions in PC programs")

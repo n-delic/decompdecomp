@@ -215,6 +215,7 @@ class Autosave:
             self.run_once()
 
     def run_once(self) -> list[str]:
+        """Save every ROM project that changed since its last save (a new event). Returns the slugs saved."""
         saved = []
         for row in self.net.store.all("SELECT p.slug, (SELECT MAX(id) FROM events e WHERE e.project_id=p.id) AS last "
                                       "FROM projects p"):

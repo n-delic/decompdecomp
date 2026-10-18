@@ -17,7 +17,7 @@ from ... import __version__, consoles, hostenv, toolchains
 from ...network import NetworkError
 from .. import agents, cleanup, edition, saves, updates
 from ..engine import COMPILERS, TOOLS
-from ..support import MAX_DISC, _static, job_error
+from ..support import MAX_DISC, job_error, static_file
 from . import App
 
 
@@ -118,7 +118,7 @@ def register(app: App) -> None:
         q = request.query_params
         toolchain = q.get("toolchain") or None
         if q.get("demo") == "1":
-            game: bytes | Path | None = _static("demo/demo-quest-64.z64")
+            game: bytes | Path | None = static_file("demo/demo-quest-64.z64")
             if game is None:
                 return fail(ValueError("the demo ROM is missing from this install"))
             name = "demo-quest-64.z64"

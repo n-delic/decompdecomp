@@ -17,8 +17,8 @@ from pathlib import Path
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from ..elfobj import _function_symbols, _section_target
-from ..rom.match import _raw_relocs
+from ..elfobj import _function_symbols, section_target
+from ..rom.match import raw_relocs
 
 # Bytes a load or store moves, by mnemonic (PowerPC, MIPS). Anything else (an address computed with addi or lui)
 # is only compared when both sides point at a C string.
@@ -70,10 +70,10 @@ class _Object:
             return None
         shndx, start, size = found
         code = self.elf.get_section(shndx).data()[start:start + size]
-        raw = _raw_relocs(self.elf, shndx, start, size, code)
+        raw = raw_relocs(self.elf, shndx, start, size, code)
         out: dict[int, tuple[str, bytes | None, int]] = {}
         for k, r in enumerate(raw):
-            residual = r["value"] if r["rela"] else _section_target("mips", raw, k)
+            residual = r["value"] if r["rela"] else section_target("mips", raw, k)
             if residual is None:
                 continue
             sym = r["symtab"].get_symbol(r["symidx"])

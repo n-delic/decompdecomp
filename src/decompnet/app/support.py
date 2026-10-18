@@ -20,11 +20,15 @@ from ..network import NetworkError
 from ..rom import RomError
 from . import agents
 
-COOKIE = "decomp_live"
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
 
 LOG_BYTES, LOG_BACKUPS = 5 << 20, 4
+TOOL_SAID_CHARS = 400  # the end of what a failed tool said, in its job's error
+DETAILS_CHARS, TRACE_CHARS = 6000, 4000  # what a failed job keeps of a tool's output and of the Python trace
+JOB_ID_CHARS = 12
+MIN_CONTEXT_TOKENS = 2048  # an endpoint's context is at least this: the work prompt alone needs about that
+MAX_SESSIONS = 32  # helpers on one endpoint at once, at most
 
 
 def file_log(path: Path) -> logging.Logger:
@@ -73,7 +77,7 @@ def job_error(e: BaseException, log_path: Path | None = None) -> str:
     if isinstance(e, subprocess.CalledProcessError):
         said = e.stderr or e.output or ""  # what the command said, so the error shows why
         said = (said.decode("utf-8", "replace") if isinstance(said, bytes) else said).strip()
-        return f"{_tool_of(e.cmd)} failed ({e.returncode})" + (f": {said[-400:]}" if said else "")
+        return f"{_tool_of(e.cmd)} failed ({e.returncode})" + (f": {said[-TOOL_SAID_CHARS:]}" if said else "")
     if isinstance(e, MemoryError):
         return "this computer ran out of memory: close other programs and try again"
     if isinstance(e, (NetworkError, RomError, toolchains.ToolchainError, ValueError, RuntimeError, OSError)):
@@ -93,7 +97,7 @@ class Jobs:
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
     def start(self, kind: str, fn) -> str:
-        jid = uuid.uuid4().hex[:12]
+        jid = uuid.uuid4().hex[:JOB_ID_CHARS]
         job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
         self.jobs[jid] = job
         logger = self.logger
@@ -110,9 +114,9 @@ class Jobs:
                 logger.info("job %s %s done in %.0fs", kind, jid, time.time() - job["t"])
             except BaseException as e:  # noqa: BLE001  a job must end, whatever went wrong
                 if getattr(e, "details", None):  # what the tool said, in full
-                    job["trace"] = str(e.details)[-6000:]
+                    job["trace"] = str(e.details)[-DETAILS_CHARS:]
                 elif not isinstance(e, (NetworkError, RomError, ValueError)):
-                    job["trace"] = traceback.format_exc()[-4000:]
+                    job["trace"] = traceback.format_exc()[-TRACE_CHARS:]
                 job["error"] = job_error(e, self.log_path)
                 job["state"] = "error"  # last: whoever sees the state sees the rest
                 logger.error("job %s %s failed: %s\n%s", kind, jid, job["error"], traceback.format_exc())
@@ -186,7 +190,7 @@ class Settings:
                 current[k] = str(data[k] or "").strip()
         for k, n in numbers.items():
             if n:
-                current[k] = max(2048, n) if k == "context_tokens" else max(1, min(n, 32))
+                current[k] = max(MIN_CONTEXT_TOKENS, n) if k == "context_tokens" else max(1, min(n, MAX_SESSIONS))
             else:
                 current.pop(k, None)
         if data.get("api_key") and "•" not in str(data["api_key"]):
@@ -216,14 +220,14 @@ class Settings:
                 "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {}}
 
 
-def _session_options(entry: dict) -> dict:
+def session_options(entry: dict) -> dict:
     """What a built-in agent session needs from its endpoint."""
     out = {"endpoint": entry.get("id") or "", "provider": entry["provider"], "base_url": entry["base_url"],
            "model": entry["model"], "provider_name": entry["name"]}
     return out | {k: entry[k] for k in ("api_key", "context_tokens") if entry.get(k)}
 
 
-def _spread(settings: Settings, manager, picked: list[str], count: int, given: dict) -> list[tuple[dict, int]]:
+def spread_sessions(settings: Settings, manager, picked: list[str], count: int, given: dict) -> list[tuple[dict, int]]:
     """(endpoint, sessions) for a start of `count` built-in agent sessions: spread over the endpoints picked, one
     at a time in turn, each up to its own limit of sessions at once (a small box serves one request at a time).
     A start without endpoints (an older GUI, or an address typed in) uses the first saved one, with what it
@@ -261,7 +265,7 @@ def _launcher(saved: dict) -> dict:
     return saved
 
 
-def _static(name: str) -> bytes | None:
+def static_file(name: str) -> bytes | None:
     if ".." in name or name.startswith(("/", "\\")):
         return None
     try:

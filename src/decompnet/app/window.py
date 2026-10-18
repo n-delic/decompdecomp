@@ -26,6 +26,7 @@ SYSTEM_PYTHON = "/usr/bin/python3"
 WINDOW_PROGRAM = Path(__file__).with_name("gtkwindow.py")
 TOKEN_AGENT = "decompdecomp-window/"  # gtkwindow.py puts this, then the secret, in its user agent
 CHECK_SECONDS = 20
+CLOSE_SECONDS = 5  # a window told to close that's still there after this long is ended
 
 # what the window needs from the system, per family of distributions (/etc/os-release ID and ID_LIKE)
 INSTALL_COMMANDS = {
@@ -133,7 +134,7 @@ class Window:
         if proc is not None and proc.poll() is None:
             self._say("close", proc)
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=CLOSE_SECONDS)
             except subprocess.TimeoutExpired:
                 proc.kill()
 

@@ -37,6 +37,34 @@ GC_DEFAULT, WII_DEFAULT = GAMECUBE.usual, WII.usual
 REL_EMPTY = "REL/empty.c"
 DISC_MAGIC = {b"RVZ\x01": "rvz", b"WIA\x01": "wia", b"WBFS": "wbfs", b"CISO": "ciso"}
 GCZ_MAGIC = 0xB10BC001
+# a disc's header (boot.bin): a magic word says which console's disc it is
+GC_DISC_MAGIC, GC_MAGIC_AT = 0xC2339F3D, 0x1C
+WII_DISC_MAGIC, WII_MAGIC_AT = 0x5D1C9EA3, 0x18
+DISC_HEAD_BYTES = 0x440  # the header: game ID, title and both magics
+GAME_ID_CHARS = 6  # GP6E01: game, region, maker
+TITLE_START, TITLE_END = 0x20, 0x400
+# a program (DOL): 7 text and 11 data sections, as three tables of 18 words (file offsets, addresses, sizes)
+DOL_SECTIONS = 18
+DOL_TABLE_BYTES = DOL_SECTIONS * 4
+DOL_OFFSETS_AT, DOL_ADDRESSES_AT, DOL_SIZES_AT = 0, DOL_TABLE_BYTES, 2 * DOL_TABLE_BYTES
+DOL_ENTRY_AT = 0xE0
+DOL_HEADER_BYTES = 0x100
+DOL_WHOLE_BYTES = 64 << 20  # a file smaller than this is read whole to check it's a DOL, else only its header
+RAM_START, RAM_END = 0x80000000, 0x81800000  # the GameCube's 24 MB (the Wii's MEM1): where programs are loaded
+# a REL module's header
+REL_HEADER_BYTES = 0x40
+REL_MAX_SECTIONS = 32
+REL_VERSIONS = (1, 3)  # the oldest and newest
+REL_MAX_MODULE_ID = 0x10000
+REL_VERSION_AT, REL_IMPORTS_AT = 0x1C, 0x28
+REL_IMPORT_BYTES = 8  # each import: a module id and where its relocations are
+EXTAB_ENTRY_BYTES = 12  # extabindex: (function, size, its extab entry)
+MAX_FUNCTION_BYTES = 0x100000  # an exception table's size bigger than this is not a function's
+VFS_BATCH = 64  # files copied out of a disc per dtk call
+DTK_SECONDS, COPY_SECONDS, BUILD_SECONDS = 600, 1800, 3600
+ERROR_TAIL = 300  # how much of a tool's message an error shows
+REPAIRS_MAX = 40  # repairs of dtk's split, one at a time, before giving up
+_GAME_ID = re.compile(f"[A-Z0-9]{{{GAME_ID_CHARS}}}")
 
 
 def comment_version(compiler: str) -> int:
@@ -81,23 +109,28 @@ def _use_linker(root: Path, game_id: str, compiler: str, sources: list[str], rel
 
 def is_dol(data: bytes) -> bool:
     """A GameCube/Wii program (DOL): 7 text + 11 data section offsets, addresses in 0x80000000-0x81800000."""
-    if len(data) < 0x100:
+    if len(data) < DOL_HEADER_BYTES:
         return False
-    offs = struct.unpack(">18I", data[0:72])
-    addrs = struct.unpack(">18I", data[72:144])
-    sizes = struct.unpack(">18I", data[144:216])
-    entry = struct.unpack(">I", data[0xE0:0xE4])[0]
-    used = [(o, a, s) for o, a, s in zip(offs, addrs, sizes) if s]
-    if not used or not 0x80000000 <= entry < 0x81800000:
+    offs, addrs, sizes = _dol_tables(data)
+    entry = struct.unpack_from(">I", data, DOL_ENTRY_AT)[0]
+    used = [(offset, address, size) for offset, address, size in zip(offs, addrs, sizes) if size]
+    if not used or not RAM_START <= entry < RAM_END:
         return False
-    return all(0x100 <= o and o + s <= len(data) and 0x80000000 <= a < 0x81800000 for o, a, s in used)
+    return all(DOL_HEADER_BYTES <= offset and offset + size <= len(data) and RAM_START <= address < RAM_END
+               for offset, address, size in used)
+
+
+def _dol_tables(dol: bytes) -> tuple[tuple[int, ...], ...]:
+    """A DOL's sections: (file offsets, addresses, sizes), 18 each."""
+    return tuple(struct.unpack_from(f">{DOL_SECTIONS}I", dol, at)
+                 for at in (DOL_OFFSETS_AT, DOL_ADDRESSES_AT, DOL_SIZES_AT))
 
 
 def disc_kind(head: bytes) -> str | None:
     """GameCube/Wii disc image formats dtk reads (ISO/GCM by magic, compressed formats by their headers)."""
-    if len(head) >= 0x20 and struct.unpack(">I", head[0x1C:0x20])[0] == 0xC2339F3D:
+    if len(head) >= GC_MAGIC_AT + 4 and struct.unpack_from(">I", head, GC_MAGIC_AT)[0] == GC_DISC_MAGIC:
         return "gc"
-    if len(head) >= 0x1C and struct.unpack(">I", head[0x18:0x1C])[0] == 0x5D1C9EA3:
+    if len(head) >= WII_MAGIC_AT + 4 and struct.unpack_from(">I", head, WII_MAGIC_AT)[0] == WII_DISC_MAGIC:
         return "wii"
     if head[:4] in DISC_MAGIC or (len(head) >= 4 and struct.unpack("<I", head[:4])[0] == GCZ_MAGIC):
         return "packed"
@@ -113,9 +146,10 @@ def _vfs_read(disc: Path, inner: str) -> bytes:
     with tempfile.TemporaryDirectory(prefix="decompwtf-disc-") as tmp:
         out = Path(tmp) / Path(inner).name
         res = subprocess.run(capped([_dtk(), "vfs", "cp", f"{disc}:{inner}", str(out)]), capture_output=True, text=True,
-                             timeout=600, encoding="utf-8", errors="replace")
+                             timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
         if res.returncode != 0 or not out.exists():
-            raise ForkError(f"couldn't read {inner} from the disc image: {(res.stderr or res.stdout).strip()[-300:]}")
+            why = (res.stderr or res.stdout).strip()[-ERROR_TAIL:]
+            raise ForkError(f"couldn't read {inner} from the disc image: {why}")
         return out.read_bytes()
 
 
@@ -123,57 +157,62 @@ def disc_id(path: Path) -> str | None:
     """The game ID (e.g. GP6E01) of a GameCube/Wii disc image in any format dtk reads, or None if it isn't one."""
     try:
         with open(path, "rb") as f:
-            head = f.read(0x440)
+            head = f.read(DISC_HEAD_BYTES)
         kind = disc_kind(head)
         if kind is None:
             return None
         boot = head if kind in ("gc", "wii") else _vfs_read(path, "sys/boot.bin")
     except (OSError, ForkError):
         return None
-    gid = boot[:6].decode("ascii", "replace")
-    return gid if re.fullmatch(r"[A-Z0-9]{6}", gid) else None
+    gid = boot[:GAME_ID_CHARS].decode("ascii", "replace")
+    return gid if _GAME_ID.fullmatch(gid) else None
 
 
 def vfs_copy(disc: Path, inner: list[str], dest: Path) -> None:
     """Copy files (paths inside the disc, like files/dll/m699Dll.rel) out of a disc image into `dest`."""
     dest.mkdir(parents=True, exist_ok=True)
-    for i in range(0, len(inner), 64):
-        res = subprocess.run(capped([_dtk(), "vfs", "cp", "-q", *[f"{disc}:{x}" for x in inner[i:i + 64]], f"{dest}{os.sep}"]),
-                             capture_output=True, text=True, timeout=1800, encoding="utf-8", errors="replace")
+    for at in range(0, len(inner), VFS_BATCH):
+        batch = [f"{disc}:{name}" for name in inner[at:at + VFS_BATCH]]
+        res = subprocess.run(capped([_dtk(), "vfs", "cp", "-q", *batch, f"{dest}{os.sep}"]),
+                             capture_output=True, text=True, timeout=COPY_SECONDS, encoding="utf-8", errors="replace")
         if res.returncode != 0:
-            raise ForkError(f"couldn't copy files out of the disc image: {(res.stderr or res.stdout).strip()[-400:]}")
+            why = (res.stderr or res.stdout).strip()[-ERROR_TAIL:]
+            raise ForkError(f"couldn't copy files out of the disc image: {why}")
 
 
 def vfs_list(disc: Path) -> list[str]:
     """Every file in a disc image (paths like files/dll/m302Dll.rel)."""
     res = subprocess.run(capped([_dtk(), "vfs", "ls", "-r", "-s", f"{disc}:"]), capture_output=True, text=True,
-                         timeout=600, encoding="utf-8", errors="replace")
+                         timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
     if res.returncode != 0:
-        raise ForkError(f"couldn't list the disc image's files: {(res.stderr or res.stdout).strip()[-300:]}")
+        raise ForkError(f"couldn't list the disc image's files: {(res.stderr or res.stdout).strip()[-ERROR_TAIL:]}")
     return [line.strip() for line in res.stdout.splitlines() if line.strip() and not line.strip().endswith("/")]
 
 
 def is_rel(data: bytes) -> bool:
     """A REL module: a small module id, up to 32 sections whose table follows the 0x40-byte header (version 1-3)."""
-    if len(data) < 0x40:
+    if len(data) < REL_HEADER_BYTES:
         return False
-    module_id, _, _, sections, table = struct.unpack(">IIIII", data[:0x14])
-    version = struct.unpack(">I", data[0x1C:0x20])[0]
-    return 0 < module_id < 0x10000 and 0 < sections <= 32 and 0x40 <= table < len(data) and 1 <= version <= 3
+    module_id, _, _, sections, table = struct.unpack_from(">IIIII", data)
+    version = struct.unpack_from(">I", data, REL_VERSION_AT)[0]
+    oldest, newest = REL_VERSIONS
+    return (0 < module_id < REL_MAX_MODULE_ID and 0 < sections <= REL_MAX_SECTIONS
+            and REL_HEADER_BYTES <= table < len(data) and oldest <= version <= newest)
 
 
 def rel_imports(data: bytes) -> set[int]:
     """The ids of the modules a REL module refers to (its import table; 0 is the program)."""
-    if len(data) < 0x30:
+    if len(data) < REL_IMPORTS_AT + REL_IMPORT_BYTES:
         return set()
-    table, size = struct.unpack(">II", data[0x28:0x30])
-    return {struct.unpack(">I", data[at:at + 4])[0] for at in range(table, min(table + size, len(data) - 7), 8)}
+    table, size = struct.unpack_from(">II", data, REL_IMPORTS_AT)
+    end = min(table + size, len(data) - REL_IMPORT_BYTES + 1)
+    return {struct.unpack_from(">I", data, at)[0] for at in range(table, end, REL_IMPORT_BYTES)}
 
 
 def is_compressed_rel(data: bytes) -> bool:
     """A REL module packed with Sega's SaCompGC (Sonic Adventure DX keeps some of its modules so): the marker sits
     near the start of the file. decompdecomp can't unpack those yet."""
-    return b"SaCompGC" in data[:0x40] or b"SACompGC" in data[:0x40]
+    return b"SaCompGC" in data[:REL_HEADER_BYTES] or b"SACompGC" in data[:REL_HEADER_BYTES]
 
 
 def disc_modules(disc: Path, packed: list[str] | None = None) -> list[tuple[str, str, str, int]]:
@@ -214,21 +253,21 @@ def disc_modules(disc: Path, packed: list[str] | None = None) -> list[tuple[str,
 def game_info(path: Path) -> dict:
     """What the user dropped: {"platform": gc|wii, "id", "title", "kind": dol|disc, "dol": bytes}."""
     with open(path, "rb") as f:
-        head = f.read(0x440)
-    if is_dol(path.read_bytes() if path.stat().st_size < 64 << 20 else head):
+        head = f.read(DISC_HEAD_BYTES)
+    if is_dol(path.read_bytes() if path.stat().st_size < DOL_WHOLE_BYTES else head):
         dol = path.read_bytes()
-        stem = re.sub(r"[^A-Z0-9]", "", path.stem.upper())[:6]
+        stem = re.sub(r"[^A-Z0-9]", "", path.stem.upper())[:GAME_ID_CHARS]
         game_id = stem if len(stem) >= 4 and stem != "MAIN" else "G" + hashlib.sha1(dol).hexdigest()[:5].upper()
         return {"platform": "gc", "id": game_id, "title": path.stem, "kind": "dol", "dol": dol}
     kind = disc_kind(head)
     if kind is None:
         raise ForkError("this isn't a GameCube or Wii disc image or program (DOL)")
     boot = head if kind in ("gc", "wii") else _vfs_read(path, "sys/boot.bin")
-    platform = "wii" if struct.unpack(">I", boot[0x18:0x1C])[0] == 0x5D1C9EA3 else "gc"
-    game_id = boot[:6].decode("ascii", "replace")
-    if not re.fullmatch(r"[A-Z0-9]{6}", game_id):
+    platform = "wii" if struct.unpack_from(">I", boot, WII_MAGIC_AT)[0] == WII_DISC_MAGIC else "gc"
+    game_id = boot[:GAME_ID_CHARS].decode("ascii", "replace")
+    if not _GAME_ID.fullmatch(game_id):
         raise ForkError("the disc header has no valid game ID")
-    title = boot[0x20:0x400].split(b"\0", 1)[0].decode("ascii", "replace").strip() or game_id
+    title = boot[TITLE_START:TITLE_END].split(b"\0", 1)[0].decode("ascii", "replace").strip() or game_id
     return {"platform": platform, "id": game_id, "title": title, "kind": "disc", "dol": _vfs_read(path, "sys/main.dol")}
 
 
@@ -313,7 +352,7 @@ def _build(fp: ForkProject, log) -> tuple[bool, str]:
     ok, tail = fp.run([sys.executable, "configure.py", *tool_args()], log=log)
     if not ok:
         return False, tail
-    return fp.run(["ninja"], log=log, timeout=3600)
+    return fp.run(["ninja"], log=log, timeout=BUILD_SECONDS)
 
 
 _SECTION_LINE = re.compile(r"^\t(\S+)(\s+type:\w+.*)$")
@@ -398,7 +437,7 @@ def _name_entry(root: Path, game_id: str, dol: bytes) -> bool:
     text = path.read_text(encoding="utf-8")
     if re.search(r"^__start = ", text, re.M):
         return False
-    entry = struct.unpack(">I", dol[0xE0:0xE4])[0]
+    entry = struct.unpack_from(">I", dol, DOL_ENTRY_AT)[0]
     new, n = re.subn(rf"^\w+ = (\.init|\.text):0x{entry:08X};", rf"__start = \1:0x{entry:08X};", text, count=1, flags=re.M)
     if n:
         path.write_text(new, encoding="utf-8")
@@ -408,7 +447,7 @@ def _name_entry(root: Path, game_id: str, dol: bytes) -> bool:
 _OVERLAP = re.compile(r"Overlapping functions (\d+):0x([0-9A-Fa-f]+)-\d+:0x([0-9A-Fa-f]+) -> \d+:0x([0-9A-Fa-f]+)")
 
 
-def _differing(root: Path, game_id: str, log_tail: str) -> list[str] | None:
+def differing_files(root: Path, game_id: str, log_tail: str) -> list[str] | None:
     """The files that rebuilt but not into the game's bytes, when that's what the build's failure is (its checksum
     step: dtk asked again, as the build's output can be too long to keep); None when something else failed."""
     if not re.search(r"\.(dol|rel): \S*FAILED|build\.sha1", log_tail) or "internal linker error" in log_tail:
@@ -416,7 +455,7 @@ def _differing(root: Path, game_id: str, log_tail: str) -> list[str] | None:
     if any(e != f"build/{game_id}/ok" for e in re.findall(r"^FAILED: (?:\[code=\d+\] )?(\S+)", log_tail, re.M)):
         return None  # another step failed (what's on disk may be from an earlier build)
     res = subprocess.run(capped([_dtk(), "shasum", "-c", f"config/{game_id}/build.sha1"]), cwd=root, capture_output=True,
-                         text=True, timeout=600, encoding="utf-8", errors="replace")
+                         text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
     lines = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in (res.stdout + res.stderr).splitlines()]
     results = [re.match(r"^(\S+\.(?:dol|rel)): (OK|FAILED)$", ln) for ln in lines]
     if any(m is None for m, ln in zip(results, lines) if re.search(r"\.(dol|rel)\b", ln)):
@@ -466,10 +505,9 @@ _MISSING_FUNCTION = re.compile(r"Failed to find function symbol @ \d+:0x([0-9A-F
 
 def _dol_read(dol: bytes, address: int, size: int) -> bytes:
     """`size` bytes of the program at `address` (empty when no section of the file holds them)."""
-    offs, addrs, sizes = (struct.unpack(">18I", dol[k:k + 72]) for k in (0, 72, 144))
-    for o, a, n in zip(offs, addrs, sizes):
-        if n and a <= address and address + size <= a + n:
-            return dol[o + address - a:o + address - a + size]
+    for offset, start, length in zip(*_dol_tables(dol)):
+        if length and start <= address and address + size <= start + length:
+            return dol[offset + address - start:offset + address - start + size]
     return b""
 
 
@@ -480,9 +518,9 @@ def _exception_table_size(dol: bytes, address: int, sections: list[tuple[str, in
         if name != "extabindex":
             continue
         table = _dol_read(dol, start, size)
-        for at in range(0, len(table) - 11, 12):
-            fn, length, _ = struct.unpack(">III", table[at:at + 12])
-            if fn == address and 0 < length < 0x100000:
+        for at in range(0, len(table) - EXTAB_ENTRY_BYTES + 1, EXTAB_ENTRY_BYTES):
+            fn, length, _ = struct.unpack_from(">III", table, at)
+            if fn == address and 0 < length < MAX_FUNCTION_BYTES:
                 return length
     return None
 
@@ -515,7 +553,7 @@ def _dtk_sections(dol: bytes) -> list[tuple[str, int, int]]:
     with tempfile.TemporaryDirectory(prefix="decompwtf-dol-") as tmp:
         (Path(tmp) / "main.dol").write_bytes(dol)
         res = subprocess.run(capped([_dtk(), "dol", "info", str(Path(tmp) / "main.dol")]), capture_output=True,
-                             text=True, timeout=600, encoding="utf-8", errors="replace")
+                             text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
     table = res.stdout.split("Sections:", 1)[-1].split("\n\n", 1)[0]
     return [(m.group(1), int(m.group(2), 16), int(m.group(3), 16))
             for m in re.finditer(r"^[ \t]*(\S+) \| 0x([0-9A-Fa-f]+)\s*\| 0x([0-9A-Fa-f]+)\s*\|", table, re.M)]
@@ -641,7 +679,7 @@ write_asm: true
     log(f"analysing {info['title']} ({gid}) with decomp-toolkit")
     ok, tail = _build(fp, log)
     closest: tuple[int, str] | None = None  # (files that differ, linker): the linker that came closest
-    for _ in range(40):  # what a real game needs that dtk's defaults don't do: one repair at a time, then again
+    for _ in range(REPAIRS_MAX):  # what a real game needs that dtk's defaults don't do: one repair at a time, then again
         if ok:
             break
         if _name_entry(root, gid, info["dol"]):
@@ -665,7 +703,7 @@ write_asm: true
                    + (" (the disc keeps some compressed)" if packed else "") if need else "it")
                 + " (the community's decomps of games like this leave such modules out too); the game keeps your copy's")
         elif (newer := _next_linker(compiler, tail)):
-            if (diff := _differing(root, gid, tail)) is not None and (closest is None or len(diff) < closest[0]):
+            if (diff := differing_files(root, gid, tail)) is not None and (closest is None or len(diff) < closest[0]):
                 closest = (len(diff), compiler)
             log(f"CodeWarrior's {compiler} linker can't link this game into its bytes: trying {newer}")
             compiler = newer
@@ -673,12 +711,12 @@ write_asm: true
         else:
             break
         ok, tail = _build(fp, log)
-    diff = None if ok else _differing(root, gid, tail)
+    diff = None if ok else differing_files(root, gid, tail)
     if not ok and closest is not None and closest[1] != compiler and (diff is None or closest[0] <= len(diff)):  # the closest (earliest of equals)
         compiler = closest[1]
         _use_linker(root, gid, compiler, [], bool(modules))
         ok, tail = _build(fp, log)
-        diff = None if ok else _differing(root, gid, tail)
+        diff = None if ok else differing_files(root, gid, tail)
     if not ok and diff is None:
         raise ForkError(f"the first build failed:\n{tail[-1500:]}")
     if diff:  # decompiling works per function; the whole game doesn't rebuild into its bytes yet (link order...)
@@ -705,7 +743,7 @@ write_asm: true
     _write_configure(root, gid, compiler, sources, rels=bool(modules))
     log(f"{len(sources)} source files for agents to write into")
     ok, tail = _build(fp, log)
-    if not ok and (_differing(root, gid, tail) is None or not diff):
+    if not ok and (differing_files(root, gid, tail) is None or not diff):
         raise ForkError(f"the project didn't rebuild the game identically after adding source files:\n{tail[-1500:]}")
     rebuild = {"identical": True, "detail": "identical"} if ok else {
         "identical": False, "detail": f"{len(diff)} files differ: {', '.join(diff[:8])}{', ...' if len(diff) > 8 else ''}"}

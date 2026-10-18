@@ -1,6 +1,8 @@
 """The game's own types written as C, for the shared header every function compiles with: what its debug information
 (stabs.py) says about each struct, union, enum and typedef, with every field at the offset the game has it, and its
-global variables declared with their types. These are what agents guess worst without it (docs/REWRITE.md §9.3).
+global variables declared with their types. These are what agents guess worst without it (on GTA San
+Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents guessed the
+layouts).
 
 The same header is compiled as C and, for a function written as a C++ method, as C++, so what's written is plain C
 that both accept: a C++ class becomes a struct of its data members (a base class is a member at its offset, the vtable

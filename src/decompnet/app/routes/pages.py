@@ -12,7 +12,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from ... import __version__
 from .. import edition, window
-from ..support import _static
+from ..support import static_file
 from . import App
 
 
@@ -29,14 +29,14 @@ def register(app: App) -> None:
                                 "decompdecomp now opens in a window of its own (it just did, if it was updated): you can close this one. "
                                 "Next time, use its app icon or run <code>decomp</code>.",
                                 status_code=401)
-        return HTMLResponse(_static("index.html").decode(), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:
             return Response(status_code=403)
         name = request.path_params["name"]
-        data = _static(name)
+        data = static_file(name)
         if data is None:
             return Response(status_code=404)
         ctype = mimetypes.guess_type(name)[0] or "application/octet-stream"

@@ -36,6 +36,7 @@ class Splits:
 
     @staticmethod
     def parse(text: str) -> "Splits":
+        """A dtk splits.txt as its header and files, each with its sections' ranges and attributes."""
         lines = text.splitlines()
         header: list[str] = []
         files: list[FileSplit] = []
@@ -61,6 +62,7 @@ class Splits:
         return Splits("\n".join(header), files)
 
     def render(self) -> str:
+        """The splits back as splits.txt text, in dtk's own layout."""
         out = [self.header, ""]
         for f in self.files:
             out.append(f"{f.name}:")
@@ -205,7 +207,7 @@ def _usual_tail(text: str, entries: list[tuple[str, int, int]]) -> str:
     return tail if n * 2 >= sum(tails.values()) else ""
 
 
-def _indent_of(text: str, at: int) -> str:
+def indent_of(text: str, at: int) -> str:
     line_start = text.rfind("\n", 0, at) + 1
     return re.match(r"[ \t]*", text[line_start:]).group(0)
 
@@ -235,7 +237,7 @@ def add_objects(text: str, module: str, sources: list[str]) -> str:
             lib = own[0]
             siblings = [o for o in lib.objects if str(Path(o[0]).parent) == folder] or lib.objects
             _, _, last_end = max(siblings, key=lambda o: o[2])
-            indent = _indent_of(text, lib.objects[-1][1])
+            indent = indent_of(text, lib.objects[-1][1])
             tail = _usual_tail(text, siblings)
             text = text[:last_end] + f",\n{indent}Object(NonMatching, \"{src}\"{tail})" + text[last_end:]
             continue
@@ -258,11 +260,11 @@ def add_objects(text: str, module: str, sources: list[str]) -> str:
         else:
             tmpl = max(candidates, key=shared)
         block = text[tmpl.start:tmpl.end]
-        indent = _indent_of(text, tmpl.objects[0][1])
-        close_indent = _indent_of(text, tmpl.body[1]) if text[tmpl.body[1]] in ")]}" else indent[:-4]
+        indent = indent_of(text, tmpl.objects[0][1])
+        close_indent = indent_of(text, tmpl.body[1]) if text[tmpl.body[1]] in ")]}" else indent[:-4]
         b0, b1 = tmpl.body[0] - tmpl.start, tmpl.body[1] - tmpl.start
         tail = _usual_tail(text, tmpl.objects)
         new = block[:b0] + f"\n{indent}Object(NonMatching, \"{src}\"{tail}),\n{close_indent}" + block[b1:]
         new = new.replace(f'"{tmpl.name}"', f'"{module}"', 1) if tmpl.name else new
-        text = text[:tmpl.end] + ",\n" + _indent_of(text, tmpl.start) + new + text[tmpl.end:]
+        text = text[:tmpl.end] + ",\n" + indent_of(text, tmpl.start) + new + text[tmpl.end:]
     return text

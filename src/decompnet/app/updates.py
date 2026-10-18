@@ -6,7 +6,7 @@ Where updates come from depends on how decompdecomp was installed (install.json,
 - "branch":  the newest commit of a branch on GitHub (for testing a branch before it's released), installed from
              GitHub's archive of that commit
 Installing is `uv tool install --force` of the new version, then its `decomp setup` (new pinned tools), then the
-running app becomes the new version with exec (the process, its console window and its port stay the same).
+running app becomes the new version with exec (the process and its port stay the same, and it opens its window again).
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ def info_file() -> Path:
 
 
 def installed() -> dict:
+    """How this copy was installed (install.json): from releases or from a branch, and its version."""
     try:
         data = json.loads(info_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -53,6 +54,7 @@ def installed() -> dict:
 
 
 def record(channel: str, branch: str = "", commit: str = "", repo: str = REPO) -> dict:
+    """Write how this copy was installed, for the next update check."""
     data = {"channel": channel if channel in ("release", "branch") else "release", "repo": repo or REPO,
             "branch": branch, "commit": commit, "version": __version__, "t": time.time()}
     if data["channel"] == "release":
@@ -147,6 +149,7 @@ def check() -> dict:
 
 
 def uv() -> str | None:
+    """Where uv is, which installs updates: on PATH, or where its installer puts it."""
     found = shutil.which("uv")
     if found:
         return found
@@ -157,7 +160,7 @@ def uv() -> str | None:
 
 
 def can_apply() -> tuple[bool, str]:
-    if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's and the AppImage's launchers
+    if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's, the .rpm's and the AppImage's launchers
         kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
         return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
     if edition.DEV:  # installing a release from a checkout would put a second, installed app beside it

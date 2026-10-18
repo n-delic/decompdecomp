@@ -327,7 +327,7 @@ def limit_reset(said: str, now: float | None = None) -> float | None:
     return at
 
 
-_versions: dict[str, tuple[float, str | None]] = {}
+known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
 
 # Claude Code's aliases always point at Anthropic's latest model of each kind; the full names below them keep one
@@ -432,7 +432,7 @@ def _which(cmd: str) -> str | None:
 
 def _version(kind: str, path: str) -> str | None:
     """An agent's `--version`, asked at most every VERSION_CACHE seconds."""
-    cached = _versions.get(kind)
+    cached = known_versions.get(kind)
     if cached is None or time.time() - cached[0] > VERSION_CACHE:
         try:
             res = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8",
@@ -441,7 +441,7 @@ def _version(kind: str, path: str) -> str | None:
             version = said.splitlines()[0][:60] if said else None
         except (OSError, subprocess.TimeoutExpired):
             version = None
-        _versions[kind] = cached = (time.time(), version)
+        known_versions[kind] = cached = (time.time(), version)
     return cached[1]
 
 
@@ -450,7 +450,7 @@ def _opencode_2(exe: str) -> bool:
     without a helper's session token: both GTA San Andreas helpers worked as the user's one chat agent, on one claim,
     whatever their folders said. --standalone gives each helper a server of its own, started from its own process
     (before 2.0 there's no such service, and the flag would stop it)."""
-    text = (_versions.get("opencode") or (0, None))[1] or _version("opencode", exe)
+    text = (known_versions.get("opencode") or (0, None))[1] or _version("opencode", exe)
     m = re.search(r"(\d+)\.\d+", text or "")
     return bool(m) and int(m.group(1)) >= 2
 
@@ -469,7 +469,7 @@ def detect(quick: bool = False) -> list[dict]:
             path = _which(k.command)
             row.update(installed=path is not None, path=path, version=None)
             if path:
-                row.update(version=(_versions.get(k.id) or (0, None))[1] if quick else _version(k.id, path),
+                row.update(version=(known_versions.get(k.id) or (0, None))[1] if quick else _version(k.id, path),
                            models=models(k.id, path, run=not quick), default_model=_config_model(k.id))
         if row["install"].startswith("npm ") and not row["installed"] and not shutil.which("npm"):
             row["needs"] = "Node.js (https://nodejs.org) for npm"
@@ -1297,7 +1297,7 @@ class Manager:
         topics = ["fork", "objdiff"] if ov.get("kind") == "fork" else ["workflow"]
         topics += [guide] if guide else []
         text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(
-            tools._guide(t) for t in topics)
+            tools.guide_text(t) for t in topics)
         if (known := self.net.knowledge.for_prompt(s.slug)):
             text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):

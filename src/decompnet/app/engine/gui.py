@@ -18,6 +18,9 @@ from ...project import compiler_for
 NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "knowledge", "collab", "import", "files",
                 "paused", "stopped")
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
+# what the project's page gets on each poll (about once a second): the newest since its last ask, at most
+LIVE_EVENTS, LIVE_ATTEMPTS = 60, 80
+FUNCTION_NOTES = 10  # the newest notes the function panel shows
 EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
               "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
               f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
@@ -235,7 +238,7 @@ class GuiMixin:
         latest = self.store.one("SELECT source, score FROM attempts WHERE function_id=? AND source IS NOT NULL "
                                 "ORDER BY id DESC LIMIT 1", fn["id"])
         notes = self.store.all("SELECT n.text, n.created_at, a.name AS agent FROM notes n LEFT JOIN agents a "
-                               "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT 10", fn["id"])
+                               f"ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT {FUNCTION_NOTES}", fn["id"])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":
@@ -284,11 +287,12 @@ class GuiMixin:
                 self._expire_claims(db)
         events = self.store.all(
             "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-            "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT 60", proj["id"], since_event)
+            f"ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT {LIVE_EVENTS}", proj["id"],
+            since_event)
         attempts = self.store.all(
             "SELECT t.id, t.score, t.compiled, t.created_at, f.name AS function, f.n_insns, a.name AS agent "
             "FROM attempts t JOIN functions f ON f.id=t.function_id LEFT JOIN agents a ON a.id=t.agent_id "
-            "WHERE f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT 80", proj["id"], since_attempt)
+            f"WHERE f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj["id"], since_attempt)
         claims = self.store.all(
             "SELECT f.name, f.n_insns, f.best_score, f.attempts, a.name AS agent, c.claimed_at FROM claims c "
             "JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id WHERE f.project_id=?", proj["id"])
