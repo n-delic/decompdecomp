@@ -141,6 +141,41 @@ Guard rails:
 to judge a function, which compilers and flags, what the map shows, its demo game. Adding a console means adding
 its package, without touching the engine.
 
+**What's there today** (research, October 2026):
+
+| Console | Import | Judge | Compilers | Compiler map | Classes | Export | Tested where |
+| :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| N64 | splat | link + compare | KMC, IDO 5.3/7.1 | ✓ | ✓ | ✓ | owner's machine |
+| PS1 | EXE, disc, CHD, overlays | link + compare | gcc-2.7.2/2.8.1-psx | ✓ | ✓ | untested | nowhere |
+| PS2 | ELF, disc | link + compare | 5 EE-GCCs, mwcps2 | ✓ | ✓ | ✓ | owner's machine (12 tests) |
+| GBA | luvdis | ARM link + compare | agbcc | ✗ | ✗ | ✓ | nowhere |
+| GameCube/Wii | dtk-template | objdiff | mwcc | ✗ | ✗ | the project | nowhere (unit tests only) |
+| DS | ds-decomp | objdiff | mwccarm | ✗ | ✗ | the project | nowhere |
+| PC | Ghidra + own delinker | objdiff (COFF) | MSVC 6/7/7.1 | ✗ | ✗ | ✗ | owner's machine |
+
+- CI installs no compilers, so every end-to-end console test skips there. GameCube/Wii counts as "working" but
+  nothing tests it end to end.
+- About 145 `if platform/arch == ...` branches across 41 Python files, plus about 85 in the GUI scripts. The GUI
+  re-does file detection in JavaScript (`home.js`), duplicating `detect.py`.
+- Platform ids disagree: PS1 is `psx` and `ps`, DS is `nds` and `ds`; four separate name tables.
+
+**Design (proposal).** Two layers, because the processor and the console vary independently:
+- `arch/` (mips, ppc, arm, x86): what depends only on the processor: relocation masks, disassembly,
+  hand-written-assembly detection, compiler-map habits, class scanning, the m2c target. An arch without a feature
+  returns nothing, and the feature shows as missing, not as an `if`.
+- `consoles/<id>/`: one package per console on one arch: names and aliases, status, compilers and default flags,
+  setup packs, guides for agents, `sniff()` (how sure it is a file is this console's), `import_game()`, `judge()`
+  (one of two shared judges: link and compare, or objdiff), `export()`, its demo game. A list in
+  `consoles/__init__.py` registers them; the engine calls `consoles.get(platform)` and never compares platform
+  names. The GUI gets names, compilers and features from `/api/consoles` and drops its own tables.
+
+**Trust.** One conformance test runs for every console: build its demo, detect it, import, judge known-matching C
+(score 0) and wrong C (not 0), draft, export and rebuild byte for byte. CI installs the free compilers (pinned,
+cached) so N64 (KMC), PS1, PS2 and GBA really run there. Proprietary compilers (mwcc, mwccarm, MSVC, mwcps2, IDO)
+can't go in public CI: a `decomp selftest` the owner runs after accepting them in Setup, and its result becomes the
+console's status in the app instead of a hand-written one. A console is "recommended" only once its test passes and
+one real game has rebuilt byte for byte.
+
 ## 7. Moving projects to another computer
 
 **Problem.** Changing distribution (or computer) loses the work. A project's progress lives in the app's database
