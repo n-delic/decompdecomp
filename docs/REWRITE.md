@@ -209,6 +209,45 @@ functions across four games (GTA San Andreas 12,627, one other game 11,877), 15,
 colours, statistics) arrive afterwards without blocking. Measured with timings on the owner's real projects (on a
 copy), before and after.
 
+## 9. Giving agents an edge
+
+The judge is strict, so even cheap models can do well; what decides the rate is how much each attempt learns and
+how much code never needs an agent. Ranked:
+
+1. **Whole libraries for free.** A fingerprint index of library functions, tried as twins: across the user's own
+   games, and from matching library decomps and libgcc/newlib built locally with the project's compiler (libultra
+   on N64, the PS1 and PS2 SDK libraries). No agent tokens at all. Library sources are fetched only when the user
+   asks, never bundled: SDK code is the console maker's copyright. Builds on `app/twins.py` and
+   `elfobj.fingerprint()`. (M, plus L per library source)
+2. **A real permuter.** Replace our six regex rewrites (`permuter.py`) with decomp-permuter (MIT, run as a pinned
+   tool like m2c): rewrites on the parse tree, weighted per compiler, plus control-flow rewrites (inverted branches,
+   while/for/do-while, if/ternary). Keep today's near-miss gate, and let an agent tidy the winning C. MIPS, PowerPC,
+   ARM; not x86. (M)
+3. **Struct layouts from field accesses.** Collect every load and store through each pointer argument and global,
+   across the call graph; propose structs in the shared header; give them to m2c as context. Our own numbers: on GTA
+   San Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents
+   guessed layouts. Generalises `classes.py`. MIPS first. (M)
+4. **A learned scheduler.** Predict which function will match next from the project's own attempt log, instead of
+   ordering by size; boost a function as soon as one of its look-alikes matches. (S)
+5. **Model routing with early escalation.** Easy functions to cheap models. After about three failed attempts,
+   hand a function to a stronger model or to the permuter instead of grinding on. Most matches come at the first
+   attempt; the chance falls fast after the third. Ties in with §4's measurements. (S-M)
+6. **Diffs that teach.** Show what the last change did against the attempt before (a three-way diff), the
+   matching prefix, and where the first mismatch is. One small change per attempt works best. (S)
+7. **Search over flags, not just compilers.** A search over compiler × flags scored by the judge's distance, only
+   with compilers the user accepted. Today's compiler map varies compilers only. (M)
+8. **Better look-alikes.** A second similarity measure (edit distance over opcodes) next to today's, and
+   "submatch": shared runs of instructions, which find inlined helpers and macros (coddog, MIT/Apache, does this).
+   Needs PowerPC and x86 opcode readers. (S)
+9. **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command
+   lists for agents. (S-M each, check each decoder's licence)
+
+Not now: fine-tuned decompilation models. They're built for modern x86 and "does the same thing", not byte
+matching, and frontier CLI agents do better here.
+
+First three: libraries (1), the permuter (2), struct layouts (3), with the scheduler (4) alongside because it's
+small.
+
 ## Questions
 
 Answers go here as they come.
