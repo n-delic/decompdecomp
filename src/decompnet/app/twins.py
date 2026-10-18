@@ -341,25 +341,6 @@ class Twins:
                     return other
         return None
 
-    def group_sizes(self, proj) -> dict[int, int]:
-        """For each unmatched function: how many unmatched functions share its code (itself included). Matching
-        the first of a big group matches the rest for free: those are worth an agent's time first."""
-        prints = self.prints(proj)
-        rows = {r["id"]: r["status"] for r in self.net.store.all(
-            "SELECT id, status FROM functions WHERE project_id=?", proj["id"])}
-        groups: dict[str, list[int]] = defaultdict(list)
-        for fid, p in prints.items():
-            if p.size >= 8:
-                groups[p.key].append(fid)
-        out = {}
-        for members in groups.values():
-            if any(rows.get(f) == "matched" for f in members):
-                continue
-            open_ = [f for f in members if rows.get(f) == "open"]
-            for f in open_:
-                out[f] = len(open_)
-        return out
-
     def update_boosts(self, proj, pending: bool = False) -> int:
         """Store the claim order twins give (functions.boost): for each group of identical unmatched functions, one
         gets the group's size - 1 (matching it matches the others), the others -1. `pending`: a pass is about to

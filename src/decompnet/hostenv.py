@@ -1,5 +1,5 @@
 """How decompdecomp reaches the Linux desktop around it: file paths the user types, opening a folder in the file
-manager, and opening a web page (a link in the app) in the user's own browser.
+manager. (Links to other sites open in the user's browser from the window itself: gtkwindow.py.)
 
 decompdecomp runs on Linux only. Windows (through WSL 2) and Docker were supported until 1.0.2 and removed in the
 rewrite: nobody tested them, and most of their code served the agent bridge that went with it.
@@ -8,7 +8,6 @@ rewrite: nobody tested them, and most of their code served the agent bridge that
 from __future__ import annotations
 
 import subprocess
-import webbrowser
 from pathlib import Path
 
 
@@ -21,14 +20,6 @@ def shown_path(path: Path | str) -> str:
     """A path of decompdecomp's as the user reads it: the home folder as ~."""
     shown, home = str(path), str(Path.home())
     return "~" + shown[len(home):] if shown == home or shown.startswith(home + "/") else shown
-
-
-def open_url(url: str) -> bool:
-    """Open a page in the user's own browser (links in the app: releases, docs). False when there's no browser."""
-    try:
-        return webbrowser.open(url)
-    except Exception:  # no browser at all
-        return False
 
 
 def open_folder(path: Path) -> str | None:

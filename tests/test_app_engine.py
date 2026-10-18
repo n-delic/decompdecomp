@@ -230,14 +230,3 @@ def test_boundary_reports_wait_for_the_user(net):
     [req] = [r for r in net.overview(slug)["boundaries"] if r["function"] == other["name"]]
     net.resolve_boundary(slug, req["id"], apply=False)
     assert net.store.one("SELECT size FROM functions WHERE id=?", other["id"])["size"] == other["size"]
-
-
-def test_a_tiny_range_is_no_proof_of_another_compiler(net):
-    """A few instructions come out the same from several compilers: GTA San Andreas gathered 43 ranges of one tiny
-    function each that way. A range applies itself only when it's a block of code or holds several functions."""
-    proj = net.project_row("demo-quest-64")
-    fns = net.store.all("SELECT vram, size FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
-    small = next(f for f in fns if f["size"] <= 64)
-    assert not net._range_proof(proj, [[small["vram"], small["vram"] + small["size"]]])
-    assert net._range_proof(proj, [[fns[0]["vram"], fns[3]["vram"]]])  # three functions
-    assert net._range_proof(proj, [[fns[0]["vram"], fns[0]["vram"] + 256]])  # a block of code

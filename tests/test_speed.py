@@ -102,7 +102,6 @@ def test_a_match_matches_its_twins(game):
     same = twin(net, slug, "player_take_damage", 0x80400000)
     other = twin(net, slug, "player_take_damage", 0x80400100, {syms["g_player"]: 0x80047000})
     proj = net.project_row(slug)
-    assert net.twins.group_sizes(proj)[net._function(same, slug)["id"]] == 3
     assert net.twins.update_boosts(proj) >= 1  # one of the three goes first, the others last
     boosts = sorted(net._function(n, slug)["boost"] for n in ("player_take_damage", same, other))
     assert boosts == [-1, -1, 2]

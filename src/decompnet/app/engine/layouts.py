@@ -184,19 +184,3 @@ class LayoutMixin:
             return []
         return ["", f"### Likely struct layouts (from loads and stores across the game; guess_struct("
                     f"\"{fn['name']}\", \"arg0\") has one as C)"] + lines
-
-    def likely_structs(self, proj, fn) -> str:
-        """C declarations of the likely structs behind a function's pointer arguments, "" when there are none: for a
-        machine draft's context (m2c writes arg0->unk_10 when the function's prototype takes S_... *arg0)."""
-        found = self.structs(proj)
-        if found is None:
-            return ""
-        syms = self.symbols(proj["id"])
-        out, done = [], set()
-        for n in range(ARGUMENT_REGISTERS):
-            t = found.type_of((structs.ARGUMENT, fn["vram"], n))
-            lay = found.layout(t) if t is not None and t not in done else None
-            if lay and lay.fields:
-                done.add(t)
-                out.append(structs.c_text(lay, found.name(t, syms.label), lambda c: found.name(c, syms.label)))
-        return "\n\n".join(out)

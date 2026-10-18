@@ -197,7 +197,6 @@ def test_the_guess_for_a_demos_struct_is_the_struct_its_source_has(demo_game):
     brief = net.get_function(name, slug)
     assert "### Likely struct layouts" in brief and "- arg0: S_" in brief and "+0x2 u16" in brief
     assert "No loads or stores through arg0" in net.guess_struct(slug, _name(net, slug, symbols, "abs_s32"))
-    assert "typedef struct S_" in net.likely_structs(net.project_row(slug), net._function(name, slug))
 
     # once a function of the type matches with a struct of its own, the others are told its name
     from decompnet.forks import csource

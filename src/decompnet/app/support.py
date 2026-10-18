@@ -20,7 +20,6 @@ from ..network import NetworkError
 from ..rom import RomError
 from . import agents
 
-COOKIE = "decomp_live"
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
 
