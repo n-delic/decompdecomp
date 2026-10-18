@@ -3,8 +3,8 @@ import tempfile
 
 # the apps the tests start never look for updates on the network (tests/test_updates.py checks that part offline)
 os.environ.setdefault("DECOMP_UPDATES", "off")
-# nothing a test starts may reach the user's own app or projects: GET /api/state lists agents' models by running the
-# agent CLIs installed on this computer, and Antigravity's settings once started the user's real app through the old
+# nothing a test starts may reach the user's own app or projects: listing agents' models runs the agent CLIs
+# installed on this computer, and Antigravity's settings once started the user's real app through the old
 # `decomp mcp` bridge, with this test environment, while it was restarting into an update
 os.environ["DECOMP_HOME"] = tempfile.mkdtemp(prefix="decomp-tests-")
 # and the app looks for installed agents in the background as it starts: here it only looks where they are, and

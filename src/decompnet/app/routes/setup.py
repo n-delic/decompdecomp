@@ -75,6 +75,7 @@ def register(app: App) -> None:
         picked: list[str] = []
         try:
             net.project_row(slug)
+            net.warm_briefs_soon(slug)  # ready before the helpers' first claims
             if kind == "api":
                 picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
                 plan = _spread(settings, manager, picked, count, given)

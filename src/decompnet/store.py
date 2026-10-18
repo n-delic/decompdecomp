@@ -1,5 +1,6 @@
-"""SQLite persistence. One file, one connection, one lock: simple and plenty fast for a
-coordinator whose expensive work (compiling) happens outside the lock."""
+"""SQLite persistence. One file; writes through one connection and one lock, reads on a connection of each thread's
+own. The write-ahead log (WAL) lets reads run beside a write: with everything on one connection and one lock, 16
+agents on two games made every GUI request wait behind the others (the GUI's poll took 2.2-2.7 s instead of 14 ms)."""
 
 from __future__ import annotations
 
@@ -65,11 +66,19 @@ MIGRATIONS = [
 ]
 
 
+# The write-ahead log is cut back to this after a checkpoint. Without a limit it never shrinks: the owner's grew to
+# 90 MB beside a 172 MB database, and every start read through it.
+WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
+IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
+
+
 class Store:
     def __init__(self, path: str | Path):
-        self.conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        self.path = str(path)
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
         for table, column, ddl in MIGRATIONS:
@@ -103,24 +112,53 @@ class Store:
                 DROP TABLE gave_up;
                 INSERT INTO settings(key, value) VALUES('abandons_recounted', '1');
                 COMMIT;""")
+        # what the last run left in the log goes into the database now, and the log starts empty
+        self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self.lock = threading.RLock()
+        self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
 
     @contextmanager
     def tx(self):
         """Serialized transaction. Never compile while holding this."""
         with self.lock:
             self.conn.execute("BEGIN IMMEDIATE")
+            self._local.in_tx = True
             try:
                 yield self.conn
             except BaseException:
                 self.conn.execute("ROLLBACK")
                 raise
+            finally:
+                self._local.in_tx = False
             self.conn.execute("COMMIT")
 
+    def _reader(self) -> sqlite3.Connection | None:
+        """This thread's own connection for reading, or None: inside tx() (a read there must see what the transaction
+        wrote) and for an in-memory database, reads go through the writer's connection."""
+        if self.path == IN_MEMORY or getattr(self._local, "in_tx", False):
+            return None
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.path, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=1")  # a write here would bypass the writer's lock
+            self._local.conn = conn
+        return conn
+
+    def _read(self, sql: str, args: tuple, single: bool):
+        conn = self._reader()
+        if conn is None:
+            with self.lock:
+                cur = self.conn.execute(sql, args)
+                return cur.fetchone() if single else cur.fetchall()
+        cur = conn.execute(sql, args)
+        try:
+            return cur.fetchone() if single else cur.fetchall()
+        finally:
+            cur.close()  # an open statement would hold its snapshot, and the log could never be checkpointed
+
     def one(self, sql: str, *args) -> sqlite3.Row | None:
-        with self.lock:
-            return self.conn.execute(sql, args).fetchone()
+        return self._read(sql, args, single=True)
 
     def all(self, sql: str, *args) -> list[sqlite3.Row]:
-        with self.lock:
-            return self.conn.execute(sql, args).fetchall()
+        return self._read(sql, args, single=False)

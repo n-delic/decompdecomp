@@ -4,7 +4,7 @@ async function showAgentsPage() {
   show("agentsPage");
   $("agList").innerHTML = `<p class="muted small">Looking for your agents…</p>`;
   await loadState();
-  renderAgentsPage();
+  renderAgentsPage();  // again when the search for agents ends (base.js agentsFound)
 }
 function renderAgentsPage() {
   const rows = S.st.agents.filter((a) => a.id !== "api");

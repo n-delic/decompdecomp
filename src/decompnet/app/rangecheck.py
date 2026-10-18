@@ -27,6 +27,9 @@ ran out without an answer.
 
 from __future__ import annotations
 
+import bisect
+import copy
+import hashlib
 import logging
 import threading
 import time
@@ -39,6 +42,16 @@ from ..project import compiler_for
 MIN_INSNS = 12  # a shorter function comes out the same from several compilers: it can't confirm or refute anything
 REACH = 3  # testable neighbours looked at on each side, beyond the suggested ranges
 MAX_TASKS = 4  # neighbours given to agents before a check waits for the user
+OPEN = ("checking", "waiting")  # a check's states while it can still change
+# GTA San Andreas: every match started a recheck of its 62 open checks, 17 s each, and matches came faster than that
+# (92 rechecks queued at once). Now a project's rechecks wait this long after the last request and run as one.
+RECHECK_DEBOUNCE_SECONDS = 2.0
+VERDICTS_KEPT = 4096  # judge verdicts remembered: the same C with the same compiler gives the same answer
+# What a check reads of every function, once per run. Never the assembly: GTA San Andreas's is 73 MB, and reading
+# every column (`SELECT *`) for each of the 62 checks was 14 of the 17 seconds.
+ROW_COLUMNS = "id, name, vram, size, n_insns, status"
+# what the judge needs, read only for the few neighbours a check gives a verdict
+JUDGE_COLUMNS = "id, project_id, name, unit, vram, size, n_insns, status, target, relocs, matched_source, best_source"
 log = logging.getLogger("decompdecomp")
 
 
@@ -83,7 +96,11 @@ class RangeChecks:
 
     def __init__(self, net):
         self.net = net
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # one run at a time
+        self._queue_lock = threading.Lock()
+        self._pending: dict[str, set] = {}  # slug -> ids of the checks to weigh again (None: every open one)
+        self._draining: set[str] = set()  # projects with a run waiting or running
+        self._verdicts: dict[tuple, bool] = {}  # see _judged
 
     # ------------------------------------------------------------------ starting one
 
@@ -113,11 +130,31 @@ class RangeChecks:
 
     # ------------------------------------------------------------------ evidence
 
-    def _functions(self, proj) -> list:
-        return self.net.store.all("SELECT * FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj["id"])
+    def _rows(self, proj) -> list:
+        return self.net.store.all(f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL "
+                                  "ORDER BY vram", proj["id"])
 
-    def _at(self, proj, vram: int):
-        return next((r for r in self._functions(proj) if r["vram"] == vram), None)
+    @staticmethod
+    def _at(rows, vram: int):
+        return next((r for r in rows if r["vram"] == vram), None)
+
+    def _open(self, proj) -> list[dict]:
+        """The open checks, each a copy of its own to change (the settings they're read from are shared)."""
+        return [copy.deepcopy(c) for c in self.net.cfg(proj).get("range_checks", []) if c["status"] in OPEN]
+
+    def _judged(self, proj, fn, label, source: str) -> bool:
+        """The judge's verdict on C built with a compiler, remembered by the C's hash: a recheck after every match
+        asked the same questions again, two compiles for each neighbour. A new header version asks again."""
+        ctx = self.net._context(proj["id"], fn["unit"])
+        # shortcut: a renamed symbol can change what C links to, and a remembered verdict doesn't see it until the
+        # app restarts; key verdicts by the symbols' version too if a check ever goes wrong that way
+        key = (fn["id"], fn["size"], label, hashlib.sha1(source.encode("utf-8", "replace")).hexdigest(),
+               (ctx["unit"], ctx["version"]) if ctx else None)
+        if key not in self._verdicts:
+            if len(self._verdicts) >= VERDICTS_KEPT:
+                self._verdicts.pop(next(iter(self._verdicts)))  # the oldest
+            self._verdicts[key] = self.net._judge_with(proj, fn, label[0], list(label[1]), source)[0]
+        return self._verdicts[key]
 
     def _classify(self, proj, cfg, fn, label, cmap, survey: dict, source: str | None = None) -> str:
         """One function's verdict on "built by `label`" (see the module's docstring)."""
@@ -130,13 +167,14 @@ class RangeChecks:
         other = built if compilermap.kind(built) != kind else (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
         if compilermap.kind(other) == kind:
             return "neutral"  # the range's compiler is the game's: nothing to tell apart
+        fn = self.net.store.one(f"SELECT {JUDGE_COLUMNS} FROM functions WHERE id=?", fn["id"]) or fn
         if cmap is not None and fn["target"] and cmap.never.get(kind) and (
                 set(cmap.never[kind]) & set(compilermap.quirks(fn["target"], bool(cfg.get("big_endian", True))))):
             return "refuted"
         said = survey.get(str(fn["vram"]))
         if said:
             return "confirmed" if compilermap.kind((said[0], tuple(said[1]))) == kind else "refuted"
-        judge = lambda lab, src: self.net._judge_with(proj, fn, lab[0], list(lab[1]), src)[0]  # noqa: E731
+        judge = lambda lab, src: self._judged(proj, fn, lab, src)  # noqa: E731
         if fn["status"] == "matched" and fn["matched_source"]:  # it matches with what it's built with: try the other
             src = fn["matched_source"]
             if compilermap.kind(built) == kind:
@@ -148,35 +186,66 @@ class RangeChecks:
         return "neutral" if judge(other, src) else "confirmed"
 
     def recheck(self, slug: str, cid: int | None = None, background: bool = True) -> None:
-        """Weigh the evidence of a check (or all open ones) again: after it starts, a match, a try_compiler, a give-up."""
-        if background and self.background:
-            threading.Thread(target=self.recheck, args=(slug, cid, False), daemon=True, name="range-check").start()
+        """Weigh the evidence of a check (or all open ones) again: after it starts, a match, a try_compiler, a give-up.
+        In the background, one run per project: it starts a moment after the last request, so a burst of matches is
+        one run, and requests made while it runs make one more run after it."""
+        if not (background and self.background):
+            self._run(slug, {cid})
             return
+        with self._queue_lock:
+            self._pending.setdefault(slug, set()).add(cid)
+            if slug in self._draining:
+                return
+            self._draining.add(slug)
+        threading.Thread(target=self._drain, args=(slug,), daemon=True, name=f"range-check-{slug}").start()
+
+    def _drain(self, slug: str) -> None:
+        try:
+            while True:
+                time.sleep(RECHECK_DEBOUNCE_SECONDS)
+                with self._queue_lock:
+                    wanted = self._pending.pop(slug, set())
+                    if not wanted:
+                        self._draining.discard(slug)
+                        return
+                self._run(slug, wanted)
+        finally:
+            with self._queue_lock:
+                self._draining.discard(slug)
+
+    def _run(self, slug: str, wanted: set) -> None:
+        """Weigh the wanted checks (None: every open one), reading every function's address and size, and the
+        compiler map, once for all of them."""
         with self._lock:
             try:
                 proj = self.net._project(slug)
-                for c in [c for c in self.net.cfg(proj).get("range_checks", []) if c["status"] in ("checking", "waiting")]:
-                    if cid is None or c["id"] == cid:
-                        self._weigh(proj, c)
+                checks = [c for c in self._open(proj) if None in wanted or c["id"] in wanted]
+                if not checks:
+                    return
+                rows = self._rows(proj)
+                at = {r["vram"]: i for i, r in enumerate(rows)}
+                cmap = self.net.compiler_map(proj)
+                for c in checks:
+                    self._weigh(proj, c, rows, at, cmap)
             except Exception:  # noqa: BLE001  a check never stands between an agent and its work: it waits
                 log.exception("range check failed")
 
-    def _weigh(self, proj, c: dict) -> None:
+    def _weigh(self, proj, c: dict, rows: list, at: dict[int, int], cmap) -> None:
+        """One check, from its functions in address order (`at`: address -> index) and the compiler map."""
         cfg = self.net.cfg(proj)
         label = (c["toolchain"], tuple(c["flags"]))
-        cmap = self.net.compiler_map(proj)
         survey = (cfg.get("compiler_survey") or {}).get("confirmed", {})
-        rows = self._functions(proj)
         if not rows:
             return
-        at = {r["vram"]: i for i, r in enumerate(rows)}
         inside = lambda r: any(a <= r["vram"] < b for a, b in c["spans"])  # noqa: E731
         if c["origin"] in at:
             o = at[c["origin"]]
         else:  # no function of its own (ranges alone, or an audit): the first function in the ranges stands for them
-            o = next((i for i, r in enumerate(rows) if inside(r)), None)
-            if o is None:
+            firsts = [i for a, b in c["spans"] if (i := bisect.bisect_left(rows, a, key=lambda r: r["vram"])) < len(rows)
+                      and rows[i]["vram"] < b]
+            if not firsts:
                 return
+            o = min(firsts)
         evidence = dict(c["evidence"])
 
         def verdict(r) -> str:
@@ -191,7 +260,7 @@ class RangeChecks:
         if c["origin"] in at:
             v = self._classify(proj, cfg, origin, label, cmap, survey, c.get("origin_source"))
             if v == "neutral":  # its own C matches with today's compiler too: no evidence at all
-                return self._finish(proj, c, "quirk", origin["vram"], origin["vram"] + origin["size"], evidence,
+                return self._finish(proj, c, rows, "quirk", origin["vram"], origin["vram"] + origin["size"], evidence,
                                     f"{origin['name']}'s C matches the game with today's compiler too: it says nothing "
                                     "about the compiler")
             first = Step(origin["vram"], origin["vram"] + origin["size"], "origin" if v != "refuted" else "refuted")
@@ -218,7 +287,7 @@ class RangeChecks:
             start = max([start] + [s.end for s in left if s.verdict == "refuted"])
             end = min([end] + [s.vram for s in right if s.verdict == "refuted"])
         if status != "checking":
-            return self._finish(proj, c, status, start, end, evidence)
+            return self._finish(proj, c, rows, status, start, end, evidence)
         self._task(proj, c, nxt, rows, at)
 
     # ------------------------------------------------------------------ verdicts and tasks
@@ -251,7 +320,7 @@ class RangeChecks:
                 f"compiler confirms the range; matching with the project's compiler only shows it was a quirk. "
                 f"Either answer helps.")
 
-    def _finish(self, proj, c: dict, status: str, start: int, end: int, evidence: dict, why: str = "") -> None:
+    def _finish(self, proj, c: dict, rows, status: str, start: int, end: int, evidence: dict, why: str = "") -> None:
         c["status"], c["range"], c["evidence"] = status, [start, end], evidence
         short = self.net._short((c["toolchain"], tuple(c["flags"])))
         agent, _ = self.net.local_agent("autopilot")
@@ -274,7 +343,7 @@ class RangeChecks:
         else:
             text = f"a quirk: {why or 'the functions on both sides are built by the project’s compiler'}"
             if c["origin"] is not None:
-                fn = self._at(proj, c["origin"])
+                fn = self._at(rows, c["origin"])
                 if fn:
                     self.net.add_note(agent, proj["slug"],
                                       f"Range check #{c['id']}: this function's C matches with {short}, but its "
@@ -282,7 +351,7 @@ class RangeChecks:
                                       f"Look for C that matches with the project's compiler.", fn["name"])
             self._save(proj, c, text, resolve="dismissed")
         for vram in c["tasks"]:  # its tasks are done: out of the line
-            fn = self._at(proj, vram)
+            fn = self._at(rows, vram)
             if fn:
                 self.net.set_priority(proj["slug"], fn["name"], False)
         with self.net.store.tx() as db:
@@ -290,6 +359,10 @@ class RangeChecks:
 
     def _save(self, proj, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said
+        stored = next((old for old in self.net.cfg(self.net._project(proj["slug"])).get("range_checks", [])
+                       if old["id"] == c["id"]), None)
+        if c == stored and resolve is None:
+            return  # nothing new (GTA San Andreas's 60 unsettled audits were written again on every run)
 
         def change(cfg):
             for i, old in enumerate(cfg.get("range_checks", [])):
@@ -308,15 +381,14 @@ class RangeChecks:
 
     def checks_on(self, proj, vram: int) -> list[dict]:
         """Open checks with this function among their tasks."""
-        return [c for c in self.net.cfg(proj).get("range_checks", [])
-                if c["status"] in ("checking", "waiting") and vram in c["tasks"]]
+        return [c for c in self._open(proj) if vram in c["tasks"]]
 
     def tried(self, proj, fn, toolchain: str, flags: list[str], source: str, matched: bool) -> None:
         """try_compiler on a function: C that matches with an open check's compiler (and not today's) confirms it."""
         if not matched or (fn["n_insns"] or 0) < MIN_INSNS:
             return
-        for c in self.net.cfg(proj).get("range_checks", []):
-            if c["status"] in ("checking", "waiting") and c["toolchain"] == toolchain and c["flags"] == list(flags):
+        for c in self._open(proj):
+            if c["toolchain"] == toolchain and c["flags"] == list(flags):
                 cfg = self.net.cfg(proj)
                 own = compiler_for(cfg, fn["vram"])
                 if not self.net._judge_with(proj, fn, own["toolchain"], list(own["flags"]), source)[0]:

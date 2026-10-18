@@ -85,6 +85,37 @@ class GuiMixin:
             "room": self._room_info(proj["slug"]),
         }
 
+    def summary(self, slug: str) -> dict:
+        """A project for the project list (the sidebar asks every 5 s, for every project): what it is and how far it
+        got, from the database alone. It used to be each project's whole overview, a fork's files included, and with
+        agents at work the list took 2.5-3.7 s."""
+        from ...forks import catalog
+
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        agg = self.store.one(
+            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions WHERE project_id=?",
+            proj["id"])
+        platform = cfg.get("platform", "n64")
+        if cfg.get("kind") == "fork":
+            name = catalog.PLATFORMS.get(platform, platform or "")
+            about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
+                     "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": name},
+                     "compiler": {"name": "Project's own build"}}
+        else:
+            name = detect.PLATFORMS.get(platform, "")
+            tc = cfg["compiler"]["toolchain"]
+            about = {"rom": {k: cfg["rom"].get(k) for k in ("game_code", "region")},
+                     "compiler": {"name": SHORT_NAMES.get(tc, toolchains.get(tc).name)}}
+        return {"slug": proj["slug"], "title": proj["name"], "platform": platform, "platform_name": name,
+                "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
+                "matched_bytes": agg["matched_bytes"] or 0,
+                "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
+                                                proj["id"])["t"],
+                "room": (self._room_info(slug) or {}).get("role"),
+                "autopilot": (self.autopilot_status(slug) or {}).get("state")} | about
+
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:
             link = self.links[slug]
@@ -105,31 +136,32 @@ class GuiMixin:
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
-        looks = self._map_columns(proj)
         return [{"name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
-                 "matched_at": r["matched_at"], "matched_by": r["matched_by"]}
-                | looks.get(r["vram"], {}) for r in rows]
+                 "matched_at": r["matched_at"], "matched_by": r["matched_by"]} for r in rows]
 
-    def _map_columns(self, proj) -> dict[int, dict]:
-        """The compiler map's view of each function for the ROM map: the compiler its code looks like (cc), and
-        whether that isn't the one it's built with today, or a habit rules today's out (ccx)."""
+    def map_columns(self, slug: str) -> list[list]:
+        """The compiler map's view of each function for the ROM map, asked for after the map is drawn: the map no
+        longer waits for the compiler map (GTA San Andreas: 710-800 ms after any match). One row per function:
+        [vram, the compiler its code looks like, whether that isn't the one it's built with today or a habit rules
+        today's out]."""
+        proj = self._project(slug)
         try:
-            cmap = self.compiler_map(proj)
-        except Exception:  # the map never stands between the user and the ROM map
+            cmap = self.compiler_map(proj, fresh=True)
+        except Exception:  # the colours never stand between the user and the ROM map
             logging.getLogger("decompdecomp").exception("the compiler map failed")
-            return {}
+            return []
         if cmap is None:
-            return {}
+            return []
         cfg = self.cfg(proj)
-        out = {}
+        out = []
         for addr, looks in cmap.of.items():
             own = compiler_for(cfg, addr)
             tc, small = compilermap.kind(looks)
-            out[addr] = {"cc": f"{SHORT_NAMES.get(tc, tc)} {small}".strip(),
-                         "ccx": compilermap.kind(looks) != compilermap.kind((own["toolchain"], tuple(own["flags"])))
-                         or addr in cmap.contradicted}
+            out.append([addr, f"{SHORT_NAMES.get(tc, tc)} {small}".strip(),
+                        compilermap.kind(looks) != compilermap.kind((own["toolchain"], tuple(own["flags"])))
+                        or addr in cmap.contradicted])
         return out
 
     def _range_rows(self, cfg: dict) -> list[dict]:
@@ -246,8 +278,10 @@ class GuiMixin:
 
     def live(self, slug: str, since_event: int = 0, since_attempt: int = 0) -> dict:
         proj = self._project(slug)
-        with self.store.tx() as db:
-            self._expire_claims(db)
+        # the GUI asks every second: the writer's lock only when a claim really ran out, not on every poll
+        if self.store.one("SELECT 1 FROM claims WHERE expires_at < ? LIMIT 1", time.time()):
+            with self.store.tx() as db:
+                self._expire_claims(db)
         events = self.store.all(
             "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
             "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT 60", proj["id"], since_event)

@@ -5,12 +5,15 @@ let picked = null;
 async function showHome() {
   show("home");
   resetDrop();
-  const st = await loadState();
+  loadState().catch(() => {});  // the version and the compiler lists: the projects don't wait for them
+  let projects;
+  try { projects = S.projects = await api("/api/projects"); } catch { projects = S.projects || []; }
+  renderNav();
   const box = $("projects");
   box.innerHTML = "";
-  $("recent").hidden = !st.projects.length;
-  $("home").classList.toggle("returning", st.projects.length > 0);  // your projects first once you have some
-  for (const p of st.projects) {
+  $("recent").hidden = !projects.length;
+  $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
+  for (const p of projects) {
     const pct = p.bytes ? (100 * p.matched_bytes) / p.bytes : 0;
     const a = document.createElement("a");
     a.className = "card";

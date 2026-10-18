@@ -1,4 +1,4 @@
-"""The app as a whole: its state (versions, projects, compilers, agents, settings), the project list, importing a
+"""The app as a whole: its state (versions, compilers, agents, settings), the project list, importing a
 game, the function map (every function, sent only when it changed), the log and background jobs.
 """
 
@@ -25,20 +25,7 @@ def register(app: App) -> None:
     manager, jobs, settings, guard, call = app.manager, app.jobs, app.settings, app.guard, app.call
     fail = app.fail
 
-    def overviews() -> list[tuple[str, dict | None, str]]:
-        """(slug, overview or None, why not) for every project. One that can't be read is still listed, with the
-        reason: before, one odd project emptied the whole sidebar, or quietly went missing from it."""
-        out = []
-        for p in net.store.all("SELECT slug, name FROM projects ORDER BY id DESC"):
-            try:
-                out.append((p["slug"], net.overview(p["slug"]), ""))
-            except Exception as e:  # noqa: BLE001
-                jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
-                out.append((p["slug"], {"slug": p["slug"], "title": p["name"] or p["slug"]}, job_error(e, jobs.log_path)))
-        return out
-
     def state() -> dict:
-        projects = [ov | ({"broken": why} if why else {}) for _, ov, why in overviews()]
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
@@ -46,8 +33,7 @@ def register(app: App) -> None:
         return {"version": __version__, "build": build_id, "install": updates.installed(),
                 "platform": toolchains.current_platform(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
-                "projects": projects, "toolchains": tcs, "agents": manager.detected(),
-                "agents_detecting": manager.detecting(),
+                "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "api_presets": agents.API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
                 "platform_status": PLATFORM_STATUS,
                 "codewarrior": {"installed": toolchains.installed("mwcc") is not None,
@@ -64,17 +50,21 @@ def register(app: App) -> None:
                 pass
 
     def project_list() -> list[dict]:
-        """The sidebar: every project with its progress and how many helper agents work on it right now."""
+        """The sidebar and the home page: every project with its progress and how many helper agents work on it
+        right now. One that can't be read is still listed, with the reason: before, one odd project emptied the
+        whole sidebar, or quietly went missing from it."""
         running: dict[str, int] = {}
         for s in manager.sessions.values():
             if s.state in ("starting", "working", "waiting"):
                 running[s.slug] = running.get(s.slug, 0) + 1
         out = []
-        for slug, ov, why in overviews():
-            out.append({k: ov.get(k) for k in ("slug", "title", "kind", "origin", "platform", "platform_name", "ready",
-                                                "functions", "matched", "bytes", "matched_bytes", "last_activity")}
-                       | {"working": running.get(slug, 0), "room": (ov.get("room") or {}).get("role"),
-                          "autopilot": (ov.get("autopilot") or {}).get("state")} | ({"broken": why} if why else {}))
+        for p in net.store.all("SELECT slug, name FROM projects ORDER BY id DESC"):
+            try:
+                out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0)})
+            except Exception as e:  # noqa: BLE001
+                jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
+                out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                            "broken": job_error(e, jobs.log_path)})
         return out
 
     @mcp.custom_route("/api/projects", methods=["GET"])
@@ -136,8 +126,17 @@ def register(app: App) -> None:
             return {"slug": slug}
         return JSONResponse({"job": jobs.start("import", work)})
 
-    MAP_KEYS = ("name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by",
-                "cc", "ccx")
+    MAP_KEYS = ("name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by")
+    COLUMN_KEYS = ("vram", "cc", "ccx")
+    GZIP_FROM_BYTES = 4096  # smaller answers aren't worth compressing
+
+    def packed(request: Request, data: dict) -> Response:
+        raw = json.dumps(data, separators=(",", ":")).encode()
+        if len(raw) > GZIP_FROM_BYTES and "gzip" in request.headers.get("accept-encoding", ""):
+            import gzip
+            return Response(gzip.compress(raw, 1), media_type="application/json",
+                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+        return Response(raw, media_type="application/json")
 
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
@@ -158,12 +157,18 @@ def register(app: App) -> None:
             data = await call(build)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        raw = json.dumps(data, separators=(",", ":")).encode()
-        if len(raw) > 4096 and "gzip" in request.headers.get("accept-encoding", ""):
-            import gzip
-            return Response(gzip.compress(raw, 1), media_type="application/json",
-                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-        return Response(raw, media_type="application/json")
+        return packed(request, data)
+
+    @mcp.custom_route("/api/mapcolumns", methods=["GET"])
+    async def api_map_columns(request: Request) -> Response:
+        """The compiler map's colours for the ROM map (MIPS games), asked for after the map is drawn."""
+        if (bad := guard(request)):
+            return bad
+        try:
+            rows = await call(net.map_columns, request.query_params.get("slug", ""))
+        except (NetworkError, ValueError) as e:
+            return fail(e)
+        return packed(request, {"keys": COLUMN_KEYS, "rows": rows})
 
     @mcp.custom_route("/api/log", methods=["GET"])
     async def api_log(request: Request) -> Response:

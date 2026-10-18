@@ -48,3 +48,17 @@ def test_without_confirmations_nothing_is_proposed():
     funcs = [(0x100000 + i * 0x40, 0x40, code(), GCC, i % 2 == 0, None) for i in range(10)]
     built = cm.build(funcs, big_endian=False)
     assert not built.proposals(256, 3) and not built.contradicted
+
+
+def test_a_functions_habits_are_read_once(monkeypatch):
+    """GTA San Andreas: decoding every function's code again was 590 of the 930 ms each rebuild took, after every
+    match. The code itself is the key, so a function whose code changes is read again."""
+    seen = []
+    real = cm.quirks
+    monkeypatch.setattr(cm, "_quirks_seen", {})
+    monkeypatch.setattr(cm, "quirks", lambda c, big: seen.append(c) or real(c, big))
+    funcs = [(0x100000 + i * 0x40, 0x28, code(BEQL if i % 2 else NOP), GCC, i < 3, None) for i in range(10)]
+    first = cm.build(funcs, big_endian=False)
+    again = cm.build([f[:4] + (True,) + f[5:] for f in funcs], big_endian=False)  # more matched, the same code
+    assert len(seen) == 2  # two different bodies among the ten functions
+    assert first.examples != again.examples

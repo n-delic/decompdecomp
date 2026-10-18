@@ -14,6 +14,12 @@ from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
 from .common import _ADDRESS
 
+# Settings parsed, by their text: GTA San Andreas's are 193 KB, and one request read them 4 to 12 times (a range
+# check after a match, 462 times). A few versions are kept: each change of a project's settings is a new text.
+SETTINGS_KEPT = 8
+_settings: dict[str, dict] = {}
+_settings_lock = threading.Lock()
+
 
 class Core(Network):
     def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60):
@@ -27,10 +33,13 @@ class Core(Network):
         self.links: dict = {}  # slug -> collab.Link, for projects joined from a friend's room
         self.rooms: dict = {}  # slug -> collab.Room, for projects this computer shares
         self._remote_ids: dict[str, int] = {}
-        self._ops: dict[int, dict] = {}  # project id -> look-alike index
+        self._ops: dict[int, tuple] = {}  # project id -> (the game's layout, look-alike index)
+        self._warmed: dict[int, tuple] = {}  # project id -> the layout its briefs' caches were built for
+        self._warming: dict[int, threading.Lock] = {}  # project id -> held while they build
         self._diffs: dict[tuple, dict] = {}  # (function, source, context, compiler) -> diff for the GUI
         self.autopilots: dict[str, dict] = {}  # slug -> progress of trying every function's machine draft
         self._cmaps: dict[int, tuple] = {}  # project id -> (what it was built from, compiler map)
+        self._cmap_builds: dict[int, threading.Lock] = {}  # project id -> held while its compiler map builds
         self.surveys: dict[str, dict] = {}  # slug -> the judge's compiler survey, running or last
         from ..forkengine import ForkEngine  # forks build on this class's claims, attempts and live view
         from ..permute import Permuter
@@ -45,7 +54,18 @@ class Core(Network):
 
     @staticmethod
     def cfg(proj) -> dict:
-        return json.loads(proj["config"])
+        """A project's settings. Shared by everyone who reads the same version of them: read it, never change it
+        (_update_cfg changes settings; code that edits a copy parses its own, json.loads(proj["config"]))."""
+        text = proj["config"]
+        with _settings_lock:
+            parsed = _settings.get(text)
+        if parsed is None:
+            parsed = json.loads(text)
+            with _settings_lock:
+                if len(_settings) >= SETTINGS_KEPT:
+                    _settings.pop(next(iter(_settings)))  # the oldest version
+                _settings[text] = parsed
+        return parsed
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"

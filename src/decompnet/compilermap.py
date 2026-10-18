@@ -20,6 +20,7 @@ same suggestion as an agent's, so it's checked against every matched function be
 
 from __future__ import annotations
 
+import functools
 import struct
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -32,6 +33,20 @@ SWITCH = 8.0  # the cost of a change of compiler between neighbours (in log-like
 STAY = 0.5  # the compiler the game builds an address with, today: a slight preference
 CONTRADICTED = 12.0  # a habit the compiler never shows
 FIXED = 50.0  # a matched or confirmed function's compiler is known
+QUIRKS_KEPT = 100_000  # functions whose habits are remembered (the owner's four games have about 30,000)
+_quirks_seen: dict[tuple[bytes, bool], Counter] = {}
+
+
+def _quirks_of(code: bytes, big_endian: bool) -> Counter:
+    """quirks(), remembered by the code itself: a function's code almost never changes, and decoding every function
+    again was most of each rebuild (GTA San Andreas: 590 of 930 ms, after every match). Shared: read it only."""
+    key = (code, big_endian)
+    found = _quirks_seen.get(key)
+    if found is None:
+        if len(_quirks_seen) >= QUIRKS_KEPT:
+            _quirks_seen.clear()
+        found = _quirks_seen[key] = quirks(code, big_endian)
+    return found
 
 
 def quirks(code: bytes, big_endian: bool) -> Counter:
@@ -77,8 +92,10 @@ def quirks(code: bytes, big_endian: bool) -> Counter:
 
 
 Label = tuple[str, tuple[str, ...]]  # (toolchain, flags)
+KINDS_KEPT = 1024  # compiler labels whose kind is remembered: a game uses a handful, asked for every function
 
 
+@functools.lru_cache(maxsize=KINDS_KEPT)
 def kind(label: Label) -> tuple[str, str]:
     """What a compiler's code can be told by: the toolchain and its small-data setting (-G8 code reads through $gp,
     -G0 code never does). Other flags (-lang c++, -O3 or -O3,p) hardly change the code's habits, so labels that differ
@@ -122,7 +139,7 @@ def build(functions: list[tuple[int, int, bytes, Label, bool, Label | None]], bi
     """The map from (address, size, code, the compiler the game builds it with today, matched, the compiler the
     judge confirmed for it or None) of every function."""
     funcs = sorted(functions)
-    q = {f[0]: quirks(f[2], big_endian) for f in funcs if len(f[2]) // 4 >= MIN_INSNS}
+    q = {f[0]: _quirks_of(f[2], big_endian) for f in funcs if len(f[2]) // 4 >= MIN_INSNS}
     known: dict[int, Label] = {f[0]: f[5] or f[3] for f in funcs if f[4] or f[5]}  # matched or confirmed
     kinds = sorted({kind(f[3]) for f in funcs} | {kind(lab) for lab in known.values()})
     examples = Counter(kind(lab) for a, lab in known.items() if a in q)

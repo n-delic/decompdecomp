@@ -64,6 +64,22 @@ function renderMapView() {
   };
 }
 
+/* The compiler map's colours come in a request of their own, after the map is drawn: after a match the compiler map
+   is built again, and the ROM map waited for it (GTA San Andreas: 710-800 ms). */
+async function loadMapColumns(slug) {
+  let data;
+  try { data = await api(`/api/mapcolumns?slug=${slug}`); } catch { return; }
+  if (slug !== S.slug || !data.rows.length) return;
+  const col = Object.fromEntries(data.keys.map((k, i) => [k, i]));
+  const at = new Map(S.map.map((f, i) => [f.vram, i]));
+  for (const r of data.rows) {
+    const i = at.get(r[col.vram]);
+    if (i != null) { S.map[i].cc = r[col.cc]; S.map[i].ccx = r[col.ccx]; }
+  }
+  renderMapView();
+  if (S.mapView === "compiler") { mapChanged(); drawMap(); }
+}
+
 /* Range checks: a suggested range is tested on its neighbours before it applies; applied ones can be looked at again. */
 function rangeChecksLine(checks) {
   const n = (st, audit) => checks.filter((c) => c.audit === audit && (Array.isArray(st) ? st.includes(c.status) : c.status === st)).length;

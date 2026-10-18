@@ -54,13 +54,19 @@ class FakeNet:
         self.rows = functions
         self.matches = matches  # name -> set of toolchains its C matches with
         self.priority, self.notes, self.events, self.applied = [], [], [], []
+        self.sql, self.judged = [], []  # what was read, and what the judge was asked
         self.store = self
         self.rangechecks = RangeChecks(self)
         self.rangechecks.background = False
 
     # the store
     def all(self, sql, *args):
+        self.sql.append(sql)
         return self.rows
+
+    def one(self, sql, *args):
+        self.sql.append(sql)
+        return next((r for r in self.rows if r["id"] == args[0]), None)
 
     def tx(self):
         return contextlib.nullcontext(None)
@@ -91,7 +97,11 @@ class FakeNet:
         return fn["name"] if fn["name"] in self.matches else None
 
     def _judge_with(self, proj, fn, toolchain, flags, source):
+        self.judged.append((fn["name"], toolchain))
         return toolchain in self.matches.get(fn["name"], set()), None, ""
+
+    def _context(self, project_id, unit=""):
+        return {"unit": "", "version": 1, "header": ""}
 
     def set_priority(self, slug, name, on=True):
         self.priority = [n for n in self.priority if n != name] + ([name] if on else [])
@@ -114,8 +124,8 @@ class FakeNet:
 
 def functions(n):
     code = struct.pack("<20I", *[0] * 20)  # 20 instructions: long enough to test
-    return [{"name": f"f{i}", "vram": 0x100000 + i * 0x80, "size": 0x50, "n_insns": 20, "status": "open",
-             "matched_source": None, "target": code} for i in range(n)]
+    return [{"id": i + 1, "name": f"f{i}", "vram": 0x100000 + i * 0x80, "size": 0x50, "n_insns": 20, "status": "open",
+             "matched_source": None, "target": code, "unit": ""} for i in range(n)]
 
 
 def start(net, origin="f4"):
@@ -167,6 +177,69 @@ def test_without_evidence_the_nearest_neighbour_goes_to_an_agent_and_giving_up_m
     net.rangechecks.tried(net.proj, net._function("f5", "game"), CW[0], CW[1], "f5", True)
     check = net.cfg(net.proj)["range_checks"][-1]
     assert check["status"] == "confirmed" and net.priority == []
+
+
+def test_a_recheck_reads_the_functions_once_and_never_their_assembly():
+    """GTA San Andreas: each of its 62 open checks read every column of every function (73 MB of assembly), 17 s
+    after every match. A run reads the functions' addresses once, and the judge's columns for the few it judges."""
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    start(net)
+    for origin in ("f1", "f7"):  # three open checks
+        fn = net._function(origin, "game")
+        net.rangechecks.propose(net.proj, {"id": 1}, origin, CW[0], CW[1], [[fn["vram"], fn["vram"] + fn["size"]]])
+    net.sql.clear()
+    net.rangechecks.recheck("game", background=False)
+    assert sum(sql.lstrip().startswith("SELECT id, name, vram") for sql in net.sql) == 1
+    assert not any("*" in sql or "asm" in sql for sql in net.sql)
+
+
+def test_the_same_c_is_judged_once():
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    start(net)
+    asked = len(net.judged)
+    net.rangechecks.recheck("game", background=False)  # nothing changed: the verdicts are remembered
+    assert asked and len(net.judged) == asked
+
+
+def test_a_check_with_nothing_new_is_not_written_again():
+    """GTA San Andreas: its 60 unsettled audits wrote the game's 193 KB of settings again on every recheck."""
+    net = FakeNet(functions(9), {})
+    fn = net._function("f4", "game")
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("compiler_ranges", [
+        {"start": fn["vram"], "end": fn["vram"] + fn["size"], "toolchain": CW[0], "flags": CW[1]}]))
+    assert net.rangechecks.audit(net.proj) == 1
+    writes, real = [], net._update_cfg
+    net._update_cfg = lambda slug, change: writes.append(1) or real(slug, change)
+    net.rangechecks.recheck("game", background=False)
+    assert net.cfg(net.proj)["range_checks"][0]["status"] == "waiting" and not writes
+
+
+def test_a_burst_of_rechecks_is_one_run(monkeypatch):
+    """Matches come faster than a recheck runs: each one started its own run (92 queued at once on GTA San Andreas).
+    Requests made close together wait for each other and run once."""
+    import threading
+    import time
+
+    from decompnet.app import rangecheck
+
+    monkeypatch.setattr(rangecheck, "RECHECK_DEBOUNCE_SECONDS", 0.05)
+    net = FakeNet(functions(9), {"f4": {CW[0]}})
+    start(net)
+    net.rangechecks.background = True
+    runs, done = [], threading.Event()
+    real = net.rangechecks._run
+
+    def run(slug, wanted):
+        runs.append(set(wanted))
+        real(slug, wanted)
+        done.set()
+    net.rangechecks._run = run
+    for _ in range(20):
+        net.rangechecks.recheck("game")
+    net.rangechecks.recheck("game", 1)
+    assert done.wait(5)
+    time.sleep(0.2)
+    assert runs == [{None, 1}]
 
 
 def test_auto_adjust_is_a_setting_of_each_project(tmp_path):

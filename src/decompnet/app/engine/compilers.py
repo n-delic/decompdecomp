@@ -26,19 +26,49 @@ class CompilerMixin:
 
     SURVEY_MIN_INSNS = 12  # a shorter function comes out the same from several compilers: it proves nothing
 
-    def compiler_map(self, proj) -> compilermap.CompilerMap | None:
+    def compiler_map(self, proj, fresh: bool = False) -> compilermap.CompilerMap | None:
         """Which compiler built each part of a MIPS game: matches, the judge's confirmations and the habits that rule
-        compilers out. Rebuilt when a match, a range or a confirmation changes it. None: not MIPS code."""
+        compilers out. Rebuilt when a match, a range or a confirmation changes it, one build at a time per project;
+        meanwhile the last map answers, unless `fresh` (wait for the one that's current). GTA San Andreas: each match
+        made the map stale, and every waiting brief and map request rebuilt it at once, 600-870 ms each.
+        None: not MIPS code."""
         if not self.is_rom(proj) or self.cfg(proj).get("platform") == "gba" or (proj["arch"] or "mips") != "mips":
             return None
+        cached = self._cmaps.get(proj["id"])
+        if cached and cached[0] == self._cmap_key(proj):
+            return cached[1]
+        building = self._cmap_builds.setdefault(proj["id"], threading.Lock())
+        if cached and not fresh:
+            if building.acquire(blocking=False):  # nobody builds it yet: in the background
+                threading.Thread(target=self._rebuild_cmap, args=(proj["slug"], building), daemon=True,
+                                 name=f"compiler-map-{proj['slug']}").start()
+            return cached[1]
+        with building:  # the first map, or a fresh one: build it, or wait for the build under way
+            return self._build_cmap(proj)
+
+    def _cmap_key(self, proj) -> tuple:
+        """What the compiler map is built from, summed up: matches, the compilers and ranges, confirmations."""
         cfg = self.cfg(proj)
         done = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(status='matched'), 0) AS m, COALESCE(MAX(matched_at), 0) "
                               "AS t FROM functions WHERE project_id=?", proj["id"])
         confirmed = (cfg.get("compiler_survey") or {}).get("confirmed", {})
-        key = (tuple(done), json.dumps([cfg.get("compiler"), cfg.get("compiler_ranges")], sort_keys=True), len(confirmed))
+        return tuple(done), json.dumps([cfg.get("compiler"), cfg.get("compiler_ranges")], sort_keys=True), len(confirmed)
+
+    def _rebuild_cmap(self, slug: str, building: threading.Lock) -> None:
+        try:
+            self._build_cmap(self._project(slug))  # its settings now, not those of the request that asked
+        except Exception:  # noqa: BLE001  the last map keeps answering
+            logging.getLogger("decompdecomp").exception("the compiler map failed")
+        finally:
+            building.release()
+
+    def _build_cmap(self, proj) -> compilermap.CompilerMap:
+        key = self._cmap_key(proj)
         cached = self._cmaps.get(proj["id"])
-        if cached and cached[0] == key:
+        if cached and cached[0] == key:  # built while this one waited
             return cached[1]
+        cfg = self.cfg(proj)
+        confirmed = (cfg.get("compiler_survey") or {}).get("confirmed", {})
 
         def label(c: dict) -> compilermap.Label:
             return c["toolchain"], tuple(c["flags"])
@@ -58,7 +88,7 @@ class CompilerMixin:
         """The map for agents: where it differs from the compiler the game builds with today, and why."""
         self._rom_only(slug, "compiler_map")
         proj = self._project(slug)
-        cmap = self.compiler_map(proj)
+        cmap = self.compiler_map(proj, fresh=True)  # an agent asked: what the evidence says now
         if cmap is None:
             raise NetworkError("the compiler map reads MIPS code (PlayStation 2, PlayStation, N64) for now")
         started = ""
@@ -178,7 +208,7 @@ class CompilerMixin:
         """Each run of the map that the judge says another compiler built, as a suggestion from the autopilot (applied
         by itself only where the user lets proven compiler changes apply; checked against matched functions)."""
         proj = self._project(proj["slug"])  # its settings as the survey left them
-        cmap = self.compiler_map(proj)
+        cmap = self.compiler_map(proj, fresh=True)  # with the survey's confirmations
         agent, _ = self.local_agent("autopilot")
         out = []
         for run in cmap.proposals(self.RANGE_PROOF_BYTES, self.RANGE_PROOF_FUNCTIONS):
@@ -427,7 +457,7 @@ class CompilerMixin:
             raise NetworkError("a fork builds with the project's own compilers and flags")
         proj = self._project(slug)
         tc = toolchains.get(toolchain)
-        cfg = self.cfg(proj)
+        cfg = json.loads(proj["config"])  # a copy of its own: changed below
         before = cfg["compiler"]
         cfg["compiler"] = {"toolchain": tc.id, "flags": flags or _default_flags(tc.id, cfg.get("platform", ""), cfg.get("gp")),
                            "timeout": 20}

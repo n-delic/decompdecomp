@@ -89,7 +89,8 @@ const S = {
   mapView: "progress",  // the ROM map's colours: progress, or the compiler map
   st: null, slug: null, ov: null, map: [], byName: new Map(), e: 0, a: 0, seq: {}, sessions: [], tab: "overview",
   scores: new Map(), claims: [], flash: new Map(), timer: null, statsTimer: null, lastMapFetch: 0, fn: null, stats: null,
-  projects: [],
+  projects: [], agents: null,
+  gen: 0, primed: false, openedAt: 0,  // which opening of a project polls belong to, its first poll done, and when
 };
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage"];
 const TABS = ["overview", "functions", "agents", "activity", "team", "source", "settings"];
@@ -111,6 +112,7 @@ function agentsFound() {
     S.detectTimer = null;
     if (S.tab === "agents" && !$("project").hidden) renderLauncher($("launcher"));
     if (!$("launchPop").hidden) renderLauncher($("launchPopBody"), true);
+    if (!$("agentsPage").hidden) renderAgentsPage();
   }
 }
 
@@ -143,6 +145,7 @@ function show(view) {
 }
 function leaveProject() {
   stopPolling();
+  S.gen++;  // what its polls bring back now is dropped
   S.slug = null;
   clearInterval(teamTimer);
 }

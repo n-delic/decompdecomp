@@ -10,6 +10,7 @@ function markNav() {
   document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", a.dataset.slug === S.slug && route === "project"));
 }
 async function loadNav() {
+  if (document.hidden && S.projects.length) return;  // the window is minimised: nobody sees the list
   try { S.projects = await api("/api/projects"); } catch (e) {
     if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
     return;

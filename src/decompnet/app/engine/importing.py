@@ -155,7 +155,7 @@ class ImportMixin:
         from ...project import compiler_config
 
         proj = self._project(slug)
-        cfg = self.cfg(proj)
+        cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
         current = cfg["compiler"]["toolchain"]
         tcs = [t for t in PLATFORM_COMPILERS.get(cfg.get("platform"), []) if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)

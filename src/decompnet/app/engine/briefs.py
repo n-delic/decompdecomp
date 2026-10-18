@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import struct
+import threading
 
 from ... import classes, seeds, similarity
 from ...network import NetworkError
@@ -16,6 +17,42 @@ from .common import _ADDRESS
 
 
 class BriefMixin:
+    def _layout_key(self, proj) -> tuple:
+        """Which functions a game has and their sizes, summed up: a split or a cut changes it, a match doesn't. What a
+        brief reads from the whole game (look-alikes, twins) is built again only when it changes."""
+        row = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, COALESCE(SUM(size), 0) AS bytes "
+                             "FROM functions WHERE project_id=?", proj["id"])
+        return tuple(row)
+
+    def warm_briefs(self, proj) -> None:
+        """Build what claim briefs read from the whole game: cross-references, C++ classes, look-alikes, twins, the
+        compiler map. On GTA San Andreas the first brief took 5.2 s (classes 3 s, look-alikes 1.2 s, twins 0.7 s).
+        Once per layout of the game, one build at a time: a brief asked meanwhile waits for it instead of building
+        the same things beside it."""
+        if not self.is_rom(proj):
+            return
+        layout = self._layout_key(proj)
+        if self._warmed.get(proj["id"]) == layout:
+            return
+        with self._warming.setdefault(proj["id"], threading.Lock()):
+            if self._warmed.get(proj["id"]) == layout:
+                return
+            for build in (self.xrefs, self.classes, self._rom_ops, self.twins.prints, self.compiler_map):
+                try:
+                    build(proj)
+                except Exception:  # a heuristic that fails is missing from briefs, never in their way
+                    logging.getLogger("decompdecomp").exception("preparing briefs: %s failed", build.__name__)
+            self._warmed[proj["id"]] = layout
+
+    def warm_briefs_soon(self, slug: str) -> None:
+        """warm_briefs in the background: when a project opens, or helpers start on it."""
+        def work() -> None:
+            try:
+                self.warm_briefs(self._project(slug))
+            except NetworkError:
+                pass  # removed meanwhile
+        threading.Thread(target=work, daemon=True, name=f"briefs-{slug}").start()
+
     def _twin_lines(self, proj, fn) -> list[str]:
         """For a brief: the matched function with the same code, and its C with this one's names."""
         try:
@@ -168,6 +205,7 @@ class BriefMixin:
     def _extra_brief(self, fn, proj) -> list[str]:
         if not self.is_rom(proj):
             return []
+        self.warm_briefs(proj)
         syms = self.symbols(proj["id"])
         x = self.xrefs(proj)
         lines = ["", "### Where it lives",
@@ -207,8 +245,14 @@ class BriefMixin:
         return lines
 
     def _rom_ops(self, proj) -> dict[tuple[int, int], list[str]]:
-        """(vram, size) -> mnemonics of every function, cached (renames keep addresses; splits change sizes)."""
-        cache = self._ops.setdefault(proj["id"], {})
+        """(vram, size) -> mnemonics of every function, cached until the game's layout changes (renames keep
+        addresses; splits change sizes). Every brief read every function's code again to find out (50 ms on GTA San
+        Andreas); now that's only after a split or a cut, and only new functions are decoded."""
+        layout = self._layout_key(proj)
+        known = self._ops.get(proj["id"])
+        if known and known[0] == layout:
+            return known[1]
+        cache = dict(known[1]) if known else {}  # a new dict: a reader of the old one never sees it change
         rows = self.store.all("SELECT vram, size, target FROM functions WHERE project_id=? AND target IS NOT NULL", proj["id"])
         live = set()
         for r in rows:
@@ -219,6 +263,7 @@ class BriefMixin:
                               similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0))
         for key in set(cache) - live:
             del cache[key]
+        self._ops[proj["id"]] = (layout, cache)
         return cache
 
     def similar(self, proj, fn, top: int = 5) -> list[tuple[dict, float]]:
