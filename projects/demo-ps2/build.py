@@ -6,7 +6,8 @@ license), compiled with EE-GCC 2.96 at -O2 -G8 and linked at 0x00100000 like PS2
 
 With a toolchain id (ee-gcc-2.95.2, mwcps2-3.0.1, ...), the same game built with that compiler instead, as games
 of its time were, into build/<toolchain>/. "mixed": the game's own code (game.c) with CodeWarrior 3.0.1 -O3 and the
-rest with EE-GCC 2.96, as GTA San Andreas mixes them, into build/mixed/. The start-up code and the 64-bit arithmetic helpers (ps2rt.c, what libgcc
+rest with EE-GCC 2.96, as GTA San Andreas mixes them, into build/mixed/. --debug: built with -g and shipped with its
+symbols and debug sections left in, as some games were (#3: Champions of Norrath), into build/<toolchain>-debug/. The start-up code and the 64-bit arithmetic helpers (ps2rt.c, what libgcc
 is to a game: linked in prebuilt) are always EE-GCC 2.96's.
 """
 
@@ -40,15 +41,19 @@ def run(argv, cwd=None):
 MIXED = {"src/game/game.c": ("mwcps2-3.0.1", ["-O3"])}  # the "mixed" build's exceptions: file -> (compiler, flags)
 
 
-def out_dir(toolchain: str) -> Path:
+def out_dir(toolchain: str, debug: bool = False) -> Path:
+    if debug:
+        return BUILD / f"{toolchain}-debug"
     return BUILD if toolchain == "ee-gcc-2.96" else BUILD / toolchain
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("toolchain", nargs="?", default="ee-gcc-2.96")
-    toolchain = ap.parse_args().toolchain
-    build = out_dir(toolchain)
+    ap.add_argument("--debug", action="store_true", help="compile with -g and keep the symbols in the game")
+    args = ap.parse_args()
+    toolchain, debug = args.toolchain, args.debug
+    build = out_dir(toolchain, debug)
     mixed = toolchain == "mixed"
     toolchain = "ee-gcc-2.96" if mixed else toolchain
     if build.exists():
@@ -73,7 +78,7 @@ def main() -> None:
             small = ["-sdatathreshold", "8"]
         elif tc == toolchain:
             small = ["-sdatathreshold", "8"] if tc.startswith("mwcps2") else ["-G8"]
-        flags = [*opt, *(small if tc == toolchain or (mixed and src in MIXED) else []), *extra]
+        flags = [*opt, *(small if tc == toolchain or (mixed and src in MIXED) else []), *extra, *(["-g"] if debug else [])]
         cfg = compiler_config(build, {"compiler": {"toolchain": tc, "flags": flags}})
         # the toolchain's own compile command, on the copies in build/ (src/sysinclude: the demo's tiny C library)
         argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "src/sysinclude") for a in cfg.cmd]
@@ -84,9 +89,16 @@ def main() -> None:
     elf = build / "demoq_ps2.elf"
     # the EE assembler writes .rel and .rela sections for the same section, which only GNU ld links
     ld = str(toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-ld")
-    run([ld, "-EL", "-T", str(HERE / "elf.ld"), "-o", str(elf), *objs], cwd=build)
+    script = HERE / "elf.ld"
+    if debug:  # the same layout, with the debug sections kept
+        script = build / "elf-debug.ld"
+        script.write_text((HERE / "elf.ld").read_text().replace(" *(.mdebug*) *(.comment)", ""))
+    run([ld, "-EL", "-T", str(script), "-o", str(elf), *objs], cwd=build)
     game = build / "SLUS_999.99"
-    run([ld.replace("-ld", "-objcopy"), "--strip-all", str(elf), str(game)])
+    if debug:
+        shutil.copy(elf, game)
+    else:
+        run([ld.replace("-ld", "-objcopy"), "--strip-all", str(elf), str(game)])
     print(f"built {game.relative_to(HERE)} ({game.stat().st_size} bytes)")
 
 
