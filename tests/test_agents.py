@@ -11,7 +11,9 @@ import time
 
 import pytest
 
+from decompnet import agents as kinds
 from decompnet import network, scoring
+from decompnet.agents import antigravity
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -36,7 +38,7 @@ def test_antigravity_stream_json_is_read():
                                                                 "Arguments": {"strategy": "easiest"}}}}},
         {"event": "result", "result": {"status": "SUCCESS", "num_turns": 1, "usage": {"total_tokens": 1200}}},
     ]
-    out = [item for line in lines for item in agents.parse_line("antigravity", json.dumps(line), state)]
+    out = [item for line in lines for item in kinds.get("antigravity").parse_line(json.dumps(line), state)]
     # its result counts the one prompt as one turn ("1 turns" for every session): the model's steps are its turns
     assert out == [("text", "Claiming the next one."), ("tool", "claim_function(easiest)"),
                    ("usage", json.dumps({"tokens": 1200, "turns": 2})), ("info", "session finished (2 turns)")]
@@ -45,24 +47,24 @@ def test_antigravity_stream_json_is_read():
 def test_antigravity_refusing_decomps_tools_says_how_to_allow_them():
     line = json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "",
                                                      "denied_actions": [{"action": "mcp", "display_name": "CallMcpTool"}]}})
-    errors = [t for k, t in agents.parse_line("antigravity", line, {}) if k == "error"]
-    assert errors and errors[0].startswith("Antigravity refused") and agents.AGY_ALLOW in errors[0]
+    errors = [t for k, t in kinds.get("antigravity").parse_line(line, {}) if k == "error"]
+    assert errors and errors[0].startswith("Antigravity refused") and antigravity.AGY_ALLOW in errors[0]
 
 
 def test_opencode_errors_say_what_failed():
     """Issue #3: opencode's error event nests the message under data; the feed showed "None"."""
     line = json.dumps({"type": "error", "sessionID": "s", "error": {"name": "ProviderAuthError",
                                                                     "data": {"message": "no key for deepseek"}}})
-    assert agents.parse_line("opencode", line) == [("error", "ProviderAuthError: no key for deepseek")]
+    assert kinds.get("opencode").parse_line(line) == [("error", "ProviderAuthError: no key for deepseek")]
     generic = json.dumps({"type": "error", "error": {"name": "UnknownError", "data": {"message": "Unexpected server error."}}})
-    assert agents.parse_line("opencode", generic) == []  # a placeholder: the log line on stderr says what failed
-    assert agents.parse_line("codex", json.dumps({"type": "turn.failed", "error": {"message": "quota"}})) == [("error", "quota")]
+    assert kinds.get("opencode").parse_line(generic) == []  # a placeholder: the log line on stderr says what failed
+    assert kinds.get("codex").parse_line(json.dumps({"type": "turn.failed", "error": {"message": "quota"}})) == [("error", "quota")]
     log = ('timestamp=2026-10-14T14:25:35.946Z level=ERROR run=89d82ac2 message=failed ref=err_ab91f09e '
            'error="ProviderModelNotFoundError: Model not found: nosuch/model." cause="ProviderModelNotFoundError: x\\n at y"')
-    assert agents.clean_stderr("opencode", log) == "ProviderModelNotFoundError: Model not found: nosuch/model."
-    assert agents.clean_stderr("opencode", "timestamp=1 level=WARN message=slow") == ""
+    assert kinds.get("opencode").clean_stderr(log) == "ProviderModelNotFoundError: Model not found: nosuch/model."
+    assert kinds.get("opencode").clean_stderr("timestamp=1 level=WARN message=slow") == ""
     agy = 'AGY_ERROR: {"message": "quota exhausted", "code": 429}'
-    assert agents.clean_stderr("antigravity", agy) == "quota exhausted"
+    assert kinds.get("antigravity").clean_stderr(agy) == "quota exhausted"
 
 
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
@@ -72,7 +74,7 @@ def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
     m = _manager(tmp_path, monkeypatch, "opencode")
     cmd, _, _ = m._command(agents.Session("opencode-1", "opencode", "o", "demo", "opencode-1", {}), "t", tmp_path)
     assert "--log-level" not in cmd and "--print-logs" in cmd
-    assert agents.clean_stderr("opencode", 'level=error message=failed error="quota exceeded"') == "quota exceeded"
+    assert kinds.get("opencode").clean_stderr('level=error message=failed error="quota exceeded"') == "quota exceeded"
     assert not agents._SIGNIN.search("quota exceeded") and agents._SIGNIN.search("ProviderAuthError: no key")
 
 
@@ -81,10 +83,10 @@ def test_a_used_up_plan_waits_instead_of_stopping():
     rate limit is still a throttle, and a prepaid account out of credit still stops)."""
     for said in ("Claude AI usage limit reached|1792140000", "You've hit your usage limit. Upgrade or try again later",
                  "RESOURCE_EXHAUSTED: quota exhausted", "provider.quota: quota exceeded"):
-        assert agents._LIMIT.search(said) and not agents.no_credit(said), said
+        assert agents.LIMIT.search(said) and not agents.no_credit(said), said
     for said in ("Rate limit exceeded", "429 Too Many Requests"):
-        assert not agents._LIMIT.search(said) and agents._THROTTLED.search(said), said
-    assert agents.no_credit("Insufficient Balance") and not agents._LIMIT.search("Insufficient Balance")
+        assert not agents.LIMIT.search(said) and agents.THROTTLED.search(said), said
+    assert agents.no_credit("Insufficient Balance") and not agents.LIMIT.search("Insufficient Balance")
 
 
 def _manager(tmp_path, monkeypatch, kind):
@@ -126,7 +128,7 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
 def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_path, monkeypatch):
     """OpenCode Zen's free models refuse requests whose tools were taken out ("deny"); "ask" keeps them listed and
     `opencode run` rejects every ask. Models of other providers get "deny"."""
-    monkeypatch.setattr(agents, "_config_model", lambda kind: None)
+    monkeypatch.setattr(kinds.get("opencode"), "config_model", lambda: None)
     for model, rule in (("opencode/big-pickle", "ask"), ("", "ask"), ("deepseek/deepseek-chat", "deny")):
         m = _manager(tmp_path, monkeypatch, "opencode")
         s = agents.Session("opencode-1", "opencode", "o", "demo", "opencode-1", {"model": model})
@@ -137,15 +139,16 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
     # its own connection, with its own token, and nothing else: opencode 2's shared service ran the user's own
     # `decomp` server without the session's token, so every helper worked as the user's one chat agent
     for version, standalone in (("opencode v2.0.28", True), ("0.15.4", False)):  # opencode 2's shared service
-        monkeypatch.setitem(agents.known_versions, "opencode", (0, version))
+        monkeypatch.setitem(kinds.known_versions, "opencode", (0, version))
         assert ("--standalone" in m._command(s, "tok", work)[0]) is standalone
     mcp = json.loads((work / "opencode.json").read_text())["mcp"]
     assert list(mcp) == ["decompdecomp"] and mcp["decompdecomp"]["headers"] == {"Authorization": "Bearer tok"}
 
 
 def test_gemini_cli_helpers_carry_on_as_antigravity():
-    assert agents.kind_id("gemini") == "antigravity" and agents.kind_id("agy") == "antigravity"
-    assert "gemini" not in agents.KINDS and agents.KINDS["antigravity"].command == "agy"
+    assert kinds.kind_id("gemini") == "antigravity" and kinds.kind_id("agy") == "antigravity"
+    assert "gemini" not in {a.id for a in kinds.AGENTS} and kinds.get("antigravity").command == "agy"
+    assert kinds.get("gemini") is kinds.get("antigravity")
 
 
 def test_assembly_for_agents_is_compact():
@@ -181,7 +184,7 @@ def test_a_helpers_identity_says_its_model_so_records_never_mix():
 
 def test_claude_offers_each_version_as_well_as_the_latest():
     """The launcher offered only "Opus", "Sonnet", "Haiku" (always the newest): the owner wanted e.g. Opus 4.6."""
-    offered = {m["id"]: m["name"] for m in agents.models("claude", "claude")}
+    offered = {m["id"]: m["name"] for m in kinds.get("claude").models("claude")}
     assert offered["opus"] == "Opus" and offered["claude-opus-4-6"] == "Opus 4.6"
     assert offered["claude-sonnet-5-5"] == "Sonnet 5.5" and offered["claude-fable-5"] == "Fable 5"
     assert agents.helper_name("claude", "claude-opus-4-6", set()) == "claude-opus-4-6-1"
@@ -205,6 +208,12 @@ def _game(tmp_path, functions: int = 1) -> RomNetwork:
     return net
 
 
+def _no_agent_settings(monkeypatch) -> None:
+    """No agent's own settings read: the default model of none."""
+    for kind in kinds.AGENTS:
+        monkeypatch.setattr(kind, "config_model", lambda: None)
+
+
 class Quick(threading.Event):
     """A helper's stop event whose waits end at once, noting how long they'd have been."""
 
@@ -220,7 +229,7 @@ class Quick(threading.Event):
 @pytest.fixture
 def quiet(monkeypatch):
     """Helpers that start without their real loop, and no agent's own settings read."""
-    monkeypatch.setattr(agents, "_config_model", lambda kind: None)
+    _no_agent_settings(monkeypatch)
     monkeypatch.setattr(agents.Manager, "_prepare", lambda self, slug: None)
     monkeypatch.setattr(agents.Manager, "_run", lambda self, s: None)
 
@@ -298,7 +307,7 @@ def test_a_failing_helper_starts_again_then_pauses_with_the_error(tmp_path, monk
     """Helpers stopped after an error and stayed stopped ("agent stopped, see the message", in a tab nobody looked
     at). Now one starts again by itself, waiting longer after each failure; five fast failures in a row pause it, with
     the error to read."""
-    monkeypatch.setattr(agents, "_config_model", lambda kind: None)
+    _no_agent_settings(monkeypatch)
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
     s = m._record("game", "opencode", "opencode-1", "opencode-1", {})
@@ -322,7 +331,7 @@ def test_a_failing_helper_starts_again_then_pauses_with_the_error(tmp_path, monk
 def test_a_usage_limit_waits_until_it_resets_then_carries_on(tmp_path, monkeypatch):
     """A night's run lost most of its helpers to their plans' usage limits. A helper waits until the time the agent
     says the limit resets, then carries on by itself; its last words show meanwhile."""
-    monkeypatch.setattr(agents, "_config_model", lambda kind: None)
+    _no_agent_settings(monkeypatch)
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
     s = m._record("game", "claude", "claude-1", "claude-1", {})
@@ -428,7 +437,7 @@ def test_the_tests_never_run_an_agent_to_find_it(monkeypatch):
     def never(*args, **kwargs):
         raise AssertionError(f"ran {args[0]}")
     monkeypatch.setattr(agents.subprocess, "run", never)
-    assert {row["id"] for row in agents.detect()} == set(agents.KINDS)
+    assert {row["id"] for row in agents.detect()} == {a.id for a in kinds.AGENTS}
 
 
 def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monkeypatch):
@@ -438,7 +447,7 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
     session's tokens (cached ones apart), turns and tool calls are on its row."""
     import httpx
 
-    monkeypatch.setattr(agents, "_config_model", lambda kind: None)
+    _no_agent_settings(monkeypatch)
     net = _game(tmp_path, functions=2)
     m = agents.Manager(net, tmp_path, URL)
     m.prompt = lambda s: "task"
@@ -465,7 +474,7 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
         return httpx.Response(200, json={"choices": [{"message": msg}], "usage": {
             "prompt_tokens": 1000, "completion_tokens": 50, "prompt_tokens_details": {"cached_tokens": 800}}})
     real = httpx.Client
-    monkeypatch.setattr(agents.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     m._run(s)
     assert len(sent) == 4 and s.state == "stopped" and "nothing left" in s.why
     third = sent[2]  # after f0 matched: its claim folded into a line, the match itself whole

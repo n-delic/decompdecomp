@@ -21,6 +21,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from .. import agents as kinds
 from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
@@ -82,7 +83,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
         endpoint was removed since)."""
-        if kind != "api":
+        if not kinds.get(kind).uses_endpoints:
             return options
         saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (
             next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))

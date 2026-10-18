@@ -7,7 +7,7 @@ async function showAgentsPage() {
   renderAgentsPage();  // again when the search for agents ends (base.js agentsFound)
 }
 function renderAgentsPage() {
-  const rows = S.st.agents.filter((a) => a.id !== "api");
+  const rows = S.st.agents.filter((a) => !a.uses_endpoints);
   $("agList").innerHTML = rows.map((a) => `<div class="agent-row">
       <div class="ar-head"><b>${esc(a.name)}</b><span class="muted small">${esc(a.vendor)}</span><span class="grow"></span>
         ${a.installed ? `<span class="ok-mark">installed</span>` : `<button class="primary small-btn" data-inst="${esc(a.id)}" type="button" ${a.needs ? "disabled" : ""}>Install</button>`}</div>

@@ -11,7 +11,7 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from .. import __version__, consoles
+from .. import __version__, agents, consoles
 from ..network import Agent, NetworkError
 from .engine import RomNetwork
 
@@ -286,9 +286,9 @@ def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str
         return f"error: bad arguments for {name}: {e}"
 
 
-# Antigravity CLI otherwise finds MCP tools on demand (an extra step each, through its generic dispatcher):
-# decompdecomp's tools are all there is to the job, so they are loaded up front.
-ALWAYS_LOAD = {"antigravity/alwaysLoad": True}
+# What agents read on each tool's definition (Agent.tool_meta): Antigravity CLI otherwise finds MCP tools on demand,
+# an extra step each, and decompdecomp's tools are all there is to the job, so they are loaded up front.
+ALWAYS_LOAD = agents.TOOL_META
 
 
 def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]]) -> MCPServer:

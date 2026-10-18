@@ -11,7 +11,9 @@ import httpx
 import pytest
 from starlette.testclient import TestClient
 
+from decompnet import agents as kinds
 from decompnet import toolchains
+from decompnet.agents import api
 from decompnet.app import agents, window
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
@@ -103,7 +105,7 @@ def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkey
                         base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
     monkeypatch.setattr(net, "overview", lambda slug: pytest.fail("built a whole overview for the list"))
     st = client.get("/api/state").json()
-    assert {a["id"] for a in st["agents"]} == set(agents.KINDS) and "projects" not in st
+    assert {a["id"] for a in st["agents"]} == {a.id for a in kinds.AGENTS} and "projects" not in st
     assert ran == []
     (game,) = client.get("/api/projects").json()
     assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
@@ -130,13 +132,13 @@ def test_parse_agent_output():
     claude = json.dumps({"type": "assistant", "message": {"content": [
         {"type": "text", "text": "Matched it."},
         {"type": "tool_use", "name": "mcp__decomp__compile_and_diff", "input": {"function": "f", "source": "a\nb"}}]}})
-    assert agents.parse_line("claude", claude) == [("text", "Matched it."), ("tool", "compile_and_diff(f, 2 lines of C)")]
+    assert kinds.get("claude").parse_line(claude) == [("text", "Matched it."), ("tool", "compile_and_diff(f, 2 lines of C)")]
     codex = json.dumps({"type": "item.started", "item": {"type": "mcp_tool_call", "server": "decomp", "tool": "claim_function",
                                                         "arguments": {"strategy": "easiest"}}})
-    assert agents.parse_line("codex", codex) == [("tool", "claim_function(easiest)")]
+    assert kinds.get("codex").parse_line(codex) == [("tool", "claim_function(easiest)")]
     opencode = json.dumps({"type": "text", "part": {"text": "done"}})
-    assert agents.parse_line("opencode", opencode) == [("text", "done")]
-    assert agents.parse_line("claude", "not json at all") == [("info", "not json at all")]
+    assert kinds.get("opencode").parse_line(opencode) == [("text", "done")]
+    assert kinds.get("claude").parse_line("not json at all") == [("info", "not json at all")]
 
 
 @needs_demo
@@ -160,10 +162,10 @@ def test_builtin_api_agent_matches_a_function(app, monkeypatch):
         return httpx.Response(200, json={"choices": [{"message": msg}]})
 
     real = httpx.Client
-    monkeypatch.setattr(agents.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     s = agents.Session("api-t", "api", "Test", slug, "api-test", {"base_url": "http://mock/v1", "model": "m", "api_key": "test-key"})
     agent, _ = net.local_agent("api-test")
-    assert manager._run_api(s, agent) is True
+    assert api.API.run(manager, s, agent) is True
     assert net._function("func_800007F4", slug)["status"] == "matched"
     assert "byte-identical" in seen[-1]["messages"][-1]["content"]
 
@@ -202,20 +204,20 @@ def test_builtin_api_agent_out_of_credit(app, monkeypatch):
     answers = iter([httpx.Response(429, json={"error": {"message": "Rate limit reached for requests"}}),
                     httpx.Response(402, json={"error": {"message": "Insufficient Balance"}})])
     real = httpx.Client
-    monkeypatch.setattr(agents.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(lambda r: next(answers)), **kw))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(lambda r: next(answers)), **kw))
     s = agents.Session("api-c", "api", "Test", slug, "api-credit", {"base_url": "http://mock/v1", "model": "m",
                                                                     "context_tokens": 32768})
     agent, _ = net.local_agent("api-credit")
-    assert manager._run_api(s, agent) is False and s.throttled
+    assert api.API.run(manager, s, agent) is False and s.throttled
     with pytest.raises(agents.Fatal, match="out of credit"):
-        manager._run_api(s, agent)
+        api.API.run(manager, s, agent)
 
 
 def test_agent_spend_is_read_from_their_output():
     """What each session spent, its tokens (those served from the provider's cache apart) and turns, as each agent
     reports them: recorded per session and model, to compare models on cost per match."""
     def usage(kind, obj):
-        return [json.loads(text) for k, text in agents.parse_line(kind, json.dumps(obj)) if k == "usage"]
+        return [json.loads(text) for k, text in kinds.get(kind).parse_line(json.dumps(obj)) if k == "usage"]
     claude = {"type": "result", "total_cost_usd": 0.42, "num_turns": 9, "usage": {
         "input_tokens": 30, "output_tokens": 900, "cache_read_input_tokens": 50000, "cache_creation_input_tokens": 4000}}
     assert usage("claude", claude) == [{"usd": 0.42, "input": 30, "output": 900, "cache_read": 50000,
@@ -225,7 +227,7 @@ def test_agent_spend_is_read_from_their_output():
     opencode = {"type": "step_finish", "part": {"cost": 0.01, "tokens": {"input": 10, "output": 5, "reasoning": 7,
                                                                          "cache": {"read": 400, "write": 0}}}}
     assert usage("opencode", opencode) == [{"usd": 0.01, "input": 10, "output": 12, "cache_read": 400, "turns": 1}]
-    assert agents.api_usage({"prompt_tokens": 1000, "completion_tokens": 50, "prompt_cache_hit_tokens": 700}) == \
+    assert api.api_usage({"prompt_tokens": 1000, "completion_tokens": 50, "prompt_cache_hit_tokens": 700}) == \
         {"input": 300, "cache_read": 700, "output": 50, "turns": 1}
 
 
@@ -364,10 +366,10 @@ def test_the_api_agent_stays_within_a_small_local_context(app, monkeypatch):
         return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None} | next(script)}]})
 
     real = httpx.Client
-    monkeypatch.setattr(agents.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     s = agents.Session("api-c", "api", "Test", slug, "api-ctx", {"base_url": "http://127.0.0.1:8080/v1", "model": "m"})
     agent, _ = net.local_agent("api-ctx")
-    assert manager._run_api(s, agent) is True
+    assert api.API.run(manager, s, agent) is True
     assert len(sizes) == len(names) + 1 and max(sizes) < 16384 * 3  # all of it, each within the context
     assert refused  # and it got past a refusal
 
@@ -377,7 +379,7 @@ def test_fit_keeps_the_task_and_the_latest_exchange():
     for k in range(6):
         msgs += [{"role": "assistant", "content": f"thinking {k} " * 50},
                  {"role": "tool", "tool_call_id": str(k), "content": f"assembly {k} " * 400}]
-    agents.fit(msgs, 3000)
+    api.fit(msgs, 3000)
     assert msgs[0]["content"] == "rules " * 100 and msgs[1]["content"] == "task " * 100
     assert msgs[-1]["content"] == "assembly 5 " * 400  # the latest result, whole
     assert "trimmed" in msgs[3]["content"]

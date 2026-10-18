@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from decompnet.agents import api
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 from decompnet.app.support import Settings, session_options, spread_sessions
@@ -99,4 +100,4 @@ def test_sessions_are_numbered_per_endpoint(tmp_path, monkeypatch):
     ("http://localhost:1234/v1", True), ("https://api.deepseek.com/v1", False), ("http://172.32.0.1/v1", False),
     ("https://8.8.8.8/v1", False)])
 def test_local_servers_are_recognised_by_address_or_name(base, local):
-    assert agents.is_local(base, resolve=False) is local
+    assert api.is_local(base, resolve=False) is local

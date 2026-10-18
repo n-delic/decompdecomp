@@ -10,6 +10,7 @@ import subprocess
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from ... import agents as kinds
 from ... import toolchains
 from ...network import NetworkError
 from .. import agents
@@ -34,7 +35,10 @@ def register(app: App) -> None:
     async def api_agent_install(request: Request) -> Response:
         if (bad := guard(request, write=True)):
             return bad
-        kind = agents.KINDS.get(agents.kind_id(str((await body(request)).get("kind", ""))))
+        try:
+            kind = kinds.get(str((await body(request)).get("kind", "")))
+        except ValueError:
+            kind = None
         if kind is None or not kind.install:
             return fail(ValueError("nothing to install"))
         if kind.install.startswith("npm ") and not shutil.which("npm"):
@@ -49,7 +53,7 @@ def register(app: App) -> None:
                 log(line.rstrip())
             if proc.wait() != 0:
                 raise RuntimeError(f"the installer exited with code {proc.returncode}")
-            agents.known_versions.pop(kind.id, None)
+            kinds.known_versions.pop(kind.id, None)
             manager.refresh_detected(wait=True)  # the launcher shows it, with its models, when the job is done
             return {"kind": kind.id}
         return JSONResponse({"job": jobs.start("agent-install", work)})
@@ -76,7 +80,7 @@ def register(app: App) -> None:
         try:
             net.project_row(slug)
             net.warm_briefs_soon(slug)  # ready before the helpers' first claims
-            if kind == "api":
+            if kinds.get(kind).uses_endpoints:
                 picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
                 plan = spread_sessions(settings, manager, picked, count, given)
                 ids = [sid for entry, n in plan for sid in manager.start(kind, slug, n, options | session_options(entry))]
@@ -87,7 +91,7 @@ def register(app: App) -> None:
         # remembered, so the next start is one click; models typed in come back as suggestions
         model = str(options.get("model") or "")
         settings.data["launcher"] = {"kind": kind, "model": model, "count": count} | ({"endpoints": picked} if picked else {})
-        if model and kind != "api":
+        if model and not kinds.get(kind).uses_endpoints:
             recent = settings.data.setdefault("recent_models", {}).setdefault(kind, [])
             settings.data["recent_models"][kind] = [model] + [m for m in recent if m != model][:7]
         settings.save()
@@ -131,8 +135,7 @@ def register(app: App) -> None:
         if data.get("remove_endpoint"):
             settings.remove_endpoint(str(data["remove_endpoint"]))
             for sid, sess in list(manager.sessions.items()):  # its sessions stop with it
-                if sess.kind == "api" and sess.options.get("endpoint") == str(data["remove_endpoint"]) \
-                        and sess.state in agents.LIVE:
+                if sess.options.get("endpoint") == str(data["remove_endpoint"]) and sess.state in agents.LIVE:
                     manager.stop(sid)
         if "per_session" in data:
             settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))

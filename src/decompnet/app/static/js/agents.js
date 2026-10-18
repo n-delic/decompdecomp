@@ -120,14 +120,16 @@ $("stopAll").onclick = async () => {
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
 const LZ = { kind: null, model: "", count: 1, per: null, effort: "", task: "" };
-// opencode 2 picks a model's reasoning effort as a variant of it: provider/model#high
-const withEffort = (a, model) => (a.id === "opencode" && LZ.effort && model ? `${model.split("#")[0]}#${LZ.effort}` : model);
+// an agent that takes an effort (opencode 2) picks it as a variant of the model: provider/model#high
+const withEffort = (a, model) => (a.takes_effort && LZ.effort && model ? `${model.split("#")[0]}#${LZ.effort}` : model);
 function launcherInit() {
   if (LZ.kind || !S.st) return;
   const l = S.st.settings.launcher || {};
-  const known = S.st.agents.find((a) => a.id === l.kind && (a.installed || a.id === "api"));
-  // the API helper first: decompdecomp runs its whole loop, and no other program's update can break it
-  LZ.kind = known ? known.id : "api";
+  const known = S.st.agents.find((a) => a.id === l.kind && (a.installed || a.uses_endpoints));
+  // the recommended agent first (the API helper: decompdecomp runs its whole loop, and no other program's update
+  // can break it)
+  const first = S.st.agents.find((a) => a.recommended) || S.st.agents[0];
+  LZ.kind = known ? known.id : first ? first.id : null;
   LZ.model = known ? (l.model || "") : "";
   LZ.count = l.count || 1;
   const eps = S.st.settings.endpoints || [];
@@ -147,30 +149,30 @@ function modelName(a, model) {
   return m ? m.name : model;
 }
 function launchLabel(a, model, count) {
-  if (a.id === "api") {
+  if (a.uses_endpoints) {
     const picked = (S.st.settings.endpoints || []).filter((e) => (LZ.eps || []).includes(e.id));
     if (picked.length > 1) return `Start ${count} across ${picked.length} endpoints`;
     return `Start ${picked[0] ? picked[0].name : "API model"}${count > 1 ? ` × ${count}` : ""}`;
   }
-  return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${a.id === "opencode" && LZ.effort && model ? ` · ${LZ.effort}` : ""}${count > 1 ? ` × ${count}` : ""}`;
+  return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${a.takes_effort && LZ.effort && model ? ` · ${LZ.effort}` : ""}${count > 1 ? ` × ${count}` : ""}`;
 }
 
 async function startAgents(a, model, count, btn, extra = {}) {
   if (btn) btn.disabled = true;
   try {
     const options = { ...extra };
-    if (model && a.id !== "api") options.model = withEffort(a, model);
-    if (a.id === "opencode" && LZ.effort && !model) throw new Error("pick a model to set its effort");
+    if (model && !a.uses_endpoints) options.model = withEffort(a, model);
+    if (a.takes_effort && LZ.effort && !model) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
     S.st.settings.launcher = { kind: a.id, model: model || "", count };
-    if (model && a.id !== "api") {
+    if (model && !a.uses_endpoints) {
       const rec = (S.st.settings.recent_models ||= {});
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
     hideLaunch();
-    toast(`${esc(a.id === "api" ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
@@ -184,18 +186,18 @@ const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matc
 function renderLauncher(box, compact = true) {
   if (!box || !S.st) return;
   launcherInit();
-  const list = [...S.st.agents].sort((x, y) => (y.id === "api") - (x.id === "api"));
+  const list = [...S.st.agents].sort((x, y) => y.recommended - x.recommended);
   const a = list.find((x) => x.id === LZ.kind) || list[0];
   const kinds = list.map((x) => `<button type="button" class="lz-kind ${x.id === a.id ? "on" : ""}" data-k="${esc(x.id)}">
-      <b>${esc(x.name)}</b><span>${x.id === "api" ? "Recommended · any model with an API key" : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
-      ${x.installed || x.id === "api" ? "" : `<em>install</em>`}</button>`).join("");
+      <b>${esc(x.name)}</b><span>${x.uses_endpoints ? `${x.recommended ? "Recommended · " : ""}any model with an API key` : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
+      ${x.installed || x.uses_endpoints ? "" : `<em>install</em>`}</button>`).join("");
   let body = "";
   if (!a.installed) {
     body = `<p class="small"><b>${esc(a.name)}</b> isn't installed on this computer.${a.needs ? ` It needs ${esc(a.needs)} first.` : ""}</p>
       ${a.install ? cmdBox(a.install) : ""}
       <div class="row"><button class="primary" data-act="install" type="button" ${a.needs ? "disabled" : ""}>Install it for me</button><button class="link-btn" data-act="detect" type="button">Installed it already? Look again</button><a class="link small" href="${esc(a.docs)}" target="_blank" rel="noopener">About ${esc(a.name)}</a></div>
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
-  } else if (a.id === "api") {
+  } else if (a.uses_endpoints) {
     const eps = S.st.settings.endpoints || [];
     const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any provider works (Anthropic, OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
@@ -211,7 +213,7 @@ function renderLauncher(box, compact = true) {
     body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${known && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
         <option value="__other" ${known ? "" : "selected"}>Another model…</option></select></label>
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>
-      ${a.id === "opencode" ? `<label class="field"><span>Effort (how hard the model thinks; opencode 2, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
+      ${a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks; opencode 2, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
   }
   const ready = a.installed;
   // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches
@@ -226,7 +228,7 @@ function renderLauncher(box, compact = true) {
         <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count))}</button></div>
-        <p class="muted small">${a.id === "api" ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
+        <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
   wireCopies(box);
   const rerender = () => renderLauncher(box, compact);
@@ -266,7 +268,7 @@ function renderLauncher(box, compact = true) {
   };
   const go = box.querySelector('[data-act="start"]');
   if (go) go.onclick = async () => {
-    if (a.id === "api") {
+    if (a.uses_endpoints) {
       if (box.querySelector('[data-f="prov"]')) {  // a new endpoint, typed in here: saved, then started on
         const before = new Set((S.st.settings.endpoints || []).map((e) => e.id));
         try { S.st.settings = await api("/api/settings", { method: "POST", body: { endpoint: endpointData(box) } }); } catch (e) { return toast(esc(e.message), "err"); }

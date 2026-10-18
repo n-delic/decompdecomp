@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import policy, scoring
+from . import agents, policy, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -29,9 +29,9 @@ CLAIM_TTL = 30 * 60
 # (see model_family): only 5.5% of released functions ever matched later, and another try by the same model mostly
 # fails the same way.
 RELEASE_COOLDOWN = 15 * 60
-# The family of a helper's model, from its name (app/agents.py helper_name: kind-model-n). Claude Code only runs
-# Anthropic's models, Codex OpenAI's, Antigravity Google's; opencode and API helpers run the model their name says.
-KIND_FAMILIES = {"claude": "claude", "codex": "gpt", "antigravity": "gemini", "gemini": "gemini"}
+# The family of a helper's model, from its name (app/agents.py helper_name: kind-model-n): its agent's, when the
+# agent runs one maker's models (agents.FAMILIES: Claude Code Anthropic's, Codex OpenAI's, Antigravity Google's),
+# else the model the name says (opencode and API helpers).
 MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fable": "claude", "o3": "gpt", "o4": "gpt"}
 # When compile_and_diff tells an agent to move on: after this many compiles in a row that didn't beat its best score,
 # by the function's size (the first number of instructions it's under). Functions that match mostly do in the first
@@ -108,8 +108,8 @@ def model_family(agent_name: str) -> str:
     """Who made an agent's model ("claude-opus-1": claude, "opencode-deepseek-v4.1-flash-2": deepseek); an agent
     whose name says no model is a family of its own."""
     kind, _, rest = agent_name.lower().partition("-")
-    if kind in KIND_FAMILIES:
-        return KIND_FAMILIES[kind]
+    if kind in agents.FAMILIES:
+        return agents.FAMILIES[kind]
     word = re.match(r"[a-z]+\d*", rest)
     if word is None:
         return kind

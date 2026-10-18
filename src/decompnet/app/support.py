@@ -16,9 +16,11 @@ from importlib import resources
 from pathlib import Path
 
 from .. import hostenv, toolchains
+from ..agents import kind_id
+from ..agents.api import API_PRESETS, endpoint_entry
 from ..network import NetworkError
 from ..rom import RomError
-from . import agents
+from .agents import PER_SESSION
 
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
@@ -135,7 +137,7 @@ class Settings:
             self.data = {}
         if not isinstance(self.data.get("endpoints"), list):  # one saved "api" before 0.10.1: the first endpoint
             old = self.data.get("api") if isinstance(self.data.get("api"), dict) else {}
-            self.data["endpoints"] = [agents.endpoint_entry(old | {"id": "e1"})] if old.get("base_url") or old.get("provider") else []
+            self.data["endpoints"] = [endpoint_entry(old | {"id": "e1"})] if old.get("base_url") or old.get("provider") else []
 
     _lock = threading.Lock()
 
@@ -172,7 +174,7 @@ class Settings:
                     raise ValueError("the context size is a number of tokens, like 16384" if k == "context_tokens"
                                      else "the session limit is a number, like 1") from None
         current = self.endpoint(str(data.get("id") or ""))
-        preset = agents.API_PRESETS.get(str(data.get("provider") or (current or {}).get("provider") or "custom"), {})
+        preset = API_PRESETS.get(str(data.get("provider") or (current or {}).get("provider") or "custom"), {})
         for k in ("base_url", "model"):  # "Add" on an empty form added an endpoint that failed only when started
             if k in data and not str(data[k] or "").strip() and not preset.get(k):
                 raise ValueError("Give the endpoint's API address and model, like https://api.deepseek.com/v1 and "
@@ -197,7 +199,7 @@ class Settings:
             current["api_key"] = str(data["api_key"]).strip()
         if data.get("clear_key"):
             current.pop("api_key", None)
-        current.update(agents.endpoint_entry(current))
+        current.update(endpoint_entry(current))
         return current
 
     def remove_endpoint(self, eid: str) -> None:
@@ -212,7 +214,7 @@ class Settings:
 
         eps = [masked(e) for e in self.endpoints()]
         return {"endpoints": eps, "api": eps[0] if eps else {},
-                "per_session": self.data.get("per_session", agents.PER_SESSION), "last_project": self.data.get("last_project"),
+                "per_session": self.data.get("per_session", PER_SESSION), "last_project": self.data.get("last_project"),
                 "autopilot": self.data.get("autopilot", True), "budget_usd": self.data.get("budget_usd") or 0,
                 "auto_update": bool(self.data.get("auto_update")), "check_updates": self.data.get("check_updates", True) is not False,
                 "auto_compiler": bool(self.data.get("auto_compiler")),
@@ -235,7 +237,7 @@ def spread_sessions(settings: Settings, manager, picked: list[str], count: int, 
     if not picked:
         first = settings.endpoints()[0] if settings.endpoints() else {}
         typed = {k: v for k, v in given.items() if k in ("provider", "base_url", "model", "context_tokens") and v}
-        entry = agents.endpoint_entry(first | typed)
+        entry = endpoint_entry(first | typed)
         if first and entry["base_url"].rstrip("/") != first["base_url"].rstrip("/"):
             entry.pop("api_key", None)
         if not entry.get("base_url") or not entry.get("model"):
@@ -244,7 +246,7 @@ def spread_sessions(settings: Settings, manager, picked: list[str], count: int, 
     eps = [settings.endpoint(e) for e in picked]
     if any(e is None for e in eps):
         raise ValueError("an endpoint you picked isn't saved any more: pick again")
-    busy = {e["id"]: sum(1 for x in manager.sessions.values() if x.kind == "api" and x.options.get("endpoint") == e["id"]
+    busy = {e["id"]: sum(1 for x in manager.sessions.values() if x.options.get("endpoint") == e["id"]
                          and x.state in ("starting", "working", "waiting") and not x.stop.is_set()) for e in eps}
     plan = {e["id"]: 0 for e in eps}
     for _ in range(count):
@@ -260,8 +262,8 @@ def spread_sessions(settings: Settings, manager, picked: list[str], count: int, 
 
 def _launcher(saved: dict) -> dict:
     """The last launcher choice; one saved for Gemini CLI (retired) comes back as Antigravity with its default model."""
-    if saved.get("kind") and agents.kind_id(saved["kind"]) != saved["kind"]:
-        return {**saved, "kind": agents.kind_id(saved["kind"]), "model": ""}
+    if saved.get("kind") and kind_id(saved["kind"]) != saved["kind"]:
+        return {**saved, "kind": kind_id(saved["kind"]), "model": ""}
     return saved
 
 
