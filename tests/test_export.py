@@ -113,3 +113,13 @@ def test_check_records_a_function_written_outside(tmp_path):
     (tree / "src" / "main" / "lerp.c").write_text('#include "common.h"\n\n' + csource.get((GAME / "game.c").read_text(), "lerp"))
     assert py("check", "lerp").returncode == 0
     assert "identical" in py().stdout
+
+
+def test_an_agents_own_include_of_context_h_names_the_exports_header():
+    """#4: the judge offers the shared header as context.h; the export calls it common.h, so a matched function that
+    included context.h itself didn't build in the export."""
+    from decompnet.rom.export import exported_source
+
+    text = exported_source("", "common_ovl.h", '#include "context.h"\n\nint f(void) { return 1; }')
+    assert text == '#include "common_ovl.h"\n\n#include "common_ovl.h"\n\nint f(void) { return 1; }\n'
+    assert "context.h" not in exported_source("", "common.h", '  # include "context.h"\nint g;')

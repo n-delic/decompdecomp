@@ -46,6 +46,17 @@ class ExportError(RuntimeError):
     pass
 
 
+CONTEXT_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"context\.h"', re.M)
+
+
+def exported_source(prelude: str, include: str, source: str) -> str:
+    """A matched function's file in the export: its header first, as the judge compiled it. The judge offers the
+    shared header as context.h, and some agents include it themselves: the export's header has the project's own
+    name (common.h), so their #include "context.h" names that instead (#4: Champions of Norrath's export stopped
+    at "context.h: No such file or directory"). Including it twice is what the judge compiled too."""
+    return f'{prelude}#include "{include}"\n\n{CONTEXT_INCLUDE.sub(f"#include \"{include}\"", source.strip())}\n'
+
+
 def _first_address(path: Path) -> tuple[int | None, int | None]:
     """(ROM offset, VRAM) of the first instruction or data word in a splat assembly file."""
     text = path.read_text(errors="replace", encoding="utf-8")
@@ -179,7 +190,7 @@ def export_rom(net, slug: str, out: Path, log=print) -> dict:
         src.parent.mkdir(parents=True, exist_ok=True)
         include = "common.h" if not unit else f"common_{unit}.h"
         prelude = toolchains.get(compiler_for(cfg, row["vram"])["toolchain"]).prelude
-        src.write_text(f'{prelude}#include "{include}"\n\n{row["matched_source"].strip()}\n', encoding="utf-8")
+        src.write_text(exported_source(prelude, include, row["matched_source"]), encoding="utf-8")
         f["kind"] = "c"
         f["src"] = src.relative_to(out).as_posix()
         f["obj"] = f"build/src/{f['seg']}/{f['name']}.o"
