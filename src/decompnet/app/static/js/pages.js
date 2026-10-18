@@ -97,7 +97,7 @@ async function showSettingsPage() {
     <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>`;
   const inst = st.install || {};
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
-  $("setAbout").innerHTML = `<p class="small">decompdecomp ${esc(st.version)} on ${esc(st.platform)}. Free and open source (MIT). Everything runs on this computer: no account, nothing sent to us.</p>
+  $("setAbout").innerHTML = `<p class="small">decompdecomp ${esc(st.version)} on ${esc(st.platform)}. Free and open source (GPL-3.0). Everything runs on this computer: no account, nothing sent to us.</p>
     <p class="small muted">A continuation of <a class="link" href="https://github.com/i12bp8/decomp.wtf" target="_blank" rel="noopener">decomp.wtf</a> by Sam Wolfs, who built it up to 0.10.6. Thank you, Sam.</p>
     <div class="field"><span>Updates come from ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>

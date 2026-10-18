@@ -1,10 +1,10 @@
 [project]
 name = "decompnet"
 version = "1.0.2-alpha"
-description = "decompdecomp, a continuation of decomp.wtf: your AI agent decompiles games you own into C that compiles to the exact same bytes, with a live view. Runs locally."
+description = "decompdecomp, a continuation of decomp.wtf: AI agents decompile games you own into C that compiles to the exact same bytes, in an app of its own. Runs locally."
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "LICENSE-decomp.wtf"]
 authors = [
     { name = "sam wolfs", email = "appelsiensam@gmail.com" },  # decomp.wtf, up to 0.10.6
     { name = "NDelic" },  # decompdecomp

@@ -5,7 +5,7 @@
 #
 # decompdecomp installs on this computer, with uv:
 #   1. installs uv, Astral's Python tool manager, if you don't have it (asks first)
-#   2. installs decompdecomp (open source, MIT) with uv, in its own environment
+#   2. installs decompdecomp (open source, GPL-3.0) with uv, in its own environment
 #   3. checks for what its window needs from your system (GTK and WebKitGTK 4.1), and offers to install it
 #   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
 #   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
@@ -116,7 +116,7 @@ step "uv $(uv --version | cut -d' ' -f2)"
 if [ -n "$SRC_DIR" ]; then
   # a copy of the source (not the checkout itself: building leaves nothing behind in it, and it may be read-only)
   TMP_SRC="$(mktemp -d)"
-  cp -R "$SRC_DIR/pyproject.toml" "$SRC_DIR/README.md" "$SRC_DIR/LICENSE" "$SRC_DIR/src" "$TMP_SRC/"
+  cp -R "$SRC_DIR/pyproject.toml" "$SRC_DIR/README.md" "$SRC_DIR/LICENSE" "$SRC_DIR/LICENSE-decomp.wtf" "$SRC_DIR/src" "$TMP_SRC/"
   find "$TMP_SRC" -name __pycache__ -type d -prune -exec rm -rf {} +
   SPEC="$TMP_SRC"
   step "installing decompdecomp from $SRC_DIR${BRANCH:+ ($BRANCH @ ${COMMIT:0:7})}"
