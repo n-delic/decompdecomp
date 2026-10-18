@@ -906,7 +906,8 @@ details.more[open] > summary::before { content: "− "; }
 .ptab[data-pane="agents"] .agents-grid, .ptab[data-pane="agents"] .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
 .ptab[data-pane="agents"] .agents-grid > .panel { display: flex; flex-direction: column; height: var(--agents-row); }
 .ptab[data-pane="agents"] .agents-grid .sessions, .ptab[data-pane="agents"] .feed { flex: 1; min-height: 0; overflow-y: auto; }
-.ptab[data-pane="agents"] { --agents-row: 560px; }
+/* the agents row fills the window below the project's header and tabs, never shorter than --agents-row-min */
+.ptab[data-pane="agents"] { --agents-row-min: 560px; --above-agents: 230px; --agents-row: max(var(--agents-row-min), calc(100vh - var(--above-agents))); }
 .ptab[data-pane="agents"] .suggest-panel { margin: 16px 0 0; }
 .feed-panel .panel-head h2:focus { outline: none; }
 .empty { padding: 18px 16px; }

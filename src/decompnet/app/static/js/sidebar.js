@@ -209,6 +209,7 @@ function trimHistory() {
 }
 function renderNotes() {
   const lines = burstLines([...N.history.values()].sort((a, b) => a.id - b.id)).reverse();
+  $("notifClear").hidden = !lines.length;
   setHtml($("notifList"), lines.length ? lines.map((g) => noteLine(g)).join("")
     : `<li class="note-empty muted small">Nothing yet. Matches, paused agents and compiler news from all your projects show up here.</li>`);
 }
@@ -235,6 +236,16 @@ document.querySelectorAll("[data-notif]").forEach((b) => {
   b.onclick = (e) => { e.stopPropagation(); S.notesFrom = b; if ($("notifPanel").hidden) openNotes(); else closeNotes(); };
 });
 $("notifClose").onclick = () => closeNotes();
+/* Clear all: the history up to the newest event goes, and stays gone after a restart (the server keeps where) */
+$("notifClear").onclick = async () => {
+  const upTo = Math.max(N.last || 0, ...N.history.keys());
+  N.history.clear();
+  for (const t of N.live) t.el.remove();
+  N.live = [];
+  renderNotes();
+  $("notifClose").focus();
+  try { S.st.settings = await api("/api/settings", { method: "POST", body: { notes_cleared_to: upTo } }); } catch { /* back after a restart */ }
+};
 document.addEventListener("click", (e) => {
   if (!$("notifPanel").hidden && !e.target.closest("#notifPanel, [data-notif]")) closeNotes(false);
 });

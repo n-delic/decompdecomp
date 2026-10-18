@@ -107,7 +107,8 @@ def register(app: App) -> None:
             return bad
         q = request.query_params
         if q.get("recent"):
-            return JSONResponse({"events": await call(net.recent_events)})
+            cleared = int(settings.data.get("notes_cleared_to") or 0)
+            return JSONResponse({"events": [e for e in await call(net.recent_events) if e["id"] > cleared]})
         after = q.get("after", "")
         return JSONResponse(await call(net.events_after, int(after) if after.isdigit() else None))
 

@@ -43,6 +43,12 @@ def test_the_feed_answers_the_window(tmp_path):
     net.record_event("a", "link", "src/a.c")
     assert [e["detail"] for e in client.get(f"/api/events?after={start['last']}").json()["events"]] == ["src/a.c"]
     assert [e["kind"] for e in client.get("/api/events?recent=1").json()["events"]] == ["link", "match"]
+    # Clear all: what came before stays out of the history, also after a restart; what comes after shows
+    last = client.get("/api/events").json()["last"]
+    assert client.post("/api/settings", json={"notes_cleared_to": last}, headers={"X-Decomp": "1"}).status_code == 200
+    assert client.get("/api/events?recent=1").json()["events"] == []
+    net.record_event("a", "match", "func_1")
+    assert [e["detail"] for e in client.get("/api/events?recent=1").json()["events"]] == ["func_1"]
 
 
 def test_a_helper_that_pauses_says_so_in_the_feed(tmp_path, monkeypatch):

@@ -149,6 +149,8 @@ def register(app: App) -> None:
             settings.data["check_updates"] = bool(data["check_updates"])
         if "auto_compiler" in data:
             settings.data["auto_compiler"] = net.auto_compiler = bool(data["auto_compiler"])
+        if "notes_cleared_to" in data:  # the notification centre's Clear all: events up to this id stay hidden
+            settings.data["notes_cleared_to"] = max(0, int(data["notes_cleared_to"] or 0))
         if "bridges_removed_seen" in data:  # the notice of what the cleanup removed (cleanup.report), seen
             settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
         settings.save()
