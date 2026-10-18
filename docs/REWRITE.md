@@ -112,6 +112,24 @@ for this release only. Once the rewrite lands, an agent researches the best way 
 compilers that only run on Linux, sandboxing, a WebView2 window) against WSL with WSLg, against something else,
 measured on the rewritten app, with what each costs to build and to test.
 
+**The research's answer (October 2026), for 1.0.4-alpha: the hybrid.** The Linux app runs unchanged in its own
+WSL 2 distribution (every compiler, the sandbox, the helpers' process groups work as on Linux); a small native
+Windows window program (pywebview on WebView2, `app/winwindow.py`, the same contract as gtkwindow.py: arguments,
+stdin words `present`/`close`, the secret in its user agent, the close question to the page) shows its page,
+started by the Linux app through WSL interop. Projects live on WSL's own disk (the 32-bit compilers fail on
+/mnt/c, and it's about 7 times slower); games are read from C: once, at import. Rejected: WSLg's GTK window (blank
+windows on some GPUs, no tray, a Linux-looking window), a native Windows app (0.9.x tried it: "most Windows releases
+broke something only Windows has"; KMC GCC and EE-GCC are Linux-only anyway), Docker. Plan, in order:
+1. A spike on a Windows 11 VM: a Linux process starts Windows `python.exe winwindow.py` with pipes and WSLENV, and
+   it loads 127.0.0.1:<port> from WSL. Whether GitHub's windows-latest has WSL 2.
+2. `app/winwindow.py`, tested on windows-latest against a stub server.
+3. `hostenv.py` becomes the only place that knows about WSL (detection, C:\ paths, explorer.exe for links and
+   folders, `window_argv()`), with a test that fails when WSL or win32 appears anywhere else.
+4. The native-Windows leftovers go: `wsl.py`, `CompilerConfig.wsl`, `Toolchain.via_wsl`, the `wsl-x86_64` parts.
+5. `install.ps1` again, from the old one (git show 6d438ca:site/public/install.ps1) minus connect and the browser:
+   the distribution with systemd, the window bundle, WebView2 check, Start menu shortcuts, `decomp.cmd`.
+6. release.yml attaches the window bundle; docs, ROADMAP column "Windows (WSL 2)"; a manual pass on a VM; tag.
+
 **Not removed: Windows PC games.** Decompiling a Windows game's `.exe` (the `win32` platform, MSVC through wibo,
 `forks/scratch_pe.py`) is a console like any other, and it runs on Linux. Only Windows as the host goes.
 
