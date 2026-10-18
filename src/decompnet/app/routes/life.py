@@ -18,6 +18,10 @@ page_log = logging.getLogger("decompdecomp.page")
 PAGE_ERROR_CHARS, PAGE_STACK_CHARS = 500, 4000  # what one page error may write to the log
 
 
+FIRST_CHECK_SECONDS = 20  # after the app starts: its own start-up comes first
+CHECK_EVERY_SECONDS = 300  # then whether a newer version is out, every five minutes
+
+
 def register(app: App) -> None:
     mcp, manager, settings = app.mcp, app.manager, app.settings
     guard, body, call, fail, updater = app.guard, app.body, app.call, app.fail, app.updater
@@ -43,10 +47,10 @@ def register(app: App) -> None:
 
     def watch_updates() -> None:
         """Check now and then; with "install updates automatically" on, install one while no helper is working."""
-        time.sleep(20)
+        time.sleep(FIRST_CHECK_SECONDS)
         while True:
             if not checking():
-                time.sleep(300)
+                time.sleep(CHECK_EVERY_SECONDS)
                 continue
             try:
                 st = updater.status()
@@ -55,7 +59,7 @@ def register(app: App) -> None:
                     updater.apply()
             except (ValueError, OSError):
                 pass
-            time.sleep(300)
+            time.sleep(CHECK_EVERY_SECONDS)
 
     @mcp.custom_route("/api/window", methods=["POST"])
     async def api_window(request: Request) -> Response:
