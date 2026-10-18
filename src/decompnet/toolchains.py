@@ -269,8 +269,8 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     log(f"{tid}: installing {tc.name} [{tc.license}]" + (" (Linux build, runs in WSL 2)" if linux else ""))
     pinned = []
     try:
-        if tc.git:
-            _install_git_tool(tc, dest, log)
+        if tc.git or tc.pip_extra:
+            _install_python_env(tc, dest, log)
         downloads = root() / ".downloads"
         downloads.mkdir(parents=True, exist_ok=True)
         for part in parts:
@@ -315,19 +315,22 @@ def venv_bin(venv: Path, name: str) -> Path:
     return venv / "Scripts" / f"{name}.exe" if sys.platform == "win32" else venv / "bin" / name
 
 
-def _install_git_tool(tc: Toolchain, dest: Path, log) -> None:
+def _install_python_env(tc: Toolchain, dest: Path, log) -> None:
+    """An isolated environment for a Python tool: its pinned git package, or for a folder of scripts unpacked from
+    its parts (decomp-permuter isn't a package), only the libraries those scripts import (`pip_extra`)."""
     uv = shutil.which("uv")
     if not uv:
         raise ToolchainError(f"{tc.id} needs `uv` to create its isolated environment")
-    if not shutil.which("git"):
+    specs = []
+    if tc.git and not shutil.which("git"):
         # uv can fetch the pinned commit as an archive when git is missing
-        spec = f"{tc.id} @ {tc.git.removesuffix('.git')}/archive/{tc.commit}.zip"
-    else:
-        spec = f"{tc.id} @ git+{tc.git}@{tc.commit}"
-    log(f"  creating an isolated environment for {tc.git} @ {tc.commit[:10]}")
+        specs = [f"{tc.id} @ {tc.git.removesuffix('.git')}/archive/{tc.commit}.zip"]
+    elif tc.git:
+        specs = [f"{tc.id} @ git+{tc.git}@{tc.commit}"]
+    log(f"  creating an isolated environment for {f'{tc.git} @ {tc.commit[:10]}' if tc.git else tc.name}")
     subprocess.run([uv, "venv", "--quiet", "--python", "3.12", str(dest / "venv")], check=True)
-    subprocess.run([uv, "pip", "install", "--quiet", "--python", str(venv_bin(dest / "venv", "python")), spec, *tc.pip_extra],
-                   check=True)
+    subprocess.run([uv, "pip", "install", "--quiet", "--python", str(venv_bin(dest / "venv", "python")), *specs,
+                    *tc.pip_extra], check=True)
 
 
 def binary(tid: str) -> Path:

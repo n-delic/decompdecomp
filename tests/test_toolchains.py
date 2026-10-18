@@ -72,6 +72,20 @@ def test_install_records_a_manifest(tc_root, monkeypatch):
     assert toolchains.require("fake") == toolchains.path("fake")
 
 
+def test_a_folder_of_scripts_gets_an_environment_for_what_it_imports(tc_root, monkeypatch):
+    """decomp-permuter is a folder of scripts, not a package: it's unpacked from its pinned archive, and its own
+    environment gets only the libraries its scripts import."""
+    _fake(monkeypatch, tc_root, sha=None)
+    toolchains.registry()["fake"].pip_extra = ["toml==0.10.2"]
+    runs = []
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(toolchains.subprocess, "run", lambda argv, **kw: runs.append(argv))
+    toolchains.install("fake", log=lambda *_: None)
+    assert [argv[1] for argv in runs] == ["venv", "pip"]
+    assert runs[1][runs[1].index("--python") + 2:] == ["toml==0.10.2"]  # no package of its own to install
+    assert (toolchains.path("fake") / "cc").exists()
+
+
 def test_zst_archives_need_no_zstd_command(tmp_path, monkeypatch):
     """The 32-bit runtime EE-GCC needs is a .tar.zst: GNU tar would run the zstd command for it, which many systems
     don't have (the install then failed with "command failed (2)")."""

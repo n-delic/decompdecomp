@@ -243,7 +243,8 @@ project never replays anything.
   - The database records no spend per helper or model, so models can't be compared on cost yet.
 
   Fixes, ranked:
-  1. Near misses go to the permuter, which runs one worker per spare core (`app/permute.py`: one thread today).
+  1. *(done, §9.2)* Near misses go to the permuter, which runs one worker per spare core (`app/permute.py`: one
+     thread today).
   2. Pick functions by the expected chance of a match: their region's match rate times their size. A region that
      keeps failing goes to the compiler survey, not to more agents.
   3. A compile budget by size (about 3 for small functions; more only while the score keeps falling). Fix the guide
@@ -452,6 +453,15 @@ how much code never needs an agent. Ranked:
    as `seeds._context_for_m2c` does for m2c, plus the near miss's C) and writes N variants of the one function.
    Our own judge scores each (`app/permute.py` `_score`): no compile.sh, no objdump, no target.o. Run one worker
    per spare core. The current six regex rewrites (`permuter.py`) go.
+   *Done:* `permuter_gen.py` (the generator, in the tool's environment), `app/permute.py` (batches of 64, from the
+   turn's first C and the best so far in turn; workers shared by every project, one per spare core up to four, at
+   a lower CPU priority; turns counted in the database). On nine near misses made from the demo ROM's functions it
+   matched all nine, the regex rewrites five. Measured on 12 cores: one worker judges about 65 variants a second;
+   past four workers the judge's own Python (about 5 ms of each variant, under the interpreter's lock) is the
+   limit, and the app's requests wait behind it: running the judge in worker processes is what would lift it.
+   The regex rewrites stay as the fallback, for C decomp-permuter can't parse (macro calls: m2c's `M2C_FIELD`, fork
+   units, whose header isn't one file) and for computers without the tool. Open: an agent tidying the winning C
+   (it's decomp-permuter's printing: §10's readable pass can).
 3. **Struct layouts from field accesses.** Collect every load and store through each pointer argument and global,
    across the call graph; propose structs in the shared header; give them to m2c as context. Our own numbers: on GTA
    San Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents
