@@ -143,12 +143,32 @@ def code_ranges(path: Path) -> list[tuple[int, int, int]]:
 
 
 def named_symbols(workdir: Path) -> dict[str, int]:
+    """The functions symbol_addrs.txt names (splat's entrypoint and main, a PS2 game's own symbols)."""
     out = {}
     path = workdir / "symbol_addrs.txt"
     if path.exists():
-        for m in re.finditer(r"^\s*([A-Za-z_]\w*)\s*=\s*(0x[0-9A-Fa-f]+)\s*;", path.read_text(encoding="utf-8"), re.M):
+        for m in re.finditer(r"^\s*([A-Za-z_]\w*)\s*=\s*(0x[0-9A-Fa-f]+)\s*;.*type:func", path.read_text(encoding="utf-8"), re.M):
             out[m.group(1)] = int(m.group(2), 16)
     return out
+
+
+_SYMBOL_LINE = re.compile(r"^\s*(\S+)\s*=\s*(0x[0-9A-Fa-f]+)\s*;", re.M)
+
+
+def _add_symbols(path: Path, lines: list[str]) -> None:
+    """More lines for splat's symbol_addrs.txt, leaving out a name or an address it has already (two names for one
+    address, or one name twice, stop splat)."""
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    names = {m.group(1) for m in _SYMBOL_LINE.finditer(text)}
+    addresses = {int(m.group(2), 16) for m in _SYMBOL_LINE.finditer(text)}
+    keep = []
+    for line in lines:
+        m = _SYMBOL_LINE.match(line)
+        if m and m.group(1) not in names and int(m.group(2), 16) not in addresses:
+            names.add(m.group(1))
+            addresses.add(int(m.group(2), 16))
+            keep.append(line)
+    path.write_text(text.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in keep), encoding="utf-8")
 
 
 def _splat(args: list[str], cwd: Path) -> str:
@@ -406,9 +426,10 @@ def _add_overlays(config: Path, workdir: Path, image: str, found: list[tuple[str
 
 
 def split_rom(workdir: Path, rom_name: str = "rom.z64", log=print,
-              overlays: list[tuple[str, bytes, int, int]] | None = None) -> SplitResult:
+              overlays: list[tuple[str, bytes, int, int]] | None = None, symbols: list[str] | None = None) -> SplitResult:
     """Run splat on workdir/rom_name and return every function and data symbol it found. `overlays`: code from
-    other files of a PlayStation disc, each with the address it's loaded at."""
+    other files of a PlayStation disc, each with the address it's loaded at. `symbols`: symbol_addrs.txt lines for
+    the names the program itself has (a PS2 game's symbol table), which splat splits by."""
     import yaml
 
     log("finding the code segments")
@@ -427,6 +448,8 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", log=print,
     image = (yaml.safe_load(config.read_text(encoding="utf-8")).get("options") or {}).get("target_path") or rom_name
     compiler, platform, gp = _patch_config(config)
     big_endian = platform == "n64"
+    if symbols:
+        _add_symbols(workdir / "symbol_addrs.txt", symbols)
     if platform == "n64":
         image = _add_code_segments(config, workdir, image, log)
     elif overlays:

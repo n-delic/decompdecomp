@@ -26,6 +26,7 @@ start). Keep this table true when a feature ships or reaches another platform.
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project | — | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 

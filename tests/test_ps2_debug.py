@@ -8,15 +8,27 @@ with -g (projects/demo-ps2/build.py --debug), which needs EE-GCC 2.96 and binuti
 """
 
 import struct
+import subprocess
+import sys
 from io import BytesIO
+from pathlib import Path
 
+import pytest
 from elftools.elf.elffile import ELFFile
 
+from decompnet import toolchains
+from decompnet.app.engine import RomNetwork
+from decompnet.app.engine.importing import _HEADER_NAMES
 from decompnet.consoles.ps2 import debuginfo, mdebug, stabs, symtab
 from decompnet.consoles.ps2.cheader import Header
+from decompnet.elfobj import unmangle
+from decompnet.forks import csource
+from decompnet.rom import split
+from decompnet.rom.n64 import RomError
 
-# what the first header defines already (app/engine/common.py BASE_HEADER)
-_HEADER_NAMES = {"s8", "u8", "s16", "u16", "s32", "u32", "s64", "u64", "f32", "f64", "NULL", "TRUE", "FALSE"}
+ROOT = Path(__file__).resolve().parent.parent
+DEMO = ROOT / "projects" / "demo-ps2"
+GAME = ROOT / "projects" / "demo-n64" / "original"
 
 # a hand-made ELF: header, the sections' contents one after another, then the section headers
 ELF_HEADER_BYTES, SECTION_HEADER_BYTES, SYMBOL_BYTES = 52, 40, 16
@@ -235,3 +247,150 @@ def test_dwarf_is_recognised_and_said_to_be_unread():
                  (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
     assert debuginfo.read(data).summary() == "debug symbols: 1 function named, DWARF 1 (.debug) not read yet"
     assert debuginfo.read(_elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0)])) is None
+
+
+def test_splat_gets_the_names_its_own_lines_lack(tmp_path):
+    """Two names for one address, or one name twice, stop splat: the program's names never repeat splat's."""
+    path = tmp_path / "symbol_addrs.txt"
+    path.write_text("// splat's\n_start = 0x00100000; // type:func\n")
+    split._add_symbols(path, ["_start = 0x00100000; // type:func size:0x5C", "__start = 0x00100000; // type:func",
+                              "main = 0x00100060; // type:func size:0x8", "g_score = 0x00100100; // size:0x4"])
+    assert path.read_text().splitlines()[1:] == ["_start = 0x00100000; // type:func",
+                                                 "main = 0x00100060; // type:func size:0x8", "g_score = 0x00100100; // size:0x4"]
+    assert split.named_symbols(tmp_path) == {"_start": 0x100000, "main": 0x100060}  # functions only
+
+
+def test_a_compiled_destructor_is_judged_by_the_games_name():
+    """The game's _$_4CPed is ___4CPed in decompdecomp; an agent's C++ destructor compiles to _$_4CPed again."""
+    table, strings = _symbols([("_$_4CPed", 0, 8, STB_GLOBAL, STT_FUNC, 1), ("_vt$4CPed", 0, 0, STB_GLOBAL, STT_NOTYPE, 0)])
+    obj = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0, bytes(8), 0),
+                (".symtab", SHT_SYMTAB, 0, 0, table, 3), (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
+    renamed = ELFFile(BytesIO(unmangle(obj, lambda name: name in {"___4CPed", "_vt_4CPed"})))
+    assert [s.name for s in renamed.get_section_by_name(".symtab").iter_symbols()][1:] == ["___4CPed", "_vt_4CPed"]
+
+
+# ---------------------------------------------------------------------------------------- with the toolchain
+
+needs_toolchain = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None
+                                     or toolchains.installed("binutils-mips") is None,
+                                     reason="needs ee-gcc-2.96 and binutils-mips to build the PS2 demo")
+DEBUG_BUILD = DEMO / "build" / "ee-gcc-2.96-debug"
+
+
+def _import_debug_game(work: Path):
+    if not (DEBUG_BUILD / "SLUS_999.99").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), "--debug"], check=True)
+    net = RomNetwork(work / "app.db", work)
+    said = []
+    slug = net.import_rom(DEBUG_BUILD / "SLUS_999.99", confirmed=True, toolchain="ee-gcc-2.96", log=said.append)
+    return net, slug, said
+
+
+@pytest.fixture(scope="module")
+def debug_game(tmp_path_factory):
+    return _import_debug_game(tmp_path_factory.mktemp("ps2-debug"))
+
+
+@needs_toolchain
+def test_names_splat_refuses_never_stop_an_import(tmp_path, monkeypatch):
+    """The game's own names help the split; if splat won't take them, the game imports as a stripped one would,
+    and keeps its units, prototypes and types."""
+    real = split.split_rom
+
+    def picky(*args, symbols=None, **kwargs):
+        if symbols:
+            raise RomError("splat could not analyse this ROM: a symbol it doesn't take")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(split, "split_rom", picky)
+    net, slug, said = _import_debug_game(tmp_path)
+    assert "splat refused the game's own names: splitting without them" in said
+    pid = net.project_row(slug)["id"]
+    units = {r["unit"] for r in net.store.all("SELECT unit FROM functions WHERE project_id=?", pid)}
+    assert "game/game.c" in units and "struct Entity {" in net.get_context(slug)
+
+
+@needs_toolchain
+def test_a_game_with_debug_symbols_imports_with_its_names_units_and_types(debug_game):
+    net, slug, said = debug_game
+    summary = next(line for line in said if line.startswith("debug symbols: "))
+    assert "functions named" in summary and "types" in summary and "18 source files" in summary
+    pid = net.project_row(slug)["id"]
+    unit = {r["name"]: r["unit"] for r in net.store.all("SELECT name, unit FROM functions WHERE project_id=?", pid)}
+    assert unit["clamp_s32"] == "game/game.c" and unit["adler32"] == "zlib/adler32.c" and unit["_start"] == "crt0.s"
+    assert not any(name.startswith("func_") for name in unit)  # every function has its real name
+    header = net.get_context(slug)
+    assert "struct Entity { /* 0x1C bytes */" in header and "    int hp; /* 0x18 */" in header
+    assert "extern Entity g_entities[32];" in header and "\nint g_score;" in header  # $gp-relative: no extern
+    agent, _ = net.local_agent("debug-reader")
+    brief = net.claim(agent, slug, "entity_spawn")
+    assert "source file game/game.c" in brief and "prototype: Entity *entity_spawn(short type, int x, int y);" in brief
+    net.release(agent, "entity_spawn", "", slug)
+
+
+@needs_toolchain
+def test_a_game_with_debug_symbols_matches_with_its_own_source(debug_game):
+    """What the debug information doesn't hold (macros, and prototypes for calls) is all an agent adds: the game's
+    own C then matches function by function, with no renames and no struct worked out by hand."""
+    net, slug, _ = debug_game
+    agent, _ = net.local_agent("debug-matcher")
+    game_h = (GAME / "game.h").read_text()
+    extra = "\n".join(line for line in game_h.splitlines() if line.startswith("#define") and "NULL" not in line
+                      or line.endswith(");") and "(" in line and not line.startswith(("extern", "typedef")))
+    assert net.edit_context(agent, slug, "", extra.replace("const ", ""), "the game's macros and prototypes").startswith("✅")
+    source = (GAME / "game.c").read_text()
+    for name in ["clamp_s32", "abs_s32", "player_take_damage", "rng_next", "count_alive_entities",
+                 "entity_update_physics", "entity_default_hp", "entity_spawn", "add_score", "lerp", "checksum_save",
+                 "entity_collides", "game_tick"]:
+        res = net.attempt(agent, name, csource.get(source, name).replace("const ", ""), slug)
+        assert res["matched"], (name, res["text"][:2000])
+
+
+@needs_toolchain
+def test_types_the_compiler_refuses_stay_out_of_the_shared_header(tmp_path):
+    """A header that doesn't compile would fail every attempt: the types go to a file in the project instead."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said = []
+    cfg = {"compiler": {"toolchain": "ee-gcc-2.96", "flags": ["-O2", "-G0"], "timeout": 20}, "gp": 0}
+    broken = debuginfo.DebugInfo(header="struct Broken { int x }\n")
+    assert net._debug_types(broken, cfg, tmp_path, said.append) == ""
+    assert (tmp_path / "debug_types.h").read_text() == broken.header and "debug_types.h" in said[0]
+    fine = debuginfo.DebugInfo(header="struct Fine { int x; };\n")
+    assert "struct Fine { int x; };" in net._debug_types(fine, cfg, tmp_path, said.append)
+
+
+CPP_SOURCE = """class Shape { public: Shape(); virtual ~Shape(); virtual int area() const; int m_sides; };
+Shape::Shape() : m_sides(4) {}
+Shape::~Shape() {}
+int Shape::area() const { return m_sides; }
+namespace Game { struct Square : public Shape { int side; unsigned char flags : 3; int area() const; };
+int Square::area() const { return side * side; } }
+typedef struct { short x, y; } Point;
+Point g_origin;
+"""
+
+
+@pytest.mark.parametrize("toolchain", ["ee-gcc-2.96", "ee-gcc-3.2"])
+def test_a_cpp_programs_types_compile_as_the_header_in_c_and_cpp(toolchain, tmp_path):
+    """The header compiles as C (a function written in C) and as C++ (a class's method), from the STABS each GCC
+    really writes for classes, a namespace, bitfields and a typedef'd anonymous struct."""
+    if toolchains.installed(toolchain) is None:
+        pytest.skip(f"needs {toolchain}")
+    from decompnet.app.engine.common import BASE_HEADER
+    from decompnet.compiler import compile_source, run_in
+    from decompnet.project import compiler_config
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "shapes.cpp").write_text(CPP_SOURCE)
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": toolchain, "flags": ["-O2", "-g"]}})
+    argv = [a.replace("{src}", "src/shapes.cpp").replace("{obj}", "shapes.o").replace("{include}", "src") for a in cfg.cmd]
+    assert run_in(cfg, tmp_path, argv, inputs=["src"], outputs=["shapes.o"]).returncode == 0
+    data = (tmp_path / "shapes.o").read_bytes()
+    info = debuginfo.read(data, _HEADER_NAMES)
+    assert "struct Square {" in info.header
+    assert "    int side; /* 0x8 */" in info.header and "typedef struct { short x; short y; } Point;" in info.header
+    base = BASE_HEADER.format(title="test") + info.header
+    for source, language in (("int check;", "c"), ("struct Probe { int f(); }; int Probe::f() { return 0; }", "c++")):
+        result = compile_source(compiler_config(tmp_path, {"compiler": {"toolchain": toolchain, "flags": ["-O2"]}}),
+                                base, source)
+        assert result.ok and result.language == language, result.log

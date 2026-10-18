@@ -11,6 +11,7 @@ import struct
 import threading
 
 from ... import classes, seeds, similarity
+from ...consoles.ps2 import debuginfo
 from ...network import NetworkError
 from ...rom import match
 from .common import _ADDRESS
@@ -208,8 +209,11 @@ class BriefMixin:
         self.warm_briefs(proj)
         syms = self.symbols(proj["id"])
         x = self.xrefs(proj)
+        debug = json.loads(fn["meta"] or "{}").get("debug") if "meta" in fn.keys() else None  # PS2 debug symbols
+        segment = fn["unit"] in {s.get("name") for s in self.cfg(proj).get("segments", [])}  # else its source file
         lines = ["", "### Where it lives",
-                 f"address 0x{fn['vram']:08X}, ROM offset 0x{fn['rom_offset']:X}, segment {fn['unit']}"]
+                 f"address 0x{fn['vram']:08X}, ROM offset 0x{fn['rom_offset']:X}, "
+                 f"{'segment' if segment else 'source file'} {fn['unit']}"]
         calls = sorted(x["calls"].get(fn["vram"], ()))
         callers = sorted(x["called_by"].get(fn["vram"], ()))
         if calls:
@@ -227,7 +231,7 @@ class BriefMixin:
                 if r and r["preview"]:
                     desc += f": {r['preview']}"
                 lines.append(f"- {syms.label(a)} (0x{a:08X}; {desc})")
-        lines += self._class_brief(fn, proj) + self._compiler_brief(fn, proj)
+        lines += (debuginfo.brief_lines(debug) if debug else []) + self._class_brief(fn, proj) + self._compiler_brief(fn, proj)
         twin = self._twin_lines(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         alike = [] if twin else [(r, sim) for r, sim in self.similar(proj, fn, top=3) if r["status"] == "matched"]

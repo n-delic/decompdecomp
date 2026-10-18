@@ -57,7 +57,10 @@ def _short_names(names: list[str]) -> dict[str, str]:
     """Source paths without the folders they all share (C:\\dev\\game\\src\\ped.cpp -> src/ped.cpp)."""
     clean = {name: name.replace("\\", "/") for name in names}
     folders = [posixpath.dirname(path) for path in clean.values() if "/" in path]
-    common = posixpath.commonpath(folders) if folders and len(folders) == len(clean) else ""
+    try:
+        common = posixpath.commonpath(folders) if folders and len(folders) == len(clean) else ""
+    except ValueError:  # absolute and relative paths mixed: nothing they all share
+        common = ""
     if len(set(clean.values())) == 1:
         common = posixpath.dirname(next(iter(clean.values())))
     return {name: posixpath.relpath(path, common) if common else path.lstrip("/") for name, path in clean.items()}
