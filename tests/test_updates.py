@@ -142,14 +142,16 @@ def test_update_api(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".decomp").mkdir(parents=True)
     net = RomNetwork(home / ".decomp" / "decomp.db", home)
-    mcp, manager, security = build(net, home / ".decomp", 6498, "sec")
+    from decompnet.app import window
+
+    mcp, manager, security, _ = build(net, home / ".decomp", 6498, "sec")
     client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
                         base_url="http://127.0.0.1:6498")
-    assert client.get("/api/update").status_code == 401  # the GUI's secret, as everywhere
-    client.cookies.set("decomp_live", "sec")
+    assert client.get("/api/update").status_code == 401  # the window's secret, as everywhere
+    client.headers["User-Agent"] = f"{window.TOKEN_AGENT}sec"
     monkeypatch.setenv("DECOMP_UPDATES", "on")
     st = client.get("/api/update").json()
-    assert st["available"] is False and st["job"]["state"] == "idle" and "runtime" in st
+    assert st["available"] is False and st["job"]["state"] == "idle"
     r = client.post("/api/update", json={"apply": True}, headers={"X-Decomp": "1"})
     assert r.status_code == 400 and "up to date" in r.json()["error"]
     assert client.post("/api/settings", json={"check_updates": False}, headers={"X-Decomp": "1"}).json()["check_updates"] is False
@@ -166,7 +168,7 @@ def test_apply_installs_what_a_fresh_check_finds(monkeypatch):
     installed = []
     monkeypatch.setattr(updates, "install", lambda found, log=print: installed.append(found))
     up = updates.Updater(lambda: None, 0, "")
-    monkeypatch.setattr(updates, "restart", lambda port, secret: None)
+    monkeypatch.setattr(updates, "restart", lambda port, secret, window: None)
     up.last = old
     up.apply()
     import threading
@@ -189,12 +191,6 @@ def test_a_packaged_install_points_at_the_releases(monkeypatch):
     monkeypatch.setenv("DECOMP_PACKAGE", "appimage")
     ok, why = updates.can_apply()
     assert not ok and "AppImage" in why and f"github.com/{updates.REPO}/releases" in why
-
-
-def test_an_appimage_bridge_is_the_appimage_itself(monkeypatch):
-    from decompnet.app import connect
-    monkeypatch.setenv("APPIMAGE", "/home/me/decompdecomp.AppImage")
-    assert connect.bridge_command() == ["/home/me/decompdecomp.AppImage", "mcp"]
 
 
 def test_an_install_from_main_updates_on_releases_only():

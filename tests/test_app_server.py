@@ -11,7 +11,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from decompnet import toolchains
-from decompnet.app import agents
+from decompnet.app import agents, window
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
 
@@ -26,22 +26,28 @@ def app(tmp_path_factory):
     home = tmp_path_factory.mktemp("home")
     (home / ".decomp").mkdir()
     net = RomNetwork(home / ".decomp" / "decomp.db", home)
-    mcp, manager, security = build(net, home / ".decomp", PORT, SECRET)
+    mcp, manager, security, _ = build(net, home / ".decomp", PORT, SECRET)
     app = mcp.streamable_http_app(transport_security=security, host="127.0.0.1")
-    client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}")
-    client.cookies.set("decomp_live", SECRET)
+    client = TestClient(app, base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
     return client, net, manager
 
 
-def test_gui_needs_the_secret_and_the_right_host(app):
+WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
+
+
+def test_only_the_apps_own_window_gets_the_gui(app):
+    """The page and its API answer only the app's window, whose user agent carries the per-launch secret: the
+    address alone, pasted in a browser, opens nothing (the old ?k= link and its cookie are gone)."""
     client, _, _ = app
     anon = TestClient(client.app, base_url=f"http://127.0.0.1:{PORT}")
     assert anon.get("/api/state").status_code == 401
     assert anon.get("/").status_code == 401
-    r = anon.get(f"/?k={SECRET}", follow_redirects=False)
-    assert r.status_code == 303 and "decomp_live" in r.headers["set-cookie"] and "samesite=strict" in r.headers["set-cookie"].lower()
-    evil = TestClient(client.app, base_url="http://evil.example:6499")
-    evil.cookies.set("decomp_live", SECRET)
+    assert anon.get(f"/?k={SECRET}", follow_redirects=False).status_code == 401
+    wrong = TestClient(client.app, base_url=f"http://127.0.0.1:{PORT}",
+                       headers={"User-Agent": f"Mozilla/5.0 {window.TOKEN_AGENT}not-the-secret"})
+    assert wrong.get("/api/state").status_code == 401
+    assert client.get("/").status_code == 200
+    evil = TestClient(client.app, base_url="http://evil.example:6499", headers=WINDOW)
     assert evil.get("/api/state").status_code == 403
     # writes need the custom header too (a cross-site form can't send it)
     assert client.post("/api/settings", json={"per_session": 3}).status_code == 403
@@ -192,8 +198,8 @@ def test_helpers_are_remembered_to_resume(app):
 
 
 def test_an_older_app_still_running_after_an_upgrade_is_replaced(tmp_path):
-    """After an upgrade the old version may still be running: `decomp` and `decomp mcp` stop it and start the new
-    one, instead of talking to an app that doesn't know the new endpoints."""
+    """After an upgrade the old version may still be running: `decomp` stops it and starts the new one, instead of
+    talking to an app that doesn't know the new endpoints."""
     import http.server
     import threading
 
@@ -226,8 +232,8 @@ def test_an_older_app_still_running_after_an_upgrade_is_replaced(tmp_path):
     server.server_close()
 
 
-def test_an_older_bridge_never_stops_a_newer_app(tmp_path, monkeypatch):
-    """An agent set up with an older install's `decomp mcp` must use the newer app that's running, not replace it."""
+def test_an_older_copy_never_stops_a_newer_app(tmp_path, monkeypatch):
+    """`decomp` from an older install brings the newer running app's window up instead of replacing it."""
     from decompnet.app import cli
 
     monkeypatch.setattr(cli, "_running_version", lambda port: "99.0.0")
@@ -352,7 +358,7 @@ def test_an_agents_open_project_survives_a_restart(tmp_path):
     (tmp_path / ".decomp" / "settings.json").write_text(json.dumps({"agent_projects": {"7": "sles-52541"},
                                                                      "last_project": "king-king"}))
     net = RomNetwork(tmp_path / ".decomp" / "decomp.db", tmp_path)
-    _, manager, _ = build(net, tmp_path / ".decomp", PORT, SECRET)
+    _, manager, _, _ = build(net, tmp_path / ".decomp", PORT, SECRET)
     assert manager.project_of(7) == "sles-52541" and manager.project_of(8) is None
 
 

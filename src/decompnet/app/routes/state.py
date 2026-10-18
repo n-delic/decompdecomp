@@ -43,7 +43,7 @@ def register(app: App) -> None:
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = SHORT_NAMES.get(t["id"], t["name"])
-        return {"version": __version__, "build": build_id, "install": updates.installed(), **hostenv.info(),
+        return {"version": __version__, "build": build_id, "install": updates.installed(),
                 "platform": toolchains.current_platform(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "projects": projects, "toolchains": tcs, "agents": agents.detect(),

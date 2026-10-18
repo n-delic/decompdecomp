@@ -1,5 +1,5 @@
 """Updates: decompdecomp finds out when there's a newer version of itself and, once the user says yes, installs it
-and restarts in place (same port, same browser session; helper agents carry on afterwards).
+and restarts in place (same port, the window again; helper agents carry on afterwards).
 
 Where updates come from depends on how decompdecomp was installed (install.json, written by the installer):
 - "release": the newest release on GitHub (main's install.sh says which one), installed from its tag's archive
@@ -24,7 +24,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from .. import __version__, hostenv, toolchains
+from .. import __version__, toolchains
+from . import window
 
 REPO = "n-delic/decompdecomp"
 RECHECK = {"release": 3 * 3600, "branch": 15 * 60}  # GitHub allows 60 unauthenticated API calls an hour
@@ -157,11 +158,8 @@ def uv() -> str | None:
 
 def can_apply() -> tuple[bool, str]:
     if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's and the AppImage's launchers
-        return False, (f"this decompdecomp was installed as {'an AppImage' if package == 'appimage' else 'a .deb'}: "
-                       f"download the new one from https://github.com/{REPO}/releases")
-    if sys.platform == "win32":
-        return False, ("decompdecomp now runs in WSL 2 on Windows: run the installer again in PowerShell "
-                       "(irm https://decomp.ndelic.com/install.ps1 | iex) to switch to it")
+        kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
+        return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
     if not uv():
         return False, "uv isn't installed here, so decompdecomp can't update itself: run the installer again"
     return True, ""
@@ -203,19 +201,19 @@ def _stream(cmd: list[str], log, failure: str) -> None:
         raise RuntimeError(f"{failure} (exit code {proc.returncode}): {' / '.join(tail[-3:])}")
 
 
-def restart(port: int, secret: str) -> None:
-    """Become the newly installed version: same process (its console window stays), same port and secret (the
-    browser tab keeps working). Never returns."""
-    env = dict(os.environ, DECOMP_RESTART=json.dumps({"port": port, "secret": secret}))
+def restart(port: int, secret: str, window: bool) -> None:
+    """Become the newly installed version: same process, same port and secret, and the window again when it was
+    open (the old one closes as this process is replaced). Never returns."""
+    env = dict(os.environ, DECOMP_RESTART=json.dumps({"port": port, "secret": secret, "window": window}))
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.flush()
         except (OSError, ValueError, AttributeError):
             pass
-    argv = [sys.executable, "-m", "decompnet.app.cli", "--no-browser", "--port", str(port)]
+    argv = [sys.executable, "-m", "decompnet.app.cli", "--port", str(port)]
     if not Path(sys.executable).exists():  # the environment moved: its decomp command starts the same way
         bindir = subprocess.run([uv() or "uv", "tool", "dir", "--bin"], capture_output=True, text=True).stdout.strip()
-        argv = [str(Path(bindir) / "decomp"), "--no-browser", "--port", str(port)]
+        argv = [str(Path(bindir) / "decomp"), "--port", str(port)]
     os.execve(argv[0], argv, env)
 
 
@@ -233,8 +231,7 @@ class Updater:
         channel = installed()["channel"]
         if refresh or cur is None or time.time() - cur.get("checked", 0) > RECHECK[channel]:
             self.last = cur = check()
-        return {**cur, "job": {k: (v[-200:] if k == "log" else v) for k, v in self.job.items()},
-                "runtime": hostenv.runtime()}
+        return {**cur, "job": {k: (v[-200:] if k == "log" else v) for k, v in self.job.items()}}
 
     def apply(self) -> None:
         """Install the update in the background, then restart into it."""
@@ -264,7 +261,7 @@ class Updater:
             time.sleep(1)  # the page sees "restarting" before the server goes away
             try:
                 self.before_restart()
-                restart(self.port, self.secret)
+                restart(self.port, self.secret, window.is_open())
             except OSError as e:  # still the old version: say so (`decomp` starts the new one)
                 self.job.update(state="error", error=f"the update is installed, but restarting failed ({e}): "
                                                        "quit decompdecomp and start it again")

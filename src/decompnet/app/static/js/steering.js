@@ -43,60 +43,25 @@ function dialog(title, html) {
 }
 
 $("joinBtn").onclick = openJoin;
-$("askBtn").onclick = openConnect;
-$("talkBtn").onclick = openConnect;
-$("connectBtn").onclick = openConnect;
 
-/* Your own agent with decompdecomp's tools: registered once, then you just ask it. */
-async function connectRows(box) {
-  const render = (rows) => {
-    box.innerHTML = rows.map((a) => `<div class="line-item"><div class="txt"><b>${esc(a.name)}</b><span class="mono">${esc(a.command)}</span></div>
-      ${!a.installed ? `<span class="muted small">not installed</span>` : a.connected ? `<span class="ok-mark">connected</span>` : `<button class="primary small-btn" data-connect="${esc(a.id)}" type="button">Connect</button>`}</div>`).join("");
-    box.querySelectorAll("[data-connect]").forEach((b) => {
-      b.onclick = async () => {
-        b.disabled = true; b.textContent = "Connecting…";
-        try {
-          await api("/api/connect", { method: "POST", body: { id: b.dataset.connect } });
-          toast(`Connected. Ask it to decompile your game.`, "match");
-          render((await api("/api/connect")).agents);
-        } catch (e) { toast(esc(e.message), "err"); b.disabled = false; b.textContent = "Connect"; }
-      };
-    });
-  };
-  try {
-    const r = await api("/api/connect");
-    render(r.agents);
-    return r;
-  } catch (e) { box.innerHTML = `<p class="bad">${esc(e.message)}</p>`; return null; }
-}
-const HOST_NAMES = { windows: "Windows", macos: "your Mac", linux: "this computer" };
-async function openConnect() {
-  if (S.st && S.st.runtime && S.st.runtime !== "native") return openHostConnect();
-  const body = dialog("Use decompdecomp from your AI agent", `<p>Connect the agent you already use, once. Then ask it in your terminal, for example:</p>
-    ${cmdBox("decompile my game at ~/roms/game.z64")}
-    <p class="muted small">It confirms the game is your own copy, imports it, opens this live view and works with every tool here: the byte-for-byte judge, the autopilot, helper agents, export. Anything it does shows up here as it happens.</p>
-    <div class="setup-group" id="connectRows"><p class="muted small">Looking for your agents…</p></div>
-    <div class="setup-group"><h3>Any other MCP client (Cursor, Claude Desktop, Windsurf, your own)</h3><pre class="code" id="bridgeJson"></pre>
-      <p class="muted small">It starts decompdecomp when needed; no token, nothing to update when the app restarts.</p></div>`);
-  const r = await connectRows(body.querySelector("#connectRows"));
-  if (r) body.querySelector("#bridgeJson").textContent = JSON.stringify({ mcpServers: { decomp: { command: r.bridge[0], args: r.bridge.slice(1) } } }, null, 2);
-}
-
-/* decompdecomp in WSL (Windows) or in Docker: the agents you talk to run on the computer itself, so they're
-   connected from there, by the `decomp` command the installer put on it. */
-async function openHostConnect() {
-  const host = HOST_NAMES[S.st.host_os] || "your computer";
-  const shell = S.st.host_os === "windows" ? "PowerShell" : "a terminal";
-  const body = dialog("Use decompdecomp from your AI agent", `<p>Run this once in ${esc(shell)} on ${esc(host)}: it connects Claude Code, Codex, Antigravity CLI and opencode there.</p>
-    ${cmdBox("decomp connect")}
-    <p>Then ask your agent, for example:</p>
-    ${cmdBox(S.st.host_os === "windows" ? "decompile my game at C:\\Games\\game.z64" : "decompile my game at ~/roms/game.z64")}
-    <p class="muted small">decompdecomp runs in ${S.st.runtime === "wsl" ? "its own WSL 2 Linux on Windows" : "Docker"}; your agent reaches it through the command below. Anything it does shows up here as it happens.</p>
-    <div class="setup-group"><h3>Any other MCP client (Cursor, Claude Desktop, Windsurf, your own)</h3><pre class="code" id="bridgeJson"></pre></div>`);
-  try {
-    const r = await api("/api/connect");
-    body.querySelector("#bridgeJson").textContent = JSON.stringify({ mcpServers: { decomp: { command: r.bridge[0], args: r.bridge.slice(1) } } }, null, 2);
-  } catch (e) { body.querySelector("#bridgeJson").textContent = e.message; }
+/* The window asks the page before it closes (app/gtkwindow.py). Nothing working: quit. Helpers or a job working:
+   the user chooses between stopping them and quitting, and keeping them working without the window. The answer
+   "wait" tells the window the page takes it from here; if this throws, the window closes by itself. */
+function decompClose() {
+  api("/api/close").then((st) => {
+    if (!st.busy) return api("/api/close", { method: "POST", body: {} });
+    const what = st.helpers ? `${plural(st.helpers, "helper")} ${st.helpers === 1 ? "is" : "are"} still working on your games.`
+      : "A job is still running.";
+    const back = st.tray ? "The decompdecomp icon in the tray brings the window back." : "Open decompdecomp again to come back to them.";
+    const body = dialog("Close decompdecomp?", `<p>${what}</p>
+      <p class="muted small">They can keep working without the window. ${back}</p>
+      <div class="row"><button class="primary" id="closeKeep" type="button">Keep them working</button>
+        <button class="ghost" id="closeQuit" type="button">Stop them and quit</button>
+        <button class="ghost" data-close type="button">Cancel</button></div>`);
+    body.querySelector("#closeKeep").onclick = () => api("/api/close", { method: "POST", body: { keep: true } }).catch((e) => toast(esc(e.message), "err"));
+    body.querySelector("#closeQuit").onclick = () => api("/api/close", { method: "POST", body: {} }).catch((e) => toast(esc(e.message), "err"));
+  }).catch(() => api("/api/close", { method: "POST", body: {} }));
+  return "wait";
 }
 
 /* ------------------------------------------------------------------ steering: instructions, next in line */

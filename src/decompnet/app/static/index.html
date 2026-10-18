@@ -28,7 +28,6 @@
       <button role="menuitem" type="button" data-new="fork"><b>Continue a community decomp</b><span>by its repository address</span></button>
       <button role="menuitem" type="button" data-new="join"><b>Join a team's room</b><span>with an invite link</span></button>
       <button role="menuitem" type="button" data-new="demo"><b>Try the demo</b><span>Demo Quest 64, in a minute</span></button>
-      <button role="menuitem" type="button" data-new="agent"><b>Use your own agent</b><span>connect Claude Code, Codex, opencode…</span></button>
     </div>
   </div>
   <div class="nav-scroll">
@@ -129,11 +128,6 @@
       <span class="sc-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg></span>
       <b>Try the demo</b>
       <span>Demo Quest 64: a small N64 ROM made for this app. Watch it work in a minute.</span>
-    </button>
-    <button class="start-card" id="askBtn" type="button">
-      <span class="sc-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v8H6l-3 2.5V11H2z"/></svg></span>
-      <b>Use your own agent</b>
-      <span>Connect Claude Code, Codex or Antigravity once, then just ask it: “decompile my game”.</span>
     </button>
     <button class="start-card" id="joinBtn" type="button">
       <span class="sc-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm5.5 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4ZM1 13c0-2.4 2-4 4.5-4S10 10.6 10 13v1H1v-1Zm10.5 1v-1c0-1.3-.4-2.4-1.1-3.3.2 0 .4-.1.6-.1 2.2 0 4 1.3 4 3.4v1h-3.5Z"/></svg></span>
@@ -293,13 +287,6 @@
           <div id="sessions" class="sessions"></div>
           <p class="empty muted small" id="noSessions">No agent is working on this project yet.</p>
         </section>
-        <section class="panel">
-          <header class="panel-head"><h2>Your own agent</h2></header>
-          <div class="pad">
-            <p class="muted small">Work with the agent you talk to (Claude Code, Codex, Antigravity CLI…): connect it once, then ask it to work on this game. It shows up here like any other agent.</p>
-            <div class="row"><button class="ghost small-btn" id="talkBtn" type="button">Connect your agent</button></div>
-          </div>
-        </section>
       </div>
       <div class="stack-col">
         <section class="panel">
@@ -374,7 +361,7 @@
         <header class="panel-head"><h2>About this project</h2></header>
         <div class="pad">
           <dl class="facts one" id="projFacts"></dl>
-          <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button><button class="ghost small-btn" id="connectBtn" type="button">Connect your agent</button></div>
+          <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
         </div>
       </section>
     </div>
@@ -395,7 +382,6 @@
   </section>
   <div class="cols ag-cols">
     <section class="panel"><header class="panel-head"><h2>Models with an API key</h2></header><div class="pad" id="apiBox"></div></section>
-    <section class="panel"><header class="panel-head"><h2>Use decompdecomp from your agent</h2></header><div class="pad" id="mcpBox"></div></section>
   </div>
 </main>
 

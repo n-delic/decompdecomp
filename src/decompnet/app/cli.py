@@ -1,4 +1,9 @@
-"""`decomp`: start decompdecomp (or bring the running one to the front) and open it in the browser."""
+"""`decomp`: open decompdecomp in its window (starting the app, or bringing the running one's window to the front).
+
+That's the one way to run it. The other commands act on the app: `decomp stop`, `decomp update`, `decomp setup` (the
+free compilers and tools), `decomp shortcut` (the apps menu entry). A development copy (run from a git checkout) is
+a separate app with its own home and port, and never touches the installed one (edition.py).
+"""
 
 from __future__ import annotations
 
@@ -11,18 +16,23 @@ import sys
 import threading
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
 from .. import hostenv
-from . import tray, window
+from . import edition, tray, window
 
-DEFAULT_PORT = int(os.environ.get("DECOMP_PORT") or 6464)
+PORTS_TO_TRY = 50
+HEALTH_TIMEOUT_SECONDS = 1.5
+QUIT_WAIT_SECONDS = 10
+QUIT_POLL_SECONDS = 0.1
+READY_WAIT_SECONDS = 20
+READY_POLL_SECONDS = 0.2
+REQUEST_BODY_LIMIT = 80 * 1024 * 1024  # a game file sent by the GUI's import
 
 
 def home_dir() -> Path:
-    return Path(os.environ.get("DECOMP_HOME", Path.home() / "Decomp")).expanduser()
+    return edition.home_dir()
 
 
 def _alive(port: int) -> bool:
@@ -32,7 +42,7 @@ def _alive(port: int) -> bool:
 def _running_version(port: int) -> str | None:
     """The version of the decompdecomp answering on this port ("" when it doesn't say), or None."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1.5) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=HEALTH_TIMEOUT_SECONDS) as r:
             data = json.loads(r.read())
             return str(data.get("version") or "") if data.get("app") == "decomp-wtf" else None
     except (OSError, ValueError):
@@ -44,90 +54,66 @@ def _version_key(v: str) -> tuple[int, ...]:
     return version_key(v)
 
 
-def replace_older(state_file: Path, log=print) -> dict | None:
-    """The running app's {port, secret} when it's this version or newer. An older one (still running after an
-    upgrade) is stopped, so the new version starts in its place: returns None then, and when nothing runs. A newer
-    app is never stopped by an older `decomp mcp` (an agent may still be set up with an older install's path)."""
+def _call(info: dict, path: str, body: dict | None = None, timeout: float = 10) -> dict:
+    """Call the running app's API as `decomp` itself: its user agent carries the secret from server.json (the
+    user's own file, 0600), like the window's (window.token_of)."""
+    port = info["port"]
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST" if body is not None else "GET",
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"User-Agent": f"{window.TOKEN_AGENT}{info['secret']}", "X-Decomp": "1",
+                                          "Host": f"127.0.0.1:{port}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def _state(state_file: Path) -> dict | None:
+    """The running app of this home, from its server.json: {port, secret, pid}, or None when none answers."""
     try:
-        prev = json.loads(state_file.read_text(encoding="utf-8"))
+        info = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    running = _running_version(prev.get("port") or 0)
-    if running is None:
+    return info if isinstance(info, dict) and _alive(info.get("port") or 0) else None
+
+
+def replace_older(state_file: Path, log=print) -> dict | None:
+    """The running app's {port, secret} when it's this version or newer. An older one (still running after an
+    upgrade) is stopped, so the new version starts in its place: returns None then, and when nothing runs. One
+    instance is one per home: a development copy (~/Decomp-dev) never meets the installed app (~/Decomp)."""
+    prev = _state(state_file)
+    if prev is None:
         return None
+    running = _running_version(prev["port"]) or ""
     mine = __import__("decompnet").__version__
     if running == mine or _version_key(running) > _version_key(mine):
         return prev
     log(f"decompdecomp {running} is still running; restarting it as {mine}")
-    req = urllib.request.Request(f"http://127.0.0.1:{prev['port']}/api/quit", method="POST", data=b"{}",
-                                 headers={"Cookie": f"decomp_live={prev['secret']}", "X-Decomp": "1",
-                                          "Host": f"127.0.0.1:{prev['port']}", "Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=10)
+        _call(prev, "/api/quit", {})
     except OSError:
         pass
-    for _ in range(100):
-        if _running_version(prev["port"]) is None:
+    for _ in range(int(QUIT_WAIT_SECONDS / QUIT_POLL_SECONDS)):
+        if not _alive(prev["port"]):
             break
-        time.sleep(0.1)
+        time.sleep(QUIT_POLL_SECONDS)
     return None
 
 
-def _bind_address() -> str:
-    """127.0.0.1, except in decompdecomp's Docker container: there the published port (127.0.0.1 on the computer
-    itself) arrives from outside the container. Host headers are still checked on every request (server.py)."""
-    return os.environ.get("DECOMP_BIND") or ("0.0.0.0" if hostenv.runtime() == "docker" else "127.0.0.1")
-
-
 def _listen(start: int, exact: bool = False) -> socket.socket:
-    """A listening socket on the first free port from `start`, kept open and handed to the server: two decompdecomp
+    """A listening socket on 127.0.0.1, on the first free port from `start`, kept open and handed to the server: two
     instances starting at the same moment can't both pick the same port. `exact`: that port or nothing (a restart
-    into an update keeps its port, so the open browser tab carries on; Docker publishes one port)."""
-    for port in range(start, start + (1 if exact else 50)):
+    into an update keeps its port)."""
+    for port in range(start, start + (1 if exact else PORTS_TO_TRY)):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        if sys.platform != "win32":  # the previous run's connections may linger in TIME_WAIT for a minute
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        for attempt in range(50 if exact else 1):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # the last run's connections linger in TIME_WAIT
+        for _attempt in range(PORTS_TO_TRY if exact else 1):
             try:
-                sock.bind((_bind_address(), port))
+                sock.bind(("127.0.0.1", port))
                 sock.listen(128)
                 return sock
             except OSError:
-                time.sleep(0.2 if exact else 0)
+                time.sleep(READY_POLL_SECONDS if exact else 0)
         sock.close()
     raise SystemExit(f"port {start} is taken" if exact else "no free port for decompdecomp")
-
-
-def _open_when_ready(url: str, port: int) -> None:
-    def wait():
-        for _ in range(100):
-            if _alive(port):
-                hostenv.open_url(url)
-                return
-            time.sleep(0.2)
-    threading.Thread(target=wait, daemon=True).start()
-
-
-def _show_window(prev: dict) -> bool:
-    """Ask the running app to show its window: it owns the window, and there is only ever one."""
-    req = urllib.request.Request(f"http://127.0.0.1:{prev['port']}/api/window", method="POST", data=b"{}",
-                                 headers={"Cookie": f"decomp_live={prev['secret']}", "X-Decomp": "1",
-                                          "Host": f"127.0.0.1:{prev['port']}", "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            return bool(json.loads(res.read()).get("window"))
-    except (OSError, ValueError):
-        return False  # an older app without windows: a tab, as before
-
-
-def _saved_secret(state_file: Path) -> str | None:
-    """The secret the last run used, so the browser's cookie outlives a restart: a new one each launch sent every open
-    tab to "Open decompdecomp again" after each update. The file is the user's alone (0600), as before."""
-    try:
-        secret = json.loads(state_file.read_text(encoding="utf-8")).get("secret")
-    except (OSError, ValueError, AttributeError):
-        return None
-    return secret if isinstance(secret, str) and len(secret) >= 24 else None
 
 
 def _restart_state() -> dict | None:
@@ -140,70 +126,59 @@ def _restart_state() -> dict | None:
         return None
 
 
+def _open_when_ready(port: int) -> None:
+    def wait():
+        for _ in range(int(READY_WAIT_SECONDS / READY_POLL_SECONDS)):
+            if _alive(port):
+                window.open_app()
+                return
+            time.sleep(READY_POLL_SECONDS)
+    threading.Thread(target=wait, daemon=True, name="open-window").start()
+
+
 def run(args) -> int:
     import uvicorn
 
+    from . import cleanup
     from .engine import RomNetwork
     from .server import build
 
     home = home_dir()
     internal = home / ".decomp"
     internal.mkdir(parents=True, exist_ok=True)
-    if sys.stdout is None:  # started without a console (pythonw: Windows' startup apps): what it says goes to app.log
-        sys.stdout = sys.stderr = open(internal / "app.log", "a", encoding="utf-8", buffering=1)
     state_file = internal / "server.json"
     restarted = _restart_state()
     prev = None if restarted else replace_older(state_file)
     if prev:
-        url = f"http://127.0.0.1:{prev['port']}/?k={prev['secret']}"
-        print(f"decompdecomp is already running: {url}")
-        if not args.no_browser and not _show_window(prev) and not hostenv.open_url(url):
-            print("open that address in your browser")
+        try:
+            shown = _call(prev, "/api/window", {}).get("window")
+        except (OSError, ValueError):
+            shown = False
+        print(f"{edition.NAME} is already running" + ("" if shown else ": its window couldn't open (see above)"))
         return 0
+    if window.wanted() and (why := window.missing()):
+        print(why, file=sys.stderr)
+        return 1
 
-    sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or _fixed_port())
+    sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted))
     port = sock.getsockname()[1]
-    secret = restarted["secret"] if restarted else (_saved_secret(state_file) or secrets.token_urlsafe(24))
+    secret = restarted["secret"] if restarted else secrets.token_urlsafe(24)
     state_file.write_text(json.dumps({"port": port, "secret": secret, "pid": os.getpid()}), encoding="utf-8")
-    try:
-        os.chmod(state_file, 0o600)
-    except OSError:
-        pass
+    os.chmod(state_file, 0o600)
+    cleanup.old_registrations(internal)
     net = RomNetwork(internal / "decomp.db", home)
-    mcp, manager, security = build(net, internal, port, secret)
-    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=80 * 1024 * 1024, host="127.0.0.1")
-    url = f"http://127.0.0.1:{port}/?k={secret}"
-
-    def tray_quit():
-        window.close_app()
-        manager.stop()
-        manager.on_stop()
-        os._exit(0)
-    # in the tray, closing the window doesn't quit: the tray's menu (or the app's own quit button) does
-    window.IN_TRAY = tray.start(lambda: window.open_app(url) or hostenv.open_url(url), tray_quit)
-    print(f"decompdecomp {__import__('decompnet').__version__} on {url}\nyour projects: {hostenv.shown_path(home)}"
-          + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C"), flush=True)
-    if not args.no_browser and not restarted:
-        _open_when_ready(url, port)
+    mcp, manager, security, quit_app = build(net, internal, port, secret)
+    app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
+    # with a tray icon, helpers kept working without the window have a way back to it
+    window.IN_TRAY = tray.start(window.open_app, quit_app)
+    print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
+          + ("\nupdated and restarted" if restarted else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
+    if not restarted or restarted.get("window"):
+        _open_when_ready(port)
     try:
         uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])
     finally:
-        manager.stop()
-        manager.on_stop()
-    return 0
-
-
-def _fixed_port() -> bool:
-    """Docker publishes exactly one port: decompdecomp must listen on it, not on the next free one."""
-    return hostenv.runtime() == "docker" and bool(os.environ.get("DECOMP_PORT"))
-
-
-def url_cmd(args) -> int:
-    """Print the address that opens the app (starting it in the background first if needed)."""
-    from .bridge import ensure_app
-
-    info = ensure_app(home_dir())
-    print(f"http://127.0.0.1:{info['port']}/?k={info['secret']}")
+        quit_app()
     return 0
 
 
@@ -211,14 +186,7 @@ def update_cmd(args) -> int:
     """Look for a newer decompdecomp and install it (the running app restarts into it)."""
     from . import updates
 
-    state_file = home_dir() / ".decomp" / "server.json"
-    running = None
-    try:
-        running = json.loads(state_file.read_text(encoding="utf-8"))
-        if not _alive(running.get("port", 0)):
-            running = None
-    except (OSError, ValueError):
-        pass
+    running = _state(home_dir() / ".decomp" / "server.json")
     found = updates.check()
     cur = found["current"]
     where = f" ({cur['branch']} @ {(cur.get('commit') or '?')[:7]})" if cur["channel"] == "branch" else ""
@@ -234,8 +202,11 @@ def update_cmd(args) -> int:
         print(f"  - {note}")
     if args.check:
         return 0
-    if running:  # the app installs it and restarts itself (its page follows along)
-        _api("/api/update", {"apply": True})
+    if running:  # the app installs it and restarts itself
+        try:
+            _call(running, "/api/update", {"apply": True}, timeout=120)
+        except urllib.error.HTTPError as e:
+            raise SystemExit(json.loads(e.read() or b"{}").get("error") or str(e)) from None
         print("decompdecomp is installing the update and restarts when it's done")
         return 0
     updates.install(found, log=print)
@@ -254,7 +225,6 @@ def install_info(args) -> int:
 def setup(args) -> int:
     """Install what decompdecomp needs on this computer: the free compilers and the draft decompiler."""
     from .. import toolchains
-    from . import agents
 
     plat = toolchains.current_platform()
     print(f"Setting up decompdecomp tools for {plat}")
@@ -270,197 +240,38 @@ def setup(args) -> int:
         except Exception as e:  # keep going: the app shows what's missing
             print(f"  ! {tc.name}: {e}")
     print("  IDO (most first-party games) is proprietary: install it from the app if you accept its license.")
-    found = [a["name"] for a in agents.detect() if a["installed"] and a["id"] != "api"]
-    print("AI agents found: " + (", ".join(found) if found else "none yet (the app helps you add one)"))
+    if why := window.missing():
+        print(f"  ! {why}")
     return 0
 
 
 def stop(args) -> int:
-    state_file = home_dir() / ".decomp" / "server.json"
-    try:
-        prev = json.loads(state_file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        print("decompdecomp is not running")
+    running = _state(home_dir() / ".decomp" / "server.json")
+    if running is None:
+        print(f"{edition.NAME} is not running")
         return 0
-    if not _alive(prev.get("port", 0)):
-        print("decompdecomp is not running")
-        return 0
-    req = urllib.request.Request(f"http://127.0.0.1:{prev['port']}/api/quit", method="POST", data=b"{}",
-                                 headers={"Cookie": f"decomp_live={prev['secret']}", "X-Decomp": "1",
-                                          "Host": f"127.0.0.1:{prev['port']}", "Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=5)
+        _call(running, "/api/quit", {}, timeout=5)
     except OSError:
         pass
-    print("decompdecomp stopped")
-    return 0
-
-
-def connect_agents(args) -> int:
-    """Give the AI agents you use decompdecomp's tools: then ask them to decompile your game."""
-    from . import agents, connect
-
-    if "gemini" in args.agents:
-        print("Gemini CLI was retired by Google; its successor is Antigravity CLI (agy): connecting that instead.")
-    args.agents = [agents.kind_id(a) for a in args.agents]
-    unknown = [a for a in args.agents if a not in connect.LABEL]
-    if unknown:
-        print(f"unknown agent {unknown[0]!r}: use claude, codex, antigravity or opencode")
-        return 2
-    found = [a for a in agents.detect() if a["id"] in connect.LABEL and a["installed"]]
-    wanted = [a for a in found if not args.agents or a["id"] in args.agents]
-    if not found:
-        print("No agent CLI found (Claude Code, Codex, Antigravity CLI or opencode). Install one, then run `decomp connect`.")
-        return 1
-    for a in wanted:
-        if args.list:
-            print(f"{a['name']}: {'connected' if connect.status(a['id']) else 'not connected'}")
-            continue
-        try:
-            connect.connect(a["id"])
-            print(f"{a['name']}: connected")
-        except (ValueError, OSError) as e:
-            print(f"{a['name']}: {e}")
-    if not args.list:
-        print('Now ask your agent, for example: "decompile my game at ~/roms/game.z64"')
-    return 0
-
-
-def _api(path: str, body: dict | None = None) -> dict:
-    """Call the running app's API (for commands that act on it, like `decomp share`)."""
-    state = home_dir() / ".decomp" / "server.json"
-    try:
-        info = json.loads(state.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise SystemExit("decompdecomp isn't running: start it with `decomp --no-browser`") from None
-    if not _alive(info.get("port", 0)):
-        raise SystemExit("decompdecomp isn't running: start it with `decomp --no-browser`")
-    req = urllib.request.Request(f"http://127.0.0.1:{info['port']}{path}", method="POST" if body is not None else "GET",
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Cookie": f"decomp_live={info['secret']}", "X-Decomp": "1",
-                                          "Host": f"127.0.0.1:{info['port']}", "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        raise SystemExit(json.loads(e.read() or b"{}").get("error") or str(e)) from None
-
-
-def _wait(job: str, what: str) -> dict:
-    last = ""
-    for _ in range(7200):
-        st = _api(f"/api/job?id={job}")
-        if st["log"] and st["log"][-1] != last:
-            last = st["log"][-1]
-            print(f"  {last}")
-        if st["state"] != "running":
-            break
-        time.sleep(0.5)
-    if st["state"] != "done":
-        raise SystemExit(st.get("error") or f"{what} failed")
-    return st["result"]
-
-
-def host(args) -> int:
-    """One command for a home PC or a server: run decompdecomp in the background, import your copy of the game and open
-    a room for your team. Prints the invite link."""
-    from .bridge import ensure_app
-
-    game = Path(args.game).expanduser()
-    if not game.is_file():
-        raise SystemExit(f"no file at {game}")
-    if not args.own_copy:
-        if not sys.stdin.isatty():
-            raise SystemExit("confirm that this is your own legally obtained copy of the game: add --own-copy")
-        if input(f"Is {game.name} your own legally obtained copy of the game? [y/N] ").strip().lower() not in ("y", "yes"):
-            raise SystemExit("decompdecomp only works with your own copy of a game")
-    if args.service:
-        from . import service
-
-        print(service.install())
-    ensure_app(home_dir())
-    print(f"importing {game.name}")
-    slug = _wait(_api(f"/api/import?confirmed=1&path={urllib.parse.quote(str(game))}", {})["job"], "importing")["slug"]
-    print(f"project: {slug}")
-    args.project = slug
-    return share(args)
-
-
-def join(args) -> int:
-    """Join a team's room with your own copy of the game (decompdecomp starts in the background if needed)."""
-    from .bridge import ensure_app
-
-    game = Path(args.game).expanduser()
-    if not game.is_file():
-        raise SystemExit(f"no file at {game}")
-    if not args.own_copy:
-        if not sys.stdin.isatty():
-            raise SystemExit("confirm that this is your own legally obtained copy of the game: add --own-copy")
-        if input(f"Is {game.name} your own legally obtained copy of the game? [y/N] ").strip().lower() not in ("y", "yes"):
-            raise SystemExit("decompdecomp only works with your own copy of a game")
-    info = ensure_app(home_dir())
-    q = urllib.parse.urlencode({"link": args.link, "name": args.name, "confirmed": "1", "path": str(game.resolve())})
-    req = urllib.request.Request(f"http://127.0.0.1:{info['port']}/api/collab/join?{q}", method="POST",
-                                 data=b"", headers={"Cookie": f"decomp_live={info['secret']}", "X-Decomp": "1",
-                                                                  "Host": f"127.0.0.1:{info['port']}",
-                                                                  "Content-Type": "application/octet-stream"})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            job = json.loads(r.read())["job"]
-    except urllib.error.HTTPError as e:
-        raise SystemExit(json.loads(e.read() or b"{}").get("error") or str(e)) from None
-    slug = _wait(job, "joining")["slug"]
-    print(f"In the room as {args.name}: project {slug}. Start agents in the app, or ask your own agent (decomp connect).")
-    return 0
-
-
-def service_cmd(args) -> int:
-    from . import service
-
-    if args.action == "install":
-        print(service.install())
-    elif args.action == "remove":
-        print(service.remove())
-    else:
-        print("decompdecomp runs as a service" if service.installed() else "decompdecomp doesn't run as a service")
-    return 0
-
-
-def share(args) -> int:
-    """Share a project with a team from this computer or a server (decomp --no-browser keeps running)."""
-    state = _api("/api/state")
-    slugs = [p["slug"] for p in state["projects"]]
-    if args.project not in slugs:
-        raise SystemExit(f"no project {args.project!r}; projects here: {', '.join(slugs) or 'none'}")
-    body = {"slug": args.project, "visibility": "public" if args.public else "private", "approve": args.approve,
-            "mode": "address" if args.address else "tunnel", "address": args.address or "", "port": args.port}
-    result = _wait(_api("/api/collab/start", body)["job"], "sharing")
-    print(f"Sharing {args.project} ({body['visibility']}{', you approve each member' if args.approve else ''}).")
-    print(f"Invite link: {result['link']}")
-    print("Teammates open decompdecomp, choose Join a friend's room, paste the link and pick their own copy of the game.")
+    print(f"{edition.NAME} stopped")
     return 0
 
 
 def shortcut(args) -> int:
     from .launcher import install_launcher
 
-    if hostenv.runtime() != "native":
-        print("the installer adds decompdecomp to your computer's menu (this is decompdecomp's own Linux)")
-        return 0
-
     print(install_launcher())
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="decomp", description="decompdecomp: your AI agents decompile your games, matching byte for byte")
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
-    ap.add_argument("--no-browser", action="store_true", help="don't open the browser")
+    ap = argparse.ArgumentParser(prog="decomp", description="decompdecomp: AI agents decompile the games you own, byte for byte")
+    ap.add_argument("--port", type=int, default=edition.FIRST_PORT, help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("setup", help="install the compilers and tools this computer needs")
-    sub.add_parser("stop", help="stop the running app")
-    sub.add_parser("shortcut", help="add decompdecomp to your apps menu / desktop")
-    sub.add_parser("url", help="print the address that opens the app (starts it if needed)")
+    sub.add_parser("stop", help="quit the running app (and every helper it started)")
+    sub.add_parser("shortcut", help="add decompdecomp to your apps menu")
     up = sub.add_parser("update", help="install the newest decompdecomp (the running app restarts into it)")
     up.add_argument("--check", action="store_true", help="only say whether there is one")
     ii = sub.add_parser("install-info", help=argparse.SUPPRESS)  # the installers: where updates come from
@@ -468,40 +279,9 @@ def main(argv: list[str] | None = None) -> int:
     ii.add_argument("--branch", default="")
     ii.add_argument("--commit", default="")
     ii.add_argument("--repo", default="n-delic/decompdecomp")
-    c = sub.add_parser("connect", help="give your AI agents (Claude Code, Codex, Antigravity CLI, opencode) decompdecomp's tools")
-    c.add_argument("agents", nargs="*", metavar="agent", help="claude, codex, antigravity (agy) or opencode (default: every one installed)")
-    c.add_argument("--list", action="store_true", help="only show which are connected")
-    sh = sub.add_parser("share", help="share a project with your team (the app must be running)")
-    sh.add_argument("project", help="the project's slug (see the app, or `decomp share x` lists them)")
-    sh.add_argument("--address", help="the address teammates use, e.g. http://my-server:6481 (default: a quick tunnel)")
-    sh.add_argument("--port", type=int, default=6481, help="port for --address (default 6481)")
-    sh.add_argument("--public", action="store_true", help="anyone with the address can join (default: invite link)")
-    sh.add_argument("--approve", action="store_true", help="you let each new member in")
-    ho = sub.add_parser("host", help="host a game for your team: import your copy and open a room (home PC or server)")
-    ho.add_argument("game", help="your copy of the game (ROM, disc image or program file)")
-    ho.add_argument("--own-copy", action="store_true", help="confirm it's your own legally obtained copy")
-    ho.add_argument("--address", help="the address teammates use, e.g. http://my-server:6481 (default: a quick tunnel)")
-    ho.add_argument("--port", type=int, default=6481, help="port for --address (default 6481)")
-    ho.add_argument("--public", action="store_true", help="anyone with the address can join (default: invite link)")
-    ho.add_argument("--approve", action="store_true", help="you let each new member in")
-    ho.add_argument("--service", action="store_true", help="also run decompdecomp as a service that starts with the computer")
-    jo = sub.add_parser("join", help="join a team's room with your own copy of the game")
-    jo.add_argument("link", help="the invite link (or the room's address for a public room)")
-    jo.add_argument("game", help="your copy of the same game")
-    jo.add_argument("--name", required=True, help="your name in the room")
-    jo.add_argument("--own-copy", action="store_true", help="confirm it's your own legally obtained copy")
-    sv = sub.add_parser("service", help="run decompdecomp in the background, starting with the computer")
-    sv.add_argument("action", choices=["install", "remove", "status"])
-    m = sub.add_parser("mcp", help="serve decompdecomp to the AI agent you talk to (stdio MCP; starts the app if needed)")
-    m.add_argument("--name", default=os.environ.get("DECOMP_AGENT_NAME") or "chat",
-                   help="how this agent shows up in the app (e.g. claude-code; or set DECOMP_AGENT_NAME)")
     args = ap.parse_args(argv)
     __import__("decompnet").utf8_output()
-    if args.cmd == "mcp":
-        from .bridge import main as bridge
-        return bridge(args.name)
-    return {"setup": setup, "stop": stop, "shortcut": shortcut, "connect": connect_agents, "share": share,
-            "host": host, "join": join, "service": service_cmd, "url": url_cmd, "update": update_cmd,
+    return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
             "install-info": install_info}.get(args.cmd, run)(args)
 
 

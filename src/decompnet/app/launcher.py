@@ -1,65 +1,42 @@
-"""Add decompdecomp to the apps menu: a .desktop entry (Linux), an app bundle (macOS), a Start Menu
-and desktop shortcut (Windows). Each just runs `decomp`, which opens the app in the browser."""
+"""Add decompdecomp to the apps menu (Linux): a .desktop entry that runs `decomp`, which opens the app's window.
+
+The entry is named like the .deb's and the .rpm's (decompdecomp.desktop), so a desktop shows one decompdecomp even
+when a package is installed too: the user's own entry takes the place of the system's. The entry older versions made
+(decomp-wtf.desktop) goes: next to the package's, the owner's menu showed decompdecomp twice.
+"""
 
 from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
-from importlib import resources
 from pathlib import Path
+
+from . import edition
+
+ENTRY_NAME = "decompdecomp"
+OLD_ENTRY_NAME = "decomp-wtf"
 
 
 def _decomp_exe() -> str:
-    found = shutil.which("decomp")
-    if found:
-        return found
-    exe = Path(sys.argv[0]).resolve()
-    return str(exe)
+    return shutil.which("decomp") or str(Path(sys.argv[0]).resolve())
 
 
 def install_launcher() -> str:
-    exe = _decomp_exe()
-    icon_svg = resources.files("decompnet.app").joinpath("static", "icon.svg").read_bytes()
-    if sys.platform.startswith("linux"):
-        icons = Path.home() / ".local" / "share" / "icons" / "hicolor" / "scalable" / "apps"
-        icons.mkdir(parents=True, exist_ok=True)
-        (icons / "decomp-wtf.svg").write_bytes(icon_svg)
-        apps = Path.home() / ".local" / "share" / "applications"
-        apps.mkdir(parents=True, exist_ok=True)
-        entry = apps / "decomp-wtf.desktop"
-        entry.write_text("[Desktop Entry]\nType=Application\nName=decompdecomp\n"
-                         "Comment=Your AI agent decompiles your games, byte for byte\n"
-                         f"Exec=\"{exe}\"\nIcon=decomp-wtf\nTerminal=false\nCategories=Development;\n", encoding="utf-8")
-        os.chmod(entry, 0o755)
-        return f"added decompdecomp to your apps menu ({entry})"
-    if sys.platform == "darwin":
-        app = Path.home() / "Applications" / "decompdecomp.app"
-        macos = app / "Contents" / "MacOS"
-        macos.mkdir(parents=True, exist_ok=True)
-        (app / "Contents" / "Info.plist").write_text(
-            '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-            '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>'
-            "<key>CFBundleName</key><string>decompdecomp</string>"
-            "<key>CFBundleIdentifier</key><string>wtf.decomp.app</string>"
-            "<key>CFBundleExecutable</key><string>decomp-wtf</string>"
-            "<key>CFBundlePackageType</key><string>APPL</string>"
-            "<key>LSUIElement</key><true/></dict></plist>\n", encoding="utf-8")
-        script = macos / "decomp-wtf"
-        script.write_text(f'#!/bin/sh\nexec "{exe}" >/dev/null 2>&1\n', encoding="utf-8")
-        os.chmod(script, 0o755)
-        return f"added decompdecomp to {app.parent}"
-    if sys.platform == "win32":
-        # Windows says where the Start menu and the desktop are (a desktop is often in OneDrive); a path with an
-        # apostrophe in it (a user name) is quoted for PowerShell
-        target = str(exe).replace("'", "''")
-        ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;$ws=New-Object -ComObject WScript.Shell;"
-              "foreach($d in @([Environment]::GetFolderPath('Programs'),[Environment]::GetFolderPath('Desktop'))){"
-              "if($d -and (Test-Path $d)){$l=Join-Path $d 'decompdecomp.lnk';$s=$ws.CreateShortcut($l);"
-              f"$s.TargetPath='{target}';$s.WindowStyle=7;$s.Description='decompdecomp';$s.Save();Write-Output $l}}}}")
-        res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], capture_output=True, text=True,
-                             encoding="utf-8", errors="replace")
-        made = [line.strip() for line in res.stdout.splitlines() if line.strip().endswith(".lnk")]
-        return "added shortcuts: " + ", ".join(made) if made else "could not create shortcuts"
-    return "no launcher for this system; run `decomp`"
+    if edition.DEV:
+        return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
+    share = Path.home() / ".local" / "share"
+    icons = share / "icons" / "hicolor" / "scalable" / "apps"
+    apps = share / "applications"
+    icons.mkdir(parents=True, exist_ok=True)
+    apps.mkdir(parents=True, exist_ok=True)
+    (icons / f"{ENTRY_NAME}.svg").write_text(edition.icon_svg(), encoding="utf-8")
+    entry = apps / f"{ENTRY_NAME}.desktop"
+    entry.write_text("[Desktop Entry]\nType=Application\nName=decompdecomp\n"
+                     "Comment=AI agents decompile the games you own, byte for byte\n"
+                     f"Exec=\"{_decomp_exe()}\"\nIcon={ENTRY_NAME}\nTerminal=false\nCategories=Development;\n"
+                     f"StartupWMClass={edition.WINDOW_CLASS}\n", encoding="utf-8")
+    os.chmod(entry, 0o755)
+    for old in (apps / f"{OLD_ENTRY_NAME}.desktop", icons / f"{OLD_ENTRY_NAME}.svg"):
+        old.unlink(missing_ok=True)
+    return f"added decompdecomp to your apps menu ({entry})"

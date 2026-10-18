@@ -5,10 +5,8 @@ function by any name an agent uses for it, and the identities of the agents that
 from __future__ import annotations
 
 import json
-import re
 import secrets
 import threading
-import time
 from pathlib import Path
 
 from ...network import Agent, Network, NetworkError, _hash_token
@@ -190,39 +188,13 @@ class Core(Network):
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         return cfg
 
-    def chat_agent(self, base: str) -> tuple[Agent, str]:
-        """An identity for an agent the user talks to (Claude Code, Codex, ... connected with `decomp mcp`): `base`,
-        or base_2, base_3... when another session of the same agent is active right now (never base-2: that's the
-        name of a helper session, see local_agent)."""
-        base = re.sub(r"[^A-Za-z0-9_.-]+", "-", base).strip("-")[:30] or "chat"
-        for n in range(1, 100):
-            name = base if n == 1 else f"{base}_{n}"
-            row = self.store.one("SELECT id, origin, last_seen FROM agents WHERE name=?", name)
-            if row is None or (row["origin"] == "chat" and (row["last_seen"] or 0) < time.time() - 600):
-                break
-        else:
-            raise NetworkError("too many chat sessions at once")
-        if row is None:
-            token = self.register_agent(name, "you", trusted=True, origin="chat")
-        else:
-            token = "dn_" + secrets.token_urlsafe(24)
-            with self.store.tx() as db:
-                db.execute("UPDATE agents SET token_hash=?, last_seen=? WHERE id=?", (_hash_token(token), time.time(), row["id"]))
-        return self.authenticate(token), token
-
-    def is_chat(self, agent: Agent) -> bool:
-        row = self.store.one("SELECT origin FROM agents WHERE id=?", agent.id)
-        return bool(row) and row["origin"] == "chat"
-
     def local_agent(self, name: str) -> tuple[Agent, str]:
-        """An agent identity for one runner on this machine (created on first use). A name an agent the user talks
-        to had before 0.10.4 (chat identities were numbered like helper sessions) becomes the runner's: a helper
-        never gets the chat agent's tools, and the chat agent never takes over the runner's identity."""
+        """An agent identity for one runner on this machine (created on first use)."""
         row = self.store.one("SELECT id FROM agents WHERE name=?", name)
         if row is not None:
             token = "dn_" + secrets.token_urlsafe(24)
             with self.store.tx() as db:
-                db.execute("UPDATE agents SET token_hash=?, origin=CASE origin WHEN 'chat' THEN 'local' ELSE origin END "
+                db.execute("UPDATE agents SET token_hash=?, origin='local' "
                            "WHERE id=?", (_hash_token(token), row["id"]))
         else:
             token = self.register_agent(name, "you", trusted=True, origin="local")

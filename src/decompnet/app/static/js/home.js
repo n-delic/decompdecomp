@@ -282,7 +282,7 @@ function importFailed(name, e, logText) {
   $("errLog").textContent = [log, job.trace].filter(Boolean).join("\n\n") || "(nothing was logged)";
   $("errCopy").onclick = async () => {
     const st = S.st || {};
-    const report = [`decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.runtime || st.platform || navigator.platform}`,
+    const report = [`decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || navigator.platform}`,
       `Importing: ${name}`, `Error: ${e.message}`, "", "Log:", "```", log.split("\n").slice(-80).join("\n"), job.trace || "", "```"].join("\n");
     try { await navigator.clipboard.writeText(report); toast("Copied: paste it into a GitHub issue"); }
     catch { toast("Couldn't reach the clipboard: select the text under What happened instead", "err"); }

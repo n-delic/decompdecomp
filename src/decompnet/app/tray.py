@@ -4,8 +4,7 @@ opens the window again or quits.
 It speaks the freedesktop StatusNotifierItem protocol (and the dbusmenu one for its menu) over D-Bus with Gio, which
 every desktop that shows tray icons this way already has: KDE, COSMIC, GNOME with the AppIndicator extension, Xfce,
 Cinnamon. No new dependency: Gio comes with the system's PyGObject. Without a tray host, or without PyGObject, start()
-says so and the app quits when its window closes, as before. (Windows: decompdecomp runs in WSL there; a tray needs
-a Windows program, not done yet.)
+says so, and helpers kept working without the window are reached again by running `decomp`.
 """
 
 from __future__ import annotations
@@ -14,6 +13,8 @@ import os
 import sys
 import threading
 from typing import Callable
+
+from . import edition
 
 _ITEM = "org.kde.StatusNotifierItem"
 _WATCHER = "org.kde.StatusNotifierWatcher"
@@ -63,14 +64,14 @@ _XML = """<node>
 </node>"""
 
 # the menu: id -> properties (dbusmenu)
-_MENU = {1: {"label": "Open decompdecomp"}, 2: {"type": "separator"}, 3: {"label": "Quit decompdecomp"}}
+_MENU = {1: {"label": f"Open {edition.NAME}"}, 2: {"type": "separator"}, 3: {"label": f"Quit {edition.NAME}"}}
 _D = ["..X", "XXX", "X.X", "X.X", "XXX"]  # the mark's "d", as on the website's logo
 
 
 def icon(size: int = 32) -> bytes:
     """The dd mark as ARGB32 (big-endian, as StatusNotifierItem wants): a light d, then a black d on the
-    highlighter's yellow block, scaled into `size` pixels."""
-    light, ink, yellow = (0xFF, 0xED, 0xEB, 0xE5), (0xFF, 0x1D, 0x1B, 0x14), (0xFF, 0xF6, 0xD4, 0x3A)
+    highlighter's block (yellow; a development copy's is blue), scaled into `size` pixels."""
+    light, ink, yellow = (0xFF, 0xED, 0xEB, 0xE5), (0xFF, 0x1D, 0x1B, 0x14), (0xFF, *edition.HIGHLIGHT)
     unit = size // 8
     top = (size - 5 * unit) // 2
     px = [[(0, 0, 0, 0)] * size for _ in range(size)]
@@ -135,10 +136,10 @@ def _run(Gio, GLib, on_open, on_quit, ready: threading.Event, ok: list) -> None:
     node = Gio.DBusNodeInfo.new_for_xml(_XML)
     size = 32
     props = {
-        "Category": GLib.Variant("s", "ApplicationStatus"), "Id": GLib.Variant("s", "decompdecomp"),
-        "Title": GLib.Variant("s", "decompdecomp"), "Status": GLib.Variant("s", "Active"),
+        "Category": GLib.Variant("s", "ApplicationStatus"), "Id": GLib.Variant("s", edition.WINDOW_CLASS),
+        "Title": GLib.Variant("s", edition.NAME), "Status": GLib.Variant("s", "Active"),
         "IconName": GLib.Variant("s", ""), "IconPixmap": GLib.Variant("a(iiay)", [(size, size, icon(size))]),
-        "ToolTip": GLib.Variant("(sa(iiay)ss)", ("", [], "decompdecomp", "Running. Click to open; the menu quits it.")),
+        "ToolTip": GLib.Variant("(sa(iiay)ss)", ("", [], edition.NAME, "Running. Click to open; the menu quits it.")),
         "ItemIsMenu": GLib.Variant("b", False), "Menu": GLib.Variant("o", "/MenuBar"),
         "Version": GLib.Variant("u", 3), "TextDirection": GLib.Variant("s", "ltr"),
     }

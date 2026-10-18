@@ -490,7 +490,6 @@ function renderHost(box, info) {
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
-    <div class="setup-group"><h3>Keep it open</h3><div class="row" id="svcRow"><span class="muted small">Checking…</span></div></div>
     <div class="row"><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`;
   wireCopies(box);
   const manage = async (payload) => {
@@ -507,26 +506,6 @@ function renderHost(box, info) {
     await api("/api/collab/stop", { method: "POST", body: { slug: S.slug } });
     renderHost(box, await api(`/api/collab?slug=${S.slug}`));
   };
-  serviceRow(box.querySelector("#svcRow"), "The room is open while decompdecomp runs.");
-}
-
-/* Start decompdecomp with the computer (systemd user service, launchd, or a log-on task). */
-function serviceRow(row, offText) {
-  if (!row) return;
-  if (S.st && S.st.runtime === "docker") { row.innerHTML = `<span class="muted small">Docker keeps decompdecomp running in the background.</span>`; return; }
-  if (S.st && S.st.runtime === "wsl") { row.innerHTML = `<span class="muted small">decompdecomp runs while its window is open (the Start menu's decompdecomp).</span>`; return; }
-  api("/api/service").then((sv) => {
-    if (!row.isConnected) return;
-    row.innerHTML = sv.installed ? `<span class="ok-mark">decompdecomp starts with this computer</span><button class="ghost small-btn" data-svc="remove" type="button">Don't</button>`
-      : `<span class="muted small grow">${esc(offText)}</span><button class="ghost small-btn" data-svc="install" type="button">Start decompdecomp with this computer</button>`;
-    row.querySelector("[data-svc]").onclick = async (e) => {
-      try {
-        const r = await api("/api/service", { method: "POST", body: { action: e.target.dataset.svc } });
-        if (r.message) toast(esc(r.message));
-        serviceRow(row, offText);
-      } catch (err) { toast(esc(err.message), "err"); }
-    };
-  }).catch(() => { row.innerHTML = ""; });
 }
 
 function openReconnect() {

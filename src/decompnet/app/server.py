@@ -1,8 +1,8 @@
 """The local decompdecomp server: the GUI, its API, and the MCP endpoint agents connect to.
 
-It listens on 127.0.0.1 only. The GUI needs a per-launch secret (handed to the browser in the URL the
-app opens, then kept in a same-site cookie); agents need their own bearer token. Host headers are
-checked on every request, so web pages can't reach it through DNS rebinding.
+It listens on 127.0.0.1 only. The GUI answers only the app's own window, whose user agent carries the per-launch
+secret (window.py); helper agents need their own bearer token. Host headers are checked on every request, so web
+pages can't reach it through DNS rebinding.
 
 build() sets up what the routes share (the engine, helper agents, jobs, settings, the request checks) and hands it to
 the modules in routes/, one per part of the app; what they share beyond that is in support.py.
@@ -22,10 +22,10 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..network import NetworkError
-from . import agents, chat, collab, routes, tools, updates, window
+from . import agents, collab, routes, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
-from .support import COOKIE, Jobs, Settings, _session_options
+from .support import Jobs, Settings, _session_options
 
 
 def build(net: RomNetwork, home: Path, port: int, secret: str):
@@ -34,21 +34,29 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     manager = agents.Manager(net, home, mcp_url)
     jobs = Jobs(home / "logs" / "decomp.log")
 
-    def window_closed():
-        """The app window was closed: quit, unless helper agents or a job are still working (they carry on in the
-        background, and `decomp` opens the window again)."""
-        if window.IN_TRAY:
-            jobs.logger.info("window closed; decompdecomp stays in the tray")
-            return
-        busy = manager.running() or any(j["state"] == "running" for j in jobs.jobs.values())
-        if busy:
-            jobs.logger.info("window closed; agents or a job keep working in the background")
+    def busy() -> bool:
+        return bool(manager.running()) or any(j["state"] == "running" for j in jobs.jobs.values())
+
+    def window_ended():
+        """The window ended without the app asking (the page found nothing working, or it crashed): quit, unless
+        helpers or a job are working; they carry on, and the tray icon or `decomp` opens the window again."""
+        if busy():
+            jobs.logger.info("window closed; helpers or a job keep working in the background")
             return
         jobs.logger.info("window closed; quitting")
-        manager.stop()
-        manager.on_stop()
+        quit_app()
+
+    def quit_app() -> None:
+        """Quit means quit: the window, every helper with everything it started, then the server."""
+        window.close_app()
+        shutdown = getattr(manager, "shutdown", None)
+        if shutdown is not None:
+            shutdown()
+        else:
+            manager.stop()
+            manager.on_stop()
         os._exit(0)
-    window.WINDOW = window.Window(window.profile_dir(home), window_closed)
+    window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
     net.auto_compiler = bool(settings.data.get("auto_compiler"))
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
@@ -94,10 +102,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             continue
 
     mcp = tools.build_mcp(net, agent_of)
-    chat.register(mcp, net, manager, jobs, settings, port, secret)
 
-    # Each agent sees the tools for its job: the agent you talk to sees everything; a helper only the work tools
-    # for its project's kind (fewer tool definitions in every request, nothing it shouldn't call).
+    # Each helper sees only the work tools for its project's kind (fewer tool definitions in every request, nothing
+    # it shouldn't call).
     from mcp_types import ListToolsResult, PaginatedRequestParams
 
     async def scoped_tools(ctx, params):
@@ -106,9 +113,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         try:
             agent = net.authenticate(auth.removeprefix("Bearer ").strip() or None)
         except NetworkError:
-            return ListToolsResult(tools=everything)
-        if net.is_chat(agent):
-            return ListToolsResult(tools=everything)
+            return ListToolsResult(tools=[])
         slug = manager.project_of(agent.id) or settings.data.get("last_project")
         keep = set(tools.tool_names(bool(slug and net.fork_slug(slug))))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
@@ -118,8 +123,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def guard(request: Request, write: bool = False) -> Response | None:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(request.cookies.get(COOKIE, ""), secret):
-            return JSONResponse({"error": "open decompdecomp from the app or the `decomp` command"}, status_code=401)
+        if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
+            return JSONResponse({"error": "decompdecomp only answers its own window: open it with `decomp`"},
+                                status_code=401)
         if write and request.headers.get("x-decomp") != "1":
             return JSONResponse({"error": "missing header"}, status_code=403)
         return None
@@ -137,17 +143,18 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def fail(e: Exception, code: int = 400) -> JSONResponse:
         return JSONResponse({"error": str(e)}, status_code=code)
 
-    def before_restart() -> None:  # what quitting does: helpers stop now and resume in the new version
+    def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         manager.stop()
         manager.on_stop()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
-                     guard, body, call, fail, updater=updates.Updater(before_restart, port, secret))
+                     guard, body, call, fail, updater=updates.Updater(before_restart, port, secret),
+                     busy=busy, quit_app=quit_app)
     for part in (pages, state, projects, forks, setup, life, rooms):
         part.register(app)
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),
                                          allowed_origins=[f"http://{h}" for h in sorted(allowed_hosts)])
-    return mcp, manager, security
+    return mcp, manager, security, quit_app

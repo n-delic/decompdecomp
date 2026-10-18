@@ -61,7 +61,6 @@ newMenu.onclick = (e) => {
   else if (what === "fork") location.hash = "#/catalog";
   else if (what === "join") openJoin();
   else if (what === "demo") $("demoBtn").click();
-  else openConnect();
 };
 newMenu.addEventListener("keydown", (e) => {
   const items = [...newMenu.querySelectorAll("button")];

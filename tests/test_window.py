@@ -1,59 +1,86 @@
-"""The app's own window (app/window.py): a Chromium-family browser with a profile of its own, so the window is a
-process of its own and the app knows when it's closed."""
+"""The app's own window (app/window.py runs app/gtkwindow.py, here a stand-in that writes down what it's told), who
+the GUI answers (only that window), and what a computer without the window's system packages is told."""
 
-import stat
-import subprocess as sp
+import sys
 import time
+
+import pytest
 
 from decompnet.app import window
 
-
-def test_the_browser_is_the_users_chromium_family_one(monkeypatch):
-    monkeypatch.delenv("BROWSER", raising=False)
-    monkeypatch.setattr(window.hostenv, "runtime", lambda: "native")
-    monkeypatch.setattr(window.sys, "platform", "linux")
-    monkeypatch.setattr(window.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("google-chrome", "brave-browser") else None)
-    monkeypatch.setattr(window.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 0, "brave-browser.desktop\n", ""))
-    assert window.browser() == "/usr/bin/brave-browser"  # the default first
-    monkeypatch.setattr(window.subprocess, "run", lambda *a, **k: sp.CompletedProcess(a, 0, "firefox.desktop\n", ""))
-    monkeypatch.setattr(window.shutil, "which", lambda n: "/usr/bin/google-chrome" if n == "google-chrome" else None)
-    assert window.browser() == "/usr/bin/google-chrome"  # Firefox has no app windows: an installed one that does
-    monkeypatch.setenv("BROWSER", "true")  # the user (or a test) said how to open pages: a tab
-    assert window.browser() is None
+# a window program that writes each word it's told to a file, and ends on "close" or when the app goes away
+FAKE_WINDOW = """import sys
+log = open(sys.argv[sys.argv.index("--url") + 1].split("log=")[1], "a")
+for line in sys.stdin:
+    log.write(line); log.flush()
+    if line.strip() == "close":
+        break
+"""
 
 
-def test_one_window_and_closing_it_tells_the_app(tmp_path, monkeypatch):
-    fake = tmp_path / "browser"
-    fake.write_text("#!/bin/sh\nsleep 0.4\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setattr(window, "browser", lambda: str(fake))
+@pytest.fixture
+def fake_window(tmp_path, monkeypatch):
+    program = tmp_path / "gtkwindow.py"
+    program.write_text(FAKE_WINDOW)
+    monkeypatch.setattr(window, "WINDOW_PROGRAM", program)
+    monkeypatch.setattr(window, "SYSTEM_PYTHON", sys.executable)
+    monkeypatch.setattr(window, "missing", lambda: None)
+    monkeypatch.delenv("DECOMP_WINDOW", raising=False)
+    log = tmp_path / "said.txt"
     closed = []
-    w = window.Window(str(tmp_path / "profile"), lambda: closed.append(1))
-    assert w.open("http://127.0.0.1:6464/?k=x") and w.is_open()
-    first = w.proc
-    assert w.open("http://127.0.0.1:6464/?k=x") and w.proc is first  # asked again: the same window, not a second
-    for _ in range(50):
-        if closed:
-            break
+    w = window.Window(tmp_path, f"http://127.0.0.1:6464/?log={log}", "secret", lambda: closed.append(1))
+    yield w, log, closed
+    w.close()
+
+
+def _wait(check, seconds=5):
+    for _ in range(int(seconds / 0.05)):
+        if check():
+            return True
         time.sleep(0.05)
-    assert closed == [1] and not w.is_open()
+    return False
 
 
-def test_without_an_app_browser_it_is_a_tab(monkeypatch, tmp_path):
-    monkeypatch.setattr(window, "browser", lambda: None)
-    assert not window.Window(str(tmp_path), lambda: None).open("http://127.0.0.1:6464/")
+def test_one_window_and_running_decomp_again_brings_it_to_the_front(fake_window):
+    w, log, closed = fake_window
+    assert w.open() and w.is_open()
+    first = w.proc
+    assert w.open() and w.proc is first  # asked again: the same window, not a second
+    assert _wait(lambda: log.exists() and log.read_text() == "present\n")
+    first.stdin.close()  # the window ends by itself (the app didn't ask): the app hears of it
+    assert _wait(lambda: closed == [1]) and not w.is_open()
 
 
-def test_quitting_closes_the_window(tmp_path, monkeypatch):
-    fake = tmp_path / "browser"
-    fake.write_text("#!/bin/sh\nsleep 30\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setattr(window, "browser", lambda: str(fake))
-    closed = []
-    w = window.Window(str(tmp_path / "profile"), lambda: closed.append(1))
-    assert w.open("http://127.0.0.1:6464/")
+def test_the_app_closing_its_window_is_not_the_user_closing_it(fake_window):
+    w, log, closed = fake_window
+    assert w.open()
     proc = w.proc
     w.close()
-    proc.wait(timeout=5)
+    assert proc.poll() is not None and log.read_text() == "close\n"
     time.sleep(0.2)
-    assert not w.is_open() and closed == []  # the app closed it: not taken for the user closing it
+    assert not w.is_open() and closed == []
+
+
+def test_no_window_in_tests(tmp_path, monkeypatch):
+    monkeypatch.setenv("DECOMP_WINDOW", "0")
+    assert not window.Window(tmp_path, "http://127.0.0.1:6464/", "s", lambda: None).open()
+
+
+def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
+    """No browser to fall back to: the user is told the packages, with their distribution's command."""
+    window.missing.cache_clear()
+    monkeypatch.setattr(window, "SYSTEM_PYTHON", "/bin/false")
+    monkeypatch.setattr(window, "_distro_family", lambda: "fedora")
+    try:
+        assert "sudo dnf install python3-gobject webkit2gtk4.1" in window.missing()
+        window.missing.cache_clear()
+        monkeypatch.setattr(window, "_distro_family", lambda: None)
+        assert "package manager" in window.missing()
+    finally:
+        window.missing.cache_clear()
+
+
+def test_the_secret_rides_in_the_windows_user_agent():
+    ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 {window.TOKEN_AGENT}abc_DEF-123 Safari/605.1.15"
+    assert window.token_of(ua) == "abc_DEF-123"
+    assert window.token_of("Mozilla/5.0 Firefox/140.0") == ""
