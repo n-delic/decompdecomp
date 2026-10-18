@@ -201,6 +201,19 @@ def test_the_same_c_is_judged_once():
     assert asked and len(net.judged) == asked
 
 
+def test_a_check_with_nothing_new_is_not_written_again():
+    """GTA San Andreas: its 60 unsettled audits wrote the game's 193 KB of settings again on every recheck."""
+    net = FakeNet(functions(9), {})
+    fn = net._function("f4", "game")
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("compiler_ranges", [
+        {"start": fn["vram"], "end": fn["vram"] + fn["size"], "toolchain": CW[0], "flags": CW[1]}]))
+    assert net.rangechecks.audit(net.proj) == 1
+    writes, real = [], net._update_cfg
+    net._update_cfg = lambda slug, change: writes.append(1) or real(slug, change)
+    net.rangechecks.recheck("game", background=False)
+    assert net.cfg(net.proj)["range_checks"][0]["status"] == "waiting" and not writes
+
+
 def test_a_burst_of_rechecks_is_one_run(monkeypatch):
     """Matches come faster than a recheck runs: each one started its own run (92 queued at once on GTA San Andreas).
     Requests made close together wait for each other and run once."""

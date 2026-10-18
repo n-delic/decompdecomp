@@ -27,6 +27,7 @@ ran out without an answer.
 
 from __future__ import annotations
 
+import bisect
 import copy
 import hashlib
 import logging
@@ -211,32 +212,38 @@ class RangeChecks:
                 self._draining.discard(slug)
 
     def _run(self, slug: str, wanted: set) -> None:
-        """Weigh the wanted checks (None: every open one), reading every function's address and size once."""
+        """Weigh the wanted checks (None: every open one), reading every function's address and size, and the
+        compiler map, once for all of them."""
         with self._lock:
             try:
                 proj = self.net._project(slug)
                 checks = [c for c in self._open(proj) if None in wanted or c["id"] in wanted]
-                rows = self._rows(proj) if checks else []
+                if not checks:
+                    return
+                rows = self._rows(proj)
+                at = {r["vram"]: i for i, r in enumerate(rows)}
+                cmap = self.net.compiler_map(proj)
                 for c in checks:
-                    self._weigh(proj, c, rows)
+                    self._weigh(proj, c, rows, at, cmap)
             except Exception:  # noqa: BLE001  a check never stands between an agent and its work: it waits
                 log.exception("range check failed")
 
-    def _weigh(self, proj, c: dict, rows: list) -> None:
+    def _weigh(self, proj, c: dict, rows: list, at: dict[int, int], cmap) -> None:
+        """One check, from its functions in address order (`at`: address -> index) and the compiler map."""
         cfg = self.net.cfg(proj)
         label = (c["toolchain"], tuple(c["flags"]))
-        cmap = self.net.compiler_map(proj)
         survey = (cfg.get("compiler_survey") or {}).get("confirmed", {})
         if not rows:
             return
-        at = {r["vram"]: i for i, r in enumerate(rows)}
         inside = lambda r: any(a <= r["vram"] < b for a, b in c["spans"])  # noqa: E731
         if c["origin"] in at:
             o = at[c["origin"]]
         else:  # no function of its own (ranges alone, or an audit): the first function in the ranges stands for them
-            o = next((i for i, r in enumerate(rows) if inside(r)), None)
-            if o is None:
+            firsts = [i for a, b in c["spans"] if (i := bisect.bisect_left(rows, a, key=lambda r: r["vram"])) < len(rows)
+                      and rows[i]["vram"] < b]
+            if not firsts:
                 return
+            o = min(firsts)
         evidence = dict(c["evidence"])
 
         def verdict(r) -> str:
@@ -350,6 +357,10 @@ class RangeChecks:
 
     def _save(self, proj, c: dict, said: str, resolve: str | None = None) -> None:
         c["said"] = said
+        stored = next((old for old in self.net.cfg(self.net._project(proj["slug"])).get("range_checks", [])
+                       if old["id"] == c["id"]), None)
+        if c == stored and resolve is None:
+            return  # nothing new (GTA San Andreas's 60 unsettled audits were written again on every run)
 
         def change(cfg):
             for i, old in enumerate(cfg.get("range_checks", [])):
