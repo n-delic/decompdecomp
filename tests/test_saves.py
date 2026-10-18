@@ -1,0 +1,92 @@
+"""A ROM project's work saved as plain files and rebuilt from them on another computer (app/saves.py): the splits,
+names, headers, notes, settings and what agents learned come back, every saved match is judged again, and a save
+only restores onto the same game."""
+
+import json
+import shutil
+
+import pytest
+
+from decompnet.app import saves
+from decompnet.app.engine import RomNetwork
+from decompnet.network import NetworkError
+
+from .test_app_engine import CLAMP
+from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
+
+
+@pytest.fixture
+def worked(built, tmp_path):  # noqa: F811
+    """The demo game with some work done: a split, a match, a rename, a best attempt, a note, settings."""
+    (tmp_path / "one").mkdir()
+    net = RomNetwork(tmp_path / "one" / "decomp.db", tmp_path / "one")
+    slug = net.import_rom(ROM, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")
+    assert net.compile_and_diff(agent, "func_800007D0", CLAMP, slug).startswith("✅ MATCH")
+    assert net.rename_symbol(agent, slug, "func_800007D0", "clamp_s32").startswith("✅")
+    other = net.store.one("SELECT name FROM functions WHERE project_id=? AND status='open' ORDER BY n_insns DESC "
+                          "LIMIT 1", net._project(slug)["id"])["name"]
+    net.compile_and_diff(agent, other, f"void {other}(void) {{ }}", slug)
+    net.release(agent, other, "tried an empty body", slug)
+    net.add_note(agent, slug, "clamps to [lo, hi]", "clamp_s32")
+    net.set_instructions(slug, "Name functions in snake_case.")
+    return net, slug, other
+
+
+def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
+    net, slug, other = worked
+    said = saves.save(net, slug, tmp_path / "save")
+    assert said["matched"] == 1 and said["best"] == 1
+    manifest = json.loads((tmp_path / "save" / saves.MANIFEST).read_text())
+    assert (tmp_path / "save" / "src" / "clamp_s32.c").exists() and manifest["game"]["sha1"]
+    assert not any(p.suffix in (".z64", ".bin", ".iso") for p in (tmp_path / "save").rglob("*"))  # no game data
+
+    (tmp_path / "two").mkdir()
+    fresh = RomNetwork(tmp_path / "two" / "decomp.db", tmp_path / "two")
+    out = saves.restore(fresh, str(tmp_path / "save"), ROM, log=lambda *_: None)
+    assert out["matched"] == 1 and out["lost"] == [] and out["best"] == 1
+    fn = fresh._function("clamp_s32", out["slug"])
+    assert fn["status"] == "matched" and fn["vram"] == 0x800007D0  # the split and the name came back
+    assert fresh.instructions(out["slug"]) == "Name functions in snake_case."
+    assert fresh._function(other, out["slug"])["best_source"]
+    assert any("clamps" in r["text"] for r in fresh.store.all("SELECT text FROM notes"))
+    assert fresh.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0  # nothing left claimed
+
+
+def test_a_save_restores_only_onto_the_same_game(worked, tmp_path):
+    net, slug, _ = worked
+    saves.save(net, slug, tmp_path / "save")
+    other = tmp_path / "other.z64"
+    data = bytearray(ROM.read_bytes())
+    data[0x1000] ^= 0xFF
+    other.write_bytes(bytes(data))
+    (tmp_path / "x").mkdir()
+    with pytest.raises(NetworkError, match="not the same game"):
+        saves.restore(RomNetwork(tmp_path / "x" / "d.db", tmp_path / "x"), str(tmp_path / "save"), other,
+                      log=lambda *_: None)
+    shutil.rmtree(tmp_path / "save" / "src")
+    (tmp_path / "save" / saves.MANIFEST).unlink()
+    with pytest.raises(NetworkError, match="isn't a decompdecomp save"):
+        saves.restore(net, str(tmp_path / "save"), ROM, log=lambda *_: None)
+
+
+def test_autosave_saves_what_changed_only(worked):
+    net, slug, _ = worked
+    auto = saves.Autosave(net)
+    assert auto.run_once() == [slug] and auto.run_once() == []
+    assert (saves.default_folder(net, slug) / saves.MANIFEST).exists()
+
+
+def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
+    """Project folders were stored as absolute paths (/home/decomp/Decomp/... inside the old Windows install's WSL):
+    a Decomp folder copied to another computer or user name finds its projects again by their names."""
+    old_home, new_home = tmp_path / "old" / "Decomp", tmp_path / "new" / "Decomp"
+    (old_home / "game").mkdir(parents=True)
+    net = RomNetwork(old_home / "decomp.db", old_home)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, '{}')", (str(old_home / "game"),))
+    shutil.copytree(old_home, new_home)
+    shutil.rmtree(tmp_path / "old")
+    moved = RomNetwork(new_home / "decomp.db", new_home)
+    assert moved.project_row("game")["root"] == str(new_home / "game")

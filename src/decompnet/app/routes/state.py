@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 
 from ... import __version__, hostenv, toolchains
 from ...network import NetworkError
-from .. import agents, updates
+from .. import agents, saves, updates
 from ..engine import COMPILERS, MW_VERSIONS, PLATFORM_STATUS, SHORT_NAMES, TOOLS
 from ..support import MAX_DISC, _static, job_error
 from . import App
@@ -22,7 +22,7 @@ from . import App
 
 def register(app: App) -> None:
     net, mcp, home, mcp_url, build_id = app.net, app.mcp, app.home, app.mcp_url, app.build_id
-    manager, jobs, settings, guard, call = app.manager, app.jobs, app.settings, app.guard, app.call
+    manager, jobs, settings, guard, call, body = app.manager, app.jobs, app.settings, app.guard, app.call, app.body
     fail = app.fail
 
     def state() -> dict:
@@ -74,6 +74,20 @@ def register(app: App) -> None:
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:
         return guard(request) or JSONResponse(await call(state))
+
+    @mcp.custom_route("/api/restore", methods=["POST"])
+    async def api_restore(request: Request) -> Response:
+        """A project rebuilt from a save (a folder, or a git repository's address) and the user's own copy of the
+        game (app/saves.py), in the background."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        if not data.get("confirmed"):
+            return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
+        source, game = str(data.get("source") or "").strip(), hostenv.local_path(str(data.get("path") or ""))
+        if not source or not game.is_file():
+            return fail(ValueError("pick the saved project (a folder or a git address) and your copy of the game"))
+        return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
 
     @mcp.custom_route("/api/import", methods=["POST"])
     async def api_import(request: Request) -> Response:

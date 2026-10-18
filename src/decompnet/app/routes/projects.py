@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 from ... import hostenv, toolchains
 from ...network import NetworkError
+from .. import saves
 from ..engine import parse_ranges
 from . import App
 
@@ -159,6 +160,10 @@ def register(app: App) -> None:
             net.start_autopilot(slug)
         return net.overview(slug)
 
+    def p_save(slug, request, data):
+        """Save the project's work as plain files (app/saves.py): to its progress/ folder, or one the user picks."""
+        return saves.save(net, slug, hostenv.local_path(data["folder"]) if data.get("folder") else None)
+
     def p_knowledge(slug, request, data):
         """What agents learned: GET lists it; POST accepts or rejects one ({id, accept}), or sets whether agreed
         knowledge is added by itself ({auto})."""
@@ -172,6 +177,7 @@ def register(app: App) -> None:
     routes = {
         "/api/project": (p_overview, ["GET"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
+        "/api/save": (p_save, ["POST"]),
         "/api/live": (p_live, ["GET"]),
         "/api/function": (lambda s, r, d: net.function_detail(s, r.query_params.get("name", "")), ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),

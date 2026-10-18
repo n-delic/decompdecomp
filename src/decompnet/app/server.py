@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ..network import NetworkError
-from . import agents, collab, routes, tools, updates, window
+from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
 from .routes import forks, life, pages, projects, rooms, setup, state
 from .support import Jobs, Settings, _session_options
@@ -81,6 +81,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("naming %s's kernel calls failed", row["slug"])
     threading.Thread(target=name_kernel_calls, daemon=True, name="kernel-calls").start()
+    saves.Autosave(net).start()  # each ROM project's work as plain files in its progress/ folder (app/saves.py)
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the

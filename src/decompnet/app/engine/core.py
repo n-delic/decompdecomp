@@ -51,6 +51,7 @@ class Core(Network):
         self.rangechecks = RangeChecks(self)
         from ..knowledge import Knowledge
         self.knowledge = Knowledge(self)
+        self.find_moved_projects()
 
     @staticmethod
     def cfg(proj) -> dict:
@@ -66,6 +67,19 @@ class Core(Network):
                     _settings.pop(next(iter(_settings)))  # the oldest version
                 _settings[text] = parsed
         return parsed
+
+    def find_moved_projects(self) -> list[str]:
+        """Projects whose folder isn't where it was, found again in this workspace by their name: a whole Decomp
+        folder copied to another computer, user name or Linux keeps its projects (their folders were stored as
+        absolute paths: /home/decomp/Decomp/... inside the old Windows install's WSL)."""
+        moved = []
+        for row in self.store.all("SELECT id, slug, root FROM projects"):
+            here = self.workspace / row["slug"]
+            if row["root"] and not Path(row["root"]).exists() and here.is_dir():
+                with self.store.tx() as db:
+                    db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
+                moved.append(row["slug"])
+        return moved
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"

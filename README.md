@@ -61,6 +61,39 @@ You can also continue a community decomp: paste the address of its repository an
 When you close the window while agents work, decompdecomp asks you: stop them and quit, or keep them working.
 **Quit** ends the app and everything it started.
 
+## Coming from an older version (1.0.x)
+
+Your projects stay. The new version opens the same `~/Decomp` folder, with every match, name and note in it.
+
+1. **Install the new version** the same way as before: the install command above, or the new `.deb`, `.rpm` or
+   AppImage. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your apps menu shows one.
+2. **Start it** with `decomp` or from your apps menu. It opens in its own window now, not in your browser.
+3. **Start your agents again.** Helper agents that were working in the old version don't restart by themselves the
+   first time. Open each project and start them; from then on they restart by themselves.
+
+What changed on the way:
+
+- **Agents run inside the app only.** `decomp connect` and `decomp mcp` are gone. On its first start, the new
+  version removes the old `decomp` entries from your agents' settings (Claude Code, Codex, opencode, Antigravity and
+  others) and lists what it removed. Before that, those entries started the old app again whenever you closed it.
+- **Windows (WSL) isn't supported in this version.** Your projects are inside the WSL distribution, in
+  `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux computer and
+  install decompdecomp there: it finds every project in it.
+
+## Moving to another computer
+
+decompdecomp saves each project's work as plain files in the project's `progress/` folder, every few minutes:
+matched C, best attempts, headers, names, notes and settings. It never contains the game, so you can keep it in a
+git repository.
+
+The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer: decompdecomp finds
+every project in it. To take a single project, or to keep it in git:
+
+1. Copy the project's `progress/` folder to the new computer, or push it to a git repository.
+2. On the new computer, in decompdecomp: **Open a saved project**. Pick the folder (or paste the repository's
+   address) and your own copy of the game.
+3. decompdecomp checks it's the same game, rebuilds the project, and judges every saved function again.
+
 ## Platforms
 
 | Platform | Status |

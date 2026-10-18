@@ -278,6 +278,8 @@ one real game has rebuilt byte for byte.
 
 ## 7. Moving projects to another computer
 
+*Done (the app's side): `app/saves.py` (save, autosave to progress/, restore from a folder or git), `/api/save`, `/api/restore`, and a copied Decomp folder finds its projects (`find_moved_projects`). The buttons come with the UI overhaul.*
+
 **Problem.** Changing distribution (or computer) loses the work. A project's progress lives in the app's database
 (`~/Decomp/.decomp/decomp.db`), not only in its folder.
 
