@@ -273,6 +273,56 @@ def generate(fn: FunctionObj, toolchain_id: str | None, context_header: str = ""
     return generate_from_asm(gnu_asm(fn), fn.name, toolchain_id, context_header, timeout=timeout)
 
 
+# ---------------------------------------------------------------- a draft of a C++ method
+
+VPTR_BYTES = 4  # the vtable pointer an object of a class with virtual functions starts with
+# m2c's line that starts the function: `void *func_00123456(void *arg0, s32 arg1) {` ({name}: the function's)
+_SIGNATURE = r"^(?P<ret>[^\n]*?)\b{name}\((?P<params>[^()\n]*)\) \{{$"
+_POINTER_ARG0 = re.compile(r"^.*\*\s*arg0$")
+_IDENTIFIER = re.compile(r"^[A-Za-z_]\w*$")
+
+
+def method_draft(draft: str, name: str, cls: str, fields: list[tuple[int, int, str]], vptr: int, role: str,
+                 more: bool = False) -> str | None:
+    """m2c's draft of a function the class recovery knows as a method of `cls` (`role`: "virtual function 3"),
+    shown as C++: `Class::name(...)` with m2c's arg0 as `this`, after a declaration of the class with the fields
+    (offset, size, type) it uses (`more`: it uses more than those), named as m2c names fields (unk4): `this->unk4`
+    in the draft is one of them.
+    None when that can't be done safely: a first argument that isn't a pointer, the vtable pointer not first, fields
+    that overlap, a class name that isn't a C++ name. The draft is then shown as m2c wrote it."""
+    found = re.search(_SIGNATURE.format(name=re.escape(name)), draft, re.M)
+    if not found or vptr != 0 or not _IDENTIFIER.match(cls):
+        return None
+    params = [p.strip() for p in found.group("params").split(",")]
+    if not _POINTER_ARG0.match(params[0]):
+        return None
+    rest = ", ".join(params[1:])
+    body = ["public:", "    /* +0x00: the vtable pointer (the compiler adds it to a class with virtual functions) */"]
+    at = VPTR_BYTES
+    for offset, size, ctype in sorted(fields):
+        if offset < at:
+            return None  # fields that overlap: no one layout says them both
+        if offset > at:
+            body.append(f"    u8 pad{at:X}[0x{offset - at:X}];")
+        field = f"unk{offset:X}"
+        if ctype.endswith("]"):  # an array: u8[3]
+            base, _, count = ctype.partition("[")
+            decl = f"{base} {field}[{count}"
+        else:
+            decl = f"{ctype}{'' if ctype.endswith('*') else ' '}{field}"
+        body.append(f"    {decl}; /* +0x{offset:02X} */")
+        at = offset + size
+    if more:
+        body.append("    /* ... and more fields it uses: get_class */")
+    ret = found.group("ret")
+    body.append(f"    {ret}{name}({rest});")
+    note = (f"/* C++: {name} is {role} of class {cls}, found from the vtables constructors store (get_class has\n"
+            "   its whole layout). m2c's arg0 is `this`; the class's fields here are the ones this function uses. */")
+    head, tail = draft[:found.start()], draft[found.start():]
+    tail = re.sub(r"\barg0\b", "this", tail[tail.index("{"):])
+    return f"{head.rstrip()}\n{note}\nclass {cls} {{\n" + "\n".join(body) + f"\n}};\n\n{ret}{cls}::{name}({rest}) {tail}"
+
+
 class DraftError(Exception):
     """m2c couldn't make the draft asked for (strict runs only), with its own reason."""
 
