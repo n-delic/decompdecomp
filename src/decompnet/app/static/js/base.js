@@ -113,7 +113,7 @@ $("themeBtn").onclick = () => setTheme(getComputedStyle(document.documentElement
 /* ------------------------------------------------------------------ state + routing */
 const S = {
   mapView: "progress",  // the ROM map's colours: progress, or the compiler map
-  st: null, slug: null, ov: null, map: [], byName: new Map(), e: 0, a: 0, seq: {}, sessions: [], tab: "overview",
+  st: null, slug: null, ov: null, map: [], byName: new Map(), lastEvent: 0, lastAttempt: 0, seq: {}, sessions: [], tab: "overview",
   scores: new Map(), claims: [], flash: new Map(), timer: null, statsTimer: null, lastMapFetch: 0, fn: null, stats: null,
   projects: [], agents: null,
   gen: 0, primed: false, openedAt: 0,  // which opening of a project polls belong to, its first poll done, and when

@@ -3,7 +3,7 @@
 async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
-  S.slug = slug; S.e = 0; S.a = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = [];
+  S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = [];
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
@@ -108,17 +108,17 @@ async function poll() {
   if (pollingGen === S.gen || !S.slug) return;
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
-    const live = await api(`/api/live?slug=${slug}&e=${S.e}&a=${S.a}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
+    const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
     if (gen !== S.gen) return;
     S.ov = live.overview;
     let mapDirty = false;
     for (const ev of live.events) {
-      S.e = Math.max(S.e, ev.id);
+      S.lastEvent = Math.max(S.lastEvent, ev.id);
       if (["match", "split", "rename", "compiler", "reopen"].includes(ev.kind)) mapDirty = true;
       if (ev.kind === "match" && !first && ev.created_at >= S.openedAt) S.flash.set(ev.detail, performance.now());
     }
     for (const at of live.attempts) {
-      S.a = Math.max(S.a, at.id);
+      S.lastAttempt = Math.max(S.lastAttempt, at.id);
       if (!S.scores.has(at.function)) S.scores.set(at.function, []);
       S.scores.get(at.function).push({ score: at.score, t: at.created_at, insns: at.n_insns });
     }
@@ -297,7 +297,7 @@ function renderCompilerNotice(ov) {
   n.className = "notice";
   n.innerHTML = ov.compiler.proprietary
     ? `<span><b>${esc(ov.compiler.name)}</b> isn't installed. It's proprietary software (recompiled by the decomp community); install it only if you accept that.</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install…</button>`
-    : `<span><b>${esc(ov.compiler.name)}</b> isn't installed yet.${ov.compiler.wsl ? " It's a Linux program: on Windows it runs inside WSL 2 (one-time setup: <code>wsl --install</code> in an administrator PowerShell, then restart)." : ""}</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install now</button>`;
+    : `<span><b>${esc(ov.compiler.name)}</b> isn't installed yet.</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install now</button>`;
   $("tcInstall").onclick = () => installToolchain(ov.compiler.toolchain, ov.compiler.proprietary);
 }
 
