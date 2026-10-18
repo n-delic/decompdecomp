@@ -6,7 +6,7 @@ async function openProject(slug, tab = "overview") {
   S.slug = slug; S.e = 0; S.a = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = [];
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
-  $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; $("expLog").hidden = true; $("expResult").innerHTML = ""; $("teamBox").innerHTML = "";
+  $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
   try {
     const [ov] = await Promise.all([api(`/api/project?slug=${slug}`), S.st ? null : loadState()]);
     if (gen !== S.gen) return;  // another project opened meanwhile
@@ -52,16 +52,16 @@ function stopPolling() {
 function setTab(tab) {
   if (!TABS.includes(tab)) tab = "overview";
   S.tab = tab;
-  document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => { a.classList.toggle("on", a.dataset.ptab === tab); a.setAttribute("aria-selected", a.dataset.ptab === tab); });
+  document.querySelectorAll("#ptabs [data-ptab]").forEach((a) => {
+    a.classList.toggle("on", a.dataset.ptab === tab);
+    if (a.dataset.ptab === tab) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  });
   if (S.ov && S.ov.kind === "fork" && !S.ov.ready) return;
   document.querySelectorAll("[data-pane]").forEach((p) => { p.hidden = p.dataset.pane !== tab; });
   if (tab === "overview") { if (S.map.length) layoutMap(); renderOverview(); }
   if (tab === "functions") renderList();
-  if (tab === "agents") { renderLauncher($("launcher")); renderSessions(S.sessions); renderPrio(); loadStats(); }
-  if (tab === "team") renderTeam();
-  if (tab === "source" && S.ov) renderSource(S.ov);
+  if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
   if (tab === "settings") renderProjectSettings();
-  if (tab !== "team") clearInterval(teamTimer);
 }
 document.querySelectorAll("[data-goto]").forEach((a) => {
   a.onclick = (e) => {
@@ -98,26 +98,11 @@ async function refreshMap(force = true) {
   if (S.ov && S.ov.kind !== "fork") loadMapColumns(slug);
 }
 
-/* Helpers that just paused on an error they can't get past (the provider out of credit, a sign-in...): said once per
-   error, as eight agents on one account pause together */
-function toastStopped(before, now) {
-  const was = new Map(before.map((s) => [s.id, s.state]));
-  const why = new Map();
-  for (const s of now) {
-    if (s.state !== "paused" || !was.has(s.id) || was.get(s.id) === "paused") continue;
-    if (!why.has(s.why)) why.set(s.why, []);
-    why.get(s.why).push(s.label);
-  }
-  for (const [error, labels] of why) {
-    const who = labels.length > 1 ? `${labels[0]} and ${labels.length - 1} more` : labels[0];
-    toast(`${esc(who)} paused: ${esc(error || "an error")}`, "err");
-  }
-}
-
 /* A poll belongs to the opening of the project it was made for (S.gen). With one flag for all of them, the left
    project's slow poll (agents at work on two games) kept the new project's first poll from running; its next poll
-   then fetched the last 60 events with nothing seen yet and toasted each as new. Only what happened after the
-   project opened is toasted. */
+   then fetched the last 60 events with nothing seen yet and toasted each as new. News is the notification centre's
+   now (sidebar.js), for every project at once: a project's poll only redraws the project, and flashes its fresh
+   matches on the map. */
 let pollingGen = -1;
 async function poll() {
   if (pollingGen === S.gen || !S.slug) return;
@@ -130,13 +115,7 @@ async function poll() {
     for (const ev of live.events) {
       S.e = Math.max(S.e, ev.id);
       if (["match", "split", "rename", "compiler", "reopen"].includes(ev.kind)) mapDirty = true;
-      const fresh = !first && ev.created_at >= S.openedAt;
-      if (ev.kind === "match" && fresh) {
-        S.flash.set(ev.detail, performance.now());
-        if (ev.agent !== AUTO && ev.agent !== "@" + AUTO) toast(`<code>${esc(ev.detail)}</code>&nbsp;matched by ${esc(ev.agent || "an agent")}`, "match");
-      }
-      if (ev.kind === "autopilot" && fresh) toast(`Autopilot: ${esc(ev.detail)}`, "match");
-      if (ev.kind === "link" && fresh) toast(`🔗 <code>${esc(ev.detail)}</code>&nbsp;is linked into the game`, "match");
+      if (ev.kind === "match" && !first && ev.created_at >= S.openedAt) S.flash.set(ev.detail, performance.now());
     }
     for (const at of live.attempts) {
       S.a = Math.max(S.a, at.id);
@@ -147,7 +126,6 @@ async function poll() {
     if (!first) applyAttempts(live.attempts);
     addActivity(live.events, live.attempts, first);
     S.claims = live.claims;
-    if (!first) toastStopped(S.sessions || [], live.sessions);
     S.sessions = live.sessions;
     for (const s of live.sessions) {
       if (s.feed.length) S.seq[s.id] = s.feed[s.feed.length - 1].seq;
@@ -167,9 +145,7 @@ async function poll() {
       const touched = live.attempts.some((a) => a.function === S.fn) || live.events.some((e) => e.detail === S.fn);
       if (touched) refreshFn(false); else fnBadge();
     }
-    $("feedHint").textContent = "";
-  } catch (e) {
-    if (String(e.message).includes("Failed to fetch")) $("feedHint").textContent = "app not reachable";
+  } catch { /* the app is busy or restarting: the next poll tries again */
   } finally {
     if (pollingGen === gen) pollingGen = -1;
   }
@@ -223,12 +199,13 @@ function renderHeader(ov) {
   $("phPct").textContent = pctNum(pct);
   $("phBar").style.width = pct + "%";
   $("phSub").textContent = fork && !ov.ready ? "set up the project to start"
-    : `${ov.matched.toLocaleString()} / ${ov.functions.toLocaleString()} functions${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
+    : `${ov.matched.toLocaleString()} / ${ov.functions.toLocaleString()} functions${ov.readable ? ` · ${ov.readable.toLocaleString()} readable` : ""}${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
+  $("phSub").title = ov.readable ? "Readable: matched functions renamed, typed and commented by agents, and still matching byte for byte" : "";
   const w = workingAgents();
   $("phWorking").hidden = !w.n;
   $("phWorkingText").textContent = `${w.n} agent${w.n === 1 ? "" : "s"} working`;
   $("phStartText").textContent = w.running.length ? "Add agents" : "Start agents";
-  $("phStart").hidden = fork && !ov.ready;
+  $("phStart").hidden = $("phExport").hidden = fork && !ov.ready;
   const room = ov.room;
   const pill = $("phRoom");
   pill.hidden = !room;
@@ -241,41 +218,24 @@ function renderHeader(ov) {
     pill.innerHTML = room.role === "host" ? `<span class="dot ${online ? "on" : ""}"></span>Sharing · ${online} online`
       : /waiting for the host/i.test(room.error || "") ? `<span class="dot work"></span>Waiting to be let in`
       : `<span class="dot ${room.connected ? "on" : "err"}"></span>${room.connected ? `In a room as ${esc(room.member)}` : "Room offline"}`;
-    $("teamTabCount").textContent = members.length ? members.length : "";
-  } else $("teamTabCount").textContent = "";
+  }
   $("agTabCount").textContent = w.n || "";
 }
 $("phWorking").onclick = () => { location.hash = `#/p/${S.slug}/agents`; };
-$("phRoom").onclick = () => { location.hash = `#/p/${S.slug}/team`; };
-$("phTogether").onclick = () => openTogether();
+$("phRoom").onclick = $("phTogether").onclick = () => openTeam();
+$("phExport").onclick = () => openExport();
 
-/* Decompile together: open a room for this project in one step (a quick tunnel, an invite link); the Team tab has
-   every option (an address of your own, approving members, who's in). */
-function openTogether() {
-  const ov = S.ov, fork = ov.kind === "fork";
-  const body = dialog("Decompile together", `<p>Friends who own this game join from their own decompdecomp, and their agents work with yours: nobody does the same function twice, and every match is checked here, against your copy, before it counts.</p>
-    <p class="muted small">${fork ? "They get this project's source tree from you and build it with their own copy of the game and their own compilers." : "Each of them brings their own copy, and decompdecomp checks it's exactly this game."} Only the work travels between you, never the game. You decide who's in.</p>
-    <div class="field"><span>Who can join</span><div class="seg" id="tgVis"><button type="button" data-vis="private" class="on">Private: an invite link</button><button type="button" data-vis="public">Public: anyone with the address</button></div></div>
-    <label class="check"><input type="checkbox" id="tgApprove"><span>I let each new member in (they wait until I say yes)</span></label>
-    <div class="row"><button class="primary" id="tgGo" type="button">Open the room</button><a class="link small" href="#/p/${esc(S.slug)}/team">More options: your own address (LAN, Tailscale, a server)</a></div>
-    <pre class="joblog" id="tgLog" hidden></pre><div id="tgDone"></div>`);
-  body.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => body.querySelectorAll("[data-vis]").forEach((x) => x.classList.toggle("on", x === b)); });
-  body.querySelector("#tgGo").onclick = async (e) => {
-    e.target.disabled = true;
-    body.querySelector("#tgLog").hidden = false;
-    try {
-      const { job } = await api("/api/collab/start", { method: "POST", body: { slug: S.slug, mode: "tunnel",
-        visibility: body.querySelector("[data-vis].on").dataset.vis, approve: body.querySelector("#tgApprove").checked } });
-      const res = await followJob(job, body.querySelector("#tgLog"));
-      body.querySelector("#tgLog").hidden = true;
-      body.querySelector("#tgDone").innerHTML = `<p><b>The room is open.</b> Send this link to friends who own the game:</p>${cmdBox(res.link)}
-        <p class="muted small">They open decompdecomp, choose <b>Join a team</b>, paste it and pick their own copy (or run <code>decomp join &lt;link&gt; &lt;their copy&gt; --name &lt;name&gt;</code>). The link works while this app is open; for a room that stays up, use your own address in the Team tab.</p>
-        <div class="row"><a class="primary small-btn as-btn" href="#/p/${esc(S.slug)}/team">See who's in</a></div>`;
-      wireCopies(body.querySelector("#tgDone"));
-      S.ov = await api(`/api/project?slug=${S.slug}`);
-    } catch (err) { toast(esc(err.message), "err"); e.target.disabled = false; }
-  };
+/* Decompile together, from the header: "Decompile together" while nobody shares the game, the room's pill once it's
+   shared. One panel with every option, kept up to date while it's open (it was a dialog with some of them and a Team
+   tab with all of them, and nobody knew which to use). */
+let teamTimer = null;
+const TEAM_HOST_EVERY_MS = 5000, TEAM_GUEST_EVERY_MS = 4000;
+function openTeam() {
+  const box = dialog("Decompile together", `<p class="muted">Looking at this computer's network…</p>`, "team");
+  renderTeam(box);
 }
+const teamOpen = () => S.dialogKind === "team" && !$("dialog").hidden && !!S.slug;
+
 $("phFolder").onclick = () => openFolder();
 
 /* Forks: how much of the game is built from linked C (decomp.dev's "linked"), next to what matches. */
@@ -292,8 +252,9 @@ function renderStats(ov) {
   $("fnCount").textContent = `${ov.matched.toLocaleString()} / ${ov.functions.toLocaleString()}`;
   renderAutopilot(ov);
   renderSteering(ov);
-  if (S.tab === "source") renderSource(ov);
+  if (exportOpen()) renderSource(ov);
   renderCompilerNotice(ov);
+  renderCompilerLine(ov);
   renderAgentsKpi(ov);
   renderNext(ov);
 }
@@ -348,7 +309,7 @@ function renderOverview() {
   $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("open", "s-open");
   setWidths($("fnStack"));
   const togo = S.ov.functions - S.ov.matched;
-  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} assembly` : ""}`;
+  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} assembly` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}`;
   const st = S.stats;
   if (st) {
     const ph = st.matches_per_hour, max = Math.max(1, ...ph);
@@ -376,6 +337,20 @@ function renderAgentsKpi(ov) {
     : sp && sp.tokens ? `${(sp.tokens / 1000).toFixed(0)}k tokens used` : budget ? `budget ${money(budget)}` : "";
 }
 
+/* The compiler, as one line: which one builds the game, how many parts another one does, and whether a change waits
+   for the user. Everything else about it is one click in (Settings → Compiler). */
+function renderCompilerLine(ov) {
+  const box = $("compilerLine");
+  box.hidden = ov.kind === "fork";
+  if (box.hidden) return;
+  const parts = (ov.compiler_ranges || []).length, waiting = compilerSuggestions(ov).length;
+  setHtml(box, `<span class="al-label">Compiler</span><span class="al-text">Built with <b>${esc(ov.compiler.name)}</b>${parts ? `; ${plural(parts, "part")} with another compiler` : ""}.${
+    waiting ? ` <b class="al-wait">${plural(waiting, "change")} waiting for you.</b>` : ""}</span><a class="link small" href="#/p/${esc(S.slug)}/settings">${waiting ? "Look at it" : "Details"}</a>`);
+}
+/* An agent's (or the survey's) "this part was built with another compiler": the compiler panel's, not the Agents
+   view's (a suggestion without a compiler stays there). */
+const compilerSuggestions = (ov) => (ov.suggestions || []).filter((s) => s.toolchain);
+
 /* What to do next, so a first project is plug and play. */
 function renderNext(ov) {
   const box = $("nextStep");
@@ -384,12 +359,13 @@ function renderNext(ov) {
   const compilerOk = ov.kind === "fork" || ov.compiler.installed;
   if (done) {
     box.hidden = false;
-    box.innerHTML = `<div class="next-text"><b>Every function matches.</b><span class="muted small">Export the project: a source tree that rebuilds your game byte for byte.</span></div><a class="primary small-btn as-btn" href="#/p/${esc(S.slug)}/source">Export</a>`;
+    setHtml(box, `<div class="next-text"><b>Every function matches.</b><span class="muted small">Export the project: a source tree that rebuilds your game byte for byte.</span></div><button class="primary small-btn" id="nextExport" type="button">Export</button>`);
+    $("nextExport").onclick = () => openExport();
     return;
   }
   if (ov.kind === "fork" && ov.ready && !ov.functions) {
     box.hidden = false;
-    box.innerHTML = `<div class="next-text"><b>Not measured yet</b><span class="muted small">objdiff compares every unit of the project with your game: it takes a moment.</span></div><button class="primary" id="nextMeasure" type="button">Measure now</button>`;
+    setHtml(box, `<div class="next-text"><b>Not measured yet</b><span class="muted small">objdiff compares every unit of the project with your game: it takes a moment.</span></div><button class="primary" id="nextMeasure" type="button">Measure now</button>`);
     $("nextMeasure").onclick = async () => {
       $("nextMeasure").disabled = true;
       toast("Measuring the whole project with objdiff…");
@@ -399,47 +375,43 @@ function renderNext(ov) {
     return;
   }
   if (w.n || !compilerOk || !S.st) { box.hidden = true; return; }
-  launcherInit();
-  const a = S.st.agents.find((x) => x.id === LZ.kind);
   const ap = ov.autopilot;
   const steps = [`<span class="ok">✓</span> ${ov.kind === "fork" ? "Project set up" : "Game analysed"}: ${plural(ov.functions, "function")}`];
   if (ap) steps.push(ap.state === "running" ? `<span class="spin-dot"></span> Autopilot trying machine drafts` : `<span class="ok">✓</span> Autopilot: ${ap.matched.toLocaleString()} free match${ap.matched === 1 ? "" : "es"}`);
   steps.push(`<span class="todo">○</span> Agents`, `<span class="todo">○</span> Export`);
   box.hidden = false;
-  box.innerHTML = `<div class="next-text"><b>Next: start your agents</b><span class="steps-line">${steps.join("")}</span></div>
-    ${a && (a.installed || a.id === "api") ? `<button class="primary" id="nextGo" type="button">${esc(launchLabel(a, LZ.model, LZ.count))}</button>` : ""}
-    <button class="ghost" id="nextPick" type="button">Choose agent &amp; model</button>`;
-  const go = $("nextGo");
-  if (go) go.onclick = () => a.id !== "api" ? startAgents(a, LZ.model, LZ.count, go)
-    : (LZ.eps || []).length ? startAgents(a, "", LZ.count, go, { endpoints: LZ.eps }) : showLaunch();
-  $("nextPick").onclick = () => showLaunch();
+  // the header's Start agents is the one place agents start from: this only points there
+  setHtml(box, `<div class="next-text"><b>Next: start your agents</b><span class="steps-line">${steps.join("")}</span>
+    <span class="muted small">AI agents decompile the rest: they work by themselves, each on a different function.</span></div>
+    <button class="primary" id="nextGo" type="button">Choose your agents</button>`);
+  $("nextGo").onclick = (e) => { e.stopPropagation(); showLaunch(); };
 }
 
-/* ------------------------------------------------------------------ team (rooms) */
-let teamTimer = null;
-async function renderTeam() {
-  const box = $("teamBox");
+/* ------------------------------------------------------------------ team (rooms), in the header's panel */
+async function renderTeam(box) {
   clearInterval(teamTimer);
   if (!S.ov) return;
   const room = S.ov.room;
-  if (room && room.role === "guest") { renderGuest(box, room); teamTimer = setInterval(() => { if (S.tab === "team" && S.ov.room) renderGuest(box, S.ov.room); }, 4000); return; }
+  if (room && room.role === "guest") {
+    renderGuest(box, room);
+    teamTimer = setInterval(() => { if (!teamOpen()) clearInterval(teamTimer); else if (S.ov.room) renderGuest(box, S.ov.room); }, TEAM_GUEST_EVERY_MS);
+    return;
+  }
   if (S.ov.kind === "fork" && !S.ov.ready) {
-    box.innerHTML = `<h2 class="pane-title">Decompile together</h2>
-      <p class="muted">Set the project up first (Overview): then friends who own the game can join it from their own decompdecomp.</p>
+    box.innerHTML = `<p class="muted">Set the project up first (Overview): then friends who own the game can join it from their own decompdecomp.</p>
       <div class="row"><button class="ghost" id="tmJoin" type="button">Join a team's room</button></div>`;
     $("tmJoin").onclick = openJoin;
     return;
   }
-  if (!box.firstElementChild) box.innerHTML = `<p class="muted">Looking at this computer's network…</p>`;
   const info = await api(`/api/collab?slug=${S.slug}`).catch((e) => { box.innerHTML = `<p class="bad">${esc(e.message)}</p>`; return null; });
-  if (!info || S.tab !== "team") return;
+  if (!info || !teamOpen()) return;
   renderHost(box, info);
   teamTimer = setInterval(async () => {
-    if (S.tab !== "team" || !S.slug) { clearInterval(teamTimer); return; }
+    if (!teamOpen()) { clearInterval(teamTimer); return; }
     if (box.contains(document.activeElement) && document.activeElement.matches("input")) return;  // typing
     const inf = await api(`/api/collab?slug=${S.slug}`).catch(() => null);
-    if (inf && inf.sharing && S.tab === "team") renderHost(box, inf);
-  }, 5000);
+    if (inf && inf.sharing && teamOpen()) renderHost(box, inf);
+  }, TEAM_HOST_EVERY_MS);
 }
 
 function renderGuest(box, room) {
@@ -447,13 +419,13 @@ function renderGuest(box, room) {
   const waiting = /waiting for the host/i.test(room.error || "");
   const people = members.map((m) => `<div class="line-item"><span class="dot ${m.online ? "on" : ""}"></span><div class="txt"><b>${esc(m.name)}${m.name === room.member ? " (you)" : ""}</b>
       <span>${m.agents && m.agents.length ? esc(m.agents.join(", ")) : "no agents yet"} · ${m.matched || 0} matched${m.working && m.working.length ? ` · on ${esc(m.working.slice(0, 3).join(", "))}` : ""}</span></div></div>`).join("");
-  box.innerHTML = `<h2 class="pane-title">${waiting ? "Waiting for the host to let you in" : room.connected ? "In a team room" : "The room is offline"}</h2>
-    <p class="muted">${waiting ? `You asked to join as <b>${esc(room.member)}</b>. Your agents start working with the room as soon as the host lets you in.`
+  $("dialogTitle").textContent = waiting ? "Waiting for the host to let you in" : room.connected ? "In a team room" : "The room is offline";
+  setHtml(box, `<p class="muted">${waiting ? `You asked to join as <b>${esc(room.member)}</b>. Your agents start working with the room as soon as the host lets you in.`
       : room.connected ? `You're <b>${esc(room.member)}</b>. Your agents claim functions through the room, so nobody does the same one twice; matches are checked and shared by the host.`
       : `${esc(room.error || "Waiting for the host…")} Your agents wait and carry on when it's back.`}</p>
     <dl class="facts"><div><dt>Host</dt><dd>${esc(room.host)}</dd></div><div><dt>Members</dt><dd>${members.length}</dd></div><div><dt>Online</dt><dd>${members.filter((m) => m.online).length}</dd></div></dl>
     ${people ? `<div class="setup-group"><h3>In the room</h3>${people}</div>` : ""}
-    <div class="row"><button class="ghost" id="roomReconnect" type="button">${room.connected ? "The host shared a new link?" : "Reconnect with a new link"}</button><button class="ghost danger" id="roomLeave" type="button">Leave room</button></div>`;
+    <div class="row"><button class="ghost" id="roomReconnect" type="button">${room.connected ? "The host shared a new link?" : "Reconnect with a new link"}</button><button class="ghost danger" id="roomLeave" type="button">Leave room</button></div>`);
   $("roomReconnect").onclick = openReconnect;
   $("roomLeave").onclick = async () => {
     if (!confirm("Leave this room? Your local copy of the project stays; it stops syncing.")) return;
@@ -462,14 +434,13 @@ function renderGuest(box, room) {
 }
 
 function renderHost(box, info) {
-  const intro = `<h2 class="pane-title">Decompile together</h2>
-    <p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) and their own agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
+  const intro = `<p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) and their own agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
   const opts = (inf) => `<div class="setup-group"><h3>Who can join</h3>
       <div class="seg" id="visSeg"><button type="button" data-vis="private" class="${inf.settings.visibility !== "public" ? "on" : ""}">Private: invite link</button><button type="button" data-vis="public" class="${inf.settings.visibility === "public" ? "on" : ""}">Public: anyone with the address</button></div>
       <label class="check"><input type="checkbox" id="apprChk" ${inf.settings.approve ? "checked" : ""}><span>I let each new member in (they wait until you approve)</span></label></div>`;
   if (!info.sharing) {
     const sugg = (info.addresses || []).map((a) => `<button type="button" class="chip" data-addr="${esc(a.address)}">${esc(a.label)}: <span>${esc(a.address)}</span></button>`).join("");
-    box.innerHTML = `${intro}${info.was_sharing ? `<div class="notice"><span>This room was shared before the app restarted. Share it again: members keep their place.</span></div>` : ""}
+    setHtml(box, `${intro}${info.was_sharing ? `<div class="notice"><span>This room was shared before the app restarted. Share it again: members keep their place.</span></div>` : ""}
       <div class="setup-group"><h3>How teammates reach this computer</h3>
         <label class="check"><input type="radio" name="mode" value="tunnel" ${info.mode !== "address" ? "checked" : ""} ${info.tunnel_supported ? "" : "disabled"}><span><b>Quick tunnel</b>: works from anywhere, nothing to set up (Cloudflare's free tunnel). The address changes when the app restarts; members then paste the new link.</span></label>
         <label class="check"><input type="radio" name="mode" value="address" ${info.mode === "address" ? "checked" : ""}><span><b>An address you control</b>: this network, Tailscale, or a server with its own domain. It stays the same, so the room reopens by itself after a restart.</span></label>
@@ -477,7 +448,7 @@ function renderHost(box, info) {
           <label class="field"><span>The address teammates use (the room listens on port <input id="addrPort" class="mono port" type="number" value="${info.port || 6481}">)</span><input id="addrIn" class="mono" placeholder="http://192.168.1.20:6481" value="${esc(info.address || "")}"></label>
           <div class="chips">${sugg}</div></div></div>
       ${opts(info)}
-      <div class="row"><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`;
+      <div class="row"><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`);
     box.querySelectorAll('[name="mode"]').forEach((r) => { r.onchange = () => { box.querySelector("#addrBox").hidden = r.value !== "address" || !r.checked; }; });
     box.querySelectorAll("[data-addr]").forEach((b) => { b.onclick = () => { box.querySelector("#addrIn").value = b.dataset.addr; }; });
     box.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => box.querySelectorAll("[data-vis]").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -503,12 +474,12 @@ function renderHost(box, info) {
       <button class="ghost small-btn danger" data-remove="${esc(m.name)}" type="button">Remove</button></div>`).join("");
   const waiting = (info.pending || []).map((p) => `<div class="line-item"><div class="txt"><b>${esc(p.name)}</b><span>asks to join</span></div>
       <button class="primary small-btn" data-approve="${esc(p.name)}" type="button">Let in</button><button class="ghost small-btn" data-decline="${esc(p.name)}" type="button">Decline</button></div>`).join("");
-  box.innerHTML = `${intro}<label class="field"><span>${info.settings.visibility === "public" ? "The room's address (anyone with it and their own copy of the game can join)" : "Invite link (send it to teammates who own this game)"}</span></label>${cmdBox(info.link || "")}
+  setHtml(box, `${intro}<label class="field"><span>${info.settings.visibility === "public" ? "The room's address (anyone with it and their own copy of the game can join)" : "Invite link (send it to teammates who own this game)"}</span></label>${cmdBox(info.link || "")}
     <p class="muted small">${info.mode === "address" ? "Shared at your own address: the room reopens by itself when this app restarts." : "Shared through a quick tunnel: the address changes if this app restarts."} Teammates choose <i>Join a team</i> in decompdecomp, or run <code>decomp join &lt;link&gt; &lt;their copy&gt; --name &lt;name&gt;</code>.</p>
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
-    <div class="row"><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`;
+    <div class="row"><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
   wireCopies(box);
   const manage = async (payload) => {
     try { await api("/api/collab/manage", { method: "POST", body: { slug: S.slug, ...payload } }); renderHost(box, await api(`/api/collab?slug=${S.slug}`)); }
@@ -537,7 +508,7 @@ function openReconnect() {
     try {
       const { job } = await api("/api/collab/reconnect", { method: "POST", body: { slug: S.slug, link: $("rLink").value.trim() } });
       await followJob(job, $("rLog"));
-      $("dialog").hidden = true;
+      closeDialog();
       toast("Back in the room.", "match");
     } catch (e) { toast(esc(e.message), "err"); $("rGo").disabled = false; }
   };
@@ -565,7 +536,7 @@ function openJoin() {
       // the file streams from disk as it's sent: a disc image is never read into the page whole
       const { job } = await api(`/api/collab/join?${q}`, { method: "POST", raw: path ? new Blob([]) : file });
       const res = await followJob(job, $("jLog"));
-      $("dialog").hidden = true;
+      closeDialog();
       loadNav();
       location.hash = `#/p/${res.slug}`;
     } catch (e) { toast(esc(e.message), "err"); $("jGo").disabled = false; }
@@ -630,7 +601,7 @@ function openForkDialog(p) {
     try {
       const { job } = await api("/api/fork", { method: "POST", body: { repo: p.repo_url, name: p.name, platform: p.platform, version: p.version } });
       const r = await followJob(job, $("forkLog"));
-      $("dialog").hidden = true;
+      closeDialog();
       await loadState();
       loadNav();
       location.hash = `#/p/${r.slug}`;

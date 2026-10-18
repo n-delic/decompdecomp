@@ -19,12 +19,15 @@
       <svg viewBox="0 -0.7 8.2 6.4" aria-hidden="true"><path d="M2 0h1v5H0V1h2zM1 2v2h1V2z"/><rect class="hl" x="3.35" y="-0.7" width="4.85" height="6.4"/><path class="on-hl" d="M6 0h1v5H4V1h2zM5 2v2h1V2z"/></svg>
       <span>decomp<b>decomp</b></span>
     </a>
+    <span class="grow"></span>
+    <button class="ghost icon sm notif-btn" type="button" data-notif aria-controls="notifPanel" aria-expanded="false" aria-label="Notifications" title="Notifications: what happened in all your projects"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5v2.7L2 11.2v1.3h12v-1.3l-1.5-2.5V6A4.5 4.5 0 0 0 8 1.5ZM6.1 13.5a1.9 1.9 0 0 0 3.8 0z"/></svg><span class="notif-count" hidden></span></button>
     <button class="ghost icon nav-close" id="navClose" type="button" aria-label="Close menu">✕</button>
   </div>
   <div class="pop-wrap nav-new-wrap">
     <button class="nav-new" id="navNew" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="newMenu"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/></svg>New project</button>
     <div class="new-menu" id="newMenu" role="menu" aria-label="Start a project" hidden>
       <button role="menuitem" type="button" data-new="file"><b>Open a game file</b><span>a ROM, disc image or program you own</span></button>
+      <button role="menuitem" type="button" data-new="restore"><b>Open a saved project</b><span>your progress, saved on another computer</span></button>
       <button role="menuitem" type="button" data-new="fork"><b>Continue a community decomp</b><span>by its repository address</span></button>
       <button role="menuitem" type="button" data-new="join"><b>Join a team's room</b><span>with an invite link</span></button>
       <button role="menuitem" type="button" data-new="demo"><b>Try the demo</b><span>Demo Quest 64, in a minute</span></button>
@@ -38,6 +41,7 @@
     <a class="nav-item" href="#/agents" data-route="agents"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a3 3 0 0 1 3 3V6h.5A1.5 1.5 0 0 1 13 7.5v5a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 12.5v-5A1.5 1.5 0 0 1 4.5 6H5V4.5a3 3 0 0 1 3-3ZM6.25 9.25a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm3.5 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2ZM8 3a1.5 1.5 0 0 0-1.5 1.5V6h3V4.5A1.5 1.5 0 0 0 8 3Z"/></svg>Agents &amp; models<span class="nav-badge" id="navAgentsBadge" hidden></span></a>
     <a class="nav-item" href="#/tools" data-route="tools"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 1.6a3.9 3.9 0 0 0-3.9 5.2L1.9 11.6a1.5 1.5 0 0 0 2.1 2.1l4.8-4.8a3.9 3.9 0 0 0 5.2-3.9l-2.2 2.2-2.1-.6-.6-2.1 2.2-2.2c-.3 0-.5-.7-.7-.7Z"/></svg>Compilers &amp; tools</a>
     <a class="nav-item" href="#/settings" data-route="settings"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.9 1h2.2l.4 1.9 1.3.6 1.7-1 1.5 1.5-1 1.7.6 1.3L15 6.9v2.2l-1.9.4-.6 1.3 1 1.7-1.5 1.5-1.7-1-1.3.6L9.1 15H6.9l-.4-1.9-1.3-.6-1.7 1-1.5-1.5 1-1.7-.6-1.3L1 9.1V6.9l1.9-.4.6-1.3-1-1.7 1.5-1.5 1.7 1 1.3-.6L6.9 1ZM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>Settings</a>
+    <a class="nav-item" id="reportLink" href="https://github.com/n-delic/decompdecomp/issues/new" target="_blank" rel="noopener" title="Opens a new issue on GitHub in your browser, and copies a report to paste into it"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5h1.5v13H3zM5.5 2.25h7.25L11.1 5.5l1.65 3.25H5.5z"/></svg>Report a problem</a>
     <div class="nav-meta">
       <span class="muted small" id="navVersion"></span>
       <button class="nav-update" id="navUpdate" type="button" hidden title="A new decompdecomp is ready">Update</button>
@@ -53,6 +57,8 @@
 <header class="mbar">
   <button class="ghost icon" id="navOpen" type="button" aria-label="Menu"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12v1.5H2zm0 3.25h12v1.5H2zM2 10.5h12V12H2z"/></svg></button>
   <a class="brand" href="#/"><svg viewBox="0 -0.7 8.2 6.4" aria-hidden="true"><path d="M2 0h1v5H0V1h2zM1 2v2h1V2z"/><rect class="hl" x="3.35" y="-0.7" width="4.85" height="6.4"/><path class="on-hl" d="M6 0h1v5H4V1h2zM5 2v2h1V2z"/></svg><span>decomp<b>decomp</b></span></a>
+  <span class="grow"></span>
+  <button class="ghost icon notif-btn" type="button" data-notif aria-controls="notifPanel" aria-expanded="false" aria-label="Notifications" title="Notifications"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a4.5 4.5 0 0 0-4.5 4.5v2.7L2 11.2v1.3h12v-1.3l-1.5-2.5V6A4.5 4.5 0 0 0 8 1.5ZM6.1 13.5a1.9 1.9 0 0 0 3.8 0z"/></svg><span class="notif-count" hidden></span></button>
 </header>
 
 <!-- ================================================================ new project -->
@@ -161,12 +167,13 @@
         <div class="ph-name"><h1 id="phTitle"></h1><button class="ghost icon sm ph-rename" id="phRename" type="button" aria-label="Rename this project" title="Rename"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M11.3 1.9a1.6 1.6 0 0 1 2.3 0l.5.5a1.6 1.6 0 0 1 0 2.3L5.5 13.3 2 14l.7-3.5 8.6-8.6Zm-.6 2.4-6.6 6.6-.3 1.3 1.3-.3 6.6-6.6-1-1Z"/></svg></button></div>
       </div>
       <div class="ph-actions">
-        <button class="pill-btn" id="phWorking" type="button" hidden><span class="dot on"></span><span id="phWorkingText"></span></button>
-        <button class="pill-btn room" id="phRoom" type="button" hidden></button>
-        <button class="ghost together" id="phTogether" type="button" hidden title="Decompile this game together with friends who own it"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm5.5 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4ZM1 13c0-2.4 2-4 4.5-4S10 10.6 10 13v1H1v-1Zm10.5 1v-1c0-1.3-.4-2.4-1.1-3.3.2 0 .4-.1.6-.1 2.2 0 4 1.3 4 3.4v1h-3.5Z"/></svg><span>Decompile together</span></button>
+        <button class="pill-btn" id="phWorking" type="button" hidden title="See what your agents do"><span class="dot on"></span><span id="phWorkingText"></span></button>
+        <button class="pill-btn room" id="phRoom" type="button" hidden title="Who's in the room, the invite link"></button>
+        <button class="ghost together" id="phTogether" type="button" hidden title="Friends who own this game work on it with you, each from their own computer"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 7a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm5.5 0a2 2 0 1 1 0-4 2 2 0 0 1 0 4ZM1 13c0-2.4 2-4 4.5-4S10 10.6 10 13v1H1v-1Zm10.5 1v-1c0-1.3-.4-2.4-1.1-3.3.2 0 .4-.1.6-.1 2.2 0 4 1.3 4 3.4v1h-3.5Z"/></svg><span>Decompile together</span></button>
+        <button class="ghost" id="phExport" type="button" title="Write the source code that rebuilds your game: the base for ports and mods"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 1.5h1.5v6.7l2.2-2.2 1.06 1.06L8 11.06 3.99 7.06 5.05 6l2.2 2.2zM2.5 10h1.5v2.5h8V10h1.5v4h-11z"/></svg><span>Export</span></button>
         <div class="pop-wrap">
-          <button class="primary" id="phStart" type="button"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg><span id="phStartText">Start agents</span></button>
-          <div class="popover" id="launchPop" hidden><div id="launchPopBody"></div></div>
+          <button class="primary" id="phStart" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="launchPop"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z"/></svg><span id="phStartText">Start agents</span></button>
+          <div class="popover" id="launchPop" role="dialog" aria-label="Start agents" hidden><div id="launchPopBody"></div></div>
         </div>
         <button class="ghost icon" id="phFolder" type="button" aria-label="Open the project folder" title="Open the project folder"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3.4l1.5 1.5H13A1.5 1.5 0 0 1 14.5 5v7.5A1.5 1.5 0 0 1 13 14H3a1.5 1.5 0 0 1-1.5-1.5v-9Z"/></svg></button>
       </div>
@@ -176,34 +183,31 @@
       <span class="ph-pct"><b id="phPct">0</b>% of code</span>
       <span class="muted small" id="phSub"></span>
     </div>
-    <nav class="ptabs" id="ptabs" role="tablist" aria-label="Project">
-      <a role="tab" data-ptab="overview">Overview</a>
-      <a role="tab" data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
-      <a role="tab" data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
-      <a role="tab" data-ptab="activity">Activity</a>
-      <a role="tab" data-ptab="team">Team <span class="count" id="teamTabCount"></span></a>
-      <a role="tab" data-ptab="source">Source</a>
-      <a role="tab" data-ptab="settings">Settings</a>
+    <nav class="ptabs" id="ptabs" aria-label="This project">
+      <a data-ptab="overview">Overview</a>
+      <a data-ptab="functions">Functions <span class="count" id="fnTabCount"></span></a>
+      <a data-ptab="agents">Agents <span class="count" id="agTabCount"></span></a>
+      <a data-ptab="settings">Settings</a>
     </nav>
   </header>
 
   <div class="notice" id="compilerNotice" hidden></div>
   <section class="fork-setup" id="forkSetup" hidden></section>
 
-  <!-- overview -->
+  <!-- overview: the map first, then the numbers, then what to do next -->
   <section class="ptab" data-pane="overview">
     <section class="panel map-panel">
       <header class="panel-head">
         <h2 id="mapTitle">ROM map</h2>
         <div class="map-tools">
-          <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" data-view="progress" class="on">Progress</button><button type="button" data-view="compiler">Compiler</button></div>
+          <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" role="radio" aria-checked="true" data-view="progress" class="on">Progress</button><button type="button" role="radio" aria-checked="false" data-view="compiler">Compiler</button></div>
           <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span></div>
         </div>
       </header>
       <p class="muted small map-hint" id="mapHint">every square is a function, in ROM order</p>
       <p class="muted small map-hint" id="mapCompilerNote" hidden></p>
       <div class="map-wrap" id="mapWrap">
-        <canvas id="map" aria-label="Function map"></canvas>
+        <canvas id="map" aria-label="Function map: every square is a function. The Functions view lists the same functions for the keyboard."></canvas>
         <div class="tip" id="tip" hidden></div>
       </div>
       <div class="now" id="now"></div>
@@ -237,6 +241,7 @@
 
     <div class="status-row">
       <div class="next" id="nextStep" hidden></div>
+      <div class="answer-line" id="compilerLine" hidden></div>
       <div class="autopilot" id="autopilot" hidden>
         <span class="ap-icon" aria-hidden="true"></span>
         <div class="ap-text"><b id="apTitle"></b><span class="muted small" id="apSub"></span><div class="upbar" id="apBar" hidden><i></i></div></div>
@@ -262,9 +267,11 @@
       <input id="fnSearch" class="search" type="search" placeholder="Find a function, address or file  ( / )" aria-label="Find a function" autocomplete="off" spellcheck="false">
       <div class="seg" id="fnFilter" role="radiogroup" aria-label="Show"></div>
     </div>
+    <p class="muted small list-hint" id="starHint">★ a function and agents take it before the others.</p>
     <div class="fn-table-wrap">
       <table class="fn-table">
         <thead><tr>
+          <th class="star-col" id="thStar" title="Agents take starred functions first"><span class="sr">Do first</span>★</th>
           <th data-sort="vram" id="thAddr">Address</th><th data-sort="name">Function</th><th data-sort="insns" class="r">Instructions</th>
           <th data-sort="best" class="r">Best</th><th data-sort="attempts" class="r">Tries</th><th data-sort="status">Status</th>
         </tr></thead>
@@ -274,102 +281,88 @@
     <div class="list-foot"><span class="muted small" id="fnShown"></span><button class="ghost small-btn" id="fnMore" type="button" hidden>Show more</button></div>
   </section>
 
-  <!-- agents -->
+  <!-- agents: who works here and what happens, side by side; what they're told below -->
   <section class="ptab" data-pane="agents">
-    <div class="agents-grid">
-      <div class="stack-col">
-        <section class="panel">
-          <header class="panel-head"><h2>Start agents</h2><span class="muted small">They work in parallel; each takes a different function</span></header>
-          <div class="launcher" id="launcher"></div>
-        </section>
-        <section class="panel">
-          <header class="panel-head"><h2>Your agents on this project <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
-          <div id="sessions" class="sessions"></div>
-          <p class="empty muted small" id="noSessions">No agent works on this project yet. Start one above: it picks functions by itself, and starts again by itself if it stops.</p>
-        </section>
-        <section class="panel feed-panel" id="helperLog" hidden>
-          <header class="panel-head"><h2 id="helperLogTitle">What it did</h2><button class="ghost small-btn" id="helperLogClose" type="button">Close</button></header>
-          <ol class="feed thoughts" id="thoughts"></ol>
-        </section>
-      </div>
-      <div class="stack-col">
-        <section class="panel">
-          <header class="panel-head"><h2>Instructions for agents</h2><span class="muted small" id="instrState"></span></header>
-          <div class="pad">
-            <p class="muted small">Every agent on this project gets these with its task: what to focus on, what you know about the game, conventions, things to leave alone.</p>
-            <textarea id="instrEdit" rows="6" placeholder="Focus on the game's own code first; leave zlib for later.&#10;The struct at 0x8004AE34 is the player (hp at +0x20).&#10;Name functions in snake_case."></textarea>
-            <div class="row"><button class="primary small-btn" id="instrSave" type="button">Save instructions</button></div>
-          </div>
-        </section>
-        <section class="panel">
-          <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
-          <div class="pad">
-            <p class="muted small">Agents propose what every agent on this game should know. A proposal counts once two different AI models notice the same thing on their own, so run helpers of several models: they check each other.</p>
-            <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
-            <div id="knowList"></div>
-          </div>
-        </section>
-        <section class="panel">
-          <header class="panel-head"><h2>Next in line</h2><span class="muted small">★ functions agents take first</span></header>
-          <ol class="mini-list" id="prioList"></ol>
-        </section>
-      </div>
-    </div>
     <section class="panel suggest-panel" id="suggestPanel" hidden>
-      <header class="panel-head"><h2>Suggestions from agents</h2><span class="muted small">changes they can't make themselves</span></header>
+      <header class="panel-head"><h2>Waiting for you</h2><span class="muted small">what agents found and can't change themselves</span></header>
       <div class="pad" id="suggestList"></div>
     </section>
-  </section>
-
-  <!-- activity -->
-  <section class="ptab" data-pane="activity">
-    <section class="panel feed-panel">
-      <header class="panel-head"><h2>Activity</h2><span class="muted small">what happens to the game's functions (what each agent says: Agents)</span><span class="muted small" id="feedHint"></span></header>
-      <ol class="feed" id="activity"></ol>
-    </section>
-  </section>
-
-  <!-- team -->
-  <section class="ptab" data-pane="team">
-    <section class="panel"><div class="pad" id="teamBox"></div></section>
-  </section>
-
-  <!-- source -->
-  <section class="ptab" data-pane="source">
-    <section class="panel">
-      <header class="panel-head"><h2>Source code</h2><span class="muted small" id="srcWhen"></span></header>
-      <div class="pad">
-        <p id="srcText"></p>
-        <div class="src-state" id="srcState"></div>
-        <div class="row"><button class="primary" id="srcExport" type="button">Export project</button><button class="ghost" id="srcOpen" type="button">Open folder</button></div>
-        <pre class="joblog tall" id="expLog" hidden></pre>
-        <div id="expResult"></div>
-      </div>
-    </section>
+    <div class="agents-grid">
+      <section class="panel">
+        <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
+        <div id="sessions" class="sessions"></div>
+        <div class="empty" id="noSessions"><p class="muted small">No agent works on this game yet. Press <b>Start agents</b> at the top: each agent picks functions by itself, and starts again by itself if it stops.</p></div>
+      </section>
+      <section class="panel feed-panel">
+        <header class="panel-head"><h2 id="feedTitle" tabindex="-1">What's happening</h2><span class="muted small" id="feedHint">every agent's work on this game, newest first</span><button class="ghost small-btn" id="helperLogClose" type="button" hidden>Back to everything</button></header>
+        <ol class="feed" id="activity" aria-live="off"></ol>
+        <ol class="feed thoughts" id="thoughts" hidden></ol>
+      </section>
+    </div>
+    <div class="cols">
+      <section class="panel">
+        <header class="panel-head"><h2>Instructions for agents</h2><span class="muted small" id="instrState"></span></header>
+        <div class="pad">
+          <p class="muted small">Every agent on this game gets these with its task: what to focus on, what you know about the game, conventions, things to leave alone.</p>
+          <textarea id="instrEdit" rows="6" aria-label="Instructions for agents" placeholder="Focus on the game's own code first; leave zlib for later.&#10;The struct at 0x8004AE34 is the player (hp at +0x20).&#10;Name functions in snake_case."></textarea>
+          <div class="row"><button class="primary small-btn" id="instrSave" type="button">Save instructions</button></div>
+        </div>
+      </section>
+      <section class="panel">
+        <header class="panel-head"><h2>What agents learned</h2><span class="muted small" id="knowState"></span></header>
+        <div class="pad">
+          <p class="muted small">Agents propose what every agent on this game should know. A proposal counts once two different AI models notice the same thing on their own, so run helpers of several models: they check each other.</p>
+          <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
+          <div id="knowList"></div>
+        </div>
+      </section>
+    </div>
   </section>
 
   <!-- settings -->
   <section class="ptab" data-pane="settings">
     <div class="cols">
-      <section class="panel" id="compilerPanel">
-        <header class="panel-head"><h2>Compiler</h2></header>
+      <section class="panel" id="compilerPanel" aria-labelledby="compilerH">
+        <header class="panel-head"><h2 id="compilerH">Compiler</h2><span class="muted small" id="compilerState"></span></header>
         <div class="pad">
-          <p class="muted small">Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.</p>
-          <label class="field"><span>Compiler</span><select id="setTc"></select></label>
-          <label class="field"><span>Flags</span><input id="setFlags" class="mono"></label>
-          <label class="field"><span>Only for these address ranges (optional: parts of the game built with another compiler)</span><input id="setRanges" class="mono" placeholder="0x10BFD0-0x10CD40, 0x1106C0-0x1107C0"></label>
-          <div class="row"><button class="primary small-btn" id="setTcSave" type="button">Save</button><button class="ghost small-btn" id="setTcReset" type="button">Default flags</button></div>
-          <label class="check"><input type="checkbox" id="autoAdjust"><span><b>Auto-adjust the compiler for this game</b>: agents' compiler suggestions apply by themselves once proven (a function's C matches with them; a range also needs a neighbouring function to confirm it) or three agents agree. Otherwise they wait for you on the Agents tab.</span></label>
-          <div id="rangeList"></div>
+          <p class="answer" id="compilerAnswer"></p>
+          <div id="compilerParts"></div>
+          <div id="compilerWaiting"></div>
+          <label class="check"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
+          <details class="more" id="compilerHow">
+            <summary>How the app checks</summary>
+            <div class="more-body" id="compilerEvidence"></div>
+          </details>
+          <details class="more">
+            <summary>Change the compiler yourself</summary>
+            <div class="more-body">
+              <p class="muted small">Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.</p>
+              <label class="field"><span>Compiler</span><select id="setTc"></select></label>
+              <label class="field"><span>Flags</span><input id="setFlags" class="mono"></label>
+              <label class="field"><span>Only for these address ranges (optional: parts of the game built with another compiler)</span><input id="setRanges" class="mono" placeholder="0x10BFD0-0x10CD40, 0x1106C0-0x1107C0"></label>
+              <div class="row"><button class="primary small-btn" id="setTcSave" type="button">Save</button><button class="ghost small-btn" id="setTcReset" type="button">Default flags</button></div>
+            </div>
+          </details>
         </div>
       </section>
-      <section class="panel">
-        <header class="panel-head"><h2>About this project</h2></header>
-        <div class="pad">
-          <dl class="facts one" id="projFacts"></dl>
-          <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
-        </div>
-      </section>
+      <div class="stack-col">
+        <section class="panel">
+          <header class="panel-head"><h2>About this project</h2></header>
+          <div class="pad">
+            <dl class="facts one" id="projFacts"></dl>
+            <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
+          </div>
+        </section>
+        <section class="panel" id="savePanel">
+          <header class="panel-head"><h2>Save your progress</h2><span class="muted small" id="saveState"></span></header>
+          <div class="pad">
+            <p class="muted small">decompdecomp saves your work on this game by itself every few minutes, as plain files in the project's <code>progress</code> folder: matched C, notes, names, compiler ranges and settings, never the game itself. Copy that folder (or push it to git) and open it on another computer with <b>New project → Open a saved project</b>.</p>
+            <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"></label>
+            <div class="row"><button class="ghost small-btn" id="saveGo" type="button">Save now</button></div>
+            <pre class="joblog" id="saveLog" hidden></pre>
+          </div>
+        </section>
+      </div>
     </div>
     <section class="panel danger-zone">
       <header class="panel-head"><h2>Remove project</h2></header>
@@ -477,7 +470,12 @@
   </div>
 </div>
 
-<div class="toasts" id="toasts" aria-live="polite"></div>
+<!-- the notification centre: what happened in every project, newest first -->
+<section class="notif-panel" id="notifPanel" role="dialog" aria-labelledby="notifTitle" hidden>
+  <header class="notif-head"><h2 id="notifTitle">What happened</h2><span class="muted small">in all your projects</span><span class="grow"></span><button class="ghost icon sm" id="notifClose" type="button" aria-label="Close notifications">✕</button></header>
+  <ol class="notif-list" id="notifList"></ol>
+</section>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 <script src="/assets/js/base.js"></script>
 <script src="/assets/js/sidebar.js"></script>
 <script src="/assets/js/home.js"></script>

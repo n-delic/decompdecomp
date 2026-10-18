@@ -27,7 +27,7 @@ async function showHome() {
     const meta = p.kind === "fork"
       ? `${p.origin === "scratch" ? "from scratch" : "public decomp"}${p.version ? " · " + esc(p.version) : ""}${p.ready ? "" : " · needs setup"}`
       : `${esc(p.rom?.game_code || "")}${p.rom?.region ? " · " + esc(p.rom.region) : ""} · ${esc(p.compiler?.name || "")}`;
-    a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="meta">${esc(since(p.last_activity))}</span></div>
+    a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
       <div><h4>${esc(p.title)}</h4><p class="meta">${meta}</p></div>
       <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${(p.functions || 0).toLocaleString()} functions</p>`;
     box.append(a);
@@ -284,11 +284,8 @@ function importFailed(name, e, logText) {
   $("errMsg").textContent = e.message;
   $("errLog").textContent = [log, job.trace].filter(Boolean).join("\n\n") || "(nothing was logged)";
   $("errCopy").onclick = async () => {
-    const st = S.st || {};
-    const report = [`decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || navigator.platform}`,
-      `Importing: ${name}`, `Error: ${e.message}`, "", "Log:", "```", log.split("\n").slice(-80).join("\n"), job.trace || "", "```"].join("\n");
-    try { await navigator.clipboard.writeText(report); toast("Copied: paste it into a GitHub issue"); }
-    catch { toast("Couldn't reach the clipboard: select the text under What happened instead", "err"); }
+    if (await copyText(bugReport([`Importing: ${name}`, `Error: ${e.message}`], [log, job.trace].filter(Boolean).join("\n")))) toast("Copied: paste it into a GitHub issue");
+    else toast("Couldn't reach the clipboard: select the text under What happened instead", "err");
   };
 }
 $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
@@ -323,9 +320,35 @@ $("pathPick").onclick = (e) => {
   body.querySelector("#ppGo").onclick = () => {
     const path = $("ppPath").value.trim();
     if (!path) return;
-    $("dialog").hidden = true;
+    closeDialog();
     runImport(`confirmed=1&path=${encodeURIComponent(path)}`, undefined, "Analysing your game…");
   };
 };
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");
+
+/* Open a saved project (app/saves.py): a save folder, or the git repository it was pushed to, and the user's own copy
+   of the game (never in the save). Like an import, it runs in the background and opens the project when it's done. */
+function openRestore() {
+  const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
+    <label class="field"><span>The save: its folder, or the git address you pushed it to</span><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"></label>
+    <label class="field"><span>Your copy of the game: its path on this computer</span><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"></label>
+    <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
+    <div class="row"><button class="primary" id="rsGo" type="button" disabled>Open it</button><button class="ghost" data-close type="button">Cancel</button></div>
+    <pre class="joblog tall" id="rsLog" hidden></pre>`, "restore");
+  body.querySelector("#rsOwn").onchange = (e) => { $("rsGo").disabled = !e.target.checked; };
+  body.querySelector("#rsGo").onclick = async () => {
+    const source = $("rsSource").value.trim(), path = $("rsGame").value.trim();
+    if (!source || !path) return toast("Say where the save is and where your copy of the game is.", "err");
+    $("rsGo").disabled = true;
+    $("rsLog").hidden = false;
+    try {
+      const { job } = await api("/api/restore", { method: "POST", body: { source, path, confirmed: true } });
+      const r = await followJob(job, $("rsLog"));
+      toast(`${plural(r.matched || 0, "matched function")} back${r.lost && r.lost.length ? `; ${r.lost.length} no longer match` : ""}.`, "match");
+      closeDialog();
+      loadNav();
+      location.hash = `#/p/${r.slug}`;
+    } catch (e) { toast(esc(e.message), "err"); if ($("rsGo")) $("rsGo").disabled = false; }
+  };
+}
 

@@ -133,10 +133,43 @@ things exist twice.
 - A full redesign pass for the new structure: layout, navigation, tokens, light and dark mode, in the native
   window. It comes after the agents work (§4) and the notification centre (§3), so it's designed around how they
   really behave. More UI issues the owner finds go here.
-
 - **Report a problem**, reachable from every page: opens a new GitHub issue in the user's browser with the
   version, the platform and a short template, and copies the bug report (version, error, log) to paste in.
 - **Save and restore** (§7) and **make readable** (§10) get their buttons in the new structure.
+
+**Design (done).** The app keeps its design system ("Marked listing", site/design/DESIGN.md: the highlighter means
+"being worked on", green only "matched", Archivo and Plex Mono, light and dark). It's a tool used every day (R1
+Utility in the work views): what changed is the structure, so that every screen answers one question.
+
+- **The sidebar, on every page:** New project (open a game file, **open a saved project**, continue a community
+  decomp, join a team's room, the demo), your projects (each with its colour), Agents & models, Compilers & tools,
+  Settings, **Report a problem**, and the **notification bell** beside the logo (§3).
+- **A project has four views: Overview · Functions · Agents · Settings.**
+- **The header does the project's actions:** "N agents working" (to Agents), **Decompile together** (or the room's
+  pill once it's shared), **Export**, **Start agents** (the one place agents start from), the project folder.
+
+Where every old feature went:
+
+| Was | Now |
+| :-- | :-- |
+| Overview | Overview: the map first, the numbers, what to do next, one line for the compiler ("Built with KMC GCC 2.7.2; 1 part with another compiler. Details"), autopilot, recent matches, who matched what |
+| Functions | Functions, with a ☆ column: star a function and agents take it before the others; a "★ First" filter lists the starred ones |
+| Agents (launcher, helpers, instructions, what agents learned, suggestions) and Activity | Agents: your helpers on the left, what happens on the right ("What's happening"; a helper's "What it said and did" takes its place, "Back to everything" returns). Above them "Waiting for you" (where a function ends, agents' suggestions); below them the instructions and what agents learned |
+| Start agents on the Agents view, and on the overview's next step | the header's Start agents only; the next step's button opens it. It also asks what the helpers do: decompile, or make matched code readable (§10) |
+| Team | the header: Decompile together, or the room's pill, opens the room in a side panel (every option: tunnel or your own address, who can join, approving members, the invite link, stop sharing; a guest's view) |
+| Source | the header: Export opens the export in a side panel (a fork: rebuild and compare, measure again) |
+| Next in line (the ★ list) | ☆ in Functions and in a function's panel ("Do this first"); the "★ First" filter |
+| Settings: the Compiler panel (Survey again, Check applied ranges, suggestions, range checks, auto-adjust) | Settings → Compiler: one answer ("This game was built with KMC GCC 2.7.2. One part of it with another compiler: below"), the parts with a plain state each (checked, being checked, waiting, doubtful) and Remove, the compiler changes waiting for you (Use it / Not now), "Apply proven changes by themselves". One click in: **How the app checks** (the survey, the checks, Check again now) and **Change the compiler yourself** (compiler, flags, ranges) |
+| The compiler survey and the applied ranges' checks, run by hand | run by the app: `/api/compilermap` starts the survey when the game uses more than one compiler and the last one is an hour old, and looks at each applied part that hasn't been looked at |
+| The map's compiler note with its buttons | the colours and one sentence, with a link to the answer |
+| Settings: About this project, Remove project | the same; and **Save your progress** (§7: it saves itself every few minutes; save now, or to a folder you pick) |
+| Per-project toasts (matches, autopilot, links, paused helpers) | the notification centre (§3) |
+
+Accessibility: the views are links (`aria-current`), every function named on a page is a button, the side panels
+take the keyboard and give it back where it was, Escape closes the top one, focus is the tokens' focus colour (olive
+ink on paper, the highlighter on dark), text that used the border colour now uses the tertiary text colour (AA), and
+toasts are paper with an ink hairline in both themes (an error's white text on the dark theme's light red was
+unreadable). Checked by driving a throwaway copy in headless Chromium, every view in light and dark, and at 820 px.
 
 ## 3. One notification centre for the whole app
 
@@ -149,6 +182,23 @@ when you open it. To confirm in the rewrite.
 **Goal.** One app-wide feed. Each entry shows the project (colour-coded), the agent and what happened ("Ridge
 Racer V · gemini-3.8-flash-2 matched func_0012A0"). Bursts collapse into one line ("+12 more matches"). Opening a
 project never replays anything.
+
+**Done.**
+- `/api/events?after=N`: what happened after event N in every project, notable kinds only (matches, links, the
+  autopilot, the compiler, reopened functions, what agents agree on, rooms, imports, **paused and stopped helpers**:
+  the manager records those now). A range of the events' primary key, however long the history. Without `after` it
+  only says where the feed is: the window starts there, so what happened before is never news.
+  `/api/events?recent=1`: the latest, for the panel.
+- The window asks every 2 seconds, whichever page is open. News of one kind from one project within 30 seconds is
+  one line that counts up ("+12 more matches"); a burst's toast updates in place, at most three toasts show, a
+  paused helper's line is red. Each line: the project's colour and name, the time, the agent and what happened; a
+  function's name opens it.
+- The bell (sidebar, and the narrow window's bar) shows how many new lines wait; its panel lists the history, newest
+  first, bursts collapsed, "Which ones" for a burst's functions.
+- Each project has a colour (six, in the order the projects were made, ordered so neighbours differ most, never the
+  highlighter's yellow or the green of "matched"), the same in the sidebar and in every notification, always next to
+  the name.
+- A project's own poll toasts nothing: it redraws the project and flashes its fresh matches on the map.
 
 ## 4. Agents, redone
 

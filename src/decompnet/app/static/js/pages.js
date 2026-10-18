@@ -208,5 +208,6 @@ $("quitBtn").onclick = async () => {
 
 loadNav();
 route();
+pollEvents();  // where the notification centre's feed starts: nothing from before is news
 setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
