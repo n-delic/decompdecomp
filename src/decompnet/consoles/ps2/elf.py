@@ -7,55 +7,71 @@ import hashlib
 import re
 import struct
 
+from ...arch.mips import JR_RA, OPCODE_SHIFT, RA, REGISTER_BITS, RS_SHIFT, RT_SHIFT, SD, SP, SPECIAL, SQ
 from ...rom import RomError
 from .disc import region_of
 
+# ELF32's header and tables (little-endian on the PS2)
 EM_MIPS = 8
+ELF_HEADER_BYTES = 0x34
+MACHINE_AT, PHOFF_AT, SHOFF_AT, PHENTSIZE_AT, SHENTSIZE_AT = 18, 28, 32, 42, 46  # where the header keeps them
+SECTION_HEADER_BYTES = 40
+SHT_NOBITS = 8  # a section with no bytes in the file (.bss)
+PT_LOAD, PF_X = 1, 1  # a program header loaded into memory; its flag for executable
+SHIFT_AND_FUNCT = 0x7FF  # a SPECIAL instruction's shift amount (zero for a move) and its function
+DADDU_MOVE = 0x2D  # daddu with no shift: `daddu rd, rs, $zero` is how EE-GCC 2.95+ moves a register
+# how code_style's numbers tell compilers apart (see guess_compiler)
+STYLE_MIN_RETURNS = 20  # fewer returns than this is too little code to judge by
+CODEWARRIOR_NOPS = 0.6  # share of returns with a nop in the delay slot: CodeWarrior 94%, GCC 9-19%
+CODEWARRIOR_3_MOVES = 1  # daddu moves per return: CodeWarrior 3 moves with daddu, 2.x without
+SN_SQ_SAVES = 0.5  # share of $ra saves made with sq: SN's EE-GCC 2.95.2
 # What a compiler leaves in a program when its notes survive linking: (pattern in .comment, compiler guess)
 _GCC = [(rb"GCC: \(GNU\) 2\.9-", "EEGCC-2.9"), (rb"GCC: \(GNU\) 2\.95\.2", "EEGCC-2.95.2"),
         (rb"GCC: \(GNU\) 2\.95\.3", "EEGCC-2.95.3"), (rb"GCC: \(GNU\) 3\.", "EEGCC-3.2")]
 
 
 def is_mips_elf(data: bytes) -> bool:
-    return len(data) > 0x34 and data[:4] == b"\x7fELF" and data[5] == 1 and struct.unpack_from("<H", data, 18)[0] == EM_MIPS
+    return (len(data) > ELF_HEADER_BYTES and data[:4] == b"\x7fELF" and data[5] == 1  # 32-bit
+            and struct.unpack_from("<H", data, MACHINE_AT)[0] == EM_MIPS)
 
 
 def _sections(data: bytes) -> dict[str, bytes]:
     """Section name -> contents, from the section headers (a stripped program usually still has them)."""
-    shoff, = struct.unpack_from("<I", data, 32)
-    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 46)
-    if not shoff or shentsize != 40 or not shnum or shoff + 40 * shnum > len(data) or shstrndx >= shnum:
+    shoff, = struct.unpack_from("<I", data, SHOFF_AT)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, SHENTSIZE_AT)
+    if (not shoff or shentsize != SECTION_HEADER_BYTES or not shnum
+            or shoff + SECTION_HEADER_BYTES * shnum > len(data) or shstrndx >= shnum):
         return {}
-    heads = [struct.unpack_from("<IIIIII", data, shoff + 40 * i) for i in range(shnum)]
+    heads = [struct.unpack_from("<IIIIII", data, shoff + SECTION_HEADER_BYTES * i) for i in range(shnum)]
     names = data[heads[shstrndx][4]:heads[shstrndx][4] + heads[shstrndx][5]]
     out = {}
     for name, kind, _, _, offset, size in heads:
         label = names[name:names.find(b"\0", name)].decode("latin-1")
-        out[label] = b"" if kind == 8 else data[offset:offset + size]  # 8: SHT_NOBITS
+        out[label] = b"" if kind == SHT_NOBITS else data[offset:offset + size]
     return out
 
 
 def code_style(data: bytes) -> tuple[int, float, float, float]:
     """(returns, share of returns with a nop in the delay slot, `daddu rd, rs, $zero` moves per return, share of
     $ra saves made with sq) over the program's executable code."""
-    phoff, = struct.unpack_from("<I", data, 28)
-    phentsize, phnum = struct.unpack_from("<HH", data, 42)
+    phoff, = struct.unpack_from("<I", data, PHOFF_AT)
+    phentsize, phnum = struct.unpack_from("<HH", data, PHENTSIZE_AT)
     returns = nops = moves = sd = sq = 0
     for i in range(phnum):
         kind, off, _, _, size, _, flags, _ = struct.unpack_from("<8I", data, phoff + phentsize * i)
-        if kind != 1 or not flags & 1:  # loaded and executable
+        if kind != PT_LOAD or not flags & PF_X:
             continue
         words = struct.unpack_from(f"<{min(size, len(data) - off) // 4}I", data, off)
         for k, w in enumerate(words):
-            op, rs, rt = w >> 26, (w >> 21) & 31, (w >> 16) & 31
-            if w == 0x03E00008 and k + 1 < len(words):  # jr $ra
+            op, rs, rt = w >> OPCODE_SHIFT, (w >> RS_SHIFT) & REGISTER_BITS, (w >> RT_SHIFT) & REGISTER_BITS
+            if w == JR_RA and k + 1 < len(words):
                 returns += 1
                 nops += words[k + 1] == 0
-            elif op == 0 and w & 0x7FF == 0x2D and rt == 0 and rs:
+            elif op == SPECIAL and w & SHIFT_AND_FUNCT == DADDU_MOVE and rt == 0 and rs:
                 moves += 1
-            elif rs == 29 and rt == 31:
-                sd += op == 0x3F
-                sq += op == 0x1F
+            elif rs == SP and rt == RA:  # $ra saved to the stack
+                sd += op == SD
+                sq += op == SQ
     return returns, nops / (returns or 1), moves / (returns or 1), sq / ((sd + sq) or 1)
 
 
@@ -69,10 +85,10 @@ def guess_compiler(data: bytes) -> str:
     comment = sections.get(".comment", b"")
     gcc = next((guess for pattern, guess in _GCC if re.search(pattern, comment)), None)
     returns, nops, moves, sq = code_style(data)
-    if returns >= 20:
-        if nops > 0.6:
-            return "MWCPS2-3" if moves > 1 else "MWCPS2-2"
-        return gcc or ("EEGCC-2.95.2" if sq > 0.5 else "EEGCC")
+    if returns >= STYLE_MIN_RETURNS:
+        if nops > CODEWARRIOR_NOPS:
+            return "MWCPS2-3" if moves > CODEWARRIOR_3_MOVES else "MWCPS2-2"
+        return gcc or ("EEGCC-2.95.2" if sq > SN_SQ_SAVES else "EEGCC")
     if ".mwcats" in sections or b"MW MIPS C Compiler" in comment:
         return "MWCPS2-2" if re.search(rb"MW MIPS C Compiler \(2\.", comment) else "MWCPS2-3"
     return gcc or "EEGCC"

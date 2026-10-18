@@ -18,13 +18,52 @@ import struct
 
 import capstone
 
+# an instruction word's fields: opcode (6 bits), rs, rt, rd (5 bits each), then SPECIAL's function (6 bits)
+OPCODE_SHIFT, RS_SHIFT, RT_SHIFT, RD_SHIFT = 26, 21, 16, 11
+REGISTER_BITS, FUNCT_BITS = 0x1F, 0x3F
+IMMEDIATE_BITS, IMMEDIATE_SIGN = 0xFFFF, 0x8000  # the 16-bit immediate of loads, stores, addiu, branches
+JUMP_TARGET_BITS = 0x03FFFFFF  # j/jal: the target's word address, inside the 256 MB region the jump is in
+REGION_BITS = 0xF0000000  # what a j/jal keeps of the address it's at
+UPPER_SHIFT, ADDRESS_BITS = 16, 0xFFFFFFFF  # lui sets an address's upper half; addresses are 32-bit
+
+R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16, R_MIPS_GOT16 = 4, 5, 6, 7, 21
 RELOC_MASKS = {  # relocation type -> (byte offset from r_offset, length, big-endian bitmask to clear)
-    4: (0, 4, 0x03FFFFFF),  # R_MIPS_26
-    5: (0, 4, 0x0000FFFF),  # R_MIPS_HI16
-    6: (0, 4, 0x0000FFFF),  # R_MIPS_LO16
-    7: (0, 4, 0x0000FFFF),  # R_MIPS_GPREL16
-    21: (0, 4, 0x0000FFFF),  # R_MIPS_GOT16 (IDO -KPIC)
+    R_MIPS_26: (0, 4, JUMP_TARGET_BITS),
+    R_MIPS_HI16: (0, 4, IMMEDIATE_BITS),
+    R_MIPS_LO16: (0, 4, IMMEDIATE_BITS),
+    R_MIPS_GPREL16: (0, 4, IMMEDIATE_BITS),
+    R_MIPS_GOT16: (0, 4, IMMEDIATE_BITS),  # IDO -KPIC
 }
+
+# opcodes (the word's top six bits)
+SPECIAL, REGIMM, J, JAL, BEQ, COP1 = 0x00, 0x01, 0x02, 0x03, 0x04, 0x11
+ADDIU, ORI, LUI, DADDIU, SW, SD, SQ = 0x09, 0x0D, 0x0F, 0x19, 0x2B, 0x3F, 0x1F
+GPR_STORES = (SW, SD, SQ)  # a register saved whole (to the stack: sq on the EE)
+# SPECIAL's functions
+JR, JALR, SYSCALL, DADDU = 0x08, 0x09, 0x0C, 0x2D
+MOVES = (0x21, 0x25, DADDU)  # addu, or, daddu: with $zero, a move
+BRANCHES = {BEQ, 0x05, 0x06, 0x07, 0x14, 0x15, 0x16, 0x17}  # beq, bne, blez, bgtz and their "likely" forms
+REGIMM_BRANCHES = {0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13}  # bltz, bgez, bltzl, bgezl, and the -al forms
+BGEZ, BGEZAL = 0x01, 0x11  # REGIMM's rt: with $zero, an unconditional branch (b, bal)
+BC1 = 0x08  # COP1's rs for bc1f/bc1t
+# registers
+ZERO, V0, SP, RA = 0, 2, 29, 31
+
+
+def fields(word: int) -> tuple[int, int, int, int, int]:
+    """An instruction word's (opcode, rs, rt, rd, function)."""
+    return (word >> OPCODE_SHIFT, (word >> RS_SHIFT) & REGISTER_BITS, (word >> RT_SHIFT) & REGISTER_BITS,
+            (word >> RD_SHIFT) & REGISTER_BITS, word & FUNCT_BITS)
+
+
+def signed_immediate(word: int) -> int:
+    """The 16-bit immediate, sign-extended (a load's offset, addiu's addend, a branch's distance in words)."""
+    return ((word & IMMEDIATE_BITS) ^ IMMEDIATE_SIGN) - IMMEDIATE_SIGN
+
+
+def jump_target(word: int, at: int) -> int:
+    """Where a j or jal at address `at` goes: its 26 bits, in the region of the address it's at."""
+    return ((word & JUMP_TARGET_BITS) << 2) | (at & REGION_BITS)
 # MIPS64 decoding also covers MIPS I/II; N64 (MIPS III) and PS2 (R5900) code uses 64-bit instructions.
 CAPSTONE = {True: (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 | capstone.CS_MODE_BIG_ENDIAN),
             False: (capstone.CS_ARCH_MIPS, capstone.CS_MODE_MIPS64 | capstone.CS_MODE_LITTLE_ENDIAN)}
@@ -45,7 +84,7 @@ def is_frame(word: int) -> bool:
 
 def jal_targets(words: tuple[int, ...], region: int) -> list[int]:
     """Where the calls (jal) among `words` go, for code that runs in `region` (a jal keeps its top four bits)."""
-    return [((w & 0x03FFFFFF) << 2) | (region & 0xF0000000) for w in words if (w >> 26) == 3]
+    return [jump_target(w, region) for w in words if w >> OPCODE_SHIFT == JAL]
 
 
 def place(rom: bytes, lo: int, hi: int, floor: int, calls: list[int], known: list[tuple[int, int]],
@@ -95,26 +134,25 @@ _MIPS_STORE = set(range(0x28, 0x2F)) | {0x3F, 0x2C, 0x2D, 0x1F}  # sb..swr, sd, 
 
 def _mips_transfer(w: int) -> bool:
     """An unconditional transfer a function can end with: jr/jalr, j/jal, b (beq zero, zero), bal."""
-    op = w >> 26
-    if op == 0:
-        return (w & 0x3F) in (8, 9)
-    if op in (2, 3):
+    op, rs, rt, _, funct = fields(w)
+    if op == SPECIAL:
+        return funct in (JR, JALR)
+    if op in (J, JAL):
         return True
-    if op == 4 and (w >> 21) & 31 == 0 and (w >> 16) & 31 == 0:
+    if op == BEQ and rs == ZERO and rt == ZERO:
         return True
-    return op == 1 and (w >> 21) & 31 == 0 and (w >> 16) & 31 in (1, 17)  # bgez/bgezal zero
+    return op == REGIMM and rs == ZERO and rt in (BGEZ, BGEZAL)
 
 
 def _mips_branch(w: int) -> bool:
-    op = w >> 26
-    return _mips_transfer(w) or op in (1, 4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17) or (op in (0x11, 0x12) and (w >> 21) & 31 == 8)
+    op, rs = w >> OPCODE_SHIFT, (w >> RS_SHIFT) & REGISTER_BITS
+    return _mips_transfer(w) or op == REGIMM or op in BRANCHES or (op in (COP1, COP2) and rs == BC1)
 
 
 def _mips_uses(w: int) -> tuple[set[int], set[int]] | None:
     """(general registers read, written) by one MIPS instruction, None when not known (no verdict)."""
-    op, rs, rt, rd = w >> 26, (w >> 21) & 31, (w >> 16) & 31, (w >> 11) & 31
-    if op == 0:
-        f = w & 0x3F
+    op, rs, rt, rd, f = fields(w)
+    if op == SPECIAL:
         if f in (0, 2, 3):  # sll, srl, sra (sll zero = nop)
             return ({rt}, {rd})
         if f in (4, 6, 7, 0x14, 0x16, 0x17):  # sllv, srlv, srav, dsllv...
@@ -168,8 +206,8 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     if not words:
         return None
     for w in words:
-        op = w >> 26
-        if op == 0 and w & 0x3F == 0x0C:  # not break (0x0D): GCC emits that for its own divide-by-zero checks
+        op = w >> OPCODE_SHIFT
+        if op == SPECIAL and w & FUNCT_BITS == SYSCALL:  # not break (0x0D): GCC emits that for its own divide-by-zero checks
             return ("makes a system call (syscall): a kernel entry stub, written in assembly; C has no way to emit "
                     "it (the PS2's libkernl stubs: addiu v1, n; syscall; jr ra)")
         if op == COP0:
@@ -218,9 +256,9 @@ def gp_from_entry(image: bytes, entry: int, segments: list) -> int:
         ins = rabbitizer.Instruction(word, entry + i)
         name = ins.getOpcodeName()
         if name == "lui" and ins.rt.value == GP:
-            hi = (word & 0xFFFF) << 16
+            hi = (word & IMMEDIATE_BITS) << UPPER_SHIFT
         elif hi is not None and name in ("addiu", "daddiu") and ins.rt.value == GP and ins.rs.value == GP:
-            return (hi + ((word & 0xFFFF) ^ 0x8000) - 0x8000) & 0xFFFFFFFF
+            return (hi + signed_immediate(word)) & ADDRESS_BITS
         elif hi is not None and name == "ori" and ins.rt.value == GP and ins.rs.value == GP:
-            return hi | (word & 0xFFFF)
+            return hi | (word & IMMEDIATE_BITS)
     return 0

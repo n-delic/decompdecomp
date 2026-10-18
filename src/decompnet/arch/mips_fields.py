@@ -19,25 +19,46 @@ import struct
 from collections.abc import Callable
 
 from ..structs import ARGUMENT, CALL, FIELD, GLOBAL, RETURNED, Facts
+from .mips import (
+    ADDIU,
+    BC1,
+    BRANCHES,
+    COP1,
+    DADDIU,
+    GPR_STORES,
+    JAL,
+    JALR,
+    JR,
+    LUI,
+    MOVES,
+    ORI,
+    R_MIPS_26,
+    R_MIPS_GPREL16,
+    R_MIPS_LO16,
+    RA,
+    REGIMM,
+    REGIMM_BRANCHES,
+    SP,
+    SPECIAL,
+    SW,
+    V0,
+    ZERO,
+    J,
+    fields,
+    jump_target,
+    signed_immediate,
+)
 
-R_MIPS_26, R_MIPS_LO16, R_MIPS_GPREL16 = 4, 6, 7
-ZERO, V0, SP, RA = 0, 2, 29, 31
 ARGUMENT_REGISTERS = (4, 5, 6, 7)  # a0-a3 (the PS2's EABI has t0-t3 too: rarely a struct's pointer)
 CALLER_SAVED = set(range(1, 16)) | {24, 25, 31}  # at, v0-v1, a0-a3, t0-t7, t8-t9, ra
-SPECIAL, REGIMM, J, JAL, COP1 = 0, 1, 2, 3, 0x11
-ADDIU, ORI, LUI, DADDIU = 0x09, 0x0D, 0x0F, 0x19
-JR, JALR = 0x08, 0x09  # SPECIAL functions
-MOVES = (0x21, 0x25, 0x2D)  # addu, or, daddu: with $zero, a move
-BRANCHES = {4, 5, 6, 7, 0x14, 0x15, 0x16, 0x17}  # beq, bne, blez, bgtz and their "likely" forms
-REGIMM_BRANCHES = {0, 1, 2, 3, 0x10, 0x11, 0x12, 0x13}  # bltz, bgez, bltzl, bgezl, and the -al forms
-BC1 = 8  # COP1's rs for bc1f/bc1t
+ADDI, DADDI = 0x08, 0x18  # with addiu and daddiu, the immediate arithmetic opcodes write rt
+TRAPS = 0x30  # SPECIAL's functions from here on (tge, tlt, ...) write no register
 # loads: opcode -> (bytes, kind); the stores' kind "" doesn't say signed or unsigned
 LOADS = {0x20: (1, "s8"), 0x24: (1, "u8"), 0x21: (2, "s16"), 0x25: (2, "u16"), 0x23: (4, "s32"), 0x27: (4, "u32"),
          0x37: (8, "u64"), 0x1E: (16, "u128"), 0x31: (4, "f32"), 0x35: (8, "f64"), 0x36: (16, "vu128")}
 STORES = {0x28: (1, ""), 0x29: (2, ""), 0x2B: (4, ""), 0x3F: (8, ""), 0x1F: (16, ""), 0x39: (4, "f32"),
           0x3D: (8, "f64"), 0x3E: (16, "vu128")}
 WORD_LOADS = (0x23, 0x27)  # lw, lwu: what a pointer is loaded with (pointers are 32-bit on both consoles)
-GPR_STORES = (0x2B, 0x3F, 0x1F)  # sw, sd, sq: a register saved whole to the stack
 GPR_LOADS = {0x20, 0x21, 0x23, 0x24, 0x25, 0x27, 0x37, 0x1E, 0x1A, 0x1B, 0x22, 0x26}
 FPU_TO_GPR = (0, 1, 2)  # COP1's rs for mfc1, dmfc1, cfc1: they write a general register
 NO_DESTINATION = {JR, 0x0C, 0x0D, 0x0F, 0x11, 0x13, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F}  # jr, syscall,
@@ -47,12 +68,12 @@ MMI = 0x1C  # the EE's multimedia instructions: they write rd
 
 def _destination(word: int) -> int | None:
     """The general register an instruction writes, if any."""
-    op, rs, rt, rd, funct = word >> 26, (word >> 21) & 31, (word >> 16) & 31, (word >> 11) & 31, word & 63
+    op, rs, rt, rd, funct = fields(word)
     if op == SPECIAL:
-        return None if funct in NO_DESTINATION or funct >= 0x30 else rd
+        return None if funct in NO_DESTINATION or funct >= TRAPS else rd
     if op == MMI:
         return rd
-    if 8 <= op <= LUI or op in (0x18, DADDIU) or op in GPR_LOADS:
+    if ADDI <= op <= LUI or op in (DADDI, DADDIU) or op in GPR_LOADS:
         return rt
     if op == COP1 and rs in FPU_TO_GPR:
         return rt
@@ -61,24 +82,19 @@ def _destination(word: int) -> int | None:
     return None
 
 
-def _signed(word: int) -> int:
-    imm = word & 0xFFFF
-    return imm - 0x10000 if imm & 0x8000 else imm
-
-
 def _branch(word: int) -> bool:
     """A conditional branch (with a 16-bit offset): REGIMM's bltz, bgez and their kin, not its traps."""
-    op = word >> 26
+    op, rs, rt, _, _ = fields(word)
     if op == REGIMM:
-        return (word >> 16) & 31 in REGIMM_BRANCHES
-    return op in BRANCHES or (op == COP1 and (word >> 21) & 31 == BC1)
+        return rt in REGIMM_BRANCHES
+    return op in BRANCHES or (op == COP1 and rs == BC1)
 
 
 def _loops(words: tuple[int, ...]) -> list[tuple[int, int]]:
     """(first, last) instruction of every backward branch's loop."""
     out = []
     for k, w in enumerate(words):
-        if _branch(w) and (target := k + 1 + _signed(w)) <= k:
+        if _branch(w) and (target := k + 1 + signed_immediate(w)) <= k:
             out.append((target, k))
     return out
 
@@ -102,7 +118,8 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
     callee = None
     end = vram + len(code)
     for k, w in enumerate(words):
-        op, rs, rt, imm = w >> 26, (w >> 21) & 31, (w >> 16) & 31, _signed(w)
+        op, rs, rt, _, funct = fields(w)
+        imm = signed_immediate(w)
         rtype, addr = at_word.get(k, (None, 0))
         global_ref = rtype in (R_MIPS_LO16, R_MIPS_GPREL16)
         value = None
@@ -116,7 +133,7 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
                 place = (term, delta + imm)
             if place is not None:
                 out.accesses.append((place[0], place[1], size, kind))
-                if op == 0x2B and rt in regs and regs[rt][1] == 0:  # sw of a pointer: the field's type is its own
+                if op == SW and rt in regs and regs[rt][1] == 0:  # sw of a pointer: the field's type is its own
                     out.stores.append((place[0], place[1], regs[rt][0]))
                 if op in WORD_LOADS:
                     value = ((FIELD, place[0], place[1]), 0)
@@ -135,7 +152,7 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
             value = (term, delta + imm)
             if rt == rs and any(first <= k <= last for first, last in loops):
                 out.walked.add(term)
-        elif op == SPECIAL and (w & 63) in MOVES and ZERO in (rs, rt):
+        elif op == SPECIAL and funct in MOVES and ZERO in (rs, rt):
             value = regs.get(rt if rs == ZERO else rs)
         target = _destination(w)
         if target and target != ZERO:
@@ -162,15 +179,15 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
             due = None
         # a transfer's effects come after its delay slot
         if op == JAL:
-            callee = addr if rtype == R_MIPS_26 else ((w & 0x3FFFFFF) << 2) | (vram & 0xF0000000)
+            callee = addr if rtype == R_MIPS_26 else jump_target(w, vram)
             due = (k + 1, k, "call")
         elif op == J:
-            there = addr if rtype == R_MIPS_26 else ((w & 0x3FFFFFF) << 2) | (vram & 0xF0000000)
+            there = addr if rtype == R_MIPS_26 else jump_target(w, vram)
             if not vram <= there < end:  # a jump out of the function: a tail call
                 callee = there
                 due = (k + 1, k, "tail")
-        elif op == SPECIAL and (w & 63) == JR and rs == RA:
+        elif op == SPECIAL and funct == JR and rs == RA:
             due = (k + 1, k, "return")
-        elif op == SPECIAL and (w & 63) == JALR:
+        elif op == SPECIAL and funct == JALR:
             due = (k + 1, k, "indirect")
     return out
