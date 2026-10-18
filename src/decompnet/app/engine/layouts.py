@@ -1,7 +1,7 @@
 """Struct layouts guessed from a game's code (structs.py), for agents: the guess_struct tool, the brief's lines about
 a function's pointer arguments (briefs.py calls `_struct_brief`), and declarations a draft's context can use.
 
-Where the game's own debug information gives a function's prototype (§12), its real types are shown instead of a
+Where the game's own debug information gives a function's prototype (consoles/ps2/debuginfo.py), its real types are shown instead of a
 guess, and where matched code already gave the type a name, agents are told to use that one.
 """
 
@@ -142,7 +142,7 @@ class LayoutMixin:
         return lines
 
     def _debug_type(self, fn, key, path, what, proj) -> str | None:
-        """What the game's own debug information (§12) says the argument is, when it says: the real type, so no
+        """What the game's own debug information says the argument is, when it says: the real type, so no
         guess is needed."""
         debug = json.loads(fn["meta"] or "{}").get("debug") if "meta" in fn.keys() else None
         if not debug or not debug.get("prototype") or key[0] != structs.ARGUMENT or path:

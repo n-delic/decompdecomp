@@ -1,5 +1,5 @@
-"""One notification centre for the whole app (REWRITE.md §3): the feed of every project's news, helpers that pause
-in it, and the compiler as one answer that checks itself (§2)."""
+"""One notification centre for the whole app: the feed of every project's news, helpers that pause in it, and the
+compiler as one answer that checks itself."""
 
 from starlette.testclient import TestClient
 

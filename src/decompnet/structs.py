@@ -1,4 +1,4 @@
-"""Struct layouts, guessed from the loads and stores a game's code makes through pointers (§9.3).
+"""Struct layouts, guessed from the loads and stores a game's code makes through pointers.
 
 On GTA San Andreas, functions that make virtual calls matched 7% of the time against 62% for the rest: agents
 guessed the layouts of the structs they work on, and every wrong offset is a failed compile. The code already says
@@ -23,8 +23,8 @@ How the guess is made:
 - each field's confidence is how many functions access it with that width and kind, and how many disagree.
 
 It is a guess agents start from: they put what they confirm into the shared header with edit_context, and the
-judge decides every match byte for byte. Where the game's own debug information gives the real type (§12), that
-is shown instead.
+judge decides every match byte for byte. Where the game's own debug information gives the real type (a PS2 game's
+STABS), that is shown instead.
 """
 
 from __future__ import annotations

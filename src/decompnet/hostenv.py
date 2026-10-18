@@ -2,7 +2,7 @@
 manager, and opening a web page (a link in the app) in the user's own browser.
 
 decompdecomp runs on Linux only. Windows (through WSL 2) and Docker were supported until 1.0.2 and removed in the
-rewrite: nobody tested them, and most of their code served the agent bridge that went with it (docs/REWRITE.md §1).
+rewrite: nobody tested them, and most of their code served the agent bridge that went with it.
 """
 
 from __future__ import annotations
