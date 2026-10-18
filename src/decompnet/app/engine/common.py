@@ -56,6 +56,7 @@ MW_VERSIONS = {
 # Tools shown in Setup besides the compilers.
 TOOLS = {
     "m2c": "machine-made first drafts (MIPS, PowerPC, ARM)",
+    "decomp-permuter": "rewrites near misses thousands of ways in the background, so more of them match",
     "objdiff-cli": "judges forks of public decomps, function by function",
     "ghidra": "drafts for PC, Switch and other platforms m2c can't read (540 MB, needs Java 21+)",
     "mwcc": "CodeWarrior, the compilers of GameCube and Wii games (proprietary)",

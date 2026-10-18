@@ -277,6 +277,19 @@ description = "Machine decompiler for MIPS and PowerPC. Produces the starting po
 git = "https://github.com/matt-kempster/m2c"
 commit = "708d2d2cb2698f091a92492b328f73b24209f72d"
 
+[decomp-permuter]
+name = "decomp-permuter"
+kind = "tool"
+license = "MIT"
+source = "simonlindholm/decomp-permuter @ 8556c81d (2026-10-06)"
+description = "Rewrites a near miss's C thousands of ways on its parse tree (statement order, temporaries, casts, branches); the judge keeps what matches."
+# a folder of scripts, not a package: unpacked as it is, with an environment of its own for the one library it needs
+pip_extra = ["toml==0.10.2"]
+[[decomp-permuter.parts]]
+url = "https://github.com/simonlindholm/decomp-permuter/archive/8556c81d80d1c1af98a858c8f4dc951357f29139.tar.gz"
+sha256 = "57cfb45141a2f97ce27e74c1882aab162ff203c2f4688b4617fc2ec3a6ca9907"
+subdir = "decomp-permuter-8556c81d80d1c1af98a858c8f4dc951357f29139"
+
 [cloudflared]
 name = "cloudflared"
 kind = "tool"

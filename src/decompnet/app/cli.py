@@ -231,7 +231,7 @@ def setup(args) -> int:
     print(f"Setting up decompdecomp tools for {plat}")
     if why := toolchains.unsupported_cpu():
         print(f"  ! {why}: the games can be imported and looked at here, not matched")
-    for tid in ("gcc-2.7.2-kmc", "m2c", "objdiff-cli"):
+    for tid in ("gcc-2.7.2-kmc", "m2c", "decomp-permuter", "objdiff-cli"):
         tc = toolchains.get(tid)
         if not tc.supported:
             print(f"  - {tc.name}: no build for {plat} (projects that need it can't be matched here yet)")
