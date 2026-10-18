@@ -1,30 +1,23 @@
 "use strict";
-// The platform picker (one pipeline at a time, and the line to tell your agent, carried into Start), the system
-// switch for the install command, and copy buttons. Without JavaScript every pipeline and both commands show.
+// The platform picker (one pipeline at a time) and the copy button. Without JavaScript every pipeline shows.
 (() => {
   document.documentElement.classList.add("js");
   document.querySelectorAll(".js-only").forEach((el) => { el.hidden = false; });
 
   const answer = document.getElementById("answer");
-  const prompt = (file) => `decompile my game at ~/games/${file}`;
   const show = (value) => {
-    let file = "game.z64";
     document.querySelectorAll(".pipeline").forEach((p) => {
       const on = p.dataset.platform === value;
       p.classList.toggle("on", on);
       if (on) {
-        file = p.dataset.file;
         const built = p.querySelectorAll(".stations b")[2].textContent;
         answer.textContent = `${p.querySelector(".pl-name").textContent}: ${p.querySelector(".status").textContent}. Built by ${built}.`;
       }
     });
-    document.getElementById("prompt").textContent = prompt(file);
-    document.getElementById("prompt-end").textContent = prompt(file);
   };
   const picker = document.querySelector(".platforms");
   picker.addEventListener("change", (e) => show(e.target.value));
   show(picker.querySelector("input:checked").value);
-
 
   // the clipboard can be missing or refused (older browsers, privacy settings): then the text is selected for Ctrl+C
   const said = (b, text) => { b.textContent = text; setTimeout(() => { b.textContent = "Copy"; }, 1600); };

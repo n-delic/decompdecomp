@@ -27,7 +27,7 @@
 | We are | We are not | Visual consequence |
 |---|---|---|
 | Proven | Magical | the real bytes of a real function are the image; scores are shown; no "AI-powered", no sparkles |
-| Yours | Hosted | "your" in every claim; the actions are the install command and the line you tell your agent |
+| Yours | Hosted | "your" in every claim; the action is the install command |
 | Hands-on | Corporate | a printed listing: mono bytes, a highlighter stroke, square-ish corners, ink buttons, no gradients |
 
 **Direction: "Marked listing"** — Swiss poster discipline (one dominant flush-left block, an asymmetric grid) × the
@@ -69,13 +69,12 @@ overlapping type (the heading over the bytes); entrance choreography (the highli
 once); one sticky sequence: none. Scroll-linked animation: none (not needed for the job).
 
 **Signature interaction:** pick the platform your game is for → the pipeline redraws (the file it takes → what
-splits it → the compiler that judges it → how a match is proven → what you get, plus the status: recommended or beta)
-and the exact sentence to tell your agent appears → that sentence is carried into the install section as the prompt
-to copy. Declared as `data-nsd-interaction="platform-pipeline"`. Without JavaScript: all seven pipelines listed as
+splits it → the compiler that judges it → how a match is proven → what you get, plus the status: recommended or beta).
+Declared as `data-nsd-interaction="platform-pipeline"`. Without JavaScript: every pipeline listed as
 static rows (a `<details>` per platform, N64 open).
 Result form: diagram — because the answer is "what happens to my file", a chain of named tools.
 Placed: section 2 of 5, reached from the first viewport by "Will it work on my game?". The page ends on: the install
-command with the prompt the visitor chose, and the GitHub link.
+command and the GitHub link.
 
 **Proposals to confirm:** none — everything stated is in the README and guide.
 
@@ -155,6 +154,6 @@ R2 on the home screen. What carries over from the site:
 
 Review: `slop_lint.py app.css index.html` C → B. What remains is chosen: the spinners are real loading
 indicators, and the label/value tables are the data of a tool used daily (`density: tight` is native to Operate).
-Checked by rendering every main screen in light and dark (home, overview, functions, agents, activity, source,
-project settings, agents & models, compilers & tools, settings, public decomps). The ROM map's colours are now
+Checked by rendering every main screen in light and dark (home, overview, functions, agents, project settings,
+agents & models, compilers & tools, settings, the export, Decompile together). The ROM map's colours are now
 read through a canvas, so it draws any CSS colour the tokens use (it read OKLCH as RGB and drew blue).
