@@ -5,13 +5,16 @@ and test which compiler built it.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import time
 from pathlib import Path
 
 from ... import scoring, seeds, toolchains
-from ...consoles.ps2 import syscalls
+from ...consoles.ps2 import debuginfo, syscalls
 from ...network import NetworkError
 from ...rom import detect, match, split
+from ...rom.n64 import RomError
 from ...rom.symbols import Symbol, SymbolTable
 from .common import (
     BASE_HEADER,
@@ -23,6 +26,15 @@ from .common import (
     _preview,
     _slugify,
 )
+
+# what the first header defines already: the game's typedefs of these names are left out (consoles/ps2/cheader.py)
+_HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", BASE_HEADER) for name in pair if name}
+DEBUG_TYPES_NOTE = """
+/* The game's own types, from the debug information it shipped with: each field is at the offset the game has it
+ * (the comments say where). Use these names; don't declare them again. */
+"""
+DEBUG_TYPES_FILE = "debug_types.h"
+HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
 
 
 class ImportMixin:
@@ -57,7 +69,20 @@ class ImportMixin:
         if picked.overlays:
             log(f"{len(picked.overlays)} overlay{'s' if len(picked.overlays) != 1 else ''} on the disc: "
                 + ", ".join(f"{o[0]} at 0x{o[2]:08X}" for o in picked.overlays[:6]) + (", ..." if len(picked.overlays) > 6 else ""))
-        res = split.split_rom(workdir, picked.filename, log=log, overlays=picked.overlays)
+        # PS2: a program that kept its symbols names its functions, and its debug sections give their types (#3)
+        debug = debuginfo.read(rom, _HEADER_NAMES) if picked.platform == "ps2" else None
+        if debug is not None:
+            log(debug.summary())
+        try:
+            res = split.split_rom(workdir, picked.filename, log=log, overlays=picked.overlays,
+                                  symbols=debug.symbol_addrs() if debug is not None and debug.named else None)
+        except RomError:
+            if debug is None or not debug.named:
+                raise
+            # the game's own names are a help, never the reason an import fails: split as if it had none
+            log("splat refused the game's own names: splitting without them")
+            shutil.rmtree(workdir / "asm", ignore_errors=True)
+            res = split.split_rom(workdir, picked.filename, log=log, overlays=picked.overlays)
         if res.image and res.image != picked.filename:  # splat works on a flat image made from the program
             rom = (workdir / res.image).read_bytes()
 
@@ -77,6 +102,8 @@ class ImportMixin:
                       "confirmed_at": time.time()},
             "context": {"file": None},
         }
+        header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if res.gp else "")
+        header += self._debug_types(debug, cfg, workdir, log)
         symbols = SymbolTable()
         for name, addr in res.named.items():
             symbols.add(Symbol(name, addr, 0, "func"), reindex=False)
@@ -106,24 +133,46 @@ class ImportMixin:
                               "mips", int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
             for fn in res.functions:
                 target = match.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
+                known = debug.functions.get(fn.vram) if debug is not None else None
+                unit = debug.units.get(fn.vram, fn.segment) if debug is not None else fn.segment  # its source file
                 db.execute(
-                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,meta) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (pid, fn.name, fn.size, len(fn.lines), target.code, json.dumps(target.to_json()),
-                     self._asm_source(fn), None, fn.segment, fn.vram, fn.rom))
+                     self._asm_source(fn), None, unit, fn.vram, fn.rom, json.dumps({"debug": known}) if known else None))
             for s in symbols.by_name.values():
                 preview = next((r[4] for r in data_rows if r[0] == s.name), None)
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
                            (pid, s.name, s.address, s.size, s.kind, preview))
             db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
-                       "VALUES(?,?,?,?,?,?,?)", (pid, 1, BASE_HEADER.format(title=info["title"]) + (GP_NOTE if res.gp else ""),
-                                                  None, "basic types", now, ""))
+                       "VALUES(?,?,?,?,?,?,?)", (pid, 1, header, None, "basic types" + (
+                           " and the game's own, from its debug information" if DEBUG_TYPES_NOTE in header else ""), now, ""))
             self._event(db, pid, None, "import", f"{len(res.functions)} functions from {info['title']}")
         if test_compilers and not flags:
             self.test_compilers(slug, log=log)
         self.name_kernel_calls(slug, log=log)
         log(f"ready: {len(res.functions)} functions to decompile")
         return slug
+
+    def _debug_types(self, debug, cfg: dict, workdir: Path, log) -> str:
+        """The game's own types from its debug information (consoles/ps2/debuginfo.py), for the first header, once
+        the project's compiler accepts them: a header that doesn't compile would fail every attempt. Types it refuses
+        stay in the project folder (debug_types.h) instead."""
+        if debug is None or not debug.header:
+            return ""
+        from ...compiler import compile_source
+        from ...project import compiler_config
+
+        types = DEBUG_TYPES_NOTE + debug.header
+        toolchain = cfg["compiler"]["toolchain"]
+        if toolchains.installed(toolchain) is not None:
+            base = BASE_HEADER.format(title="") + (GP_NOTE if cfg.get("gp") else "")
+            if not compile_source(compiler_config(workdir, cfg), base + types, HEADER_CHECK).ok:
+                (workdir / DEBUG_TYPES_FILE).write_text(debug.header, encoding="utf-8")
+                log(f"the game's types don't compile with {SHORT_NAMES.get(toolchain, toolchain)}: they're in "
+                    f"{DEBUG_TYPES_FILE} in the project folder, not in the shared header")
+                return ""
+        return types
 
     def name_kernel_calls(self, slug: str, log=print) -> int:
         """PS2: the kernel's call stubs get their names (consoles/ps2/syscalls.py), once per project: at import, and

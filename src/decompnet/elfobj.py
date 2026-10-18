@@ -294,8 +294,9 @@ def unmangle(data: bytes, known) -> bytes:
     """A compiled object with its C++ names turned back into the game's own, so a function written as a class's
     method (`void CPed::func_00123456(int)`) is judged as, and calls, the game's func_00123456: GCC 2.9x's
     `func_00123456__4CPedi`, GCC 3's `_ZN4CPed13func_00123456Ei`. `known(name)` says whether a name is one of the
-    game's. The new name is shorter, so it's written over the old one in the string table."""
-    if b"__" not in data and b"_Z" not in data:
+    game's. The new name is shorter, so it's written over the old one in the string table. GCC 2.9x's special names
+    (_$_4CPed, a destructor; _vt$4CPed, a vtable) are the game's with _ for $ (consoles/ps2/symtab.py), as long."""
+    if b"__" not in data and b"_Z" not in data and b"$" not in data:
         return data
     elf = ELFFile(BytesIO(data))
     symtab = elf.get_section_by_name(".symtab")
@@ -309,7 +310,9 @@ def unmangle(data: bytes, known) -> bytes:
             continue
         new = None
         m = _GCC2_MANGLED.match(name)
-        if m and known(m.group(1)):
+        if "$" in name and known(name.replace("$", "_")):
+            new = name.replace("$", "_")
+        elif m and known(m.group(1)):
             new = m.group(1)
         elif name.startswith("_Z"):  # <length><identifier>... (the Itanium C++ ABI)
             i = 2

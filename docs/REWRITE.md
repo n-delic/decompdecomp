@@ -465,6 +465,14 @@ func_..., every size is guessed by splat.
    each function's brief. This is what agents guess worst today (§9.3).
 3. Tested on the homemade PS2 demo built with `-g`, never on a real game in the repository.
 
+**Done** (`consoles/ps2/`: `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py`; the demo's
+`build.py --debug`; `tests/test_ps2_debug.py`): names and sizes from the symbol table; from STABS the source files
+as units, prototypes and where parameters and locals live in the brief, every type and global in the first header
+(checked with the project's compiler first). DWARF (CodeWarrior's `.debug`, later GCCs' `.debug_info`) is
+recognised and named in the import log, not read yet. Still open: C++ methods in the header (classes are structs of
+their data), callees' prototypes in the brief, and a header too big to read whole on a game with thousands of types
+(the brief could carry only the types a function uses).
+
 ## 13. A stranger's test, at the very end
 
 When everything above is done, an agent uses the app the way a new user would, without reading its source: installs
