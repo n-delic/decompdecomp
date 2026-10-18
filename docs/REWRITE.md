@@ -73,6 +73,9 @@ server, helpers, tools. Nothing starts it but the user.
 - Window: a native window (pywebview), not a browser. The UI stays HTML, served only to that window.
 - Quit means quit: stop helpers (their whole process group), jobs, and the server.
 - Remove the `--service` mode (`app/service.py`) and the browser fallback.
+- **Packages: .deb, .rpm and AppImage.** The .rpm is built from the same tree as the .deb (`packaging/linux/build.sh`,
+  release.yml), installs to `/opt/decompdecomp` and depends on Fedora's names for the window's packages
+  (`python3-gobject`, `webkit2gtk4.1`); the .deb on Debian's (`python3-gi`, `gir1.2-webkit2-4.1`).
 
 ### `decomp` is the app, and a development copy never touches the release
 
