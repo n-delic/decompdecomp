@@ -1111,12 +1111,14 @@ class Manager:
         """It can't work until the user does something: it stops trying, says why and what to do."""
         self._set(s, "paused", why, None, todo)
         s.push("error", f"paused: {why}" + (f" {todo}" if todo else ""))
+        self.net.record_event(s.slug, "paused", why, s.agent_name)  # the notification centre tells the user
 
     def _finish(self, s: Session, why: str) -> None:
         """It stopped by itself: nothing to do here any more."""
         s.stopped_by = BY_ITSELF
         self._set(s, "stopped", why)
         s.push("info", f"stopping: {why}")
+        self.net.record_event(s.slug, "stopped", why, s.agent_name)
 
     def _room_away(self, s: Session) -> bool:
         """In a room whose host is away (or that hasn't let us in yet): wait, don't fail."""
