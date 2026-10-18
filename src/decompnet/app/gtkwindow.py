@@ -48,6 +48,7 @@ class AppWindow:
         self.view.connect("decide-policy", self.on_policy)
         self.window.add(self.view)
         self.window.connect("delete-event", self.on_close_request)
+        self.window.connect("key-press-event", self.on_key)
         self.window.connect("destroy", lambda _w: Gtk.main_quit())
         channel = GLib.IOChannel.unix_new(sys.stdin.fileno())
         GLib.io_add_watch(channel, GLib.PRIORITY_DEFAULT, GLib.IOCondition.IN | GLib.IOCondition.HUP, self.on_command)
@@ -65,6 +66,14 @@ class AppWindow:
         if uri.startswith(("http://", "https://")):
             Gio.AppInfo.launch_default_for_uri(uri, None)
         return True
+
+    def on_key(self, _window, event):
+        """F5 or Ctrl+R reloads the page, as in a browser (the window has no toolbar to do it with)."""
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        if event.keyval == Gdk.KEY_F5 or (ctrl and event.keyval in (Gdk.KEY_r, Gdk.KEY_R)):
+            self.view.reload()
+            return True
+        return False
 
     def on_close_request(self, _window, _event):
         if self.closing:

@@ -281,12 +281,8 @@
     <div class="list-foot"><span class="muted small" id="fnShown"></span><button class="ghost small-btn" id="fnMore" type="button" hidden>Show more</button></div>
   </section>
 
-  <!-- agents: who works here and what happens, side by side; what they're told below -->
+  <!-- agents: who works here and what happens, side by side; what they're told below; what waits for you last -->
   <section class="ptab" data-pane="agents">
-    <section class="panel suggest-panel" id="suggestPanel" hidden>
-      <header class="panel-head"><h2>Waiting for you</h2><span class="muted small">what agents found and can't change themselves</span></header>
-      <div class="pad" id="suggestList"></div>
-    </section>
     <div class="agents-grid">
       <section class="panel">
         <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
@@ -318,6 +314,10 @@
         </div>
       </section>
     </div>
+    <section class="panel suggest-panel" id="suggestPanel" hidden>
+      <header class="panel-head"><h2>Waiting for you</h2><span class="muted small">what agents found and can't change themselves</span></header>
+      <div class="pad" id="suggestList"></div>
+    </section>
   </section>
 
   <!-- settings -->

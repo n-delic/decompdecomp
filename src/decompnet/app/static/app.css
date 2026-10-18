@@ -897,9 +897,13 @@ details.more[open] > summary::before { content: "− "; }
 .star-btn.on { color: var(--work); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* agents: helpers on the left, what happens on the right (or one helper's own log), what they're told below */
-.ptab[data-pane="agents"] .agents-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
-.ptab[data-pane="agents"] .suggest-panel { margin: 0 0 16px; }
+/* agents: two rows of two equal columns (helpers | what happens, instructions | what they learned), each row's
+   panels as tall as each other; the feed scrolls inside its panel; what waits for the user last, full width */
+.ptab[data-pane="agents"] .agents-grid, .ptab[data-pane="agents"] .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+.ptab[data-pane="agents"] .agents-grid > .panel { display: flex; flex-direction: column; height: var(--agents-row); }
+.ptab[data-pane="agents"] .agents-grid .sessions, .ptab[data-pane="agents"] .feed { flex: 1; min-height: 0; overflow-y: auto; }
+.ptab[data-pane="agents"] { --agents-row: 560px; }
+.ptab[data-pane="agents"] .suggest-panel { margin: 16px 0 0; }
 .feed-panel .panel-head h2:focus { outline: none; }
 .empty { padding: 18px 16px; }
 .job:focus-visible { outline-offset: 1px; }
