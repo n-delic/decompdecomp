@@ -93,7 +93,7 @@ async function showSettingsPage() {
     <label class="check"><input type="checkbox" id="autopilotSet" ${st.settings.autopilot !== false ? "checked" : ""}><span><b>Autopilot after each import</b>: try every function's machine draft first, so free matches cost no agent time.</span></label>`;
   const theme = savedTheme();
   $("setComputer").innerHTML = `
-    <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${[["", "System"], ["light", "Light"], ["dark", "Dark"]].map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+    <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
     <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>`;
   const inst = st.install || {};
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
@@ -200,11 +200,24 @@ async function showUpdating() {
 }
 $("navUpdate").onclick = () => (updateInfo && updateInfo.available ? offerUpdate() : checkUpdate(true, true));
 
-$("quitBtn").onclick = async () => {
-  if (!confirm("Quit decompdecomp? Running agents stop.")) return;
-  await api("/api/quit", { method: "POST" }).catch(() => {});
-  document.body.innerHTML = `<main class="view"><p class="muted">decompdecomp has stopped. You can close this tab.</p></main>`;
+$("quitBtn").onclick = () => {
+  const body = dialog("Quit decompdecomp?", `<p>Agents that are working stop, and so does everything decompdecomp started. Your work is saved.</p>
+    <div class="row"><button class="primary" id="quitGo" type="button">Quit</button><button class="ghost" data-close type="button">Cancel</button></div>`);
+  body.querySelector("#quitGo").onclick = async () => {
+    await api("/api/quit", { method: "POST" }).catch(() => {});
+    closeDialog();
+    showStopped();
+  };
 };
+
+/* The app has quit. The page stops asking it (its polls only filled the window with errors) and says what's left to
+   do; the page stays underneath, so nothing still running finds its elements gone (replacing the page did: "null
+   is not an object (evaluating 'width')"). */
+function showStopped() {
+  const newest = setTimeout(() => {}, 0);
+  for (let id = 0; id <= newest; id++) { clearTimeout(id); clearInterval(id); }  // timer ids count up: this is every poll
+  document.body.insertAdjacentHTML("beforeend", `<div class="stopped" role="alert"><p><b>decompdecomp has stopped.</b> Close this window.</p></div>`);
+}
 
 loadNav();
 route();

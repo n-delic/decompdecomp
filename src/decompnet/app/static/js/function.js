@@ -93,7 +93,10 @@ async function refreshFn(first) {
     if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
     $("fnXref").innerHTML = xr.join("");
     $("fnXref").querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn.split("+")[0]); });
-    $("fnNotes").innerHTML = d.notes.length ? `<p class="col-title">Notes from agents</p>` + d.notes.map((n) => `<div class="note"><small>${esc(n.agent)} · ${clock(n.created_at)}</small>${esc(n.text)}</div>`).join("") : "";
+    // your own notes (written here, as "you") apart from the agents': they aren't notes from an agent
+    const noteRow = (n) => `<div class="note"><small>${esc(n.agent)} · ${clock(n.created_at)}</small>${esc(n.text)}</div>`;
+    const notesOf = (mine, title) => { const ns = d.notes.filter((n) => (n.agent === "you") === mine); return ns.length ? `<p class="col-title">${title}</p>` + ns.map(noteRow).join("") : ""; };
+    $("fnNotes").innerHTML = notesOf(true, "Your notes") + notesOf(false, "Notes from agents");
     const tab = S.ftab || (d.status === "matched" || !d.scores.length ? "code" : "diff");
     showFnTab(tab);
   } catch (e) {

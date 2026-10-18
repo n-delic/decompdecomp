@@ -256,6 +256,12 @@ function linkedText(ov) {
 
 function renderStats(ov) {
   renderHeader(ov);
+  // the sidebar's line for this project follows the header now, not 5 s later (they disagreed after each match)
+  const mine = (S.projects || []).find((p) => p.slug === ov.slug);
+  if (mine && (mine.matched_bytes !== ov.matched_bytes || mine.bytes !== ov.bytes)) {
+    Object.assign(mine, { matched_bytes: ov.matched_bytes, bytes: ov.bytes });
+    renderNav();
+  }
   const pct = ov.bytes ? (100 * ov.matched_bytes) / ov.bytes : 0;
   $("pct").textContent = pctNum(pct);
   $("pctSub").textContent = (ov.bytes ? `${bytes(ov.matched_bytes)} of ${bytes(ov.bytes)}` : "") + linkedText(ov) + (S.today ? ` · ${S.today} matched today` : "");

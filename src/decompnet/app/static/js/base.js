@@ -115,9 +115,24 @@ function applyTheme(t) {
 function setTheme(t) {
   try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* storage off */ }
   applyTheme(t);
+  labelThemeButton(t);
 }
-function savedTheme() { try { return localStorage.getItem(THEME_KEY) || ""; } catch { return ""; } }
-$("themeBtn").onclick = () => setTheme(getComputedStyle(document.documentElement).colorScheme.includes("dark") ? "light" : "dark");
+function savedTheme() {
+  try { const t = localStorage.getItem(THEME_KEY); return THEMES.some(([k]) => k === t) ? t : ""; } catch { return ""; }
+}
+/* The sidebar's button goes round the same three choices as Settings: it only flipped light and dark, so once
+   pressed there was no way back to the system's from it. */
+const THEMES = [["", "System"], ["light", "Light"], ["dark", "Dark"]];
+const nextTheme = (t) => THEMES[(THEMES.findIndex(([k]) => k === t) + 1) % THEMES.length][0];
+function labelThemeButton(t) {
+  const name = (k) => THEMES.find(([x]) => x === k)[1];
+  $("themeBtn").title = `Appearance: ${name(t)} (click for ${name(nextTheme(t))})`;
+  $("themeBtn").setAttribute("aria-label", $("themeBtn").title);
+}
+$("themeBtn").onclick = () => setTheme(nextTheme(savedTheme()));
+// the saved choice, before anything is drawn (applyTheme also redraws the map, which loads later)
+if (savedTheme()) document.documentElement.dataset.theme = savedTheme();
+labelThemeButton(savedTheme());
 
 /* ------------------------------------------------------------------ state + routing */
 const S = {

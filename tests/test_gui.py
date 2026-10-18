@@ -67,3 +67,8 @@ def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui
     rom_ma, fork_main, _, nothing = gui["checks"]["search"]
     assert rom_ma == ["main_loop"]
     assert fork_main == ["func_80000400", "lerp", "main_loop"] and nothing == []
+
+
+def test_the_theme_button_goes_round_system_light_and_dark(gui):
+    """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
+    assert gui["checks"]["themes"] == ["light", "dark", ""]

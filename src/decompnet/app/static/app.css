@@ -318,7 +318,7 @@ a.ghost, a.primary { text-decoration: none; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
-.sw.open { background: var(--open); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.match { background: var(--match); }
+.sw.open { background: var(--open); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.match { background: var(--match); } .sw.close { background: var(--match-hi); }
 .map-hint { padding: 12px 16px 0; }
 .map-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .map-hint .small-btn { margin: 6px 8px 0 0; }
@@ -523,7 +523,7 @@ a.ghost, a.primary { text-decoration: none; }
 .drawer-card.narrow { width: min(580px, 100vw); }
 @keyframes slide { from { transform: translateX(24px); opacity: .6; } }
 .drawer-head { flex: none; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line-soft); }
-.drawer-head h2 { font-size: 20px; letter-spacing: -.02em; margin-top: 6px; overflow-wrap: anywhere; }
+.drawer-head h2 { font-size: 20px; letter-spacing: -.02em; margin-top: 6px; overflow-wrap: break-word; }  /* a name breaks only when it can't fit whole (func_80000A|A4 broke mid-name) */
 .drawer-head .row { flex-wrap: nowrap; gap: 6px; }
 .drawer-head .badge { margin-right: 6px; }
 .dh-title { min-width: 0; }
@@ -649,7 +649,7 @@ a.ghost, a.primary { text-decoration: none; }
 @media (max-width: 560px) {
   .kpis, .starts { grid-template-columns: 1fr; }
   .lz-fields { grid-template-columns: 1fr; }
-  .drawer-head { padding: 16px; gap: 10px; }
+  .drawer-head { padding: 16px; gap: 10px; flex-wrap: wrap; }  /* the buttons go under a long name, not into it */
   .drawer-head #fnStatus { display: none; }
   .drawer-head .ghost.icon { width: 32px; height: 32px; }
   .drawer-body { padding: 16px 16px 40px; }
@@ -919,3 +919,6 @@ details.more[open] > summary::before { content: "− "; }
   .ptab[data-pane="agents"] .agents-grid { grid-template-columns: 1fr; }
 }
 .flags { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+/* the app has quit (pages.js, showStopped): nothing on the page answers any more */
+.stopped { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--ink); text-align: center; }
