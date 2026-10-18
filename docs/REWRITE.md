@@ -379,6 +379,12 @@ how much code never needs an agent. Ranked:
       draft follows what the agent learns.
     - Drafts exist only for functions someone opened (GTA San Andreas: 653 of 12,627). Draft in the background.
     - CodeWarrior PS2 code is read as EE GCC's (m2c has no CodeWarrior MIPS target).
+    - **C++ games.** m2c always writes C. Its C++ mode only demangles CodeWarrior names and types CodeWarrior
+      vtables (GameCube/Wii); for PS2's GCC it changes nothing, and stripped PS2 games have no names to demangle
+      anyway. Agents can already write C++ (the judge compiles what isn't C as C++, `compiler.py`). The draft can
+      meet them halfway: where the class recovery (`classes.py`) knows a function is a method of a class (it's in a
+      vtable, or a constructor stores one), turn m2c's `func(void *arg0, ...)` into `Class::method(...)` with `this`
+      and the class's known fields, in the brief and in the readable pass (§10).
     - The prompt says what the draft is good for: control flow and arithmetic are usually right, types and names
       usually wrong; start from it and fix those.
 
