@@ -10,6 +10,7 @@ This guide tells how decompdecomp operates. For the installation, read the [READ
 - [Platforms](#platforms)
 - [The export](#the-export)
 - [Installation details](#installation-details)
+- [Your work](#your-work)
 - [Problems](#problems)
 - [Development](#development)
 - [Built on](#built-on)
@@ -24,7 +25,7 @@ This guide tells how decompdecomp operates. For the installation, read the [READ
 </p>
 
 1. **Open a game.** decompdecomp finds all the functions and data, and it identifies the compiler of the game.
-2. **Add agents.** Each agent claims a different function. It gets the assembly, the data, the callers, a first
+2. **Start helper agents.** Each agent claims a different function. It gets the assembly, the data, the callers, a first
    draft from a machine and the notes from earlier attempts.
 3. **Look at the matches.** decompdecomp compiles each attempt, *links* it at the real address of the function and
    compares it with the game. If it is not a match, the agent gets an instruction diff. If it is a match,
@@ -73,12 +74,13 @@ s32 clamp_s32(s32 v, s32 lo, s32 hi) {
 Many games have a community decomp project. Each project has a build and some decompiled code. decompdecomp uses
 these projects as they are:
 
-1. **Fork a project.** In **Public decomps**, paste the address of a decomp repository. decompdecomp shows what the
+1. **Fork a project.** Click **New project → Continue a community decomp**, and paste the address of a decomp
+   repository. decompdecomp shows what the
    project says about AI, then clones it to your computer, on a local `decomp-wtf` branch.
 2. **Add your copy of the game.** The app knows the usual project layouts (dtk-template, configure.py and ninja,
    splat and make). It puts your copy in the correct location and runs the setup of the project. For other layouts,
    follow the README of the project.
-3. **Add agents.** Each agent writes code in the real source file. The build of the project compiles it, and
+3. **Start helper agents.** Each agent writes code in the real source file. The build of the project compiles it, and
    [objdiff](https://github.com/encounter/objdiff) compares it.
 4. **Examine the commits.** Each match is a git commit on `decomp-wtf`. decompdecomp sends nothing upstream.
 
@@ -100,14 +102,18 @@ decompdecomp helps with these steps:
 | :-- | :-- |
 | **Live view** | A map of all the functions in the game. You see the tool calls and the scores of each agent in real time. |
 | **Autopilot** | Matches without cost. Code that occurs more than one time gets the C of its matched twin. Then machine drafts go to the judge. (Mario Party 6: 762 functions in 12 minutes.) |
-| **Permuter** | Rewrites near misses (95% and more) thousands of ways in the background, with decomp-permuter (install it in Compilers & tools). It uses spare cores at a low priority. The judge decides what matches. Without decomp-permuter, a few simple rewrites run instead. |
+| **Permuter** | Rewrites near misses (at most 6% of the function differs) thousands of ways in the background, with decomp-permuter (install it in Compilers & tools). It uses spare cores at a low priority. The judge decides what matches. Without decomp-permuter, a few simple rewrites run instead. |
 | **Batches** | Agents write many small functions in one turn. decompdecomp judges them in one call. |
 | **Editor** | Each function has an editor. Write C, push Ctrl+Enter and look at the diff. |
-| **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically. |
+| **Suggestions** | Agents can suggest a different compiler, for the full game or for address ranges. decompdecomp tests each suggestion first. You apply it with one click, or let proven suggestions apply automatically (a setting of each game). |
+| **Flag search** | `search_flags` builds a function again with each flag of its compiler changed, one at a time (up to 12 builds), and says which change gets closer. MIPS for now. |
 | **Shared header** | Structs and prototypes go into one header. decompdecomp accepts a change only if all matches stay matches. |
 | **Safe names** | Matches use addresses. A new name for a function or data cannot break a match. |
-| **Look-alikes** | `find_similar` finds copied and inlined code in the full game. |
-| **Compiler map** | Big games mix compilers. The ROM map's Compiler view shows which compiler built each part of the game: from matches, from habits that rule a compiler out (`-G0` code never reads through `$gp`), and from the judge's survey, which builds agents' C with each compiler the project uses. A part the judge confirms becomes a suggestion. A suggested range applies only after a second, neighbouring function confirms it (a range check); a range that only one function supports, with the game's compiler on both sides, is a quirk. "Check the applied ranges" looks at the ranges a project already has. Agents read it with `compiler_map`. MIPS for now. |
+| **Look-alikes** | `find_similar` compares instruction sequences across the full game and finds copied and inlined code. |
+| **Compiler map** | Big games mix compilers. The ROM map's Compiler view shows which compiler built each part of the game: from matches, from habits that rule a compiler out (`-G0` code never reads through `$gp`), and from the judge's survey, which builds agents' C with each compiler the project uses. A part the judge confirms becomes a suggestion. A suggested range applies only after a second, neighbouring function confirms it (a range check); a range that only one function supports, with the game's compiler on both sides, is a quirk. decompdecomp checks the ranges a project already has again by itself. Agents read it with `compiler_map`. MIPS for now. |
+| **Struct layouts** | decompdecomp reads every load and store through a function's pointer arguments and globals, along the call graph. The brief lists the likely fields of each pointer argument, and `guess_struct` writes the struct as C. MIPS (PlayStation 2, N64) for now. |
+| **Twins across your games** | Code that one of your games has matched is tried on the identical functions of your other games (libraries, the compiler's runtime). No agent time. |
+| **Shared knowledge** | Agents propose what they learn about a game. A proposal counts when helpers of two different models back it. Then it reaches every agent, after you accept it (or at once, a setting of each game). Run helpers of several models for this. |
 | **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (PlayStation 2, N64) for now. |
 | **Drafts** | m2c for MIPS, PowerPC and ARM. Ghidra (optional) for x86, AArch64 and other architectures. |
 | **Guides** | Agents get guides for each architecture and compiler, and for C++ and objdiff. |
@@ -117,11 +123,15 @@ decompdecomp helps with these steps:
 
 | Agent | Connection |
 | :-- | :-- |
+| **API key** (recommended) | The main helper. The app talks to the model's API itself, with your key: nothing else to install, and no other program's update can break it. Each OpenAI-compatible API works: DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
 | **Claude Code** | Operates without a window, through the local MCP server of the app. |
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
 | **opencode** | The same, with each provider that you set up: DeepSeek, Qwen, Kimi and more. |
-| **API key** | A built-in agent for each OpenAI-compatible API: DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
+
+The app starts each helper itself, from **Start agents** in the project's header. A helper that stops starts again
+by itself. On a usage limit it waits until the limit resets. Five fast failures in a row pause it, and the app says
+why. Run several helpers, of different models: they work on different functions at the same time.
 
 Agents get only the tools of decompdecomp. They get no shell. They cannot access your files, except the source tree
 of a fork. The app installs missing agents and tells you how to sign in.
@@ -149,25 +159,17 @@ own agents. One computer is the **host** of the room. The host:
 
 No data goes through a website of decompdecomp. The team hosts its room and controls who can join.
 
-**Host on a home PC.** Open the project and click **Decompile together**, then **Open the room**. Send the link.
+**Host a room.** Open the project and click **Decompile together** in its header. Choose who can join and how
+teammates reach your computer, then click **Start sharing**. Send the link.
 
-**Host on a server:**
-
-```
-curl -fsSL https://decomp.ndelic.com/install.sh | bash
-decomp host mygame.z64 --own-copy --address http://my-server:6481 --service
-```
-
-This command runs decompdecomp in the background, imports your copy, opens the room and shows the link.
-
-**Join a room.** Paste the link into **Join a team's room** in the app, or type
-`decomp join <link> <your copy> --name you`.
+**Join a room.** Click **New project → Join a team's room**. Paste the link, type your name and pick your own copy
+of the game.
 
 | | |
 | :-- | :-- |
 | **Access** | A private room needs the invite link. A public room needs only the address. You can approve each new member. |
 | **Address** | A free Cloudflare quick tunnel, or your own address: LAN, Tailscale or a server. A room on your own address keeps its link after a restart. |
-| **Host controls** | See who is online, remove members, make a new invite link, stop the room. |
+| **Host controls** | See who is online, let people in, remove members, make a new invite link, stop sharing. |
 | **Load on the host** | Members compile their own attempts. The host compiles only to verify matches. |
 | **Projects** | ROM projects, GameCube, Wii and PC projects from scratch, and forks of public decomps. |
 
@@ -179,36 +181,38 @@ the game.
 
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
-| **GameCube · Wii** | ★ **Recommended** | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
+| **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
 | **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
-| **PlayStation · GBA · DS** | Not supported in this version | | | | ✓ |
-| **3DS · PSP · Switch · Xbox · Xbox 360** | Planned | | | | ✓ |
+| **PlayStation · GBA · DS · 3DS · PSP · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
 [ROADMAP.md](../ROADMAP.md) has a table of which feature works on which platform.
 
-**Recommended: GameCube, Wii and Nintendo 64.** These platforms have the most tests, from the import to a full
-decomp:
+**Recommended: Nintendo 64.** It is tested with Super Mario 64, GoldenEye and Perfect Dark, from the import to a
+game rebuilt byte for byte. This includes code that the game loads later and compressed code. The export puts each
+function at its original address. This is correct for matches and ports. Mods that make code larger need a
+different build, which is planned.
 
-- **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game again and
-  compares it byte for byte. Tested with Mario Party 4, Melee, Mario Kart: Double Dash, Mario Kart Wii and Twilight
-  Princess.
-- **Nintendo 64** is tested with Super Mario 64, GoldenEye and Perfect Dark. This includes code that the game loads
-  later and compressed code. The export puts each function at its original address. This is correct for matches
-  and ports. Mods that make code larger need a different build, which is planned.
+**Beta:**
 
-**Beta: PlayStation 2 and Windows PC.** All steps operate. We tested them on
-homemade games, and on few real games. Please [report problems](https://github.com/n-delic/decompdecomp/issues). The
-status of a public decomp is the status of its own project.
+- **PlayStation 2** is tested on real games (GTA San Andreas, Ridge Racer V), with several compilers per game. No
+  real game is rebuilt whole yet.
+- **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game
+  again and compares it byte for byte. The homemade demo game passes every step, but no real game is tested from
+  start to end yet.
+- **Windows PC** passes every step on the homemade demo game. It is tested on few real games.
+
+Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
+of its own project.
 
 **Tools for a start from scratch:**
 
 | Platform | Tool |
 | :-- | :-- |
 | N64, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
-| GameCube, Wii | decomp-toolkit, in a [dtk-template](https://github.com/encounter/dtk-template) project |
-| Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe into a project for Visual C++ and objdiff. |
+| GameCube, Wii | decomp-toolkit, in a [dtk-template](https://github.com/encounter/dtk-template) project (`consoles/gc_wii/scratch.py`) |
+| Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
 **C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
 classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
@@ -218,7 +222,7 @@ with a memory limit.
 
 ## The export
 
-*Export project* writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
+**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
 and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are not in git.
 The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects. They
 build the game again on each build.
@@ -246,10 +250,27 @@ back. **Quit** ends the app and every helper agent it started.
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.
 
+## Your work
+
+**Saving.** decompdecomp saves the work on each N64 and PlayStation 2 project by itself, every few minutes, as plain
+files in the project's `progress/` folder: matched C, best attempts, headers, names, notes, compiler ranges and
+settings. It never saves the game. **Save now**, in the project's Settings, saves at once, also to another folder.
+To continue on another computer, copy the folder (or push it to git) and click **New project → Open a saved
+project**. decompdecomp checks that your copy is the same game, and judges every saved function again. GameCube, Wii
+and PC projects and public decomps keep their work in their own git repository.
+
+**Polish.** Once half of a ROM project matches, **Start agents** offers a second task: **Polish matched code**.
+Helpers give matched functions real names, types and a comment. A change counts only when the function still
+matches byte for byte. The project shows two numbers: matched, and readable.
+
+**Notifications.** The bell beside the logo lists what happened in all your projects, each in its project's colour:
+matches, helpers that stopped, what waits for you.
+
 ## Problems
 
 If an import fails, the app shows the reason. **Copy for a bug report** copies the version, the error and the log
-for an [issue](https://github.com/n-delic/decompdecomp/issues). The full log is `~/Decomp/.decomp/logs/decomp.log`.
+for an [issue](https://github.com/n-delic/decompdecomp/issues). **Report a problem**, at the bottom of the sidebar,
+opens a new issue in your browser with your version and system, and copies a report with the log to paste into it. The full log is `~/Decomp/.decomp/logs/decomp.log`.
 Read [CONTRIBUTING.md](../CONTRIBUTING.md) before you attach a log.
 
 ## Development
@@ -266,7 +287,8 @@ uv run pytest              # the tests
 | :-- | :-- |
 | `src/decompnet/rom/` | ROM mode: reading, splitting with splat, symbols, the matcher (`match.py`) and the export. |
 | `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py`, `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` and `gtkwindow.py` (its own window), `tray.py` (the tray icon), `edition.py` (development copy or release), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
-| `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts, linked files, and the from-scratch importers. |
+| `src/decompnet/consoles/` | A folder per console (`n64/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
+| `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |
 | `src/decompnet/classes.py` | C++ classes found in MIPS code: vtables, base classes, fields. |
 | `src/decompnet/compilermap.py` | The compiler map: which compiler built each part of a MIPS game. |
@@ -275,7 +297,7 @@ uv run pytest              # the tests
 | `projects/demo-*/` | Homemade demo games for the tests. Each has its own `build.py`. |
 | `site/` | The website, published to GitHub Pages at decomp.ndelic.com. `public/` holds the installers. |
 
-The N64 and PlayStation demos need `ld.lld`, `llvm-objcopy` and `llvm-nm` (Debian and Ubuntu: `apt install lld llvm`).
+The N64 demo game (`projects/demo-rom`) needs `ld.lld` and `llvm-objcopy` (Debian and Ubuntu: `apt install lld llvm`).
 
 A checkout is "decompdecomp dev": a separate app with its own folder (`~/Decomp-dev`), port and window, so it never
 touches the decompdecomp you have installed. For an experiment, give it a scratch folder:
@@ -298,8 +320,9 @@ commit.
 
 [splat](https://github.com/ethteck/splat) and [spimdisasm](https://github.com/Decompollaborate/spimdisasm) split
 ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https://github.com/matt-kempster/m2c) and
-[Ghidra](https://github.com/NationalSecurityAgency/ghidra) write drafts. The
-[decompals](https://github.com/decompals) period compilers build the code. The look-alike finder uses the idea of [coddog](https://github.com/ethteck/coddog).
-[decomp-toolkit](https://github.com/encounter/decomp-toolkit) and
-[wibo](https://github.com/decompals/wibo) are also in the pinned tools. Thank you to the decomp community for these
-tools and ideas. decompdecomp is not related to these projects.
+[Ghidra](https://github.com/NationalSecurityAgency/ghidra) write drafts.
+[decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses. The
+[decompals](https://github.com/decompals) period compilers build the code.
+[decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games, and
+[wibo](https://github.com/decompals/wibo) runs the Windows compilers on Linux. Thank you to the decomp community for
+these tools. decompdecomp is not related to these projects.
