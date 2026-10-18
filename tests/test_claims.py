@@ -92,3 +92,23 @@ def test_a_released_function_goes_to_another_model_family_first(tmp_path):
         net._event(db, pid, None, "context", "v2: a struct the function uses")
     d, _ = net.local_agent("api-deepseek-chat-2")
     assert net.claim_row(d, "game")["name"] == "f0"  # the header changed: the usual order
+
+
+def test_the_part_of_the_game_where_matches_happen_comes_first(tmp_path):
+    """GTA San Andreas: small functions matched 19-28% of the time in most of the game, 87% in one part; a part where
+    agents keep failing (another compiler, mostly) waits until the rest is done."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    good, bad, fresh = 0x100000, 0x100000 + network.REGION_BYTES, 0x100000 + 2 * network.REGION_BYTES
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        rows = [(f"good_done_{i}", good + 0x100 * i, "matched", 1) for i in range(20)]
+        rows += [(f"bad_tried_{i}", bad + 0x100 * i, "open", 3) for i in range(30)]
+        rows += [("good_open", good + 0x8000, "open", 0), ("bad_twin", bad + 0x9000, "open", 0),
+                 ("fresh_open", fresh, "open", 0)]
+        for name, vram, status, attempts in rows:  # a twin in the failing part: it would fail the same way
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,vram,attempts,boost) VALUES(?,?,?,?,?,?,?,?)",
+                       (pid, name, 40, 10, status, vram, attempts, int(name == "bad_twin")))
+    order = [net.claim_row(net.local_agent(f"a{k}")[0], "game", None, "easiest")["name"] for k in range(3)]
+    # the part where matches happen, then one nobody tried yet (it counts as the game's average), the failing part last
+    assert order[:2] == ["good_open", "fresh_open"] and order[2].startswith("bad_"), order

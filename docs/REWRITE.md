@@ -383,7 +383,7 @@ how much code never needs an agent. Ranked:
    across the call graph; propose structs in the shared header; give them to m2c as context. Our own numbers: on GTA
    San Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents
    guessed layouts. Generalises `classes.py`. MIPS first. (M)
-4. **A learned scheduler.** Predict which function will match next from the project's own attempt log, instead of
+4. *(done in part: the part of the game where matches happen first, failing parts last; `network.py` REGION_BYTES)* **A learned scheduler.** Predict which function will match next from the project's own attempt log, instead of
    ordering by size; boost a function as soon as one of its look-alikes matches. (S)
 5. **Model routing with early escalation.** Easy functions to cheap models. After about three failed attempts,
    hand a function to a stronger model or to the permuter instead of grinding on. Most matches come at the first

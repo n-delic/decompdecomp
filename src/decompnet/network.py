@@ -45,12 +45,29 @@ MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their 
 # free once it does.
 _TWINS = ("(f.boost > 0 AND f.n_insns <= 400 AND f.abandons < 2) DESC, "
           "CASE WHEN f.boost > 0 THEN (f.boost + 1) * 64 / (f.n_insns + 16) ELSE 0 END DESC, f.boost < 0, ")
+# Where in the game a function is says much about its chances: on GTA San Andreas small functions matched 19-28% of
+# the time in most of the game and 87% in one part of it; on Mario Kart 64 one part 19%, the rest 71-85% (October
+# 2026). Mostly another compiler or flags built the bad parts. So among functions of about the same size, the one
+# from the part where matches happen comes first (its share of tried functions matched, pulled towards the game's
+# overall share while little there is tried), and a part that keeps failing comes after everything else: more
+# agents won't fix a wrong compiler, the compiler map and range checks will.
+REGION_BYTES = 0x40000  # one part of the game: 256 KB of code
+REGION_PRIOR = 8  # tries' worth of the game's overall share, so a part judged on two functions isn't judged yet
+FAILING_SHARE, FAILING_TRIED = 0.15, 20
+SIZE_STEP = 64  # instructions: functions within one step are "about the same size"
+_REGION = (f"(SELECT vram / {REGION_BYTES} AS region, SUM(status = 'matched') AS won, "
+           f"SUM(status = 'matched' OR attempts > 0) AS tried FROM functions WHERE project_id = :pid "
+           f"AND status != 'asm' AND vram IS NOT NULL GROUP BY region)")
+_SHARE = f"((COALESCE(r.won, 0) + {REGION_PRIOR} * :overall) / (COALESCE(r.tried, 0) + {REGION_PRIOR}))"
+_FAILING = f"(COALESCE(r.tried, 0) >= {FAILING_TRIED} AND {_SHARE} < {FAILING_SHARE})"
 STRATEGIES = {
-    "easiest": _TWINS + "f.abandons > 0, f.n_insns ASC",
+    # (a failing part waits even for its twins: they'd fail the same way)
+    "easiest": f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
+                                          f"{_SHARE} DESC, f.n_insns ASC",
     # what nobody gave up on, small first; among functions of about the same size, the files closest to done (a
     # file is linked into the game once all of it matches). Leftovers agents released again and again come last,
     # or a crowd of agents spends its time passing the hardest functions around.
-    "finish": _TWINS + "f.abandons ASC, (f.n_insns + 31) / 32 ASC, (SELECT COUNT(*) FROM functions g WHERE "
+    "finish": f"{_FAILING}, " + _TWINS + "f.abandons ASC, (f.n_insns + 31) / 32 ASC, (SELECT COUNT(*) FROM functions g WHERE "
                        "g.project_id=f.project_id AND g.unit=f.unit AND g.status='open') ASC, f.n_insns ASC",
     # near-misses, the ones given up on least first (else every agent resumes the same stuck one)
     "closest": "f.best_score IS NULL, f.abandons ASC, CAST(f.best_score AS REAL) / (f.n_insns * 100) ASC",
@@ -316,18 +333,23 @@ class Network:
             else:
                 family = model_family(agent.name)
                 kin = [r["id"] for r in db.execute("SELECT id, name FROM agents") if model_family(r["name"]) == family]
+                tried = db.execute("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
+                                   "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
+                overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
                 fn = db.execute(
-                    f"""SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open'
+                    f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
+                        WHERE f.project_id=:pid AND f.status='open'
                         AND f.id NOT IN (SELECT function_id FROM claims)
-                        AND f.name NOT IN (SELECT detail FROM events WHERE project_id=? AND agent_id=? AND kind='release')
-                        ORDER BY f.name IN (SELECT detail FROM events WHERE project_id=? AND kind='release'
-                                            AND agent_id IN (SELECT value FROM json_each(?)) AND created_at >
-                                            COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=?
+                        AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                                           AND kind='release')
+                        ORDER BY f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                                            AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
+                                            COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
                                                       AND kind IN ('context', 'compiler')), 0)),
-                                 f.name IN (SELECT detail FROM events WHERE project_id=? AND kind='release'
-                                            AND created_at > ?), {STRATEGIES[strategy]} LIMIT 1""",
-                    (proj["id"], proj["id"], agent.id, proj["id"], json.dumps(kin), proj["id"], proj["id"],
-                     now - RELEASE_COOLDOWN),
+                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
+                                            AND created_at > :cooled), {STRATEGIES[strategy]} LIMIT 1""",
+                    {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                     "overall": overall},
                 ).fetchone()
                 if fn is None:
                     return None
