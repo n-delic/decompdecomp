@@ -590,7 +590,8 @@ In this order, nothing skipped:
    docs/GUIDE.md, ROADMAP.md (its table and what's done). This file is deleted.
 6. The app, started as the development copy for the owner to try before anything is released.
 7. Squash-merged into main by the owner, released; the owner answers #3 and #4 when it's out.
-8. After the release: an agent researches how to support Windows well (§1).
+8. After the release: an agent researches how to support Windows well (§1). `wsl.py` (running Linux compilers through WSL
+   from a native Windows app) is still in place, inactive on Linux, for that research to keep or remove.
 9. On the owner's computer: the old 1.0.0-alpha .deb removed (`sudo apt remove decompdecomp`), if it isn't yet.
 
 ## Questions
