@@ -256,7 +256,7 @@ function renderAutopilot(ov) {
   };
 }
 
-const LAYOUT = { gc: "dtk-template", wii: "dtk-template", nds: "ds-decomp", win32: "Ghidra + objdiff" };
+const LAYOUT = { gc: "dtk-template", wii: "dtk-template", win32: "Ghidra + objdiff" };
 const cwName = (c) => (c.startsWith("DS/") ? `CodeWarrior for DS ${c.slice(3)}` : `CodeWarrior ${c}`);
 
 /* ------------------------------------------------------------------ export: the base for ports and mods
@@ -339,7 +339,7 @@ async function renderProjectSettings() {
   $("compilerPanel").hidden = fork;
   if (!fork) {
     if (!S.st) await loadState();
-    fillCompilers($("setTc"), ov.compiler.toolchain, { n64: "N64", psx: "PS1", ps2: "PS2", gba: "GBA" }[ov.platform]);
+    fillCompilers($("setTc"), ov.compiler.toolchain, { n64: "N64", ps2: "PS2" }[ov.platform]);
     $("setFlags").value = ov.compiler.flags.join(" ");
     $("autoAdjust").checked = !!ov.auto_compiler;
     $("setRanges").value = "";

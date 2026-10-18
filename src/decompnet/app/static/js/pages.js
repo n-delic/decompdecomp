@@ -63,7 +63,7 @@ function renderAgentsPage() {
 $("agRefresh").onclick = showAgentsPage;
 
 /* ------------------------------------------------------------------ compilers & tools page */
-const TOOL_GROUPS = [["", "All"], ["N64", "N64"], ["PS1", "PS1"], ["PS2", "PS2"], ["GBA", "GBA"], ["cw", "GameCube, Wii, DS"], ["tool", "Tools"]];
+const TOOL_GROUPS = [["", "All"], ["N64", "N64"], ["PS2", "PS2"], ["cw", "GameCube, Wii"], ["tool", "Tools"]];
 let toolFilter = "";
 async function showToolsPage() {
   show("toolsPage");

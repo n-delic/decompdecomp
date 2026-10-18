@@ -170,7 +170,7 @@ function workingAgents() {
 /* recommended | beta | "" for a platform key, as the browser or a project names it. */
 function platformStatus(p) {
   const st = (S.st && S.st.platform_status) || {};
-  const key = { gcwii: "gc", ps: "psx", playstation: "psx" }[p] || p;
+  const key = { gcwii: "gc" }[p] || p;
   return st[key] || "";
 }
 function markPlatforms() {
