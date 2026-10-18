@@ -199,6 +199,91 @@ Example: PC has Visual C++ 6.0, 7.0 and 7.1, and you want Visual C++ 2005 (8.0).
    when it isn't installed: `pytest.mark.skipif(toolchains.installed(...) is None, reason="needs ...")`.
 9. **Say it**: the compiler in ROADMAP.md, README.md and docs/GUIDE.md where they list the console's compilers.
 
+## Agents
+
+### Where an agent's code is
+
+Each agent the app can start is one module: `src/decompnet/agents/<id>.py`. Everything decompdecomp knows about that
+agent is in it: how a session starts, how to read what it prints, its models, where its settings are. The rest of
+the app never asks "is this opencode?". It asks the helper's agent, `agents.get(kind)`, through one file: the
+connector, `agents/__init__.py`.
+
+| Module | Agent | Its parts |
+| :-- | :-- | :-- |
+| `agents/claude.py` | Claude Code | `claude -p` with the app's MCP server as its only one; its model aliases and versions |
+| `agents/codex.py` | Codex CLI | `codex exec --json`, the user's own MCP servers switched off for the run |
+| `agents/antigravity.py` | Antigravity CLI | `agy` with stream-json in and out; its models from `agy models`; once Gemini CLI |
+| `agents/opencode.py` | opencode | `opencode run`, its own server per helper (opencode 2); its models from `opencode models` |
+| `agents/api.py` | API helper | No program: the app's own loop for any OpenAI-compatible API, and the saved endpoints' presets |
+
+Around them:
+
+| Where | What |
+| :-- | :-- |
+| `agents/__init__.py` | The connector: the `Agent` class (every fact and part, one line each) and the list of agents. |
+| `agents/template.py` | The module to copy for a new agent. |
+| `app/agents.py` | What's the same for every agent: starting and restarting helpers, waiting out usage limits, their records, ending everything they started when the app quits. |
+| `app/tools.py` | The tools every agent gets, and its prompt (`WORK_PROMPT`). |
+
+An agent is one of two sorts:
+
+- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode). The app runs it
+  headless, a session at a time, in a private folder. It connects only to the app's own MCP server, with a token of
+  its own, and may use only decompdecomp's tools. The prompt goes in on stdin; what it prints is read into the feed.
+- **A loop in the app** (the API helper). It talks to a model's API itself and calls the tools directly.
+
+### Improving an agent
+
+1. Open `agents/<id>.py`. Its docstring says how a session runs and what the agent prints.
+2. Change the part you need there. Something every agent needs (how long a helper waits after a failure) goes in
+   `app/agents.py`.
+3. Run its tests: `uv run pytest tests/test_agents.py tests/test_agent_kinds.py -q`. Never run the real program in a
+   test: it starts the MCP servers in the user's own settings. Use a recorded line of its output instead.
+
+### Adding an agent
+
+1. **Copy the template.** `cp src/decompnet/agents/template.py src/decompnet/agents/<id>.py`. Rename the class and
+   the object at the end.
+2. **Pick its sort.** A program: fill in `command` and the session's parts. A loop in the app: leave `command`
+   empty and fill in `run` (see `agents/api.py`).
+3. **Fill in its facts.** Each is one line in the `Agent` class:
+
+   | Fact | What it is |
+   | :-- | :-- |
+   | `id`, `aliases` | What helpers' records store as their kind. Keep it once helpers exist; old ids go in `aliases`. |
+   | `name`, `vendor` | What the app shows: its name, and who makes it (or whose models it runs). |
+   | `command` | Its program, looked for on PATH. Empty for a loop in the app. |
+   | `install`, `signin`, `docs` | What "Install it for me" runs, how to sign in (shown when it isn't), its documentation. |
+   | `family` | Who made its models, when it runs only one maker's ("gpt"). A function one model gave up on goes to another family first. |
+   | `models_args` | The arguments that list the models the user's sign-in offers (`("models",)`), read by `read_models`. |
+   | `tool_meta` | What it reads on each MCP tool's definition (Antigravity: load the tools up front). |
+   | `recommended`, `uses_endpoints`, `takes_effort` | For the launcher: list it first; take its model and key from the saved API endpoints; offer a reasoning effort. |
+
+4. **Fill in the parts it needs.** The rest keep their default, which does nothing or says it can't:
+
+   | Part | What it does |
+   | :-- | :-- |
+   | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
+   | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
+   | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. |
+   | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
+   | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
+   | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |
+   | `config_model()` | The default model in the agent's own settings. |
+   | `version(path)` | Its version (`--version` by default). |
+   | `label(name, options, used)` | What the GUI calls a helper of it. |
+   | `run(manager, session, agent)` | A loop in the app: one session's work. |
+
+5. **Keep the user safe.** A session connects only to the app's MCP server, with the token it was given, and to
+   none of the user's own MCP servers. It may use only decompdecomp's tools: no shell, no file edits, no web. The
+   token never goes on the command line, where every process can read it, and the prompt goes in on stdin.
+6. **Register it** in the list at the end of `agents/__init__.py` (`_registry`). The Agents page lists the agents in
+   that order.
+7. **Pass the tests**: `uv run pytest tests/test_agent_kinds.py -q`. It checks the facts, the ids, the command line
+   (no token on it) and that no code outside `agents/` asks an agent's name. Add a test of its own to
+   `tests/test_agents.py`: a recorded line of its output, and the feed items it gives.
+8. **Say it**: add the agent to README.md's list of agents and to docs/GUIDE.md's table.
+
 ## Pull requests
 
 - Keep each one to one change, and say in the description what it fixes or adds, and how you tested it.

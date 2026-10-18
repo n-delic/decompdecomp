@@ -15,7 +15,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | Importing a game from scratch, PROJECT mode (GameCube, Wii, PC) | the console's `scratch.py`, opened by `app/forkengine.py` |
 | Forking a public decomp | `forks/` (`project.py` detects and builds a project), `app/forkengine.py` |
 | The judge | ROM mode: `rom/match.py` (MIPS). Fork mode: objdiff, run from `forks/project.py` |
-| A tool agents call | the MCP definition and the `HANDLERS` table in `app/tools.py`, the API agents' schema in `app/agents.py` (`api_tool_schemas`), the work in `app/engine/<topic>.py` (ROM) or `app/forkengine.py` (forks) |
+| A tool agents call | the MCP definition and the `HANDLERS` table in `app/tools.py`, the API agents' schema in `agents/api.py` (`api_tool_schemas`), the work in `app/engine/<topic>.py` (ROM) or `app/forkengine.py` (forks) |
 | What agents read about a function | `app/engine/briefs.py` |
 | Claims, attempts, the judge's bookkeeping | `app/engine/judging.py`, under it `network.py` |
 | Compilers, ranges, suggestions | `app/engine/compilers.py`; the compiler map `compilermap.py`; range checks `app/rangecheck.py` |
@@ -26,7 +26,9 @@ says how to send a change. Examples point at real code by file and name: search 
 | Polishing matched code (names, types, comments that still match) | `app/readable.py` |
 | What agents learn, shared once two models agree | `app/knowledge.py` |
 | Saving a ROM project as plain files, and restoring one | `app/saves.py` |
-| Helper agents: starting and restarting them, the API helper's own loop | `app/agents.py`; their prompt: `WORK_PROMPT` in `app/tools.py` |
+| Helper agents: starting and restarting them, their records | `app/agents.py`; their prompt: `WORK_PROMPT` in `app/tools.py` |
+| One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `api` |
+| What every agent has to say, and the list of agents | `agents/__init__.py`, the connector |
 | Look-alikes (`find_similar`) | `similarity.py` |
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |
 | The GUI's API | `app/routes/<part>.py` (`app/routes/__init__.py` lists the parts); what they share `app/support.py` (jobs, settings) |
@@ -42,6 +44,12 @@ whose build writes `build/demo.json`, an entry in the list in `consoles/__init__
 `tests/test_consoles.py`, and a column in the table "What works where" in [ROADMAP.md](../ROADMAP.md).
 CONTRIBUTING.md, "Consoles", has the steps, and the steps for adding a compiler to a console. Every new feature
 adds its row or its ticks to that table.
+
+Agents work the same way. One agent's code stays in its module in `agents/`, and the rest of the app (the helpers'
+manager in `app/agents.py`, the routes, the GUI) asks `agents.get(kind)` for a fact or a part, never `if kind ==
+"opencode"`. The GUI gets the facts it shows agents by from the server (`uses_endpoints`, `takes_effort`). A new
+agent is a new module (copy `agents/template.py`), an entry in the list in `agents/__init__.py`, and a passing
+`tests/test_agent_kinds.py`. CONTRIBUTING.md, "Adding an agent", has the steps.
 
 A new feature that touches the engine keeps its logic in a module of its own and adds small hooks to the engine
 (see `app/rangecheck.py` and where `self.rangechecks` is used). That keeps the engine's modules readable and makes
