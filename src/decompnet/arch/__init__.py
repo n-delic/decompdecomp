@@ -11,13 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
-from . import arm, mips, ppc, x86
+from . import arm, mips, mips_fields, ppc, x86
 
 # What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS today):
 COMPILER_MAP = "compiler_map"  # which compiler built each part of a game, from its habits (compilermap.py)
 CLASSES = "classes"  # C++ classes from the vtables constructors store (classes.py)
 BOUNDARIES = "boundaries"  # cutting a function where an agent says it really ends (engine/editing.py, rom/split.py)
+STRUCTS = "structs"  # struct layouts from the loads and stores through pointers (structs.py, Arch.field_accesses)
 
 
 @dataclass(frozen=True)
@@ -32,10 +34,13 @@ class Arch:
     # the PS2's EABI passes them in t0-t3 too), so code whose console isn't known (a fork's object) isn't judged
     asm_needs_console: bool = False
     features: frozenset[str] = frozenset()
+    # what a function does with pointers, for structs.py: (vram, code, relocs, big_endian=, datum=) -> structs.Facts
+    field_accesses: Callable[..., Any] | None = None
 
 
 ARCHES = [
-    Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True, frozenset({COMPILER_MAP, CLASSES, BOUNDARIES})),
+    Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
