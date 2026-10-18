@@ -34,8 +34,9 @@ Testing a change must not touch it:
   no launcher. One instance is one per home, so it never replaces the installed app. Never point it at `~/Decomp`
   (`DECOMP_HOME`). For experiments, give it a throwaway home: `DECOMP_HOME=<scratch dir> DECOMP_TRAY=0 uv run decomp`
   (`DECOMP_WINDOW=0`: no window).
-- The agent CLIs the app lists (`agy models` above all) start the MCP servers in their own settings. Run experiments
-  with a PATH that doesn't have them, and stub them in tests.
+- The agent CLIs the app lists (`agy models` above all) start the MCP servers in their own settings. The app finds
+  them outside PATH too (`~/.local/bin`, `~/.opencode/bin`, ...), so a running experiment also needs a scratch `HOME`
+  (with `DECOMP_WINDOW=0`); stub them in tests.
 - Tests already run with a throwaway `DECOMP_HOME` and no window (tests/conftest.py). When the user's
   app runs from this checkout's `.venv`, run them in another environment so uv doesn't rebuild it underneath:
   `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
