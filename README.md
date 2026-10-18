@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="GPL-3.0 license" src="https://img.shields.io/badge/license-GPL--3.0-157a49?style=flat-square"></a>
+  <a href="LICENSE"><img alt="AGPL-3.0 license" src="https://img.shields.io/badge/license-AGPL--3.0-157a49?style=flat-square"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-15140f?style=flat-square">
   <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
@@ -101,8 +101,9 @@ decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra and th
 
 ## License
 
-decompdecomp is free software under the [GNU General Public License version 3](LICENSE) © 2026 NDelic. Anyone who
-gives or sells a copy of it, changed or not, must give its full source under the same license.
+decompdecomp is free software under the [GNU Affero General Public License version 3](LICENSE) © 2026 NDelic.
+Anyone who gives or sells a copy of it, changed or not, must give its full source under the same license. So must
+anyone who runs a changed copy for others to use over a network, a hosted room for example.
 
 The code that came from decomp.wtf was released under the MIT license by Sam Wolfs; its notice is in
 [LICENSE-decomp.wtf](LICENSE-decomp.wtf).

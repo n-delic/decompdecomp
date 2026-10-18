@@ -75,7 +75,7 @@ Name: decompdecomp
 Version: ${VERSION/-/\~}
 Release: 1
 Summary: AI agents decompile the games you own, byte for byte
-License: GPL-3.0-only
+License: AGPL-3.0-only
 URL: https://github.com/n-delic/decompdecomp
 BuildArch: x86_64
 AutoReqProv: no

@@ -75,7 +75,7 @@ works on which platform: every — in it is a gap to fill.
 - Pull requests written with an AI agent are fine (AGENTS.md is there for it). Read the diff yourself, and make sure
   the tests pass.
 
-By contributing you agree that your work is released under the project's license, the [GNU GPL version 3](LICENSE).
+By contributing you agree that your work is released under the project's license, the [GNU AGPL version 3](LICENSE).
 
 decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf), which is archived. Please don't open
 issues there.

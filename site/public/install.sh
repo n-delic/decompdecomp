@@ -5,7 +5,7 @@
 #
 # decompdecomp installs on this computer, with uv:
 #   1. installs uv, Astral's Python tool manager, if you don't have it (asks first)
-#   2. installs decompdecomp (open source, GPL-3.0) with uv, in its own environment
+#   2. installs decompdecomp (open source, AGPL-3.0) with uv, in its own environment
 #   3. checks for what its window needs from your system (GTK and WebKitGTK 4.1), and offers to install it
 #   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
 #   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
