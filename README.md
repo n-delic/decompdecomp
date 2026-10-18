@@ -46,7 +46,7 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
 
 1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open
    Demo Quest 64.
-2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
+2. **Start agents.** Any model with an API key (Anthropic, DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
    Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
    same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
@@ -102,7 +102,7 @@ single N64 or PlayStation 2 project, or to keep it in git:
 | Nintendo 64 | Recommended: tested on real games, rebuilt byte for byte |
 | PlayStation 2 | Beta: tested on real games, with several compilers per game; no real game rebuilt whole yet |
 | GameCube, Wii | Beta: not yet tested from start to end on a real game |
-| Windows PC games | Beta |
+| Windows PC games | Beta: tested on homemade games |
 | PlayStation, Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.

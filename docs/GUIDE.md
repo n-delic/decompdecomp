@@ -123,7 +123,7 @@ decompdecomp helps with these steps:
 
 | Agent | Connection |
 | :-- | :-- |
-| **API key** (recommended) | The main helper. The app talks to the model's API itself, with your key: nothing else to install, and no other program's update can break it. Each OpenAI-compatible API works: DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
+| **API key** (recommended) | The main helper. The app talks to the model's API itself, with your key: nothing else to install, and no other program's update can break it. Each OpenAI-compatible API works: Anthropic, DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
 | **Claude Code** | Operates without a window, through the local MCP server of the app. |
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
@@ -182,9 +182,9 @@ the game.
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
-| **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
-| **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
+| **PlayStation 2** | Beta: tested on real games, not yet rebuilt whole | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
+| **GameCube · Wii** | Beta: not yet tested from start to end | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
+| **Windows PC** | Beta: tested on homemade games | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
 | **PlayStation · GBA · DS · 3DS · PSP · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
 [ROADMAP.md](../ROADMAP.md) has a table of which feature works on which platform.
