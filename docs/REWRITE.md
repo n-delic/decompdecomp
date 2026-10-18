@@ -280,7 +280,8 @@ project never replays anything.
   10. Each project registers only its own tools (ROM projects get no fork-only tools).
   11. Source already compiled for a function answers "identical to attempt N" without compiling (about 3% of
       compiles).
-  12. Bug: `read_data` (`engine/briefs.py`) only decodes N64 addresses as pointers, never PS2 ones.
+  12. *(done: the console's `ram` range, from the connector; `tests/test_ps2.py`)* Bug: `read_data`
+      (`engine/briefs.py`) only decodes N64 addresses as pointers, never PS2 ones.
 
 - *(done: the launcher lists it first with a plain explanation; the Agents view shows each model's cost per match)* **The API helper first** (the owner's answer below): the helper that calls a model's API with the user's key is
   the one decompdecomp controls end to end, so the app recommends it first when starting helpers, explains it
@@ -463,8 +464,13 @@ copy), before and after.
 | ... an agent's claim on GTA San Andreas | 1,849 / 4,003 ms | 215 / 1,877 ms |
 | ... a compile that matches | 926 / 2,702 ms | 33 / 105 ms |
 
-Still slow under load: a claim of a function with no machine draft yet runs m2c under one lock for the whole app
-(`_seed_lock`, about 0.3 s each), so agents claiming at once wait in turn.
+Was still slow under load: a claim of a function with no machine draft yet ran m2c under one lock for the whole
+app (`_seed_lock`, about 0.3 s each), so agents claiming at once waited in turn. *Done (§9.10):* drafts are made in
+the background before anyone claims, and side by side (a lock per function); and look-alikes read only the rows of
+the functions they found, not all 12,627 (with 8 agents at once, briefs waited on each other row by row). 8 agents
+briefing 24 GTA San Andreas functions without drafts: 3.3 s (each median 1,026 ms, p90 1,109 ms) before; 1.4-1.9 s
+(median 400-460 ms, p90 640-930 ms) with a lock per function; with the drafts made in the background, median
+220-300 ms.
 
 ## 9. Giving agents an edge
 
@@ -543,20 +549,39 @@ how much code never needs an agent. Ranked:
     function as it is and matched 1,352 of 4,844 (28%), about 41% of all matches. But helpers mostly ignore the
     draft: their first attempt is close to it (60% of tokens or more) for only 2-13% of functions on N64 and PS2
     (median similarity 23-29%). And the draft is weak where it could be strong:
-    - It's made once, the first time a function is opened, and never again: types and structs added to the shared
-      header later never reach it. Redraft when the header changes, and run autopilot again on what changed.
-    - A `redraft` tool for agents: m2c run again with the agent's own declarations (a struct it worked out), so the
-      draft follows what the agent learns.
-    - Drafts exist only for functions someone opened (GTA San Andreas: 653 of 12,627). Draft in the background.
+    - *(done: `engine/briefs.py` `_draft_plan`, `functions.seed_key`)* It's made once, the first time a function
+      is opened, and never again: types and structs added to the shared header later never reach it. Redraft when
+      the header changes, and run autopilot again on what changed. Now a draft is made from the declarations of the
+      header its assembly names (and those they need), and remembers that with its compiler: when either changes, it's
+      made again on the next brief and in the background, and autopilot judges the new draft of a function it tried
+      before (a draft it already judged with the same header is skipped). Found on the way: GTA San Andreas's header
+      keeps its classes in `#ifdef __cplusplus`, and m2c got both branches: none of its drafts had read the header
+      (0 of 40 sampled; 37 of 40 now, `seeds.c_only`; the permuter's generator had the same problem). 116 of 120
+      drafts made from the declarations a function uses were the same as with the whole header, the other 4 better.
+      Most functions use none of it (GTA San Andreas: 1,040 of 10,880 open ones do), so a header edit redrafts few.
+    - *(done: the `redraft` tool)* A `redraft` tool for agents: m2c run again with the agent's own declarations (a
+      struct it worked out), so the draft follows what the agent learns. Theirs replace the header's of the same
+      names; recorded nowhere; m2c's own reason when it can't read them.
+    - *(done: `app/drafts.py`)* Drafts exist only for functions someone opened (GTA San Andreas: 653 of 12,627).
+      Draft in the background. One drafter per project, on up to four shared workers at a lower CPU priority; it
+      looks again every 30 s for a change. On a copy of the owner's games, one pass: Ridge Racer V 1,272 open
+      functions in 92 s (autopilot judged 683 changed drafts again, 4 new matches), Mario Kart 64 2,245 in 129 s
+      (1,087 judged again, none matched), GTA San Andreas 10,880 in 422 s (10,707 of them have a draft now;
+      autopilot judged 96 changed drafts again, 6 new matches).
     - CodeWarrior PS2 code is read as EE GCC's (m2c has no CodeWarrior MIPS target).
     - **C++ games.** m2c always writes C. Its C++ mode only demangles CodeWarrior names and types CodeWarrior
       vtables (GameCube/Wii); for PS2's GCC it changes nothing, and stripped PS2 games have no names to demangle
       anyway. Agents can already write C++ (the judge compiles what isn't C as C++, `compiler.py`). The draft can
       meet them halfway: where the class recovery (`classes.py`) knows a function is a method of a class (it's in a
       vtable, or a constructor stores one), turn m2c's `func(void *arg0, ...)` into `Class::method(...)` with `this`
-      and the class's known fields, in the brief and in the readable pass (§10).
-    - The prompt says what the draft is good for: control flow and arithmetic are usually right, types and names
-      usually wrong; start from it and fix those.
+      and the class's known fields, in the brief and in the readable pass (§10). *Done for the brief*
+      (`seeds.method_draft`, `briefs._draft_shown`): one class only (or one whose subclasses inherit it), a vtable
+      that starts like a C++ compiler's, a pointer first argument, the vtable pointer first and fields that don't
+      overlap; else m2c's draft as is. The class shows the fields the function uses, named as m2c names them. GTA San
+      Andreas: 3,086 functions known as methods, 2,941 of one sure class; 19 of 29 sampled drafts shown as methods.
+      The readable pass: open.
+    - *(done: `tools.WORK_PROMPT`, the brief's draft heading, the m2c guide)* The prompt says what the draft is good
+      for: control flow and arithmetic are usually right, types and names usually wrong; start from it and fix those.
 
 11. **Name PS2 system calls.** *(done: `consoles/ps2/syscalls.py`; 154 stubs in GTA San Andreas, 129 in Ridge Racer V)* The kernel's stubs (`addiu v1, N; syscall; jr ra`) are already found and marked
     hand-written (`handwritten.py`), but they keep names like `func_0012A0`. The number in `v1` says which kernel
@@ -609,8 +634,11 @@ func_..., every size is guessed by splat.
 as units, prototypes and where parameters and locals live in the brief, every type and global in the first header
 (checked with the project's compiler first). DWARF (CodeWarrior's `.debug`, later GCCs' `.debug_info`) is
 recognised and named in the import log, not read yet. Still open: C++ methods in the header (classes are structs of
-their data), callees' prototypes in the brief, and a header too big to read whole on a game with thousands of types
-(the brief could carry only the types a function uses).
+their data), and callees' prototypes in the brief. *Done:* a header too big to read whole on a game with thousands of
+types: over 16 KB (`briefs.BIG_HEADER_BYTES`), the brief carries the declarations the function's code and draft use
+(nearest first, up to 6 KB) and says get_context has the rest; every compile still includes the whole header. On the
+debug demo (9 KB, 110 declarations, as if big): a function's declarations median 401 bytes; brief and header 11.4 KB
+-> 2.8 KB.
 
 ## 13. A stranger's test, at the very end
 
