@@ -726,7 +726,9 @@ class ForkEngine:
                                "VALUES(?,?,?,?,?,?,?,?,?,?)", (proj["id"], name, size, n, status, score, uname,
                                                               int(vram) if vram else None, json.dumps(meta), ""))
                 else:
-                    if status != "matched" and old["best_source"] and old["best_score"] is not None:
+                    # a better attempt kept elsewhere stays the best; a 0 (identical) of a function that no longer
+                    # matches doesn't: the queue and briefs would say it's done
+                    if status != "matched" and old["best_source"] and old["best_score"] and old["status"] != "matched":
                         score = old["best_score"] if score is None else min(score, old["best_score"])
                     db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
                                (size, n, status, score, json.dumps(meta), old["id"]))
@@ -1653,8 +1655,11 @@ class ForkEngine:
                 if pct is not None and pct >= 100 and sym not in held:
                     if r["status"] != "matched":
                         self._matched(db, proj, r, agent, text)
-                elif r["status"] == "matched":
-                    db.execute("UPDATE functions SET status='open' WHERE id=?", (r["id"],))
+                elif r["status"] == "matched":  # no longer matches: its best is what it scores now, not 0 (identical)
+                    db.execute("UPDATE functions SET status='open', best_score=? WHERE id=?",
+                               (None if pct is None else scaled(pct, r["n_insns"]), r["id"]))
+                elif pct is not None and r["best_score"] == 0:  # reopened before this was fixed: still says identical
+                    db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
                 elif pct is not None and not r["best_source"]:
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
 
