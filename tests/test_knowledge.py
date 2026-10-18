@@ -1,0 +1,62 @@
+"""What agents learn about a game (app/knowledge.py): it reaches every agent only once two different models agree,
+and the user accepts it unless the project adds agreed knowledge by itself. Compiler guesses aren't knowledge."""
+
+import json
+
+import pytest
+
+from decompnet.app.engine import RomNetwork
+from decompnet.network import NetworkError
+
+
+@pytest.fixture
+def net(tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        for slug in ("game", "other"):
+            db.execute("INSERT INTO projects(slug, name, root, config) VALUES(?, ?, ?, ?)",
+                       (slug, slug, str(tmp_path), json.dumps({"kind": "rom", "platform": "ps2"})))
+    return net
+
+
+def agent(net, name):
+    return net.local_agent(name)[0]
+
+
+def test_two_sessions_of_one_model_are_one_opinion_two_models_are_two(net):
+    opus1, opus2, gpt = (agent(net, n) for n in ("claude-opus-5.5-1", "claude-opus-5.5-2", "opencode-gpt-6.1-1"))
+    said = net.knowledge.share(opus1, "game", "Functions in the 0x1A0000 area take a CPed* as their first argument")
+    kid = int(said.split("#")[1].split(".")[0])
+    assert "needs a helper running a model other than" in net.knowledge.share(opus2, "game", supports=kid)
+    assert net.knowledge.listing("game")["items"][0]["status"] == "proposed"
+    assert "the user decides now" in net.knowledge.share(gpt, "game", supports=kid)
+    assert net.knowledge.listing("game")["items"][0]["models"] == ["claude-opus-5.5", "opencode-gpt-6.1"]
+    assert "CPed" not in net.knowledge.for_prompt("game")  # agreed, not accepted yet
+    net.knowledge.decide("game", kid, accept=True)
+    assert "CPed" in net.knowledge.for_prompt("game") and "CPed" not in net.knowledge.for_prompt("other")
+
+
+def test_a_project_can_take_what_two_models_agree_on_by_itself(net):
+    net.knowledge.set_auto("game", True)
+    a, b = agent(net, "claude-opus-5.5-1"), agent(net, "agy-gemini-3.8-flash-1")
+    kid = int(net.knowledge.share(a, "game", "Strings are Shift-JIS").split("#")[1].split(".")[0])
+    assert "every agent gets it" in net.knowledge.share(b, "game", supports=kid)
+    assert "Shift-JIS" in net.knowledge.for_prompt("game")
+
+
+def test_the_same_idea_again_is_pointed_at_the_open_proposal(net):
+    a, b = agent(net, "claude-opus-5.5-1"), agent(net, "opencode-gpt-6.1-1")
+    net.knowledge.share(a, "game", "The player struct is 0x2F0 bytes and its health is at offset 0x540")
+    said = net.knowledge.share(b, "game", "the player struct is 0x2F0 bytes; its health is at offset 0x540")
+    assert "back it: share_knowledge(supports=" in said and len(net.knowledge.listing("game")["items"]) == 1
+
+
+def test_compiler_guesses_go_to_the_compiler_tools(net):
+    with pytest.raises(NetworkError, match="compiler map"):
+        net.knowledge.share(agent(net, "claude-opus-5.5-1"), "game", "This part is built with ee-gcc 2.96 -O2 -G0")
+
+
+def test_proposals_waiting_for_a_second_model_are_offered_to_agents(net):
+    net.knowledge.share(agent(net, "claude-opus-5.5-1"), "game", "Every menu screen has an Init, Update and Draw function")
+    text = net.knowledge.for_prompt("game")
+    assert "waiting for a second model" in text and "menu screen" in text

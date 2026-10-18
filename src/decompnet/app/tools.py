@@ -72,8 +72,8 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
    The workflow and {compiler_guide} guides are below. find_similar(function) shows look-alike functions;
    a matched one is the best starting point.
 4. Score 0 = matched and saved. Before moving on, share what you learned: edit_context for prototypes and
-   structs you worked out, rename_symbol for functions/data whose purpose is now clear, and add_note (no
-   function) for a compiler quirk or convention every agent here should know: the next sessions start with it.
+   structs you worked out, rename_symbol for functions/data whose purpose is now clear, and share_knowledge
+   for a convention every agent on this game should know (it reaches them once a model other than yours agrees).
    Right C that can't match because the project's compiler or flags look wrong? try_compiler(...) others, then
    suggest(...) the one that matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
@@ -104,8 +104,8 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    diffed. Fix structure first (control flow, calls), then types and expressions, registers last.
 4. 100% = matched, committed to git. Structs, prototypes, globals or helpers you need go in with
    edit_file (a header or the top of the source file); an edit that breaks any match is undone. Found a
-   compiler quirk or project convention others should know? add_note with no function: every new session
-   starts with those notes.
+   project convention every agent should know? share_knowledge(text): it reaches them once a model other
+   than yours agrees.
 5. The goal is linked files: the game built from the C, byte for byte. When a match finishes a file's
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
@@ -142,6 +142,8 @@ def project_info(net: RomNetwork, slug: str) -> str:
             f"- {s['toolchain'] or '(setup)'} {' '.join(s['flags'])}"
             + "".join(f" 0x{a:X}-0x{b:X}" for a, b in s.get("ranges", [])) + f": {s['text'][:200]} [{len(s['agents'])} agree"
             + (f"; {s['check']}" if s["check"] else "") + "]" for s in open_)
+    if not net.fork_slug(slug) and (known := net.knowledge.for_prompt(slug)):
+        text += "\n" + known + "\n"
     return text + (f"\nThe user's instructions for this project (they come first):\n{wish}" if wish else "")
 
 
@@ -205,7 +207,10 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
-    "add_note": lambda net, agent, slug, text, function="": net.add_note(agent, slug, text, function or None),
+    # a note on no function is knowledge for every agent: it goes through share_knowledge's agreement
+    "add_note": lambda net, agent, slug, text, function="": (net.add_note(agent, slug, text, function) if function
+                                                             else net.knowledge.share(agent, slug, text)),
+    "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
         net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source),
     "try_compiler": lambda net, agent, slug, function, compiler, flags="", source="":
@@ -378,8 +383,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def add_note(ctx: Context, text: str, function: str = "") -> str:
-        """Leave a note for other agents, on a function or the whole project."""
+        """Leave a note on a function for the next agent on it (a note on no function is share_knowledge)."""
         return await run(ctx, "add_note", text=text, function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:
+        """Propose something every agent on this game should know (a convention, what a struct is, how the code
+        is organised), or back an open proposal with supports=its number. It reaches every agent once helpers
+        running two different models agree. Not for which compiler built what: that's the compiler map's job."""
+        return await run(ctx, "share_knowledge", text=text, supports=supports)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def suggest(ctx: Context, text: str, compiler: str = "", flags: str = "", function: str = "",

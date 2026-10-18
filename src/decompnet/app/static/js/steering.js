@@ -71,6 +71,7 @@ function renderSteering(ov) {
   $("spendLine").textContent = sp && sp.usd ? `· ${money(sp.usd)} spent${n ? ` · ${money(sp.usd / n)}/match` : ""}`
     : sp && sp.tokens ? `· ${(sp.tokens / 1000).toFixed(0)}k tokens` : "";
   $("instrState").textContent = ov.instructions ? "agents get these" : "none yet";
+  renderKnowledge();
   const sg = ov.suggestions || [];
   const tcName = (id) => (S.st?.toolchains || []).find((t) => t.id === id)?.name || id;
   const bd = ov.boundaries || [];
@@ -121,6 +122,42 @@ $("phRename").onclick = () => {
   };
   body.querySelector("#renameGo").onclick = go;
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+};
+/* What agents learned (app/knowledge.py): fetched now and then, not on every poll. */
+const KNOWLEDGE_EVERY_MS = 30000;
+async function renderKnowledge(force = false) {
+  if (!force && S.knowAt && Date.now() - S.knowAt < KNOWLEDGE_EVERY_MS && S.knowSlug === S.slug) return;
+  S.knowAt = Date.now(); S.knowSlug = S.slug;
+  let k;
+  try { k = await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
+  $("knowAuto").checked = k.auto;
+  const by = (it) => it.models.map(esc).join(", ");
+  const row = (it) => {
+    if (it.status === "agreed") return `<div class="note"><small>agreed by ${by(it)} · waiting for you</small>${esc(it.text)}
+      <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
+      <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
+    if (it.status === "accepted") return `<div class="note"><small>agents get this · agreed by ${by(it)}</small>${esc(it.text)}
+      <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
+    return `<div class="note muted"><small>waiting for a second model · proposed by ${by(it)}</small>${esc(it.text)}</div>`;
+  };
+  const waiting = k.items.filter((it) => it.status === "agreed").length;
+  $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
+  setHtml($("knowList"), k.items.map(row).join(""));
+}
+$("knowList").onclick = async (e) => {
+  const b = e.target.closest("[data-know]");
+  if (!b) return;
+  try {
+    await api("/api/knowledge", { method: "POST", body: { slug: S.slug, id: Number(b.dataset.know), accept: !!b.dataset.accept } });
+    renderKnowledge(true);
+  } catch (err) { toast(esc(err.message), "err"); }
+};
+$("knowAuto").onchange = async (e) => {
+  try {
+    await api("/api/knowledge", { method: "POST", body: { slug: S.slug, auto: e.target.checked } });
+    toast(e.target.checked ? "What two models agree on goes to agents by itself now." : "You decide what agents get.");
+    renderKnowledge(true);
+  } catch (err) { toast(esc(err.message), "err"); }
 };
 $("instrSave").onclick = async () => {
   try {

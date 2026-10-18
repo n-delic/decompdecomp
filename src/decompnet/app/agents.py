@@ -1273,9 +1273,8 @@ class Manager:
                 "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")]
         text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(
             tools._guide(t) for t in topics)
-        if (learned := self.net.learnings(s.slug)):
-            text += ("\nWhat agents learned on this project so far (compiler quirks, conventions; add yours with "
-                     f"add_note and no function):\n{learned}\n")
+        if (known := self.net.knowledge.for_prompt(s.slug)):
+            text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):
             text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
         return text
@@ -1674,7 +1673,10 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
         "list_functions": ("List functions by status.", s(status=st("open | matched | all"), limit=it("max rows"))),
-        "add_note": ("Leave a note for other agents.", s(text=st("note", True), function=st("function"))),
+        "add_note": ("Leave a note on a function for the next agent on it.", s(text=st("note", True), function=st("function"))),
+        "share_knowledge": ("Propose something every agent on this game should know, or back proposal #N "
+                            "(supports=N). It counts once two different models agree. Not for compiler questions.",
+                            s(text=st("what every agent should know"), supports=it("a proposal's number to back"))),
         "suggest": ("Suggest a setup change for the user (another compiler or flags), with evidence.",
                     s(text=st("what and why", True), compiler=st("toolchain id"), flags=st("flags"),
                       function=st("a function whose best attempt should match with it: checked now"),

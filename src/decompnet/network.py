@@ -675,18 +675,3 @@ class Network:
                 db.execute(f"DELETE FROM {table} WHERE project_id=?", (proj["id"],))
             db.execute("DELETE FROM projects WHERE id=?", (proj["id"],))
         return len(ids)
-
-    def learnings(self, slug: str, budget: int = 2500) -> str:
-        """The project-wide notes agents left (newest first, within `budget` characters), for every new session:
-        what one agent works out about the compiler or the project, the next one starts with."""
-        proj = self._project(slug)
-        out, used = [], 0
-        for r in self.store.all("SELECT text FROM notes WHERE project_id=? AND function_id IS NULL ORDER BY id DESC LIMIT 40",
-                                proj["id"]):
-            text = " ".join(r["text"].split())[:600]
-            if used + len(text) > budget:
-                break
-            out.append(f"- {text}")
-            used += len(text)
-        return "\n".join(out)
-

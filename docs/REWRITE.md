@@ -211,6 +211,8 @@ project never replays anything.
 
 ## 5. Shared knowledge agents keep up to date
 
+*Done: `app/knowledge.py`, the `share_knowledge` tool, and "What agents learned" in the project's settings.*
+
 **Problem.** Each project has instructions for agents, but the user has to write them, and the user mostly watches.
 
 **Goal.** Agents propose additions to the project's instructions. A setting per project decides how they land:

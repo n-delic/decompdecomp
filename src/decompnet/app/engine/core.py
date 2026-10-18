@@ -40,6 +40,8 @@ class Core(Network):
         self.permuter = Permuter(self)
         from ..rangecheck import RangeChecks
         self.rangechecks = RangeChecks(self)
+        from ..knowledge import Knowledge
+        self.knowledge = Knowledge(self)
 
     @staticmethod
     def cfg(proj) -> dict:

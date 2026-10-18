@@ -206,18 +206,6 @@ def test_give_ups_are_recounted_once_without_decomp_wtfs_own_expiries(tmp_path):
     assert Store(path).one("SELECT abandons FROM functions WHERE name='f'")["abandons"] == 7  # once only
 
 
-def test_every_new_session_starts_with_what_agents_learned(net, agents):
-    """Project-wide notes (compiler quirks, conventions) go into every session's prompt, newest first, within a
-    budget: what one agent works out, the next one starts with."""
-    alice, _ = agents
-    net.add_note(alice, "demo", "old tip: " + "x" * 300)
-    net.add_note(alice, "demo", "MWCC here: declare the loop counter last to get r31")
-    net.add_note(alice, "demo", "a note on one function only", "clamp_s32")
-    learned = net.learnings("demo", budget=400)
-    assert learned.startswith("- MWCC here") and "one function only" not in learned and "old tip" in learned
-    assert "old tip" not in net.learnings("demo", budget=100)
-
-
 def test_big_functions_get_more_compiles_before_the_nudge_to_move_on(net, agents):
     alice, _ = agents
     fn = net.store.one("SELECT id FROM functions WHERE name='clamp_s32'")

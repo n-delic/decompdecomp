@@ -89,6 +89,7 @@ def register(app: App) -> None:
     def p_delete(slug, request, data):
         manager.forget_project(slug)  # (it stopped every project's helpers)
         proj = net.project_row(slug)
+        net.knowledge.forget(slug)
         net.remove_project(slug)
         if data.get("files"):
             shutil.rmtree(proj["root"], ignore_errors=True)
@@ -156,8 +157,19 @@ def register(app: App) -> None:
             net.start_autopilot(slug)
         return net.overview(slug)
 
+    def p_knowledge(slug, request, data):
+        """What agents learned: GET lists it; POST accepts or rejects one ({id, accept}), or sets whether agreed
+        knowledge is added by itself ({auto})."""
+        if request.method == "POST":
+            if "auto" in data:
+                net.knowledge.set_auto(slug, bool(data["auto"]))
+            else:
+                net.knowledge.decide(slug, int(data.get("id") or 0), bool(data.get("accept")))
+        return net.knowledge.listing(slug)
+
     routes = {
         "/api/project": (p_overview, ["GET"]),
+        "/api/knowledge": (p_knowledge, ["GET", "POST"]),
         "/api/live": (p_live, ["GET"]),
         "/api/function": (lambda s, r, d: net.function_detail(s, r.query_params.get("name", "")), ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
