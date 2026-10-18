@@ -415,8 +415,9 @@ Answers go here as they come.
   private wiring to the CLI helpers it runs. (§1)
 - **Consoles:** in this repo only, one package per console, with a template. (§6)
 - **Order:** §1 standalone app and §4 agents first, then §3 notifications, §2 UI, §5 knowledge, §6 consoles.
-- **Consoles (owner, October 2026):** keep what's supported today and verify each after the rewrite, plus PS2 and
-  PC; scrap the ones that aren't proven. (Which exactly: to confirm.) (§6)
+- **Consoles:** N64, PS2, PC (Windows games) and GameCube/Wii stay, each verified after the rewrite. GameCube/Wii
+  stays although nothing tests it end to end: issues that turn up are for contributors to fix too. PS1, GBA and DS
+  are removed (the git history keeps them for anyone who wants to bring one back as a console package). (§6)
 - **The API helper becomes the main helper** (§4): it talks to a model's API directly with the user's key
   (Anthropic, OpenAI, DeepSeek, OpenRouter...), so decompdecomp controls its whole loop: prompt, tools, caching,
   cost. CLI helpers stay, but their updates can't break the app's main path.
