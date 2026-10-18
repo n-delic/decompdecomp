@@ -584,7 +584,10 @@ In this order, nothing skipped:
 1. Merge the UI overhaul (§2, §3) and the consoles (§6) when their agents finish; the suite passes after each.
 2. The real permuter (§9.2, researched and prototyped above), then what's left of §9 (struct layouts, library
    decomps built locally, the m2c items of §9.10, the brief's types per function from §12's risks).
-3. The stranger's test (§13), its findings fixed.
+3. The stranger's test (§13), its findings fixed. Beside it, an auditor agent reads this plan section by section and
+   compares it with the code as written: every item marked done really is done (and tested), nothing the owner asked
+   for in chat got lost between sessions (the work was cut off several times), and what's left is listed. Its gaps
+   are fixed before step 5.
 4. The release's version: 1.0.3-alpha (the owner told the issue reporters so), bumped in the four places.
 5. Every Markdown file describes the new decompdecomp: README, AGENTS.md, CONTRIBUTING.md, docs/CONVENTIONS.md,
    docs/GUIDE.md, ROADMAP.md (its table and what's done). This file is deleted.
