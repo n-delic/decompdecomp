@@ -388,7 +388,7 @@ how much code never needs an agent. Ranked:
 5. **Model routing with early escalation.** Easy functions to cheap models. After about three failed attempts,
    hand a function to a stronger model or to the permuter instead of grinding on. Most matches come at the first
    attempt; the chance falls fast after the third. Ties in with §4's measurements. (S-M)
-6. **Diffs that teach.** Show what the last change did against the attempt before (a three-way diff), the
+6. *(done for ROM projects: `network.py` _what_changed)* **Diffs that teach.** Show what the last change did against the attempt before (a three-way diff), the
    matching prefix, and where the first mismatch is. One small change per attempt works best. (S)
 7. **Search over flags, not just compilers.** A search over compiler × flags scored by the judge's distance, only
    with compilers the user accepted. Today's compiler map varies compilers only. (M)

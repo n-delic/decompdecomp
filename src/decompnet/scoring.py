@@ -175,6 +175,16 @@ class DiffResult:
         return render_rows(self.rows, context, max_rows)
 
 
+def first_mismatch(rows: list[tuple[str, str, str]]) -> tuple[int, int, tuple[str, str, str] | None]:
+    """(how many target instructions match from the start, the target's length, the first row that differs): one
+    small change per compile works best, and this says where the next one goes."""
+    total = sum(1 for _, target, _ in rows if target)
+    for row in rows:
+        if row[0] != " ":
+            return sum(1 for m, target, _ in rows[:rows.index(row)] if target), total, row
+    return total, total, None
+
+
 MARKERS = {"<": "missing", ">": "extra", "|": "different", "o": "reordered", "r": "regalloc", "s": "stack",
            "i": "operand"}
 LEGEND = ("markers: r=regalloc s=stack-offset i=operand |=different insn <=missing (target only) >=extra (yours only) "

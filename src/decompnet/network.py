@@ -469,6 +469,8 @@ class Network:
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
         matched_now = d.bytes_match and not scratch
+        last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
+                              "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
 
         if scratch:
@@ -481,6 +483,7 @@ class Network:
             best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
             head = (f"score {d.score} ({scoring.percent_text(d.percent)} match) — best so far {best}. "
                     f"Target {len([r for r in d.rows if r[1]])} insns, yours {len([r for r in d.rows if r[2]])}.")
+            head += self._what_changed(d, last["score"] if last else None)
             if d.rows and all(m == " " for m, _, _ in d.rows):
                 head += ("\nNOT A MATCH YET: every instruction reads the same, but the bytes differ"
                          + (" because of the linking notes at the end: fix those." if problems else
@@ -489,6 +492,22 @@ class Network:
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
         return {"text": f"{head}\n{d.render()}{warn}{self.stall_note(fn['id'], agent.id)}", "score": d.score, "matched": False}
+
+    @staticmethod
+    def _what_changed(d: scoring.DiffResult, last: int | None) -> str:
+        """What the agent's last change did, and where the first difference is now: one small change per compile
+        works best, and an agent that sees which way the score moved knows whether to keep or undo it."""
+        said = ""
+        if last is not None:
+            said = ("\nYour last change: no effect on the score." if d.score == last else
+                    f"\nYour last change made it better ({last} → {d.score}): keep it." if d.score < last else
+                    f"\nYour last change made it worse ({last} → {d.score}): undo it, or it fixed one thing and broke another.")
+        same, total, row = scoring.first_mismatch(d.rows)
+        if row is not None:
+            mark, target, yours = row
+            said += (f"\nThe first {same} of {total} target instructions match; the first difference "
+                     f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
+        return said
 
     def stall_note(self, function_id: int, agent_id: int, after: int | None = None) -> str:
         """A nudge once an agent's last `after` compiles of a function didn't beat its best: functions that match
