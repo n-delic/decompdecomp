@@ -1287,6 +1287,8 @@ class Manager:
             return tools.FORK_PROMPT.format(title=ov["title"], platform=ov.get("platform_name") or "its platform",
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
+        if s.options.get("task") == "readable":
+            return tools.READABLE_PROMPT.format(title=ov["title"], count=count)
         guide = {"psx": "psx", "ps2": "ps2", "gba": "agbcc"}.get(ov.get("platform")) or (
             "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
@@ -1674,6 +1676,9 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
         "list_functions": ("List functions by status.", s(status=st("open | matched | all"), limit=it("max rows"))),
         "add_note": ("Leave a note on a function for the next agent on it.", s(text=st("note", True), function=st("function"))),
+        "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
+        "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
+                          "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
         "share_knowledge": ("Propose something every agent on this game should know, or back proposal #N "
                             "(supports=N). It counts once two different models agree. Not for compiler questions.",
                             s(text=st("what every agent should know"), supports=it("a proposal's number to back"))),

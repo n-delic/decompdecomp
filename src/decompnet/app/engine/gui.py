@@ -50,6 +50,7 @@ class GuiMixin:
                                              "twins": None if twins is None else {
                                                  k: getattr(twins, k) for k in ("state", "pairs", "tried", "matched", "asm")},
                                              "helper_matches": helpers,
+                                             "readable": self.readability.counts(proj)["readable"],
                                              "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                                              "priority": cfg.get("priority", []),
                                              # (a suggestion its own check disproved isn't one: older ones were filed)

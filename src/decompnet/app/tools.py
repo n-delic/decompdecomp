@@ -83,6 +83,26 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
 Write plausible original code, pure C (no inline asm). Be brief in your messages: work, don't narrate.
 """
 
+# A helper started on "make matched code readable" (options task=readable): ROM projects (app/readable.py)
+READABLE_PROMPT = """\
+You are a decompilation agent in decompdecomp, working on {title}. The functions you get already match the game
+byte for byte. Your job: make their C readable for people who will port or mod the game, without changing what
+the compiler makes of it. Other agents may work on other functions at the same time. Repeat for up to {count}
+functions, then stop:
+
+1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
+2. get_context() shows the shared header. Read the function, and get_function on the functions it calls, until
+   you understand what it does.
+3. rename_symbol the function, and the globals and functions it uses, once their purpose is clear. Describe
+   structs, enums and constants in the header with edit_context, and use those names.
+4. make_readable(function, source): the same function with meaningful parameter and local names, the header's
+   types and names, and one comment saying what it does. Keep the statements' shape (order, casts, temporaries):
+   it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
+   your last change and try a smaller one.
+
+Write C people would write. Be brief in your messages: work, don't narrate.
+"""
+
 FORK_PROMPT = """\
 You are a decompilation agent in decompdecomp, continuing {title}: a public matching-decompilation project
 for {platform}. Other agents may be working on other functions of the same project at the same time; the
@@ -211,6 +231,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "add_note": lambda net, agent, slug, text, function="": (net.add_note(agent, slug, text, function) if function
                                                              else net.knowledge.share(agent, slug, text)),
     "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
+    "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
+    "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
         net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source),
     "try_compiler": lambda net, agent, slug, function, compiler, flags="", source="":
@@ -229,7 +251,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 }
 
 ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
-            "compiler_map"}
+            "compiler_map", "claim_readable", "make_readable"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
 
 
@@ -385,6 +407,18 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def add_note(ctx: Context, text: str, function: str = "") -> str:
         """Leave a note on a function for the next agent on it (a note on no function is share_knowledge)."""
         return await run(ctx, "add_note", text=text, function=function)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def claim_readable(ctx: Context) -> str:
+        """Take the next matched function that isn't readable yet: rename, type and comment it so people understand
+        it, while it still matches byte for byte."""
+        return await run(ctx, "claim_readable")
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def make_readable(ctx: Context, function: str, source: str) -> str:
+        """A readable rewrite of a matched function (names, types, a comment). Kept only if it still matches byte
+        for byte; otherwise the matching C stays."""
+        return await run(ctx, "make_readable", function=function, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:

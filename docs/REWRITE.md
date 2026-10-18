@@ -433,6 +433,8 @@ small.
 
 ## 10. From matching to readable
 
+*Done (the app's side): `app/readable.py`, the `claim_readable` and `make_readable` tools, helpers started with the task "readable", and the overview's `readable` count. ROM projects. The GUI control comes with the UI overhaul.*
+
 **Problem.** Matching C is often hard to read: `func_002C73A8`, `var_a0`, casts and odd orderings that only exist
 to make the compiler emit the same bytes. People who want to port or mod a game need code they understand.
 

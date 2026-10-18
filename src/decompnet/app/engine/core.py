@@ -51,6 +51,8 @@ class Core(Network):
         self.rangechecks = RangeChecks(self)
         from ..knowledge import Knowledge
         self.knowledge = Knowledge(self)
+        from ..readable import Readability
+        self.readability = Readability(self)
         self.find_moved_projects()
 
     @staticmethod
