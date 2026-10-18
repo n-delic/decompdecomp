@@ -15,6 +15,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -178,6 +179,8 @@ def run(args) -> int:
         _open_when_ready(port)
     try:
         uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])
+    except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
+        traceback.print_exc()
     finally:
         quit_app()
     return 0

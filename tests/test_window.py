@@ -84,3 +84,20 @@ def test_the_secret_rides_in_the_windows_user_agent():
     ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 {window.TOKEN_AGENT}abc_DEF-123 Safari/605.1.15"
     assert window.token_of(ua) == "abc_DEF-123"
     assert window.token_of("Mozilla/5.0 Firefox/140.0") == ""
+
+
+def test_the_tray_borrows_the_systems_gtk_without_its_other_packages(monkeypatch):
+    """The system's Python folder stayed on the import path after loading GTK for the tray icon: uvicorn then found
+    the system's old `websockets` and the app quit at start on every desktop with a tray."""
+    import os
+    import sys
+
+    from decompnet.app import tray
+
+    system = "/usr/lib/python3/dist-packages"
+    if not os.path.isdir(os.path.join(system, "gi")):
+        pytest.skip("needs the system's PyGObject")
+    monkeypatch.setattr(sys, "path", [p for p in sys.path if p != system])
+    for name in [m for m in sys.modules if m == "gi" or m.startswith("gi.")]:
+        monkeypatch.delitem(sys.modules, name)
+    assert tray._gi() is not None and system not in sys.path

@@ -97,11 +97,17 @@ def _gi():
         system = "/usr/lib/python3/dist-packages"
         if sys.platform != "linux" or not os.path.isdir(system):
             return None
+        # only for gi: left on the path, it served the system's other packages too, and uvicorn picked up the
+        # system's old `websockets` instead of going without it, so the app quit at start whenever a tray showed
         sys.path.append(system)
         try:
             import gi  # noqa: F401
+            from gi.repository import Gio, GLib
         except ImportError:
             return None
+        finally:
+            sys.path.remove(system)
+        return Gio, GLib
     from gi.repository import Gio, GLib
     return Gio, GLib
 
