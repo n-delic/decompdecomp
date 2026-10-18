@@ -44,7 +44,6 @@ function dialog(title, html) {
 
 $("joinBtn").onclick = openJoin;
 $("askBtn").onclick = openConnect;
-$("talkBtn").onclick = openConnect;
 $("connectBtn").onclick = openConnect;
 
 /* Your own agent with decompdecomp's tools: registered once, then you just ask it. */

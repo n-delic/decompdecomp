@@ -416,8 +416,14 @@ a.ghost, a.primary { text-decoration: none; }
 .facts-line { font: 12px/1.45 var(--mono); color: var(--muted); }
 .facts-line b { font-weight: 500; }
 .session .last { font: 12px/1.45 var(--mono); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.session .last .fn { cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; overflow-wrap: anywhere; }
-.session.ext .tag { margin-left: auto; font: 500 11px/1 var(--mono); color: var(--muted); }
+.session .last .fn, .session .state .fn { cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.session-top .ghost + .ghost { margin-left: 0; }
+.session .todo-line { font-size: 12.5px; color: var(--ink-2); }
+/* the agent's own last words: a few lines, the rest one click in */
+.session .said { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.session .said::before { content: "“"; color: var(--muted); }
+.session .said::after { content: "”"; color: var(--muted); }
+.session .link-btn { justify-self: start; }
 .empty { padding: 18px 16px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; display: inline-block; }
 .dot.on { background: var(--hl); box-shadow: 0 0 0 1.5px var(--hl-ink); }
@@ -432,7 +438,6 @@ a.ghost, a.primary { text-decoration: none; }
 .model-chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 
 /* ------------------------------------------------------------------ activity */
-.activity-cols { margin-top: 0; }
 .feed-panel { min-height: 320px; }
 .feed { flex: 1; overflow: auto; max-height: calc(100vh - 260px); padding: 8px 0; font-size: 13.5px; overscroll-behavior: contain; }
 .feed li { display: grid; grid-template-columns: 58px 1fr; gap: 10px; padding: 6px 16px; align-items: baseline; }
@@ -444,9 +449,7 @@ a.ghost, a.primary { text-decoration: none; }
 .feed .ok { color: var(--match); font-weight: 600; }
 .feed .score { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
 .feed li.placeholder { padding: 18px 16px; }
-.thoughts li { grid-template-columns: 58px 96px 1fr; }
 .thoughts li.placeholder { grid-template-columns: 0 1fr; }
-.thoughts .src { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thoughts .t-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .thoughts .t-text code { font-size: 12.5px; background: var(--bg-alt); padding: 1px 5px; border-radius: var(--r-sm); }
 .thoughts .t-text b { font-weight: 600; }

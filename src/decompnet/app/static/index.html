@@ -289,16 +289,13 @@
           <div class="launcher" id="launcher"></div>
         </section>
         <section class="panel">
-          <header class="panel-head"><h2>Working on this project <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
+          <header class="panel-head"><h2>Your agents on this project <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
           <div id="sessions" class="sessions"></div>
-          <p class="empty muted small" id="noSessions">No agent is working on this project yet.</p>
+          <p class="empty muted small" id="noSessions">No agent works on this project yet. Start one above: it picks functions by itself, and starts again by itself if it stops.</p>
         </section>
-        <section class="panel">
-          <header class="panel-head"><h2>Your own agent</h2></header>
-          <div class="pad">
-            <p class="muted small">Work with the agent you talk to (Claude Code, Codex, Antigravity CLI…): connect it once, then ask it to work on this game. It shows up here like any other agent.</p>
-            <div class="row"><button class="ghost small-btn" id="talkBtn" type="button">Connect your agent</button></div>
-          </div>
+        <section class="panel feed-panel" id="helperLog" hidden>
+          <header class="panel-head"><h2 id="helperLogTitle">What it did</h2><button class="ghost small-btn" id="helperLogClose" type="button">Close</button></header>
+          <ol class="feed thoughts" id="thoughts"></ol>
         </section>
       </div>
       <div class="stack-col">
@@ -324,16 +321,10 @@
 
   <!-- activity -->
   <section class="ptab" data-pane="activity">
-    <div class="cols activity-cols">
-      <section class="panel feed-panel">
-        <header class="panel-head"><h2>Activity</h2><span class="muted small" id="feedHint"></span></header>
-        <ol class="feed" id="activity"></ol>
-      </section>
-      <section class="panel feed-panel">
-        <header class="panel-head"><h2>Agent output</h2><span class="muted small">what helper agents say and do</span></header>
-        <ol class="feed thoughts" id="thoughts"></ol>
-      </section>
-    </div>
+    <section class="panel feed-panel">
+      <header class="panel-head"><h2>Activity</h2><span class="muted small">what happens to the game's functions (what each agent says: Agents)</span><span class="muted small" id="feedHint"></span></header>
+      <ol class="feed" id="activity"></ol>
+    </section>
   </section>
 
   <!-- team -->
