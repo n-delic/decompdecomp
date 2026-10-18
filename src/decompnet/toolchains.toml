@@ -332,29 +332,6 @@ sha256 = "2b3000ef6a7a490c24ccd71967735ae0005e218922e51806cca1b8d77fd3cf7c"
 binary = "wibo"
 platforms = ["macos-x86_64", "macos-arm64"]
 
-[coddog]
-name = "coddog"
-kind = "tool"
-license = "MIT OR Apache-2.0"
-source = "ethteck/coddog 0.6.3"
-description = "Finds functions that look alike, inside one game or across games, so agents can learn from code that already matches."
-binary_name = "coddog"
-[[coddog.parts]]
-url = "https://github.com/ethteck/coddog/releases/download/0.6.3/coddog-cli-x86_64-unknown-linux-gnu.tar.xz"
-sha256 = "c8e1dd6228d4363378598b71c57095fc8d5b02c3d0cffb1c71b051a257e75bc7"
-subdir = "coddog-cli-x86_64-unknown-linux-gnu"
-platforms = ["linux-x86_64"]
-[[coddog.parts]]
-url = "https://github.com/ethteck/coddog/releases/download/0.6.3/coddog-cli-aarch64-apple-darwin.tar.xz"
-sha256 = "b040cf68cd673795ae95336dbadb045255b7d4d100f98cba32360ce1a64a0d0b"
-subdir = "coddog-cli-aarch64-apple-darwin"
-platforms = ["macos-arm64"]
-[[coddog.parts]]
-url = "https://github.com/ethteck/coddog/releases/download/0.6.3/coddog-cli-x86_64-apple-darwin.tar.xz"
-sha256 = "40d8f12c67a852e5716c1c2c1181673fc81bcd505e656111775c1d3b38094ed3"
-subdir = "coddog-cli-x86_64-apple-darwin"
-platforms = ["macos-x86_64"]
-
 [gc-wii-binutils]
 name = "GNU binutils for GameCube and Wii"
 kind = "tool"

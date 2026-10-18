@@ -470,7 +470,7 @@ class Tunnel:
     def start(self, log=print, timeout: float = 45) -> str:
         if toolchains.installed("cloudflared") is None:
             toolchains.install("cloudflared", log=log)
-        exe = toolchains.path("cloudflared") / ("cloudflared.exe" if (toolchains.path("cloudflared") / "cloudflared.exe").exists() else "cloudflared")
+        exe = toolchains.path("cloudflared") / "cloudflared"
         self.proc = subprocess.Popen([str(exe), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{self.port}"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                      errors="replace")

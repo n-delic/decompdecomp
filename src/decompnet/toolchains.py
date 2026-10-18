@@ -332,7 +332,7 @@ def _install_python_env(tc: Toolchain, dest: Path, log) -> None:
 
 
 def binary(tid: str) -> Path:
-    """The main executable of an installed tool (objdiff-cli, dtk, coddog, ...), on any OS."""
+    """The main executable of an installed tool (objdiff-cli, dtk, ...)."""
     tc = get(tid)
     base = require(tid)
     name = tc.binary_name or tid
