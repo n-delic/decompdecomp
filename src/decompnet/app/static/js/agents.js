@@ -199,7 +199,7 @@ function renderLauncher(box, compact = true) {
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
   } else if (a.uses_endpoints) {
     const eps = S.st.settings.endpoints || [];
-    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any provider works (Anthropic, OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
+    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
     if (!LZ.eps.length && eps.length) LZ.eps = [eps[0].id];
     body = eps.length && !LZ.adding ? `<div class="ep-pick">${eps.map((e) => `<label class="check inline"><input type="checkbox" data-ep="${esc(e.id)}" ${LZ.eps.includes(e.id) ? "checked" : ""}>
@@ -213,7 +213,7 @@ function renderLauncher(box, compact = true) {
     body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${known && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
         <option value="__other" ${known ? "" : "selected"}>Another model…</option></select></label>
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>
-      ${a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks; opencode 2, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
+      ${a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
   }
   const ready = a.installed;
   // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches

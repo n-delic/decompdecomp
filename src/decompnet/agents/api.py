@@ -1,4 +1,4 @@
-"""The API helper: decompdecomp's own agent loop for any OpenAI-compatible API (Anthropic, DeepSeek, OpenRouter,
+"""The API helper: decompdecomp's own agent loop for any OpenAI-compatible API (DeepSeek, OpenRouter,
 OpenAI, a local llama.cpp, Ollama or LM Studio). No program to install: the app sends the conversation to the model's
 chat-completions endpoint and calls the tools the model asks for directly (app/tools.py `call`), with the same tools
 the CLI agents get over MCP.
@@ -20,8 +20,6 @@ import httpx
 from . import Agent, args_brief, number
 
 API_PRESETS = {
-    # Anthropic answers the same chat-completions requests at this address (its OpenAI-compatible endpoint)
-    "anthropic": {"name": "Anthropic", "base_url": "https://api.anthropic.com/v1", "model": "claude-opus-5-5", "key": True},
     "deepseek": {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "key": True},
     "openrouter": {"name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat", "key": True},
     "ollama": {"name": "Ollama (local)", "base_url": "http://127.0.0.1:11434/v1", "model": "qwen3-coder", "key": False},

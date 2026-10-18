@@ -36,7 +36,7 @@ function renderAgentsPage() {
       <div class="row"><button class="primary small-btn" data-save type="button">${e.id ? "Save" : "Add"}</button>
         ${e.has_key ? `<button class="ghost small-btn" data-forget type="button">Forget the key</button>` : ""}
         ${e.id ? `<button class="ghost small-btn danger" data-remove type="button">Remove</button>` : eps.length ? `<button class="ghost small-btn" data-cancel type="button">Cancel</button>` : ""}</div></div>`;
-  $("apiBox").innerHTML = `<p class="muted small">Any OpenAI-compatible API runs through decompdecomp's built-in agent loop: Anthropic, DeepSeek, OpenRouter, OpenAI, or models on your own machines with llama.cpp, Ollama or LM Studio. Save one endpoint per machine or provider: when you start agents you tick the ones to use, and the sessions are spread across them. Each key stays on this computer and is only sent to its own endpoint.</p>
+  $("apiBox").innerHTML = `<p class="muted small">Any OpenAI-compatible API runs through decompdecomp's built-in agent loop: DeepSeek, OpenRouter, OpenAI, or models on your own machines with llama.cpp, Ollama or LM Studio. Save one endpoint per machine or provider: when you start agents you tick the ones to use, and the sessions are spread across them. Each key stays on this computer and is only sent to its own endpoint.</p>
     ${eps.map(card).join("")}
     <div id="epNew" ${eps.length && !S.addingEndpoint ? "hidden" : ""}>${card({ provider: "custom" })}</div>
     ${eps.length && !S.addingEndpoint ? `<div class="row"><button class="ghost small-btn" id="epAdd" type="button">Add an endpoint</button></div>` : ""}
