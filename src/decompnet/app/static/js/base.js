@@ -73,6 +73,23 @@ async function followJob(id, logEl, onUpdate) {
   }
 }
 
+/* A job started from a dialog or panel says why it failed right there, above its log, until it's tried again
+   (`message` ""): a toast is gone before it's read. A fork of a repository that doesn't exist sat on "cloning …"
+   for good, and a join with a wrong link showed an empty box. */
+function showJobError(logEl, message) {
+  let box = logEl.previousElementSibling;
+  if (!box || !box.classList.contains("err-msg")) {
+    box = document.createElement("p");
+    box.className = "err-msg";
+    box.setAttribute("role", "alert");
+    logEl.before(box);
+  }
+  box.hidden = !message;
+  box.textContent = message || "";
+  if (message) logEl.hidden = !logEl.textContent.trim();
+  else { logEl.textContent = ""; logEl.hidden = false; }
+}
+
 /* The map's still cells are drawn once into `base` (again only when one of them changes); a frame copies it and
    draws just what moves on top: the functions being worked on, fresh matches, the selection. A big game is tens of
    thousands of cells, and redrawing them all 60 times a second while agents or autopilot work made the app lag. */

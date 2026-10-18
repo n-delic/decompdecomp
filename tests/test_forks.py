@@ -430,7 +430,18 @@ def test_a_projects_own_words_on_ai_come_before_forking(tmp_path):
     assert got["error"] is None and set(got["files"]) == {"README.md", ".github/CONTRIBUTING.md"}
     assert got["lines"] == [{"file": ".github/CONTRIBUTING.md", "text": "Pull requests written by AI tools will be closed."}]
     assert got["lean"] == "no"
-    assert policy.check(f"file://{tmp_path}/nothing")["error"].startswith("couldn't read the repository")
+    gone = policy.check(f"file://{tmp_path}/nothing")
+    assert gone["error"] == policy.MISSING_REPO and gone["missing"]
+
+
+def test_git_trouble_reading_a_repository_is_said_in_a_sentence():
+    """A fork of a repository that doesn't exist showed git's "could not read Username for 'https://github.com':
+    terminal prompts disabled": GitHub's answer for a missing repository, which says nothing to most people."""
+    from decompnet.forks import policy
+    github = "Cloning into 'x'...\nfatal: could not read Username for 'https://github.com': terminal prompts disabled\n"
+    assert policy.git_trouble(github) == policy.MISSING_REPO
+    assert "internet connection" in policy.git_trouble("fatal: unable to access 'https://x/': Could not resolve host: x")
+    assert policy.git_trouble("fatal: something odd\n") == "git couldn't read the repository (something odd)."
 
 
 def test_c_code_going_into_a_cpp_file_gets_c_linkage(tmp_path, monkeypatch):

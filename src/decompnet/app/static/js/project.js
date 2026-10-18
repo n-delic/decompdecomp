@@ -460,7 +460,7 @@ function renderHost(box, info) {
     box.querySelector("#startShare").onclick = async () => {
       const mode = box.querySelector('[name="mode"]:checked')?.value || "tunnel";
       const visibility = box.querySelector("[data-vis].on")?.dataset.vis || "private";
-      box.querySelector("#shareLog").hidden = false;
+      showJobError(box.querySelector("#shareLog"), "");
       box.querySelector("#startShare").disabled = true;
       try {
         const { job } = await api("/api/collab/start", { method: "POST", body: { slug: S.slug, mode, visibility,
@@ -468,7 +468,7 @@ function renderHost(box, info) {
           port: Number(box.querySelector("#addrPort")?.value) || 6481, keep: info.was_sharing } });
         await followJob(job, box.querySelector("#shareLog"));
         renderHost(box, await api(`/api/collab?slug=${S.slug}`));
-      } catch (e) { toast(esc(e.message), "err"); box.querySelector("#startShare").disabled = false; }
+      } catch (e) { showJobError(box.querySelector("#shareLog"), e.message); box.querySelector("#startShare").disabled = false; }
     };
     return;
   }
@@ -505,18 +505,36 @@ function renderHost(box, info) {
 function openReconnect() {
   const body = dialog("Reconnect to the room", `<p class="muted">When the host restarts decompdecomp with a quick tunnel, their invite link changes. Paste the new one; you stay the same member and keep everything you've done.</p>
     <label class="field"><span>New invite link</span><input id="rLink" class="mono" placeholder="https://….trycloudflare.com/join/…"></label>
-    <div class="row"><button class="primary" id="rGo" type="button">Reconnect</button></div><pre class="joblog" id="rLog" hidden></pre>`);
+    <div class="row"><button class="primary" id="rGo" type="button" disabled>Reconnect</button><span class="muted small" id="rWhy"></span></div><pre class="joblog" id="rLog" hidden></pre>`);
+  const check = () => { const why = inviteProblem($("rLink").value); $("rGo").disabled = !!why; $("rWhy").textContent = $("rLink").value.trim() ? why : ""; };
+  body.querySelector("#rLink").oninput = check;
   body.querySelector("#rGo").onclick = async () => {
-    if (!$("rLink").value.trim()) return toast("Paste the host's new invite link.", "err");
-    $("rLog").hidden = false;
+    showJobError($("rLog"), "");
     $("rGo").disabled = true;
     try {
       const { job } = await api("/api/collab/reconnect", { method: "POST", body: { slug: S.slug, link: $("rLink").value.trim() } });
       await followJob(job, $("rLog"));
       closeDialog();
       toast("Back in the room.", "match");
-    } catch (e) { toast(esc(e.message), "err"); $("rGo").disabled = false; }
+    } catch (e) { if ($("rLog")) { showJobError($("rLog"), e.message); check(); } }
   };
+}
+
+/* What's wrong with an invite link, in a sentence, or "" when it has an invite's shape: the shapes the app accepts
+   (collab.parse_invite), a room's link or a public room's bare address. */
+const INVITE_LINK = /^https?:\/\/[^/\s]+(\/join\/[A-Za-z0-9_-]{4,}(#room=[\w-]+)?)?\/?$/;
+function inviteProblem(text) {
+  if (!text.trim()) return "Paste the invite link the room's host gave you.";
+  return INVITE_LINK.test(text.trim()) ? "" : "That isn't an invite link. It looks like https://….trycloudflare.com/join/….";
+}
+
+/* What's still missing before Join can start, in a sentence, or "" when everything is there. */
+function joinProblem({ link, name, copy, own }) {
+  return inviteProblem(link)
+    || (!name ? "Pick a name for yourself in the room."
+      : !/^[A-Za-z0-9_-]{1,24}$/.test(name) ? "Your name can have letters, digits, - and _ only."
+      : !copy ? "Pick your copy of the game, or give its path."
+      : !own ? "Confirm it's your own copy of the game." : "");
 }
 
 function openJoin() {
@@ -524,16 +542,18 @@ function openJoin() {
     <label class="field"><span>Invite link</span><input id="jLink" class="mono" placeholder="https://….trycloudflare.com/join/…"></label>
     <label class="field"><span>Your name in the room</span><input id="jName" maxlength="24" placeholder="e.g. alex"></label>
     <label class="field"><span>Your copy of the game</span><input id="jRom" type="file"></label>
-    <label class="field"><span>…or its path on this computer (best for a GameCube or Wii disc: it's read where it is)</span><input id="jPath" class="mono" placeholder="${S.st && S.st.host_os === "windows" ? "C:\\Games\\game.rvz" : "/home/you/games/game.iso"}"></label>
+    <label class="field"><span>…or its path on this computer (best for a GameCube or Wii disc: it's read where it is)</span><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"></label>
     <label class="check"><input type="checkbox" id="jOwn"><span>This is my own copy of this game, obtained legally. I'll keep what the room makes private.</span></label>
-    <p class="muted small">A GameCube, Wii or DS project comes with its whole source tree from the host, and is then built here with your copy and your compilers: the first time takes a few minutes.</p>
-    <div class="row"><button class="primary" id="jGo" type="button">Join</button></div><pre class="joblog" id="jLog" hidden></pre>`);
+    <p class="muted small">A GameCube, Wii or PC project comes with its whole source tree from the host, and is then built here with your copy and your compilers: the first time takes a few minutes.</p>
+    <div class="row"><button class="primary" id="jGo" type="button" disabled>Join</button><span class="muted small" id="jWhy"></span></div><pre class="joblog" id="jLog" hidden></pre>`);
+  const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: $("jRom").files[0] || $("jPath").value.trim(), own: $("jOwn").checked });
+  // the sentence waits until something is typed: a fresh dialog shouldn't open on a complaint
+  const check = () => { const f = fields(), why = joinProblem(f); $("jGo").disabled = !!why; $("jWhy").textContent = f.link.trim() || f.name ? why : ""; };
+  body.querySelectorAll("input").forEach((el) => { el.oninput = check; el.onchange = check; });
   body.querySelector("#jGo").onclick = async () => {
     const file = $("jRom").files[0], path = $("jPath").value.trim();
-    if (!$("jLink").value.trim() || !/^[A-Za-z0-9_-]{1,24}$/.test($("jName").value) || !(file || path) || !$("jOwn").checked) {
-      return toast("Fill in the link, a name (letters, digits, - or _), your copy of the game, and confirm it's your own.", "err");
-    }
-    $("jLog").hidden = false;
+    if (joinProblem(fields())) return check();
+    showJobError($("jLog"), "");
     $("jGo").disabled = true;
     try {
       let q = `link=${encodeURIComponent($("jLink").value.trim())}&name=${encodeURIComponent($("jName").value)}&confirmed=1`;
@@ -544,7 +564,7 @@ function openJoin() {
       closeDialog();
       loadNav();
       location.hash = `#/p/${res.slug}`;
-    } catch (e) { toast(esc(e.message), "err"); $("jGo").disabled = false; }
+    } catch (e) { if ($("jLog")) { showJobError($("jLog"), e.message); check(); } }
   };
 }
 
@@ -568,16 +588,32 @@ function showCatalog() {
   show("catalog");
 }
 
+/* What's wrong with a repository address, in a sentence, or "" when it's one decompdecomp can fork: the shape the
+   app accepts (forkengine._REPO). Anything else reached git, whose answers ("could not read Username") say nothing
+   to most people. */
+const REPO_ADDRESS = /^https:\/\/(github\.com|gitlab\.com|codeberg\.org|git\.[\w.-]+)\/[\w.-]+\/[\w.-]+?(\.git)?\/?$/;
+function repoProblem(text) {
+  const url = text.trim();
+  if (!url) return "Paste the address of the project's repository.";
+  if (REPO_ADDRESS.test(url)) return "";
+  if (/^(git@|ssh:\/\/)/.test(url)) return "Use the repository's https address, like https://github.com/owner/repo.";
+  if (/^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/.test(url)) return "decompdecomp forks from GitHub, GitLab, Codeberg or a git.… server, at an https address like https://github.com/owner/repo.";
+  return "That isn't a repository's address. It looks like https://github.com/owner/repo.";
+}
+
+const checkRepo = () => { const why = repoProblem($("repoUrl").value); $("repoFork").disabled = !!why; $("repoWhy").textContent = $("repoUrl").value.trim() ? why : ""; };
+$("repoUrl").addEventListener("input", checkRepo);
 $("repoUrl").addEventListener("keydown", (e) => { if (e.key === "Enter") $("repoFork").click(); });
 $("repoFork").onclick = () => {
   const url = $("repoUrl").value.trim();
-  if (!url) return;
+  if (repoProblem(url)) return checkRepo();
   openForkDialog({ name: url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, ""), repo_url: url, platform: "", platform_name: "", id: url });
 };
 
 /* What the project's own files say about AI, word for word, before anything is cloned. */
 function policyHtml(pol) {
-  if (pol.error) return `<div class="notice"><span>Couldn't read what the project says about AI (${esc(pol.error)}). Look at its README and contribution rules yourself before you fork it.</span></div>`;
+  if (pol.missing) return `<div class="notice bad"><span>${esc(pol.error)}</span></div>`;
+  if (pol.error) return `<div class="notice"><span>Couldn't read what the project says about AI: ${esc(pol.error)} Look at its README and contribution rules yourself before you fork it.</span></div>`;
   const quotes = pol.lines.map((l) => `<blockquote class="policy-line">“${esc(l.text)}” <span class="muted small">${esc(l.file)}</span></blockquote>`).join("");
   if (pol.lean === "no") return `<div class="notice bad"><span><b>This project says it doesn't want AI-made code.</b> Respect that: keep this fork for yourself, to study the game, and send it nothing your agents wrote.</span></div>${quotes}
     <label class="check"><input type="checkbox" id="forkOk"><span>I'll keep this fork to myself and won't send AI-made code to this project.</span></label>`;
@@ -596,12 +632,12 @@ function openForkDialog(p) {
     if (!$("forkPolicy")) return;  // (the dialog was closed meanwhile)
     $("forkPolicy").innerHTML = policyHtml(pol);
     const ok = $("forkOk");
-    $("forkGo").disabled = !!ok;
+    $("forkGo").disabled = !!ok || !!pol.missing;  // nothing to clone at an address with no repository
     if (ok) ok.onchange = () => { $("forkGo").disabled = !ok.checked; };
   });
   body.querySelector("#forkGo").onclick = async () => {
     $("forkGo").disabled = true;
-    $("forkLog").hidden = false;
+    showJobError($("forkLog"), "");
     try {
       const { job } = await api("/api/fork", { method: "POST", body: { repo: p.repo_url, name: p.name, platform: p.platform, version: p.version } });
       const r = await followJob(job, $("forkLog"));
@@ -609,7 +645,7 @@ function openForkDialog(p) {
       await loadState();
       loadNav();
       location.hash = `#/p/${r.slug}`;
-    } catch (e) { toast(esc(e.message), "err"); $("forkGo").disabled = false; }
+    } catch (e) { if ($("forkLog")) { showJobError($("forkLog"), e.message); $("forkGo").disabled = !!$("forkOk") && !$("forkOk").checked; } }
   };
 }
 
@@ -641,7 +677,7 @@ async function renderForkSetup() {
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button></div>`;
   const run = async (start) => {
-    $("fsLog").hidden = false;
+    showJobError($("fsLog"), "");
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
       const { job } = await start();
@@ -650,9 +686,7 @@ async function renderForkSetup() {
       loadNav();
       openProject(S.slug);
     } catch (e) {
-      toast(esc(e.message), "err");
-      $("fsLog").textContent += `\n\n✕ ${e.message}`;  // stays visible after the toast is gone
-      $("fsLog").scrollTop = $("fsLog").scrollHeight;
+      showJobError($("fsLog"), e.message);
       box.querySelectorAll("button, input").forEach((b) => { b.disabled = false; });
       if ($("fsOwn")) $("fsGo").disabled = !$("fsOwn").checked;
     }

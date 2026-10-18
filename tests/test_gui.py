@@ -38,3 +38,16 @@ def test_the_notification_centre_tells_each_projects_news_in_one_line_per_burst(
     assert matches.startswith("Ridge Racer V") and "claude-2 matched func_200" in matches and "+13 more matches" in matches
     assert paused.startswith("Demo Quest 64") and "claude-1 paused: the provider is out of credit" in paused
     assert gui["unread"] == 2
+
+
+def test_fork_and_join_say_what_is_wrong_before_anything_starts(gui):
+    """A fork of "hello" reached git, and a join with the link "hello" showed an empty box: the page checks the
+    shapes the app accepts first, says what's wrong in a sentence, and keeps the button off until it's right."""
+    empty, word, ssh, other_host, github, gitlab = gui["checks"]["repo"]
+    assert github == gitlab == ""
+    assert "https://github.com/owner/repo" in word and "https address" in ssh and "GitHub, GitLab, Codeberg" in other_host
+    assert empty and "Username" not in word
+    bad_link, invite, bare_room = gui["checks"]["invite"]
+    assert bad_link.startswith("That isn't an invite link") and invite == bare_room == ""
+    no_copy, bad_name, ready = gui["checks"]["join"]
+    assert "copy of the game" in no_copy and "letters, digits" in bad_name and ready == ""

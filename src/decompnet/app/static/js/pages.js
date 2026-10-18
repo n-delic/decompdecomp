@@ -20,13 +20,13 @@ function renderAgentsPage() {
   $("agList").querySelectorAll("[data-inst]").forEach((b) => {
     b.onclick = async () => {
       const log = $("agList").querySelector(`[data-ilog="${b.dataset.inst}"]`);
-      log.hidden = false; b.disabled = true;
+      showJobError(log, ""); b.disabled = true;
       try {
         const { job } = await api("/api/agents/install", { method: "POST", body: { kind: b.dataset.inst } });
         await followJob(job, log);
         toast("Installed.", "match");
         showAgentsPage();
-      } catch (e) { toast(esc(e.message), "err"); b.disabled = false; }
+      } catch (e) { showJobError(log, e.message); b.disabled = false; }
     };
   });
   const eps = S.st.settings.endpoints || [];

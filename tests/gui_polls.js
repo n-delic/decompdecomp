@@ -114,5 +114,14 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
   await settle();
   const notes = vm.runInContext("N.live.map((x) => x.el.innerHTML.replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim())", ctx);
   const unread = vm.runInContext("N.unread", ctx);
-  process.stdout.write(JSON.stringify({ toasts, notes, unread, errors }));
+  // the page's small pure helpers, for tests of their own
+  const checks = vm.runInContext(`({
+    repo: ["", "hello", "git@github.com:zeldaret/oot.git", "https://example.com/owner/repo", "https://github.com/zeldaret/oot",
+           "https://gitlab.com/owner/repo.git/"].map(repoProblem),
+    invite: ["hello", "https://abc.trycloudflare.com/join/CODE1#room=game", "http://192.168.1.5:6481"].map(inviteProblem),
+    join: [{ link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "", own: true },
+           { link: "https://abc.trycloudflare.com/join/CODE1", name: "a b", copy: "/x.iso", own: true },
+           { link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "/x.iso", own: true }].map(joinProblem),
+  })`, ctx);
+  process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

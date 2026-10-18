@@ -418,10 +418,12 @@ class ForkEngine:
         dest = self.net.workspace / slug
         log(f"cloning {url}")
         res = subprocess.run(["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, str(dest)],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
         if res.returncode != 0:
+            from ..forks import policy
             shutil.rmtree(dest, ignore_errors=True)
-            raise NetworkError(f"git clone failed: {res.stderr.strip()[-400:]}")
+            raise NetworkError(policy.git_trouble(res.stderr))
         fp = ForkProject(dest)
         fp.git("checkout", "-q", "-b", "decomp-wtf")
         kind = fp.kind()

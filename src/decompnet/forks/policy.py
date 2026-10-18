@@ -23,6 +23,24 @@ _AI = re.compile(r"\bA\.?I\b|\bLLMs?\b|\blarge language models?\b|\bChatGPT\b|\b
 _NO = re.compile(r"\b(?:no|not|never|don'?t|do not|won'?t|will not|cannot|can'?t|prohibit\w*|ban(?:ned|s)?|forbid\w*|"
                  r"disallow\w*|reject\w*|refus\w*|unwelcome|without|closed|removed|deleted)\b", re.I)
 _YES = re.compile(r"\b(?:welcome\w*|allowed|accept\w*|encourag\w*|fine|okay|ok|permitted|may use|can use|feel free)\b", re.I)
+# git's ways of saying there's no repository there: GitHub answers a missing (or private) one by asking for a
+# password, which git can't ask for here ("could not read Username ... terminal prompts disabled")
+_MISSING = re.compile(r"repository not found|could not read username|authentication failed|not found|"
+                      r"does not appear to be a git repository", re.I)
+_OFFLINE = re.compile(r"could not resolve host|failed to connect|timed out|network is unreachable", re.I)
+MISSING_REPO = ("There's no public repository at this address. Open it in your browser to check it: it may be "
+                "private, or spelled differently.")
+
+
+def git_trouble(output: str) -> str:
+    """What went wrong reading a repository, as a sentence the user can act on: git's own words mean little to most
+    people (a fork of a repository that doesn't exist said "could not read Username for 'https://github.com'")."""
+    if _MISSING.search(output):
+        return MISSING_REPO
+    if _OFFLINE.search(output):
+        return "decompdecomp couldn't reach the repository's server. Check your internet connection, then try again."
+    last = output.strip().splitlines()[-1:] or ["no reason given"]
+    return f"git couldn't read the repository ({last[0].removeprefix('fatal: ')[:200]})."
 
 
 def _git(*args: str, cwd: str | None = None, timeout: int = 90) -> subprocess.CompletedProcess:
@@ -65,8 +83,9 @@ def check(url: str) -> dict:
         try:
             res = _git("clone", "--depth", "1", "--filter=blob:none", "--no-checkout", "--quiet", url, tmp)
             if res.returncode != 0:
-                return {"files": [], "lines": [], "lean": "silent",
-                        "error": f"couldn't read the repository: {(res.stderr or res.stdout).strip()[-300:]}"}
+                output = res.stderr or res.stdout
+                return {"files": [], "lines": [], "lean": "silent", "error": git_trouble(output),
+                        "missing": bool(_MISSING.search(output))}
             listing = _git("ls-tree", "-r", "--name-only", "HEAD", cwd=tmp).stdout.splitlines()
             files = [f for f in listing if _POLICY_FILE.match(f)][:10]
             found: list[dict] = []

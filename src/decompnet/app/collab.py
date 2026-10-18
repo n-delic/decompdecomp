@@ -504,7 +504,8 @@ def parse_invite(link: str) -> tuple[str, str]:
         return link, "open"
     m = re.match(r"^(https?://[^/\s]+(?::\d+)?)/join/([A-Za-z0-9_-]{4,})(?:#room=([\w-]+))?$", link)
     if not m:
-        raise NetworkError("that doesn't look like a decompdecomp invite link")
+        raise NetworkError("That isn't an invite link. Ask the room's host for theirs: it looks like "
+                           "https://….trycloudflare.com/join/….")
     return m.group(1), m.group(2) + (f"#{m.group(3)}" if m.group(3) else "")
 
 

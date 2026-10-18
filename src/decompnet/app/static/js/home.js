@@ -321,9 +321,9 @@ function openRestore() {
   body.querySelector("#rsOwn").onchange = (e) => { $("rsGo").disabled = !e.target.checked; };
   body.querySelector("#rsGo").onclick = async () => {
     const source = $("rsSource").value.trim(), path = $("rsGame").value.trim();
-    if (!source || !path) return toast("Say where the save is and where your copy of the game is.", "err");
+    if (!source || !path) return showJobError($("rsLog"), "Say where the save is and where your copy of the game is.");
     $("rsGo").disabled = true;
-    $("rsLog").hidden = false;
+    showJobError($("rsLog"), "");
     try {
       const { job } = await api("/api/restore", { method: "POST", body: { source, path, confirmed: true } });
       const r = await followJob(job, $("rsLog"));
@@ -331,7 +331,7 @@ function openRestore() {
       closeDialog();
       loadNav();
       location.hash = `#/p/${r.slug}`;
-    } catch (e) { toast(esc(e.message), "err"); if ($("rsGo")) $("rsGo").disabled = false; }
+    } catch (e) { if ($("rsLog")) { showJobError($("rsLog"), e.message); $("rsGo").disabled = false; } }
   };
 }
 

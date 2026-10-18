@@ -316,7 +316,7 @@ function renderSource(ov) {
 }
 async function exportNow() {
   $("srcExport").disabled = true;
-  $("expLog").hidden = false;
+  showJobError($("expLog"), "");
   $("expResult").innerHTML = "";
   try {
     const { job } = await api("/api/export", { method: "POST", body: { slug: S.slug } });
@@ -328,7 +328,7 @@ async function exportNow() {
     wireCopies($("expResult"));
     S.ov = await api(`/api/project?slug=${S.slug}`);
     renderSource(S.ov);
-  } catch (e) { toast(esc(e.message), "err"); } finally { if ($("srcExport")) $("srcExport").disabled = false; }
+  } catch (e) { if (exportOpen()) showJobError($("expLog"), e.message); else toast(esc(e.message), "err"); } finally { if ($("srcExport")) $("srcExport").disabled = false; }
 }
 
 /* ------------------------------------------------------------------ project settings */
