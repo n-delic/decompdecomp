@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# decompdecomp installer for Linux (Windows: install.ps1, in PowerShell). macOS isn't supported.
+# decompdecomp installer for Linux. Windows and macOS aren't supported in this version.
 #
 #   curl -fsSL https://decomp.ndelic.com/install.sh | bash
 #
 # decompdecomp installs on this computer, with uv:
 #   1. installs uv, Astral's Python tool manager, if you don't have it (asks first)
 #   2. installs decompdecomp (open source, MIT) with uv, in its own environment
-#   3. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
-#   4. adds decompdecomp to your apps menu and opens it
+#   3. checks for what its window needs from your system (GTK and WebKitGTK 4.1), and offers to install it
+#   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
+#   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
 #
 # Your projects go to ~/Decomp. Nothing is sent anywhere.
 # Uninstall: uv tool uninstall decompnet
@@ -18,7 +19,6 @@
 #                       testing; its updates follow that branch) or a folder with decompdecomp's source. Run from a
 #                       git checkout, the checkout is used (and updates follow its branch; main's are releases).
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
-# On a server, decompdecomp also runs in Docker: docker-compose.yml in the repository.
 set -euo pipefail
 
 VERSION="1.0.2-alpha"
@@ -59,16 +59,11 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
 fi
 [ -n "$SOURCE" ] || SOURCE="${CHECKOUT:-release}"
 
-# decompdecomp's own Linux (WSL on Windows, Docker): made by linux-base.sh; then this installs for its user only
-IN_BOX=""
-[ -f /etc/decomp-wtf-runtime ] && IN_BOX="$(cat /etc/decomp-wtf-runtime)"
-
 bold "decompdecomp setup"
 OS="$(uname -s)"
 case "$OS" in
   Linux) ;;
-  Darwin) fail "macOS isn't supported: decompdecomp runs on Linux and on Windows (in WSL 2), on x86-64 PCs (the games' compilers are x86 programs). On an Intel Mac, an x86-64 Linux virtual machine works too." ;;
-  *) fail "this installer is for Linux; on Windows run in PowerShell: irm https://decomp.ndelic.com/install.ps1 | iex" ;;
+  *) fail "decompdecomp runs on Linux, on x86-64 PCs (the games' compilers are x86 programs). Windows and macOS aren't supported in this version; a Linux virtual machine works." ;;
 esac
 case "$(uname -m)" in
   x86_64|amd64) ;;
@@ -111,14 +106,8 @@ resolve_branch() {  # the branch's newest commit, installed from GitHub's archiv
 # ------------------------------------------------------------------------------------------- on this Linux
 for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do [ -x "$d/uv" ] && export PATH="$d:$PATH"; done
 if ! command -v uv >/dev/null; then
-  if [ -z "$IN_BOX" ]; then
-    ask "decompdecomp is installed with uv (Astral's Python tool manager). Install uv now?" || fail "uv is needed: https://docs.astral.sh/uv/"
-  fi
-  if [ -n "$IN_BOX" ]; then
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh >/dev/null
-  else
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-  fi
+  ask "decompdecomp is installed with uv (Astral's Python tool manager). Install uv now?" || fail "uv is needed: https://docs.astral.sh/uv/"
+  curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="$HOME/.local/bin:$PATH"
   command -v uv >/dev/null || fail "uv installed, but it isn't on PATH yet; open a new terminal and run this again"
 fi
@@ -140,8 +129,25 @@ fi
 uv tool install --force --quiet --python 3.12 "$SPEC"
 [ -n "${TMP_SRC:-}" ] && rm -rf "$TMP_SRC"
 BIN="$(uv tool dir --bin)"
-[ -n "$IN_BOX" ] || uv tool update-shell >/dev/null 2>&1 || true
+uv tool update-shell >/dev/null 2>&1 || true
 "$BIN/decomp" install-info --channel "$CHANNEL" --branch "$BRANCH" --commit "$COMMIT" --repo "$REPO" >/dev/null
+
+# the window: GTK and WebKitGTK 4.1 with their Python bindings, from the system (no browser involved)
+if ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")' 2>/dev/null; then
+  . /etc/os-release 2>/dev/null || true
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" debian "*|*" ubuntu "*) WINDOW_PACKAGES="sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1" ;;
+    *" fedora "*|*" rhel "*) WINDOW_PACKAGES="sudo dnf install -y python3-gobject gtk3 webkit2gtk4.1" ;;
+    *" arch "*) WINDOW_PACKAGES="sudo pacman -S --needed python-gobject gtk3 webkit2gtk-4.1" ;;
+    *suse*) WINDOW_PACKAGES="sudo zypper install -y python3-gobject typelib-1_0-Gtk-3_0 typelib-1_0-WebKit2-4_1" ;;
+    *) WINDOW_PACKAGES="" ;;
+  esac
+  if [ -n "$WINDOW_PACKAGES" ] && ask "decompdecomp's window needs GTK and WebKitGTK from your system. Install them now? ($WINDOW_PACKAGES)"; then
+    $WINDOW_PACKAGES || echo "  couldn't install them: run $WINDOW_PACKAGES"
+  else
+    echo "  decompdecomp's window needs PyGObject and WebKitGTK 4.1 (with GObject introspection) from your package manager"
+  fi
+fi
 
 step "downloading the compilers and tools"
 "$BIN/decomp" setup
@@ -149,27 +155,24 @@ step "downloading the compilers and tools"
 # an older decompdecomp still running from before this upgrade: stop it, so the new version takes over
 "$BIN/decomp" stop >/dev/null 2>&1 || true
 
-if [ -n "$IN_BOX" ]; then  # decompdecomp's own Linux: the installer on Windows (or the Docker image) does the rest
-  step "decompdecomp is installed"
-  exit 0
+# one decompdecomp at a time: an older .deb or .rpm of it would be a second one in the apps menu and on PATH
+if [ -d /opt/decompdecomp ]; then
+  if command -v dpkg >/dev/null && dpkg -s decompdecomp >/dev/null 2>&1; then REMOVE="sudo apt remove -y decompdecomp"
+  elif command -v rpm >/dev/null && rpm -q decompdecomp >/dev/null 2>&1; then REMOVE="sudo dnf remove -y decompdecomp"
+  else REMOVE=""; fi
+  if [ -n "$REMOVE" ] && ask "An older decompdecomp package is installed too. Remove it? ($REMOVE)"; then
+    $REMOVE >/dev/null && step "removed the older decompdecomp package" || echo "  couldn't remove it: run $REMOVE"
+  fi
 fi
 
 "$BIN/decomp" shortcut >/dev/null 2>&1 && step "added decompdecomp to your apps" || true
 
-# Your AI agents with decompdecomp's tools: only when someone is there to say yes (it changes their configs)
-if has_tty && "$BIN/decomp" connect --list 2>/dev/null | grep -q "not connected"; then
-  if ask "Give your AI agents (Claude Code, Codex, Antigravity CLI, opencode) decompdecomp's tools, so you can just ask them to decompile a game?"; then
-    "$BIN/decomp" connect | sed 's/^/  /'
-  fi
-fi
-
 bold "Done."
 echo "  Start it any time from your apps menu, or with: decomp"
-echo "  From your AI agent: run 'decomp connect' once, then ask it to decompile your game."
 if [ "$START" = 1 ]; then
   if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     nohup "$BIN/decomp" >/dev/null 2>&1 &
-    echo "  Opening decompdecomp in your browser…"
+    echo "  Opening decompdecomp…"
   else
     echo "  No desktop session found (SSH?). Run 'decomp' on the machine itself."
   fi

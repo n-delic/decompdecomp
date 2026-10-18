@@ -158,6 +158,7 @@ def run(args) -> int:
         return 0
     if window.wanted() and (why := window.missing()):
         print(why, file=sys.stderr)
+        window.tell_desktop(f"{edition.NAME} can't open its window", why)
         return 1
 
     sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted))

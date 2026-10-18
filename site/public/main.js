@@ -25,11 +25,6 @@
   picker.addEventListener("change", (e) => show(e.target.value));
   show(picker.querySelector("input:checked").value);
 
-  const os = (value) => document.querySelectorAll(".cmd[data-os]").forEach((c) => c.classList.toggle("on", c.dataset.os === value));
-  document.querySelector(".os").addEventListener("change", (e) => os(e.target.value));
-  const win = /Windows/i.test(navigator.userAgent);
-  if (win) document.querySelector('.os input[value="win"]').checked = true;
-  os(win ? "win" : "linux");
 
   // the clipboard can be missing or refused (older browsers, privacy settings): then the text is selected for Ctrl+C
   const said = (b, text) => { b.textContent = text; setTimeout(() => { b.textContent = "Copy"; }, 1600); };

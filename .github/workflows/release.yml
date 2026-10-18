@@ -1,4 +1,4 @@
-# A tag v* (e.g. v1.0.0-alpha) builds decompdecomp as a Linux app (.deb and AppImage) and attaches both to the tag's
+# A tag v* (e.g. v1.0.0-alpha) builds decompdecomp as a Linux app (.deb, .rpm, AppImage) and attaches them to the tag's
 # GitHub release, creating the release when there isn't one yet, as the latest (alphas too: the version says what it
 # is, and GitHub shows "Latest" and serves releases/latest only for a release that isn't a pre-release). It can
 # also be run by hand for a tag that's already pushed: gh workflow run release -f tag=v1.0.0-alpha
@@ -28,16 +28,16 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: the version in the tag is the version in the code
         run: test "v$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml)" = "$TAG"
-      - name: appimagetool checks the apps-menu entry with desktop-file-validate
-        run: sudo apt-get install -y --no-install-recommends desktop-file-utils
-      - name: build the .deb and the AppImage
+      - name: appimagetool checks the apps-menu entry with desktop-file-validate; rpmbuild makes the .rpm
+        run: sudo apt-get install -y --no-install-recommends desktop-file-utils rpm
+      - name: build the .deb, the .rpm and the AppImage
         run: packaging/linux/build.sh
       - name: attach them to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/*.deb dist/*.AppImage --clobber
+            gh release upload "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage --clobber
           else
-            gh release create "$TAG" dist/*.deb dist/*.AppImage --generate-notes --latest
+            gh release create "$TAG" dist/*.deb dist/*.rpm dist/*.AppImage --generate-notes --latest
           fi

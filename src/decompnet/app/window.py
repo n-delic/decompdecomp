@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import functools
 import os
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -63,6 +64,21 @@ def missing() -> str | None:
     return (f"decompdecomp's window needs {PACKAGES_NEEDED} from your system. "
             + (f"Install them with:\n  {command}\nthen start decompdecomp again." if command
                else "Install them with your distribution's package manager, then start decompdecomp again."))
+
+
+def tell_desktop(title: str, text: str) -> None:
+    """A desktop notification: started from the apps menu (an AppImage without WebKitGTK), there's no terminal to
+    read what `decomp` printed. gdbus comes with GLib, which every desktop has."""
+    gdbus = shutil.which("gdbus")
+    if not gdbus:
+        return
+    try:
+        subprocess.run([gdbus, "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path",
+                        "/org/freedesktop/Notifications", "--method", "org.freedesktop.Notifications.Notify",
+                        edition.NAME, "0", "", title, text, "[]", "{}", "0"],
+                       capture_output=True, timeout=CHECK_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def wanted() -> bool:

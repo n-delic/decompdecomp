@@ -123,17 +123,16 @@ h1 {
 .check-head h2 { font-size: var(--typography-h2-size); line-height: var(--typography-h2-lh); }
 @media (min-width: 905px) { .check-head { max-width: none; grid-template-columns: 1fr 2fr; align-items: baseline; } }
 .platforms { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-10); }
-.platforms label, .os label { position: relative; }
-.platforms input, .os input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
-.platforms span, .os span {
+.platforms label { position: relative; }
+.platforms input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.platforms span {
   display: inline-flex; align-items: center; min-height: var(--size-control-md); padding: 0 var(--space-6);
   border: var(--border-width-hairline) solid var(--color-border-strong); border-radius: var(--radius-control);
   font-weight: 600; font-size: var(--typography-label-size); transition: background var(--duration-fast) var(--ease-standard);
 }
-.platforms label:hover span, .os label:hover span { background: var(--color-action-secondary); }
-.platforms input:checked + span, .os input:checked + span { background: var(--color-mark-fill); color: var(--color-mark-text); border-color: var(--color-text-primary); }
-.platforms input:focus-visible + span, .os input:focus-visible + span { outline: var(--border-width-strong) solid var(--color-focus); outline-offset: var(--space-1); }
-.os small { font-weight: 400; margin-left: var(--space-3); color: inherit; opacity: 0.8; }
+.platforms label:hover span { background: var(--color-action-secondary); }
+.platforms input:checked + span { background: var(--color-mark-fill); color: var(--color-mark-text); border-color: var(--color-text-primary); }
+.platforms input:focus-visible + span { outline: var(--border-width-strong) solid var(--color-focus); outline-offset: var(--space-1); }
 
 .answer { display: block; margin-top: var(--space-8); font-size: var(--typography-body-lg-size); font-weight: 650; }
 .answer::before { content: "→ "; }
@@ -227,8 +226,6 @@ h1 {
 .start h2 { font-size: var(--typography-display-size); line-height: var(--typography-display-lh); font-stretch: 125%; font-weight: 800; }
 .steps { display: grid; gap: var(--space-11); margin-top: var(--space-11); }
 .step { display: grid; gap: var(--space-5); align-content: start; }
-.os { display: flex; gap: var(--space-3); }
-.js .cmd[data-os]:not(.on) { display: none; }
 .step-note { font-size: var(--typography-body-sm-size); color: var(--color-text-secondary); }
 .step-note code { font-size: 0.95em; }
 @media (min-width: 905px) { .steps { grid-template-columns: 1fr 1fr; gap: var(--space-11); } }
