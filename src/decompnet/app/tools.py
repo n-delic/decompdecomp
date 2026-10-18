@@ -222,6 +222,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
                                                             if net.fork_slug(slug) else net.read_data(slug, what, length)),
     "get_class": lambda net, agent, slug, what="": net.get_class(slug, what),
     "guess_struct": lambda net, agent, slug, function, argument="arg0": net.guess_struct(slug, function, argument),
+    "redraft": lambda net, agent, slug, function, context: net.redraft(slug, function, context),
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
@@ -250,7 +251,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class", "guess_struct",
+ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
+            "guess_struct", "redraft",
             "compiler_map", "claim_readable", "make_readable", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
 
@@ -380,6 +382,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """Hex dump of the original's data: an address or symbol (ROM projects), a data symbol such as
         lbl_1_data_10 (forks); text, pointers and floats decoded."""
         return await run(ctx, "read_data", what=what, length=length)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def redraft(ctx: Context, function: str, context: str) -> str:
+        """m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
+        you worked out) added to the shared header's; yours replace the header's where they declare the same
+        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped."""
+        return await run(ctx, "redraft", function=function, context=context)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:

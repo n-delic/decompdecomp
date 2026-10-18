@@ -7,8 +7,9 @@ import time
 import pytest
 
 from decompnet import seeds, toolchains
-from decompnet.app import drafts
+from decompnet.app import drafts, tools
 from decompnet.app.engine import RomNetwork
+from decompnet.network import NetworkError
 
 from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
 
@@ -63,6 +64,10 @@ def test_the_names_of_an_assembly_listing_are_its_symbols():
            "/* 404 80000404 0C000200 */  jal        node_kind\n/* 408 80000408 8C840000 */  lw         $a0, 0x0($a0)\n"
            ".L80000410:\n/* 410 80000410 03E00008 */  jr         $ra\n")
     assert seeds.asm_names(asm) == {"func_80000400", "D_80010000", "node_kind"}
+
+
+def test_redraft_is_a_tool_of_rom_projects_only():
+    assert "redraft" in tools.tool_names(fork=False) and "redraft" not in tools.tool_names(fork=True)
 
 
 @pytest.fixture(scope="module")
@@ -177,3 +182,20 @@ def test_every_open_function_gets_a_draft_in_the_background_and_autopilot_tries_
     finally:
         net.drafter.stop(SLUG)
         net.set_compiler_ranges(SLUG, [[fn["vram"], fn["vram"] + fn["size"]]], None)
+
+
+@needs_demo
+@needs_m2c
+def test_redraft_uses_an_agents_declarations_and_records_nothing(net):
+    name, callee = _calling(net)
+    fn = net._function(name, SLUG)
+    before = (fn["seed"], fn["seed_key"], fn["attempts"])
+    out = net.redraft(SLUG, name, f"typedef int s32;\ntypedef struct Mine {{ s32 hp; }} Mine;\ns32 {name}(Mine *m);")
+    assert out.startswith(f"m2c's draft of {name}") and "Mine *m" in out and "```c" in out
+    assert "yours replace the header's s32" in out
+    fn = net._function(name, SLUG)
+    assert (fn["seed"], fn["seed_key"], fn["attempts"]) == before
+    with pytest.raises(NetworkError, match="couldn't make the draft with your declarations"):
+        net.redraft(SLUG, name, "struct Broken { s32 hp }")  # a missing semicolon: m2c says so
+    with pytest.raises(NetworkError, match="pass the declarations"):
+        net.redraft(SLUG, name, "  ")

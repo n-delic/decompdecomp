@@ -167,6 +167,39 @@ class BriefMixin:
         return (self.is_rom(proj) and seeds.available()
                 and bool(seeds.m2c_target(self.cfg(proj)["compiler"]["toolchain"])))
 
+    def redraft(self, project: str | None, function: str, context: str) -> str:
+        """m2c's draft of a function made again with declarations an agent worked out (a struct, a prototype) on top
+        of the shared header's, replacing the header's where they declare the same names. Recorded nowhere: the agent
+        tries it with compile_and_diff, and shares what helped with edit_context."""
+        self._rom_only(project, "redraft")
+        proj = self._project(project)
+        fn = self._function(function, proj["slug"])
+        if not seeds.available():
+            raise NetworkError("redraft needs m2c, the draft decompiler: the user can install it in Setup")
+        own = compiler_for(self.cfg(proj), fn["vram"])
+        if not seeds.m2c_target(own["toolchain"]):
+            raise NetworkError("m2c can't read this function's code (no draft decompiler for its compiler)")
+        mine = seeds.declarations(seeds.c_only(context))
+        if not mine:
+            raise NetworkError("pass the declarations to draft with in `context` (a struct, a prototype, an extern)")
+        declared = set().union(*(d.names for d in mine))
+        roots = self._current_names(proj, seeds.asm_names(fn["asm"] or "")) | set().union(*(d.uses for d in mine))
+        index = self._header_index(proj["id"], self._context(proj["id"], fn["unit"]))
+        theirs = [d.text for d in index.used(roots) if not d.text.startswith("#") and not (d.names and d.names <= declared)]
+        data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
+        try:
+            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], own["toolchain"],
+                                            "\n".join(theirs + [d.text for d in mine]), data_asm, strict=True)
+        except seeds.DraftError as e:
+            raise NetworkError(f"m2c couldn't make the draft with your declarations: {e}") from None
+        if not draft:
+            raise NetworkError(f"m2c made no draft of {fn['name']}")
+        replaced = sorted(declared & set(index.by_name))
+        return (f"m2c's draft of {fn['name']} with your declarations"
+                + (f" (yours replace the header's {', '.join(replaced[:8])})" if replaced else "")
+                + ". Recorded nowhere: try it with compile_and_diff, and add the declarations that helped to the "
+                  "header with edit_context, so every draft and agent gets them.\n```c\n" + draft.strip() + "\n```")
+
     def _jtbl_asm(self, proj, fn) -> list[str]:
         out = [".section .rodata"]
         read = self.reader(proj)

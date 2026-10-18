@@ -273,18 +273,34 @@ def generate(fn: FunctionObj, toolchain_id: str | None, context_header: str = ""
     return generate_from_asm(gnu_asm(fn), fn.name, toolchain_id, context_header, timeout=timeout)
 
 
+class DraftError(Exception):
+    """m2c couldn't make the draft asked for (strict runs only), with its own reason."""
+
+
 def generate_from_asm(asm_text: str, name: str, toolchain_id: str | None, context_header: str = "",
-                      data_asm: str | None = None, timeout: float = 20, valid: bool = False) -> str | None:
+                      data_asm: str | None = None, timeout: float = 20, valid: bool = False,
+                      strict: bool = False) -> str | None:
     """C draft from GNU/splat-style assembly text (plus optional data, for jump tables and strings). `valid`:
-    m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is."""
+    m2c's compilable form (unknown types and expressions as M2C_ macros, see M2C_MACROS), for trying drafts as is.
+    `strict`: a context m2c can't read raises DraftError instead of drafting without it."""
     target = m2c_target(toolchain_id or "")
     if not target:
         return None
-    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid)
+    return run_m2c(asm_text, name, target, context_header, data_asm, timeout, valid, strict)
+
+
+MAX_REASON_CHARS = 600  # of m2c's reason for a failure, passed on to an agent
+
+
+def _failure(res: subprocess.CompletedProcess) -> str:
+    """m2c's reason for a failed run: its "Decompilation failure" note, else the end of what it printed."""
+    out = res.stdout or ""
+    note = out[out.find("Decompilation failure"):] if "Decompilation failure" in out else (res.stderr or out)
+    return note.strip().strip("*/").strip()[-MAX_REASON_CHARS:] or f"m2c stopped with code {res.returncode}"
 
 
 def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", data_asm: str | None = None,
-            timeout: float = 20, valid: bool = False) -> str | None:
+            timeout: float = 20, valid: bool = False, strict: bool = False) -> str | None:
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
     if not available():
         return None
@@ -308,7 +324,11 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
                                  encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired:
+            if strict:
+                raise DraftError(f"m2c took longer than {timeout:g} s") from None
             return None
+        if res.returncode != 0 and strict:
+            raise DraftError(_failure(res))
         if res.returncode != 0 and "--context" in argv:  # an unparsable context must not cost us the seed
             i = argv.index("--context")
             res = subprocess.run(argv[:i] + argv[i + 2:], capture_output=True, text=True, timeout=timeout,

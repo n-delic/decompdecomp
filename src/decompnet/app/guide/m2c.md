@@ -2,6 +2,9 @@
 
 m2c translates the assembly to C mechanically. It is a starting point, never a match.
 
+- The draft is made from the shared header's declarations the function uses, and made again when they change.
+  Worked out a struct or a prototype? `redraft(function, context)` runs m2c again with your declarations and
+  returns the new draft (recorded nowhere). Add what helped to the header with edit_context.
 - `?` types: m2c couldn't tell. Replace with s32/u8/a struct pointer as the instructions suggest
   (see the `mips` guide's "Types from instructions").
 - `arg0`, `var_v0`, `temp_s0`, `sp10`: placeholder names. `spXX` is a stack local at offset XX.

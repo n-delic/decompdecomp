@@ -1681,6 +1681,9 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                          "pointer reaches; where else it flows; the type matched code already uses.",
                          s(function=st("function", True), argument=st("arg0-arg3, return, or a global; +0x14 follows "
                                                                        "the pointer at 0x14"))),
+        "redraft": ("m2c's draft of a function made again with your declarations (a struct, a prototype) added to "
+                    "the shared header's, which they replace where they declare the same names. Recorded nowhere.",
+                    s(function=st("function", True), context=st("C declarations", True))),
         "compiler_map": ("Which compiler built each part of the game, where it differs from today's. survey=true starts "
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
