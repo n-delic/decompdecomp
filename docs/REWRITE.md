@@ -369,6 +369,19 @@ how much code never needs an agent. Ranked:
 9. **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command
    lists for agents. (S-M each, check each decoder's licence)
 
+10. **Make more of m2c.** Measured (October 2026, the owner's games): autopilot compiles m2c's draft of each
+    function as it is and matched 1,352 of 4,844 (28%), about 41% of all matches. But helpers mostly ignore the
+    draft: their first attempt is close to it (60% of tokens or more) for only 2-13% of functions on N64 and PS2
+    (median similarity 23-29%). And the draft is weak where it could be strong:
+    - It's made once, the first time a function is opened, and never again: types and structs added to the shared
+      header later never reach it. Redraft when the header changes, and run autopilot again on what changed.
+    - A `redraft` tool for agents: m2c run again with the agent's own declarations (a struct it worked out), so the
+      draft follows what the agent learns.
+    - Drafts exist only for functions someone opened (GTA San Andreas: 653 of 12,627). Draft in the background.
+    - CodeWarrior PS2 code is read as EE GCC's (m2c has no CodeWarrior MIPS target).
+    - The prompt says what the draft is good for: control flow and arithmetic are usually right, types and names
+      usually wrong; start from it and fix those.
+
 Not now: fine-tuned decompilation models. They're built for modern x86 and "does the same thing", not byte
 matching, and frontier CLI agents do better here.
 
