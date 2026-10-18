@@ -3,7 +3,6 @@
 This guide tells how decompdecomp operates. For the installation, read the [README](../README.md).
 
 - [How it works](#how-it-works)
-- [Use it from your agent](#use-it-from-your-agent)
 - [Public decomps](#public-decomps)
 - [Features](#features)
 - [Agents](#agents)
@@ -69,29 +68,6 @@ s32 clamp_s32(s32 v, s32 lo, s32 hi) {
 
 </details>
 
-## Use it from your agent
-
-You can use decompdecomp from Claude Code, Codex, Antigravity CLI or opencode. Connect them one time:
-
-```
-decomp connect
-```
-
-Then tell your agent in your terminal:
-
-> decompile my game at ~/roms/game.z64
-
-The agent makes sure that the game is your copy. Then it imports the game, opens the live view and starts the work.
-It can use all the tools of decompdecomp, and it can start helper agents (`start_agents`).
-
-The connection is `decomp mcp`, an MCP server. It starts the app when necessary. You can also add it yourself, for
-example `claude mcp add decomp -- decomp mcp`.
-
-| Agent | Install as a package |
-| :-- | :-- |
-| **Claude Code** | `/plugin marketplace add n-delic/decompdecomp`, then `/plugin install decompdecomp@decompdecomp`. This adds a "decompile" skill. |
-| **Codex, Antigravity CLI, opencode** | `decomp connect codex`, `decomp connect antigravity` or `decomp connect opencode` |
-
 ## Public decomps
 
 Many games have a community decomp project. Each project has a build and some decompiled code. decompdecomp uses
@@ -146,8 +122,6 @@ decompdecomp helps with these steps:
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
 | **opencode** | The same, with each provider that you set up: DeepSeek, Qwen, Kimi and more. |
 | **API key** | A built-in agent for each OpenAI-compatible API: DeepSeek, OpenRouter, OpenAI, or a local model with llama.cpp, Ollama or LM Studio. |
-| **Your own agent** | `decomp connect`, or the Claude Code plugin. It controls decompdecomp from your terminal. |
-| **Other MCP clients** | Connect them to `decomp mcp`, or use **Connect another agent** in the app. |
 
 Agents get only the tools of decompdecomp. They get no shell. They cannot access your files, except the source tree
 of a fork. The app installs missing agents and tells you how to sign in.
@@ -259,21 +233,20 @@ projects are ds-decomp projects. They build the game again on each build.
 The installer installs [uv](https://docs.astral.sh/uv/), the app, the compilers and the m2c draft decompiler. All
 compilers are pinned and have checksums. To start the app, use your apps menu or type `decomp` in a terminal.
 
-**The .deb and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a `.deb`
-(`sudo apt install ./decompdecomp_*.deb`) and an AppImage for x86_64 Linux. Both contain their own Python and uv, so
-nothing else is necessary. The app's Setup gets the compilers. These copies do not update themselves: the app tells
-you when a new version is available, and you download it from the releases.
+**The .deb, the .rpm and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a
+`.deb` (`sudo apt install ./decompdecomp_*.deb`), an `.rpm` (`sudo dnf install ./decompdecomp-*.rpm`) and an AppImage
+for x86_64 Linux. They contain their own Python and uv. The app's Setup gets the compilers. These copies do not
+update themselves: the app tells you when a new version is available, and you download it from the releases.
 
-**Windows (WSL 2, experimental).** Some compilers are Linux programs. Thus the installer makes a small Linux (a WSL 2 distribution with
-the name `decomp-wtf`) from the official Debian image. Windows can ask for permission and a restart one time. Your
-projects are in `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. The results are identical to Linux.
+**Linux only.** This version runs on Linux. Windows and macOS are not supported in this version. On Windows 11,
+the Linux version may work inside WSL (WSLg shows its window), but nobody tests that.
 
-**Its window and the tray.** decompdecomp opens in a window of its own: a Chromium-family browser (Edge, which every
-Windows has; Chrome, Brave, Chromium, Edge or Vivaldi on Linux) shows it as an app, without tabs. There is only one
-window: `decomp` or the apps menu shows the open one. Closing the window keeps decompdecomp running in the system
-tray, so helper agents keep working; the tray's menu opens the window again or quits. Without a tray (some
-desktops), closing the window quits when no agent is working. Without a Chromium-family browser, the app opens in a
-normal browser tab.
+**Its window and the tray.** decompdecomp opens in a window of its own. It uses GTK and WebKitGTK from your
+system, not a browser. The installer and the packages install them; without them, `decomp` tells you the command
+for your distribution. Only that window can open the app: its address does nothing in a browser. There is only one
+window: `decomp` or the apps menu shows the open one. When you close it while helper agents work, the app asks: stop
+them and quit, or keep them working. They keep working without the window; the tray icon (or `decomp`) brings it
+back. **Quit** ends the app and every helper agent it started.
 
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.
@@ -290,27 +263,28 @@ Read [CONTRIBUTING.md](../CONTRIBUTING.md), [CONVENTIONS.md](CONVENTIONS.md) and
 
 ```bash
 uv sync
-uv run decomp              # the app; projects are in ~/Decomp (or $DECOMP_HOME)
+uv run decomp              # the development copy: its own window, projects in ~/Decomp-dev (or $DECOMP_HOME)
 uv run pytest              # the tests
 ```
 
 | Path | Contents |
 | :-- | :-- |
 | `src/decompnet/rom/` | ROM mode: reading, splitting with splat, symbols, the matcher (`match.py`) and the export. |
-| `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py`, `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` (its own window), `tray.py` (the tray icon), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
+| `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py`, `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` and `gtkwindow.py` (its own window), `tray.py` (the tray icon), `edition.py` (development copy or release), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts, linked files, and the from-scratch importers. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |
 | `src/decompnet/classes.py` | C++ classes found in MIPS code: vtables, base classes, fields. |
 | `src/decompnet/compilermap.py` | The compiler map: which compiler built each part of a MIPS game. |
 | `src/decompnet/toolchains.py` | The pinned compilers and tools. |
-| `packaging/linux/` | `build.sh` makes the `.deb` and the AppImage; `.github/workflows/release.yml` runs it for each `v*` tag. |
+| `packaging/linux/` | `build.sh` makes the `.deb`, the `.rpm` and the AppImage; `.github/workflows/release.yml` runs it for each `v*` tag. |
 | `projects/demo-*/` | Homemade demo games for the tests. Each has its own `build.py`. |
 | `site/` | The website, published to GitHub Pages at decomp.ndelic.com. `public/` holds the installers. |
 
 The N64 and PlayStation demos need `ld.lld`, `llvm-objcopy` and `llvm-nm` (Debian and Ubuntu: `apt install lld llvm`).
 
-If decompdecomp is installed and running on your computer, start the checkout with its own folder:
-`DECOMP_HOME=/some/scratch/folder uv run decomp`. A newer version that finds your app running replaces it.
+A checkout is "decompdecomp dev": a separate app with its own folder (`~/Decomp-dev`), port and window, so it never
+touches the decompdecomp you have installed. For an experiment, give it a scratch folder:
+`DECOMP_HOME=/some/scratch/folder uv run decomp`.
 [ROADMAP.md](../ROADMAP.md) lists what's planned.
 
 **Test a branch.** Run the installer from a checkout of the branch. The app then follows that branch on GitHub, and
@@ -318,8 +292,7 @@ each new commit shows as an update. A checkout of `main` updates on releases onl
 
 ```
 git clone -b <branch> https://github.com/n-delic/decompdecomp && cd decompdecomp
-bash site/public/install.sh                                           # Linux
-powershell -ExecutionPolicy Bypass -File site\public\install.ps1      # Windows
+bash site/public/install.sh
 ```
 
 Without a checkout, set `DECOMP_BRANCH=<branch>` and run the installer from

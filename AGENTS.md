@@ -10,8 +10,7 @@ archived at 0.10.6): `origin` is n-delic/decompdecomp, `upstream` the archived o
 
 Naming: the project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, so
 existing installs and projects keep working: the `decomp` command, the `decompnet` package and data folder,
-`~/Decomp`, `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch, WSL distribution and
-services. Installs and updates come from GitHub (`REPO` in app/updates.py and the installers); the decomp.wtf domain
+`~/Decomp`, `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates come from GitHub (`REPO` in app/updates.py and the installers); the decomp.wtf domain
 isn't ours, so nothing may point at it. `site/` is the website (decomp.ndelic.com, published to GitHub Pages by
 `.github/workflows/site.yml` on every push to main that changes `site/public/`); `site/public/` also holds the
 installers, which updates read from GitHub. Work on `main`: it's what users update from.
@@ -20,8 +19,7 @@ installers, which updates read from GitHub. Work on `main`: it's what users upda
 
 ```bash
 uv sync
-uv run decomp                 # the app (GUI in the browser); projects live in ~/Decomp or $DECOMP_HOME
-uv run decomp mcp             # the MCP server agents connect to
+uv run decomp                 # the development copy of the app, in its own window; projects in ~/Decomp-dev
 uv run pytest -q              # the test suite; many tests skip when a compiler or tool isn't installed
 uv run pytest tests/test_forks.py -q   # one file
 uv run ruff check src tests projects   # the linter (CI runs it and the tests)
@@ -29,12 +27,15 @@ uv run ruff check src tests projects   # the linter (CI runs it and the tests)
 
 ## Never disturb the user's own decompdecomp
 
-The user usually has decompdecomp running (installed with uv, port 6464, projects in `~/Decomp`) with agents working
-in it. Testing a change must not touch it:
-- Never run the checkout's `decomp` or `decomp mcp` against `~/Decomp`. A newer version that finds an older app
-  running quits it and takes its place (cli.py), stopping its jobs. Give it a throwaway home:
-  `DECOMP_HOME=<scratch dir> BROWSER=true DECOMP_TRAY=0 uv run decomp ...`.
-- Tests already run with a throwaway `DECOMP_HOME` (tests/conftest.py) and stop the apps they start. When the user's
+The user usually has decompdecomp running (installed, port 6464, projects in `~/Decomp`) with agents working in it.
+Testing a change must not touch it:
+- A checkout is "decompdecomp dev" (app/edition.py): its own home `~/Decomp-dev`, port 6474, its own window class,
+  no launcher. One instance is one per home, so it never replaces the installed app. Never point it at `~/Decomp`
+  (`DECOMP_HOME`). For experiments, give it a throwaway home: `DECOMP_HOME=<scratch dir> DECOMP_TRAY=0 uv run decomp`
+  (`DECOMP_WINDOW=0`: no window).
+- The agent CLIs the app lists (`agy models` above all) start the MCP servers in their own settings. Run experiments
+  with a PATH that doesn't have them, and stub them in tests.
+- Tests already run with a throwaway `DECOMP_HOME` and no window (tests/conftest.py). When the user's
   app runs from this checkout's `.venv`, run them in another environment so uv doesn't rebuild it underneath:
   `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
 - To try a change on a real project, work on a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro"
@@ -65,8 +66,10 @@ Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.
 from the vtables constructors store, MIPS: the `get_class` tool and the class lines of `get_function`),
 `compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
 `app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
-tools and the agent prompt), `app/window.py` + `app/tray.py` (the app's own window and its tray icon; tests set
-`BROWSER=true` and `DECOMP_TRAY=0` so they open neither), `app/guide/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
+tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
++ `app/gtkwindow.py` + `app/tray.py` (the window: GTK and WebKitGTK from the system, run by the system's python3; the
+page answers only it, by the secret in its user agent; and the tray icon; tests set `DECOMP_WINDOW=0` and
+`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/guide/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
 
 ## Conventions
 
@@ -80,11 +83,11 @@ linting). In short:
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
-- Releases bump the version in five places together: `pyproject.toml`, `src/decompnet/__init__.py`,
-  `site/public/install.sh`, `site/public/install.ps1`, `uv.lock`. Commit subjects read
+- Releases bump the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
+  `site/public/install.sh`, `uv.lock`. Commit subjects read
   `decompdecomp X.Y.Z: <what users get, in one sentence>`, with a body explaining why. Pre-releases are
   `X.Y.Z-alpha` (`-beta`, `-rc`); `updates.version_key` orders them before X.Y.Z.
-- A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb` and the AppImage
+- A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb`, the `.rpm` and the AppImage
   (`packaging/linux/build.sh`, which also runs locally) and attaches them to the GitHub release; it can be run by hand
   for a pushed tag (`gh workflow run release -f tag=vX.Y.Z`). Packaged copies set `DECOMP_PACKAGE` and don't update
   themselves.

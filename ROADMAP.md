@@ -96,5 +96,5 @@ An image with % matched, functions and platform, for READMEs and posts. No game 
 
 ## Later
 
-- A tray icon on Windows (decompdecomp runs in WSL there; it needs a small Windows program).
+- Windows as a host again, the best way found after the rewrite (docs/REWRITE.md §1).
 - macOS.

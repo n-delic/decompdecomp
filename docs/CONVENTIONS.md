@@ -24,7 +24,7 @@ name if a line moved).
 | The GUI | `app/static/`: `index.html`, `app.css`, and `js/` (nine plain scripts loaded in order, one per part of the GUI; `js/base.js` lists them; no build step) |
 | Know-how agents read | `app/guide/*.md`, served by the `guide(topic)` tool |
 | Compilers and tools themselves | `toolchains.toml` (pinned, with checksums), `toolchains.py` |
-| The app's window, tray, updates | `app/window.py`, `app/tray.py`, `app/updates.py` |
+| The app's window, tray, updates | `app/window.py` + `app/gtkwindow.py`, `app/tray.py`, `app/updates.py`; dev or release: `app/edition.py` |
 
 A new platform needs: an importer, a judge path, entries in `PLATFORM_COMPILERS` and `PLATFORM_STATUS`
 (`app/engine/common.py:68`, `:20`), a homemade demo game in `projects/demo-*`, and a column in the table "What works
@@ -38,13 +38,17 @@ the feature easy to move.
 
 - The project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, because
   existing installs depend on them: the `decomp` command, the `decompnet` package, `~/Decomp`, `.decomp.wtf.json`,
-  `.decomp-wtf/`, the `decomp-wtf` branch and WSL distribution. The decomp.wtf domain isn't ours: nothing points at it.
+  `.decomp-wtf/`, the `decomp-wtf` branch. The decomp.wtf domain isn't ours: nothing points at it.
 - Python: `snake_case` for functions and variables, `CapWords` for classes, `UPPER_CASE` for module constants
   (`SHORT_NAMES`, `RANGE_PROOF_BYTES`), a leading underscore for what's private to its module or class. The engine's
   parts are `<Topic>Mixin` classes.
 - Names use the domain's words: `claim`, `attempt`, `target`, `twin`, `range`, `brief`, `judge`. Not the
   implementation's (`process_item`, `handle_data`).
 - Tests are named as a sentence of behaviour: `test_an_install_from_main_updates_on_releases_only`.
+
+- Named values, not bare ones: no single letters outside tiny loops, no bare hex or magic numbers in logic. Name a
+  value once and use the name (`VTABLE_HEADER_BYTES = 8`, `CHECK_SECONDS = 20`). People and agents both read this
+  code; a name says what a value means.
 
 ## 3. Comments and docstrings
 
@@ -124,17 +128,18 @@ def try_compiler(self, agent, slug, function, compiler, flags="", source=""):
 - Homemade games and objects live in `projects/demo-*` and are built by their own scripts. Small hand-assembled
   machine code in a test is fine (`tests/test_classes.py`, `tests/test_compilermap.py`).
 - Code that's hard to set up gets a small stand-in for what it uses (`FakeNet` in `tests/test_rangecheck.py`).
-- Tests never reach the user's own app: `tests/conftest.py` sets a throwaway `DECOMP_HOME`, `BROWSER=true` and
-  `DECOMP_TRAY=0`, and stops the apps the tests started.
+- Tests never reach the user's own app: `tests/conftest.py` sets a throwaway `DECOMP_HOME`, `DECOMP_WINDOW=0` and
+  `DECOMP_TRAY=0`. Agent CLIs are always stubbed: listing Antigravity's models starts the MCP servers in its settings.
 
 ## 10. Never disturb the user's own decompdecomp
 
 People working on decompdecomp usually have it running too, with agents working in it. A test or an experiment must
 not touch it.
 
-- A newer `decomp` that finds an older app running quits it and takes its place (`app/cli.py`). So never run the
-  checkout's `decomp` or `decomp mcp` against your real `~/Decomp`: give it a throwaway home,
-  `DECOMP_HOME=<scratch> BROWSER=true DECOMP_TRAY=0 uv run decomp ...`.
+- A checkout is a separate app, "decompdecomp dev" (`app/edition.py`): its own home `~/Decomp-dev`, port 6474 and
+  window class. A newer `decomp` that finds an older one running in the same home quits it and takes its place
+  (`app/cli.py`), so never point a checkout at your real `~/Decomp`. For an experiment, use a throwaway home:
+  `DECOMP_HOME=<scratch> DECOMP_TRAY=0 uv run decomp`, with a PATH without agent CLIs.
 - If your app runs from the checkout's `.venv`, run the tests in another environment, so uv doesn't rebuild the one
   your app uses: `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run pytest -q`.
 - To try a change on a real project, use a copy: `sqlite3 "file:$HOME/Decomp/.decomp/decomp.db?mode=ro" ".backup
@@ -145,10 +150,11 @@ not touch it.
 
 - Work on `main`, or on a branch for something big. `main` is what users update from.
 - A commit's subject says what users (or contributors) get, in one sentence. The body says why.
-- A release bumps the version in five places together: `pyproject.toml`, `src/decompnet/__init__.py`,
-  `site/public/install.sh`, `site/public/install.ps1`, `uv.lock`. Its commit reads
+- A release bumps the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
+  `site/public/install.sh`, `uv.lock`. Its commit reads
   `decompdecomp X.Y.Z: <what users get>`. Pre-releases are `X.Y.Z-alpha` (then `-beta`, `-rc`).
-- A release is a `vX.Y.Z` tag. `.github/workflows/release.yml` builds the `.deb` and the AppImage and attaches them.
+- A release is a `vX.Y.Z` tag. `.github/workflows/release.yml` builds the `.deb`, the `.rpm` and the AppImage and
+  attaches them.
 
 ## 12. Linting
 

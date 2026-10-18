@@ -15,8 +15,7 @@ Before you attach a log (`~/Decomp/.decomp/logs/decomp.log`), read it, and cut o
 
 [Open an issue](https://github.com/n-delic/decompdecomp/issues) with:
 
-- your version (bottom left of the app, or `decomp update --check`) and your OS (Linux distribution, or Windows
-  with WSL);
+- your version (bottom left of the app, or `decomp update --check`) and your Linux distribution;
 - the platform (N64, PS2, GameCube, PC, ...) and the compiler the project uses;
 - what you did, what you expected, and what happened instead, with the error text;
 - the part of the log around it, if it helps (see above).
