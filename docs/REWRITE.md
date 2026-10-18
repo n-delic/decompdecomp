@@ -336,6 +336,24 @@ including the old `decomp mcp` bridge, which starts the app. One more reason the
 colours, statistics) arrive afterwards without blocking. Measured with timings on the owner's real projects (on a
 copy), before and after.
 
+**Done:** fixes 1-7 and 9 (8, the fork judge, is open). On the same copy, after:
+
+| What | Before | After |
+| :-- | --: | --: |
+| First `/api/state` | 3,750 ms | 15 ms (agents found later, by `/api/agents/detected`) |
+| ROM map of GTA San Andreas after a match | 742-750 ms | 71-74 ms (colours from `/api/mapcolumns`) |
+| Compiler map rebuild after a match; six asking at once | 930 ms; 1,850 ms | 145 ms; 4 ms (the last map answers) |
+| First claim brief on GTA San Andreas | 3,230 ms | 380 ms (2.5 s built when the project opens) |
+| Range recheck after a match, GTA San Andreas (62 open checks) | 17,300 ms | 68 ms |
+| Settings parsed per claim brief / map / live poll | 12 / 4 / 5 | 1 / 0 / 0 |
+| 16 simulated agents on two games: GUI poll cycle, median / p90 | 1,446 / 3,355 ms | 93 / 370 ms |
+| ... `/api/projects` (every 5 s) | 2,043 / 4,401 ms | 7 / 48 ms |
+| ... an agent's claim on GTA San Andreas | 1,849 / 4,003 ms | 215 / 1,877 ms |
+| ... a compile that matches | 926 / 2,702 ms | 33 / 105 ms |
+
+Still slow under load: a claim of a function with no machine draft yet runs m2c under one lock for the whole app
+(`_seed_lock`, about 0.3 s each), so agents claiming at once wait in turn.
+
 ## 9. Giving agents an edge
 
 The judge is strict, so even cheap models can do well; what decides the rate is how much each attempt learns and
