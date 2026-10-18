@@ -38,6 +38,7 @@ _CACHE_VERSION = 2  # of twins.json: 2 added why code is hand-written assembly
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.
 MISS_TTL = 24 * 3600
+FORK_PRINTS_TTL = 10 * 60  # a fork's target objects are looked at again after this long (they can be rebuilt)
 _GENERATED = ("__dt__", "__ct__", "__sinit", "__vt__")  # C++ code the compiler writes: nothing to copy
 
 
@@ -202,7 +203,7 @@ class Twins:
 
     def __init__(self, net):
         self.net = net
-        self._prints: dict[int, tuple[float, dict[int, Print]]] = {}
+        self._prints: dict[int, tuple[float, tuple | None, dict[int, Print]]] = {}  # (when, ROM layout, prints)
         self._lock = threading.Lock()
         self._queue: dict[int, set[int]] = defaultdict(set)  # project id -> newly matched functions to propagate
         self._busy: set[int] = set()
@@ -212,15 +213,19 @@ class Twins:
     # ------------------------------------------------------------------ fingerprints
 
     def prints(self, proj) -> dict[int, Print]:
-        """function id -> fingerprint, for every function of the project (ROM: from the database; fork: from the
-        target objects, cached in the project's state folder by the objects' modification times)."""
+        """function id -> fingerprint, for every function of the project (ROM: from the database, kept until a split
+        or a cut changes the functions, as they took 0.7 s on GTA San Andreas every 10 minutes; fork: from the target
+        objects, looked at again every 10 minutes and cached in the project's state folder by their modification
+        times)."""
+        fork = self.net.fork_slug(proj["slug"])
+        layout = None if fork else self.net._layout_key(proj)
         with self._lock:
             hit = self._prints.get(proj["id"])
-        if hit and time.time() - hit[0] < 600:
-            return hit[1]
-        prints = self._fork_prints(proj) if self.net.fork_slug(proj["slug"]) else self._rom_prints(proj)
+        if hit and (hit[1] == layout if layout is not None else time.time() - hit[0] < FORK_PRINTS_TTL):
+            return hit[2]
+        prints = self._fork_prints(proj) if fork else self._rom_prints(proj)
         with self._lock:
-            self._prints[proj["id"]] = (time.time(), prints)
+            self._prints[proj["id"]] = (time.time(), layout, prints)
         return prints
 
     def _rom_prints(self, proj) -> dict[int, Print]:

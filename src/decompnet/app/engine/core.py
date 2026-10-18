@@ -35,7 +35,9 @@ class Core(Network):
         self.links: dict = {}  # slug -> collab.Link, for projects joined from a friend's room
         self.rooms: dict = {}  # slug -> collab.Room, for projects this computer shares
         self._remote_ids: dict[str, int] = {}
-        self._ops: dict[int, dict] = {}  # project id -> look-alike index
+        self._ops: dict[int, tuple] = {}  # project id -> (the game's layout, look-alike index)
+        self._warmed: dict[int, tuple] = {}  # project id -> the layout its briefs' caches were built for
+        self._warming: dict[int, threading.Lock] = {}  # project id -> held while they build
         self._diffs: dict[tuple, dict] = {}  # (function, source, context, compiler) -> diff for the GUI
         self.autopilots: dict[str, dict] = {}  # slug -> progress of trying every function's machine draft
         self._cmaps: dict[int, tuple] = {}  # project id -> (what it was built from, compiler map)

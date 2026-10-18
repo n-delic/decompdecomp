@@ -162,3 +162,32 @@ def test_the_rom_map_comes_without_the_compiler_map(tmp_path, monkeypatch):
     monkeypatch.undo()
     columns = net.map_columns("game")
     assert [c[0] for c in columns] == [r["vram"] for r in rows] and all(c[1].endswith("-G8") and not c[2] for c in columns)
+
+
+def test_what_briefs_read_from_the_whole_game_is_built_once_per_layout(tmp_path, monkeypatch):
+    """GTA San Andreas's first claim brief took 5.2 s: C++ classes 3 s, look-alikes 1.2 s, twins 0.7 s, built when
+    the brief asked. They're built when the project opens, once (briefs asked meanwhile wait for that one build), and
+    again only when a split or a cut changes the functions."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    proj = tiny_game(net)
+    built, prints = [], []
+
+    def slow_classes(p):
+        time.sleep(0.2)
+        built.append("classes")
+    monkeypatch.setattr(net, "classes", slow_classes)
+    real_prints = net.twins._rom_prints
+    monkeypatch.setattr(net.twins, "_rom_prints", lambda p: prints.append(1) or real_prints(p))
+    askers = [threading.Thread(target=net.warm_briefs, args=(proj,)) for _ in range(3)]
+    for t in askers:
+        t.start()
+    for t in askers:
+        t.join(5)
+    net.warm_briefs(proj)
+    net.twins.prints(proj)
+    assert built == ["classes"] and prints == [1]
+    with net.store.tx() as db:  # a split: one more function
+        db.execute("INSERT INTO functions(project_id, name, size, n_insns, vram, target, relocs) "
+                   "VALUES(?,'func_9',8,2,?,?,'[]')", (proj["id"], 0x100100, bytes(8)))
+    net.warm_briefs(proj)
+    assert built == ["classes", "classes"] and prints == [1, 1]

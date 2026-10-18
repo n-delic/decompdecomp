@@ -38,7 +38,9 @@ def register(app: App) -> None:
     def p_overview(slug, request, data):
         settings.data["last_project"] = slug
         settings.save()
-        return net.overview(slug)
+        overview = net.overview(slug)
+        net.warm_briefs_soon(slug)  # the project is open: agents' first briefs come next
+        return overview
 
     def p_live(slug, request, data):
         q = request.query_params
