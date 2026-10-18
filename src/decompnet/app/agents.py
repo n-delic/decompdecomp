@@ -328,9 +328,20 @@ def limit_reset(said: str, now: float | None = None) -> float | None:
 _versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
 
-# Claude Code's aliases always point at Anthropic's latest model of each kind.
+# Claude Code's aliases always point at Anthropic's latest model of each kind; the full names below them keep one
+# version, newest first (`claude --model` takes either). A model missing here: "Another model…" takes any name.
 CLAUDE_MODELS = [("fable", "Fable", "Anthropic's most capable model"), ("opus", "Opus", "very capable"),
                  ("sonnet", "Sonnet", "fast and capable, cheaper"), ("haiku", "Haiku", "fastest, cheapest")]
+CLAUDE_VERSIONS = ["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "claude-opus-5", "claude-opus-4-8",
+                   "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6",
+                   "claude-haiku-5-5", "claude-haiku-4-5"]
+PINNED_NOTE = "this version only"
+
+
+def version_name(model_id: str) -> str:
+    """claude-opus-4-6 -> Opus 4.6."""
+    _, family, *version = model_id.split("-")
+    return f"{family.capitalize()} {'.'.join(version)}"
 
 
 def _codex_config() -> dict:
@@ -349,7 +360,8 @@ def helper_name(kind: str, model: str | None, taken: set[str]) -> str:
     compiles and statistics hang off this name, so a model never inherits another's: helpers used to be opencode-1,
     opencode-2... whatever model they ran, and a re-added helper with another model took over the old one's record.
     The same model again gets the same name back and carries on its record."""
-    m = re.sub(r"[^a-z0-9._-]+", "-", (model or "").lower().rsplit("/", 1)[-1]).strip("-._")[:24]
+    m = re.sub(r"[^a-z0-9._-]+", "-", (model or "").lower().rsplit("/", 1)[-1]).strip("-._")
+    m = m.removeprefix(f"{kind}-")[:24]  # claude-opus-4-6-1, not claude-claude-opus-4-6-1
     base = f"{kind}-{m}" if m else kind
     k = 1
     while f"{base}-{k}" in taken:
@@ -380,7 +392,8 @@ def models(kind: str, path: str | None, run: bool = True) -> list[dict]:
     own lists (what the user's sign-in offers; `run` False: only what was found before); for Codex the user's default
     plus any model name they type."""
     if kind == "claude":
-        return [{"id": i, "name": n, "note": note} for i, n, note in CLAUDE_MODELS]
+        return ([{"id": i, "name": n, "note": note} for i, n, note in CLAUDE_MODELS]
+                + [{"id": i, "name": version_name(i), "note": PINNED_NOTE} for i in CLAUDE_VERSIONS])
     if kind not in ("opencode", "antigravity") or not path:
         return []
     cached = _models.get(kind)
