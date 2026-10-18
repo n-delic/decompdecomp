@@ -111,6 +111,24 @@ def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkey
     assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
 
 
+def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypatch):
+    """The launcher's "Polish matched code" sends task=readable, and the start route kept only the model and the
+    claims per session: the helpers got the decompile prompt instead. What else a page sends still stays out."""
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, manager, security, _ = build(net, tmp_path, PORT, SECRET)
+    started = []
+    monkeypatch.setattr(manager, "start", lambda kind, slug, count=1, options=None: started.append(options) or ["1"])
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    r = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "options": {"model": "opus", "task": "readable", "base_url": "http://x"}})
+    assert r.status_code == 200, r.text
+    assert started == [{"model": "opus", "task": "readable", "per_session": agents.PER_SESSION}]
+
+
 def test_settings_never_echo_the_api_key(app):
     client, _, _ = app
     out = client.post("/api/settings", json={"api": {"provider": "deepseek", "api_key": "sk-abcdef123456"}},
