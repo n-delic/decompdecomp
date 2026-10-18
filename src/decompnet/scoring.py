@@ -53,6 +53,8 @@ def percent_text(p: float | None) -> str:
 
 
 def disassemble(fn: FunctionObj) -> list[Insn]:
+    """A function's instructions, with relocated fields masked and named after their symbols, so the target and a
+    candidate compare by what they do, not by where they were linked."""
     arch, mode = _CS[(fn.arch, fn.big_endian)]
     md = capstone.Cs(arch, mode)
     md.detail = True
@@ -185,6 +187,8 @@ LEGEND = ("markers: r=regalloc s=stack-offset i=operand |=different insn <=missi
 
 def render_rows(rows: list[tuple[str, str, str]], context: int = 2, max_rows: int = 60, run: int = 6,
                 legend: str = LEGEND) -> str:
+    """A diff's rows as text for an agent: the differing lines with `context` lines around them, at most `max_rows`,
+    long equal stretches folded, and a count of each kind of difference."""
     counts = Counter(m for m, _, _ in rows if m != " ")
     summary = ", ".join(f"{n} {MARKERS.get(m, m)}" for m, n in counts.most_common())
     width = min(max((len(t) for _, t, _ in rows), default=10) + 2, 44)
@@ -243,6 +247,8 @@ def compact_asm(text: str) -> str:
 
 
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
+    """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
+    rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
     t_ins, c_ins = disassemble(target), disassemble(candidate)
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
     bytes_match = target.fingerprint() == candidate.fingerprint()

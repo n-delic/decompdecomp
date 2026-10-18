@@ -34,6 +34,7 @@ def wanted() -> bool:
 
 
 def exe() -> str | None:
+    """Where wsl.exe is (DECOMP_WSL can name a stand-in), or None."""
     if os.environ.get("DECOMP_WSL"):
         return os.environ["DECOMP_WSL"]
     found = shutil.which("wsl")

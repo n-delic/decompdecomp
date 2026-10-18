@@ -46,6 +46,7 @@ class Field:
     users: set[int] = field(default_factory=set)
 
     def ctype(self) -> str:
+        """The field's C type, from its width and how the code reads it."""
         if self.pointer:
             return "void *"
         if self.kind == "f32":

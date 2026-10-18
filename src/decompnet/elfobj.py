@@ -65,6 +65,8 @@ class FunctionObj:
 
 
 def mask_relocs(code: bytes, relocs: list[Reloc], arch: str, big_endian: bool) -> bytes:
+    """The code with every relocated field cleared, as the processor's relocation masks say: two builds that differ
+    only in where things were linked compare equal."""
     buf = bytearray(code)
     for r in relocs:
         delta, length, mask = MASKS_BY_ARCH.get((arch, r.type), (0, 4, 0xFFFFFFFF))
@@ -220,6 +222,8 @@ def list_functions(data: bytes) -> list[str]:
 
 
 def extract_function(data: bytes, name: str) -> FunctionObj | None:
+    """One function of an object file: its code, its relocations (with what each refers to) and the processor; None
+    when the object has no function of that name."""
     elf = ELFFile(BytesIO(data))
     arch, big_endian = _arch_of(elf)
     found = _function_symbols(elf).get(name)

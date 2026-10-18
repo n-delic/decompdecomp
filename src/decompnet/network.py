@@ -161,8 +161,9 @@ class Network:
         return token
 
     def authenticate(self, token: str | None) -> Agent:
+        """The agent a token belongs to (helpers get theirs from the app when it starts them)."""
         if not token:
-            raise NetworkError("missing API token: add `--header \"Authorization: Bearer dn_...\"` to your MCP config")
+            raise NetworkError("missing token: only helpers decompdecomp starts can work on its projects")
         row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
         if row is None:
             raise NetworkError("invalid API token")
@@ -272,6 +273,8 @@ class Network:
     # ---------------------------------------------------------------- projects
 
     def get_context(self, project: str | None, function: str | None = None) -> str:
+        """The shared header a function compiles with, as agents read it (a project with one header per source
+        file needs the function)."""
         if function:
             fn = self._function(function, project)
             proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
@@ -351,6 +354,8 @@ class Network:
         return fn
 
     def release(self, agent: Agent, function: str, notes: str, project: str | None = None) -> str:
+        """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
+        counts one more give-up (the claim order puts those later)."""
         fn = self._function(function, project)
         with self.store.tx() as db:
             row = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
@@ -650,6 +655,8 @@ class Network:
 
     def regression_test(self, proj, header: str | None, sources: dict[int, str] | None = None,
                         only: list | None = None, header_for=None) -> list[tuple[str, str]]:
+        """Every matched function (or `only`) built again with a changed header or sources: (name, why) of each
+        that no longer matches, so a header edit that breaks matches is refused."""
         matched = only if only is not None else self.store.all(
             "SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
 
@@ -676,6 +683,7 @@ class Network:
     # ------------------------------------------------------------------ notes
 
     def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None) -> str:
+        """A note for the agents after this one, on a function or on the whole project."""
         proj = self._project(project)
         fn = self._function(function, proj["slug"]) if function else None
         if not text.strip():
@@ -686,6 +694,7 @@ class Network:
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:
+        """Notes on the project that contain `query`, newest first."""
         proj = self._project(project)
         rows = self.store.all(
             "SELECT n.text, n.created_at, a.name AS agent, f.name AS fn FROM notes n "
@@ -698,6 +707,7 @@ class Network:
     # ------------------------------------------------------------- the project as a whole
 
     def remove_project(self, slug: str) -> int:
+        """Delete a project and everything recorded for it. Returns how many functions it had."""
         proj = self._project(slug)
         with self.store.tx() as db:
             ids = [r["id"] for r in db.execute("SELECT id FROM functions WHERE project_id=?", (proj["id"],))]

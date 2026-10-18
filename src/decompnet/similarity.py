@@ -15,6 +15,7 @@ MAX_OPS = 800  # compare at most this many instructions of very large functions
 
 
 def mips_mnemonics(code: bytes, big_endian: bool = True, vram: int = 0) -> list[str]:
+    """A MIPS function's instructions by name (operands differ between copies of the same code)."""
     import rabbitizer
 
     order = "big" if big_endian else "little"

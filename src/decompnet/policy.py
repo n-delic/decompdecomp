@@ -27,6 +27,8 @@ LEVELS = (
 
 
 def reputation(store, agent_id: int) -> dict:
+    """An agent's level (from its verified matches, or trusted), its matches and instructions matched, and how far
+    the next level is."""
     row = store.one(
         "SELECT a.trusted, COUNT(f.id) AS matches, COALESCE(SUM(f.n_insns), 0) AS insns FROM agents a "
         "LEFT JOIN functions f ON f.matched_agent_id = a.id WHERE a.id = ? GROUP BY a.id", agent_id)

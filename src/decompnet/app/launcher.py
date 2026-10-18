@@ -23,6 +23,8 @@ def _decomp_exe() -> str:
 
 
 def install_launcher() -> str:
+    """Put decompdecomp in the apps menu (a .desktop entry and its icon). A development copy gets none: it's started
+    from its checkout."""
     if edition.DEV:
         return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
     share = Path.home() / ".local" / "share"

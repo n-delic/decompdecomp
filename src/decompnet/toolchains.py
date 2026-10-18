@@ -369,6 +369,8 @@ def java_version() -> int:
 
 
 def status() -> list[dict]:
+    """Every pinned compiler and tool: whether it's installed and can be on this computer, its licence, and whether
+    its downloads are pinned. For Compilers & tools."""
     rows = []
     for tc in registry().values():
         m = installed(tc.id)

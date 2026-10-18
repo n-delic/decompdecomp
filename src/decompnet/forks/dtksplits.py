@@ -36,6 +36,7 @@ class Splits:
 
     @staticmethod
     def parse(text: str) -> "Splits":
+        """A dtk splits.txt as its header and files, each with its sections' ranges and attributes."""
         lines = text.splitlines()
         header: list[str] = []
         files: list[FileSplit] = []
@@ -61,6 +62,7 @@ class Splits:
         return Splits("\n".join(header), files)
 
     def render(self) -> str:
+        """The splits back as splits.txt text, in dtk's own layout."""
         out = [self.header, ""]
         for f in self.files:
             out.append(f"{f.name}:")

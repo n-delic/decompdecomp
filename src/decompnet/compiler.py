@@ -40,6 +40,8 @@ class SourceRejected(ValueError):
 
 
 def check_source(source: str) -> None:
+    """Refuse C that could match without being C (inline asm, asm-include macros, pragmas) or reach outside the
+    sandbox (absolute or `..` includes): what the judge accepts must come from a compiler."""
     if len(source.encode()) > MAX_SOURCE_BYTES:
         raise SourceRejected(f"source too large (max {MAX_SOURCE_BYTES} bytes)")
     for inc in _INCLUDE.findall(source):
@@ -131,6 +133,9 @@ def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 30
 
 
 def compile_source(cfg: CompilerConfig, context_header: str, source: str, trusted: bool = False) -> CompileResult:
+    """Compile one function's C with the project's compiler in the sandbox, with the shared header as context.h.
+    Agents' C (not `trusted`) is checked first. C++ is tried for what doesn't compile as C when the toolchain builds
+    both."""
     if not trusted:
         try:
             check_source(source)

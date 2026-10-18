@@ -37,6 +37,7 @@ def info_file() -> Path:
 
 
 def installed() -> dict:
+    """How this copy was installed (install.json): from releases or from a branch, and its version."""
     try:
         data = json.loads(info_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -53,6 +54,7 @@ def installed() -> dict:
 
 
 def record(channel: str, branch: str = "", commit: str = "", repo: str = REPO) -> dict:
+    """Write how this copy was installed, for the next update check."""
     data = {"channel": channel if channel in ("release", "branch") else "release", "repo": repo or REPO,
             "branch": branch, "commit": commit, "version": __version__, "t": time.time()}
     if data["channel"] == "release":
@@ -147,6 +149,7 @@ def check() -> dict:
 
 
 def uv() -> str | None:
+    """Where uv is, which installs updates: on PATH, or where its installer puts it."""
     found = shutil.which("uv")
     if found:
         return found
