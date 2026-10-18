@@ -32,9 +32,9 @@ class SymbolTable:
         self.starts: list[int] = []  # every symbol's address, sorted (for bisect)
         for s in symbols or []:
             self.add(s, reindex=False)
-        self._reindex()
+        self.reindex_symbols()
 
-    def _reindex(self) -> None:
+    def reindex_symbols(self) -> None:
         self.starts = sorted(self.by_addr)
 
     def add(self, sym: Symbol, reindex: bool = True) -> None:
@@ -44,7 +44,7 @@ class SymbolTable:
         self.by_name[sym.name] = sym
         self.by_addr[sym.address] = sym
         if reindex:
-            self._reindex()
+            self.reindex_symbols()
 
     def rename(self, old: str, new: str) -> Symbol:
         sym = self.by_name.pop(old)

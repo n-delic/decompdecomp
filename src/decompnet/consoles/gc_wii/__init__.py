@@ -101,7 +101,7 @@ class GameCube(Console):
         from . import scratch
 
         ok, tail = fp.verify(log=log)
-        diff = scratch._differing(fp.root, version, tail) or []
+        diff = scratch.differing_files(fp.root, version, tail) or []
         return {"identical": ok, "detail": "identical" if ok else f"{len(diff)} files differ: {', '.join(diff[:8])}"
                 if diff else (tail.strip().splitlines() or ["the build failed"])[-1][-DETAIL_BYTES:]}
 

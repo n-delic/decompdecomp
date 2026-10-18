@@ -137,7 +137,7 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
     # its own connection, with its own token, and nothing else: opencode 2's shared service ran the user's own
     # `decomp` server without the session's token, so every helper worked as the user's one chat agent
     for version, standalone in (("opencode v2.0.28", True), ("0.15.4", False)):  # opencode 2's shared service
-        monkeypatch.setitem(agents._versions, "opencode", (0, version))
+        monkeypatch.setitem(agents.known_versions, "opencode", (0, version))
         assert ("--standalone" in m._command(s, "tok", work)[0]) is standalone
     mcp = json.loads((work / "opencode.json").read_text())["mcp"]
     assert list(mcp) == ["decompdecomp"] and mcp["decompdecomp"]["headers"] == {"Authorization": "Bearer tok"}

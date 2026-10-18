@@ -17,7 +17,7 @@ from elftools.elf.elffile import ELFFile
 from decompnet import toolchains
 from decompnet.compiler import CompilerConfig, compile_source
 from decompnet.consoles.n64 import rom as n64
-from decompnet.elfobj import _canonical, list_functions
+from decompnet.elfobj import canonical_symbol, list_functions
 from decompnet.rom import match, split
 from decompnet.rom.symbols import Symbol, SymbolTable
 
@@ -53,7 +53,7 @@ def truth() -> SymbolTable:
         kind = s["st_info"]["type"]
         if kind not in ("STT_FUNC", "STT_OBJECT") or not s.name or s.name.endswith("."):
             continue
-        syms.append(Symbol(_canonical(s.name, s["st_info"]["bind"]), s["st_value"], s["st_size"],
+        syms.append(Symbol(canonical_symbol(s.name, s["st_info"]["bind"]), s["st_value"], s["st_size"],
                            "func" if kind == "STT_FUNC" else "data"))
     return SymbolTable(syms)
 

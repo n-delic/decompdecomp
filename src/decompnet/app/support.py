@@ -214,14 +214,14 @@ class Settings:
                 "launcher": _launcher(self.data.get("launcher") or {}), "recent_models": self.data.get("recent_models") or {}}
 
 
-def _session_options(entry: dict) -> dict:
+def session_options(entry: dict) -> dict:
     """What a built-in agent session needs from its endpoint."""
     out = {"endpoint": entry.get("id") or "", "provider": entry["provider"], "base_url": entry["base_url"],
            "model": entry["model"], "provider_name": entry["name"]}
     return out | {k: entry[k] for k in ("api_key", "context_tokens") if entry.get(k)}
 
 
-def _spread(settings: Settings, manager, picked: list[str], count: int, given: dict) -> list[tuple[dict, int]]:
+def spread_sessions(settings: Settings, manager, picked: list[str], count: int, given: dict) -> list[tuple[dict, int]]:
     """(endpoint, sessions) for a start of `count` built-in agent sessions: spread over the endpoints picked, one
     at a time in turn, each up to its own limit of sessions at once (a small box serves one request at a time).
     A start without endpoints (an older GUI, or an address typed in) uses the first saved one, with what it
@@ -259,7 +259,7 @@ def _launcher(saved: dict) -> dict:
     return saved
 
 
-def _static(name: str) -> bytes | None:
+def static_file(name: str) -> bytes | None:
     if ".." in name or name.startswith(("/", "\\")):
         return None
     try:

@@ -26,7 +26,7 @@ from elftools.elf.elffile import ELFFile
 from elftools.elf.relocation import RelocationSection
 
 from .. import scoring
-from ..elfobj import _MASKS, FunctionObj, Reloc, _canonical, _section_target, _symbol_at, unmangle
+from ..elfobj import MASKS_BY_ARCH, FunctionObj, Reloc, canonical_symbol, section_target, symbol_at, unmangle
 from .split import RomFunction
 from .symbols import AUTO_NAME, SymbolTable
 
@@ -161,7 +161,7 @@ def canonical_target(t: RomTarget, symbols: SymbolTable) -> FunctionObj:
 
 # -------------------------------------------------------------------------------- candidate
 
-def _raw_relocs(elf: ELFFile, shndx: int, start: int, size: int, code: bytes) -> list[dict]:
+def raw_relocs(elf: ELFFile, shndx: int, start: int, size: int, code: bytes) -> list[dict]:
     order = "little" if elf.little_endian else "big"
     raw = []
     for rsec in elf.iter_sections():
@@ -176,7 +176,7 @@ def _raw_relocs(elf: ELFFile, shndx: int, start: int, size: int, code: bytes) ->
             if rel.is_RELA():
                 value = rel["r_addend"]
             else:
-                delta, length, mask = _MASKS.get(("mips", rtype), (0, 4, 0xFFFFFFFF))
+                delta, length, mask = MASKS_BY_ARCH.get(("mips", rtype), (0, 4, 0xFFFFFFFF))
                 at = off - start + delta
                 value = int.from_bytes(code[at:at + length], order) & mask
             raw.append({"off": off - start, "type": rtype, "symidx": rel["r_info_sym"], "rela": rel.is_RELA(),
@@ -226,7 +226,7 @@ class _Linker:
         if r["type"] == R_MIPS_GPREL16:
             residual = r["value"] - 0x10000 if r["value"] & 0x8000 else r["value"]
         else:
-            residual = _section_target("mips", raw, k)
+            residual = section_target("mips", raw, k)
         if residual is None:
             self.problem(f"relocation type {r['type']} is not supported here")
             return None
@@ -238,10 +238,10 @@ class _Linker:
         if r["type"] == R_MIPS_GPREL16 and sym["st_info"]["bind"] == "STB_LOCAL":
             residual += self.gp0  # (a C static, or C++'s definitions: global data a C file only declares)
         if shndx in ("SHN_UNDEF", "SHN_COMMON") or shndx in (0xFF03, 0xFF04):  # + MIPS small common / small undefined
-            base = self.resolve_name(_canonical(sym.name, sym["st_info"]["bind"]))
+            base = self.resolve_name(canonical_symbol(sym.name, sym["st_info"]["bind"]))
             return None if base is None else (base + residual) & 0xFFFFFFFF
         off = residual if sym["st_info"]["type"] == "STT_SECTION" else sym["st_value"] + residual
-        named = _symbol_at(self.symtab, shndx, off)
+        named = symbol_at(self.symtab, shndx, off)
         if shndx == fn_shndx:
             if named and named[0] == self.name:
                 return self.target.vram + named[1]
@@ -305,10 +305,10 @@ class _Linker:
         """(address, own datum) a word of the candidate's data points at: (address, None) for a named thing,
         (None, (section, offset)) for more of the candidate's own data, (None, None) when it can't be placed."""
         if s["st_shndx"] in ("SHN_UNDEF", "SHN_COMMON") or s["st_shndx"] in (0xFF03, 0xFF04):
-            base = self.resolve_name(_canonical(s.name, s["st_info"]["bind"]))
+            base = self.resolve_name(canonical_symbol(s.name, s["st_info"]["bind"]))
             return (None if base is None else base + value), None
         in_sec = value if s["st_info"]["type"] == "STT_SECTION" else s["st_value"] + value
-        hit = _symbol_at(self.symtab, s["st_shndx"], in_sec)
+        hit = symbol_at(self.symtab, s["st_shndx"], in_sec)
         if hit and hit[0] == self.name:
             return self.target.vram + hit[1], None
         base = self.symbols.resolve(hit[0]) if hit else None
@@ -378,7 +378,7 @@ class _Linker:
         shndx, start, size = fsym
         self.fn_shndx = shndx
         code = self.elf.get_section(shndx).data()[start:start + size]
-        raw = _raw_relocs(self.elf, shndx, start, size, code)
+        raw = raw_relocs(self.elf, shndx, start, size, code)
         if self.elf.little_endian == self.target.big_endian:
             return LinkResult(None, False, ["the compiler produced code in the wrong byte order for this game"])
         fmt = (">" if self.target.big_endian else "<") + f"{len(code) // 4}I"

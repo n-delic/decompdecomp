@@ -56,7 +56,7 @@ def disc_files(disc) -> list[tuple[str, int, int]]:
     return list(_walk(disc, root_lba, root_len))
 
 
-def _elf_segments(data: bytes) -> list[tuple[int, bytes]] | None:
+def elf_segments(data: bytes) -> list[tuple[int, bytes]] | None:
     """(address, bytes) of an EE ELF program's loadable code; None if it isn't one (an IOP module is left out)."""
     if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
         return None
@@ -105,7 +105,7 @@ def find(disc, boot: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, 
         name = re.sub(r"[^A-Za-z0-9_]", "_", Path(base_name).stem).strip("_").lower() or "overlay"
         while name in names:
             name += "_"
-        if (segs := _elf_segments(data)) is not None:
+        if (segs := elf_segments(data)) is not None:
             for k, (vaddr, code) in enumerate(segs):
                 if _code_like(code):
                     out.append((f"{name}{k or ''}", code, vaddr, 0))

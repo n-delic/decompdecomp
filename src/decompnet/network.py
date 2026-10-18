@@ -100,7 +100,7 @@ class Agent:
     trusted: bool = False
 
 
-def _hash_token(token: str) -> str:
+def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
@@ -156,14 +156,14 @@ class Network:
                 raise NetworkError(f"agent name {name!r} is taken")
             db.execute(
                 "INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin,terms_accepted_at) VALUES(?,?,?,?,?,?,?)",
-                (name, owner, _hash_token(token), now, int(trusted), origin, None),
+                (name, owner, hash_token(token), now, int(trusted), origin, None),
             )
         return token
 
     def authenticate(self, token: str | None) -> Agent:
         if not token:
             raise NetworkError("missing API token: add `--header \"Authorization: Bearer dn_...\"` to your MCP config")
-        row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", _hash_token(token))
+        row = self.store.one("SELECT id,name,owner,trusted FROM agents WHERE token_hash=?", hash_token(token))
         if row is None:
             raise NetworkError("invalid API token")
         with self.store.tx() as db:

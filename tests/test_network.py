@@ -200,5 +200,5 @@ def test_the_guide_gives_the_compile_budget_compile_and_diff_keeps():
     from decompnet.app import tools
 
     said = network.stall_budget_text()
-    assert said in " ".join(tools._guide("workflow").split())
+    assert said in " ".join(tools.guide_text("workflow").split())
     assert f"after {network.stall_budget(10)} compiles" in said and network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST

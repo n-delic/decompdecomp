@@ -24,7 +24,7 @@ MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC":
 
 # (arch, reloc type) -> (byte offset from r_offset, length, big-endian bitmask to clear), from each processor's
 # module in arch/. Anything not listed masks the 4 bytes at r_offset, which is right for most absolute/PC32 relocs.
-_MASKS: dict[tuple[str, int], tuple[int, int, int]] = arch.reloc_masks()
+MASKS_BY_ARCH: dict[tuple[str, int], tuple[int, int, int]] = arch.reloc_masks()
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,7 @@ class FunctionObj:
 def mask_relocs(code: bytes, relocs: list[Reloc], arch: str, big_endian: bool) -> bytes:
     buf = bytearray(code)
     for r in relocs:
-        delta, length, mask = _MASKS.get((arch, r.type), (0, 4, 0xFFFFFFFF))
+        delta, length, mask = MASKS_BY_ARCH.get((arch, r.type), (0, 4, 0xFFFFFFFF))
         start = r.offset + delta
         if start < 0 or start + length > len(buf):
             continue
@@ -87,7 +87,7 @@ def _arch_of(elf: ELFFile) -> tuple[str, bool]:
 _LOCAL_STATIC = re.compile(r"^(.+)\.\d+$")
 
 
-def _canonical(name: str, bind: str) -> str:
+def canonical_symbol(name: str, bind: str) -> str:
     """GCC names function-local statics `name.N`, where N counts statics earlier in the file, so the same
     variable gets a different N when its function is compiled on its own. Compare them by base name."""
     m = _LOCAL_STATIC.match(name) if bind == "STB_LOCAL" else None
@@ -104,14 +104,14 @@ def _symbol_name(elf: ELFFile, symtab: SymbolTableSection, idx: int) -> tuple[st
             return sec[len(".text.") :], True
         # .rodata.str1.1 / .rodata.cst4 etc. are all "rodata" as far as matching cares
         return ("." + sec.split(".")[1]) if sec.count(".") > 1 else sec, True
-    return _canonical(sym.name, sym["st_info"]["bind"]), False
+    return canonical_symbol(sym.name, sym["st_info"]["bind"]), False
 
 
 def _sext16(v: int) -> int:
     return v - 0x10000 if v & 0x8000 else v
 
 
-def _section_target(arch: str, raw: list[dict], k: int) -> int | None:
+def section_target(arch: str, raw: list[dict], k: int) -> int | None:
     """Offset inside the referenced section that a section-relative relocation points at."""
     r = raw[k]
     if r["rela"]:
@@ -135,7 +135,7 @@ def _section_target(arch: str, raw: list[dict], k: int) -> int | None:
     return None
 
 
-def _symbol_at(symtab: SymbolTableSection, shndx: int, offset: int) -> tuple[str, int] | None:
+def symbol_at(symtab: SymbolTableSection, shndx: int, offset: int) -> tuple[str, int] | None:
     """(name, offset into it) of the named symbol covering `offset` in a section, preferring exact starts,
     global symbols, and functions/objects over plain labels."""
     best = None
@@ -153,7 +153,7 @@ def _symbol_at(symtab: SymbolTableSection, shndx: int, offset: int) -> tuple[str
         kind = {"STT_FUNC": 2, "STT_OBJECT": 1}.get(s["st_info"]["type"], 0)
         rank = (lo == offset, kind, s["st_info"]["bind"] == "STB_GLOBAL")
         if best is None or rank > best[0]:
-            best = (rank, _canonical(s.name, s["st_info"]["bind"]), offset - lo)
+            best = (rank, canonical_symbol(s.name, s["st_info"]["bind"]), offset - lo)
     return (best[1], best[2]) if best else None
 
 
@@ -244,7 +244,7 @@ def extract_function(data: bytes, name: str) -> FunctionObj | None:
                 value = rel["r_addend"]
             else:
                 # REL (MIPS): the addend lives in the masked instruction field itself
-                delta, length, mask = _MASKS.get((arch, rtype), (0, 4, 0xFFFFFFFF))
+                delta, length, mask = MASKS_BY_ARCH.get((arch, rtype), (0, 4, 0xFFFFFFFF))
                 field_at = off - start + delta
                 value = int.from_bytes(code[field_at : field_at + length], "big" if big_endian else "little") & mask
             raw.append({"off": off - start, "type": rtype, "symidx": rel["r_info_sym"], "rela": rel.is_RELA(),
@@ -261,8 +261,8 @@ def extract_function(data: bytes, name: str) -> FunctionObj | None:
             # so a function compiled on its own (which references neighbours by name) can still match.
             addend = 0
             sec_idx = r["symtab"].get_symbol(r["symidx"])["st_shndx"]
-            target = _section_target(arch, raw, k)
-            named = _symbol_at(symtab, sec_idx, target) if target is not None else None
+            target = section_target(arch, raw, k)
+            named = symbol_at(symtab, sec_idx, target) if target is not None else None
             if named:
                 sym_name, residual = named
                 addend = _encode(arch, r, residual)

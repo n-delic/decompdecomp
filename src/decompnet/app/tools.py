@@ -134,7 +134,7 @@ def _console_guides() -> dict:
     return {path.stem: path for folder in consoles.guide_dirs() for path in sorted(folder.glob("*.md"))}
 
 
-def _guide(topic: str = "") -> str:
+def guide_text(topic: str = "") -> str:
     topic = topic.strip().lower()
     own = _console_guides()
     if topic in own:
@@ -243,7 +243,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
-    "guide": lambda net, agent, slug, topic="": _guide(topic),
+    "guide": lambda net, agent, slug, topic="": guide_text(topic),
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": net.forks.search(_fork(net, slug, "search_code"), pattern, glob),

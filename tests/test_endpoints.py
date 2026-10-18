@@ -9,7 +9,7 @@ import pytest
 
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
-from decompnet.app.support import Settings, _session_options, _spread
+from decompnet.app.support import Settings, session_options, spread_sessions
 
 
 def test_the_one_saved_api_becomes_the_first_endpoint(tmp_path):
@@ -55,27 +55,27 @@ def test_sessions_spread_across_the_endpoints_within_their_limits(tmp_path):
     s = Settings(tmp_path / "settings.json")
     s.save_endpoint({"provider": "custom", "name": "small", "base_url": "http://10.0.0.2:8080/v1", "model": "a", "max_sessions": 1})
     s.save_endpoint({"provider": "custom", "name": "big", "base_url": "http://10.0.0.3:8080/v1", "model": "b", "api_key": "kb"})
-    plan = _spread(s, fake_manager(), ["e1", "e2"], 4, {})
+    plan = spread_sessions(s, fake_manager(), ["e1", "e2"], 4, {})
     assert [(e["name"], n) for e, n in plan] == [("small", 1), ("big", 3)]
-    plan = _spread(s, fake_manager(("e1", "working")), ["e1", "e2"], 2, {})  # small is busy already
+    plan = spread_sessions(s, fake_manager(("e1", "working")), ["e1", "e2"], 2, {})  # small is busy already
     assert [(e["name"], n) for e, n in plan] == [("big", 2)]
     with pytest.raises(ValueError, match="already runs"):
-        _spread(s, fake_manager(("e1", "working")), ["e1"], 1, {})
+        spread_sessions(s, fake_manager(("e1", "working")), ["e1"], 1, {})
     with pytest.raises(ValueError, match="isn't saved"):
-        _spread(s, fake_manager(), ["e9"], 1, {})
-    opts = _session_options(plan[0][0])
+        spread_sessions(s, fake_manager(), ["e9"], 1, {})
+    opts = session_options(plan[0][0])
     assert opts["endpoint"] == "e2" and opts["api_key"] == "kb" and opts["provider_name"] == "big"
 
 
 def test_a_saved_key_never_goes_to_an_address_typed_in(tmp_path):
     s = Settings(tmp_path / "settings.json")
     s.save_endpoint({"provider": "deepseek", "api_key": "sk-deepseek"})
-    ((entry, n),) = _spread(s, fake_manager(), [], 2, {})
+    ((entry, n),) = spread_sessions(s, fake_manager(), [], 2, {})
     assert n == 2 and entry["api_key"] == "sk-deepseek"  # an older GUI's start: the first endpoint, as saved
-    ((entry, _),) = _spread(s, fake_manager(), [], 1, {"provider": "custom", "base_url": "http://elsewhere.example/v1"})
+    ((entry, _),) = spread_sessions(s, fake_manager(), [], 1, {"provider": "custom", "base_url": "http://elsewhere.example/v1"})
     assert entry["base_url"] == "http://elsewhere.example/v1" and "api_key" not in entry
     with pytest.raises(ValueError, match="add an API endpoint"):
-        _spread(Settings(tmp_path / "empty.json"), fake_manager(), [], 1, {"provider": "custom"})
+        spread_sessions(Settings(tmp_path / "empty.json"), fake_manager(), [], 1, {"provider": "custom"})
 
 
 def test_sessions_are_numbered_per_endpoint(tmp_path, monkeypatch):

@@ -53,7 +53,7 @@ def test_output_into_a_pipe_is_utf8():
 def test_the_guides_reach_agents_intact():
     from decompnet.app import tools
 
-    text = tools._guide("fork")
+    text = tools.guide_text("fork")
     assert "…" in text and "â€" not in text
 
 

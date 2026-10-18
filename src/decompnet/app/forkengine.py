@@ -1089,7 +1089,7 @@ class ForkEngine:
                 old_entry = ctext[entry[0]:entry[1]]
                 new_entry = re.sub(r'^(Object\(\s*)\w+(\s*,\s*)"[^"]+"', lambda mm: f'{mm.group(1)}NonMatching{mm.group(2)}"{new}"',
                                    old_entry, count=1)
-                indent = dtksplits._indent_of(ctext, entry[0])
+                indent = dtksplits.indent_of(ctext, entry[0])
                 conf.write_text(ctext[:entry[1]] + f",\n{indent}{new_entry}" + ctext[entry[1]:], encoding="utf-8")
                 new_path.parent.mkdir(parents=True, exist_ok=True)
                 new_path.write_text(preamble + ("\n" if preamble else "") + "\n\n".join(moved_code) + ("\n" if moved_code else ""),

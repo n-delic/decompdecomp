@@ -27,7 +27,7 @@ from io import BytesIO
 from pathlib import Path
 
 from .. import arch
-from ..elfobj import _MASKS, Reloc, mask_relocs
+from ..elfobj import MASKS_BY_ARCH, Reloc, mask_relocs
 from ..network import NetworkError
 from ..project import compiler_for
 
@@ -42,7 +42,7 @@ MISS_TTL = 24 * 3600
 # Across games, functions this small are the same everywhere (a return, a stub): they match on their own anyway
 ACROSS_MIN_BYTES = 32
 FORK_PRINTS_TTL = 10 * 60  # a fork's target objects are looked at again after this long (they can be rebuilt)
-WHOLE_WORD = (0, 4, 0xFFFFFFFF)  # a relocation of a type _MASKS doesn't know: its whole word is masked
+WHOLE_WORD = (0, 4, 0xFFFFFFFF)  # a relocation of a type MASKS_BY_ARCH doesn't know: its whole word is masked
 LABELS_BACK, LABEL_REACH = 64, 0x10000  # rom_renames looks this many labels down, at most this many bytes below
 SQL_CHUNK = 500  # ids per IN (...): under SQLite's limit of variables in one statement
 WHY_CHARS = 300  # how much of a compiler's message a miss keeps
@@ -62,7 +62,7 @@ class Print:
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
     for off, rtype in relocs:
-        delta, length, mask = _MASKS.get((arch, rtype), _MASKS.get(("thumb", rtype), WHOLE_WORD))
+        delta, length, mask = MASKS_BY_ARCH.get((arch, rtype), MASKS_BY_ARCH.get(("thumb", rtype), WHOLE_WORD))
         at = off + delta
         if at < 0 or at + length > len(code):
             continue

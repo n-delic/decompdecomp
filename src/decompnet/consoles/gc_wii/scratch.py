@@ -447,7 +447,7 @@ def _name_entry(root: Path, game_id: str, dol: bytes) -> bool:
 _OVERLAP = re.compile(r"Overlapping functions (\d+):0x([0-9A-Fa-f]+)-\d+:0x([0-9A-Fa-f]+) -> \d+:0x([0-9A-Fa-f]+)")
 
 
-def _differing(root: Path, game_id: str, log_tail: str) -> list[str] | None:
+def differing_files(root: Path, game_id: str, log_tail: str) -> list[str] | None:
     """The files that rebuilt but not into the game's bytes, when that's what the build's failure is (its checksum
     step: dtk asked again, as the build's output can be too long to keep); None when something else failed."""
     if not re.search(r"\.(dol|rel): \S*FAILED|build\.sha1", log_tail) or "internal linker error" in log_tail:
@@ -703,7 +703,7 @@ write_asm: true
                    + (" (the disc keeps some compressed)" if packed else "") if need else "it")
                 + " (the community's decomps of games like this leave such modules out too); the game keeps your copy's")
         elif (newer := _next_linker(compiler, tail)):
-            if (diff := _differing(root, gid, tail)) is not None and (closest is None or len(diff) < closest[0]):
+            if (diff := differing_files(root, gid, tail)) is not None and (closest is None or len(diff) < closest[0]):
                 closest = (len(diff), compiler)
             log(f"CodeWarrior's {compiler} linker can't link this game into its bytes: trying {newer}")
             compiler = newer
@@ -711,12 +711,12 @@ write_asm: true
         else:
             break
         ok, tail = _build(fp, log)
-    diff = None if ok else _differing(root, gid, tail)
+    diff = None if ok else differing_files(root, gid, tail)
     if not ok and closest is not None and closest[1] != compiler and (diff is None or closest[0] <= len(diff)):  # the closest (earliest of equals)
         compiler = closest[1]
         _use_linker(root, gid, compiler, [], bool(modules))
         ok, tail = _build(fp, log)
-        diff = None if ok else _differing(root, gid, tail)
+        diff = None if ok else differing_files(root, gid, tail)
     if not ok and diff is None:
         raise ForkError(f"the first build failed:\n{tail[-1500:]}")
     if diff:  # decompiling works per function; the whole game doesn't rebuild into its bytes yet (link order...)
@@ -743,7 +743,7 @@ write_asm: true
     _write_configure(root, gid, compiler, sources, rels=bool(modules))
     log(f"{len(sources)} source files for agents to write into")
     ok, tail = _build(fp, log)
-    if not ok and (_differing(root, gid, tail) is None or not diff):
+    if not ok and (differing_files(root, gid, tail) is None or not diff):
         raise ForkError(f"the project didn't rebuild the game identically after adding source files:\n{tail[-1500:]}")
     rebuild = {"identical": True, "detail": "identical"} if ok else {
         "identical": False, "detail": f"{len(diff)} files differ: {', '.join(diff[:8])}{', ...' if len(diff) > 8 else ''}"}

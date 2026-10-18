@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 
 from ... import consoles
-from ...network import Agent, Network, NetworkError, _hash_token
+from ...network import Agent, Network, NetworkError, hash_token
 from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
 from .common import _ADDRESS
@@ -242,7 +242,7 @@ class Core(Network):
             token = "dn_" + secrets.token_urlsafe(24)
             with self.store.tx() as db:
                 db.execute("UPDATE agents SET token_hash=?, origin='local' "
-                           "WHERE id=?", (_hash_token(token), row["id"]))
+                           "WHERE id=?", (hash_token(token), row["id"]))
         else:
             token = self.register_agent(name, "you", trusted=True, origin="local")
         return self.authenticate(token), token

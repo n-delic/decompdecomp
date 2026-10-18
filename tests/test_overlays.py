@@ -51,10 +51,10 @@ def test_ps2_elf_overlays_say_where_they_go():
     elf += struct.pack("<HHIIIIIHHHHHH", 2, 8, 1, 0x00400000, phoff, 0, 0, 52, 32, 1, 0, 0, 0)
     elf += struct.pack("<8I", 1, 0x100, 0x00400000, 0x00400000, len(code), len(code), 5, 0x10)
     elf += bytes(0x100 - len(elf)) + code
-    assert overlays._elf_segments(bytes(elf)) == [(0x00400000, code)]
+    assert overlays.elf_segments(bytes(elf)) == [(0x00400000, code)]
     irx = bytearray(elf)
     irx[16:18] = struct.pack("<H", 0xFF80)  # an IOP module: relocatable, left out
-    assert overlays._elf_segments(bytes(irx)) is None
+    assert overlays.elf_segments(bytes(irx)) is None
 
 
 @needs_demo
