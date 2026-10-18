@@ -117,8 +117,49 @@ project never replays anything.
 - The agent's own last words are visible where you see the agent.
 - Helpers survive an app restart as records, not as ghosts. Their claims are released when their process is gone.
 - Only helpers the app starts exist, so every agent on screen has a stop button. No "connected agent" rows.
-- **Efficiency.** Shorter prompts, fewer wasted tool calls. To measure first (tokens and tool calls per match, per
-  model).
+- **Efficiency.** Measured on a copy of the owner's database and the app's logs (October 2026):
+
+  | Helper | Game | Matches | Compiles per match | Matched at the first compile |
+  | :-- | :-- | --: | --: | --: |
+  | Claude Code | GTA San Andreas | 375 | 4.1 | 70% |
+  | Claude Sonnet | Mario Kart 64 | 341 | 2.8 | 75% |
+  | Gemini 3.8 Flash | Ridge Racer V | 267 | 7.1 | 44% |
+  | Muse Spark | Ridge Racer V | 236 | 6.0 | 52% |
+  | DeepSeek Flash (API) | Ridge Racer V | 108 | 8.8 | 42% |
+
+  - Autopilot made 41% of all 3,200 matches, with no tokens.
+  - Cost per match: about $0.15 (GTA San Andreas), $0.04 (Mario Kart 64). Ridge Racer V cost $4 in all but 240K
+    tokens per match, likely the API helper resending its whole conversation.
+  - 59-91% of claim time goes to functions that end released. Only 5.5% of released functions ever match later.
+  - The chance that a compile matches falls fast: for functions up to 20 instructions 43%, 29%, 17%, 11% for the
+    first four compiles; over 50 instructions it's 7% from the start.
+  - Regions differ hugely: on GTA San Andreas small functions match 19-28% of the time in most of the game but 87%
+    in one region; on Mario Kart 64 one region 19%, the rest 71-85%. 63% of give-up notes blame the compiler or
+    flags.
+  - 549 open functions are within 6% of matching. The permuter has touched only 52 functions (25 matched).
+  - No helper has tried a GTA San Andreas function over 100 instructions: most of the game's code.
+  - The database records no spend per helper or model, so models can't be compared on cost yet.
+
+  Fixes, ranked:
+  1. Near misses go to the permuter, which runs one worker per spare core (`app/permute.py`: one thread today).
+  2. Pick functions by the expected chance of a match: their region's match rate times their size. A region that
+     keeps failing goes to the compiler survey, not to more agents.
+  3. A compile budget by size (about 3 for small functions; more only while the score keeps falling). Fix the guide
+     that says "~20 compiles" while the prompt says 4.
+  4. A released function goes next to a different model family, or waits until the shared header or compiler range
+     changes, instead of coming back in 15 minutes.
+  5. The shared header comes with the claim (once per session, then only what changed): one tool call less per
+     claim.
+  6. Longer sessions: 6-10 claims instead of 2, so each start's system prompt, tools and guides are paid less often.
+     Measure cost per match before and after.
+  7. The API helper folds a finished function's messages into one line and trims only there, so prompt caching
+     keeps working.
+  8. Record spend, tokens, turns and tool calls per helper session and model in the database.
+  9. The brief shows matched callees' prototypes and the struct types of the data a function uses.
+  10. Each project registers only its own tools (ROM projects get no fork-only tools).
+  11. Source already compiled for a function answers "identical to attempt N" without compiling (about 3% of
+      compiles).
+  12. Bug: `read_data` (`engine/briefs.py`) only decodes N64 addresses as pointers, never PS2 ones.
 
 ## 5. Shared knowledge agents keep up to date
 
