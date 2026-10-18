@@ -283,13 +283,51 @@ map at first, which fills in later.
 **What's there today** (the owner's database, read-only): 172 MB plus a 90 MB write-ahead log, about 30,000
 functions across four games (GTA San Andreas 12,627, one other game 11,877), 15,867 attempts, 10,521 events.
 
-**Suspects, to measure before changing anything:**
-- The ROM map's request (`engine/gui.py`, `function_map`) runs the compiler map for every function of the game
-  (`_map_columns`) each time, as part of the same answer as the map itself.
-- Each project's settings are one JSON column, parsed again by most requests (`cfg(proj)`); suggestions, range
-  checks and notes grow inside it.
-- The overview asks for the latest event with `WHERE project_id=?`, and no index has `project_id` first.
-- The write-ahead log isn't checkpointed, so it grew to 90 MB.
+**Measured** (a copy of the owner's database and projects, October 2026):
+
+| What | Time |
+| :-- | --: |
+| First `/api/state` (the home page waits for it): `agents.detect` runs `agy models`, `opencode models` and six `--version` | 3,750 ms |
+| ROM map of GTA San Andreas after any match (the compiler map is rebuilt inside the request) | 710-800 ms |
+| First claim brief on GTA San Andreas (class recovery 3 s, similar functions 1.2 s, twins 0.7 s) | 5,230 ms |
+| Range checks after every match, GTA San Andreas (62 open checks) | 17,000 ms |
+| A ROM compile + link + compare (the judge itself) | 20-60 ms |
+
+With 16 simulated agents on two projects, the GUI's poll cycle went from 14 ms to 2.2-2.7 s (it polls every
+second), `/api/projects` to 2.5-3.7 s, and an agent's claim to 2-3 s.
+
+**Why the app stalls with two projects** (reproduced):
+1. Every match starts its own range-check thread. Each queues on one lock and does 17 s of work: 62 times
+   `SELECT * FROM functions`, dragging 73 MB of assembly text out each time. Matches come faster than that, so the
+   queue never empties (92 threads queued at once).
+2. All of it holds the one SQLite connection's lock, which every GUI request and agent call shares.
+3. Each match makes the compiler map stale, and every waiting brief and map request rebuilds it at the same time
+   (600-870 ms each). `quirks()` re-decodes every function's bytes on every rebuild. Settings JSON (193 KB) is
+   parsed 4-11 times per request.
+
+**Why the notifications flood** (from the code): opening a project resets the event counters and starts a poll, but
+the other project's poll is still running (it takes longer than its 1-second interval under load), so the new one
+does nothing. The next tick fetches the last 60 events and 80 attempts with the counters at zero, and shows each as
+new.
+
+**Also found:** `agy models` (run to list Antigravity's models) starts the MCP servers in Antigravity's config,
+including the old `decomp mcp` bridge, which starts the app. One more reason the bridge goes.
+
+**Fixes, ranked:**
+1. Range checks: one pending run per project (debounced), the function rows fetched once with only the columns
+   needed, verdicts cached by source hash. 17 s → under 0.5 s.
+2. Compiler map: `quirks()` cached per function, one build at a time per project serving the last map meanwhile,
+   and its colours sent in a later request than the map. 870 → about 250 ms, once per change.
+3. GUI polls per project, and shows only events newer than the moment the project opened.
+4. Agent detection in the background at start; pages render from `/api/projects` without waiting. 3.7 s → 50 ms.
+5. Settings parsed once per request; later, suggestions and range checks in tables of their own.
+6. Reads on their own connections (WAL allows concurrent readers), one writer; claim expiry on a timer, not in
+   every live poll.
+7. Brief caches warmed when a project opens (classes, cross-references, similar functions, twins prints). Cold
+   brief 5.2 s → about 0.2 s.
+8. Fork judge: builds are one at a time per project and the first try of a unit builds twice. About 4 judgments a
+   second at most.
+9. A WAL size limit and a checkpoint at start.
 
 **Goal.** The window shows the project list at once, and a project's map at once. Slow extras (the compiler map's
 colours, statistics) arrive afterwards without blocking. Measured with timings on the owner's real projects (on a
