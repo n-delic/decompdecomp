@@ -7,6 +7,7 @@ import re
 import struct
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -160,6 +161,8 @@ def test_a_header_gives_a_types_definition():
 ENTITY = {0x00: "s16", 0x02: "u16", 0x04: "s32", 0x08: "s32", 0x0C: "s32", 0x10: "s32", 0x14: "s16", 0x16: "s16",
           0x18: "s32"}
 MIPS_DEMOS = [c for c in consoles.startable() if c.demo and arch.STRUCTS in c.features]
+DEMO_SOURCE = Path(__file__).resolve().parent.parent / "projects" / "demo-n64" / "original" / "game.c"
+DEMO_DEFINES = "#define GRAVITY 2\n#define MAX_FALL_SPEED 24\n#define FLOOR_Y 448\n#define ENTITY_FLAG_GROUNDED 0x2\n"
 
 
 @pytest.fixture(scope="module", params=MIPS_DEMOS, ids=[c.id for c in MIPS_DEMOS])
@@ -195,6 +198,18 @@ def test_the_guess_for_a_demos_struct_is_the_struct_its_source_has(demo_game):
     assert "### Likely struct layouts" in brief and "- arg0: S_" in brief and "+0x2 u16" in brief
     assert "No loads or stores through arg0" in net.guess_struct(slug, _name(net, slug, symbols, "abs_s32"))
     assert "typedef struct S_" in net.likely_structs(net.project_row(slug), net._function(name, slug))
+
+    # once a function of the type matches with a struct of its own, the others are told its name
+    from decompnet.forks import csource
+
+    game = DEMO_SOURCE.parent
+    entity = structs.definition((game / "game.h").read_text(), "Entity")
+    body = csource.get(DEMO_SOURCE.read_text(), "entity_update_physics").replace("entity_update_physics(", f"{name}(", 1)
+    agent, _ = net.local_agent("struct-agent")
+    net.claim(agent, slug, name)
+    assert net.attempt(agent, name, DEMO_DEFINES + entity + "\n" + body, slug)["matched"]
+    text = net.guess_struct(slug, _name(net, slug, symbols, "entity_collides"), "arg0")
+    assert f"Matched code already calls it Entity ({name} arg0), defined in its own source" in text, text
 
 
 @pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None or toolchains.installed("binutils-mips") is None,

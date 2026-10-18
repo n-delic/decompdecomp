@@ -133,9 +133,12 @@ class LayoutMixin:
         header = (self._context(proj["id"], "") or {"header": ""})["header"]
         lines = []
         for name, where in sorted(seen.items(), key=lambda item: -len(item[1])):
-            lines.append(f"Matched code already calls it {name} ({', '.join(where[:SHOWN_MATCHED])}): use that type.")
+            said = f"Matched code already calls it {name} ({', '.join(where[:SHOWN_MATCHED])})"
             if (text := structs.definition(header, name)):
-                lines += ["Its definition in context.h:", "```c", text, "```"]
+                lines += [f"{said}: use that type. Its definition in context.h:", "```c", text, "```"]
+            else:
+                lines.append(f"{said}, defined in its own source, not in context.h (get_function shows it): move it "
+                             f"there with edit_context, so every agent uses one struct.")
         return lines
 
     def _debug_type(self, fn, key, path, what, proj) -> str | None:
