@@ -143,10 +143,13 @@ def run(args) -> int:
     from . import cleanup
     from .engine import RomNetwork
     from .server import build
+    from .support import file_log
 
     home = home_dir()
     internal = home / ".decomp"
     internal.mkdir(parents=True, exist_ok=True)
+    log = file_log(internal / "logs" / "decomp.log")  # from the first line on: whatever stops the app is in it
+    log.info("%s %s starting (%s)", edition.NAME, __import__("decompnet").__version__, sys.executable)
     state_file = internal / "server.json"
     restarted = _restart_state()
     prev = None if restarted else replace_older(state_file)
@@ -158,6 +161,7 @@ def run(args) -> int:
         print(f"{edition.NAME} is already running" + ("" if shown else ": its window couldn't open (see above)"))
         return 0
     if window.wanted() and (why := window.missing()):
+        log.error("no window: %s", why)
         print(why, file=sys.stderr)
         window.tell_desktop(f"{edition.NAME} can't open its window", why)
         return 1
@@ -180,6 +184,7 @@ def run(args) -> int:
     try:
         uvicorn.Server(uvicorn.Config(app, log_level="warning")).run(sockets=[sock])
     except Exception:  # quit_app ends the process at once: say why first, or the app just vanishes
+        log.exception("the server stopped")
         traceback.print_exc()
     finally:
         quit_app()

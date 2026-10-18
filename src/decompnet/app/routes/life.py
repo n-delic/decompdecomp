@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -12,6 +13,9 @@ from starlette.responses import JSONResponse, Response
 
 from .. import updates, window
 from . import App
+
+page_log = logging.getLogger("decompdecomp.page")
+PAGE_ERROR_CHARS, PAGE_STACK_CHARS = 500, 4000  # what one page error may write to the log
 
 
 def register(app: App) -> None:
@@ -72,6 +76,16 @@ def register(app: App) -> None:
             await call(window.close_app)
             return JSONResponse({"ok": True})
         threading.Thread(target=app.quit_app, daemon=True).start()
+        return JSONResponse({"ok": True})
+
+    @mcp.custom_route("/api/log", methods=["POST"])
+    async def api_log(request: Request) -> Response:
+        """An error in the page's own scripts, into the app's log: a broken page otherwise leaves nothing behind."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        page_log.warning("page: %s (%s)\n%s", str(data.get("message", ""))[:PAGE_ERROR_CHARS],
+                         str(data.get("where", ""))[:PAGE_ERROR_CHARS], str(data.get("stack", ""))[:PAGE_STACK_CHARS])
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/quit", methods=["POST"])

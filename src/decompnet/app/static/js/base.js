@@ -45,6 +45,14 @@ async function api(path, { method = "GET", body, raw } = {}) {
   return data;
 }
 
+/* Errors in these scripts go into the app's log (POST /api/log): a broken page otherwise leaves nothing to go on. */
+function reportPageError(message, where, stack) {
+  fetch("/api/log", { method: "POST", headers: { "X-Decomp": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ message: String(message), where: String(where || ""), stack: String(stack || "") }) }).catch(() => {});
+}
+window.addEventListener("error", (e) => reportPageError(e.message, `${e.filename}:${e.lineno}:${e.colno}`, e.error && e.error.stack));
+window.addEventListener("unhandledrejection", (e) => reportPageError(e.reason && e.reason.message || e.reason, "a promise", e.reason && e.reason.stack));
+
 function toast(html, kind = "") {
   const t = document.createElement("div");
   t.className = "toast " + kind;

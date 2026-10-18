@@ -11,6 +11,7 @@ No browser is involved: the page is served only to a window whose user agent car
 from __future__ import annotations
 
 import functools
+import logging
 import os
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from typing import Callable
 
 from . import edition
 
+log = logging.getLogger("decompdecomp")
 SYSTEM_PYTHON = "/usr/bin/python3"
 WINDOW_PROGRAM = Path(__file__).with_name("gtkwindow.py")
 TOKEN_AGENT = "decompdecomp-window/"  # gtkwindow.py puts this, then the secret, in its user agent
@@ -110,12 +112,14 @@ class Window:
             argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
                     "--window-class", edition.WINDOW_CLASS, "--icon", str(icon)] + (["--dev"] if edition.DEV else [])
             try:
-                self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                             stderr=open(self.internal / "window.log", "ab"), text=True,
+                self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                             stderr=subprocess.STDOUT, text=True, errors="replace",
                                              env=dict(os.environ, DECOMP_WINDOW_TOKEN=self.secret))
             except OSError:
+                log.exception("the window didn't start")
                 return False
             threading.Thread(target=self._watch, args=(self.proc,), daemon=True, name="window").start()
+            threading.Thread(target=self._relay, args=(self.proc,), daemon=True, name="window-output").start()
             return True
 
     def close(self) -> None:
@@ -138,8 +142,16 @@ class Window:
         except (OSError, ValueError, AttributeError):
             return False
 
+    @staticmethod
+    def _relay(proc: subprocess.Popen) -> None:
+        """What the window program says (GTK and WebKit warnings, the page's console messages) into the app's log."""
+        for line in proc.stdout:
+            log.info("window: %s", line.rstrip())
+
     def _watch(self, proc: subprocess.Popen) -> None:
         proc.wait()
+        if proc.returncode:
+            log.warning("the window ended with exit code %s", proc.returncode)
         if proc is self.proc:
             self.proc = None
             self.on_close()

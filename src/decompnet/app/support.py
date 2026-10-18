@@ -7,6 +7,7 @@ import json
 import logging.handlers
 import os
 import subprocess
+import sys
 import threading
 import time
 import traceback
@@ -23,20 +24,35 @@ COOKIE = "decomp_live"
 MAX_DISC = 16 * 1024 * 1024 * 1024  # dual-layer DVD and then some
 
 
+LOG_BYTES, LOG_BACKUPS = 5 << 20, 4
+
+
 def file_log(path: Path) -> logging.Logger:
-    """decompdecomp's own log (logs/decomp.log in its data folder): every job, what it said, and every error with its
-    traceback, so a failed import can be reported with the whole story."""
+    """decompdecomp's log (logs/decomp.log in its data folder), always on: every job and what it said, decompdecomp's
+    own debug messages, the web server's and the libraries' warnings, and every uncaught error in any thread with its
+    traceback. The app once quit at start without a word (the tray's import path broke the web server), and finding
+    out meant guessing: whatever goes wrong is in this file."""
     logger = logging.getLogger("decompdecomp")
-    if not any(getattr(h, "baseFilename", None) == str(path) for h in logger.handlers):
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            handler = logging.handlers.RotatingFileHandler(path, maxBytes=2 << 20, backupCount=2, encoding="utf-8")
-        except OSError:
-            return logger
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
-        logger.propagate = False
+    root = logging.getLogger()
+    if any(getattr(h, "baseFilename", None) == str(path) for h in root.handlers):
+        return logger
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=LOG_BYTES, backupCount=LOG_BACKUPS, encoding="utf-8")
+    except OSError:
+        return logger
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s %(threadName)s] %(message)s"))
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)  # the libraries' debug chatter (httpx, mcp) would bury the app's own
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = True
+
+    def uncaught(kind, value, tb):
+        logger.critical("uncaught error", exc_info=(kind, value, tb))
+        sys.__excepthook__(kind, value, tb)
+    sys.excepthook = uncaught
+    threading.excepthook = lambda a: logger.critical("uncaught error in thread %s", a.thread.name if a.thread else "?",
+                                                     exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
     return logger
 
 

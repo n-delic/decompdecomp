@@ -1,6 +1,7 @@
 """The local app: GUI API security, demo import, live feed, agent output parsing, the built-in API agent."""
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -413,3 +414,11 @@ def test_settings_saved_from_many_threads_stay_whole(tmp_path):
     for t in threads:
         t.join()
     assert not broken
+
+
+def test_a_page_error_lands_in_the_apps_log(app, caplog):
+    client, _, _ = app
+    with caplog.at_level(logging.WARNING, logger="decompdecomp.page"):
+        r = client.post("/api/log", json={"message": "x is undefined", "where": "base.js:12:3", "stack": "at f"},
+                        headers={"X-Decomp": "1"})
+    assert r.status_code == 200 and "page: x is undefined (base.js:12:3)" in caplog.text

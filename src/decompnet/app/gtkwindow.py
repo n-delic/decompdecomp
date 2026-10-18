@@ -44,6 +44,7 @@ class AppWindow:
         settings = self.view.get_settings()
         settings.set_user_agent(f"{settings.get_user_agent()} {TOKEN_AGENT}{os.environ.get('DECOMP_WINDOW_TOKEN', '')}")
         settings.set_enable_developer_extras(args.dev)
+        settings.set_enable_write_console_messages_to_stdout(True)  # the page's errors reach the app's log
         self.view.connect("decide-policy", self.on_policy)
         self.window.add(self.view)
         self.window.connect("delete-event", self.on_close_request)
