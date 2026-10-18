@@ -479,10 +479,33 @@ how much code never needs an agent. Ranked:
    The regex rewrites stay as the fallback, for C decomp-permuter can't parse (macro calls: m2c's `M2C_FIELD`, fork
    units, whose header isn't one file) and for computers without the tool. Open: an agent tidying the winning C
    (it's decomp-permuter's printing: §10's readable pass can).
-3. **Struct layouts from field accesses.** Collect every load and store through each pointer argument and global,
+3. *(done for MIPS: `structs.py`, `arch/mips_fields.py`, `app/engine/layouts.py`)* **Struct layouts from field accesses.** Collect every load and store through each pointer argument and global,
    across the call graph; propose structs in the shared header; give them to m2c as context. Our own numbers: on GTA
    San Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents
    guessed layouts. Generalises `classes.py`. MIPS first. (M)
+   *Done:* the processor's reader (`Arch.field_accesses`, MIPS) says what each function does with pointers (loads
+   and stores through its arguments, the pointers loaded from them, globals, callees' results; what it hands to
+   which callee, returns, stores in fields); `structs.py` unifies them into types along the call graph, with each
+   field's width, kind and how many functions agree. Offered, never forced: the brief has one line per pointer
+   argument (`_struct_brief`, the hook in briefs.py), `guess_struct(function, argument)` writes the struct as C
+   with offsets and padding, where else the type flows, and the name matched code already gives it (with the
+   header's definition, or "move it there"); the game's debug information (§12) wins where it has the prototype.
+   Measured on a copy of the owner's database: GTA San Andreas 7,842 of 12,627 functions (62%) get a layout for a
+   pointer argument (10,833 arguments, 4,873 with fields from other functions too), 2,152 types are shared by two or
+   more arguments, returns or globals, the largest 618 functions; Ridge Racer V 817 of 2,544 (32%: its code works on
+   globals, 370 with two or more fields), 207 shared types. Against the structs agents gave matched functions' arguments
+   (120 on GTA San Andreas, 69 on Ridge Racer V): offsets the function itself accesses 99% and 100% right; offsets
+   proposed from other functions 95% (60 of 63) and 92% (24 of 26), widths 92% and 92%. Unifying along every call
+   instead made one type of 3,735 functions, 43% right: a callee joins its callers' type only when it uses the
+   pointer itself, doesn't walk it, has at most 4 callers and agrees on every width. 1.8 s for the whole of GTA San
+   Andreas, once per layout of the game (warmed with the brief's caches). The demo games' Entity comes out field for
+   field (N64 and PS2).
+   *Left:* PowerPC and x86 readers; the PS2's fifth to eighth arguments (t0-t3); a pointer into the middle of a
+   struct handed to a callee (`&this->pos`) doesn't tie the callee's type to that offset; GTA San Andreas's symbol
+   table has no data sizes, so `%gp_rel(D_X+8)` reads are their own globals; a field other functions only copy
+   (lw/sw) reads as s32 even when it's a float (12 of the 63); base-class methods with few callers still merge
+   derived classes (their conflicts show in the counts). For the drafts (§9.10): `likely_structs(proj, fn)` gives the
+   declarations of a function's likely structs for m2c's context; it needs the function's prototype to use them.
 4. *(done in part: the part of the game where matches happen first, failing parts last; `network.py` REGION_BYTES)* **A learned scheduler.** Predict which function will match next from the project's own attempt log, instead of
    ordering by size; boost a function as soon as one of its look-alikes matches. (S)
 5. **Model routing with early escalation.** Easy functions to cheap models. After about three failed attempts,

@@ -21,6 +21,7 @@ name if a line moved).
 | Claims, attempts, the judge's bookkeeping | `app/engine/judging.py`, under it `network.py` |
 | Compilers, ranges, suggestions | `app/engine/compilers.py`; the compiler map `compilermap.py`; range checks `app/rangecheck.py` |
 | C++ classes found in the code | `classes.py` |
+| Struct layouts guessed from the code | `structs.py` (the types), `arch/mips_fields.py` (MIPS's reader), `app/engine/layouts.py` (`guess_struct`, the brief's lines) |
 | Free matches | twins `app/twins.py`, autopilot `app/engine/autopilot.py`, the permuter `app/permute.py` |
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |
 | The GUI's API | `app/routes/<part>.py` (`app/routes/__init__.py` lists the parts) |

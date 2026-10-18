@@ -27,6 +27,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Compiler map and the judge's survey | ✓ | ✓ | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | — | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | — | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | — | — | — |
 | The game's own debug symbols: names, types, prototypes | — | ✓ symbol table, STABS | — | — | — |
 | Rebuildable export | ✓ | ✓ | the project | — | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -37,9 +38,17 @@ Where to start on a gap:
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects).
 - **Function-end reports** cut MIPS functions (`engine._cut`).
+- **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
+  `Arch.field_accesses`, and structs.py does the rest.
 
 ## Recently done
 
+- **Struct layouts from loads and stores** (MIPS: PlayStation 2, N64). Every load and store through a function's
+  pointer arguments, the pointers loaded from them and globals, made into types along the call graph: the brief
+  names each pointer argument's likely fields (offset, width, how many functions agree), `guess_struct` writes the
+  struct as C, says where else the type flows and which name matched code already gives it. Checked against the
+  structs agents gave matched functions on GTA San Andreas: 95% of the offsets it proposes from other functions are
+  right. PowerPC and x86 need their instruction readers (`Arch.field_accesses`).
 - **Range checks** (MIPS ROM projects). An agent's "this range was built by another compiler" is a hypothesis: the
   judge tests the functions next to it (their matches, agents' attempts, the survey, habits), and where nothing
   settles it the nearest neighbour goes to an agent as a task. A range applies once a second function matches only
