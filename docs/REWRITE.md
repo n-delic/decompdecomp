@@ -647,6 +647,13 @@ the development copy, opens the demo game, starts helpers, closes and reopens th
 purpose. It reports everything it finds in detail: bugs, confusing screens, missing features, anything a stranger
 gets stuck on. Its findings go into issues or straight into fixes.
 
+Run when the owner says so, on Opus 5.5 at high effort (both the stranger and the auditor of §14). The stranger also
+does a **real update from 1.0.2**: in a throwaway home and a throwaway uv tool folder, install 1.0.2-alpha from its
+tag the way install.sh does, import the demo, match a few functions, then update to this version the way the app's
+Update button does (the old updater: uv tool install, `decomp setup`, the restart with `--no-browser --port N`),
+and check the projects, matches, names and notes survive and the window opens. Nothing may touch ~/Decomp or the
+owner's installed app.
+
 ## 14. Finishing the rewrite
 
 In this order, nothing skipped:
@@ -665,6 +672,10 @@ In this order, nothing skipped:
    file is deleted.
 6. The app, started as the development copy for the owner to try before anything is released.
 7. Squash-merged into main by the owner, released; the owner answers #3 and #4 when it's out.
+   **Release notes for Windows (WSL) users** (the owner's choice: no stopgap): Windows isn't supported in 1.0.3 and
+   comes back in 1.0.4; don't update. Already updated? Inside the WSL distribution: `uv tool install --force
+   --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/tags/v1.0.2-alpha.tar.gz"`,
+   then turn off update checks in Settings until 1.0.4, or the app offers 1.0.3 again.
 8. After the release: an agent researches how to support Windows well (§1). `wsl.py` (running Linux compilers through WSL
    from a native Windows app) is still in place, inactive on Linux, for that research to keep or remove.
 9. On the owner's computer: the old 1.0.0-alpha .deb removed (`sudo apt remove decompdecomp`), if it isn't yet.
