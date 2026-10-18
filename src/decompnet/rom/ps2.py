@@ -8,7 +8,7 @@ import re
 import struct
 
 from .n64 import RomError
-from .psx import region_of
+from .psx import region_of  # Sony's product codes, the same on both PlayStations
 
 EM_MIPS = 8
 # What a compiler leaves in a program when its notes survive linking: (pattern in .comment, compiler guess)

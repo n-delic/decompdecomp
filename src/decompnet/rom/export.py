@@ -30,11 +30,10 @@ from .symbols import AUTO_NAME
 
 AS_FLAGS = {
     "n64": ["-EB", "-march=vr4300", "-mabi=32"],
-    "psx": ["-EL", "-march=r3000", "-mabi=32"],
     "ps2": ["-EL", "-march=r5900", "-mabi=eabi"],
 }
-LD_ENDIAN = {"n64": "-EB", "psx": "-EL", "ps2": "-EL"}
-IMAGE_EXT = {"n64": ".z64", "psx": ".exe", "ps2": ".bin"}
+LD_ENDIAN = {"n64": "-EB", "ps2": "-EL"}
+IMAGE_EXT = {"n64": ".z64", "ps2": ".bin"}
 _ADDR_COMMENT = re.compile(r"/\*\s*([0-9A-F]+)\s+([0-9A-F]{8})\b")
 _BSS_COMMENT = re.compile(r"/\*\s*([0-9A-F]{8})\s*\*/\s*\.space")
 _DEFINES = re.compile(r"^\s*(?:glabel|dlabel|jlabel|alabel|ehlabel)\s+(\w+)|^\s*\.globl\s+(\w+)|^\s*(\w+):", re.M)
@@ -309,7 +308,7 @@ def export_rom(net, slug: str, out: Path, log=print) -> dict:
 
 
 def _write_docs(out: Path, title: str, platform: str, base: str, matched: int, total: int, fallback) -> None:
-    names = {"n64": "Nintendo 64", "psx": "PlayStation", "ps2": "PlayStation 2"}
+    names = {"n64": "Nintendo 64", "ps2": "PlayStation 2"}
     notes = "".join(f"\n- `{n}`: kept as assembly, {why}" for n, why in fallback)
     (out / "README.md").write_text(f"""# {title} (decompilation)
 

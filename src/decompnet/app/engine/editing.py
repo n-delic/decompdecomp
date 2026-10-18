@@ -38,8 +38,6 @@ class EditMixin:
         syms = self.symbols(proj["id"])
         if not IDENT.match(new_name) or new_name in syms.by_name:
             raise NetworkError(f"`{new_name}` is not a free C identifier")
-        if self.cfg(proj).get("platform") == "gba":
-            return self._split_gba(agent, proj, fn, addr, new_name, syms)
         head, tail = self._cut(proj, fn, addr, new_name, syms, agent.id, "split", f"{fn['name']} / {new_name}")
         return (f"✅ split: {fn['name']} is now {len(head.lines)} instructions; {new_name} at 0x{addr:08X} has "
                 f"{len(tail.lines)}. Continue with {fn['name']} (get_function shows its new assembly).")
@@ -83,7 +81,7 @@ class EditMixin:
             raise NetworkError("in a team room the host's project decides where functions end: tell the host (add_note)")
         fn = self._function(function, slug)
         proj = self._project(slug)
-        if self.cfg(proj).get("platform") == "gba" or (proj["arch"] or "mips") != "mips":
+        if (proj["arch"] or "mips") != "mips":
             raise NetworkError("boundary reports are for MIPS games (N64, PlayStation, PlayStation 2) for now")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} is matched: its boundaries are proven")
@@ -125,65 +123,6 @@ class EditMixin:
                       {"asm_code": f"not code (set aside from {fn['name']}): {req['reason']}"})
         self._update_cfg(slug, lambda cfg: next(r for r in cfg["boundaries"] if r["id"] == rid).__setitem__(
             "status", "applied" if apply else "dismissed"))
-
-    def _split_gba(self, agent: Agent, proj, fn, addr: int, new_name: str, syms: SymbolTable) -> str:
-        """Cut a GBA function's bytes and assembly in two at `addr` (Thumb: a halfword boundary)."""
-        off = addr - fn["vram"]
-        if off >= fn["size"] and off % 2 == 0:  # code after the function that nobody found yet: make it a function
-            return self._add_gba_function(agent, proj, fn, addr, new_name, syms)
-        if off <= 0 or off >= fn["size"] or off % 2:
-            raise NetworkError(f"0x{addr:08X} isn't inside {fn['name']} (0x{fn['vram']:08X}, {fn['size']} bytes)")
-        head, tail = fn["target"][:off], fn["target"][off:]
-        cut = re.search(rf"^(?:_|\.L){addr:08X}:|^\t(?:thumb|arm)_func_start \w*{addr:08X}\b", fn["asm"], re.M)
-        asm_head, asm_tail = ((fn["asm"][:cut.start()], fn["asm"][cut.start():]) if cut else
-                              (fn["asm"], f"\tthumb_func_start {new_name}\n@ split from {fn['name']}: see its assembly\n"))
-        refs = json.loads(fn["relocs"])
-        refs_head = [r for r in refs if r[0] < off]
-        refs_tail = [[r[0] - off, r[1], r[2]] for r in refs if r[0] >= off]
-        syms.add(Symbol(new_name, addr, len(tail), "func"))
-        with self.store.tx() as db:
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (len(head), max(1, len(head) // 2), head, json.dumps(refs_head), asm_head, fn["id"]))
-            db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (proj["id"], new_name, len(tail), max(1, len(tail) // 2), tail,
-                                                        json.dumps(refs_tail), asm_tail, None, fn["unit"], addr,
-                                                        fn["rom_offset"] + off))
-            db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=?", (len(head), proj["id"], fn["name"]))
-            db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
-                       (proj["id"], new_name, addr, len(tail), "func"))
-            self._event(db, proj["id"], agent.id, "split", f"{fn['name']} / {new_name}")
-        self._xrefs.pop(proj["id"], None)
-        self._ops.pop(proj["id"], None)
-        return (f"✅ split: {fn['name']} is now {len(head)} bytes; {new_name} at 0x{addr:08X} has {len(tail)}. "
-                f"Continue with {fn['name']} (get_function shows its new assembly).")
-
-    def _add_gba_function(self, agent: Agent, proj, prev, addr: int, new_name: str, syms: SymbolTable) -> str:
-        from ...rom import gba, gba_candidates
-
-        nxt = self.store.one("SELECT vram FROM functions WHERE project_id=? AND vram>? ORDER BY vram LIMIT 1",
-                             proj["id"], prev["vram"])
-        rom, _ = self._rom(proj)
-        off, limit = addr - gba.BASE, (nxt["vram"] - gba.BASE) if nxt else len(rom)
-        if not off < limit or not gba_candidates.plausible_function(rom, off):
-            raise NetworkError(f"0x{addr:08X} doesn't look like the start of a function")
-        literals = gba_candidates.literal_words(rom, [addr])
-        end = min(next(gba_candidates.bodies(rom, [addr], literals))[1], limit)
-        while end + 4 <= limit and end in literals:
-            end += 4
-        code = rom[off:end]
-        syms.add(Symbol(new_name, addr, len(code), "func"))
-        with self.store.tx() as db:
-            db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
-                       "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (proj["id"], new_name, len(code), max(1, len(code) // 2), code,
-                                                        json.dumps(gba._refs(code, addr, literals, off)),
-                                                        f"\tthumb_func_start {new_name}\n@ found by an agent after {prev['name']}\n",
-                                                        None, prev["unit"], addr, off))
-            db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
-                       (proj["id"], new_name, addr, len(code), "func"))
-            self._event(db, proj["id"], agent.id, "split", f"{prev['name']} / {new_name}")
-        self._xrefs.pop(proj["id"], None)
-        self._ops.pop(proj["id"], None)
-        return f"✅ new function {new_name} at 0x{addr:08X}, {len(code)} bytes."
 
     def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "") -> str:
         self._rom_only(project, "rename_symbol")

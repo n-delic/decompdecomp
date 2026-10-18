@@ -1,40 +1,17 @@
-"""PlayStation executables (PS-X EXE) and the CD images they come on.
+"""PlayStation 2 disc images: the file system, and the program SYSTEM.CNF names.
 
-A PlayStation game's code is one executable on the disc (named in SYSTEM.CNF, e.g. SLUS_000.01). Discs are ISO 9660,
-stored either as 2048-byte sectors (.iso) or raw 2352-byte sectors (.bin, Mode 1 or Mode 2 Form 1). We read only the
-file system and the executable, from the user's own image; nothing here touches copy protection.
+A PlayStation 2 game's code is one program on the disc (named in SYSTEM.CNF, e.g. SLUS_200.00). Discs are ISO 9660,
+stored either as 2048-byte sectors (.iso) or raw 2352-byte sectors (.bin, Mode 1 or Mode 2 Form 1, as CD games
+were). We read only the file system and the program, from the user's own image; nothing here touches copy
+protection.
 """
 
 from __future__ import annotations
 
-import hashlib
 import re
 import struct
 
 from .n64 import RomError
-
-REGIONS = {"North America": "North America", "Japan": "Japan", "Europe": "Europe"}
-
-
-def read_exe(data: bytes, boot_name: str = "") -> tuple[bytes, dict]:
-    if data[:8] != b"PS-X EXE":
-        raise RomError("this isn't a PlayStation executable")
-    pc, gp, load, size = struct.unpack_from("<IIII", data, 0x10)
-    if not (0x80000000 <= load < 0x80200000) or size == 0 or 0x800 + size > len(data):
-        raise RomError("the executable's header doesn't make sense (load address or size)")
-    marker = data[0x4C:0x800].split(b"\0", 1)[0].decode("ascii", "replace")
-    region = next((v for k, v in REGIONS.items() if k in marker), "Unknown region")
-    code = ""
-    m = re.match(r"^([A-Z]{4})[_-](\d{3})\.(\d{2})", boot_name.upper())
-    if m:
-        code = f"{m.group(1)}-{m.group(2)}{m.group(3)}"
-    exe = data[:0x800 + size]
-    return exe, {
-        "title": code or boot_name or "PlayStation game", "game_code": code, "region": region, "version": 0,
-        "entrypoint": pc, "gp": gp, "load": load, "crc1": 0, "crc2": 0, "size": len(exe),
-        "sha1": hashlib.sha1(exe).hexdigest(), "byte_order": "exe", "compiler_guess": "PSYQ", "platform": "psx",
-        "boot": boot_name,
-    }
 
 
 def region_of(serial: str) -> str:
@@ -111,24 +88,20 @@ class _Disc:
         return None
 
 
-def from_disc(src) -> tuple[bytes, str, str]:
-    """(program bytes, its file name, platform) from a PlayStation or PlayStation 2 disc image.
-    SYSTEM.CNF names the program: `BOOT2 = cdrom0:\\SLUS_200.00;1` on PS2, `BOOT = cdrom:\\...` on PS1."""
+def from_disc(src) -> tuple[bytes, str]:
+    """(program bytes, its file name) from a PlayStation 2 disc image: SYSTEM.CNF names the program
+    (`BOOT2 = cdrom0:\\SLUS_200.00;1`). A PlayStation 1 disc says `BOOT = cdrom:\\...` instead."""
     disc = _Disc(src)
     cnf = disc.find("SYSTEM.CNF")
-    boot, platform = "PSX.EXE", "psx"
-    if cnf is not None:
-        m = re.search(rb"BOOT2\s*=\s*cdrom0?:?\\*([^\s;]+)", cnf, re.I)
-        if m:
-            platform = "ps2"
-        else:
-            m = re.search(rb"BOOT\s*=\s*cdrom:?\\*([^\s;]+)", cnf, re.I)
-        if m:
-            boot = m.group(1).decode("ascii", "replace")
+    m = re.search(rb"BOOT2\s*=\s*cdrom0?:?\\*([^\s;]+)", cnf or b"", re.I)
+    if m is None:
+        raise RomError("this disc isn't a PlayStation 2 game (its SYSTEM.CNF names no BOOT2 program): PlayStation 1 "
+                       "games aren't supported in this version")
+    boot = m.group(1).decode("ascii", "replace")
     exe = disc.find(boot)
     if exe is None:
         raise RomError(f"the disc names {boot} as its program, but it isn't on the disc")
-    return exe, boot.replace("\\", "/").rsplit("/", 1)[-1], platform
+    return exe, boot.replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def is_disc(data) -> bool:

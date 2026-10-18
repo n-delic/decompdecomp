@@ -286,7 +286,7 @@ def test_a_job_always_ends_and_says_why(tmp_path):
         return {}["missing"]
 
     def slow(log):
-        raise subprocess.TimeoutExpired(["/usr/bin/systemd-run", "--user", "--", "/x/luvdis", "disasm"], 1800)
+        raise subprocess.TimeoutExpired(["/usr/bin/systemd-run", "--user", "--", "/x/dtk", "dol", "split"], 1800)
 
     def failed(log):
         raise subprocess.CalledProcessError(2, ["ninja"], stderr=b"ld: undefined symbol foo")
@@ -294,7 +294,7 @@ def test_a_job_always_ends_and_says_why(tmp_path):
     job = wait(jobs.start("import", bug))
     assert job["state"] == "error" and "KeyError" in job["error"] and "report" in job["error"]
     assert "Traceback" in job["trace"]
-    assert "luvdis took longer than 30 minutes" in wait(jobs.start("import", slow))["error"]
+    assert "dtk took longer than 30 minutes" in wait(jobs.start("import", slow))["error"]
     assert wait(jobs.start("build", failed))["error"] == "ninja failed (2): ld: undefined symbol foo"
     logged = (tmp_path / "logs" / "decomp.log").read_text()
     assert "reading the ROM" in logged and "KeyError" in logged and "Traceback" in logged

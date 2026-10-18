@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 from ... import scoring
-from ...elfobj import FunctionObj
 from ...network import Agent, Network, NetworkError
 from ...rom import match, split
 from ...rom.symbols import SymbolTable
@@ -33,19 +32,11 @@ class JudgeMixin:
     def _target_obj(self, fn, proj):
         if not self.is_rom(proj):
             return super()._target_obj(fn, proj)
-        if self.cfg(proj).get("platform") == "gba":
-            return FunctionObj(fn["name"], "thumb", False, fn["target"], [])
         return match.canonical_target(self._rom_target(fn), self.symbols(proj["id"]))
 
     def _evaluate(self, fn, proj, obj: bytes):
         if not self.is_rom(proj):
             return super()._evaluate(fn, proj, obj)
-        if self.cfg(proj).get("platform") == "gba":
-            from ...rom import match_arm
-
-            res = match_arm.link(obj, fn["name"], match_arm.ArmTarget(fn["name"], fn["vram"], fn["target"]),
-                                 self.symbols(proj["id"]), self.reader(proj))
-            return res.candidate, res.exact if res.candidate is not None else None, res.problems
         res = match.link(obj, fn["name"], self._rom_target(fn), self.symbols(proj["id"]), self.reader(proj))
         return res.candidate, res.exact if res.candidate is not None else None, res.problems
 

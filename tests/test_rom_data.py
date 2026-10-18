@@ -10,7 +10,6 @@ then "hello", then the double. Every one of those must be found equal; a wrong o
 import shutil
 import subprocess
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 from elftools.elf.elffile import ELFFile
@@ -144,76 +143,4 @@ def test_own_data_in_another_layout_matches(game):
                                     {"hello": "hell"}])
 def test_wrong_data_is_caught(game, change):
     for name, linked in judge(game, **change).items():
-        assert not linked.exact and linked.problems, (name, change)
-
-
-PICK = """const char *pick(int i) {
-    static const char *const names[] = {"%s", "%s", "%s"};
-    if (i < 0) return "%s";
-    return names[i];
-}
-"""
-BASE = 0x08000000
-
-
-def _agbcc(source: str) -> bytes:
-    from decompnet.project import compiler_config
-
-    res = compile_source(compiler_config(Path("."), {"compiler": {"toolchain": "agbcc"}}), "", source)
-    assert res.ok, res.log
-    return res.obj
-
-
-@pytest.fixture(scope="module")
-def gba_game():
-    """The original: pick() at 0x08000200, its strings packed differently (other data right after "zero"), its
-    table elsewhere, every pointer an absolute address."""
-    if any(toolchains.installed(t) is None for t in ("agbcc", "arm-gnu")):
-        pytest.skip("needs agbcc and the Arm GNU toolchain")
-    obj = ELFFile(BytesIO(_agbcc(PICK % ("zero", "one", "two", "neg"))))
-    rodata = obj.get_section_by_name(".rodata").data()
-    places = {"neg": 0x08001000, "zero": 0x08001004, "one": 0x08001010, "two": 0x08001014, "names": 0x08001020}
-    image = bytearray(0x2000)
-
-    def put(addr, data):
-        image[addr - BASE:addr - BASE + len(data)] = data
-
-    for s in ("neg", "zero", "one", "two"):
-        put(places[s], s.encode() + b"\0")
-    put(0x08001009, b"\x01\x02\x03")  # someone else's data right after "zero\0"
-    put(places["names"], b"".join(places[s].to_bytes(4, "little") for s in ("zero", "one", "two")) + b"\xef\xbe\xad\xde")
-    where = {rodata.find(s.encode() + b"\0"): places[s] for s in ("neg",)} | {0: places["names"]}
-    code = bytearray(obj.get_section_by_name(".text").data()[:0x24])
-    for rel in obj.get_section_by_name(".rel.text").iter_relocations():
-        at = rel["r_offset"]
-        code[at:at + 4] = where[int.from_bytes(code[at:at + 4], "little")].to_bytes(4, "little")
-    put(0x08000200, code)
-
-    def read(addr, n):
-        return bytes(image[addr - BASE:addr - BASE + n]) if BASE <= addr and addr + n <= BASE + len(image) else None
-
-    from decompnet.rom.match_arm import ArmTarget
-
-    labels = [Symbol(f"gUnknown_{a:08X}", a, 0, "data") for a in (*places.values(), 0x08001009)]
-    return read, ArmTarget("pick", 0x08000200, bytes(code)), {"no labels": SymbolTable([]),
-                                                               "labels": SymbolTable(labels)}
-
-
-def judge_gba(gba_game, names=("zero", "one", "two"), neg="neg"):
-    from decompnet.rom import match_arm
-
-    read, target, symbol_tables = gba_game
-    obj = _agbcc(PICK % (*names, neg))
-    return {name: match_arm.link(obj, "pick", target, table, read) for name, table in symbol_tables.items()}
-
-
-def test_gba_strings_and_pointer_tables_match(gba_game):
-    for name, linked in judge_gba(gba_game).items():
-        assert linked.exact, (name, linked.problems)
-
-
-@pytest.mark.parametrize("change", [{"neg": "neq"}, {"names": ("zero", "one", "tw0")},
-                                    {"names": ("one", "zero", "two")}, {"names": ("zero", "on", "two")}])
-def test_gba_wrong_data_is_caught(gba_game, change):
-    for name, linked in judge_gba(gba_game, **change).items():
         assert not linked.exact and linked.problems, (name, change)

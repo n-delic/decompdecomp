@@ -25,7 +25,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .. import similarity, toolchains
-from ..forks import catalog, csource, datadiff, drafts, dtksplits, ghidra, scratch_dsd, scratch_dtk, scratch_pe
+from ..forks import catalog, csource, datadiff, drafts, dtksplits, ghidra, scratch_dtk, scratch_pe
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
 from ..network import Agent, Network, NetworkError
@@ -448,11 +448,11 @@ class ForkEngine:
             self.net._event(db, pid, None, "fork", event)
 
     def create_scratch(self, game: Path, *, compiler: str | None = None, log=print) -> str:
-        """A GameCube, Wii, DS or PC game, from scratch: generate the community's project layout for it (dtk-template,
-        ds-decomp; for PC, decompdecomp's own from Ghidra's analysis) and open it like a fork."""
+        """A GameCube, Wii or PC game, from scratch: generate the community's project layout for it (dtk-template;
+        for PC, decompdecomp's own from Ghidra's analysis) and open it like a fork."""
         with open(game, "rb") as f:
             head = f.read(0x1000)
-        maker = scratch_dsd if scratch_dsd.is_nds(head) else scratch_pe if scratch_pe.is_pe(head) else scratch_dtk
+        maker = scratch_pe if scratch_pe.is_pe(head) else scratch_dtk
         info = maker.game_info(game)
         sha1 = info["sha1"] if maker is not scratch_dtk else hashlib.sha1(info["dol"]).hexdigest()
         for p in self.net.store.all("SELECT slug, config FROM projects"):
@@ -524,20 +524,17 @@ class ForkEngine:
                                "pick your copy of one of those versions")
 
     def check_rom(self, slug: str, log=print) -> dict:
-        """A DS game started from scratch: rebuild its ROM and compare it with the user's copy (scratch_dsd.check_rom);
-        what it says is kept in the project's .decomp.wtf.json and shown on the project."""
+        """A GameCube or Wii game started from scratch: rebuild its program and compare it with the user's copy; what
+        it says is kept in the project's .decomp.wtf.json and shown on the project."""
         proj, fp, cfg = self.get(slug)
         manifest = fp.manifest or {}
-        if cfg.get("origin") != "scratch" or manifest.get("platform") not in ("nds", "gc", "wii"):
-            raise NetworkError("only games started from scratch rebuild here")
+        if cfg.get("origin") != "scratch" or manifest.get("platform") not in ("gc", "wii"):
+            raise NetworkError("only GameCube and Wii games started from scratch rebuild here")
         with self._build_locks[proj["id"]]:  # not while an agent's compile builds in the same tree
-            if manifest.get("platform") == "nds":
-                result = scratch_dsd.check_rom(fp.root, manifest["version"], log=log)
-            else:
-                ok, tail = fp.verify(log=log)
-                diff = scratch_dtk._differing(fp.root, manifest["version"], tail) or []
-                result = {"identical": ok, "detail": "identical" if ok else
-                          f"{len(diff)} files differ: {', '.join(diff[:8])}" if diff else (tail.strip().splitlines() or ["the build failed"])[-1][-300:]}
+            ok, tail = fp.verify(log=log)
+            diff = scratch_dtk._differing(fp.root, manifest["version"], tail) or []
+            result = {"identical": ok, "detail": "identical" if ok else
+                      f"{len(diff)} files differ: {', '.join(diff[:8])}" if diff else (tail.strip().splitlines() or ["the build failed"])[-1][-300:]}
         manifest["rebuild"] = result | {"t": time.time()}
         (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return result

@@ -49,14 +49,12 @@ compilers are only installed after the user accepts that in Setup; don't add cod
 
 ## Two ways a game is decompiled
 
-1. **ROM mode** (N64, PS1, PS2, GBA): `src/decompnet/rom/` splits the game (splat/spimdisasm, luvdis), and
-   `rom/match.py` (MIPS) / `rom/match_arm.py` (ARM) *link* each compiled candidate at the function's real address
-   and compare bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them). Exported as a rebuildable tree by `rom/export*.py`.
-2. **Fork mode** (public decomps forked by repository address, and GameCube/Wii/DS/PC started from scratch): a community-shaped
+1. **ROM mode** (N64, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm), and `rom/match.py` *links*
+   each compiled candidate at the function's real address and compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them). Exported as a rebuildable tree by `rom/export*.py`.
+2. **Fork mode** (public decomps forked by repository address, and GameCube/Wii/PC started from scratch): a community-shaped
    project on disk with an `objdiff.json`; objdiff judges each unit. `forks/project.py` detects and builds projects,
    `app/forkengine.py` drives them. From-scratch importers generate such a project:
-   `forks/scratch_dtk.py` (GameCube/Wii, dtk-template), `forks/scratch_dsd.py` (DS, ds-decomp, template in
-   `forks/ds_template/`) and `forks/scratch_pe.py` (Windows PC: Ghidra finds functions, decompdecomp delinks them
+   `forks/scratch_dtk.py` (GameCube/Wii, dtk-template) and `forks/scratch_pe.py` (Windows PC: Ghidra finds functions, decompdecomp delinks them
    into COFF objects itself, template in `forks/pc_template/`). A new from-scratch platform that has a
    delinker/objdiff story belongs here. Fork-mode helpers that read objects with pyelftools must tolerate COFF
    (PC, Xbox): treat an `ELFError` as "no verdict".

@@ -144,7 +144,7 @@ class BriefMixin:
     def classes(self, proj) -> classes.Classes | None:
         """The C++ classes found in a MIPS game's code (classes.py), kept with the cross-references (renames keep
         addresses; splits and cuts drop both). None: not MIPS code."""
-        if not self.is_rom(proj) or self.cfg(proj).get("platform") == "gba" or (proj["arch"] or "mips") != "mips":
+        if not self.is_rom(proj) or (proj["arch"] or "mips") != "mips":
             return None
         x = self.xrefs(proj)
         if "classes" not in x:
@@ -263,8 +263,7 @@ class BriefMixin:
             key = (r["vram"], r["size"])
             live.add(key)
             if key not in cache:
-                cache[key] = (similarity.thumb_mnemonics(r["target"], r["vram"] or 0) if proj["arch"] == "arm" else
-                              similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0))
+                cache[key] = similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0)
         for key in set(cache) - live:
             del cache[key]
         self._ops[proj["id"]] = (layout, cache)

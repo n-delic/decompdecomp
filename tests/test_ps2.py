@@ -1,7 +1,7 @@
 """PlayStation 2 ROM projects: split a homemade PS2 executable and prove the matcher on it.
 
-Demo Quest PS1 (projects/demo-ps2) is the Demo Quest game built for the PlayStation with GCC 2.7.2 at -O2 -G8,
-little-endian, small globals $gp-relative, like PSY-Q-era games. The executable carries no symbols, so the test
+Demo Quest PS2 (projects/demo-ps2) is the Demo Quest game built for the PlayStation 2 with EE-GCC 2.96 at -O2 -G8,
+little-endian, small globals $gp-relative, like games of its time. The executable carries no symbols, so the test
 does what an agent does: give addresses names, declare the game's types, then write each function. Every one of
 them must match byte for byte.
 """
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None or t
 
 
 @pytest.fixture(scope="module")
-def psx(tmp_path_factory):
+def ps2(tmp_path_factory):
     if not EXE.exists():
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     work = tmp_path_factory.mktemp("ps2")
@@ -43,8 +43,8 @@ def psx(tmp_path_factory):
     return net, slug
 
 
-def test_import(psx):
-    net, slug = psx
+def test_import(ps2):
+    net, slug = ps2
     ov = net.overview(slug)
     assert ov["platform"] == "ps2" and ov["compiler"]["toolchain"] == "ee-gcc-2.96" and ov["functions"] > 60
     assert ov["compiler"]["flags"] == ["-O2", "-G8"]
@@ -69,8 +69,8 @@ def test_a_removed_game_can_be_imported_again(tmp_path):
     again.import_rom(EXE, confirmed=True, log=lambda *_: None)
 
 
-def test_every_game_function_matches(psx):
-    net, slug = psx
+def test_every_game_function_matches(ps2):
+    net, slug = ps2
     _match_every_function(net, slug, ELF)
 
 
@@ -81,7 +81,7 @@ def _match_every_function(net, slug, elf):
 
 def _name_the_game(net, slug, elf):
     """What an agent does first: the game's types into the shared header, and the game's names on its addresses."""
-    agent, _ = net.local_agent("psx-agent")
+    agent, _ = net.local_agent("ps2-agent")
     syms = {s.name: s["st_value"] for s in ELFFile(open(elf, "rb")).get_section_by_name(".symtab").iter_symbols()}
     header = (GAME / "game.h").read_text()
     header = "\n".join(l for l in header.splitlines()
@@ -113,9 +113,9 @@ def _attempt_every_function(net, slug, agent):
     assert all(score == 0 for score in scores.values()), scores
 
 
-def test_wrong_code_does_not_match(psx):
-    net, slug = psx
-    agent, _ = net.local_agent("psx-agent-2")
+def test_wrong_code_does_not_match(ps2):
+    net, slug = ps2
+    agent, _ = net.local_agent("ps2-agent-2")
     fn = net.store.one("SELECT name FROM functions WHERE status='open' AND n_insns > 8 ORDER BY n_insns LIMIT 1")
     res = net.attempt(agent, fn["name"], f"int {fn['name']}(int a) {{ return a * 3; }}", slug)
     assert not res["matched"]

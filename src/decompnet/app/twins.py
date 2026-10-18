@@ -118,7 +118,6 @@ def object_prints(data: bytes) -> dict[str, Print]:
 def rom_print(fn, arch: str, big_endian: bool, label) -> Print:
     """Fingerprint of a ROM project's function, from its target bytes and the addresses its relocations fill in."""
     relocs = sorted((int(r[0]), int(r[1]), int(r[2])) for r in json.loads(fn["relocs"] or "[]") if len(r) >= 3)
-    arch = "thumb" if arch == "arm" else arch  # GBA code is Thumb; its references are bl pairs and literal words
     code = mask_relocs(fn["target"] or b"", [Reloc(o, t, "", 0) for o, t, _ in relocs], arch, big_endian)
     return Print(_key(code, [(o, t) for o, t, _ in relocs]), [label(a) for _, _, a in relocs], len(fn["target"] or b""),
                  [a for _, _, a in relocs])
@@ -250,8 +249,7 @@ class Twins:
     def _rom_prints(self, proj) -> dict[int, Print]:
         cfg = self.net.cfg(proj)
         syms = self.net.symbols(proj["id"])
-        arch = "arm" if cfg.get("platform") == "gba" else proj["arch"] or "mips"
-        return {r["id"]: rom_print(r, arch, bool(cfg.get("big_endian", True)), syms.label) for r in self.net.store.all(
+        return {r["id"]: rom_print(r, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label) for r in self.net.store.all(
             "SELECT id, target, relocs FROM functions WHERE project_id=? AND status!='asm'", proj["id"])}
 
     def _fork_prints(self, proj) -> dict[int, Print]:

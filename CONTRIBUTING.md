@@ -41,7 +41,7 @@ The tests already use a folder of their own.
 
 Compilers and tools (splat, objdiff, dtk, wibo, Ghidra and the period compilers) are pinned with checksums in
 `src/decompnet/toolchains.toml`, and the app installs them in Setup. Many tests skip when a compiler isn't installed,
-and that's fine. The homemade demo games in `projects/demo-*` are built by their own scripts. The N64 and PS1 demos
+and that's fine. The homemade demo games in `projects/demo-*` are built by their own scripts. The N64 demos
 also need `ld.lld`, `llvm-objcopy` and `llvm-nm` on your PATH (Debian and Ubuntu: `apt install lld llvm`).
 
 **[docs/CONVENTIONS.md](docs/CONVENTIONS.md) has the house rules, and [AGENTS.md](AGENTS.md) how the code is laid

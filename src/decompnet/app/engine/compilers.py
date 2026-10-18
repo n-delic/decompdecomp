@@ -47,7 +47,7 @@ class CompilerMixin:
         meanwhile the last map answers, unless `fresh` (wait for the one that's current). GTA San Andreas: each match
         made the map stale, and every waiting brief and map request rebuilt it at once, 600-870 ms each.
         None: not MIPS code."""
-        if not self.is_rom(proj) or self.cfg(proj).get("platform") == "gba" or (proj["arch"] or "mips") != "mips":
+        if not self.is_rom(proj) or (proj["arch"] or "mips") != "mips":
             return None
         cached = self._cmaps.get(proj["id"])
         if cached and cached[0] == self._cmap_key(proj):

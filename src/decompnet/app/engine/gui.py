@@ -31,11 +31,9 @@ class GuiMixin:
         if self.fork_slug(slug):  # a fork's work is already in its source tree, committed
             return {"path": self._project(slug)["root"], "identical": None}
         from ...rom.export import export_rom
-        from ...rom.export_gba import export_gba
 
         proj = self._project(slug)
-        export = export_gba if self.cfg(proj).get("platform") == "gba" else export_rom
-        res = export(self, slug, Path(proj["root"]) / "source", log=log)
+        res = export_rom(self, slug, Path(proj["root"]) / "source", log=log)
         with self.store.tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),
@@ -90,7 +88,7 @@ class GuiMixin:
             "context_version": self._context(proj["id"])["version"],
             "folder": proj["root"],
             "export": cfg.get("export"),
-            "exportable": cfg.get("platform", "n64") in ("n64", "psx", "ps2", "gba"),
+            "exportable": cfg.get("platform", "n64") in ("n64", "ps2"),
             "room": self._room_info(proj["slug"]),
         }
 

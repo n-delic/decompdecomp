@@ -1,16 +1,30 @@
-"""PlayStation overlays (rom/overlays.py): code in other files of a disc, placed at the address it's loaded at from
-its own calls, and split with the program, as a segment of its own."""
+"""PlayStation 2 overlays (rom/overlays.py): code in other files of a disc, placed at the address it's loaded at
+from its own calls, and split with the program, as a segment of its own."""
 
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from decompnet import toolchains
 from decompnet.rom import overlays, split
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / "projects" / "demo-psx" / "build" / "DEMOQ_PS1.EXE"
+DEMO = ROOT / "projects" / "demo-ps2"
+EXE = DEMO / "build" / "SLUS_999.99"
 NOP, JR_RA = 0, 0x03E00008
+OVERLAY_AT = 0x00400000  # above the demo program (linked at 0x00100000), where a game would load one
+needs_demo = pytest.mark.skipif(toolchains.installed("ee-gcc-2.96") is None or toolchains.installed("binutils-mips") is None,
+                                reason="needs ee-gcc-2.96 and binutils-mips to build the PS2 demo")
+
+
+@pytest.fixture(scope="module")
+def exe() -> bytes:
+    if not EXE.exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    return EXE.read_bytes()
 
 
 def _overlay(base: int, count: int) -> bytes:
@@ -24,9 +38,9 @@ def _overlay(base: int, count: int) -> bytes:
 
 
 def test_an_overlay_is_placed_at_its_load_address():
-    data = bytes(64) + _overlay(0x80100040, 60)  # a little header before its code, as overlay files often have
-    assert overlays.place(data, "psx", [(0x80010000, 0x80050000)]) == (0x80100000, 64)
-    assert overlays.place(data, "psx", [(0x800F0000, 0x80120000)]) is None  # over the resident program: no
+    data = bytes(64) + _overlay(OVERLAY_AT + 0x40, 60)  # a little header before its code, as overlay files often have
+    assert overlays.place(data, [(0x00100000, 0x00150000)]) == (OVERLAY_AT, 64)
+    assert overlays.place(data, [(0x003F0000, 0x00420000)]) is None  # over the resident program: no
 
 
 def test_ps2_elf_overlays_say_where_they_go():
@@ -42,19 +56,19 @@ def test_ps2_elf_overlays_say_where_they_go():
     assert overlays._elf_segments(bytes(irx)) is None
 
 
-@pytest.mark.skipif(not EXE.exists(), reason="needs the PlayStation demo (projects/demo-psx)")
-def test_overlays_are_split_with_the_program(tmp_path):
-    (tmp_path / "game.exe").write_bytes(EXE.read_bytes())
+@needs_demo
+def test_overlays_are_split_with_the_program(tmp_path, exe):
+    (tmp_path / "game.elf").write_bytes(exe)
     # two overlays that load at the same address (only one is in memory at a time)
-    found = [("battle", _overlay(0x80180000, 30), 0x80180000, 0), ("field", _overlay(0x80180000, 20), 0x80180000, 0)]
-    res = split.split_rom(tmp_path, "game.exe", log=lambda *_: None, overlays=found)
+    found = [("battle", _overlay(OVERLAY_AT, 30), OVERLAY_AT, 0), ("field", _overlay(OVERLAY_AT, 20), OVERLAY_AT, 0)]
+    res = split.split_rom(tmp_path, "game.elf", log=lambda *_: None, overlays=found)
     names = {f.name for f in res.functions}
-    assert "func_80180000" in names or "ovl_battle_func_80180000" in names
+    assert "func_00400000" in names or "ovl_battle_func_00400000" in names
     battle = [f for f in res.functions if f.segment == "ovl_battle"]
     field = [f for f in res.functions if f.segment == "ovl_field"]
     assert len(battle) == 30 and len(field) == 20
     assert len({f.name for f in battle + field}) == 50  # same addresses, names of their own
-    assert res.image == "game.overlays.exe"
+    assert ".overlays." in res.image  # a working copy of the image with the overlays after the program
 
 
 def _iso(files: dict[str, bytes]) -> bytes:
@@ -88,17 +102,17 @@ def _iso(files: dict[str, bytes]) -> bytes:
     return bytes(image)
 
 
-@pytest.mark.skipif(not EXE.exists(), reason="needs the PlayStation demo (projects/demo-psx)")
-def test_a_disc_with_an_overlay_imports_both(tmp_path):
+@needs_demo
+def test_a_disc_with_an_overlay_imports_both(tmp_path, exe):
     from decompnet.app.engine import RomNetwork
 
-    disc = _iso({"SYSTEM.CNF": b"BOOT = cdrom:\\DEMOQ_PS1.EXE;1\r\n", "DEMOQ_PS1.EXE": EXE.read_bytes(),
-                 "BATTLE.BIN": bytes(64) + _overlay(0x80180040, 40), "MUSIC.VAB": bytes(range(256)) * 32})
+    disc = _iso({"SYSTEM.CNF": b"BOOT2 = cdrom0:\\SLUS_999.99;1\r\n", "SLUS_999.99": exe,
+                 "BATTLE.BIN": bytes(64) + _overlay(OVERLAY_AT + 0x40, 40), "MUSIC.VAB": bytes(range(256)) * 32})
     (tmp_path / "game.iso").write_bytes(disc)
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     said = []
     slug = net.import_rom(tmp_path / "game.iso", confirmed=True, log=said.append)
-    assert any("overlay on the disc: battle at 0x80180000" in s for s in said), said
+    assert any("overlay on the disc: battle at 0x00400000" in s for s in said), said
     rows = net.store.all("SELECT name, vram FROM functions WHERE project_id=?", net.project_row(slug)["id"])
-    in_overlay = [r for r in rows if 0x80180000 <= r["vram"] < 0x80181000]
+    in_overlay = [r for r in rows if OVERLAY_AT <= r["vram"] < OVERLAY_AT + 0x1000]
     assert len(in_overlay) == 40 and len(rows) > 40  # the program's functions and the overlay's

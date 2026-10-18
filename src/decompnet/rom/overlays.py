@@ -1,6 +1,6 @@
-"""PlayStation 1 and 2 overlays: code a game keeps in files on its disc, besides the main executable.
+"""PlayStation 2 overlays: code a game keeps in files on its disc, besides the main executable.
 
-Most PlayStation games load part of their code from other files when they need it (a battle system, a level's
+Many PlayStation 2 games load part of their code from other files when they need it (a battle system, a level's
 logic, a minigame): overlays. The community's projects list them by hand with the address each is loaded at, found
 in the code that loads them or with an emulator. Here the code says it: every file on the disc is checked for MIPS
 code, and its load address is the one that makes its own calls (jal: absolute addresses) land on its own functions'
@@ -23,7 +23,7 @@ from .n64code import JR_RA, _frame, _place
 MAX_FILE = 16 << 20
 PEEK = 64 << 10  # how much of a file is read first: code shows in its first 64 KiB
 JR_RA_LE = struct.pack("<I", JR_RA)
-RAM = {"psx": (0x80000000, 0x80200000), "ps2": (0x00080000, 0x02000000)}
+RAM = (0x00080000, 0x02000000)  # where the EE's programs load: above the kernel, within its 32 MiB
 
 
 def _swap(data: bytes) -> bytes:
@@ -72,15 +72,15 @@ def _elf_segments(data: bytes) -> list[tuple[int, bytes]] | None:
     return out
 
 
-def place(data: bytes, platform: str, known: list[tuple[int, int]]) -> tuple[int, int] | None:
+def place(data: bytes, known: list[tuple[int, int]]) -> tuple[int, int] | None:
     """(the address a raw overlay file is loaded at, where in it its code starts), or None if it can't be told."""
     swapped = _swap(data)
-    seg = _place(swapped, 0, len(swapped), 0, [], known, regions=(RAM.get(platform, RAM["psx"]),))
+    seg = _place(swapped, 0, len(swapped), 0, [], known, regions=(RAM,))
     if seg is None:
         return None
     start, _, vram, _ = seg
     base = vram - start
-    lo, hi = RAM.get(platform, RAM["psx"])
+    lo, hi = RAM
     if not lo <= base < hi or base % 4:
         return None
     if any(a < base + len(data) and base < b for a, b in known):  # over the resident program: not where it goes
@@ -88,8 +88,8 @@ def place(data: bytes, platform: str, known: list[tuple[int, int]]) -> tuple[int
     return base, start
 
 
-def find(disc, boot: str, platform: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, int]]:
-    """(name, bytes, load address, where its code starts) of the overlays on a PlayStation 1 or 2 disc. `main` is
+def find(disc, boot: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, int]]:
+    """(name, bytes, load address, where its code starts) of the overlays on a PlayStation 2 disc. `main` is
     the resident program's address range."""
     out = []
     names: set[str] = set()
@@ -104,7 +104,7 @@ def find(disc, boot: str, platform: str, main: tuple[int, int]) -> list[tuple[st
         name = re.sub(r"[^A-Za-z0-9_]", "_", Path(base_name).stem).strip("_").lower() or "overlay"
         while name in names:
             name += "_"
-        if platform == "ps2" and (segs := _elf_segments(data)) is not None:
+        if (segs := _elf_segments(data)) is not None:
             for k, (vaddr, code) in enumerate(segs):
                 if _code_like(code):
                     out.append((f"{name}{k or ''}", code, vaddr, 0))
@@ -112,7 +112,7 @@ def find(disc, boot: str, platform: str, main: tuple[int, int]) -> list[tuple[st
             continue
         if not _code_like(data):
             continue
-        placed = place(data, platform, [main])
+        placed = place(data, [main])
         if placed is not None:
             out.append((name, data, *placed))
             names.add(name)

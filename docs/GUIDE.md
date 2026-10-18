@@ -108,10 +108,10 @@ decompdecomp helps with these steps:
 | **Safe names** | Matches use addresses. A new name for a function or data cannot break a match. |
 | **Look-alikes** | `find_similar` finds copied and inlined code in the full game. |
 | **Compiler map** | Big games mix compilers. The ROM map's Compiler view shows which compiler built each part of the game: from matches, from habits that rule a compiler out (`-G0` code never reads through `$gp`), and from the judge's survey, which builds agents' C with each compiler the project uses. A part the judge confirms becomes a suggestion. A suggested range applies only after a second, neighbouring function confirms it (a range check); a range that only one function supports, with the game's compiler on both sides, is a quirk. "Check the applied ranges" looks at the ranges a project already has. Agents read it with `compiler_map`. MIPS for now. |
-| **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (PlayStation 2, PlayStation, N64) for now. |
+| **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (PlayStation 2, N64) for now. |
 | **Drafts** | m2c for MIPS, PowerPC and ARM. Ghidra (optional) for x86, AArch64 and other architectures. |
 | **Guides** | Agents get guides for each architecture and compiler, and for C++ and objdiff. |
-| **Disc formats** | ROMs, PlayStation discs, GameCube and Wii discs (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ) and program files. |
+| **Disc formats** | ROMs, PlayStation 2 discs (ISO, BIN, CHD), GameCube and Wii discs (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ) and program files. |
 
 ## Agents
 
@@ -169,7 +169,7 @@ This command runs decompdecomp in the background, imports your copy, opens the r
 | **Address** | A free Cloudflare quick tunnel, or your own address: LAN, Tailscale or a server. A room on your own address keeps its link after a restart. |
 | **Host controls** | See who is online, remove members, make a new invite link, stop the room. |
 | **Load on the host** | Members compile their own attempts. The host compiles only to verify matches. |
-| **Projects** | ROM projects, GameCube, Wii and DS projects from scratch, and forks of public decomps. |
+| **Projects** | ROM projects, GameCube, Wii and PC projects from scratch, and forks of public decomps. |
 
 No ROM data or assembly goes between computers. Each person reads the code from their own copy. All copies must be
 identical. The decompiled code of a commercial game belongs to its rights holder. Share it only with people who own
@@ -181,11 +181,9 @@ the game.
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **GameCube · Wii** | ★ **Recommended** | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
-| **PlayStation** | Beta | ✓ disc (.bin, .iso, .chd) or EXE | GCC 2.7.2 / 2.8.1 (PSY-Q era) | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
-| **Game Boy Advance** | Beta | ✓ ROM | agbcc | ✓ export | ✓ |
-| **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 | ✓ ds-decomp | ✓ |
 | **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
+| **PlayStation · GBA · DS** | Not supported in this version | | | | ✓ |
 | **3DS · PSP · Switch · Xbox · Xbox 360** | Planned | | | | ✓ |
 
 [ROADMAP.md](../ROADMAP.md) has a table of which feature works on which platform.
@@ -200,7 +198,7 @@ decomp:
   later and compressed code. The export puts each function at its original address. This is correct for matches
   and ports. Mods that make code larger need a different build, which is planned.
 
-**Beta: PlayStation, PlayStation 2, Game Boy Advance, DS and Windows PC.** All steps operate. We tested them on
+**Beta: PlayStation 2 and Windows PC.** All steps operate. We tested them on
 homemade games, and on few real games. Please [report problems](https://github.com/n-delic/decompdecomp/issues). The
 status of a public decomp is the status of its own project.
 
@@ -208,15 +206,12 @@ status of a public decomp is the status of its own project.
 
 | Platform | Tool |
 | :-- | :-- |
-| N64, PlayStation, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
+| N64, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
 | GameCube, Wii | decomp-toolkit, in a [dtk-template](https://github.com/encounter/dtk-template) project |
-| DS | [ds-decomp](https://github.com/AetiasHax/ds-decomp) (ARM9, ITCM, DTCM, overlays) |
-| GBA | [luvdis](https://github.com/aarant/luvdis), and a pass for code that nothing calls |
 | Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe into a project for Visual C++ and objdiff. |
 
-**C and C++.** GameCube, Wii, DS, PS2 and Windows PC games are often C++. On these platforms, agents can write
-classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64, PlayStation and GBA
-use C. Public decomps use the language of their project.
+**C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
+classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
 
 **Proprietary compilers** (IDO, CodeWarrior, Visual C++) install only after you accept them. Heavy tools operate
 with a memory limit.
@@ -225,8 +220,8 @@ with a memory limit.
 
 *Export project* writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
 and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are not in git.
-The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects, and DS
-projects are ds-decomp projects. They build the game again on each build.
+The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects. They
+build the game again on each build.
 
 ## Installation details
 
@@ -305,6 +300,6 @@ commit.
 ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https://github.com/matt-kempster/m2c) and
 [Ghidra](https://github.com/NationalSecurityAgency/ghidra) write drafts. The
 [decompals](https://github.com/decompals) period compilers build the code. The look-alike finder uses the idea of [coddog](https://github.com/ethteck/coddog).
-[decomp-toolkit](https://github.com/encounter/decomp-toolkit), [maspsx](https://github.com/mkst/maspsx) and
+[decomp-toolkit](https://github.com/encounter/decomp-toolkit) and
 [wibo](https://github.com/decompals/wibo) are also in the pinned tools. Thank you to the decomp community for these
 tools and ideas. decompdecomp is not related to these projects.

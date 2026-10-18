@@ -45,8 +45,8 @@ class ImportMixin:
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
         project_file = self._community_layout(data, name)
-        if project_file is not None:  # a dtk-template or ds-decomp project, worked on like a fork
-            compiler = toolchain if toolchain and toolchain.startswith(("GC/", "Wii/", "DS/", "MSVC/")) else None
+        if project_file is not None:  # a dtk-template or PC project, worked on like a fork
+            compiler = toolchain if toolchain and toolchain.startswith(("GC/", "Wii/", "MSVC/")) else None
             return self.forks.create_scratch(project_file, compiler=compiler, log=log)
         picked = detect.identify(data, name)
         rom, info = picked.data, picked.info
@@ -64,8 +64,6 @@ class ImportMixin:
         size = f"{info['size'] // (1024 * 1024)} MiB" if info["size"] >= 1 << 20 else f"{info['size'] // 1024} KiB"
         log(f"{detect.PLATFORMS[picked.platform]}: {info['title']} ({info['game_code'] or 'no game code'}, "
             f"{info['region']}), {size}, looks built with {info['compiler_guess']}")
-        if picked.platform == "gba":
-            return self._import_gba(picked, slug, workdir, toolchain, flags, log)
         if picked.overlays:
             log(f"{len(picked.overlays)} overlay{'s' if len(picked.overlays) != 1 else ''} on the disc: "
                 + ", ".join(f"{o[0]} at 0x{o[2]:08X}" for o in picked.overlays[:6]) + (", ..." if len(picked.overlays) > 6 else ""))
@@ -248,66 +246,22 @@ class ImportMixin:
                 f"byte for byte, {counts.get(current, 0)} with {SHORT_NAMES.get(current, current)}): using it")
         return counts
 
-    def _import_gba(self, picked, slug: str, workdir: Path, toolchain: str | None, flags: list[str] | None, log) -> str:
-        """Game Boy Advance: functions found by luvdis (plus a pass for code nothing calls), judged by the ARM matcher."""
-        from ...rom import gba
-
-        info = picked.info
-        fns = gba.split(workdir / picked.filename, workdir, log=log)
-        toolchain = toolchain or "agbcc"
-        tc = toolchains.get(toolchain)
-        cfg = {
-            "kind": "rom", "platform": "gba", "big_endian": False, "gp": 0, "arch": "thumb",
-            "rom": {**info, "file": picked.filename, "program": picked.filename},
-            "segments": [{"name": "rom", "rom_start": 0, "rom_end": info["size"], "vram": gba.BASE}],
-            "compiler": {"toolchain": toolchain, "flags": flags or tc.flags, "timeout": 20},
-            "legal": {"basis": "personal-copy", "license": "personal use only",
-                      "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
-                      "confirmed_at": time.time()},
-            "context": {"file": None},
-        }
-        now = time.time()
-        with self.store.tx() as db:
-            pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                             (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(fns)} functions",
-                              "arm", 0, str(workdir), json.dumps(cfg))).lastrowid
-            names: set[str] = set()
-            for f in fns:
-                name = f.asm_only or f.name  # known hand-written helpers keep their real name and stay assembly
-                if name in names:  # a game can link a helper twice (Spyro Orange has two of _call_via_r3)
-                    name = f"{name}_{f.vram:08X}"
-                names.add(name)
-                db.execute(
-                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,status) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (pid, name, len(f.code), f.n_insns, f.code, json.dumps([list(r) for r in f.refs or []]),
-                     f.asm.replace(f.name, name), None, "rom", f.vram, f.rom, "asm" if f.asm_only else "open"))
-                db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
-                           (pid, name, f.vram, len(f.code), "func", None))
-            db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
-                       "VALUES(?,?,?,?,?,?,?)", (pid, 1, BASE_HEADER.format(title=info["title"]), None, "basic types", now, ""))
-            self._event(db, pid, None, "import", f"{len(fns)} functions from {info['title']}")
-        log(f"ready: {len(fns)} functions to decompile")
-        return slug
-
     def _community_layout(self, data: bytes | Path, name: str = "") -> Path | None:
         """The file, when the game starts as a community-layout project: a GameCube/Wii program (DOL) or disc image
-        (dtk-template), a DS ROM (ds-decomp), or a Windows program (.exe, see scratch_pe). Bytes are saved to a file
-        first."""
-        from ...forks import scratch_dsd, scratch_dtk, scratch_pe
+        (dtk-template), or a Windows program (.exe, see scratch_pe). Bytes are saved to a file first."""
+        from ...forks import scratch_dtk, scratch_pe
 
         head = Path(data).open("rb").read(0x1000) if isinstance(data, (str, Path)) else bytes(data[:0x1000])
         small = Path(data).read_bytes() if isinstance(data, (str, Path)) and Path(data).stat().st_size < 64 << 20 else data
-        nds, pe = scratch_dsd.is_nds(head), scratch_pe.is_pe(head)
-        if not nds and not pe and scratch_dtk.disc_kind(head) is None and not (isinstance(small, (bytes, bytearray))
-                                                                              and scratch_dtk.is_dol(small)):
+        pe = scratch_pe.is_pe(head)
+        if not pe and scratch_dtk.disc_kind(head) is None and not (isinstance(small, (bytes, bytearray))
+                                                                  and scratch_dtk.is_dol(small)):
             return None
         if isinstance(data, (str, Path)):
             return Path(data)
         uploads = self.workspace / ".decomp" / "uploads"
         uploads.mkdir(parents=True, exist_ok=True)
-        path = uploads / (Path(name).name or ("game.nds" if nds else "game.exe" if pe else "main.dol"
-                                              if scratch_dtk.is_dol(data) else "game.iso"))
+        path = uploads / (Path(name).name or ("game.exe" if pe else "main.dol" if scratch_dtk.is_dol(data) else "game.iso"))
         path.write_bytes(data)
         return path
 

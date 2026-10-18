@@ -9,10 +9,10 @@ name if a line moved).
 
 | You want to change | Look in |
 | :-- | :-- |
-| Importing a game from scratch, ROM mode (N64, PS1, PS2, GBA) | `rom/` (splat, spimdisasm, luvdis), `app/engine/importing.py` |
-| Importing a game from scratch, fork mode (GameCube, Wii, DS, PC) | `forks/scratch_dtk.py`, `forks/scratch_dsd.py`, `forks/scratch_pe.py` |
+| Importing a game from scratch, ROM mode (N64, PS2) | `rom/` (splat, spimdisasm), `app/engine/importing.py` |
+| Importing a game from scratch, fork mode (GameCube, Wii, PC) | `forks/scratch_dtk.py`, `forks/scratch_pe.py` |
 | Forking a public decomp | `forks/` (`project.py` detects and builds a project), `app/forkengine.py` |
-| The judge | ROM mode: `rom/match.py` (MIPS), `rom/match_arm.py` (ARM). Fork mode: objdiff, run from `forks/project.py` |
+| The judge | ROM mode: `rom/match.py` (MIPS). Fork mode: objdiff, run from `forks/project.py` |
 | A tool agents call | the MCP definition and the `HANDLERS` table in `app/tools.py`, the API agents' schema in `app/agents.py` (`api_tool_schemas`), the work in `app/engine/<topic>.py` (ROM) or `app/forkengine.py` (forks) |
 | What agents read about a function | `app/engine/briefs.py` |
 | Claims, attempts, the judge's bookkeeping | `app/engine/judging.py`, under it `network.py` |

@@ -23,7 +23,6 @@ ROOT = Path(__file__).resolve().parent
 B = json.loads((ROOT / "build.json").read_text(encoding="utf-8"))
 PREAMBLE = {
     "n64": '.include "macro.inc"\n.set noat\n.set noreorder\n.set gp=64\n.section .text, "ax"\n',
-    "psx": '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n',
     "ps2": '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n',
 }
 OWN = ".rodata .rodata.* .data .data.* .sdata .rdata .lit4 .lit8 .bss .sbss"

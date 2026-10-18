@@ -308,16 +308,16 @@ def test_a_disc_of_another_version_switches_the_project_or_is_refused(tmp_path, 
 
 def test_a_project_made_from_scratch_builds_with_this_computers_tools(tmp_path, monkeypatch):
     """The manifest of a generated project records the tools of the computer that made it; setup uses this one's."""
-    from decompnet.forks import scratch_dsd
+    from decompnet.forks import scratch_pe
     from decompnet.forks.project import ForkProject
 
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({
-        "created": "from scratch", "platform": "nds", "version": "abce",
-        "setup": [["python", "tools/configure.py", "abce", "--dsd", "/elsewhere/dsd", "--compilers", "/elsewhere/mw"], ["ninja"]]}))
-    monkeypatch.setattr(scratch_dsd, "tool_args", lambda: ["--dsd", "/here/dsd", "--compilers", "/here/mw"])
-    cmds = ForkProject(tmp_path).setup_commands("abce")
-    assert cmds[0][1:] == ["tools/configure.py", "abce", "--dsd", "/here/dsd", "--compilers", "/here/mw"]
-    assert cmds[1] == ["ninja"]
+        "created": "from scratch", "platform": "win32", "version": "game",
+        "setup": [["python", "tools/configure.py", "game", "--msvc", "/elsewhere/msvc"], ["ninja", "prepare"]]}))
+    monkeypatch.setattr(scratch_pe, "tool_args", lambda: ["--msvc", "/here/msvc", "--wibo", "/here/wibo"])
+    cmds = ForkProject(tmp_path).setup_commands("game")
+    assert cmds[0][1:] == ["tools/configure.py", "game", "--msvc", "/here/msvc", "--wibo", "/here/wibo"]
+    assert cmds[1] == ["ninja", "prepare"]
 
 
 @needs_tools

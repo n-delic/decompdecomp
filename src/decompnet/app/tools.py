@@ -30,10 +30,8 @@ GUIDES = {
     "ppc": "PowerPC (GameCube, Wii): registers, calling convention, common patterns",
     "mwcc": "matching Metrowerks CodeWarrior code (GameCube, Wii, DS)",
     "cpp": "decompiling C++: classes, vtables, constructors, inlines, name mangling",
-    "psx": "matching PlayStation (PSY-Q GCC + maspsx) code",
     "ps2": "matching PlayStation 2 (EE-GCC, MWCC PS2) code",
     "arm": "ARM and Thumb (GBA, DS, 3DS): registers, conditional code, literal pools",
-    "agbcc": "matching Game Boy Advance code built with agbcc",
     "x86": "x86 and MSVC (PC, Xbox): calling conventions, SEH, matching MSVC output",
     "aarch64": "AArch64 and Clang (Switch): registers, matching Clang output",
     "similarity": "finding similar functions and reusing matched code",
@@ -41,9 +39,9 @@ GUIDES = {
 
 # Guides worth reading first on each platform.
 PLATFORM_GUIDES = {
-    "n64": ["mips"], "ps": ["mips", "psx"], "ps2": ["mips", "ps2"], "psp": ["mips"],
+    "n64": ["mips"], "ps": ["mips"], "ps2": ["mips", "ps2"], "psp": ["mips"],
     "gc": ["ppc", "mwcc", "cpp"], "wii": ["ppc", "mwcc", "cpp"], "nds": ["arm", "mwcc"], "3ds": ["arm", "cpp"],
-    "gba": ["arm", "agbcc"], "switch": ["aarch64", "cpp"], "win32": ["x86", "cpp"], "xbox": ["x86", "cpp"],
+    "gba": ["arm"], "switch": ["aarch64", "cpp"], "win32": ["x86", "cpp"], "xbox": ["x86", "cpp"],
     "xbox360": ["ppc", "cpp"],
 }
 

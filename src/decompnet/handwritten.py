@@ -12,10 +12,9 @@ the save area in r11 (Mario Party 6's minigame modules each link their own copie
 Not a sign: instructions only assembly has (mtmsr, mtspr of a GQR...). C functions get them too, inlined from the
 SDK's headers (OSInitFastCast's asm block, in HuSysInit), and an agent matches those by calling the same helpers.
 
-MIPS (N64, PlayStation, PlayStation 2), see mips_reason: coprocessor 0 (the system: mfc0, mtc0, rfe, eret) or, on
-the PlayStations, coprocessor 2 (the PS1's GTE, the PS2's VU0: ctc2, mtc2, lwc2, cop2 commands), which C compilers
-never emit (PSY-Q's libgte is written in assembly; C that drives the GTE does it with inline asm, which decompdecomp
-doesn't take); code that ends without a return or a jump and so runs on into the next function (an extra entry
+MIPS (N64, PlayStation 2), see mips_reason: coprocessor 0 (the system: mfc0, mtc0, rfe, eret) or, on the PS2,
+coprocessor 2 (VU0: ctc2, mtc2, lwc2, cop2 commands), which C compilers never emit (C that drives VU0 does it with
+inline asm, which decompdecomp doesn't take); code that ends without a return or a jump and so runs on into the next function (an extra entry
 point into hand-written code: the splitter cut it off); or a first block that reads a temporary register (at, v0,
 v1, t0-t9) or k0/k1 before setting it (compiled code gets its arguments in a0-a3).
 """
@@ -211,17 +210,8 @@ def mips_reason(code: bytes, big_endian: bool, platform: str = "") -> str | None
                     "it (the PS2's libkernl stubs: addiu v1, n; syscall; jr ra)")
         if op == 0x10:
             return "uses coprocessor 0 (the system's: mfc0, mtc0, rfe, eret): no C compiler emits it"
-        if platform in ("psx", "ps", "ps2") and (op == 0x12 or op in (0x32, 0x3A, 0x36, 0x3E)):
-            unit = "the GTE (coprocessor 2)" if platform != "ps2" else "VU0 (coprocessor 2)"
-            return (f"uses {unit}: no C compiler emits it (PSY-Q's libgte is written in assembly; C does it with "
-                    "inline asm)" if platform != "ps2" else f"uses {unit}: C reaches it only through inline asm")
-    if platform in ("psx", "ps"):
-        # a BIOS call: li t2, 0xA0/0xB0/0xC0 (the table), jr t2, li t1, n (the function number) in any order. A C
-        # call through a pointer would use jalr and pass its arguments in a0-a3, never a number in t1
-        head = words[:4]
-        tables = {w & 0xFFFF for w in head if w >> 26 == 9 and (w >> 21) & 31 == 0 and (w >> 16) & 31 == 10}
-        if tables & {0xA0, 0xB0, 0xC0} and 0x01400008 in head:  # jr t2
-            return "calls the BIOS through its A0/B0/C0 table with the function number in t1: a stub written in assembly"
+        if platform == "ps2" and (op == 0x12 or op in (0x32, 0x3A, 0x36, 0x3E)):
+            return "uses VU0 (coprocessor 2): C reaches it only through inline asm"
     body = list(words)
     while len(body) > 1 and body[-1] == 0:  # alignment padding
         body.pop()

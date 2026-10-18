@@ -26,14 +26,6 @@ def mips_mnemonics(code: bytes, big_endian: bool = True, vram: int = 0) -> list[
     return out
 
 
-def thumb_mnemonics(code: bytes, vram: int = 0) -> list[str]:
-    import capstone
-
-    md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
-    md.skipdata = True
-    return [ins.mnemonic for ins in md.disasm(code, vram)]
-
-
 def mnemonics(lines: list[str]) -> list[str]:
     """Mnemonics from formatted instructions ("lwz r3, 0x10(r31)" -> "lwz")."""
     return [l.split(None, 1)[0].lower() for l in lines if l.strip()]

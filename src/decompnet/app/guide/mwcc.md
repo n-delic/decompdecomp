@@ -51,7 +51,7 @@ Libraries: the Dolphin/Revolution SDK (OS, GX, DVD, PAD, VI, AX), MSL (the C lib
 (`__ptmf`, `__construct_array`), NW4R, EGG or JSystem are usually already decompiled in the community;
 the project's headers have their prototypes and structs.
 
-DS (mwccarm, CodeWarrior for DS 1.2-2.0 and DSi 1.x): the same inlining rules; see guide("arm") for the
+DS (mwccarm, CodeWarrior for DS 1.2-2.0 and DSi 1.x, in forks of public DS decomps): the same inlining rules; see guide("arm") for the
 instruction set. Notes that differ from GameCube/Wii:
 - Code is ARM unless a file says `#pragma thumb on`; `-interworking` lets ARM and Thumb call each other.
 - Callee-saved registers r4-r11 are pushed together (`stmdb sp!, {r4-r8, lr}`); which register a local gets
@@ -62,5 +62,3 @@ instruction set. Notes that differ from GameCube/Wii:
   equal strings as separate copies.
 - NitroSDK functions (OS_, MI_, GX_, G2_, FS_, SND_, PAD_, TP_) and its macros are usually already known in the
   project; ITCM functions (fast copies, math) and DTCM data are linked separately but compile like the rest.
-- Started from scratch: ds-decomp named things `func_02001234` and `data_02041480`; use those names (or rename
-  them with the project's tools) and keep each function in the `src/auto/` file that holds its address.

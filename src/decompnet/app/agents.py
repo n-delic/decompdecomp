@@ -1267,11 +1267,11 @@ class Manager:
         # the know-how every session reads first, given up front (saves each session its first tool calls)
         ov = self.net.overview(s.slug)
         if ov.get("kind") == "fork":
-            # CodeWarrior's register and stack rules decide most of what's left on GameCube, Wii and DS
+            # CodeWarrior's register and stack rules decide most of what's left on GameCube and Wii (and DS forks)
             topics = ["fork", "objdiff", *(["mwcc"] if ov.get("platform") in ("gc", "wii", "nds") else
                                            ["x86"] if ov.get("platform") == "win32" else [])]
         else:
-            topics = ["workflow", {"psx": "psx", "ps2": "ps2", "gba": "agbcc"}.get(ov.get("platform")) or (
+            topics = ["workflow", {"ps2": "ps2"}.get(ov.get("platform")) or (
                 "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")]
         text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(
             tools._guide(t) for t in topics)
@@ -1291,7 +1291,7 @@ class Manager:
                                             guides=", ".join(f'guide("{g}")' for g in guides))
         if s.options.get("task") == "readable":
             return tools.READABLE_PROMPT.format(title=ov["title"], count=count)
-        guide = {"psx": "psx", "ps2": "ps2", "gba": "agbcc"}.get(ov.get("platform")) or (
+        guide = {"ps2": "ps2"}.get(ov.get("platform")) or (
             "ido" if ov["compiler"]["toolchain"].startswith("ido") else "gcc-kmc")
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)

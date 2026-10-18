@@ -28,9 +28,6 @@ M2C_TARGETS = {
     "mwcps2-3.0.1": "mipsee-gcc-c",
     "ido-7.1": "mips-ido-c",
     "ido-5.3": "mips-ido-c",
-    "gcc-2.7.2-psx": "mipsel-gcc-c",
-    "gcc-2.8.1-psx": "mipsel-gcc-c",
-    "agbcc": "gba-gcc-c",
 }
 # What m2c's --valid-syntax output needs to compile: its unknown types and macros, defined the simplest way that
 # keeps the code's meaning (written for decompdecomp; the names are m2c's interface).
@@ -103,7 +100,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
     """Run m2c for one function with an explicit target triple (e.g. ppc-mwcc-c++)."""
     if not available():
         return None
-    if target.startswith("gba"):  # luvdis / pret style: function macro, pre-UAL load mnemonics
+    if target.startswith("gba"):  # a public GBA decomp (pret style): function macros, pre-UAL load mnemonics
         asm_text = re.sub(r"^\s*(?:non_word_aligned_)?thumb_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"^\s*arm_func_start\s+(\w+)", r"glabel \1", asm_text, flags=re.M)
         asm_text = re.sub(r"\bld(s[hb])\b", r"ldr\1", asm_text)

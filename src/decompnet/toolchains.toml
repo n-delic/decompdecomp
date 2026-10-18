@@ -57,58 +57,6 @@ url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/bin
 sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
 platforms = ["macos-x86_64", "macos-arm64"]
 
-["gcc-2.7.2-psx"]
-name = "GCC 2.7.2 for PlayStation + binutils 2.6"
-platform = "PS1"
-arch = "mipsel"
-license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.7.2-psx), decompals/mips-binutils-2.6 v0.3"
-description = "GCC 2.7.2 with the PlayStation patches, the C compiler family behind PSY-Q, with the GNU assembler."
-cc = ["{tc}/gcc", "-B{tc}/", "-c", "-Wa,-EL"]
-flags = ["-O2", "-G8"]
-[["gcc-2.7.2-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx.tar.gz"
-sha256 = "500a459b3485e885a8d302cac23c2a4632f3900e03a09153f6190699fd723571"
-platforms = ["linux-x86_64"]
-[["gcc-2.7.2-psx".parts]]
-url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/binutils-2.6-linux.tar.gz"
-sha256 = "5a612cd28344e5b410c3344ec5dcfb92d9d03947756f190cd12404055b4a624d"
-platforms = ["linux-x86_64"]
-[["gcc-2.7.2-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx-macos.tar.gz"
-sha256 = "4280894661c9792bc19f5c970c283d35381937fb44e479a91d0c044c95fcd208"
-platforms = ["macos-x86_64", "macos-arm64"]
-[["gcc-2.7.2-psx".parts]]
-url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/binutils-2.6-mac.tar.gz"
-sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
-platforms = ["macos-x86_64", "macos-arm64"]
-
-["gcc-2.8.1-psx"]
-name = "GCC 2.8.1 for PlayStation + binutils 2.6"
-platform = "PS1"
-arch = "mipsel"
-license = "GPL-2.0"
-source = "decompals/old-gcc 0.17 (gcc-2.8.1-psx), decompals/mips-binutils-2.6 v0.3"
-description = "GCC 2.8.1 with the PlayStation patches (later PSY-Q versions), with the GNU assembler."
-cc = ["{tc}/gcc", "-B{tc}/", "-c", "-Wa,-EL"]
-flags = ["-O2", "-G8"]
-[["gcc-2.8.1-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx.tar.gz"
-sha256 = "f6f6e883942d4d3289d048236c672e71ed410e546aaae8ff655952f1567e1be0"
-platforms = ["linux-x86_64"]
-[["gcc-2.8.1-psx".parts]]
-url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/binutils-2.6-linux.tar.gz"
-sha256 = "5a612cd28344e5b410c3344ec5dcfb92d9d03947756f190cd12404055b4a624d"
-platforms = ["linux-x86_64"]
-[["gcc-2.8.1-psx".parts]]
-url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx-macos.tar.gz"
-sha256 = "bab0c6ea1f394573d5aabbdd7b37e36aceeb83c522141d946a87a9f58c199ea0"
-platforms = ["macos-x86_64", "macos-arm64"]
-[["gcc-2.8.1-psx".parts]]
-url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/binutils-2.6-mac.tar.gz"
-sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
-platforms = ["macos-x86_64", "macos-arm64"]
-
 ["ee-gcc-2.96"]
 cplusplus = true
 name = "EE-GCC 2.96"
@@ -320,7 +268,6 @@ sha256 = "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c"
 binary = "cloudflared.exe"
 platforms = ["windows-x86_64"]
 
-
 # ------------------------------------------------------------------------------------------------
 # The decomp community's toolbelt. Downloaded on demand; every part is pinned to its release digest.
 
@@ -456,34 +403,6 @@ url = "https://github.com/encounter/gc-wii-binutils/releases/download/2.42-2/win
 sha256 = "bd95bd57607efb45c437e97b77ec199073e242869027eb72196b0720611bb1c1"
 platforms = ["windows-x86_64"]
 
-[agbcc]
-name = "agbcc"
-platform = "GBA"
-arch = "arm"
-license = "GPL-2.0"
-source = "pret/agbcc release"
-description = "The GCC 2.95-based compiler behind most Game Boy Advance games, as rebuilt by the pret community."
-cc = ["{tc}/bin/agbcc"]
-flags = ["-mthumb-interwork", "-O2"]
-requires = ["arm-gnu"]
-# agbcc only compiles preprocessed C to assembly: preprocess, compile, assemble, like pret's builds
-cmd = ["/bin/sh", "-c", "src=\"$1\"; obj=\"$2\"; inc=\"$3\"; shift 3; \"{tc:arm-gnu}/bin/arm-none-eabi-cpp\" -nostdinc -undef -I \"{tc}/include\" -I \"$inc\" \"$src\" -o \"$obj.i\" && \"{tc}/bin/agbcc\" \"$@\" \"$obj.i\" -o \"$obj.s\" && \"{tc:arm-gnu}/bin/arm-none-eabi-as\" -mcpu=arm7tdmi -o \"$obj\" \"$obj.s\"", "agbcc", "{src}", "{obj}", "{include}", "{flags}"]
-[[agbcc.parts]]
-url = "https://github.com/pret/agbcc/releases/download/release/agbcc.tar.gz"
-sha256 = "bcf0197e3e27d8e08506a142e25fa68ea7f6679a98347a6406804eb3f9ff4d29"
-platforms = ["linux-x86_64"]
-
-[maspsx]
-name = "maspsx"
-kind = "tool"
-license = "MIT"
-source = "mkst/maspsx @ e85ecb3 (2026-10-02)"
-description = "Makes GCC output assemble like Sony's PSY-Q assembler (ASPSX), which matching PlayStation code needs."
-[[maspsx.parts]]
-url = "https://github.com/mkst/maspsx/archive/e85ecb373828aabea96d7e6400974d4f91ce8c74.tar.gz"
-sha256 = "9f8ea9827b785ae41437befa8ebdceb8c00f3b1e8f3a90c506948e2df1079bde"
-subdir = "maspsx-e85ecb373828aabea96d7e6400974d4f91ce8c74"
-
 [ghidra]
 name = "Ghidra"
 kind = "tool"
@@ -501,7 +420,7 @@ name = "GNU binutils for MIPS (decompals)"
 kind = "tool"
 license = "GPL-2.0"
 source = "decompals/binutils-mips-ps2-decompals v0.10"
-description = "A modern MIPS assembler and linker (PS1, PS2, N64), as used with maspsx and by PS2 decomps."
+description = "A modern MIPS assembler and linker (PS2, N64), as used by PS2 decomps."
 binary_name = "mips-ps2-decompals-ld"
 [[binutils-mips.parts]]
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-linux-x86-64.tar.gz"
@@ -548,45 +467,6 @@ url = "https://github.com/OmniBlade/decomp.me/releases/download/msvcwin9x/msvc7.
 sha256 = "49eba7f9f72644f6f872a4176baeac544e8b5dfb2be1f47bb4d439b1136ffeac"
 into = "7.1"
 
-[mwccarm]
-name = "Metrowerks CodeWarrior for Nintendo DS (mwccarm)"
-kind = "compiler-pack"
-platform = "DS"
-license = "proprietary"
-source = "decompme/compilers release 'compilers' mwccarm.zip (the decomp community's archive)"
-description = "Every CodeWarrior version DS games were built with (1.2, 2.0, DSi 1.1-1.6), compiler and linker. Windows programs, run through wibo on Linux and macOS."
-[[mwccarm.parts]]
-url = "https://github.com/decompme/compilers/releases/download/compilers/mwccarm.zip"
-sha256 = "dc386e37b2176e960954a733de928337d9b7e7620b9e94228008c31774339ace"
-
-[dsd]
-name = "ds-decomp (dsd)"
-kind = "tool"
-license = "MIT"
-source = "AetiasHax/ds-decomp v0.12.1"
-description = "Nintendo DS toolkit: extracts and rebuilds ROMs, analyses the ARM9 and overlays, delinks them into objects."
-binary_name = "dsd"
-[[dsd.parts]]
-url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-linux-x86_64"
-sha256 = "256edde804dd8e5d7bc4c0e4187f85244ee4cd1f42bb427502e01fda6af43ceb"
-binary = "dsd"
-platforms = ["linux-x86_64"]
-[[dsd.parts]]
-url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-macos-arm64"
-sha256 = "1bbb57fe66a37123a7e9a64459b174956ea69ea103ad3dfd2766f18ca63057c7"
-binary = "dsd"
-platforms = ["macos-arm64"]
-[[dsd.parts]]
-url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-macos-x86_64"
-sha256 = "21adcef119d6e9b6bb853b0e5cc626bc4c086d28d45abc9a91b715c78631a044"
-binary = "dsd"
-platforms = ["macos-x86_64"]
-[[dsd.parts]]
-url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-windows-x86_64.exe"
-sha256 = "5917df26bffc05d4752276a2e0b1edd21bd6e920aabe1992be8a50efc9d10932"
-binary = "dsd.exe"
-platforms = ["windows-x86_64"]
-
 [sjiswrap]
 name = "sjiswrap"
 kind = "tool"
@@ -610,34 +490,3 @@ url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 
-[arm-gnu]
-name = "Arm GNU Toolchain (arm-none-eabi)"
-kind = "tool"
-license = "GPL-3.0"
-source = "Arm GNU Toolchain 14.3.Rel1 (developer.arm.com)"
-description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code (GBA, DS); about 150 MB."
-binary_name = "bin/arm-none-eabi-as"
-[[arm-gnu.parts]]
-url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"
-sha256 = "8f6903f8ceb084d9227b9ef991490413014d991874a1e34074443c2a72b14dbd"
-subdir = "arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi"
-platforms = ["linux-x86_64"]
-[[arm-gnu.parts]]
-url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi.tar.xz"
-sha256 = "30f4d08b219190a37cded6aa796f4549504902c53cfc3c7e044a8490b6eba1f7"
-subdir = "arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi"
-platforms = ["macos-arm64"]
-[[arm-gnu.parts]]
-url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip"
-sha256 = "864c0c8815857d68a1bbba2e5e2782255bb922845c71c97636004a3d74f60986"
-platforms = ["windows-x86_64"]  # the Windows zip has bin/, lib/, ... at its top, no folder around them
-
-[luvdis]
-name = "Luvdis"
-kind = "tool"
-license = "MIT"
-source = "aarant/luvdis @ ec3a4e3e"
-description = "Game Boy Advance disassembler: finds the functions in a ROM and writes assembly that rebuilds it."
-git = "https://github.com/aarant/luvdis"
-commit = "ec3a4e3ee3afe3e9b4a9c7ae8fffc65e1ea2096c"
-pip_extra = ["setuptools<70"]
