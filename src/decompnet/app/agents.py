@@ -440,11 +440,6 @@ def _opencode_2(exe: str) -> bool:
     return bool(m) and int(m.group(1)) >= 2
 
 
-def signin(k: Kind) -> str:
-    """How to sign in to an agent."""
-    return k.signin
-
-
 def detect(quick: bool = False) -> list[dict]:
     """Which agents are installed, their versions and models. `quick` (or DECOMP_DETECT_AGENTS=off) runs none of
     them, only looks where they are: running them takes seconds (`agy models` alone about three, and it starts the MCP
@@ -452,7 +447,7 @@ def detect(quick: bool = False) -> list[dict]:
     quick = quick or os.environ.get(DETECT_ENV) == "off"
     out = []
     for k in KINDS.values():
-        row = {"id": k.id, "name": k.name, "vendor": k.vendor, "signin": signin(k), "docs": k.docs, "install": k.install}
+        row = {"id": k.id, "name": k.name, "vendor": k.vendor, "signin": k.signin, "docs": k.docs, "install": k.install}
         if not k.command:
             row.update(installed=True, version=None, path=None)
         else:
@@ -1207,13 +1202,13 @@ class Manager:
             throttles = 0
             if ok:
                 failures = fast = limits = 0
-                self._set(s, "waiting", "starting its next session")
+                self._set(s, "waiting", "the next session starts in a moment")
                 s.stop.wait(SESSION_GAP)
                 continue
             failures += 1
             fast = fast + 1 if time.time() - began < FAST_FAILURE else 0
             if fast >= FAST_FAILURES_TO_PAUSE:
-                hint = signin(KINDS[s.kind]) if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
+                hint = KINDS[s.kind].signin if _SIGNIN.search(s.error) else ""  # not after every failure: it misleads
                 self._pause(s, f"it failed {fast} times in a row, each soon after it started: {s.error}", hint)
                 break
             s.restarts += 1
@@ -1427,7 +1422,7 @@ class Manager:
             s.throttled = True
         if code != 0 and _SIGNED_OUT.search(everything):
             s.signed_out = True
-            s.error = f"{KINDS[s.kind].name} isn't signed in on this computer. {signin(KINDS[s.kind])}"
+            s.error = f"{KINDS[s.kind].name} isn't signed in on this computer. {KINDS[s.kind].signin}"
             s.push("error", s.error)
             return False
         if code != 0:
