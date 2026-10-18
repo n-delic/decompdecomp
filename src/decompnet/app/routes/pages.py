@@ -10,10 +10,20 @@ import secrets
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from ... import __version__
+from ... import __version__, hostenv
 from .. import edition, window
 from ..support import static_file
 from . import App
+
+# what the browser tab of 1.0.2 and older shows after updating into this version
+OLD_PAGE = ("<!doctype html><meta charset=utf-8><title>decompdecomp</title>"
+            "<body style='font:16px/1.5 system-ui;background:#0b0c0e;color:#e8e6e1;padding:3rem;max-width:46rem'>")
+OLD_PAGE_LINUX = ("decompdecomp now opens in a window of its own (it just did, if it was updated): you can close this one. "
+                  "Next time, use its app icon or run <code>decomp</code>.")
+OLD_PAGE_WINDOWS = ("<p><b>This version of decompdecomp doesn't run on Windows.</b> Windows comes back in 1.0.4. Your projects "
+                    "are safe, and update checks are now off, so 1.0.2 won't update itself again.</p>"
+                    "<p>Go back to 1.0.2: in PowerShell, run</p><pre style='white-space:pre-wrap'>"
+                    + hostenv.WSL_GO_BACK + "</pre><p>then start decompdecomp as before.</p>")
 
 
 def register(app: App) -> None:
@@ -24,11 +34,7 @@ def register(app: App) -> None:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
         if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
-            return HTMLResponse("<!doctype html><meta charset=utf-8><title>decompdecomp</title>"
-                                "<body style='font:16px system-ui;background:#0b0c0e;color:#e8e6e1;padding:3rem'>"
-                                "decompdecomp now opens in a window of its own (it just did, if it was updated): you can close this one. "
-                                "Next time, use its app icon or run <code>decomp</code>.",
-                                status_code=401)
+            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_wsl() else OLD_PAGE_LINUX), status_code=401)
         return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])

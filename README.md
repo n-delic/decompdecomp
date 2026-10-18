@@ -46,7 +46,7 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
 
 1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open
    Demo Quest 64.
-2. **Start agents.** Any model with an API key (Anthropic, DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
+2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
    Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
    same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
@@ -75,9 +75,18 @@ What changed on the way:
   others), and its home page says what it removed. Before that, those entries started the old app again whenever
   you closed it.
 - **The Source tab is now the Export button** in the project's header.
-- **Windows (WSL) isn't supported in this version.** It is planned for 1.0.4. Your projects are inside the WSL
-  distribution, in `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux
-  computer, with the hidden `.decomp` folder in it, and install decompdecomp there: it finds every project in it.
+- **Windows (WSL) isn't supported in this version.** Windows comes back in 1.0.4: until then, stay on 1.0.2. In
+  its Settings, untick **Install updates by itself** and **Look for updates**. Updated already? This version turns
+  both off, and its old browser tab shows how to go back. In PowerShell:
+
+  ```powershell
+  wsl --terminate decomp-wtf
+  wsl -d decomp-wtf -u decomp --exec /home/decomp/.local/bin/uv tool install --force --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/tags/v1.0.2-alpha.tar.gz"
+  ```
+
+  Then start decompdecomp as before. To move to Linux instead: your projects are in
+  `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux computer, with
+  the hidden `.decomp` folder in it, and install decompdecomp there: it finds every project in it.
 
 ## Moving to another computer
 
@@ -99,11 +108,15 @@ single N64 or PlayStation 2 project, or to keep it in git:
 
 | Platform | Status |
 | :-- | :-- |
-| Nintendo 64 | Recommended: tested on real games, rebuilt byte for byte |
-| PlayStation 2 | Beta: tested on real games, with several compilers per game; no real game rebuilt whole yet |
-| GameCube, Wii | Beta: not yet tested from start to end on a real game |
-| Windows PC games | Beta: tested on homemade games |
+| Nintendo 64 | Recommended |
+| PlayStation 2 | Beta |
+| GameCube, Wii | Beta |
+| Windows PC games | Beta |
 | PlayStation, Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
+
+1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
+[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
+from beta to recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
 

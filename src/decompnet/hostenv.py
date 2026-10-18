@@ -10,6 +10,22 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+KERNEL_RELEASE = Path("/proc/sys/kernel/osrelease")  # "...-microsoft-standard-WSL2" inside WSL
+# 1.0.2 on Windows lived in a WSL distribution of its own; it updates itself into this version, which doesn't run there
+WSL_DISTRO, WSL_USER = "decomp-wtf", "decomp"
+OLD_VERSION_SPEC = "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/tags/v1.0.2-alpha.tar.gz"
+WSL_GO_BACK = (f"wsl --terminate {WSL_DISTRO}\n"
+               f"wsl -d {WSL_DISTRO} -u {WSL_USER} --exec /home/{WSL_USER}/.local/bin/uv tool install --force "
+               f'--python 3.12 "{OLD_VERSION_SPEC}"')
+
+
+def in_wsl() -> bool:
+    """Running inside Windows' WSL, where this version isn't supported (1.0.4 brings Windows back)."""
+    try:
+        return "microsoft" in KERNEL_RELEASE.read_text(encoding="utf-8").lower()
+    except OSError:
+        return False
+
 
 def local_path(text: str) -> Path:
     """A file path the user gave (in a form, or pasted with quotes around it), as a path."""

@@ -38,6 +38,28 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, monkeypatch):
+    """1.0.2 on Windows (in WSL) can install this version by itself, and it doesn't run there. Going back to 1.0.2
+    must stick: 1.0.2 reads the same settings, so its update checks are switched off, and its old tab says how."""
+    from decompnet import hostenv
+
+    kernel = tmp_path / "osrelease"
+    kernel.write_text("6.6.87.2-microsoft-standard-WSL2\n")
+    monkeypatch.setattr(hostenv, "KERNEL_RELEASE", kernel)
+    home = tmp_path / "home"
+    (home / ".decomp").mkdir(parents=True)
+    (home / ".decomp" / "settings.json").write_text(json.dumps({"auto_update": True}))
+    net = RomNetwork(home / ".decomp" / "decomp.db", home)
+    mcp, _, security, _ = build(net, home / ".decomp", PORT, SECRET)
+    saved = json.loads((home / ".decomp" / "settings.json").read_text())
+    assert saved["auto_update"] is False and saved["check_updates"] is False
+    anon = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                      base_url=f"http://127.0.0.1:{PORT}")
+    page = anon.get("/").text
+    assert "doesn't run on Windows" in page and "v1.0.2-alpha.tar.gz" in page
+    kernel.write_text("6.12.0-generic\n")
+    assert "doesn't run on Windows" not in anon.get("/").text
+
 def test_only_the_apps_own_window_gets_the_gui(app):
     """The page and its API answer only the app's window, whose user agent carries the per-launch secret: the
     address alone, pasted in a browser, opens nothing (the old ?k= link and its cookie are gone)."""
