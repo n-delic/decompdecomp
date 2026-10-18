@@ -16,6 +16,12 @@ from ...rom import split
 from ...rom.symbols import Symbol, SymbolTable
 from .common import _ADDRESS
 
+# Settings parsed, by their text: GTA San Andreas's are 193 KB, and one request read them 4 to 12 times (a range
+# check after a match, 462 times). A few versions are kept: each change of a project's settings is a new text.
+SETTINGS_KEPT = 8
+_settings: dict[str, dict] = {}
+_settings_lock = threading.Lock()
+
 
 class Core(Network):
     def __init__(self, db_path: str | Path, workspace: Path, claim_ttl: int = 30 * 60):
@@ -45,7 +51,18 @@ class Core(Network):
 
     @staticmethod
     def cfg(proj) -> dict:
-        return json.loads(proj["config"])
+        """A project's settings. Shared by everyone who reads the same version of them: read it, never change it
+        (_update_cfg changes settings; code that edits a copy parses its own, json.loads(proj["config"]))."""
+        text = proj["config"]
+        with _settings_lock:
+            parsed = _settings.get(text)
+        if parsed is None:
+            parsed = json.loads(text)
+            with _settings_lock:
+                if len(_settings) >= SETTINGS_KEPT:
+                    _settings.pop(next(iter(_settings)))  # the oldest version
+                _settings[text] = parsed
+        return parsed
 
     def is_rom(self, proj) -> bool:
         return self.cfg(proj).get("kind") == "rom"

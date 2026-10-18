@@ -19,7 +19,7 @@ class RoomMixin:
         from ..collab import Link
 
         proj = self._project(slug)
-        cfg = self.cfg(proj)
+        cfg = json.loads(proj["config"])  # a copy of its own: changed below
         cfg["link"] = info
         with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
@@ -44,7 +44,7 @@ class RoomMixin:
             except NetworkError:
                 pass
         proj = self._project(slug)
-        cfg = self.cfg(proj)
+        cfg = json.loads(proj["config"])  # a copy of its own: changed below
         cfg.pop("link", None)
         with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))

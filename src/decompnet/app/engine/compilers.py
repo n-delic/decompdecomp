@@ -427,7 +427,7 @@ class CompilerMixin:
             raise NetworkError("a fork builds with the project's own compilers and flags")
         proj = self._project(slug)
         tc = toolchains.get(toolchain)
-        cfg = self.cfg(proj)
+        cfg = json.loads(proj["config"])  # a copy of its own: changed below
         before = cfg["compiler"]
         cfg["compiler"] = {"toolchain": tc.id, "flags": flags or _default_flags(tc.id, cfg.get("platform", ""), cfg.get("gp")),
                            "timeout": 20}

@@ -8,6 +8,7 @@ import threading
 import time
 
 from decompnet.app.engine import RomNetwork
+from decompnet.app.engine import core as engine_core
 from decompnet.store import WAL_SIZE_LIMIT_BYTES, Store
 
 GCC = {"toolchain": "ee-gcc-2.95.3", "flags": ["-O2", "-G8"]}
@@ -82,6 +83,19 @@ def test_the_log_starts_empty_and_stays_small(tmp_path):
     assert store.conn.execute("PRAGMA journal_size_limit").fetchone()[0] == WAL_SIZE_LIMIT_BYTES
     assert store.one("SELECT COUNT(*) AS n FROM settings WHERE value LIKE 'x%'")["n"] == 500
     raw.close()
+
+
+def test_settings_are_parsed_once_per_version(tmp_path, monkeypatch):
+    """GTA San Andreas's settings are 193 KB, and one request parsed them 4 to 12 times (a range check, 462)."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    proj = tiny_game(net)
+    parsed = []
+    real = json.loads
+    monkeypatch.setattr(engine_core.json, "loads", lambda text, *a, **k: parsed.append(1) or real(text, *a, **k))
+    first = net.cfg(proj)
+    assert net.cfg(net._project("game")) is first and len(parsed) <= 1
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("instructions", "be brief"))
+    assert net.cfg(net._project("game"))["instructions"] == "be brief" and "instructions" not in first
 
 
 def test_the_live_feed_takes_the_writers_lock_only_when_a_claim_ran_out(tmp_path, monkeypatch):
