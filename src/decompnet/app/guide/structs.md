@@ -1,5 +1,9 @@
 # Working out structs
 
+0. ROM projects on MIPS (N64, PS2): `guess_struct(function, "arg0")` has done steps 1-3 for you, over every
+   function the same pointer reaches, with how many functions agree on each field. Check its fields against
+   your function's assembly. A field "also read as" another type can be a union, a copy, or two structs
+   taken for one. If it says matched code already names the type, use that type.
 1. Collect every offset used with one base pointer: `lw $v0, 0x1C($a0)`, `sh $a1, 0x22($a0)`, ...
 2. The width and signedness of each access gives the field type (lw = 32-bit, lhu = u16, lb = s8, lwc1 =
    f32, ...).

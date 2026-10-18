@@ -1677,6 +1677,10 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
                       "Give a vtable address or one of its functions; empty lists the classes.",
                       s(what=st("vtable address, or a virtual function / constructor"))),
+        "guess_struct": ("The likely struct behind a function's pointer, as C with offsets, from every function the same "
+                         "pointer reaches; where else it flows; the type matched code already uses.",
+                         s(function=st("function", True), argument=st("arg0-arg3, return, or a global; +0x14 follows "
+                                                                       "the pointer at 0x14"))),
         "compiler_map": ("Which compiler built each part of the game, where it differs from today's. survey=true starts "
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
