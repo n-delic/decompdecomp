@@ -38,6 +38,7 @@ class GameCube(Console):
     packs = (("mwcc", "CodeWarrior, the compilers of GameCube and Wii games (proprietary)"),)
     guides = ("ppc", "mwcc", "cpp")
     compiler_guide = "mwcc"  # CodeWarrior's register and stack rules decide most of what's left
+    compiler_family = "mwcc"
     m2c = "ppc-mwcc"
     ram = (0x80000000, 0x81800000)
     demo = "demo-gc"

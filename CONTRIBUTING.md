@@ -129,6 +129,7 @@ A console works in one of two modes:
    | `compilers` | Its compilers (`Compiler(id, name, built, guess)`). The first is the default. |
    | `packs` | More toolchains Setup offers for it, with what each is for (a proprietary compiler pack). |
    | `guides`, `compiler_guide` | Guides agents read first; the one every helper gets up front. |
+   | `compiler_family` | Its compilers' family ("mwcc") when a project names no toolchain: the permuter's weights. |
    | `m2c` | m2c's target for drafts ("mipsee-gcc"), or "" when m2c can't read its code. |
    | `ram` | Where its programs live: words in this range are read as pointers. |
    | `demo`, `demo_tools` | Its demo game's folder in `projects/`, and the tools building it needs. |

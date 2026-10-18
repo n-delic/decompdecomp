@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import scoring, toolchains
+from .. import consoles, scoring, toolchains
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
@@ -59,13 +59,12 @@ WORKERS = max(1, min(MAX_WORKERS, (os.cpu_count() or 1) - RESERVED_CORES))
 NICE = 10  # how much lower the workers' CPU priority is
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
 FAMILIES = (("ido", "ido"), ("gcc", "gcc"), ("ee-gcc", "gcc"), ("mwc", "mwcc"))
-FORK_FAMILIES = {"gc": "mwcc", "wii": "mwcc"}  # forks name their platform, not a toolchain
 
 
 def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
     """Which of decomp-permuter's weight sets suits the compiler that builds the code at `vram`."""
-    if fork:
-        return FORK_FAMILIES.get(cfg.get("platform") or "", "base")
+    if fork:  # forks name their console, not a toolchain: the console says its compilers' family
+        return consoles.get(cfg.get("platform")).compiler_family or "base"
     toolchain = (compiler_for(cfg, vram).get("toolchain") or "") if cfg.get("compiler") else ""
     return next((family for prefix, family in FAMILIES if toolchain.startswith(prefix)), "base")
 

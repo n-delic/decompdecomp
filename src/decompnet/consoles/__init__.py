@@ -66,6 +66,7 @@ class Console:
     guides: tuple[str, ...] = ()  # guide topics worth reading first (files in its guides/ folder or app/guide/)
     m2c = ""  # m2c's target for drafts of its code, without the language ("mipsee-gcc"); "" when m2c can't read it
     compiler_guide = ""  # the guide on matching what most of its games were built with ("mwcc"): see up_front_guide
+    compiler_family = ""  # their family, when a project names no toolchain (a fork): the permuter's weights ("mwcc")
     ram = (0, 0)  # where its programs' code and data live: words in this range read as pointers
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
