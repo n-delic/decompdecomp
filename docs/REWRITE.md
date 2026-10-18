@@ -327,6 +327,10 @@ New console code already goes there (`consoles/ps2/syscalls.py`).
 docs/CONVENTIONS.md say where each console's code is (`consoles/<console>/`, what each file does), how to improve an
 existing console, and how to write a new one: copy the template package, fill in the connector's parts, add its demo
 game, make the conformance test pass, add its column to ROADMAP.md's table. Written for people and agents alike.
+Also how to **add a compiler to a console that exists** (the owner: PC has Visual C++ 6.0 to 7.1 today, someone
+will want newer MSVC): the pinned toolchains.toml entry with checksums, how it runs on Linux, the licence gate for
+proprietary ones, where the console lists its compilers and default flags, and the test that proves it builds
+matching code.
 
 **Trust.** One conformance test runs for every console: build its demo, detect it, import, judge known-matching C
 (score 0) and wrong C (not 0), draft, export and rebuild byte for byte. CI installs the free compilers (pinned,
