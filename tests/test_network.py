@@ -229,3 +229,13 @@ def test_big_functions_get_more_compiles_before_the_nudge_to_move_on(net, agents
     with net.store.tx() as db:
         db.execute("UPDATE functions SET n_insns=300 WHERE id=?", (fn["id"],))
     assert net.stall_note(fn["id"], alice.id) == ""  # a big one: not before 10
+
+
+def test_the_guide_gives_the_compile_budget_compile_and_diff_keeps():
+    """The guide said "stuck after ~20 compiles" while compile_and_diff nudged after 4."""
+    from decompnet import network
+    from decompnet.app import tools
+
+    said = network.stall_budget_text()
+    assert said in " ".join(tools._guide("workflow").split())
+    assert f"after {network.stall_budget(10)} compiles" in said and network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST

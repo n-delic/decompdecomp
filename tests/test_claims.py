@@ -4,6 +4,7 @@ leftovers around (Mario Party 6: 16 agents, one match, on 326 big functions rele
 
 import json
 
+from decompnet import network
 from decompnet.app.engine import RomNetwork
 
 
@@ -61,3 +62,33 @@ def test_a_function_just_released_waits_before_the_next_agent_gets_it(tmp_path, 
                                      "WHERE c.agent_id=?", g.id)["name"], "", "game")
     h, _ = net.local_agent("h")
     assert net.claim_row(h, "game", None, "easiest")["name"] == "small"  # the wait is over: the usual order
+
+
+def test_a_released_function_goes_to_another_model_family_first(tmp_path):
+    """Only 5.5% of released functions ever matched later, and another try by the same model mostly fails the same
+    way: a function a DeepSeek helper released waits for helpers of another model (after the usual pause), and for
+    DeepSeek helpers until the shared header or the compiler changes."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "mips", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        for name in ("f0", "f1"):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                       (pid, name, 16, 4, "open", ""))
+    a, _ = net.local_agent("opencode-deepseek-v4.1-flash-1")
+    b, _ = net.local_agent("api-deepseek-chat-1")
+    c, _ = net.local_agent("claude-opus-1")
+    assert {network.model_family(x.name) for x in (a, b)} == {"deepseek"} and network.model_family(c.name) == "claude"
+    assert net.claim_row(a, "game")["name"] == "f0"
+    net.release(a, "f0", "", "game")
+    with net.store.tx() as db:  # long ago: the pause for everybody is over
+        db.execute("UPDATE events SET created_at=1 WHERE kind='release'")
+    assert net.claim_row(b, "game")["name"] == "f1"  # the same family: something else
+    assert net.claim_row(c, "game")["name"] == "f0"  # another family: at once
+    net.release(c, "f0", "", "game")
+    net.release(b, "f1", "", "game")
+    with net.store.tx() as db:
+        db.execute("UPDATE events SET created_at=1 WHERE kind='release'")
+        net._event(db, pid, None, "context", "v2: a struct the function uses")
+    d, _ = net.local_agent("api-deepseek-chat-2")
+    assert net.claim_row(d, "game")["name"] == "f0"  # the header changed: the usual order
