@@ -381,6 +381,14 @@ how much code never needs an agent. Ranked:
    tool like m2c): rewrites on the parse tree, weighted per compiler, plus control-flow rewrites (inverted branches,
    while/for/do-while, if/ternary). Keep today's near-miss gate, and let an agent tidy the winning C. MIPS, PowerPC,
    ARM; not x86. (M)
+   *How (researched, decomp-permuter @ 8556c81, MIT):* use it as a library, not as a program. Its
+   `src/candidate.py` has `Candidate.from_source(source, EvalState(), fn_name, weights, rng_seed)`, then
+   `randomize_ast()` and `get_source()`: pure Python with its own copy of pycparser (`perm_pycparser/`), weights per
+   compiler in `default_weights.toml`. Install it as a pinned tool in its own environment (like m2c), and run a
+   small generator in that environment: it reads the translation unit (the shared header made pycparser-friendly,
+   as `seeds._context_for_m2c` does for m2c, plus the near miss's C) and writes N variants of the one function.
+   Our own judge scores each (`app/permute.py` `_score`): no compile.sh, no objdump, no target.o. Run one worker
+   per spare core. The current six regex rewrites (`permuter.py`) go.
 3. **Struct layouts from field accesses.** Collect every load and store through each pointer argument and global,
    across the call graph; propose structs in the shared header; give them to m2c as context. Our own numbers: on GTA
    San Andreas, functions with virtual calls matched 7% of the time against 62% for the rest, because agents
