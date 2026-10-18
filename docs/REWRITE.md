@@ -586,8 +586,10 @@ In this order, nothing skipped:
    decomps built locally, the m2c items of §9.10, the brief's types per function from §12's risks).
 3. The stranger's test (§13), its findings fixed. Beside it, an auditor agent reads this plan section by section and
    compares it with the code as written: every item marked done really is done (and tested), nothing the owner asked
-   for in chat got lost between sessions (the work was cut off several times), and what's left is listed. Its gaps
-   are fixed before step 5.
+   for in chat got lost between sessions (the work was cut off several times), and what's left is listed. It also
+   reads the code for how readable it is to people and agents alike: one console's code in its folder and nowhere
+   else, named constants instead of bare numbers and letters, comments that say why, no dead code, files a newcomer
+   can find their way through from AGENTS.md and CONTRIBUTING.md. Its gaps are fixed before step 5.
 4. The release's version: 1.0.3-alpha (the owner told the issue reporters so), bumped in the four places.
 5. Every Markdown file describes the new decompdecomp: README, AGENTS.md, CONTRIBUTING.md, docs/CONVENTIONS.md,
    docs/GUIDE.md, ROADMAP.md (its table and what's done). This file is deleted.
