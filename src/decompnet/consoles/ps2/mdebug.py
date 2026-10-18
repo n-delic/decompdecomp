@@ -87,7 +87,7 @@ def read(data: bytes, section_offset: int, section_size: int) -> list[SourceFile
      *_) = HEADER.unpack_from(data, section_offset)
     if magic != MAGIC:
         return []
-    # the offsets are the file's; a tool that moved the section without fixing them leaves them relative to it
+    # the offsets are the file's: ones that would point outside the section can only be relative to it
     shift = 0 if section_offset <= files_at < section_offset + section_size else section_offset
     out = []
     for number in range(files):
