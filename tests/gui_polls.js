@@ -122,6 +122,12 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     join: [{ link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "a b", copy: "/x.iso", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "/x.iso", own: true }].map(joinProblem),
+    search: (() => {
+      const fns = [{ name: "func_80000400", vram: 0x80000400, unit: "main" }, { name: "lerp", vram: 0x80000500, unit: "main" },
+                   { name: "main_loop", vram: 0x80000600, unit: "main" }];
+      return [searchFunctions(fns, "ma", false), searchFunctions(fns, "main", true), searchFunctions(fns, "mai", false).length,
+              searchFunctions(fns, "zzz", false)].map((r) => (Array.isArray(r) ? r.map((f) => f.name) : r));
+    })(),
     autopilot: burstLines([
       { id: 1, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_1", created_at: 100 },
       { id: 2, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_2", created_at: 101 },

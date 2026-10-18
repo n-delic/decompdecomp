@@ -363,6 +363,7 @@ function groupHtml(g) {
   const who = `<span class="who">${esc(g.agent || "")}</span>`;
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
+  if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;
   if (g.released) return `${who} set ${fnLink(g.fn)} aside, with notes for the next agent${g.tries ? ` <span class="score">${plural(g.tries, "compile")}${p != null ? ` · best ${pctText(p)}` : ""}</span>` : ""}`;
   if (!g.tries) return `${who} started ${fnLink(g.fn)}`;
   const last = g.lastScore === undefined ? "" : g.lastScore === null ? ` · <span class="bad">last one didn't compile</span>` : "";
@@ -390,17 +391,30 @@ function touchGroup(agent, fn, t, change, first) {
   } else g.li = addLine(t, groupHtml(g), first);
   if (g.matched || g.released) groups.delete(key);
 }
+/* A match ends every other agent's line about that function too: they stopped "working on" it. */
+function matchedBy(agent, fn) {
+  for (const [key, g] of groups) {
+    if (g.fn !== fn || g.agent === agent) continue;
+    g.overtaken = agent;
+    if (g.li && g.li.isConnected) g.li.querySelector("span").innerHTML = groupHtml(g);
+    groups.delete(key);
+  }
+}
 
 const AUTO = "autopilot";
 function autopilotLine(t, first, done) {
   const a = S.apFeed || (S.apFeed = { tried: 0, matched: 0, li: null });
   const html = `<span class="who">autopilot</span> ${done ? esc(done) : `tried ${plural(a.tried, "machine draft")}${a.matched ? ` · <span class="ok">${a.matched} matched</span>` : ""}`}`;
-  if (a.li && a.li.isConnected) { a.li.querySelector("time").textContent = clock(t); a.li.querySelector("span").innerHTML = html; }
-  else a.li = addLine(t, html, first);
+  if (a.li && a.li.isConnected) {
+    a.li.querySelector("time").textContent = clock(t);
+    a.li.querySelector("span").innerHTML = html;
+    if (a.li !== $("activity").firstElementChild) $("activity").prepend(a.li);  // newest first, like every line
+  } else a.li = addLine(t, html, first);
 }
 function addActivity(events, attempts, first) {
   const items = [...events.map((e) => ({ t: e.created_at, ev: e })), ...attempts.map((a) => ({ t: a.created_at, at: a }))];
-  items.sort((a, b) => a.t - b.t);
+  // in the same second, the attempt before its match: else the match closed the line and the attempt opened a new one
+  items.sort((a, b) => a.t - b.t || (a.at ? 0 : 1) - (b.at ? 0 : 1));
   for (const it of items) {
     const auto = (who) => who === AUTO || who === "@" + AUTO;  // ours, or the room host's
     if ((it.at && auto(it.at.agent)) || (it.ev && auto(it.ev.agent) && ["match", "claim", "autopilot"].includes(it.ev.kind))) {
@@ -417,7 +431,7 @@ function addActivity(events, attempts, first) {
         if (at.score != null) g.best = g.best == null ? at.score : Math.min(g.best, at.score);
       }, first);
     } else if (it.ev.kind === "claim") touchGroup(it.ev.agent, it.ev.detail, it.t, () => {}, first);
-    else if (it.ev.kind === "match") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first);
+    else if (it.ev.kind === "match") { matchedBy(it.ev.agent, it.ev.detail); touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first); }
     else if (it.ev.kind === "release") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.released = true; }, first);
     else addLine(it.t, eventHtml(it.ev), first);
   }

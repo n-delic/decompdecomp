@@ -59,3 +59,11 @@ def test_the_autopilots_run_and_its_summary_are_one_notification(gui):
     run, agent, alone = gui["checks"]["autopilot"]
     assert run == "Autopilot: 2 of 95 functions matched from machine drafts"
     assert agent == "claude-1 matched func_3" and alone.startswith("Autopilot: 0 of 1")
+
+
+def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui):
+    """Searching "ma" listed every function of the segment "main". A ROM's segment counts only when no name or address
+    has the text; a fork's source file is shown in the list, so it always counts there."""
+    rom_ma, fork_main, _, nothing = gui["checks"]["search"]
+    assert rom_ma == ["main_loop"]
+    assert fork_main == ["func_80000400", "lerp", "main_loop"] and nothing == []

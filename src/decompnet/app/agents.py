@@ -78,6 +78,8 @@ KINDS = {
 }
 
 API_PRESETS = {
+    # Anthropic answers the same chat-completions requests at this address (its OpenAI-compatible endpoint)
+    "anthropic": {"name": "Anthropic", "base_url": "https://api.anthropic.com/v1", "model": "claude-opus-5-5", "key": True},
     "deepseek": {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "key": True},
     "openrouter": {"name": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "model": "deepseek/deepseek-chat", "key": True},
     "ollama": {"name": "Ollama (local)", "base_url": "http://127.0.0.1:11434/v1", "model": "qwen3-coder", "key": False},

@@ -283,6 +283,16 @@ const canStar = () => !!(S.ov && S.ov.kind !== "fork");
 const fnState = (f) => (f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
 const STATE_RANK = { working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 
+/* The functions a search (lowercase) finds: by name or address. A fork's list shows each function's source file, so
+   the file counts there too; a ROM's segment only when no name or address has the text ("ma" found every function of
+   the segment "main"). */
+function searchFunctions(fns, q, fork) {
+  if (!q) return fns;
+  const inUnit = (f) => (f.unit || "").toLowerCase().includes(q);
+  const found = fns.filter((f) => f.name.toLowerCase().includes(q) || hex8(f.vram).toLowerCase().includes(q) || (fork && inUnit(f)));
+  return found.length || fork ? found : fns.filter(inUnit);
+}
+
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
   const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, first: 0 };
@@ -292,8 +302,8 @@ function renderList() {
   $("fnFilter").innerHTML = FILTERS.filter(([k]) => star || k !== "first").map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}"${k === "first" ? ` title="Agents take starred functions before the others"` : ""}>${label}<span>${counts[k].toLocaleString()}</span></button>`).join("");
   $("starHint").hidden = $("thStar").hidden = !star;
   const q = L.q.trim().toLowerCase();
-  let rows = S.map.filter((f) => (L.filter === "all" || (L.filter === "first" ? starred(f) : fnState(f) === L.filter))
-    && (!q || f.name.toLowerCase().includes(q) || hex8(f.vram).toLowerCase().includes(q) || (f.unit || "").toLowerCase().includes(q)));
+  let rows = searchFunctions(S.map.filter((f) => L.filter === "all" || (L.filter === "first" ? starred(f) : fnState(f) === L.filter)),
+    q, S.ov && S.ov.kind === "fork");
   const key = {
     i: (f) => f.i, name: (f) => f.name.toLowerCase(), insns: (f) => f.insns, attempts: (f) => f.attempts || 0,
     best: (f) => (f.status === "matched" ? 2 : f.best == null ? -1 : pctOf(f.best, f.insns)), status: (f) => STATE_RANK[fnState(f)],

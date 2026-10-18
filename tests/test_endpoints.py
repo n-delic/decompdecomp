@@ -39,6 +39,8 @@ def test_endpoints_are_added_changed_and_removed(tmp_path):
         s.save_endpoint({"id": "e1", "context_tokens": "lots"})
     with pytest.raises(ValueError):  # a new one that doesn't validate isn't half made
         s.save_endpoint({"model": "x", "max_sessions": "two"})
+    with pytest.raises(ValueError, match="API address and model"):  # "Add" on the empty form
+        s.save_endpoint({"provider": "custom", "base_url": "", "model": "", "api_key": ""})
     assert len(s.endpoints()) == 2
     s.remove_endpoint("e1")
     assert [e["id"] for e in s.endpoints()] == ["e2"]

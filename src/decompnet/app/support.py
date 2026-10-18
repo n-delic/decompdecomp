@@ -168,6 +168,11 @@ class Settings:
                     raise ValueError("the context size is a number of tokens, like 16384" if k == "context_tokens"
                                      else "the session limit is a number, like 1") from None
         current = self.endpoint(str(data.get("id") or ""))
+        preset = agents.API_PRESETS.get(str(data.get("provider") or (current or {}).get("provider") or "custom"), {})
+        for k in ("base_url", "model"):  # "Add" on an empty form added an endpoint that failed only when started
+            if k in data and not str(data[k] or "").strip() and not preset.get(k):
+                raise ValueError("Give the endpoint's API address and model, like https://api.deepseek.com/v1 and "
+                                 "deepseek-chat.")
         if current is None:  # ids are never reused: a session resumed later can't end up on another machine
             ids = {e["id"] for e in self.endpoints()}
             n = max(int(self.data.get("endpoint_seq") or 0), len(ids)) + 1
