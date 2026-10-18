@@ -25,7 +25,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from .. import consoles, similarity, toolchains
-from ..forks import csource, datadiff, drafts, dtksplits, ghidra
+from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
 from ..network import Agent, Network, NetworkError
@@ -135,6 +135,23 @@ def _floor_pct(pct: float, matched: bool) -> float:
 def _digest(code: str) -> str:
     """A function's text, whitespace aside."""
     return hashlib.sha1(re.sub(r"\s+", " ", code).strip().encode()).hexdigest()
+
+
+def _set_aside(fp: ForkProject) -> dict[str, str]:
+    """Symbol -> why it's set aside, for functions a project says aren't the game's own (library code, middleware,
+    an SDK, the C runtime): config/<version>/set_aside.json, or the file the manifest names (`set_aside`)."""
+    manifest = fp.manifest or {}
+    rel = manifest.get("set_aside") or (f"config/{manifest['version']}/set_aside.json" if manifest.get("version") and (
+        fp.root / "config" / str(manifest["version"]) / "set_aside.json").is_file() else None)
+    if not rel:
+        return {}
+    try:
+        data = json.loads((fp.root / rel).read_text(encoding="utf-8"))
+        info = json.loads((fp.root / rel).with_name("functions.json").read_text(encoding="utf-8")) \
+            if isinstance(data.get("ranges"), list) else {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return objdiff.expand_set_aside(data, info)
 
 
 def _matched_in(rep: dict, broken: set[str] = frozenset()) -> set[tuple[str, str]]:
@@ -665,6 +682,7 @@ class ForkEngine:
         data = {n: _data_symbols(u.target) for n, u in units.items()}
         rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
                 if f["name"] not in data.get(u["name"], ())]
+        aside = _set_aside(fp)
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1
@@ -712,6 +730,8 @@ class ForkEngine:
                         fuzzy = None if fuzzy is None else min(fuzzy, 99.99)
                 if old is not None:
                     meta.update({k: v for k, v in self._meta(old).items() if k in _ASM_KEYS})
+                if sym in aside:  # code the project says isn't the game's own (library code, middleware)
+                    meta["asm_code"] = aside[sym]
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -749,7 +769,7 @@ class ForkEngine:
                         for table in ("claims", "notes"):
                             db.execute(f"DELETE FROM {table} WHERE function_id=?", (fid,))
                         db.execute("DELETE FROM functions WHERE id=?", (fid,))
-            m = rep.get("measures", {})
+            m = objdiff.game_measures(rep, set(aside))  # % of the game's own code: set-aside code doesn't count
             self.net._event(db, proj["id"], None, "sync", f"{float(m.get('matched_code_percent', 0)):.2f}% of code matches")
         log(f"{m.get('matched_functions', 0)}/{m.get('total_functions', 0)} functions match, "
             f"{float(m.get('matched_code_percent', 0)):.2f}% of code")

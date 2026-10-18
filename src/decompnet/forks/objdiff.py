@@ -108,6 +108,56 @@ class FunctionDiff:
                            "<=missing (target only) >=extra (yours only)")
 
 
+def expand_set_aside(data: dict, info: dict) -> dict[str, str]:
+    """A project's set_aside.json as symbol -> why: its symbol entries (library code an import found), plus every
+    function of functions.json (`info`) in its `ranges`: [{"from": "0x...", "to": "0x...", "why": ...}] (`to`
+    exclusive), or listed in its `functions`: {"0x<address>": why}. That is for code that isn't the game's own,
+    middleware (a graphics or sound engine), an SDK or the C runtime, which an import of an existing decompilation lists."""
+    out = {k: v for k, v in data.items() if isinstance(v, str)}
+    ranges = []
+    for r in data.get("ranges") or []:
+        try:
+            ranges.append((int(str(r["from"]), 0), int(str(r["to"]), 0), str(r.get("why") or "not the game's code")))
+        except (KeyError, TypeError, ValueError):
+            continue
+    listed = {}
+    for k, v in (data.get("functions") or {}).items():
+        try:
+            listed[int(str(k), 0)] = str(v)
+        except ValueError:
+            continue
+    if ranges or listed:
+        for fns in (info.get("units") or {}).values():
+            for fn in fns:
+                why = listed.get(fn["addr"]) or next((w for lo, hi, w in ranges if lo <= fn["addr"] < hi), None)
+                if why is not None:
+                    out.setdefault(fn["name"], why)
+    return out
+
+
+def game_measures(rep: dict, aside: set[str]) -> dict:
+    """The report's measures counting only the game's own functions: the set-aside ones (library code, middleware)
+    are left out of the totals as well as the matches, so `matched_code_percent` is the share of the game done.
+    The report's own figures stay in `all_functions`, `all_code` when anything was left out."""
+    m = dict(rep.get("measures") or {})
+    if not aside:
+        return m
+    fns = code = done_fns = done_code = 0
+    for unit in rep.get("units", []):
+        for f in unit.get("functions", []):
+            if f.get("name") in aside:
+                continue
+            size = int(f.get("size") or 0)
+            fns, code = fns + 1, code + size
+            if float(f.get("fuzzy_match_percent") or 0) >= 100.0:
+                done_fns, done_code = done_fns + 1, done_code + size
+    m["all_functions"], m["all_code"] = m.get("total_functions"), m.get("total_code")
+    m.update(total_functions=fns, matched_functions=done_fns, total_code=str(code), matched_code=str(done_code),
+             matched_functions_percent=100.0 * done_fns / fns if fns else 0.0,
+             matched_code_percent=100.0 * done_code / code if code else 0.0, set_aside_functions=len(aside))
+    return m
+
+
 def _sym(obj: dict | None, name: str) -> dict | None:
     for s in (obj or {}).get("symbols", []):
         if s.get("name") == name:
