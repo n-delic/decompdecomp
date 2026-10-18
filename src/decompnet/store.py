@@ -64,6 +64,7 @@ MIGRATIONS = [
     ("functions", "meta", "TEXT"),                             # forks: symbol, demangled name, source file
     ("functions", "boost", "INTEGER NOT NULL DEFAULT 0"),      # claim order: >0 matching it matches that many twins
     ("functions", "readable", "INTEGER NOT NULL DEFAULT 0"),   # matched C rewritten readable, still matching (readable.py)
+    ("functions", "permuted", "INTEGER NOT NULL DEFAULT 0"),   # turns the permuter spent on it (app/permute.py)
 ]
 
 
