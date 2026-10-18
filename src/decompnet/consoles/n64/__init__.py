@@ -20,7 +20,6 @@ class Nintendo64(Console):
     name = "Nintendo 64"
     short = "N64"
     status = RECOMMENDED  # tested on real games (Super Mario 64, GoldenEye, Perfect Dark), rebuilt byte for byte
-    readiness = "tested on real games, rebuilt byte for byte"
     arch = "mips"
     big_endian = True
     mode = ROM

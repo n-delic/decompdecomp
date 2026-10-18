@@ -14,7 +14,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS2 | GameCube · Wii | Windows PC | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta: real games, not yet rebuilt whole | beta: not tested end to end | beta | the project's own |
+| Status | recommended | beta | beta | beta | the project's own |
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ | fork by address |
 | Judge | link · compare | link · compare | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | by architecture |

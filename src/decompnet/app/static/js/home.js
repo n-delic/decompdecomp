@@ -158,6 +158,8 @@ function notSupported(head, file) {
   if (ext === "pbp" || ext === "cso") return "That's a PSP file. PSP games aren't supported yet.";
   return null;
 }
+// 1.0.3 rewrote most of the app: every platform is being tested again, and reports are how a platform moves up
+const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
 const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
 
 async function pickFile(file) {
@@ -187,8 +189,8 @@ async function pickFile(file) {
   $("romStatus").hidden = !level;
   $("romStatus").className = `plat-status ${level || ""}`;
   $("romStatus").innerHTML = level === "recommended"
-    ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod.`
-    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works${consoleOf(p)?.readiness ? `: ${esc(consoleOf(p).readiness)}` : ""}. Problems are worth <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">reporting</a>.`;
+    ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod. ${TRY_AND_TELL}`
+    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works, and needs more games tried on it. ${TRY_AND_TELL}`;
   setupCompilers(info);
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = false;

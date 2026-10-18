@@ -27,7 +27,7 @@ from ..rom import Picked, RomError
 
 # status: how ready a console is for a full decomp you can port and mod (the GUI and the README show it)
 RECOMMENDED = "recommended"  # the most tested path, from import to a project that builds the game
-BETA = "beta"  # works, but no real game has been rebuilt with it whole yet (`readiness` says how far it's tested)
+BETA = "beta"  # works, but no real game has been rebuilt with it whole yet
 PUBLIC = "public"  # only forks of public decomps: decompdecomp can't start its games from scratch
 # mode: how a game of it is decompiled (the module docstring says more)
 ROM = "rom"
@@ -57,7 +57,6 @@ class Console:
     short = ""  # where space is short (the sidebar): "N64"
     aliases: tuple[str, ...] = ()  # other ids older configs or public decomps use for it ("win32" for "pc")
     status = PUBLIC  # RECOMMENDED, BETA or PUBLIC
-    readiness = ""  # how far it's tested, in a few words the GUI shows with its status ("tested on real games")
     arch = ""  # its processor, an id in arch/ ("mips")
     big_endian = False
     mode = ""  # ROM, PROJECT, or "" (only public decomps)
@@ -205,7 +204,7 @@ class Console:
     def describe(self) -> dict:
         """What the GUI shows about it (the `consoles` list of /api/state)."""
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
-                "status": self.status, "readiness": self.readiness, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
+                "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
                 "default_compiler": self.default_compiler({}, "") if self.mode else ""}

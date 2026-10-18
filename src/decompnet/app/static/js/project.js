@@ -186,8 +186,7 @@ function markPlatforms() {
   document.querySelectorAll("#platRow [data-p]").forEach((s) => {
     const rec = platformStatus(s.dataset.p) === "recommended";
     s.classList.toggle("rec", rec);
-    const readiness = consoleOf(s.dataset.p)?.readiness;
-    s.title = (rec ? "Recommended: the most tested path to a full decomp you can port and mod" : "Beta") + (readiness ? ` (${readiness})` : "");
+    s.title = rec ? "Recommended: the most tested path to a full decomp you can port and mod" : "Beta";
     if (rec && !s.querySelector(".rec-mark")) s.insertAdjacentHTML("afterbegin", `<span class="rec-mark">★</span>`);
   });
   $("platLegend").hidden = !any;
@@ -196,7 +195,7 @@ function markPlatforms() {
 function renderHeader(ov) {
   const fork = ov.kind === "fork";
   const chips = [`<span class="plat">${esc(ov.platform_name || "?")}</span>`];
-  if (platformStatus(ov.platform) === "beta") chips.push(`<span class="chip-s beta" title="This platform works and is tested on homemade games, less so on real ones yet">beta</span>`);
+  if (platformStatus(ov.platform) === "beta") chips.push(`<span class="chip-s beta" title="This platform works and needs more games tried on it: tell us how it goes">beta</span>`);
   if (ov.rom && ov.rom.game_code) chips.push(`<span class="chip-s mono">${esc(ov.rom.game_code)}</span>`);
   if (fork) chips.push(`<span class="chip-s">${ov.origin === "scratch" ? `from scratch · ${esc(ov.layout || "decomp")}` : "public decomp"}</span>`);
   else if (ov.rom && ov.rom.region) chips.push(`<span class="chip-s">${esc(ov.rom.region)}</span>`);
