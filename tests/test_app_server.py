@@ -117,6 +117,15 @@ def test_settings_never_echo_the_api_key(app):
     assert "sk-abcdef" not in json.dumps(client.get("/api/state").json())
 
 
+def test_the_notice_of_the_removed_bridge_stays_dismissed(app):
+    """The home page says once which old `decomp mcp` entries the first start removed; Dismiss is remembered."""
+    client, _, _ = app
+    assert client.get("/api/state").json()["settings"]["bridges_removed_seen"] is False
+    out = client.post("/api/settings", json={"bridges_removed_seen": True}, headers={"X-Decomp": "1"}).json()
+    assert out["bridges_removed_seen"] is True
+    assert client.get("/api/state").json()["settings"]["bridges_removed_seen"] is True
+
+
 def test_parse_agent_output():
     claude = json.dumps({"type": "assistant", "message": {"content": [
         {"type": "text", "text": "Matched it."},

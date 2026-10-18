@@ -330,9 +330,12 @@ function renderOverview() {
   if (st) {
     const ph = st.matches_per_hour, max = Math.max(1, ...ph);
     const last3 = ph.slice(-3).reduce((a, b) => a + b, 0) / 3;
+    // an estimate needs a steady pace: a new project's autopilot burst (21 in its first hour) said "≈ 11 h to go" for
+    // agents that hadn't started, and hours before the project existed counted as hours of no matches
+    const steady = ph.slice(-3).every((n) => n > 0);
     $("paceNum").textContent = `${ph[23]}`;
     $("paceBars").innerHTML = ph.map((n, i) => `<rect x="${i * 10 + 1}" y="${28 - Math.max(n ? 3 : 1, (26 * n) / max)}" width="8" height="${Math.max(n ? 3 : 1, (26 * n) / max)}" rx="1.5" class="${n ? "on" : ""}"><title>${n} matched ${23 - i ? `${23 - i} h ago` : "this hour"}</title></rect>`).join("");
-    $("paceSub").textContent = `matched in the last hour · ${plural(st.compiles_last_hour, "compile")}` + (last3 > 0 && togo > 0 ? ` · ≈ ${duration(togo / last3)} to go at this pace` : "");
+    $("paceSub").textContent = `matched in the last hour · ${plural(st.compiles_last_hour, "compile")}` + (steady && togo > 0 ? ` · ≈\u00a0${duration(togo / last3)} to go at this pace` : "");
     $("board").innerHTML = st.agents.length ? st.agents.slice(0, 8).map((r) => `<li><span class="who">${esc(r.agent)}</span><span class="grow"></span>
         <span class="mono small">${r.matched ? `<b class="ok">${r.matched.toLocaleString()}</b> matched · ` : ""}${plural(r.compiles, "compile")}</span></li>`).join("")
       : `<li class="muted small">Nobody yet. Matches by agents, the autopilot and you show up here.</li>`;

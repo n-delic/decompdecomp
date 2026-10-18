@@ -436,7 +436,7 @@ sha256 = "2bb5904ee174e04f1600cc70ffdb3dc36b0efa4d1892ea446be588ba8dc6198c"
 platforms = ["windows-x86_64"]
 
 [mwcc]
-name = "Metrowerks CodeWarrior (GameCube, Wii) + ProDG + Xbox 360 MSVC"
+name = "CodeWarrior for GameCube and Wii"
 kind = "compiler-pack"
 platform = "GameCube/Wii"
 license = "proprietary"

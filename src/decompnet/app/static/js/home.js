@@ -2,6 +2,23 @@
 /* ------------------------------------------------------------------ home */
 let picked = null;
 
+/* Once, after this version's first start: the old `decomp mcp` entries it took out of the agents' settings
+   (app/cleanup.py), each a sentence from the app, until the user dismisses them. Those entries started decompdecomp
+   again whenever it was closed. */
+function renderBridgesNotice() {
+  const st = S.st || {}, removed = Array.isArray(st.bridges_removed) ? st.bridges_removed : [];
+  const box = $("bridgesNotice");
+  box.hidden = !removed.length || !!(st.settings && st.settings.bridges_removed_seen);
+  if (box.hidden) return;
+  setHtml(box, `<span><b>decompdecomp removed its old connection from your agents.</b> It isn't needed any more: helpers get
+    what they need from the app itself.<ul class="small">${removed.map((s) => `<li>${esc(s)}</li>`).join("")}</ul></span>
+    <button class="ghost small-btn" type="button" id="bridgesOk">Dismiss</button>`);
+  $("bridgesOk").onclick = async () => {
+    box.hidden = true;
+    try { S.st.settings = await api("/api/settings", { method: "POST", body: { bridges_removed_seen: true } }); } catch { /* it shows again next time */ }
+  };
+}
+
 async function showHome() {
   show("home");
   resetDrop();

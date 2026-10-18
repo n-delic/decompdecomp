@@ -31,8 +31,8 @@ function since(t) {
   return s < MINUTE ? "just now" : s < HOUR ? `${Math.round(s / MINUTE)} min ago` : s < DAY ? `${Math.round(s / HOUR)} h ago`
     : s < 2 * DAY ? "yesterday" : `${Math.round(s / DAY)} days ago`;
 }
-/* Hours as people say them: minutes under one, days past two. */
-function duration(h) { return h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)} h` : `${Math.round(h / 24)} days`; }
+/* Hours as people say them: minutes under one, days past two; the number never wraps away from its unit. */
+function duration(h) { return h < 1 ? `${Math.max(1, Math.round(h * 60))}\u00a0min` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)}\u00a0h` : `${Math.round(h / 24)}\u00a0days`; }
 function bytes(n) { return n >= MIB ? `${(n / MIB).toFixed(1)} MB` : n >= KIB ? `${(n / KIB).toFixed(1)} KB` : `${n} bytes`; }
 function money(usd) { return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`; }
 
@@ -173,7 +173,7 @@ async function copyText(text) {
   } catch { return false; }
 }
 
-async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); reportLink(); return S.st; }
+async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); reportLink(); renderBridgesNotice(); return S.st; }
 /* The app looks for installed agents in the background (it runs each one's CLI: seconds): ask again until it's done,
    then show their models where agents are picked. */
 const DETECT_POLL_MS = 1500;
