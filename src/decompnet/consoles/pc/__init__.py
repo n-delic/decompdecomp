@@ -26,6 +26,7 @@ class WindowsPC(Console):
     short = "PC"
     aliases = ("win32",)
     status = BETA
+    readiness = "tested on homemade games"
     arch = "x86"
     mode = PROJECT
     layout = "Ghidra + objdiff"

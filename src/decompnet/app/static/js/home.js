@@ -171,7 +171,7 @@ async function pickFile(file) {
   $("romStatus").className = `plat-status ${level || ""}`;
   $("romStatus").innerHTML = level === "recommended"
     ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod.`
-    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works and is tested on homemade games, less so on real ones yet. Problems are worth <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">reporting</a>.`;
+    : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works${consoleOf(p)?.readiness ? `: ${esc(consoleOf(p).readiness)}` : ""}. Problems are worth <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">reporting</a>.`;
   setupCompilers(info);
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = false;

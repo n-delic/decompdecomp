@@ -30,6 +30,7 @@ class PlayStation2(Console):
     name = "PlayStation 2"
     short = "PS2"
     status = BETA  # tested on real games (GTA San Andreas, Ridge Racer V), not yet rebuilt byte for byte whole
+    readiness = "tested on real games, not yet rebuilt whole"
     arch = "mips"
     big_endian = False
     mode = ROM

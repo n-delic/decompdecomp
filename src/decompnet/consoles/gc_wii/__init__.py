@@ -31,6 +31,7 @@ class GameCube(Console):
     short = "GameCube"
     status = BETA  # BETA until its conformance test passes and one real game rebuilt byte for byte (CodeWarrior and dtk
     # can't run in public CI, and nothing has been tested end to end yet)
+    readiness = "not yet tested from start to end on a real game"
     arch = "ppc"
     big_endian = True
     mode = PROJECT

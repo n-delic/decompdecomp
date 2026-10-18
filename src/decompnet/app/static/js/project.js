@@ -183,7 +183,8 @@ function markPlatforms() {
   document.querySelectorAll("#platRow [data-p]").forEach((s) => {
     const rec = platformStatus(s.dataset.p) === "recommended";
     s.classList.toggle("rec", rec);
-    s.title = rec ? "Recommended: the most tested path to a full decomp you can port and mod" : "Beta: works, less tested on real games";
+    const readiness = consoleOf(s.dataset.p)?.readiness;
+    s.title = (rec ? "Recommended: the most tested path to a full decomp you can port and mod" : "Beta") + (readiness ? ` (${readiness})` : "");
     if (rec && !s.querySelector(".rec-mark")) s.insertAdjacentHTML("afterbegin", `<span class="rec-mark">★</span>`);
   });
   $("platLegend").hidden = !any;
@@ -480,7 +481,7 @@ function renderHost(box, info) {
   const waiting = (info.pending || []).map((p) => `<div class="line-item"><div class="txt"><b>${esc(p.name)}</b><span>asks to join</span></div>
       <button class="primary small-btn" data-approve="${esc(p.name)}" type="button">Let in</button><button class="ghost small-btn" data-decline="${esc(p.name)}" type="button">Decline</button></div>`).join("");
   setHtml(box, `${intro}<label class="field"><span>${info.settings.visibility === "public" ? "The room's address (anyone with it and their own copy of the game can join)" : "Invite link (send it to teammates who own this game)"}</span></label>${cmdBox(info.link || "")}
-    <p class="muted small">${info.mode === "address" ? "Shared at your own address: the room reopens by itself when this app restarts." : "Shared through a quick tunnel: the address changes if this app restarts."} Teammates choose <i>Join a team</i> in decompdecomp, or run <code>decomp join &lt;link&gt; &lt;their copy&gt; --name &lt;name&gt;</code>.</p>
+    <p class="muted small">${info.mode === "address" ? "Shared at your own address: the room reopens by itself when this app restarts." : "Shared through a quick tunnel: the address changes if this app restarts."} Teammates choose <i>New project → Join a team's room</i> in decompdecomp and paste it.</p>
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
