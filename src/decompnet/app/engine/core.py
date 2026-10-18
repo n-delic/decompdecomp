@@ -39,6 +39,7 @@ class Core(Network):
         self._diffs: dict[tuple, dict] = {}  # (function, source, context, compiler) -> diff for the GUI
         self.autopilots: dict[str, dict] = {}  # slug -> progress of trying every function's machine draft
         self._cmaps: dict[int, tuple] = {}  # project id -> (what it was built from, compiler map)
+        self._cmap_builds: dict[int, threading.Lock] = {}  # project id -> held while its compiler map builds
         self.surveys: dict[str, dict] = {}  # slug -> the judge's compiler survey, running or last
         from ..forkengine import ForkEngine  # forks build on this class's claims, attempts and live view
         from ..permute import Permuter

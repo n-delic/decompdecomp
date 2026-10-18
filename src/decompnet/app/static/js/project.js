@@ -73,7 +73,13 @@ async function refreshMap(force = true) {
   S.lastMapFetch = Date.now();
   if (data.same) return;
   S.mapSig = data.sig;
-  S.map = data.rows.map((r) => { const f = {}; data.keys.forEach((k, i) => { f[k] = r[i]; }); return f; });
+  const was = new Map(S.map.map((f) => [f.vram, f]));  // its compiler colours until loadMapColumns brings new ones
+  S.map = data.rows.map((r) => {
+    const f = {}; data.keys.forEach((k, i) => { f[k] = r[i]; });
+    const old = f.vram != null && was.get(f.vram);
+    if (old && old.cc) { f.cc = old.cc; f.ccx = old.ccx; }
+    return f;
+  });
   S.byName = new Map(S.map.map((f, i) => [f.name, i]));
   S.map.forEach((f, i) => { f.i = i; });
   baseDirty = true;
@@ -83,6 +89,7 @@ async function refreshMap(force = true) {
   renderList();
   renderProgress();
   renderOverview();
+  if (S.ov && S.ov.kind !== "fork") loadMapColumns(slug);
 }
 
 /* Helpers that just stopped on an error (the provider out of credit, a sign-in...): said once per error, as eight

@@ -105,31 +105,32 @@ class GuiMixin:
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
-        looks = self._map_columns(proj)
         return [{"name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
-                 "matched_at": r["matched_at"], "matched_by": r["matched_by"]}
-                | looks.get(r["vram"], {}) for r in rows]
+                 "matched_at": r["matched_at"], "matched_by": r["matched_by"]} for r in rows]
 
-    def _map_columns(self, proj) -> dict[int, dict]:
-        """The compiler map's view of each function for the ROM map: the compiler its code looks like (cc), and
-        whether that isn't the one it's built with today, or a habit rules today's out (ccx)."""
+    def map_columns(self, slug: str) -> list[list]:
+        """The compiler map's view of each function for the ROM map, asked for after the map is drawn: the map no
+        longer waits for the compiler map (GTA San Andreas: 710-800 ms after any match). One row per function:
+        [vram, the compiler its code looks like, whether that isn't the one it's built with today or a habit rules
+        today's out]."""
+        proj = self._project(slug)
         try:
-            cmap = self.compiler_map(proj)
-        except Exception:  # the map never stands between the user and the ROM map
+            cmap = self.compiler_map(proj, fresh=True)
+        except Exception:  # the colours never stand between the user and the ROM map
             logging.getLogger("decompdecomp").exception("the compiler map failed")
-            return {}
+            return []
         if cmap is None:
-            return {}
+            return []
         cfg = self.cfg(proj)
-        out = {}
+        out = []
         for addr, looks in cmap.of.items():
             own = compiler_for(cfg, addr)
             tc, small = compilermap.kind(looks)
-            out[addr] = {"cc": f"{SHORT_NAMES.get(tc, tc)} {small}".strip(),
-                         "ccx": compilermap.kind(looks) != compilermap.kind((own["toolchain"], tuple(own["flags"])))
-                         or addr in cmap.contradicted}
+            out.append([addr, f"{SHORT_NAMES.get(tc, tc)} {small}".strip(),
+                        compilermap.kind(looks) != compilermap.kind((own["toolchain"], tuple(own["flags"])))
+                        or addr in cmap.contradicted])
         return out
 
     def _range_rows(self, cfg: dict) -> list[dict]:

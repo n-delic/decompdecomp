@@ -135,8 +135,17 @@ def register(app: App) -> None:
             return {"slug": slug}
         return JSONResponse({"job": jobs.start("import", work)})
 
-    MAP_KEYS = ("name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by",
-                "cc", "ccx")
+    MAP_KEYS = ("name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by")
+    COLUMN_KEYS = ("vram", "cc", "ccx")
+    GZIP_FROM_BYTES = 4096  # smaller answers aren't worth compressing
+
+    def packed(request: Request, data: dict) -> Response:
+        raw = json.dumps(data, separators=(",", ":")).encode()
+        if len(raw) > GZIP_FROM_BYTES and "gzip" in request.headers.get("accept-encoding", ""):
+            import gzip
+            return Response(gzip.compress(raw, 1), media_type="application/json",
+                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
+        return Response(raw, media_type="application/json")
 
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
@@ -157,12 +166,18 @@ def register(app: App) -> None:
             data = await call(build)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        raw = json.dumps(data, separators=(",", ":")).encode()
-        if len(raw) > 4096 and "gzip" in request.headers.get("accept-encoding", ""):
-            import gzip
-            return Response(gzip.compress(raw, 1), media_type="application/json",
-                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-        return Response(raw, media_type="application/json")
+        return packed(request, data)
+
+    @mcp.custom_route("/api/mapcolumns", methods=["GET"])
+    async def api_map_columns(request: Request) -> Response:
+        """The compiler map's colours for the ROM map (MIPS games), asked for after the map is drawn."""
+        if (bad := guard(request)):
+            return bad
+        try:
+            rows = await call(net.map_columns, request.query_params.get("slug", ""))
+        except (NetworkError, ValueError) as e:
+            return fail(e)
+        return packed(request, {"keys": COLUMN_KEYS, "rows": rows})
 
     @mcp.custom_route("/api/log", methods=["GET"])
     async def api_log(request: Request) -> Response:

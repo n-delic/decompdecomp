@@ -114,3 +114,51 @@ def test_the_live_feed_takes_the_writers_lock_only_when_a_claim_ran_out(tmp_path
     with net.store.tx() as db:
         db.execute("UPDATE claims SET expires_at=?", (time.time() - 1,))
     assert net.live("game")["claims"] == [] and expired == [1]
+
+
+def test_one_compiler_map_build_at_a_time_and_the_last_one_answers_meanwhile(tmp_path, monkeypatch):
+    """Each match made GTA San Andreas's compiler map stale, and every brief and map request waiting rebuilt it at
+    once (600-870 ms each). One build runs per project; meanwhile the last map answers at once."""
+    from decompnet import compilermap
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    proj = tiny_game(net)
+    builds, release = [], threading.Event()
+    real = compilermap.build
+
+    def slow_build(functions, big_endian):
+        builds.append(1)
+        if len(builds) > 1:
+            release.wait(5)
+        return real(functions, big_endian)
+    monkeypatch.setattr(compilermap, "build", slow_build)
+    first = net.compiler_map(proj)
+    with net.store.tx() as db:  # a match
+        db.execute("UPDATE functions SET status='matched', matched_at=? WHERE project_id=? AND name='func_0'",
+                   (time.time(), proj["id"]))
+    answers = []
+    askers = [threading.Thread(target=lambda: answers.append(net.compiler_map(proj))) for _ in range(6)]
+    for t in askers:
+        t.start()
+    for t in askers:
+        t.join(2)
+    assert len(answers) == 6 and all(a is first for a in answers)  # at once, while the new one builds
+    release.set()
+    deadline = time.time() + 5
+    while net.compiler_map(proj) is first and time.time() < deadline:
+        time.sleep(0.02)
+    assert net.compiler_map(proj) is not first and len(builds) == 2
+    assert net.compiler_map(proj, fresh=True) is net.compiler_map(proj)
+
+
+def test_the_rom_map_comes_without_the_compiler_map(tmp_path, monkeypatch):
+    """The map is drawn at once; the compiler map's colours come in a later request (GTA San Andreas: the map waited
+    710-800 ms for the compiler map after any match)."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    monkeypatch.setattr(net, "compiler_map", lambda *a, **k: (_ for _ in ()).throw(AssertionError("built for the map")))
+    rows = net.function_map("game")
+    assert len(rows) == 4 and not any("cc" in r for r in rows)
+    monkeypatch.undo()
+    columns = net.map_columns("game")
+    assert [c[0] for c in columns] == [r["vram"] for r in rows] and all(c[1].endswith("-G8") and not c[2] for c in columns)
