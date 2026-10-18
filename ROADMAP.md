@@ -9,7 +9,8 @@ Want to work on one? Open an issue first, so two people don't build the same thi
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to
-start). Keep this table true when a feature ships or reaches another platform.
+start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
+folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
 | Feature | N64 | PS2 | GameCube · Wii | Windows PC | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: |

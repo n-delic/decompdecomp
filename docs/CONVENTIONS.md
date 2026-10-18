@@ -9,8 +9,11 @@ name if a line moved).
 
 | You want to change | Look in |
 | :-- | :-- |
-| Importing a game from scratch, ROM mode (N64, PS2) | `rom/` (splat, spimdisasm), `app/engine/importing.py` |
-| Importing a game from scratch, fork mode (GameCube, Wii, PC) | `forks/scratch_dtk.py`, `forks/scratch_pe.py` |
+| Anything about one console (its files, compilers, flags, guides, importer) | `consoles/<id>/` (`n64`, `ps2`, `gc_wii`, `pc`): its `__init__.py` lists its files |
+| What every console has to say, and the list of consoles | `consoles/__init__.py`, the connector |
+| What depends only on the processor (relocations, disassembly, hand-written assembly) | `arch/<processor>.py` |
+| Importing a game from scratch, ROM mode (N64, PS2) | `rom/split.py` (splat), `app/engine/importing.py`; the console reads its file |
+| Importing a game from scratch, PROJECT mode (GameCube, Wii, PC) | the console's `scratch.py`, opened by `app/forkengine.py` |
 | Forking a public decomp | `forks/` (`project.py` detects and builds a project), `app/forkengine.py` |
 | The judge | ROM mode: `rom/match.py` (MIPS). Fork mode: objdiff, run from `forks/project.py` |
 | A tool agents call | the MCP definition and the `HANDLERS` table in `app/tools.py`, the API agents' schema in `app/agents.py` (`api_tool_schemas`), the work in `app/engine/<topic>.py` (ROM) or `app/forkengine.py` (forks) |
@@ -22,13 +25,17 @@ name if a line moved).
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |
 | The GUI's API | `app/routes/<part>.py` (`app/routes/__init__.py` lists the parts) |
 | The GUI | `app/static/`: `index.html`, `app.css`, and `js/` (nine plain scripts loaded in order, one per part of the GUI; `js/base.js` lists them; no build step) |
-| Know-how agents read | `app/guide/*.md`, served by the `guide(topic)` tool |
+| Know-how agents read | `app/guide/*.md` (shared), `consoles/<id>/guides/*.md` (one console's), served by `guide(topic)` |
 | Compilers and tools themselves | `toolchains.toml` (pinned, with checksums), `toolchains.py` |
 | The app's window, tray, updates | `app/window.py` + `app/gtkwindow.py`, `app/tray.py`, `app/updates.py`; dev or release: `app/edition.py` |
 
-A new platform needs: an importer, a judge path, entries in `PLATFORM_COMPILERS` and `PLATFORM_STATUS`
-(`app/engine/common.py:68`, `:20`), a homemade demo game in `projects/demo-*`, and a column in the table "What works
-where" in [ROADMAP.md](../ROADMAP.md). Every new feature adds its row or its ticks to that table.
+A console's code stays in its folder and reaches the rest of the app only through the connector: the engine,
+briefs, twins, the agents' tools and prompts, the export and the GUI ask `consoles.get(platform)`, never `if
+platform == "ps2"`. A new console is a new folder (copy `consoles/template/`), a demo game in `projects/demo-*`
+whose build writes `build/demo.json`, an entry in the list in `consoles/__init__.py`, a passing
+`tests/test_consoles.py`, and a column in the table "What works where" in [ROADMAP.md](../ROADMAP.md).
+CONTRIBUTING.md, "Consoles", has the steps, and the steps for adding a compiler to a console. Every new feature
+adds its row or its ticks to that table.
 
 A new feature that touches the engine keeps its logic in a module of its own and adds small hooks to the engine
 (see `app/rangecheck.py` and where `self.rangechecks` is used). That keeps the engine's modules readable and makes
