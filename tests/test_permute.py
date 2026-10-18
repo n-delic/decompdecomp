@@ -12,7 +12,7 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app import permute
-from decompnet.app.permute import MAX_TURNS, Permuter, State, generate, weight_family
+from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
 from decompnet.network import Agent
 from decompnet.store import IN_MEMORY, Store
 
@@ -70,10 +70,22 @@ AGENT = Agent(1, "permuter", None)
 
 
 def batches(monkeypatch, *outputs):
-    """The generator's answers, one per run, and the jobs it was given."""
+    """The generator's answers, one per batch, and the jobs it was given."""
     jobs, answers = [], list(outputs)
+
+    class ScriptedGenerator:
+        def __init__(self, argv=None):
+            pass
+
+        def batch(self, job):
+            jobs.append(job)
+            return answers.pop(0) if answers else []
+
+        def close(self):
+            pass
+
     monkeypatch.setattr(permute, "available", lambda: True)
-    monkeypatch.setattr(permute, "generate", lambda job, argv=None: jobs.append(job) or (answers.pop(0) if answers else []))
+    monkeypatch.setattr(permute, "Generator", ScriptedGenerator)
     return jobs
 
 
@@ -167,33 +179,38 @@ def test_compilers_pick_decomp_permuters_weights():
 
 FAKE_GENERATOR = """
 import json, sys, time
-job = json.load(sys.stdin)
-if job["source"] == "hang":
-    time.sleep(30)
-if job["source"] == "unreadable":
-    print(json.dumps({"error": "Syntax error"}))
-    sys.exit(1)
-if job["source"] == "crash":
-    sys.exit(3)
-print("a stray line")
-print(3)
-for n in range(job["count"]):
-    print(json.dumps({"variant": f"{job['source']} {job['family']} {job['seed'] + n}"}))
+for number, line in enumerate(sys.stdin, 1):
+    job = json.loads(line)
+    if job["source"] == "hang":
+        time.sleep(30)
+    if job["source"] == "crash":
+        sys.exit(3)
+    if job["source"] == "unreadable":
+        print(json.dumps({"error": "Syntax error"}))
+    else:
+        print("a stray line")
+        print(3)
+        for n in range(job["count"]):
+            print(json.dumps({"variant": f"job {number}: {job['source']} {job['family']} {job['seed'] + n}"}))
+    print(json.dumps({"done": True}), flush=True)
 """
 
 
 def test_the_generator_answers_in_json_lines(tmp_path, monkeypatch):
-    """The generator's side of the protocol, with a stand-in: variants line by line; and None (the simple rewrites
-    take over) for C it can't read, a crash, or a run that hangs."""
+    """The generator's side of the protocol, with a stand-in: one process for the turn, jobs in and variants out
+    line by line; and None (the simple rewrites take over) for C it can't read, a crash, or a batch that hangs."""
     script = tmp_path / "gen.py"
     script.write_text(FAKE_GENERATOR)
     argv = [sys.executable, str(script)]
     job = {"header": "", "source": "C", "function": "f", "family": "gcc", "seed": 7, "count": 3}
-    assert generate(job, argv) == ["C gcc 7", "C gcc 8", "C gcc 9"]
-    assert generate({**job, "source": "unreadable"}, argv) is None
-    assert generate({**job, "source": "crash"}, argv) is None
+    gen = permute.Generator(argv)
+    assert gen.batch(job) == ["job 1: C gcc 7", "job 1: C gcc 8", "job 1: C gcc 9"]
+    assert gen.batch({**job, "seed": 1, "count": 1}) == ["job 2: C gcc 1"]  # the same process: parsed once
+    assert gen.batch({**job, "source": "unreadable"}) is None
+    assert gen.batch({**job, "source": "crash"}) is None and gen.proc.poll() == 3
     monkeypatch.setattr(permute, "GENERATOR_SECONDS", 0.5)
-    assert generate({**job, "source": "hang"}, argv) is None
+    gen = permute.Generator(argv)
+    assert gen.batch({**job, "source": "hang"}) is None and gen.proc.poll() is not None
 
 
 needs_tool = pytest.mark.skipif(toolchains.installed(permute.TOOL) is None, reason="needs decomp-permuter")
@@ -202,7 +219,12 @@ needs_tool = pytest.mark.skipif(toolchains.installed(permute.TOOL) is None, reas
 @needs_tool
 def test_decomp_permuter_writes_variants_of_the_function_alone():
     job = {"header": HEADER, "source": SOURCE, "function": "f", "family": "gcc", "seed": 1, "count": 20}
-    variants = generate(job)
-    assert len(variants) == len(set(variants)) == 20
-    assert all(" f(" in v and "typedef" not in v and "the game's types" not in v for v in variants)
-    assert generate({**job, "source": "s32 f(s32 a) { return M2C_FIELD(a, s32 *, 4); }"}) is None  # a macro call
+    gen = permute.Generator()
+    try:
+        variants = gen.batch(job)
+        assert len(variants) == len(set(variants)) == 20
+        assert all(" f(" in v and "typedef" not in v and "the game's types" not in v for v in variants)
+        assert gen.batch({**job, "source": "s32 f(s32 a) { return M2C_FIELD(a, s32 *, 4); }"}) is None  # a macro call
+        assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
+    finally:
+        gen.close()

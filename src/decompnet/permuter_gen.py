@@ -4,16 +4,17 @@ A program of its own, not a module of decompdecomp: app/permute.py runs it with 
 environment, `python -I permuter_gen.py <decomp-permuter's folder>`, and it imports nothing of decompdecomp. Our
 own judge scores what it writes; this only makes candidates, so a variant that doesn't compile costs one compile.
 
-In, on stdin, one JSON object:
+In, on stdin, one job per line, each a JSON object:
     header    the shared header, as the compiler gets it
     source    the near miss's C
     function  its name
     family    base, ido, gcc or mwcc: the weights decomp-permuter tuned per compiler (default_weights.toml)
     seed      any number: the same job gives the same variants
     count     how many variants to write
-Out, on stdout, one JSON object per line: {"variant": C}, distinct and none the source itself, each the function
-alone plus whatever the randomizer added beside it (a helper it inlined code into); or a single {"error": why}
-when the C can't be read.
+Out, on stdout, one JSON object per line: {"variant": C} for each variant, distinct and none the source itself,
+each the function alone plus whatever the randomizer added beside it (a helper it inlined code into); or
+{"error": why} when the C can't be read; then {"done": true}, and the next job. It runs for as long as its stdin
+is open, so a header is parsed once per C a turn starts from: a second for a header of 300 KB.
 
 decomp-permuter reads C through pycparser, which knows neither comments nor the preprocessor: comments go, and so
 do the header's preprocessor lines (as for m2c's context, seeds.py). Its macros stay undefined here, which is fine
@@ -51,39 +52,46 @@ def main() -> int:
     from src.helpers import get_default_randomization_weights
     from src.perm.perm import EvalState
 
-    def own_part(ast) -> str:
-        """The C after the seam: the function and its neighbours from the source, without the header. A header
-        declaration the randomizer retyped is left out: the header isn't the permuter's to change, and a second,
-        different declaration would only fail to compile."""
-        return to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:]))
-
-    job = json.load(sys.stdin)
-    name, count = job["function"], int(job["count"])
-    unit = f"{plain_c(job['header'], directives=False)}\ntypedef int {SOURCE_STARTS};\n{plain_c(job['source'])}\n"
-    rng = random.Random(job["seed"])
-    try:
-        weights = get_default_randomization_weights(job.get("family") or "base")
-        first = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
-    except Exception as e:  # the C or the header isn't C pycparser reads (a macro call, a compiler extension)
-        print(json.dumps({"error": f"{type(e).__name__}: {e}"}), flush=True)
-        return 1
-    seam = next(node for node in first.ast.ext if isinstance(node, c_ast.Typedef) and node.name == SOURCE_STARTS)
-    seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
-    cand = first
-    for _ in range(count * TRIES_PER_VARIANT):
-        if len(seen) > count:
-            break
+    def variants(job: dict):
+        name, count = job["function"], int(job["count"])
+        unit = f"{plain_c(job['header'], directives=False)}\ntypedef int {SOURCE_STARTS};\n{plain_c(job['source'])}\n"
+        rng = random.Random(job["seed"])
         try:
-            if cand is None or rng.random() >= KEEP:
-                cand = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
-            cand.randomize_ast()
-            variant = own_part(cand.ast)
-        except Exception:  # a rewrite that trips over this code: start again from the source
-            cand = None
-            continue
-        if variant not in seen:
-            seen.add(variant)
-            print(json.dumps({"variant": variant}), flush=True)
+            weights = get_default_randomization_weights(job.get("family") or "base")
+            first = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
+        except Exception as e:  # the C or the header isn't C pycparser reads (a macro call, a compiler extension)
+            yield {"error": f"{type(e).__name__}: {e}"}
+            return
+        seam = next(node for node in first.ast.ext if isinstance(node, c_ast.Typedef) and node.name == SOURCE_STARTS)
+
+        def own_part(ast) -> str:
+            """The C after the seam: the function and its neighbours from the source, without the header. A header
+            declaration the randomizer retyped is left out: the header isn't the permuter's to change, and a
+            second, different declaration would only fail to compile."""
+            return to_c(c_ast.FileAST(ast.ext[ast.ext.index(seam) + 1:]))
+
+        seen = {own_part(first.ast)}  # the source as decomp-permuter prints it: not a variant
+        cand = first
+        for _ in range(count * TRIES_PER_VARIANT):
+            if len(seen) > count:
+                break
+            try:
+                if cand is None or rng.random() >= KEEP:
+                    cand = Candidate.from_source(unit, EvalState(), name, weights, rng.randrange(1, MAX_SEED))
+                cand.randomize_ast()
+                variant = own_part(cand.ast)
+            except Exception:  # a rewrite that trips over this code: start again from the source
+                cand = None
+                continue
+            if variant not in seen:
+                seen.add(variant)
+                yield {"variant": variant}
+
+    for line in sys.stdin:
+        if line.strip():
+            for answer in variants(json.loads(line)):
+                print(json.dumps(answer))
+            print(json.dumps({"done": True}), flush=True)
     return 0
 
 

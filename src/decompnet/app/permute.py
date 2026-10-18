@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import random
+import select
 import subprocess
 import threading
 import time
@@ -45,7 +46,8 @@ CANDIDATES = 20  # near misses looked up at a time, for the workers to share
 TOOL = "decomp-permuter"
 GENERATOR = Path(__file__).resolve().parent.parent / "permuter_gen.py"
 BATCH = 64  # variants per run of the generator: about 0.15 s to write, a few seconds to judge
-GENERATOR_SECONDS = 30  # a run that takes longer is stuck: its randomizer retries until a rewrite applies
+GENERATOR_SECONDS = 30  # a batch that takes longer is stuck: its randomizer retries until a rewrite applies
+READ_BYTES = 1 << 16
 MAX_SEED = 2**31  # seeds of the generator's runs: the same function and turn write the same variants
 REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none applies to the C
 RESERVED_CORES = 2  # left to the app itself and the agents' compiles
@@ -77,32 +79,61 @@ def generator_argv() -> list[str]:
     return [str(toolchains.venv_bin(tool / "venv", "python")), "-I", str(GENERATOR), str(tool)]
 
 
-def generate(job: dict, argv: list[str] | None = None) -> list[str] | None:
-    """Variants of a function's C from the generator (the job's fields: permuter_gen.py), or None when it can't
-    read the C, fails or hangs: then the simple rewrites take over."""
-    try:
-        res = subprocess.run(argv or generator_argv(), input=json.dumps(job), capture_output=True, text=True,
-                             timeout=GENERATOR_SECONDS, encoding="utf-8", errors="replace")
-    except (OSError, subprocess.TimeoutExpired) as e:
-        log.info("permuter: no variants of %s: %s", job["function"], e)
-        return None
-    variants = []
-    for line in res.stdout.splitlines():
+class Generator:
+    """The generator (permuter_gen.py) for one turn, in decomp-permuter's environment. It stays up for the turn, so
+    it parses the header once per C it starts from: that takes a second for a header of 300 KB (debug symbols give a
+    game thousands of types), where writing a batch of 64 variants takes 0.1 s."""
+
+    def __init__(self, argv: list[str] | None = None):
+        self.proc = subprocess.Popen(argv or generator_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.DEVNULL)
+        self._pending = b""
+
+    def batch(self, job: dict) -> list[str] | None:
+        """Variants of a function's C (the job's fields: permuter_gen.py), or None when the generator can't read
+        the C, has stopped or doesn't answer: then the simple rewrites take over."""
         try:
-            out = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(out, dict):
-            continue
-        if "error" in out:
-            log.info("permuter: decomp-permuter can't read %s: %s", job["function"], out["error"][:300])
+            self.proc.stdin.write(json.dumps(job).encode() + b"\n")
+            self.proc.stdin.flush()
+        except OSError:
             return None
-        if isinstance(out.get("variant"), str):
-            variants.append(out["variant"])
-    if res.returncode != 0 and not variants:
-        log.info("permuter: the generator failed on %s: %s", job["function"], res.stderr[-300:])
+        deadline = time.monotonic() + GENERATOR_SECONDS
+        variants: list[str] | None = []
+        while (line := self._line(deadline)) is not None:
+            try:
+                out = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(out, dict):
+                continue
+            if "done" in out:
+                return variants
+            if "error" in out:  # read on to its "done": the next job's answers start after it
+                log.info("permuter: decomp-permuter can't read %s: %s", job["function"], str(out["error"])[:300])
+                variants = None
+            elif variants is not None and isinstance(out.get("variant"), str):
+                variants.append(out["variant"])
+        log.info("permuter: the generator stopped or hung on %s", job["function"])
+        self.close()
         return None
-    return variants
+
+    def _line(self, deadline: float) -> bytes | None:
+        """The generator's next line, or None when it has stopped or hasn't answered by `deadline`."""
+        while b"\n" not in self._pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([self.proc.stdout], [], [], remaining)[0]:
+                return None
+            chunk = os.read(self.proc.stdout.fileno(), READ_BYTES)
+            if not chunk:
+                return None
+            self._pending += chunk
+        line, self._pending = self._pending.split(b"\n", 1)
+        return line
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait()
 
 
 @dataclass
@@ -222,26 +253,31 @@ class Permuter:
         st.holding(fn["name"], True)
         fork = self.net.fork_slug(proj["slug"])
         rng = random.Random(f"{fn['id']}-{fn['permuted']}")
-        tool = available()
-        if tool:
-            header = "" if fork else self.net._context(proj["id"], fn["unit"])["header"]
-            family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+        gen = None
         try:
+            if available():
+                header = "" if fork else self.net._context(proj["id"], fn["unit"])["header"]
+                family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+                try:
+                    gen = Generator()
+                except OSError as e:  # its environment is broken: the simple rewrites still work
+                    log.info("permuter: decomp-permuter didn't start: %s", e)
             start_src = best_src = cur_src = fn["best_source"]
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
             batches = misses = 0
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
-                if tool:
+                if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
-                    # turn: from the best alone, rewrites piled on rewrites and got stuck on one of eight near misses of
+                    # turn: from the best alone, rewrites piled on rewrites and got stuck on one of nine near misses of
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
                     base = best_src if batches % 2 else start_src
                     batches += 1
-                    batch = generate({"header": header, "source": base, "function": fn["name"], "family": family,
-                                      "seed": rng.randrange(MAX_SEED), "count": BATCH})
+                    batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
+                                       "seed": rng.randrange(MAX_SEED), "count": BATCH})
                     if batch is None:  # C it can't read: the simple rewrites can still try
-                        tool = False
+                        gen.close()
+                        gen = None
                         continue
                     if not batch:  # nothing new left to write from this C
                         break
@@ -268,6 +304,8 @@ class Permuter:
                     if score <= cur or rng.random() < 0.02:  # mostly downhill, now and then sideways off a plateau
                         cur, cur_src = score, cand
         finally:
+            if gen is not None:
+                gen.close()
             st.holding(fn["name"], False)
             self._let_go(agent, fn)
 
