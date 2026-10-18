@@ -1,13 +1,21 @@
-# MIPS for N64 decompilation (R4300i, o32 ABI)
+# MIPS for N64 and PlayStation 2 decompilation
+
+The N64 (R4300i) uses the o32 calling convention. The PlayStation 2 (Emotion Engine, R5900) uses the EABI.
+They differ in the arguments and in `$gp`; the rest of this guide is the same for both. guide("ps2") has
+the PS2's own instructions.
 
 Registers
-- `$a0-$a3`: first four integer/pointer arguments. More arguments go on the stack at 0x10($sp)+.
-- `$v0` (`$v1` for the high half of 64-bit): return value.
-- `$f12`, `$f14`: first two float arguments (doubles use register pairs). `$f0`: float return.
+- N64 (o32): `$a0-$a3` are the first four integer/pointer arguments. More arguments go on the stack at
+  0x10($sp)+. `$f12`, `$f14`: first two float arguments (doubles use register pairs).
+- PS2 (EABI): eight integer/pointer arguments in registers, `$a0-$a3` then `$t0-$t3`. A function that
+  reads `$t0` before setting it takes five or more arguments. Float arguments go in `$f12` and up.
+- `$v0` (`$v1` for the high half of 64-bit on N64): return value. `$f0`: float return.
 - `$s0-$s7`, `$fp`, `$f20-$f30` (even): callee-saved. Seeing `sw $s0, ...($sp)` in the prologue means
   the function keeps a value alive across calls in `$s0`.
 - `$t0-$t9`, `$at`, `$v0/1`, `$a0-3`: scratch (caller-saved).
-- `$ra`: return address. `$sp`: stack. `$zero`: always 0. `$gp`: unused when built with -G0.
+- `$ra`: return address. `$sp`: stack. `$zero`: always 0.
+- `$gp`: unused when built with -G0 (most N64 games). PS2 games are usually built with -G8: globals of up
+  to 8 bytes are read through `$gp` (`lw $v0, %gp_rel(sym)($gp)`), so declare them with their real size.
 
 Delay slots
 - The instruction after any branch or jump runs before the branch takes effect. Assembly shows it
@@ -32,5 +40,5 @@ Types from instructions
   original wrote `0.5` instead of `0.5f`.
 
 Stack frame
-- `addiu $sp, $sp, -N` / `addiu $sp, $sp, N`: frame size. GCC and IDO both reserve 0x10 bytes for the
-  argument area of calls. Locals whose address is taken live on the stack (`addiu $a1, $sp, 0x10` = `&local`).
+- `addiu $sp, $sp, -N` / `addiu $sp, $sp, N`: frame size. On N64, GCC and IDO both reserve 0x10 bytes
+  for the argument area of calls. Locals whose address is taken live on the stack (`addiu $a1, $sp, 0x10` = `&local`).

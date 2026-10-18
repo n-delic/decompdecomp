@@ -29,20 +29,22 @@ decompdecomp is Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 ```bash
 git clone https://github.com/n-delic/decompdecomp && cd decompdecomp
 uv sync
-uv run decomp                 # the app, in your browser (projects in ~/Decomp, or $DECOMP_HOME)
+uv run decomp                 # the development copy, in its own window (projects in ~/Decomp-dev, or $DECOMP_HOME)
 uv run pytest -q              # the tests
 uv run pytest tests/test_ps2.py -q   # one file
 uv run ruff check src tests projects   # the linter
 ```
 
-If you use decompdecomp yourself, keep your own copy out of your tests: run the checkout with
-`DECOMP_HOME=/some/scratch/folder uv run decomp`. A newer version that finds your installed app running replaces it.
-The tests already use a folder of their own.
+A checkout is a separate app, "decompdecomp dev": its own folder (`~/Decomp-dev`), port and window. It never
+replaces the decompdecomp you have installed, and never touches its projects in `~/Decomp`. For an experiment, give
+it a scratch folder: `DECOMP_HOME=/some/scratch/folder DECOMP_TRAY=0 uv run decomp`. The tests already use a folder
+of their own.
 
-Compilers and tools (splat, objdiff, dtk, wibo, Ghidra and the period compilers) are pinned with checksums in
-`src/decompnet/toolchains.toml`, and the app installs them in Setup. Many tests skip when a compiler isn't installed,
-and that's fine. The homemade demo games in `projects/demo-*` are built by their own scripts. The N64 demos
-also need `ld.lld`, `llvm-objcopy` and `llvm-nm` on your PATH (Debian and Ubuntu: `apt install lld llvm`).
+Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter and the period compilers) are pinned with
+checksums in `src/decompnet/toolchains.toml`, and the app installs them in Setup. splat is a Python dependency
+(`pyproject.toml`). Many tests skip when a compiler isn't installed, and that's fine. The homemade demo games in
+`projects/demo-*` are built by their own scripts. The N64 demo (`projects/demo-rom`) also needs `ld.lld` and
+`llvm-objcopy` on your PATH (Debian and Ubuntu: `apt install lld llvm`).
 
 **[docs/CONVENTIONS.md](docs/CONVENTIONS.md) has the house rules, and [AGENTS.md](AGENTS.md) how the code is laid
 out. Read them first.** In short:

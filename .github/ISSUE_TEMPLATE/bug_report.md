@@ -1,38 +1,30 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Something in decompdecomp doesn't work as it should
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+<!-- No game data, please: no ROMs, discs or executables, and no code, assembly or assets from a game (that includes
+the C your agents matched). The game's name is fine. The app's "Report a problem" fills in the version and your
+system for you. -->
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**Version** (bottom left of the app, or `decomp update --check`):
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**Linux distribution:**
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+**Platform and compiler** (N64, PS2, GameCube, Wii, PC, or a public decomp; the compiler the project uses):
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+**What you did:**
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+**What you expected:**
 
-**Additional context**
-Add any other context about the problem here.
+**What happened instead** (with the error text):
+
+**The log around it**, if it helps (`~/Decomp/.decomp/logs/decomp.log`; read it first and cut out any code or
+assembly):
+
+```
+```

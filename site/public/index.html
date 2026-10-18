@@ -6,12 +6,12 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fbfaf6">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#100f0c">
-<title>decompdecomp · your agent decompiles your game</title>
-<meta name="description" content="Free and open source. Your AI agent writes C or C++ for a game you own; the game's original compiler checks it, byte for byte. Runs on your computer.">
+<title>decompdecomp · AI agents decompile your game</title>
+<meta name="description" content="Free and open source. Open a game you own and start AI helper agents: they write C or C++, and the game's original compiler checks it, byte for byte. Runs on your computer.">
 <link rel="canonical" href="https://decomp.ndelic.com/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="decompdecomp">
-<meta property="og:description" content="Your agent decompiles your game. The game's own compiler checks every function, byte for byte.">
+<meta property="og:description" content="AI agents decompile your game. The game's own compiler checks every function, byte for byte.">
 <meta property="og:image" content="https://decomp.ndelic.com/og.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="fonts/Archivo-400_800.woff2" as="font" type="font/woff2" crossorigin>
@@ -47,9 +47,9 @@
     </div>
   </figure>
   <div class="claim-row">
-    <h1 id="claim">Your agent decompiles your game.</h1>
+    <h1 id="claim">Agents decompile your game.</h1>
     <div class="claim-side">
-      <p class="lede">Point the AI agent you already use at a game you own. It writes C or C++, one function at a time. The game's original compiler builds each attempt, and only identical bytes count.</p>
+      <p class="lede">Open a game you own in the app and start helper agents. They write C or C++, one function at a time. The game's original compiler builds each attempt, and only identical bytes count.</p>
       <div class="actions">
         <a class="btn" href="#start">Install</a>
         <a class="link-arrow" href="#check">Will it work on my game?</a>
@@ -86,7 +86,7 @@
       </ol>
     </article>
     <article class="pipeline" data-platform="gc" data-file="game.iso">
-      <h3><span class="pl-name">GameCube</span> <span class="status rec">Recommended</span></h3>
+      <h3><span class="pl-name">GameCube</span> <span class="status beta">Beta: not tested end to end</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Disc or DOL</b><span>ISO, GCM, RVZ, WIA, CISO, GCZ</span></li>
         <li><small>Split by</small><b>decomp-toolkit</b><span>in a dtk-template project</span></li>
@@ -96,7 +96,7 @@
       </ol>
     </article>
     <article class="pipeline" data-platform="wii" data-file="game.rvz">
-      <h3><span class="pl-name">Wii</span> <span class="status rec">Recommended</span></h3>
+      <h3><span class="pl-name">Wii</span> <span class="status beta">Beta: not tested end to end</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Disc or DOL</b><span>ISO, RVZ, WIA, WBFS, CISO</span></li>
         <li><small>Split by</small><b>decomp-toolkit</b><span>in a dtk-template project</span></li>
@@ -106,7 +106,7 @@
       </ol>
     </article>
     <article class="pipeline" data-platform="ps2" data-file="game.iso">
-      <h3><span class="pl-name">PlayStation 2</span> <span class="status beta">Beta</span></h3>
+      <h3><span class="pl-name">PlayStation 2</span> <span class="status beta">Beta: tested on real games, not yet rebuilt whole</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>Disc or ELF</b><span>the game's main program</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
@@ -127,10 +127,6 @@
     </article>
   </div>
 
-  <div class="tell js-only" hidden>
-    <p class="tell-label">Then tell your agent</p>
-    <p class="tell-line"><code id="prompt">decompile my game at ~/games/game.z64</code><button type="button" class="copy" data-copy-from="prompt">Copy</button></p>
-  </div>
   <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, Visual C++) install only after you accept them in Setup. Also: 3DS, PSP, Switch and Xbox, through a fork of a community decomp repository.</p>
 </section>
 
@@ -176,7 +172,7 @@ jr      $ra
   <h2 id="yours-h">Yours.</h2>
   <ol class="yours-list">
     <li><b>Your game</b> stays on your computer. No account, no telemetry, nothing uploaded. decompdecomp supplies no games.</li>
-    <li><b>Your agent</b> does the work: Claude Code, Codex, Antigravity CLI, opencode, or any model with an API key. You pay your own provider.</li>
+    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. The app starts them and restarts them. You pay your own provider.</li>
     <li><b>Your code</b> comes out as a project that builds your game again, byte for byte: the start of a port or a mod.</li>
   </ol>
   <p class="yours-note">The code from a game belongs to its rights holder. Keep it to yourself.</p>
@@ -193,14 +189,14 @@ jr      $ra
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>
-      <p class="step-note">Pick your own copy of the game in the app, then start helper agents: Claude Code, Codex, opencode, Antigravity, or any model with an API key. Or open Demo Quest 64 and watch first.</p>
+      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
     </div>
   </div>
 </section>
 </main>
 
 <footer class="foot">
-  <p>decompdecomp continues <a href="https://github.com/i12bp8/decomp.wtf">decomp.wtf</a> by Sam Wolfs. It is built on splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra and the decompals compilers.</p>
+  <p>decompdecomp continues <a href="https://github.com/i12bp8/decomp.wtf">decomp.wtf</a> by Sam Wolfs. It is built on splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo and the decompals compilers.</p>
   <nav aria-label="Site"><a href="https://github.com/n-delic/decompdecomp">GitHub</a><a href="https://github.com/n-delic/decompdecomp/blob/main/docs/GUIDE.md">Guide</a><a href="https://github.com/n-delic/decompdecomp/issues">Issues</a><a href="privacy.html">Privacy</a></nav>
   <p class="foot-small">AGPL-3.0 · Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</p>
 </footer>

@@ -54,4 +54,5 @@ Conventions
 When it won't match
 - Check the function's real signature (C++ mangled names encode it exactly).
 - Look at how matched neighbours handle the same structs and calls.
-- Stuck after ~25 compiles: `release_function` with notes on what you tried and the remaining diff.
+- Stuck (compile_and_diff says when: 3 compiles in a row without a better score for small functions, up to 10
+  for the biggest): `release_function` with notes on what you tried and the remaining diff.

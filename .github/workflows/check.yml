@@ -13,14 +13,14 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv has published no major tags since v7
       - run: uv sync
       - run: uv run ruff check src tests projects
       - name: The N64 demo's linker (ld.lld, llvm-objcopy)
         run: sudo apt-get install -y --no-install-recommends lld llvm
       - name: Cache the compilers (again when toolchains.toml changes)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:  # m2c isn't cached: it's a Python environment of its own, made again each time
           path: |
             ~/.local/share/decompnet/toolchains/gcc-2.7.2-kmc
@@ -36,5 +36,4 @@ jobs:
         run: uv run python projects/zlib-n64/prepare.py
       - run: uv run pytest -q -rs
         env:
-          BROWSER: "true"
           DECOMP_TRAY: "0"

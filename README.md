@@ -15,9 +15,6 @@ decompdecomp is an app that decompiles games you own. AI agents write C or C++ f
 game's original compiler builds it. When the result is the same as the game, byte for byte, the function is
 matched. In the end you get a project that builds your game again, exactly.
 
-> **The app is being rewritten.** This branch is the new version: its own window, agents that restart by themselves,
-> and a faster app. It isn't released yet. [docs/REWRITE.md](docs/REWRITE.md) says what changes and why.
-
 <p align="center">
   <img alt="decompdecomp on the demo ROM: the autopilot matches functions for free, then an agent matches more, one function at a time." src=".github/assets/demo.webp" width="900">
   <br>
@@ -49,12 +46,12 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
 
 1. **Open a game.** Pick a ROM, a disc image or a program file of a game that you own. To try the app first, open
    Demo Quest 64.
-2. **Start agents.** Claude Code, Codex, opencode, Antigravity CLI, or any model with an API key (DeepSeek,
-   OpenRouter, OpenAI, a local model). Run several, and different models: they work on different functions at the
+2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
+   Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
    same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
-4. **Export.** You get a decomp project that builds your game again, byte for byte.
+4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.
 
@@ -75,19 +72,23 @@ What changed on the way:
 
 - **Agents run inside the app only.** `decomp connect` and `decomp mcp` are gone. On its first start, the new
   version removes the old `decomp` entries from your agents' settings (Claude Code, Codex, opencode, Antigravity and
-  others) and lists what it removed. Before that, those entries started the old app again whenever you closed it.
-- **Windows (WSL) isn't supported in this version.** Your projects are inside the WSL distribution, in
-  `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux computer and
-  install decompdecomp there: it finds every project in it.
+  others), and its home page says what it removed. Before that, those entries started the old app again whenever
+  you closed it.
+- **The Source tab is now the Export button** in the project's header.
+- **Windows (WSL) isn't supported in this version.** It is planned for 1.0.4. Your projects are inside the WSL
+  distribution, in `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux
+  computer, with the hidden `.decomp` folder in it, and install decompdecomp there: it finds every project in it.
 
 ## Moving to another computer
 
-decompdecomp saves each project's work as plain files in the project's `progress/` folder, every few minutes:
-matched C, best attempts, headers, names, notes and settings. It never contains the game, so you can keep it in a
-git repository.
+decompdecomp saves the work on each N64 and PlayStation 2 project as plain files in the project's `progress/`
+folder, every few minutes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
+so you can keep it in a git repository. GameCube, Wii and PC projects and community decomps are git repositories
+already: push them.
 
-The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer: decompdecomp finds
-every project in it. To take a single project, or to keep it in git:
+The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
+`.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
+single N64 or PlayStation 2 project, or to keep it in git:
 
 1. Copy the project's `progress/` folder to the new computer, or push it to a git repository.
 2. On the new computer, in decompdecomp: **Open a saved project**. Pick the folder (or paste the repository's
@@ -98,9 +99,9 @@ every project in it. To take a single project, or to keep it in git:
 
 | Platform | Status |
 | :-- | :-- |
-| PlayStation 2 | Works: tested on real games, with several compilers per game |
-| Nintendo 64 | Works: tested on real games |
-| GameCube, Wii | Works, but not yet tested from start to end |
+| Nintendo 64 | Recommended: tested on real games, rebuilt byte for byte |
+| PlayStation 2 | Beta: tested on real games, with several compilers per game; no real game rebuilt whole yet |
+| GameCube, Wii | Beta: not yet tested from start to end on a real game |
 | Windows PC games | Beta |
 | PlayStation, Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
 
@@ -129,7 +130,8 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6 and then archived it. Thank you,
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra and the decompals compilers. The
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo and the decompals
+compilers. The
 [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License

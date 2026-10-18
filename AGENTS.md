@@ -10,10 +10,11 @@ archived at 0.10.6): `origin` is n-delic/decompdecomp, `upstream` the archived o
 
 Naming: the project is **decompdecomp** in everything users read. Internal names stay as decomp.wtf left them, so
 existing installs and projects keep working: the `decomp` command, the `decompnet` package and data folder,
-`~/Decomp`, `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates come from GitHub (`REPO` in app/updates.py and the installers); the decomp.wtf domain
-isn't ours, so nothing may point at it. `site/` is the website (decomp.ndelic.com, published to GitHub Pages by
-`.github/workflows/site.yml` on every push to main that changes `site/public/`); `site/public/` also holds the
-installers, which updates read from GitHub. Work on `main`: it's what users update from.
+`~/Decomp`, `.decomp.wtf.json` manifests, `.decomp-wtf/` state, the `decomp-wtf` git branch. Installs and updates
+come from GitHub (`REPO` in app/updates.py and install.sh); the decomp.wtf domain isn't ours, so nothing may point
+at it. `site/` is the website (decomp.ndelic.com, published to GitHub Pages by `.github/workflows/site.yml` on every
+push to main that changes `site/public/`); `site/public/` also holds the installer, `install.sh`, which updates read
+from GitHub. Work on `main`: it's what users update from.
 
 ## Commands
 
@@ -43,8 +44,9 @@ Testing a change must not touch it:
   live database only with `?mode=ro`.
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.
 
-Compilers and tools (splat, objdiff, dtk, wibo, Ghidra, period compilers) are pinned with checksums in
-`src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. Proprietary
+Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter, period compilers) are pinned with checksums
+in `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. splat is a
+Python dependency in `pyproject.toml`. Proprietary
 compilers are only installed after the user accepts that in Setup; don't add code that fetches them silently.
 
 ## Consoles, and the two ways a game is decompiled
@@ -59,7 +61,7 @@ compares console names: a console-specific `if` outside `consoles/` is a bug. Wh
 
 1. **ROM mode** (N64, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
-   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them). Exported as a
+   compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they share). Exported as a
    rebuildable tree by `rom/export*.py`.
 2. **PROJECT mode** (GameCube/Wii/PC started from scratch, and public decomps forked by repository address): a
    community-shaped project on disk with an `objdiff.json`; objdiff judges each unit. The console makes the project
@@ -82,7 +84,10 @@ from the vtables constructors store, MIPS: the `get_class` tool and the class li
 tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`
 + `app/gtkwindow.py` + `app/tray.py` (the window: GTK and WebKitGTK from the system, run by the system's python3; the
 page answers only it, by the secret in its user agent; and the tray icon; tests set `DECOMP_WINDOW=0` and
-`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
+`DECOMP_TRAY=0`), `app/edition.py` (release or development copy), `app/saves.py` (a ROM project's work as plain files, and a
+project restored from them), `app/readable.py` (polishing matched code), `app/knowledge.py` (what agents learn,
+shared once two models agree), `app/drafts.py` + `app/permute.py` (background drafts and the permuter),
+`structs.py` (struct layouts from loads and stores), `app/guide/*.md` and `consoles/<id>/guides/*.md` (know-how agents read through `guide(topic)`), `app/static/` (GUI: `index.html`, `app.css`, and `js/*.js`, nine plain scripts loaded in order; `js/base.js` says which is which).
 
 ## Conventions
 

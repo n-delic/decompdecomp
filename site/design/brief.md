@@ -4,15 +4,15 @@
 
 | Field | Answer |
 |---|---|
-| What it is | A free, open-source app that lets an AI agent decompile a game the user owns into C that the game's original compiler turns into the same bytes. |
+| What it is | A free, open-source app in which AI helper agents decompile a game the user owns into C that the game's original compiler turns into the same bytes. |
 | Who it is for | Decomp and modding hobbyists, and developers curious about AI agents; on a desktop or laptop, usually in the evening; they arrive from GitHub, Reddit or Discord links. |
-| The job they hire it for | When I own a game I want to mod or port, I want my AI agent to turn its code back into real C, so I can change it without starting from assembly. |
+| The job they hire it for | When I own a game I want to mod or port, I want AI agents to turn its code back into real C, so I can change it without starting from assembly. |
 | Business goal for this piece of work | Installs (the install command copied) and trust (the visitor understands that the match is proven, and that it runs locally). |
-| Market & audience locale | Global · English · Latin script · desktop first (the app runs on Linux and Windows), phones for link previews · conventions: a copyable install command, a GitHub link, no sign-up. |
+| Market & audience locale | Global · English · Latin script · desktop first (the app runs on Linux), phones for link previews · conventions: a copyable install command, a GitHub link, no sign-up. |
 | Primary language | en |
 | Platform(s) | Web marketing page, static files (Cloudflare or any static host). |
 | Expression register | R3 Expressive — the visitor decides by curiosity and taste (a hobby tool, not a purchase), the category (Binary Ninja, IDA, Ghidra, decomp.me) sits at R2 with screenshots, and a new brand has to be remembered. Asset budget: no photography; a typographic and diagrammatic direction carries R3. |
-| Interaction depth | I3 — signature interaction: "Will it work on my game?": pick the platform of the game → the pipeline for that platform redraws (the file it takes, the splitter, the compiler, the judge, what you get) and the exact line to tell your agent appears → carried into the install section as the prompt to copy. |
+| Interaction depth | I3 — signature interaction: "Will it work on my game?": pick the platform of the game → the pipeline for that platform redraws (the file it takes, the splitter, the compiler, the judge, what you get, and the platform's status). |
 | Design language | Depart on three named axes (chroma, imagery, layout); keep the category's grotesk, solid controls and choreographed motion. |
 | Mode | Standard |
 | Surface type | landing / marketing |
@@ -20,7 +20,7 @@
 
 ## 2. The memorable thing
 
-Your agent, your game: the AI you already use works on a game you own, on your own computer.
+Your game, checked byte for byte: AI agents work on a game you own, on your own computer, and the game's own compiler judges them.
 
 ## 3. Constraints
 
@@ -39,7 +39,7 @@ Your agent, your game: the AI you already use works on a game you own, on your o
 | Proto-persona | Context of use | Top 3 tasks | Top frustration today | What "good" feels like |
 |---|---|---|---|---|
 | Modder with a childhood game | evening, desktop, came from a Reddit post | see if their console is supported; understand what it does; install | decomp projects take years and need assembly knowledge | "my agent can actually do this, and I can check it" |
-| Developer trying AI agents | between tasks, already uses Claude Code / Codex | see how it plugs into their agent; trust the result | AI output that looks right and isn't | a hard, external judge of the AI's work |
+| Developer trying AI agents | between tasks, already uses Claude Code / Codex or an API key | see which models it runs; trust the result | AI output that looks right and isn't | a hard, external judge of the AI's work |
 | Existing decomper | knows splat/objdiff/decomp.me | see which tools and compilers are behind it; continue a community repo | tools that hide what they do | named tools, honest limits |
 
 ## 5. Competitive & reference landscape
@@ -59,7 +59,7 @@ Your agent, your game: the AI you already use works on a game you own, on your o
 | Attribute | Anti-attribute | Visual consequence |
 |---|---|---|
 | Proven | Magical | the real bytes of a real function are the image; "score 0" shown, never "AI-powered" |
-| Yours | Hosted | the visitor's game and agent are named in the copy ("your"); the install and the agent prompt are the actions |
+| Yours | Hosted | the visitor's game and agents are named in the copy ("your"); the install is the action |
 | Hands-on | Corporate | a printed-listing world: mono bytes, a highlighter, square corners, no gradients, no glow |
 
 ## 7. Success criteria
