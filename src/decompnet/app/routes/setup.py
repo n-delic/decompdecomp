@@ -1,13 +1,11 @@
-"""Compilers and tools (Setup), agents: installing them, starting and stopping helpers, connecting an agent the
-user runs (MCP), their sign-in tokens, and the settings.
+"""Compilers and tools (Setup), agents: installing them, finding which are installed, starting, stopping and
+restarting helpers, and the settings.
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
-import sys
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -21,7 +19,7 @@ from . import App
 
 def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
-    settings, guard, body, fail = app.settings, app.guard, app.body, app.fail
+    settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
     @mcp.custom_route("/api/toolchain", methods=["POST"])
     async def api_toolchain(request: Request) -> Response:
@@ -39,32 +37,30 @@ def register(app: App) -> None:
         kind = agents.KINDS.get(agents.kind_id(str((await body(request)).get("kind", ""))))
         if kind is None or not kind.install:
             return fail(ValueError("nothing to install"))
-        cmd = kind.install["windows" if sys.platform == "win32" else "unix"]
-        env = None
-        if sys.platform == "win32":
-            env = dict(os.environ, PATH=agents.search_path())  # Node.js installed since the app started counts
-            if cmd.startswith("npm ") and not shutil.which("npm", path=env["PATH"]):
-                return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
-                                       "first (the LTS version), then try again"))
+        if kind.install.startswith("npm ") and not shutil.which("npm"):
+            return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
+                                   "first (the LTS version), then try again"))
 
         def work(log):
-            log(f"$ {cmd}")
-            if sys.platform == "win32":
-                # Node.js's npm is a PowerShell script (npm.ps1) that Windows' default execution policy won't run;
-                # output as UTF-8 so it reads right here; never wait at a prompt nobody sees
-                argv = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
-                        f"[Console]::OutputEncoding = [Text.Encoding]::UTF8; {cmd}"]
-            else:
-                argv = ["bash", "-lc", cmd]
-            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                    errors="replace", env=env)
+            log(f"$ {kind.install}")
+            proc = subprocess.Popen(["bash", "-lc", kind.install], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace")
             for line in proc.stdout:
                 log(line.rstrip())
             if proc.wait() != 0:
                 raise RuntimeError(f"the installer exited with code {proc.returncode}")
             agents._versions.pop(kind.id, None)
+            manager.refresh_detected(wait=True)  # the launcher shows it, with its models, when the job is done
             return {"kind": kind.id}
         return JSONResponse({"job": jobs.start("agent-install", work)})
+
+    @mcp.custom_route("/api/agents/detect", methods=["POST"])
+    async def api_agents_detect(request: Request) -> Response:
+        """Look again which agents are installed and their models (a sign-in since): in the background."""
+        if (bad := guard(request, write=True)):
+            return bad
+        manager.refresh_detected()
+        return JSONResponse({"detecting": True})
 
     @mcp.custom_route("/api/agents/start", methods=["POST"])
     async def api_agents_start(request: Request) -> Response:
@@ -75,7 +71,7 @@ def register(app: App) -> None:
         given = data.get("options") or {}
         options = {k: v for k, v in given.items() if k in ("model", "per_session")}
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
-        count = max(1, min(int(data.get("count", 1)), 8))
+        count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         picked: list[str] = []
         try:
             net.project_row(slug)
@@ -98,17 +94,27 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/agents/stop", methods=["POST"])
     async def api_agents_stop(request: Request) -> Response:
+        """Stop a helper (`id`), forget it (`remove`), or stop every helper on a project (`slug`)."""
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
         if data.get("remove"):
-            manager.remove(str(data.get("id")))
-        elif data.get("slug"):  # every helper on one project
-            for s in list(manager.sessions.values()):
-                if s.slug == data["slug"] and s.state in ("starting", "working", "waiting"):
-                    manager.stop(s.id)
-        else:
-            manager.stop(data.get("id") or None)
+            await call(manager.remove, str(data.get("id")))
+        elif data.get("slug"):
+            await call(manager.stop_project, str(data["slug"]))
+        elif data.get("id"):
+            await call(manager.stop, str(data["id"]))
+        return JSONResponse({"ok": True})
+
+    @mcp.custom_route("/api/agents/restart", methods=["POST"])
+    async def api_agents_restart(request: Request) -> Response:
+        """Start a stopped or paused helper again."""
+        if (bad := guard(request, write=True)):
+            return bad
+        try:
+            await call(manager.restart, str((await body(request)).get("id", "")))
+        except ValueError as e:
+            return fail(e)
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/settings", methods=["POST"])
@@ -124,7 +130,8 @@ def register(app: App) -> None:
         if data.get("remove_endpoint"):
             settings.remove_endpoint(str(data["remove_endpoint"]))
             for sid, sess in list(manager.sessions.items()):  # its sessions stop with it
-                if sess.kind == "api" and sess.options.get("endpoint") == str(data["remove_endpoint"]):
+                if sess.kind == "api" and sess.options.get("endpoint") == str(data["remove_endpoint"]) \
+                        and sess.state in agents.LIVE:
                     manager.stop(sid)
         if "per_session" in data:
             settings.data["per_session"] = max(1, min(int(data["per_session"]), 20))

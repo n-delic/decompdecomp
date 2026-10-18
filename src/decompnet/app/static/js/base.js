@@ -101,7 +101,18 @@ function openFolder() {
     .catch((e) => toast(esc(e.message), "err"));
 }
 
-async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); return S.st; }
+async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); return S.st; }
+/* The app looks for installed agents in the background (it runs each one's CLI: seconds): ask again until it's done,
+   then show their models where agents are picked. */
+const DETECT_POLL_MS = 1500;
+function agentsFound() {
+  if (S.st.agents_detecting) { clearTimeout(S.detectTimer); S.detectTimer = setTimeout(loadState, DETECT_POLL_MS); return; }
+  if (S.detectTimer) {
+    S.detectTimer = null;
+    if (S.tab === "agents" && !$("project").hidden) renderLauncher($("launcher"));
+    if (!$("launchPop").hidden) renderLauncher($("launchPopBody"), true);
+  }
+}
 
 function route() {
   const h = location.hash;

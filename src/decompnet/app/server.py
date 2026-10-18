@@ -49,12 +49,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
         window.close_app()
-        shutdown = getattr(manager, "shutdown", None)
-        if shutdown is not None:
-            shutdown()
-        else:
-            manager.stop()
-            manager.on_stop()
+        manager.shutdown()
         os._exit(0)
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
@@ -64,11 +59,6 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     # GUI showed last (opencode sessions on GTA San Andreas found its functions missing from another game)
     for agent_id, slug in (settings.data.get("agent_projects") or {}).items():
         manager.assignments.setdefault(int(agent_id), slug)
-
-    def remember(running: list[dict]) -> None:
-        settings.data["running_agents"] = running
-        settings.save()
-    manager.persist = remember
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     def agent_of(ctx: Context):
@@ -92,22 +82,18 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
                 jobs.logger.exception("naming %s's kernel calls failed", row["slug"])
     threading.Thread(target=name_kernel_calls, daemon=True, name="kernel-calls").start()
 
-    # helpers that were working when the app last stopped carry on
-    resume = [r for r in settings.data.get("running_agents", []) if isinstance(r, dict)]
-    for r in resume:
-        try:
-            net.project_row(r["slug"])
-            options = dict(r.get("options") or {})
-            if r["kind"] == "api":
-                saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (
-                    next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))
-                if saved is None and options.get("endpoint"):
-                    continue  # its endpoint was removed since
-                if saved is not None:  # as the endpoint is now, with its key
-                    options.update(_session_options(saved))
-            manager.start(r["kind"], r["slug"], 1, options)
-        except (NetworkError, ValueError, KeyError):
-            continue
+    def options_now(kind: str, options: dict) -> dict | None:
+        """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
+        endpoint was removed since)."""
+        if kind != "api":
+            return options
+        saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (
+            next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))
+        if saved is None and options.get("endpoint"):
+            return None
+        return options | (_session_options(saved) if saved is not None else {})
+    manager.options_now = options_now
+    manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 
     mcp = tools.build_mcp(net, agent_of)
 
@@ -152,8 +138,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         return JSONResponse({"error": str(e)}, status_code=code)
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
-        manager.stop()
-        manager.on_stop()
+        manager.shutdown()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use

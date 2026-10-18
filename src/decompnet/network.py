@@ -25,7 +25,20 @@ from .store import Store
 CLAIM_TTL = 30 * 60
 # A function an agent just released goes to the back of the queue for this long, for every agent: the next one
 # starts on something fresh instead of passing the same function back and forth. Asked for by name, it comes at once.
+# For agents of the released one's model family it stays at the back until the shared header or the compiler changes
+# (see model_family): only 5.5% of released functions ever matched later, and another try by the same model mostly
+# fails the same way.
 RELEASE_COOLDOWN = 15 * 60
+# The family of a helper's model, from its name (app/agents.py helper_name: kind-model-n). Claude Code only runs
+# Anthropic's models, Codex OpenAI's, Antigravity Google's; opencode and API helpers run the model their name says.
+KIND_FAMILIES = {"claude": "claude", "codex": "gpt", "antigravity": "gemini", "gemini": "gemini"}
+MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fable": "claude", "o3": "gpt", "o4": "gpt"}
+# When compile_and_diff tells an agent to move on: after this many compiles in a row that didn't beat its best score,
+# by the function's size (the first number of instructions it's under). Functions that match mostly do in the first
+# few compiles (up to 20 instructions: 43%, 29%, 17%, 11% of the first four compiles matched, October 2026), so small
+# ones get few; big ones get more, as long as the score keeps falling.
+STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
+STALL_BUDGET_BIGGEST = 10
 MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
 # Twins first (see app/twins.py): a function whose code the game has more than once (boost: how many more times)
 # and isn't too big or given up on, best value per instruction first; its twins (boost -1) last, as they match for
@@ -60,6 +73,29 @@ class Agent:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def model_family(agent_name: str) -> str:
+    """Who made an agent's model ("claude-opus-1": claude, "opencode-deepseek-v4.1-flash-2": deepseek); an agent
+    whose name says no model is a family of its own."""
+    kind, _, rest = agent_name.lower().partition("-")
+    if kind in KIND_FAMILIES:
+        return KIND_FAMILIES[kind]
+    word = re.match(r"[a-z]+\d*", rest)
+    if word is None:
+        return kind
+    return MODEL_FAMILIES.get(word.group(0), re.sub(r"\d+$", "", word.group(0)))
+
+
+def stall_budget(n_insns: int) -> int:
+    """Compiles in a row without a better score before an agent is told to move on (STALL_BUDGET)."""
+    return next((after for under, after in STALL_BUDGET if n_insns < under), STALL_BUDGET_BIGGEST)
+
+
+def stall_budget_text() -> str:
+    """The budget in words: the prompt and the workflow guide say exactly this."""
+    return (f"no better score after {STALL_BUDGET[0][1]} compiles in a row for small functions, up to "
+            f"{STALL_BUDGET_BIGGEST} for the biggest")
 
 
 def _ago(ts: float | None) -> str:
@@ -278,13 +314,20 @@ class Network:
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             else:
+                family = model_family(agent.name)
+                kin = [r["id"] for r in db.execute("SELECT id, name FROM agents") if model_family(r["name"]) == family]
                 fn = db.execute(
                     f"""SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open'
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=? AND agent_id=? AND kind='release')
                         ORDER BY f.name IN (SELECT detail FROM events WHERE project_id=? AND kind='release'
+                                            AND agent_id IN (SELECT value FROM json_each(?)) AND created_at >
+                                            COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=?
+                                                      AND kind IN ('context', 'compiler')), 0)),
+                                 f.name IN (SELECT detail FROM events WHERE project_id=? AND kind='release'
                                             AND created_at > ?), {STRATEGIES[strategy]} LIMIT 1""",
-                    (proj["id"], proj["id"], agent.id, proj["id"], now - RELEASE_COOLDOWN),
+                    (proj["id"], proj["id"], agent.id, proj["id"], json.dumps(kin), proj["id"], proj["id"],
+                     now - RELEASE_COOLDOWN),
                 ).fetchone()
                 if fn is None:
                     return None
@@ -429,11 +472,10 @@ class Network:
         """A nudge once an agent's last `after` compiles of a function didn't beat its best: functions that match
         mostly do in the first few tries, and the agent's time is better spent on the next one. Big functions get
         longer (a quarter of Mario Party 6's agent matches over 64 instructions took more than 4 compiles, and
-        those functions hold most of the code left)."""
+        those functions hold most of the code left): STALL_BUDGET."""
         if after is None:
             row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
-            n = (row["n_insns"] if row else 0) or 0
-            after = 4 if n < 64 else 6 if n < 128 else 8 if n < 256 else 10
+            after = stall_budget((row["n_insns"] if row else 0) or 0)
         rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 16",
                               function_id, agent_id)
         best, since = None, 0

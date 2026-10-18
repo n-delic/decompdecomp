@@ -85,19 +85,19 @@ async function refreshMap(force = true) {
   renderOverview();
 }
 
-/* Helpers that just stopped on an error (the provider out of credit, a sign-in...): said once per error, as eight
-   agents on one account stop together */
+/* Helpers that just paused on an error they can't get past (the provider out of credit, a sign-in...): said once per
+   error, as eight agents on one account pause together */
 function toastStopped(before, now) {
   const was = new Map(before.map((s) => [s.id, s.state]));
   const why = new Map();
   for (const s of now) {
-    if (s.state !== "error" || !was.has(s.id) || was.get(s.id) === "error") continue;
-    if (!why.has(s.error)) why.set(s.error, []);
-    why.get(s.error).push(s.label);
+    if (s.state !== "paused" || !was.has(s.id) || was.get(s.id) === "paused") continue;
+    if (!why.has(s.why)) why.set(s.why, []);
+    why.get(s.why).push(s.label);
   }
   for (const [error, labels] of why) {
     const who = labels.length > 1 ? `${labels[0]} and ${labels.length - 1} more` : labels[0];
-    toast(`${esc(who)} stopped: ${esc(error || "an error")}`, "err");
+    toast(`${esc(who)} paused: ${esc(error || "an error")}`, "err");
   }
 }
 

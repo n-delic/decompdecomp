@@ -34,40 +34,64 @@ function renderNow(claims) {
 }
 
 /* ------------------------------------------------------------------ agents on this project */
-const STATE_TEXT = { starting: "starting…", working: "working", waiting: "next session in a moment", stopped: "stopped", error: "stopped with an error" };
+/* Every agent here is a helper this app runs (nobody connects from outside), each in one state: working on a function,
+   waiting (why, until when), stopped (by whom) or paused on an error it can't get past (what to do). Its own last words
+   are on its row; everything it said and did is one click in. */
+const LIVE = ["starting", "working", "waiting"];
+const STATE_ORDER = { working: 0, starting: 1, waiting: 2, paused: 3, stopped: 4 };
+const FEED_KEEP = 400;  // lines of each helper's log kept here (the app keeps as many)
+const hhmm = (t) => clock(t).slice(0, 5);
+const sentence = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
+
+function helperState(s, claim) {
+  if (s.state === "working") return claim ? `Working on ${fnLink(claim.name)} · ${claim.attempts ? plural(claim.attempts, "compile") : reading(claim)}` : "Working: picking its next function";
+  if (s.state === "starting") return s.why ? `Starting: ${esc(s.why)}` : "Starting…";
+  if (s.state === "waiting") return `Waiting: ${esc(s.why || "a moment")}${s.until ? ` · carries on at ${hhmm(s.until)}` : ""}`;
+  if (s.state === "paused") return `Paused: ${esc(s.why)}`;
+  return s.stopped_by === "you" || !s.why ? "Stopped by you" : `Stopped: ${esc(s.why)}`;
+}
 
 function renderSessions(sessions) {
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
-  const running = sessions.filter((s) => ["starting", "working", "waiting"].includes(s.state));
+  const running = sessions.filter((s) => LIVE.includes(s.state));
   $("stopAll").hidden = running.length < 2;
-  const html = sessions.map((s) => {
+  const sorted = [...sessions].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
+  const html = sorted.map((s) => {
     const claim = S.claims.find((c) => c.agent === s.agent);
-    const dot = s.state === "error" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
-    const live = ["starting", "working", "waiting"].includes(s.state);
-    const b = board.get(s.agent);
-    const facts = [s.model ? esc(s.model) : "default model", s.runs ? `session ${s.runs}` : "", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
-      s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.started_at ? `since ${clock(s.started_at).slice(0, 5)}` : ""].filter(Boolean);
-    return `<div class="session"><div class="session-top"><span class="dot ${dot}"></span><b>${esc(s.label)}</b>
-        <span class="state ${s.state === "error" ? "err" : ""}">${esc(STATE_TEXT[s.state] || s.state)}</span>
-        <button class="ghost" data-stop="${esc(s.id)}" data-remove="${live ? "" : "1"}" type="button">${live ? "Stop" : "Remove"}</button></div>
+    const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
+    const live = LIVE.includes(s.state), id = esc(s.id), b = board.get(s.agent);
+    const facts = [esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
+      s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
+      s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
+    const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
+    return `<div class="session" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
+        ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
+          : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
+      <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>
+      ${todo ? `<span class="todo-line">${esc(todo)}</span>` : ""}
+      ${s.last_message ? `<q class="said" title="${esc(s.last_message)}">${esc(s.last_message)}</q>` : ""}
       <span class="facts-line">${facts.join(" · ")}</span>
-      ${s.state === "error" ? `<span class="state err">${esc(s.error)}</span>` : ""}
-      ${claim ? `<span class="last">on ${fnLink(claim.name)}</span>` : ""}</div>`;
+      <button class="link-btn" data-log="${id}" type="button">${S.logFor === s.id ? "Hide what it did" : "What it said and did"}</button></div>`;
   }).join("");
-  const own = new Set(sessions.map((s) => s.agent));
-  const outside = [...new Set(S.claims.filter((c) => !own.has(c.agent) && c.agent !== AUTO).map((c) => c.agent))];
-  setHtml(box, html + outside.map((a) => `<div class="session ext"><div class="session-top"><span class="dot on"></span><b>${esc(a)}</b><span class="tag">${a.startsWith("@") ? "in the room" : "connected agent"}</span></div>
-      <span class="last">on ${S.claims.filter((c) => c.agent === a).map((c) => fnLink(c.name)).join(", ")}</span></div>`).join(""));
+  setHtml(box, html);
   box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
-  $("noSessions").hidden = sessions.length + outside.length > 0;
-  box.querySelectorAll("[data-stop]").forEach((b) => {
+  $("noSessions").hidden = sessions.length > 0;
+  const act = (sel, path, body) => box.querySelectorAll(sel).forEach((b) => {
     b.onclick = async () => {
-      await api("/api/agents/stop", { method: "POST", body: { id: b.dataset.stop, remove: !!b.dataset.remove } }).catch((e) => toast(esc(e.message), "err"));
+      b.disabled = true;
+      await api(path, { method: "POST", body: body(b) }).catch((e) => toast(esc(e.message), "err"));
       poll(false);
     };
   });
+  act("[data-stop]", "/api/agents/stop", (b) => ({ id: b.dataset.stop }));
+  act("[data-remove]", "/api/agents/stop", (b) => ({ id: b.dataset.remove, remove: true }));
+  act("[data-again]", "/api/agents/restart", (b) => ({ id: b.dataset.again }));
+  box.querySelectorAll("[data-log]").forEach((b) => {
+    b.onclick = () => { S.logFor = S.logFor === b.dataset.log ? null : b.dataset.log; renderLog(); renderSessions(S.sessions || []); };
+  });
 }
+$("helperLogClose").onclick = () => { S.logFor = null; renderLog(); renderSessions(S.sessions || []); };
 $("stopAll").onclick = async () => {
   await api("/api/agents/stop", { method: "POST", body: { slug: S.slug } }).catch((e) => toast(esc(e.message), "err"));
   toast("Stopping every agent on this project.");
@@ -125,7 +149,7 @@ async function startAgents(a, model, count, btn, extra = {}) {
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
     hideLaunch();
-    toast(`${esc(a.id === "api" ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. Watch it on the map and in Activity.`, "match");
+    toast(`${esc(a.id === "api" ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. Watch the map fill in; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
@@ -143,7 +167,7 @@ function renderLauncher(box, compact = false) {
   if (!a.installed) {
     body = `<p class="small"><b>${esc(a.name)}</b> isn't installed on this computer.${a.needs ? ` It needs ${esc(a.needs)} first.` : ""}</p>
       ${a.install ? cmdBox(a.install) : ""}
-      <div class="row"><button class="primary" data-act="install" type="button" ${a.needs ? "disabled" : ""}>Install it for me</button><a class="link small" href="${esc(a.docs)}" target="_blank" rel="noopener">About ${esc(a.name)}</a></div>
+      <div class="row"><button class="primary" data-act="install" type="button" ${a.needs ? "disabled" : ""}>Install it for me</button><button class="link-btn" data-act="detect" type="button">Installed it already? Look again</button><a class="link small" href="${esc(a.docs)}" target="_blank" rel="noopener">About ${esc(a.name)}</a></div>
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
   } else if (a.id === "api") {
     const eps = S.st.settings.endpoints || [];
@@ -166,7 +190,7 @@ function renderLauncher(box, compact = false) {
     <div class="lz-body">${body}
       ${ready ? `<div class="lz-row">
         <div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
-        ${compact ? "" : `<label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="20" value="${LZ.per || S.st.settings.per_session || 2}"></label>`}
+        ${compact ? "" : `<label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="20" value="${LZ.per || S.st.settings.per_session}"></label>`}
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count))}</button></div>
         <p class="muted small">${a.id === "api" ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
@@ -182,7 +206,7 @@ function renderLauncher(box, compact = false) {
   if (eff) eff.onchange = () => { LZ.effort = eff.value; label(); };
   box.querySelectorAll("[data-step]").forEach((b) => { b.onclick = () => { LZ.count = Math.max(1, Math.min(8, LZ.count + Number(b.dataset.step))); box.querySelector(".stepper output").textContent = LZ.count; label(); }; });
   const per = box.querySelector('[data-f="per"]');
-  if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(20, Number(per.value) || 4)); };
+  if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(20, Number(per.value) || S.st.settings.per_session)); };
   wireEndpointFields(box);
   box.querySelectorAll("[data-ep]").forEach((c) => { c.onchange = () => { LZ.eps = [...box.querySelectorAll("[data-ep]:checked")].map((x) => x.dataset.ep); label(); }; });
   const addEp = box.querySelector('[data-act="add-ep"]'), pickEp = box.querySelector('[data-act="pick-ep"]');
@@ -199,6 +223,12 @@ function renderLauncher(box, compact = false) {
       await loadState();
       rerender();
     } catch (e) { toast(esc(e.message), "err"); inst.disabled = false; }
+  };
+  const again = box.querySelector('[data-act="detect"]');
+  if (again) again.onclick = async () => {
+    again.disabled = true;
+    await api("/api/agents/detect", { method: "POST" }).catch((e) => toast(esc(e.message), "err"));
+    await loadState();  // (it asks again by itself until the look is done)
   };
   const go = box.querySelector('[data-act="start"]');
   if (go) go.onclick = async () => {
@@ -359,24 +389,41 @@ function miniMarkdown(text) {
     .replace(/^- /gm, "• ");
 }
 
-function addThoughts(sessions, first) {
+/* One helper's log: what it said, thought and called, newest first, in the Agents tab's "What it said and did". */
+function logLine(f, fresh) {
+  const li = document.createElement("li");
+  if (fresh) li.className = "fresh";
+  const time = document.createElement("time"); time.textContent = clock(f.t);
+  const body = document.createElement("span"); body.className = "t-" + f.type;
+  if (f.type === "text") body.innerHTML = miniMarkdown(f.text.slice(0, 1600));
+  else body.textContent = f.type === "think" ? f.text.slice(0, 1200) : f.text;
+  li.append(time, body);
+  return li;
+}
+function renderLog() {
+  const s = (S.sessions || []).find((x) => x.id === S.logFor);
+  $("helperLog").hidden = !s;
+  if (!s) return;
+  $("helperLogTitle").textContent = `What ${s.label} said and did`;
   const list = $("thoughts");
-  const items = [];
-  for (const s of sessions) for (const f of s.feed) items.push({ ...f, label: s.label });
-  items.sort((a, b) => a.t - b.t);
-  for (const it of items) {
-    const li = document.createElement("li");
-    if (!first) li.className = "fresh";
-    const time = document.createElement("time"); time.textContent = clock(it.t);
-    const src = document.createElement("span"); src.className = "src"; src.textContent = it.label;
-    const body = document.createElement("span"); body.className = "t-" + it.type;
-    if (it.type === "text") body.innerHTML = miniMarkdown(it.text.slice(0, 1600));
-    else body.textContent = it.type === "think" ? it.text.slice(0, 1200) : it.text;
-    li.append(time, src, body);
-    list.prepend(li);
+  list.innerHTML = "";
+  for (const f of S.feeds[s.id] || []) list.prepend(logLine(f, false));
+  if (!list.children.length) list.innerHTML = `<li class="placeholder"><time></time><span class="muted">Nothing since decompdecomp started. What it says and does shows here as it works.</span></li>`;
+}
+/* The live poll's new lines of every helper's log (the name is from when they all went into one list). */
+function addThoughts(sessions, first) {
+  if (first) S.feeds = {};  // a project opened again: the app sends each helper's whole log once more
+  for (const s of sessions) {
+    if (!s.feed.length) continue;
+    const kept = (S.feeds[s.id] ||= []);
+    kept.push(...s.feed);
+    kept.splice(0, Math.max(0, kept.length - FEED_KEEP));
+    if (s.id !== S.logFor || first) continue;
+    const list = $("thoughts");
+    list.querySelector(".placeholder")?.remove();
+    for (const f of s.feed) list.prepend(logLine(f, true));
+    while (list.children.length > FEED_KEEP) list.lastChild.remove();
   }
-  while (list.children.length > 400) list.lastChild.remove();
-  if (!list.children.length) list.innerHTML = `<li class="placeholder"><time></time><span class="muted">Helper agents you start from decompdecomp think out loud here.</span></li>`;
-  else list.querySelector(".placeholder")?.remove();
+  if (first) renderLog();
 }
 

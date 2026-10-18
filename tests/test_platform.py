@@ -14,11 +14,6 @@ from decompnet.app import agents
 from decompnet.forks.project import ForkProject
 
 
-def test_commands_stay_as_they_are_elsewhere():
-    assert agents.search_path() is None
-    assert agents.argv(["agent.cmd", "-p", "a\nb"]) == ["agent.cmd", "-p", "a\nb"]
-
-
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
