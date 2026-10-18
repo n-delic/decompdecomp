@@ -461,6 +461,13 @@ func_..., every size is guessed by splat.
    each function's brief. This is what agents guess worst today (§9.3).
 3. Tested on the homemade PS2 demo built with `-g`, never on a real game in the repository.
 
+## 13. A stranger's test, at the very end
+
+When everything above is done, an agent uses the app the way a new user would, without reading its source: installs
+the development copy, opens the demo game, starts helpers, closes and reopens the window, exports, breaks things on
+purpose. It reports everything it finds in detail: bugs, confusing screens, missing features, anything a stranger
+gets stuck on. Its findings go into issues or straight into fixes.
+
 ## Questions
 
 Answers go here as they come.
