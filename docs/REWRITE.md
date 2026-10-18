@@ -264,7 +264,7 @@ project never replays anything.
       compiles).
   12. Bug: `read_data` (`engine/briefs.py`) only decodes N64 addresses as pointers, never PS2 ones.
 
-- **The API helper first** (the owner's answer below): the helper that calls a model's API with the user's key is
+- *(done: the launcher lists it first with a plain explanation; the Agents view shows each model's cost per match)* **The API helper first** (the owner's answer below): the helper that calls a model's API with the user's key is
   the one decompdecomp controls end to end, so the app recommends it first when starting helpers, explains it
   plainly (any provider: Anthropic, OpenAI, DeepSeek, OpenRouter, a local model), and its loop gets the same care
   as the CLI helpers' (prompt caching done; cost per model shown).

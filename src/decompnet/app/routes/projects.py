@@ -167,6 +167,7 @@ def register(app: App) -> None:
     routes = {
         "/api/project": (p_overview, ["GET"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
+        "/api/modelcosts": (lambda s, r, d: manager.costs(s), ["GET"]),
         "/api/save": (p_save, ["POST"]),
         "/api/live": (p_live, ["GET"]),
         "/api/function": (lambda s, r, d: net.function_detail(s, r.query_params.get("name", "")), ["GET"]),

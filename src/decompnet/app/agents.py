@@ -985,6 +985,15 @@ class Manager:
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
         self.sessions.pop(sid, None)
 
+    def costs(self, slug: str) -> list[dict]:
+        """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
+        more of. Cheapest per match first; models with no match last."""
+        rows = self.net.store.all(
+            "SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS matches, "
+            "SUM(compiles) AS compiles FROM helper_sessions WHERE project=? GROUP BY kind, model", slug)
+        out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0} for r in rows]
+        return sorted(out, key=lambda r: (r["matches"] == 0, (r["usd"] / r["matches"]) if r["matches"] else 0))
+
     def forget_project(self, slug: str) -> None:
         """A project is removed: its helpers stop and their records go with it."""
         for s in list(self.sessions.values()):

@@ -51,7 +51,24 @@ function helperState(s, claim) {
   return s.stopped_by === "you" || !s.why ? "Stopped by you" : `Stopped: ${esc(s.why)}`;
 }
 
+/* What each model cost on this game (helper_sessions), now and then: which models to run more of. */
+const COSTS_EVERY_MS = 30000;
+async function renderCosts(force = false) {
+  if (!force && S.costsAt && Date.now() - S.costsAt < COSTS_EVERY_MS && S.costsSlug === S.slug) return;
+  S.costsAt = Date.now(); S.costsSlug = S.slug;
+  let rows;
+  try { rows = await api(`/api/modelcosts?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
+  const box = $("modelCosts");
+  box.hidden = !rows.length;
+  const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
+  setHtml(box, `<p class="col-title">What each model cost here</p>
+    <p class="muted small">Cheapest per match first: run more of the models at the top.</p>
+    <ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
+      <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
+}
+
 function renderSessions(sessions) {
+  renderCosts();
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
   const running = sessions.filter((s) => LIVE.includes(s.state));
@@ -105,9 +122,9 @@ const withEffort = (a, model) => (a.id === "opencode" && LZ.effort && model ? `$
 function launcherInit() {
   if (LZ.kind || !S.st) return;
   const l = S.st.settings.launcher || {};
-  const ready = S.st.agents.filter((a) => a.installed && a.id !== "api");
   const known = S.st.agents.find((a) => a.id === l.kind && (a.installed || a.id === "api"));
-  LZ.kind = known ? known.id : (ready[0] ? ready[0].id : "api");
+  // the API helper first: decompdecomp runs its whole loop, and no other program's update can break it
+  LZ.kind = known ? known.id : "api";
   LZ.model = known ? (l.model || "") : "";
   LZ.count = l.count || 1;
   const eps = S.st.settings.endpoints || [];
@@ -163,10 +180,10 @@ const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
 function renderLauncher(box, compact = true) {
   if (!box || !S.st) return;
   launcherInit();
-  const list = S.st.agents;
+  const list = [...S.st.agents].sort((x, y) => (y.id === "api") - (x.id === "api"));
   const a = list.find((x) => x.id === LZ.kind) || list[0];
   const kinds = list.map((x) => `<button type="button" class="lz-kind ${x.id === a.id ? "on" : ""}" data-k="${esc(x.id)}">
-      <b>${esc(x.name)}</b><span>${x.id === "api" ? "DeepSeek, OpenRouter, Ollama…" : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
+      <b>${esc(x.name)}</b><span>${x.id === "api" ? "Recommended · any model with an API key" : x.installed ? esc(x.version ? x.version.replace(/\s*\(.*\)/, "") : x.vendor) : "not installed"}</span>
       ${x.installed || x.id === "api" ? "" : `<em>install</em>`}</button>`).join("");
   let body = "";
   if (!a.installed) {
@@ -176,12 +193,14 @@ function renderLauncher(box, compact = true) {
       <p class="muted small">${esc(a.signin)}</p><pre class="joblog" data-log hidden></pre>`;
   } else if (a.id === "api") {
     const eps = S.st.settings.endpoints || [];
+    const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any provider works (Anthropic, OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
     if (!LZ.eps.length && eps.length) LZ.eps = [eps[0].id];
     body = eps.length && !LZ.adding ? `<div class="ep-pick">${eps.map((e) => `<label class="check inline"><input type="checkbox" data-ep="${esc(e.id)}" ${LZ.eps.includes(e.id) ? "checked" : ""}>
         <span><b>${esc(e.name)}</b> <span class="mono small">${esc(e.model)}</span><br><span class="muted small mono">${esc(hostOf(e.base_url))}${e.max_sessions ? ` · at most ${e.max_sessions} at once` : ""}</span></span></label>`).join("")}</div>
       <p class="muted small">${eps.length > 1 ? "Tick several to spread the sessions across them. " : ""}<a class="link" href="#/agents">Manage endpoints</a> · <button type="button" class="link-btn" data-act="add-ep">Add one</button></p>`
       : `<div class="lz-fields">${endpointFields({ provider: "deepseek" }, compact)}</div>${eps.length ? `<p class="muted small"><button type="button" class="link-btn" data-act="pick-ep">Back to your endpoints</button></p>` : ""}`;
+    body = why + body;
   } else {
     const opts = modelOptions(a);
     const known = opts.some((o) => o.id === LZ.model);

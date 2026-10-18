@@ -466,3 +466,16 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
     row = net.store.one("SELECT * FROM helper_sessions WHERE helper_id=?", s.id)
     assert (row["input_tokens"], row["cache_read_tokens"], row["output_tokens"]) == (800, 3200, 200)
     assert (row["turns"], row["tool_calls"], row["outcome"]) == (4, 4, "ok")
+
+
+def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
+    """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match
+    first, models that matched nothing last."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    with net.store.tx() as db:
+        for model, usd, matches in (("claude-opus-5.5", 3.0, 10), ("deepseek-v4.1-flash", 0.5, 10), ("muse-1.3", 1.0, 0)):
+            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, matches) "
+                       "VALUES(1, 'game', 'api', ?, 'a', 0, ?, ?)", (model, usd, matches))
+    assert [r["model"] for r in m.costs("game")] == ["deepseek-v4.1-flash", "claude-opus-5.5", "muse-1.3"]
+    assert m.costs("other") == []
