@@ -1,5 +1,5 @@
-"""One notification centre for the whole app (REWRITE.md §3): the feed of every project's news, and the helpers
-that pause in it."""
+"""One notification centre for the whole app (REWRITE.md §3): the feed of every project's news, helpers that pause
+in it, and the compiler as one answer that checks itself (§2)."""
 
 from starlette.testclient import TestClient
 
@@ -61,3 +61,24 @@ def test_a_helper_that_pauses_says_so_in_the_feed(tmp_path, monkeypatch):
     m._finish(m.sessions[sid], "nothing left to decompile here")
     assert [e["kind"] for e in net.events_after(start)["events"]] == ["paused", "stopped"]
 
+
+def test_the_compiler_answer_checks_by_itself(tmp_path, monkeypatch):
+    """"Survey again" and "Check the applied ranges" were buttons nobody could say when to press. The answer runs them
+    itself: the survey when the game uses more than one compiler and the last one is old, and a look at each applied
+    part that hasn't had one. One compiler: nothing to try, nothing started."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    surveys, audits = [], []
+    monkeypatch.setattr(net, "start_survey", lambda slug: surveys.append(slug) or {"state": "running"})
+    monkeypatch.setattr(net.rangechecks, "audit", lambda proj: audits.append(proj["slug"]) or 0)
+    one = net.compiler_answer("game")
+    assert (one["compiler"], one["flags"], one["parts"]) == ("EE-GCC 2.95.3 (SN)", "-O2 -G8", [])
+    assert surveys == audits == []
+    part = {"start": 0x100000, "end": 0x100010, "toolchain": "ee-gcc-2.96", "flags": ["-O2", "-G0"]}
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("compiler_ranges", [part]))
+    two = net.compiler_answer("game")
+    assert surveys == audits == ["game"]
+    assert [(p["start"], p["flags"], p["check"]) for p in two["parts"]] == [(0x100000, "-O2 -G0", "")]
+    net.surveys["game"] = {"state": "running"}
+    net.compiler_answer("game")
+    assert surveys == ["game"]  # (one survey at a time)
