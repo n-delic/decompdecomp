@@ -167,7 +167,7 @@ async function startAgents(a, model, count, btn, extra = {}) {
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
     hideLaunch();
-    toast(`${esc(a.id === "api" ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. ${LZ.task === "readable" ? "Matched functions become readable one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    toast(`${esc(a.id === "api" ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
@@ -176,7 +176,8 @@ async function startAgents(a, model, count, btn, extra = {}) {
 /* The launcher, in the header's Start agents popover: the one place agents start from. `compact`: an API endpoint
    typed in here asks only what starting needs (the rest is on Agents & models). */
 const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
-  ["readable", "Make matched code readable", "rename, add types and a comment, keep it matching"]];
+  ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"]];
+const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matching: before that, agents decompile
 function renderLauncher(box, compact = true) {
   if (!box || !S.st) return;
   launcherInit();
@@ -210,10 +211,10 @@ function renderLauncher(box, compact = true) {
       ${a.id === "opencode" ? `<label class="field"><span>Effort (how hard the model thinks; opencode 2, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
   }
   const ready = a.installed;
-  // a ROM project's helpers can also make matched C readable (app/readable.py)
-  const tasks = S.ov && S.ov.kind !== "fork" && S.ov.matched ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+  // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches
+  const tasks = S.ov && S.ov.kind !== "fork" && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     TASKS.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
-    <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}${LZ.task ? " (readable: renamed, typed and commented, and still matching)" : ""}</span></div>` : "";
+    <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks) LZ.task = "";
   box.innerHTML = `${tasks}<div class="lz-kinds">${kinds}</div>
     <div class="lz-body">${body}
