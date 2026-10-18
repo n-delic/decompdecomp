@@ -146,6 +146,8 @@ class RangeChecks:
         """The judge's verdict on C built with a compiler, remembered by the C's hash: a recheck after every match
         asked the same questions again, two compiles for each neighbour. A new header version asks again."""
         ctx = self.net._context(proj["id"], fn["unit"])
+        # shortcut: a renamed symbol can change what C links to, and a remembered verdict doesn't see it until the
+        # app restarts; key verdicts by the symbols' version too if a check ever goes wrong that way
         key = (fn["id"], fn["size"], label, hashlib.sha1(source.encode("utf-8", "replace")).hexdigest(),
                (ctx["unit"], ctx["version"]) if ctx else None)
         if key not in self._verdicts:
