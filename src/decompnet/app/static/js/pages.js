@@ -4,6 +4,7 @@ async function showAgentsPage() {
   show("agentsPage");
   $("agList").innerHTML = `<p class="muted small">Looking for your agents…</p>`;
   await loadState();
+  await loadAgents();  // their versions and models: what this page is for
   renderAgentsPage();
 }
 function renderAgentsPage() {

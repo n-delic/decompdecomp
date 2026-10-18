@@ -64,7 +64,9 @@ def test_import_demo_and_follow_it_live(app):
     assert j["state"] == "done", j
     slug = j["result"]["slug"]
     st = client.get("/api/state").json()
-    assert st["projects"][0]["slug"] == slug and any(a["id"] == "api" for a in st["agents"])
+    assert any(a["id"] == "api" for a in st["agents"])
+    listed = client.get("/api/projects").json()[0]
+    assert listed["slug"] == slug and listed["functions"] >= 95 and listed["compiler"]["name"]
     full = client.get(f"/api/map?slug={slug}").json()
     assert len(full["rows"]) >= 95 and "name" in full["keys"]
     assert client.get(f"/api/map?slug={slug}&since={full['sig']}").json() == {"sig": full["sig"], "same": True}
@@ -72,6 +74,26 @@ def test_import_demo_and_follow_it_live(app):
     assert live["overview"]["functions"] >= 95 and live["events"][0]["kind"] == "import"
     detail = client.get(f"/api/function?slug={slug}&name=func_80000460").json()
     assert "glabel" in detail["asm"]
+
+
+def test_the_home_page_waits_for_no_agent_and_no_projects_files(tmp_path, monkeypatch):
+    """The first /api/state ran every agent's --version and `agy models` (3.7 s before the home page showed), and the
+    project list built every project's whole overview every 5 s, a fork's files included (2.5-3.7 s with agents at
+    work). The state says which agents are installed without running them; the list reads the database only."""
+    from .test_loading import tiny_game
+
+    monkeypatch.setattr(agents, "detect", lambda: pytest.fail("ran every agent's program"))
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security = build(net, tmp_path, PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}")
+    client.cookies.set("decomp_live", SECRET)
+    monkeypatch.setattr(net, "overview", lambda slug: pytest.fail("built a whole overview for the list"))
+    st = client.get("/api/state").json()
+    assert {a["id"] for a in st["agents"]} == set(agents.KINDS) and "projects" not in st
+    (game,) = client.get("/api/projects").json()
+    assert game["slug"] == "game" and game["functions"] == 4 and game["compiler"]["name"] and "broken" not in game
 
 
 def test_settings_never_echo_the_api_key(app):
@@ -286,14 +308,14 @@ def test_a_project_that_cant_be_read_is_listed_with_the_reason(app, monkeypatch)
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
                    ("odd-game", "Odd Game", "", "mips", 1, "/nowhere", "{}"))
-    real = net.overview
+    real = net.summary
 
-    def overview(slug, *a, **k):
+    def summary(slug, *a, **k):
         if slug == "odd-game":
             raise TypeError("'NoneType' object is not subscriptable")
         return real(slug, *a, **k)
 
-    monkeypatch.setattr(net, "overview", overview)
+    monkeypatch.setattr(net, "summary", summary)
     listed = {p["slug"]: p for p in client.get("/api/projects").json()}
     assert "TypeError" in listed["odd-game"]["broken"] and listed["odd-game"]["title"] == "Odd Game"
     assert any("broken" not in p for p in listed.values()) or len(listed) == 1

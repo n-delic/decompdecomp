@@ -6,8 +6,7 @@ async function openProject(slug, tab = "overview") {
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; $("expLog").hidden = true; $("expResult").innerHTML = ""; $("teamBox").innerHTML = "";
   try {
-    if (!S.st) await loadState();
-    S.ov = await api(`/api/project?slug=${slug}`);
+    [S.ov] = await Promise.all([api(`/api/project?slug=${slug}`), S.st ? null : loadState()]);
   } catch (e) {
     toast(esc(e.message), "err");
     location.hash = "#/";

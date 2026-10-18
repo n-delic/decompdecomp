@@ -89,7 +89,7 @@ const S = {
   mapView: "progress",  // the ROM map's colours: progress, or the compiler map
   st: null, slug: null, ov: null, map: [], byName: new Map(), e: 0, a: 0, seq: {}, sessions: [], tab: "overview",
   scores: new Map(), claims: [], flash: new Map(), timer: null, statsTimer: null, lastMapFetch: 0, fn: null, stats: null,
-  projects: [],
+  projects: [], agents: null,
 };
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage"];
 const TABS = ["overview", "functions", "agents", "activity", "team", "source", "settings"];
@@ -101,7 +101,25 @@ function openFolder() {
     .catch((e) => toast(esc(e.message), "err"));
 }
 
-async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); return S.st; }
+/* The agents' versions and models: finding them runs each agent's program (seconds; the home page used to wait for
+   it). /api/state only says which agents are installed; this fills in the rest after the page is drawn. */
+let agentsAsked = null;
+function loadAgents(again = false) {
+  if (again || !agentsAsked) {
+    agentsAsked = api("/api/agents/detected")
+      .then((list) => { S.agents = list; if (S.st) S.st.agents = list; return list; })
+      .catch(() => { agentsAsked = null; return S.st ? S.st.agents : []; });
+  }
+  return agentsAsked;
+}
+async function loadState() {
+  const st = await api("/api/state");
+  // what was found keeps its versions and models while it agrees with what's installed (an install since: again)
+  if (S.agents && st.agents.every((a) => S.agents.some((d) => d.id === a.id && d.installed === a.installed))) st.agents = S.agents;
+  else loadAgents(Boolean(S.agents));  // none found yet: the search under way (or a first one); out of date: again
+  S.st = st;
+  $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); return S.st;
+}
 
 function route() {
   const h = location.hash;

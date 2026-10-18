@@ -25,20 +25,15 @@ def register(app: App) -> None:
     manager, jobs, settings, guard, call = app.manager, app.jobs, app.settings, app.guard, app.call
     fail = app.fail
 
-    def overviews() -> list[tuple[str, dict | None, str]]:
-        """(slug, overview or None, why not) for every project. One that can't be read is still listed, with the
-        reason: before, one odd project emptied the whole sidebar, or quietly went missing from it."""
-        out = []
-        for p in net.store.all("SELECT slug, name FROM projects ORDER BY id DESC"):
-            try:
-                out.append((p["slug"], net.overview(p["slug"]), ""))
-            except Exception as e:  # noqa: BLE001
-                jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
-                out.append((p["slug"], {"slug": p["slug"], "title": p["name"] or p["slug"]}, job_error(e, jobs.log_path)))
-        return out
+    def agent_kinds() -> list[dict]:
+        """The agents, each with whether its program is on this computer, found without running any of them: the
+        first /api/state ran every agent's --version and `agy models` (3.7 s before the home page showed, and `agy
+        models` starts the MCP servers in Antigravity's settings). Versions and models: /api/agents/detected."""
+        return [{"id": k.id, "name": k.name, "vendor": k.vendor, "signin": agents.signin(k), "docs": k.docs,
+                 "install": k.install.get("windows" if agents.WIN else "unix", ""), "version": None, "path": None,
+                 "installed": not k.command or agents._which(k.command) is not None} for k in agents.KINDS.values()]
 
     def state() -> dict:
-        projects = [ov | ({"broken": why} if why else {}) for _, ov, why in overviews()]
         tcs = [t for t in toolchains.status() if t["id"] in COMPILERS or t["id"] in TOOLS]
         for t in tcs:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
@@ -46,7 +41,7 @@ def register(app: App) -> None:
         return {"version": __version__, "build": build_id, "install": updates.installed(), **hostenv.info(),
                 "platform": toolchains.current_platform(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
-                "projects": projects, "toolchains": tcs, "agents": agents.detect(),
+                "toolchains": tcs, "agents": agent_kinds(),
                 "api_presets": agents.API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
                 "platform_status": PLATFORM_STATUS,
                 "codewarrior": {"installed": toolchains.installed("mwcc") is not None,
@@ -63,17 +58,21 @@ def register(app: App) -> None:
                 pass
 
     def project_list() -> list[dict]:
-        """The sidebar: every project with its progress and how many helper agents work on it right now."""
+        """The sidebar and the home page: every project with its progress and how many helper agents work on it
+        right now. One that can't be read is still listed, with the reason: before, one odd project emptied the
+        whole sidebar, or quietly went missing from it."""
         running: dict[str, int] = {}
         for s in manager.sessions.values():
             if s.state in ("starting", "working", "waiting"):
                 running[s.slug] = running.get(s.slug, 0) + 1
         out = []
-        for slug, ov, why in overviews():
-            out.append({k: ov.get(k) for k in ("slug", "title", "kind", "origin", "platform", "platform_name", "ready",
-                                                "functions", "matched", "bytes", "matched_bytes", "last_activity")}
-                       | {"working": running.get(slug, 0), "room": (ov.get("room") or {}).get("role"),
-                          "autopilot": (ov.get("autopilot") or {}).get("state")} | ({"broken": why} if why else {}))
+        for p in net.store.all("SELECT slug, name FROM projects ORDER BY id DESC"):
+            try:
+                out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0)})
+            except Exception as e:  # noqa: BLE001
+                jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
+                out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                            "broken": job_error(e, jobs.log_path)})
         return out
 
     @mcp.custom_route("/api/projects", methods=["GET"])
@@ -83,6 +82,12 @@ def register(app: App) -> None:
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:
         return guard(request) or JSONResponse(await call(state))
+
+    @mcp.custom_route("/api/agents/detected", methods=["GET"])
+    async def api_agents_detected(request: Request) -> Response:
+        """The agents with their versions and models: finding those runs each agent's program (seconds the first
+        time), so the GUI asks for this after a page is drawn, never before."""
+        return guard(request) or JSONResponse(await call(agents.detect))
 
     @mcp.custom_route("/api/import", methods=["POST"])
     async def api_import(request: Request) -> Response:

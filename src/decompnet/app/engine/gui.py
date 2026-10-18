@@ -85,6 +85,37 @@ class GuiMixin:
             "room": self._room_info(proj["slug"]),
         }
 
+    def summary(self, slug: str) -> dict:
+        """A project for the project list (the sidebar asks every 5 s, for every project): what it is and how far it
+        got, from the database alone. It used to be each project's whole overview, a fork's files included, and with
+        agents at work the list took 2.5-3.7 s."""
+        from ...forks import catalog
+
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        agg = self.store.one(
+            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions WHERE project_id=?",
+            proj["id"])
+        platform = cfg.get("platform", "n64")
+        if cfg.get("kind") == "fork":
+            name = catalog.PLATFORMS.get(platform, platform or "")
+            about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
+                     "ready": bool(cfg.get("ready")), "rom": {"game_code": cfg.get("version") or "", "region": name},
+                     "compiler": {"name": "Project's own build"}}
+        else:
+            name = detect.PLATFORMS.get(platform, "")
+            tc = cfg["compiler"]["toolchain"]
+            about = {"rom": {k: cfg["rom"].get(k) for k in ("game_code", "region")},
+                     "compiler": {"name": SHORT_NAMES.get(tc, toolchains.get(tc).name)}}
+        return {"slug": proj["slug"], "title": proj["name"], "platform": platform, "platform_name": name,
+                "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
+                "matched_bytes": agg["matched_bytes"] or 0,
+                "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
+                                                proj["id"])["t"],
+                "room": (self._room_info(slug) or {}).get("role"),
+                "autopilot": (self.autopilot_status(slug) or {}).get("state")} | about
+
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:
             link = self.links[slug]
