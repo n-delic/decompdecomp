@@ -26,6 +26,10 @@ Everything in [CONVENTIONS.md](CONVENTIONS.md) still holds, plus:
   in logic. Name them once and use the name: `JAL_OPCODE = 0x0C000000`, `VTABLE_HEADER_BYTES = 8`,
   `SWITCH_COST = 8`. People and agents both read this code; a name says what a value means.
 - Breaking changes are allowed. No compatibility shims for the old app's data unless we decide one is worth it.
+- **Except the owner's projects.** The games in `~/Decomp` (GTA San Andreas, Ridge Racer V, Mario Kart 64, king)
+  keep being worked on with the release while the rewrite happens, and must carry over into the rewritten app with
+  all their progress: through the re-import of §7, or a one-time conversion of the old database. Tested on a copy
+  first; the originals are never written by development code.
 
 ## 1. A standalone app, and only that
 
