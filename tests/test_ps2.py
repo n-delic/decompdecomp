@@ -7,7 +7,6 @@ them must match byte for byte.
 """
 
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -306,7 +305,7 @@ def test_a_game_built_with_two_compilers(tmp_path):
                          net.project_row(slug)["id"], end)["name"]
     assert "this address range" not in net.claim(agent, slug, zlib)  # past the range: EE-GCC as before
 
-    if toolchains.installed("binutils-mips") is not None and shutil.which("ld.lld"):
+    if toolchains.installed("binutils-mips") is not None:
         out = net.export_rom(slug, log=lambda *_: None)  # each file built by its own range's compiler
         assert out["identical"] and out["matched"] == len(FUNCTIONS), out["log"]
 
@@ -348,7 +347,7 @@ def test_a_function_written_as_a_cpp_method_matches(toolchain, tmp_path):
               + csource.get((GAME / "game.c").read_text(), "add_score").replace("void add_score(", "void Score::add_score(", 1))
     res = net.attempt(agent, "add_score", caller, slug)
     assert res["matched"], res["text"]
-    if toolchains.installed("binutils-mips") is not None and shutil.which("ld.lld"):
+    if toolchains.installed("binutils-mips") is not None:
         out = net.export_rom(slug, log=lambda *_: None)  # the export builds them as .cpp, to the same bytes
         assert out["identical"], out["log"]
         assert (Path(out["path"]) / "src" / "cod" / "clamp_s32.cpp").exists(), out.get("fallback")
