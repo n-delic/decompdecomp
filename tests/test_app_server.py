@@ -411,3 +411,41 @@ def test_a_page_error_lands_in_the_apps_log(app, caplog):
         r = client.post("/api/log", json={"message": "x is undefined", "where": "base.js:12:3", "stack": "at f"},
                         headers={"X-Decomp": "1"})
     assert r.status_code == 200 and "page: x is undefined (base.js:12:3)" in caplog.text
+
+
+def test_decomp_stop_stops_a_running_1_0_2_and_says_so_only_when_it_has(tmp_path, monkeypatch):
+    """A running 1.0.2 took the secret only in its cookie: the new `decomp stop` (and the installer, which runs it)
+    said "stopped" while the old app kept serving the user's projects."""
+    import http.server
+    import threading
+
+    from decompnet.app import cli
+
+    class Old(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # /health
+            body = json.dumps({"ok": True, "app": "decomp-wtf", "version": "1.0.2-alpha"}).encode()
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # /api/quit: only with the old cookie
+            ok = "decomp_live=s3cret" in (self.headers.get("Cookie") or "")
+            self.send_response(200 if ok else 401)
+            self.end_headers()
+            self.wfile.write(b"{}")
+            if ok:
+                threading.Thread(target=server.shutdown, daemon=True).start()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Old)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    home = tmp_path / "home"
+    (home / ".decomp").mkdir(parents=True)
+    (home / ".decomp" / "server.json").write_text(json.dumps({"port": server.server_address[1], "secret": "s3cret",
+                                                              "pid": 1}))
+    monkeypatch.setenv("DECOMP_HOME", str(home))
+    server_alive = cli.stop(None)
+    server.server_close()
+    assert server_alive == 0

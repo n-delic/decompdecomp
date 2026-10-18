@@ -70,6 +70,7 @@ def test_no_window_in_tests(tmp_path, monkeypatch):
 def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
     """No browser to fall back to: the user is told the packages, with their distribution's command."""
     window.missing.cache_clear()
+    monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(window, "SYSTEM_PYTHON", "/bin/false")
     monkeypatch.setattr(window, "_distro_family", lambda: "fedora")
     try:
@@ -77,6 +78,17 @@ def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
         window.missing.cache_clear()
         monkeypatch.setattr(window, "_distro_family", lambda: None)
         assert "package manager" in window.missing()
+    finally:
+        window.missing.cache_clear()
+
+
+def test_with_no_desktop_it_says_so_instead_of_vanishing(monkeypatch):
+    """Started over ssh, the app exited without a word: the window had nowhere to open."""
+    window.missing.cache_clear()
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    try:
+        assert "no desktop here" in window.missing()
     finally:
         window.missing.cache_clear()
 

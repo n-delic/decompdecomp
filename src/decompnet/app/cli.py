@@ -24,6 +24,7 @@ from .. import hostenv
 from . import edition, tray, window
 
 PORTS_TO_TRY = 50
+OLD_COOKIE = "decomp_live"  # 1.0.2 and older took the secret in this cookie
 HEALTH_TIMEOUT_SECONDS = 1.5
 QUIT_WAIT_SECONDS = 10
 QUIT_POLL_SECONDS = 0.1
@@ -57,11 +58,13 @@ def _version_key(v: str) -> tuple[int, ...]:
 
 def _call(info: dict, path: str, body: dict | None = None, timeout: float = 10) -> dict:
     """Call the running app's API as `decomp` itself: its user agent carries the secret from server.json (the
-    user's own file, 0600), like the window's (window.token_of)."""
+    user's own file, 0600), like the window's (window.token_of). The cookie carries it too, for a running 1.0.2 or
+    older, which knew only that: without it, `decomp stop` and the installer couldn't stop the old app."""
     port = info["port"]
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="POST" if body is not None else "GET",
                                  data=json.dumps(body).encode() if body is not None else None,
                                  headers={"User-Agent": f"{window.TOKEN_AGENT}{info['secret']}", "X-Decomp": "1",
+                                          "Cookie": f"{OLD_COOKIE}={info['secret']}",
                                           "Host": f"127.0.0.1:{port}", "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"{}")
@@ -271,6 +274,8 @@ def setup(args) -> int:
 
 
 def stop(args) -> int:
+    """Quit the running app of this home, and say so only once it has: it used to say "stopped" to a 1.0.2 app
+    that refused the request and kept running."""
     running = _state(home_dir() / ".decomp" / "server.json")
     if running is None:
         print(f"{edition.NAME} is not running")
@@ -279,8 +284,14 @@ def stop(args) -> int:
         _call(running, "/api/quit", {}, timeout=5)
     except OSError:
         pass
-    print(f"{edition.NAME} stopped")
-    return 0
+    for _ in range(int(QUIT_WAIT_SECONDS / QUIT_POLL_SECONDS)):
+        if not _alive(running["port"]):
+            print(f"{edition.NAME} stopped")
+            return 0
+        time.sleep(QUIT_POLL_SECONDS)
+    pid = running.get("pid")
+    print(f"{edition.NAME} didn't stop" + (f": end it with `kill {pid}`" if pid else ""), file=sys.stderr)
+    return 1
 
 
 def shortcut(args) -> int:

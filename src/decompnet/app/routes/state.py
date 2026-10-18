@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 from ... import __version__, consoles, hostenv, toolchains
 from ...network import NetworkError
-from .. import agents, saves, updates
+from .. import agents, cleanup, saves, updates
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, _static, job_error
 from . import App
@@ -44,6 +44,7 @@ def register(app: App) -> None:
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
+                "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
                 "api_presets": agents.API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
                 # every console: names, status, compilers, layout, features (consoles/, Console.describe)
                 "consoles": [c.describe() for c in consoles.CONSOLES]}

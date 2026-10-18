@@ -146,5 +146,7 @@ def register(app: App) -> None:
             settings.data["check_updates"] = bool(data["check_updates"])
         if "auto_compiler" in data:
             settings.data["auto_compiler"] = net.auto_compiler = bool(data["auto_compiler"])
+        if "bridges_removed_seen" in data:  # the notice of what the cleanup removed (cleanup.report), seen
+            settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
         settings.save()
         return JSONResponse(settings.public())

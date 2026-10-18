@@ -55,6 +55,9 @@ def _distro_family() -> str | None:
 @functools.cache
 def missing() -> str | None:
     """Why the window can't open here (what to install, and how), or None when it can."""
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):  # over ssh, or a text console
+        return ("decompdecomp opens its own window, and there's no desktop here to show it on. "
+                "Start decompdecomp from a terminal in your desktop session (or from the apps menu).")
     probe = 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")'
     try:
         ok = subprocess.run([SYSTEM_PYTHON, "-I", "-c", probe], capture_output=True, timeout=CHECK_SECONDS).returncode == 0
