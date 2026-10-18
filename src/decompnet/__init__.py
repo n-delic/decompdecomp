@@ -1,4 +1,4 @@
-"""DecompNet: collaborative matching decompilation for AI agents."""
+"""decompdecomp: an app where AI agents decompile games you own into C that builds them again, byte for byte."""
 
 import sys
 
@@ -13,14 +13,3 @@ def utf8_output() -> None:
             if stream is not None and not stream.isatty():
                 stream.reconfigure(encoding="utf-8", errors="replace")
 
-
-if sys.platform == "win32":
-    # Python only trusts the root certificates Windows has already cached, and Windows fetches the others the first
-    # time a browser needs them: downloads from some hosts (developer.arm.com) fail with CERTIFICATE_VERIFY_FAILED.
-    # Verify through Windows itself instead, like every other program there does.
-    try:
-        import truststore
-
-        truststore.inject_into_ssl()
-    except ImportError:
-        pass

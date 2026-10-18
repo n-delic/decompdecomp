@@ -118,8 +118,6 @@ def get(tid: str) -> Toolchain:
 
 def data_dir() -> Path:
     """Per-user data directory for decompnet (toolchains, caches)."""
-    if sys.platform == "win32":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "decompnet"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "decompnet"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "decompnet"
@@ -311,8 +309,8 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
 
 
 def venv_bin(venv: Path, name: str) -> Path:
-    """Path of an executable inside a virtual environment, on any OS."""
-    return venv / "Scripts" / f"{name}.exe" if sys.platform == "win32" else venv / "bin" / name
+    """Path of an executable inside a virtual environment."""
+    return venv / "bin" / name
 
 
 def _install_python_env(tc: Toolchain, dest: Path, log) -> None:
