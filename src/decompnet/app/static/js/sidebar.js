@@ -17,6 +17,15 @@ async function loadNav() {
   }
   renderNav();
 }
+/* Each project's colour, the same in the sidebar and in every notification, so a glance says which game it was. In
+   the order the projects were made (app.css orders the colours so that neighbours differ most): a new project never
+   changes the colours of the ones before it. Past six projects the colours come round again. */
+const PROJECT_COLOURS = 6;  // app.css: .pc-0 ... .pc-5
+function colourOf(slug) {
+  const i = S.projects.length - 1 - S.projects.findIndex((p) => p.slug === slug);  // (the list is newest first)
+  return i < S.projects.length ? i % PROJECT_COLOURS : 0;
+}
+
 function renderNav() {
   const box = $("navProjects");
   if (!S.projects.length) { box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
@@ -29,7 +38,7 @@ function renderNav() {
       <span class="np-top"><span class="np-name">${esc(p.title)}</span></span>
       <span class="np-meta"><span>can't be opened: hover for why</span></span></a>`;
     return `<a class="nav-proj" href="#/p/${esc(p.slug)}" data-slug="${esc(p.slug)}" title="${esc(p.title)}">
-      <span class="np-top"><span class="np-name">${esc(p.title)}</span>${state}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
+      <span class="np-top"><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span><span class="np-name">${esc(p.title)}</span>${state}${p.room ? `<span class="np-room" title="${p.room === "host" ? "you share this project" : "in a team room"}">●●</span>` : ""}</span>
       <span class="np-meta"><span>${esc(short)}</span><span class="grow"></span><span>${p.kind === "fork" && !p.ready ? "set up" : pctNum(pct) + "%"}</span></span>
       <span class="np-bar"><i data-w="${pct.toFixed(2)}"></i></span></a>`;
   }).join("");
@@ -60,6 +69,7 @@ newMenu.onclick = (e) => {
   const what = b.dataset.new;
   if (what === "file") { if (location.hash && location.hash !== "#/") location.hash = "#/"; $("file").click(); }
   else if (what === "fork") location.hash = "#/catalog";
+  else if (what === "restore") openRestore();
   else if (what === "join") openJoin();
   else if (what === "demo") $("demoBtn").click();
 };
@@ -73,4 +83,166 @@ newMenu.addEventListener("keydown", (e) => {
   }
 });
 document.addEventListener("click", (e) => { if (!newMenu.hidden && !e.target.closest(".nav-new-wrap")) closeNew(); });
+
+/* ------------------------------------------------------------------ report a problem
+   Always one click away, on every page: a new GitHub issue in the user's own browser (the window sends links there),
+   already holding the version and this computer, and a report on the clipboard to paste in. The end of the log
+   stays out of the address: too long, and it can hold the user's paths. */
+const ISSUES_URL = "https://github.com/n-delic/decompdecomp/issues/new";
+function reportLink() {
+  const st = S.st || {};
+  const body = ["**What happened?**", "", "", "**What did you expect?**", "", "", "**What were you doing?** (which game's platform, which screen)", "", "",
+    "---", `decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || ""}${st.system ? ` · ${st.system}` : ""}`,
+    "Paste the copied report here (decompdecomp put it on your clipboard when you clicked Report a problem)."].join("\n");
+  $("reportLink").href = `${ISSUES_URL}?body=${encodeURIComponent(body)}`;
+}
+$("reportLink").addEventListener("click", () => {
+  const log = fetch("/api/log").then((r) => r.text()).catch(() => "(the log couldn't be read)");
+  copyText(log.then((text) => bugReport([`Page: ${location.hash || "#/"}`], text))).then((ok) => toast(ok
+    ? "A new issue opens in your browser. A report is on your clipboard: paste it into the issue."
+    : "A new issue opens in your browser. The report couldn't be copied: the log is at Settings → This computer."));
+});
+
+/* ------------------------------------------------------------------ the notification centre (REWRITE.md §3)
+   One feed for the whole app (/api/events): every project's news, each in its project's colour with its name, the
+   agent and what happened. A burst (an agent's or the autopilot's run of matches) is one line that counts up ("+12
+   more matches"). The feed starts where it is when the window opens: what happened before is history in the panel,
+   never news. Two games with agents at work used to stall the window, then flood it with toasts of the past. */
+const NOTIFY_POLL_MS = 2000;
+const BURST_SECONDS = 30;  // the same kind of news from one project this close together is one line
+const HISTORY_KEEP = 300;  // events the panel keeps
+const NOTE_TOAST_MS = 6000, NOTE_TOASTS_SHOWN = 3;
+const N = { last: null, polling: false, history: new Map(), live: [], unread: 0, loaded: false };
+
+/* Events into lines: news of one kind from one project, close in time, is one line. Oldest first. */
+function burstLines(events) {
+  const lines = [];
+  for (const ev of events) {
+    const g = lines.findLast((x) => x.slug === ev.slug && x.kind === ev.kind);
+    if (g && ev.created_at - g.t <= BURST_SECONDS) { g.events.push(ev); g.t = ev.created_at; continue; }
+    lines.push({ slug: ev.slug, project: ev.project, kind: ev.kind, t: ev.created_at, events: [ev] });
+  }
+  return lines;
+}
+const MORE = { match: ["more match", "more matches"], link: ["more file linked", "more files linked"], reopen: ["more function reopened", "more functions reopened"] };
+/* A line in words: the newest event of the burst, "+N more" for the rest (everything from the server is escaped). */
+function noteHtml(g) {
+  const ev = g.events[g.events.length - 1], who = esc(ev.agent || "an agent"), d = ev.detail || "";
+  const fn = (name) => `<button type="button" class="fn" data-slug="${esc(g.slug)}" data-fn="${esc(name)}">${esc(name)}</button>`;
+  const what = {
+    match: () => `${who} matched ${fn(d)}`,
+    link: () => `${esc(d)} is linked: the game builds from its C`,
+    autopilot: () => `Autopilot: ${esc(d)}`,
+    compiler: () => `Compiler: ${esc(d)}`,
+    reopen: () => esc(d),
+    knowledge: () => `Agents agree on something every agent should know (${esc(d)})`,
+    collab: () => esc(sentence(d)),
+    import: () => `Game analysed: ${esc(d)}`,
+    files: () => `${who} gave code without a source file one: ${esc(d)}`,
+    paused: () => `${who} paused: ${esc(d)}`,
+    stopped: () => `${who} stopped: ${esc(d)}`,
+  }[g.kind] || (() => `${who} ${esc(g.kind)} ${esc(d)}`);
+  const n = g.events.length - 1, more = MORE[g.kind] || ["more", "more"];
+  return `${what()}${n ? ` <span class="n-more">+${n.toLocaleString()} ${n === 1 ? more[0] : more[1]}</span>` : ""}`;
+}
+function noteLine(g, tag = "li") {
+  const all = g.kind === "match" && g.events.length > 1
+    ? `<details class="n-all"><summary>Which ones</summary><span>${g.events.map((e) => `<button type="button" class="fn" data-slug="${esc(g.slug)}" data-fn="${esc(e.detail)}">${esc(e.detail)}</button>`).join(" ")}</span></details>` : "";
+  return `<${tag} class="note-line${g.kind === "paused" ? " bad" : ""}"><span class="swatch pc-${colourOf(g.slug)}" aria-hidden="true"></span>
+    <span class="n-body"><span class="n-head"><a href="#/p/${esc(g.slug)}">${esc(g.project)}</a><time>${clock(g.t).slice(0, 5)}</time></span>
+    <span class="n-text">${noteHtml(g)}</span>${tag === "li" ? all : ""}</span></${tag}>`;
+}
+
+/* Live news as toasts: a burst's toast counts up in place instead of a new toast per event. */
+function showNews(events) {
+  for (const g of burstLines(events)) {
+    const key = g.slug + "\u0000" + g.kind;
+    let t = N.live.find((x) => x.key === key && g.events[0].created_at - x.g.t <= BURST_SECONDS && x.el.isConnected);
+    if (t) { t.g.events.push(...g.events); t.g.t = g.t; }
+    else {
+      N.unread++;
+      t = { key, g, el: document.createElement("div") };
+      t.el.className = "toast note";
+      N.live.push(t);
+      $("toasts").append(t.el);
+      const shown = N.live.filter((x) => x.el.isConnected);
+      for (const old of shown.slice(0, Math.max(0, shown.length - NOTE_TOASTS_SHOWN))) old.el.remove();
+    }
+    t.el.innerHTML = noteLine(t.g, "div");
+    clearTimeout(t.timer);
+    const done = t;
+    t.timer = setTimeout(() => { done.el.remove(); N.live = N.live.filter((x) => x !== done); }, NOTE_TOAST_MS);
+  }
+  markUnread();
+}
+function markUnread() {
+  document.querySelectorAll(".notif-count").forEach((c) => { c.hidden = !N.unread; c.textContent = N.unread > 99 ? "99+" : N.unread; });
+  document.querySelectorAll("[data-notif]").forEach((b) => b.setAttribute("aria-label", N.unread ? `Notifications, ${N.unread} new` : "Notifications"));
+}
+
+async function pollEvents() {
+  if (N.polling) return;
+  N.polling = true;
+  try {
+    const r = await api(`/api/events${N.last == null ? "" : `?after=${N.last}`}`);
+    const first = N.last == null;
+    N.last = r.last;
+    if (first || !r.events.length) return;
+    for (const ev of r.events) N.history.set(ev.id, ev);
+    trimHistory();
+    showNews(r.events);
+    if (!$("notifPanel").hidden) renderNotes();
+  } catch { /* the app is restarting: the next poll carries on where this one stopped */ } finally { N.polling = false; }
+}
+function trimHistory() {
+  const ids = [...N.history.keys()].sort((a, b) => a - b);
+  for (const id of ids.slice(0, Math.max(0, ids.length - HISTORY_KEEP))) N.history.delete(id);
+}
+function renderNotes() {
+  const lines = burstLines([...N.history.values()].sort((a, b) => a.id - b.id)).reverse();
+  setHtml($("notifList"), lines.length ? lines.map((g) => noteLine(g)).join("")
+    : `<li class="note-empty muted small">Nothing yet. Matches, paused agents and compiler news from all your projects show up here.</li>`);
+}
+async function openNotes() {
+  $("notifPanel").hidden = false;
+  document.querySelectorAll("[data-notif]").forEach((b) => b.setAttribute("aria-expanded", "true"));
+  N.unread = 0; markUnread();
+  for (const t of N.live) t.el.remove();  // (their news is in the panel now)
+  N.live = [];
+  if (!N.loaded) {  // the history once; live news joins it as it comes
+    try { for (const ev of (await api("/api/events?recent=1")).events) N.history.set(ev.id, ev); N.loaded = true; } catch { /* shown empty */ }
+    trimHistory();
+  }
+  renderNotes();
+  $("notifClose").focus();
+}
+function closeNotes(back = true) {
+  if ($("notifPanel").hidden) return;
+  $("notifPanel").hidden = true;
+  document.querySelectorAll("[data-notif]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+  if (back) (S.notesFrom || document.querySelector("[data-notif]")).focus();
+}
+document.querySelectorAll("[data-notif]").forEach((b) => {
+  b.onclick = (e) => { e.stopPropagation(); S.notesFrom = b; if ($("notifPanel").hidden) openNotes(); else closeNotes(); };
+});
+$("notifClose").onclick = () => closeNotes();
+document.addEventListener("click", (e) => {
+  if (!$("notifPanel").hidden && !e.target.closest("#notifPanel, [data-notif]")) closeNotes(false);
+});
+/* A function named in a notification: its project opens, then the function. */
+const OPEN_WAIT_TRIES = 50, OPEN_WAIT_MS = 100;
+async function openNoted(slug, name) {
+  closeNotes(false);
+  if (S.slug !== slug || $("project").hidden) location.hash = `#/p/${slug}`;
+  for (let i = 0; i < OPEN_WAIT_TRIES && !(S.slug === slug && S.ov && S.ov.slug === slug); i++) await sleep(OPEN_WAIT_MS);
+  if (S.slug === slug) openFn(name);
+}
+for (const box of [$("notifList"), $("toasts")]) {
+  box.addEventListener("click", (e) => {
+    const b = e.target.closest("button.fn[data-slug]");
+    if (b) { e.preventDefault(); openNoted(b.dataset.slug, b.dataset.fn); return; }
+    if (e.target.closest("a[href^='#/p/']")) closeNotes(false);
+  });
+}
+setInterval(pollEvents, NOTIFY_POLL_MS);
 

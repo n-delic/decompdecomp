@@ -16,6 +16,14 @@ from ...project import compiler_for
 from ...rom import detect
 from .common import PLATFORM_COMPILERS, SHORT_NAMES
 
+# What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
+NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "knowledge", "collab", "import", "files",
+                "paused", "stopped")
+EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
+EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
+              "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
+              f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
+
 
 class GuiMixin:
     def export_rom(self, slug: str, log=print) -> dict:
@@ -302,3 +310,28 @@ class GuiMixin:
                     claims.append(dict(row) | {"agent": "@" + c["agent"], "claimed_at": None})
         return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
                 "claims": claims, "overview": self.overview(slug)}
+
+    def events_after(self, after: int | None, limit: int = EVENTS_PER_ASK) -> dict:
+        """The notification centre's feed, for every project at once: what happened after event `after`, oldest
+        first. With no `after` (the app's window just opened): nothing, only where the feed starts, so nothing that
+        happened before is ever shown as news. Two games with agents at work flooded each project's own feed with
+        what happened before it was opened. A range of the events' primary key: cheap however long the history."""
+        last = self.store.one("SELECT COALESCE(MAX(id), 0) AS n FROM events")["n"]
+        if after is None:
+            return {"last": last, "events": []}
+        # (up to `last` only: an event written meanwhile comes with the next ask, not twice)
+        rows = self.store.all(f"{EVENT_ROWS} AND e.id>? AND e.id<=? ORDER BY e.id LIMIT ?", after, last, limit)
+        return {"last": rows[-1]["id"] if len(rows) == limit else last, "events": [dict(r) for r in rows]}
+
+    def recent_events(self, limit: int = EVENTS_PER_ASK) -> list[dict]:
+        """The notification centre's history: the latest notable events of every project, newest first."""
+        return [dict(r) for r in self.store.all(f"{EVENT_ROWS} ORDER BY e.id DESC LIMIT ?", limit)]
+
+    def record_event(self, slug: str, kind: str, detail: str, agent_name: str = "") -> None:
+        """Something that happened outside the judge (a helper paused on an error), in the project's feed and the
+        notification centre. A project removed meanwhile: nothing to record."""
+        proj = self.store.one("SELECT id FROM projects WHERE slug=?", slug)
+        agent = self.store.one("SELECT id FROM agents WHERE name=?", agent_name) if agent_name else None
+        if proj is not None:
+            with self.store.tx() as db:
+                self._event(db, proj["id"], agent["id"] if agent else None, kind, detail)

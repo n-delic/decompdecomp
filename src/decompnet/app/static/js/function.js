@@ -22,8 +22,7 @@ async function openFn(name) {
   const again = S.fn === name && !$("drawer").hidden;
   if (!again) { giveBack(name); S.editDirty = false; $("tryMsg").hidden = true; }
   S.fn = name;
-  $("drawer").hidden = false;
-  document.body.classList.add("locked");
+  showDrawer("drawer");
   if (!again) { S.ftab = null; S.which = "latest"; S.diffKey = null; $("diff").innerHTML = ""; $("diffSum").textContent = ""; }
   drawMap();
   document.querySelectorAll("#fnRows tr").forEach((tr) => tr.classList.toggle("sel", tr.dataset.fn === name));
@@ -69,7 +68,8 @@ async function refreshFn(first) {
     const pinned = (S.ov.priority || []).includes(d.name);
     $("fnPin").hidden = S.ov.kind === "fork" || d.status !== "open";
     $("fnPin").classList.toggle("on", pinned);
-    $("fnPin").textContent = pinned ? "★ Next (on)" : "★ Next";
+    $("fnPin").setAttribute("aria-pressed", pinned);
+    $("fnPin").textContent = pinned ? "★ Agents do this first" : "☆ Do this first";
     $("fnPin").onclick = () => togglePrio(d.name, !pinned).then(() => refreshFn(false));
     $("noteAdd").onclick = async () => {
       const text = $("noteText").value.trim();
@@ -275,17 +275,23 @@ $("fnNext").onclick = () => stepFn(1);
 
 /* ------------------------------------------------------------------ function list */
 const L = { q: "", filter: "all", sort: "i", dir: 1, limit: 200, rows: [] };
-const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"]];
+const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["first", "★ First"]];
+// ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
+const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
+const canStar = () => !!(S.ov && S.ov.kind !== "fork");
 const fnState = (f) => (f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
 const STATE_RANK = { working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
-  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0 };
-  for (const f of S.map) counts[fnState(f)]++;
-  $("fnFilter").innerHTML = FILTERS.map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}">${label}<span>${counts[k].toLocaleString()}</span></button>`).join("");
+  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, first: 0 };
+  for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; }
+  const star = canStar();
+  if (!star && L.filter === "first") L.filter = "all";
+  $("fnFilter").innerHTML = FILTERS.filter(([k]) => star || k !== "first").map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}"${k === "first" ? ` title="Agents take starred functions before the others"` : ""}>${label}<span>${counts[k].toLocaleString()}</span></button>`).join("");
+  $("starHint").hidden = $("thStar").hidden = !star;
   const q = L.q.trim().toLowerCase();
-  let rows = S.map.filter((f) => (L.filter === "all" || fnState(f) === L.filter)
+  let rows = S.map.filter((f) => (L.filter === "all" || (L.filter === "first" ? starred(f) : fnState(f) === L.filter))
     && (!q || f.name.toLowerCase().includes(q) || hex8(f.vram).toLowerCase().includes(q) || (f.unit || "").toLowerCase().includes(q)));
   const key = {
     i: (f) => f.i, name: (f) => f.name.toLowerCase(), insns: (f) => f.insns, attempts: (f) => f.attempts || 0,
@@ -299,10 +305,12 @@ function renderList() {
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
     const status = st === "matched" ? `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>` : st === "asm" ? `<span class="st" title="hand-written assembly: no C compiles to it">assembly</span>` : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
-    return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0"><td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
-      <td class="mono name">${(S.ov && (S.ov.priority || []).includes(f.name)) ? `<span class="star" title="agents take it next">★</span>` : ""}${esc(f.name)}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
+    const on = starred(f), open = st !== "matched" && st !== "asm";
+    const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
+    return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
+      <td class="mono name">${esc(f.name)}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
       <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td>${status}</td></tr>`;
-  }).join("") || `<tr class="none"><td colspan="6">No function matches${q ? ` “${esc(L.q)}”` : ""}.</td></tr>`;
+  }).join("") || `<tr class="none"><td colspan="7">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`;
   $("fnShown").textContent = rows.length > L.limit ? `${L.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "function");
   $("fnMore").hidden = rows.length <= L.limit;
   document.querySelectorAll(".fn-table th").forEach((th) => {
@@ -313,8 +321,13 @@ function renderList() {
 $("fnFilter").addEventListener("click", (e) => { const b = e.target.closest("[data-filter]"); if (b) { L.filter = b.dataset.filter; L.limit = 200; renderList(); } });
 $("fnSearch").addEventListener("input", () => { L.q = $("fnSearch").value; L.limit = 200; renderList(); });
 $("fnMore").onclick = () => { L.limit += 500; renderList(); };
-$("fnRows").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-fn]"); if (tr) openFn(tr.dataset.fn); });
-$("fnRows").addEventListener("keydown", (e) => { const tr = e.target.closest("tr[data-fn]"); if (tr && e.key === "Enter") openFn(tr.dataset.fn); });
+$("fnRows").addEventListener("click", (e) => {
+  const star = e.target.closest("[data-star]");
+  if (star) { togglePrio(star.dataset.star, star.getAttribute("aria-pressed") !== "true"); return; }
+  const tr = e.target.closest("tr[data-fn]");
+  if (tr) openFn(tr.dataset.fn);
+});
+$("fnRows").addEventListener("keydown", (e) => { const tr = e.target.closest("tr[data-fn]"); if (tr && e.key === "Enter" && e.target === tr) openFn(tr.dataset.fn); });
 document.querySelectorAll(".fn-table th[data-sort]").forEach((th) => {
   th.onclick = () => {
     const k = th.dataset.sort === "vram" ? "i" : th.dataset.sort;

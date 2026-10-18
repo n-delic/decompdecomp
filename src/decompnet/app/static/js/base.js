@@ -3,9 +3,10 @@
    it only ever reaches the page through textContent or esc().
 
    The GUI is nine classic scripts sharing one global scope, loaded by index.html in this order: base (helpers,
-   theme, state and routing), sidebar, home, project (overview, team, public decomps), map, agents (who's working,
-   the launcher, feeds), function (the drawer, the function list), steering (drawers and keys, instructions,
-   source, project settings), pages (the app's own pages, updates, and starting the app). Functions can be called
+   theme, state and routing, bug reports), sidebar (the project list, New project, the notification centre), home,
+   project (overview, decompiling together, public decomps), map, agents (who's working, the launcher, what
+   happens), function (the drawer, the function list), steering (drawers and keys, instructions, export, project
+   settings and the compiler), pages (the app's own pages, updates, and starting the app). Functions can be called
    across files once all have loaded; code that runs while a file loads may only use what this file or an earlier
    one defines. Not ES modules: they would need an import for every name used across files. */
 
@@ -93,7 +94,9 @@ const S = {
   gen: 0, primed: false, openedAt: 0,  // which opening of a project polls belong to, its first poll done, and when
 };
 const VIEWS = ["home", "catalog", "project", "agentsPage", "toolsPage", "settingsPage"];
-const TABS = ["overview", "functions", "agents", "activity", "team", "source", "settings"];
+/* A project's views. Activity is in Agents now, Team and Source are the header's Decompile together and Export:
+   seven tabs were too many to tell apart. */
+const TABS = ["overview", "functions", "agents", "settings"];
 
 /* The project folder in the computer's file manager (decompdecomp in Docker says where it is instead). */
 function openFolder() {
@@ -102,7 +105,26 @@ function openFolder() {
     .catch((e) => toast(esc(e.message), "err"));
 }
 
-async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); return S.st; }
+/* What a bug report needs, ready to paste into a GitHub issue: decompdecomp's version and build, this computer, what
+   the reporter adds, and the end of a log. Used by a failed import's "Copy for a bug report" and by Report a problem. */
+const REPORT_LOG_LINES = 80;
+function bugReport(lines, log = "") {
+  const st = S.st || {};
+  return [`decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || navigator.platform}${st.system ? ` · ${st.system}` : ""}`,
+    ...lines, "", "Log:", "```", log.split("\n").slice(-REPORT_LOG_LINES).join("\n"), "```"].join("\n");
+}
+/* The clipboard takes a promise of the text (WebKit, the app's window, only lets a click write to it while the click
+   is being handled, and the log arrives later); writeText where that isn't there. */
+async function copyText(text) {
+  try {
+    if (window.ClipboardItem && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": Promise.resolve(text).then((t) => new Blob([t], { type: "text/plain" })) })]);
+    } else await navigator.clipboard.writeText(await text);
+    return true;
+  } catch { return false; }
+}
+
+async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); reportLink(); return S.st; }
 /* The app looks for installed agents in the background (it runs each one's CLI: seconds): ask again until it's done,
    then show their models where agents are picked. */
 const DETECT_POLL_MS = 1500;
@@ -110,8 +132,7 @@ function agentsFound() {
   if (S.st.agents_detecting) { clearTimeout(S.detectTimer); S.detectTimer = setTimeout(loadState, DETECT_POLL_MS); return; }
   if (S.detectTimer) {
     S.detectTimer = null;
-    if (S.tab === "agents" && !$("project").hidden) renderLauncher($("launcher"));
-    if (!$("launchPop").hidden) renderLauncher($("launchPopBody"), true);
+    if (!$("launchPop").hidden) renderLauncher($("launchPopBody"));
     if (!$("agentsPage").hidden) renderAgentsPage();
   }
 }

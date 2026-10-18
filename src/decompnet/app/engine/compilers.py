@@ -36,6 +36,10 @@ class CompilerMixin:
     AGREE = 3
 
     SURVEY_MIN_INSNS = 12  # a shorter function comes out the same from several compilers: it proves nothing
+    # The compiler answer's own checking: the survey runs again by itself at most this often (it skips C it tried, so
+    # a run where little changed is quick)
+    SURVEY_AGAIN_SECONDS = 3600
+    ANSWER_STRETCHES = 12  # stretches that look built by another compiler, listed in the answer
 
     def compiler_map(self, proj, fresh: bool = False) -> compilermap.CompilerMap | None:
         """Which compiler built each part of a MIPS game: matches, the judge's confirmations and the habits that rule
@@ -332,6 +336,50 @@ class CompilerMixin:
         older global one, which projects without their own keep."""
         own = self.cfg(proj).get("auto_compiler")
         return self.auto_compiler if own is None else bool(own)
+
+    def compiler_answer(self, slug: str, check_now: bool = False) -> dict:
+        """Which compiler built the game, as one answer for the GUI: the project's compiler, the parts built with
+        another one (each with what checking it said), and the stretches whose code looks like another compiler's
+        that nothing applies yet. The app does the checking itself: the judge's survey runs in the background when
+        it's older than SURVEY_AGAIN_SECONDS, and every applied range gets looked at again once. "Survey again" and
+        "Check the applied ranges" were buttons nobody could say when to press, the owner and their author included.
+        `check_now`: both at once, whatever their age."""
+        self._rom_only(slug, "the compiler answer")
+        proj = self._project(slug)
+        cfg = self.cfg(proj)
+        main = (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
+        ranges = cfg.get("compiler_ranges", [])
+        cmap = self.compiler_map(proj)  # None: not MIPS code (no map, no survey)
+        state = self.surveys.get(slug) or {}
+        if cmap is not None:
+            last = cfg.get("compiler_survey") or {}
+            several = len({main} | {(r["toolchain"], tuple(r["flags"])) for r in ranges}) > 1  # (one compiler: nothing to try)
+            if several and state.get("state") != "running" and (check_now or time.time() - (last.get("t") or 0) > self.SURVEY_AGAIN_SECONDS):
+                state = self.start_survey(slug)
+            audited = {(tuple(map(tuple, c["spans"])), c["toolchain"]) for c in cfg.get("range_checks", []) if c.get("audit")}
+            if ranges and (check_now or any((((r["start"], r["end"]),), r["toolchain"]) not in audited for r in ranges)):
+                self.rangechecks.audit(proj)
+                cfg = self.cfg(self._project(slug))
+        checks = cfg.get("range_checks", [])
+        audits = {tuple(map(tuple, c["spans"])): c for c in checks if c.get("audit")}
+        parts = []
+        for r in ranges:
+            c = audits.get(((r["start"], r["end"]),)) or {}
+            parts.append({"start": r["start"], "end": r["end"], "compiler": SHORT_NAMES.get(r["toolchain"], r["toolchain"]),
+                          "flags": " ".join(r["flags"]),
+                          "check": c.get("status", ""), "said": c.get("said", "")})
+        elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
+        # the compiler's name and its flags apart: "built with KMC GCC 2.7.2" reads at a glance, the flags are details
+        return {"compiler": SHORT_NAMES.get(main[0], main[0]), "flags": " ".join(main[1]), "parts": parts, "mips": cmap is not None,
+                "elsewhere": [{"start": r.start, "end": r.end, "compiler": self._short(r.label), "functions": r.functions,
+                               "confirmed": r.confirmed} for r in elsewhere[:self.ANSWER_STRETCHES]],
+                "elsewhere_count": len(elsewhere),
+                "checking": state.get("state") == "running" or any(c["status"] == "checking" for c in checks),
+                "survey": {"state": state.get("state"), "tried": len((cfg.get("compiler_survey") or {}).get("tried", {})),
+                           "confirmed": len((cfg.get("compiler_survey") or {}).get("confirmed", {})),
+                           "running_tried": state.get("tried", 0), "t": (cfg.get("compiler_survey") or {}).get("t")},
+                "checks": [{"id": c["id"], "audit": bool(c.get("audit")), "status": c["status"], "said": c.get("said") or "",
+                            "ranges": c["spans"], "compiler": self._short((c["toolchain"], tuple(c["flags"])))} for c in checks]}
 
     def set_auto_adjust(self, slug: str, on: bool) -> None:
         self._update_cfg(slug, lambda cfg: cfg.__setitem__("auto_compiler", bool(on)))

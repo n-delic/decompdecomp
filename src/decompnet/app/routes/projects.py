@@ -71,19 +71,9 @@ def register(app: App) -> None:
         return {"job": jobs.start("export", work)}
 
     def p_compilermap(slug, request, data):
-        """The judge's compiler survey: start it (POST), or check the applied ranges again (POST audit), or how they
-        go (GET), with the range checks."""
-        if request.method == "POST" and data.get("audit"):
-            net.rangechecks.audit(net._project(slug))
-        elif request.method == "POST":
-            net.start_survey(slug)
-        cfg = net.cfg(net._project(slug))
-        last = cfg.get("compiler_survey") or {}
-        checks = [{"id": c["id"], "audit": bool(c.get("audit")), "status": c["status"], "said": c.get("said") or "",
-                   "ranges": c["spans"], "compiler": net._short((c["toolchain"], tuple(c["flags"])))}
-                  for c in cfg.get("range_checks", [])]
-        return {"survey": net.surveys.get(slug), "confirmed": len(last.get("confirmed", {})),
-                "tried": len(last.get("tried", {})), "t": last.get("t"), "checks": checks}
+        """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
+        answer is old. POST: check again now (the survey and the applied ranges)."""
+        return net.compiler_answer(slug, check_now=request.method == "POST")
 
     def p_open(slug, request, data):
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))

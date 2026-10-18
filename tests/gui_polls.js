@@ -1,6 +1,6 @@
 // The GUI's scripts, run in node against a stand-in for the page, to test what tests/test_gui.py asks: the live
-// polls of two projects. Every element is a stub that takes any property and any call; fetch answers from the
-// scenario below, and an answer can be held back to play a slow poll.
+// polls of two projects, and the notification centre that tells their news. Every element is a stub that takes any
+// property and any call; fetch answers from the scenario below, and an answer can be held back to play a slow poll.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -59,11 +59,19 @@ answers["/api/state"] = () => ({ version: "test", settings: {}, agents: [], tool
 answers["/api/projects"] = () => [];
 answers["/api/agents/detected"] = () => [];
 answers["/api/mapcolumns"] = () => ({ keys: ["vram", "cc", "ccx"], rows: [] });
+answers["/api/knowledge"] = () => ({ auto: false, items: [] });
 answers["/api/stats"] = () => ({ agents: [], matches_per_hour: new Array(24).fill(0), compiles_last_hour: 0 });
 answers["/api/project?slug="] = (url) => overview(url.split("=")[1]);
 answers["/api/map?slug="] = () => ({ sig: "s", keys: ["name", "vram"], rows: [] });
 answers["/api/live?slug=a"] = () => live("a", []);
 answers["/api/live?slug=b"] = (url) => live("b", liveB.filter((e) => e.id > Number(new URL("http://x" + url).searchParams.get("e"))));
+// the app-wide feed (/api/events): every project's notable events, with the project's name
+let feed = old.map((e) => ({ ...e, slug: "b", project: "Ridge Racer V" }));
+answers["/api/events"] = (url) => {
+  const after = new URL("http://x" + url).searchParams.get("after");
+  const last = Math.max(0, ...feed.map((e) => e.id));
+  return after == null ? { last, events: [] } : { last, events: feed.filter((e) => e.id > Number(after)) };
+};
 
 vm.createContext(ctx);
 // GUI_JS: another copy of the scripts (an older one, to see the test fail there)
@@ -89,7 +97,22 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
   for (const [, release] of held) release();  // A's slow poll comes back, after B opened
   await settle();
   liveB = old.concat([{ id: 61, kind: "match", detail: "func_new", agent: "gemini", created_at: Date.now() / 1000 + 1 }]);
-  await ctx.poll();  // B's next poll: only what happened since it opened is news
+  await ctx.poll();  // B's next poll: news is the notification centre's, never a project's own toast
   await settle();
-  process.stdout.write(JSON.stringify({ toasts, errors }));
+  // the notification centre began where the feed was when the window opened (pages.js): 60 old matches aren't news.
+  // Then B's agent matches 13 functions and A's helper pauses: two lines, a burst counted, not 14 toasts
+  const t = Date.now() / 1000;
+  const news = Array.from({ length: 13 }, (_, i) => ({ id: 61 + i, kind: "match", detail: `func_${100 + i}`, agent: "gemini-3.8-flash-2",
+    created_at: t + i, slug: "b", project: "Ridge Racer V" }));
+  news.push({ id: 74, kind: "paused", detail: "the provider is out of credit", agent: "claude-1", created_at: t + 13, slug: "a", project: "Demo Quest 64" });
+  feed = feed.concat(news);
+  await ctx.pollEvents();
+  await settle();
+  // one more match in the same burst: the same line counts up
+  feed.push({ id: 75, kind: "match", detail: "func_200", agent: "claude-2", created_at: t + 14, slug: "b", project: "Ridge Racer V" });
+  await ctx.pollEvents();
+  await settle();
+  const notes = vm.runInContext("N.live.map((x) => x.el.innerHTML.replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim())", ctx);
+  const unread = vm.runInContext("N.unread", ctx);
+  process.stdout.write(JSON.stringify({ toasts, notes, unread, errors }));
 })().catch((e) => { console.error(e); process.exit(1); });

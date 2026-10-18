@@ -5,6 +5,7 @@ game, the function map (every function, sent only when it changed), the log and 
 from __future__ import annotations
 
 import json
+import platform
 import shutil
 import uuid
 from pathlib import Path
@@ -20,6 +21,15 @@ from ..support import MAX_DISC, _static, job_error
 from . import App
 
 
+def system_name() -> str:
+    """The Linux distribution, as it names itself ("Ubuntu 24.04.1 LTS"), for bug reports: problems often depend on it
+    (the window's WebKitGTK, the compilers' libraries)."""
+    try:
+        return platform.freedesktop_os_release().get("PRETTY_NAME", "")
+    except OSError:
+        return ""
+
+
 def register(app: App) -> None:
     net, mcp, home, mcp_url, build_id = app.net, app.mcp, app.home, app.mcp_url, app.build_id
     manager, jobs, settings, guard, call, body = app.manager, app.jobs, app.settings, app.guard, app.call, app.body
@@ -31,7 +41,7 @@ def register(app: App) -> None:
             t["use"] = COMPILERS.get(t["id"]) or TOOLS[t["id"]]
             t["name"] = SHORT_NAMES.get(t["id"], t["name"])
         return {"version": __version__, "build": build_id, "install": updates.installed(),
-                "platform": toolchains.current_platform(), "home": hostenv.shown_path(home.parent),
+                "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "api_presets": agents.API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
@@ -88,6 +98,18 @@ def register(app: App) -> None:
         if not source or not game.is_file():
             return fail(ValueError("pick the saved project (a folder or a git address) and your copy of the game"))
         return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
+
+    @mcp.custom_route("/api/events", methods=["GET"])
+    async def api_events(request: Request) -> Response:
+        """The notification centre, for every project: `after=N` what happened since event N (no `after`: where the
+        feed starts now), `recent=1` the latest, newest first, for its history panel."""
+        if (bad := guard(request)):
+            return bad
+        q = request.query_params
+        if q.get("recent"):
+            return JSONResponse({"events": await call(net.recent_events)})
+        after = q.get("after", "")
+        return JSONResponse(await call(net.events_after, int(after) if after.isdigit() else None))
 
     @mcp.custom_route("/api/import", methods=["POST"])
     async def api_import(request: Request) -> Response:
