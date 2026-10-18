@@ -295,8 +295,13 @@ Answers go here as they come.
 
 - **Closing the window while helpers work:** ask each time: "stop them and quit", or "keep them working in the
   tray". The tray icon reopens the window or quits. (§1)
-- **Window:** native, pywebview on the system's WebKit. The .deb depends on webkit2gtk; the AppImage needs it
-  installed or bundled. (§1)
+- **Window:** native, on the system's WebKitGTK 4.1, driven by a small window program the system's `python3` runs
+  (`python3-gi`, `gir1.2-webkit2-4.1`): the app's own Python (uv's) can't load the system's GTK bindings, and pip
+  can't install them without C build headers. Tauri was considered: on Linux it uses the same WebKitGTK and adds
+  Rust. The .deb depends on both packages; the AppImage checks for them at start and, if they're missing, says the
+  install command for the user's distribution and quits (no browser fallback). Later, maybe a Flatpak on the GNOME
+  runtime, which has WebKitGTK. Linux is the platform: Windows (WSL) and macOS get no native window in the rewrite;
+  contributors can add one (pywebview there). (§1)
 - **Auto-restart:** always, with backoff. After any stop or crash the helper starts again; on a usage limit it
   waits until the limit resets. Five fast failures in a row pause it, and the app shows why. (§4)
 - **Shared knowledge needs two different models.** Two Claude Opus helpers saying the same thing is one opinion;
