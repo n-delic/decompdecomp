@@ -84,6 +84,11 @@ Why:
 - Windows 11 users still have a way: WSL shows Linux apps' windows (WSLg), so installing the Linux version inside
   WSL should work, unsupported. The README says so.
 
+**After the rewrite: research how to support Windows well.** Many users will come from Windows, so the removal is
+for this release only. Once the rewrite lands, an agent researches the best way back: native Windows (the
+compilers that only run on Linux, sandboxing, a WebView2 window) against WSL with WSLg, against something else,
+measured on the rewritten app, with what each costs to build and to test.
+
 **Not removed: Windows PC games.** Decompiling a Windows game's `.exe` (the `win32` platform, MSVC through wibo,
 `forks/scratch_pe.py`) is a console like any other, and it runs on Linux. Only Windows as the host goes.
 
