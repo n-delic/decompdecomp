@@ -26,7 +26,7 @@ SHOWN_MATCHED = 3  # matched functions named as already using a type
 class LayoutMixin:
     def structs(self, proj) -> structs.Structs | None:
         """The types found in a game's code (structs.py), kept with the cross-references like the classes (renames
-        keep addresses; splits and cuts drop both). 1.8 s on GTA San Andreas, once. None: no reader for its
+        keep addresses; splits and cuts drop both). About 2 s on GTA San Andreas, once. None: no reader for its
         processor."""
         if not self.is_rom(proj) or arch.STRUCTS not in self.console(proj).features:
             return None

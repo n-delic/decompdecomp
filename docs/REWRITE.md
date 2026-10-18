@@ -497,7 +497,7 @@ how much code never needs an agent. Ranked:
    (120 on GTA San Andreas, 69 on Ridge Racer V): offsets the function itself accesses 99% and 100% right; offsets
    proposed from other functions 95% (60 of 63) and 92% (24 of 26), widths 92% and 92%. Unifying along every call
    instead made one type of 3,735 functions, 43% right: a callee joins its callers' type only when it uses the
-   pointer itself, doesn't walk it, has at most 4 callers and agrees on every width. 1.8 s for the whole of GTA San
+   pointer itself, doesn't walk it, has at most 4 callers and agrees on every width. About 2 s for the whole of GTA San
    Andreas, once per layout of the game (warmed with the brief's caches). The demo games' Entity comes out field for
    field (N64 and PS2).
    *Left:* PowerPC and x86 readers; the PS2's fifth to eighth arguments (t0-t3); a pointer into the middle of a
