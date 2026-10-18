@@ -30,7 +30,9 @@ class Core(Network):
         self._sym_override: dict[int, SymbolTable] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
-        self._seed_lock = threading.Lock()
+        self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
+        self._headers: dict[tuple, object] = {}  # (project id, header version, for m2c) -> its declarations
+        self._asm_names: dict[int, dict] = {}  # project id -> {function id: (size, the names its assembly mentions)}
         self.links: dict = {}  # slug -> collab.Link, for projects joined from a friend's room
         self.rooms: dict = {}  # slug -> collab.Room, for projects this computer shares
         self._remote_ids: dict[str, int] = {}
@@ -54,6 +56,8 @@ class Core(Network):
         self.knowledge = Knowledge(self)
         from ..readable import Readability
         self.readability = Readability(self)
+        from ..drafts import Drafter
+        self.drafter = Drafter(self)
         self.find_moved_projects()
 
     @staticmethod

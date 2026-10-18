@@ -238,9 +238,8 @@ class GuiMixin:
                                "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT 10", fn["id"])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
-        if not (fn["matched_source"] or fn["best_source"] or latest) and fn["seed"] is None:
-            with self._seed_lock:
-                self._seed_for(fn, proj)
+        if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":
+            self._seed_for(fn, proj)  # (made again first when what it's made from changed)
             fn = self._function(fn["name"], slug)
         return {
             "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],

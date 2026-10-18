@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import scoring, toolchains
@@ -106,6 +107,165 @@ def c_only(header: str) -> str:
 def _context_for_m2c(header: str) -> str:
     # m2c parses the context with pycparser and does not run a preprocessor.
     return "\n".join(line for line in c_only(header).splitlines() if not line.lstrip().startswith("#"))
+
+
+# ---------------------------------------------------------------- the part of a header one function uses
+
+# Words of C (and the C++ a header may hold) that never name a declaration of the header
+_KEYWORDS = frozenset("""auto break case char const continue default do double else enum extern float for goto if
+inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile
+while _Bool __attribute__ __inline__ __restrict__ __extension__ asm __asm__ class public private protected virtual
+operator template typename namespace using friend mutable explicit bool true false new delete this""".split())
+_TAGS = frozenset(("struct", "union", "enum", "class"))
+_TOKEN = re.compile(r"(?P<comment>/\*.*?\*/|//[^\n]*)|(?P<pp>^[ \t]*#(?:\\\n|[^\n])*)"
+                    r"|(?P<string>\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*')|(?P<ident>[A-Za-z_]\w*)"
+                    r"|(?P<punct>[{}()\[\];,:*=])", re.S | re.M)
+_DEFINE = re.compile(r"\s*#\s*define\s+([A-Za-z_]\w*)")
+_LINE_TAIL = re.compile(r"[ \t]*(?:/\*(?:(?!\*/)[^\n])*\*/|//[^\n]*)[ \t]*(?=\n|$)")
+
+
+@dataclass(frozen=True)
+class Declaration:
+    """One top-level declaration of a header: its text (with the comment before it), the names it declares, and the
+    other names it mentions (the types, macros and declarations it needs)."""
+    text: str
+    names: frozenset[str]
+    uses: frozenset[str]
+
+
+def _declares(tokens: list[tuple[str, str, int]]) -> set[str]:
+    """The names one declaration declares, from its tokens (kind, text, depth): a struct, union, enum or class tag
+    with a body, the constants of an enum, and its declarators (typedef names, variables, functions)."""
+    names: set[str] = set()
+    top = [(kind, text) for kind, text, depth in tokens if depth == 0]
+    for i, (kind, text) in enumerate(top):  # tags that are defined here (a body or a base class follows)
+        if text in _TAGS and i + 1 < len(top) and top[i + 1][0] == "ident":
+            after = top[i + 2][1] if i + 2 < len(top) else ";"
+            if after in ("{", ":") or (after == ";" and i == 0):
+                names.add(top[i + 1][1])
+    if "enum" in [text for _, text, _ in tokens[:3]]:  # its constants: the first word of each item of its body
+        item = False
+        for kind, text, depth in tokens:
+            if item and depth == 1 and kind == "ident":
+                names.add(text)
+            item = (depth == 0 and text == "{") or (depth == 1 and text == ",")
+    # declarators: after the body if there is one, split at the commas outside any brackets
+    body_end = max((i for i, (_, text, depth) in enumerate(tokens) if text == "}" and depth == 0), default=-1)
+    parts: list[list[tuple[str, str, int]]] = [[]]
+    for kind, text, depth in tokens[body_end + 1:]:
+        if depth == 0 and text == ",":
+            parts.append([])
+        else:
+            parts[-1].append((kind, text, depth))
+    for part in parts:
+        pointer = next((j for j in range(len(part) - 2) if part[j][1] == "(" and part[j][2] == 0
+                        and part[j + 1][1] == "*"), None)  # (*name)(...): a pointer to a function
+        if pointer is not None:
+            name = next((text for kind, text, _ in part[pointer + 2:] if kind == "ident"), None)
+        else:
+            idents = [text for kind, text, depth in part if kind == "ident" and depth == 0 and text not in _KEYWORDS]
+            name = idents[-1] if idents else None
+        if name:
+            names.add(name)
+    opener = next((i for i, (_, text, depth) in enumerate(tokens) if text == "{" and depth == 0), None)
+    if opener and tokens[opener - 1][1] == ")" and body_end == len(tokens) - 1:  # a function defined in the header
+        before = tokens[:next(i for i, (_, text, depth) in enumerate(tokens) if text == "(" and depth == 0)]
+        names.update(text for kind, text, depth in before[-1:] if kind == "ident" and text not in _KEYWORDS)
+    return names
+
+
+def declarations(header: str) -> list[Declaration]:
+    """The header's top-level declarations in order: structs, unions, enums and classes, typedefs, prototypes,
+    variables and macros. A light reader, not a C parser: what it can't place still keeps its text and the names it
+    mentions, so nothing a function needs goes missing, at worst a little more comes with it."""
+    out: list[Declaration] = []
+    tokens: list[tuple[str, str, int]] = []
+    start, depth, function_body = 0, 0, False
+
+    def finish(end: int) -> None:
+        nonlocal start, tokens, function_body
+        tail = _LINE_TAIL.match(header, end)  # a comment after it on its line is its own (`}; /* 0x48 */`)
+        end = tail.end() if tail else end
+        text = header[start:end].strip()
+        if text and any(kind != "comment" for kind, _, _ in tokens):
+            names = _declares([t for t in tokens if t[0] != "comment"])
+            uses = {text for kind, text, _ in tokens if kind == "ident"} - names - _KEYWORDS
+            out.append(Declaration(text, frozenset(names), frozenset(uses)))
+        start, tokens, function_body = end, [], False
+
+    for m in _TOKEN.finditer(header):
+        kind, text = m.lastgroup, m.group()
+        if kind == "pp":
+            if depth == 0:
+                finish(m.start())
+                define = _DEFINE.match(text)
+                if define:  # a macro: it declares its name and mentions what its value does
+                    uses = set(re.findall(r"[A-Za-z_]\w*", text[define.end():])) - _KEYWORDS - {define.group(1)}
+                    out.append(Declaration(text.strip(), frozenset({define.group(1)}), frozenset(uses)))
+                start = m.end()
+            continue
+        if kind == "string":
+            continue
+        if text in "{([":
+            if text == "{" and depth == 0:
+                # a function defined in the header (static inline ...): a parameter list came before its body
+                function_body = any(t == "(" and d == 0 for _, t, d in tokens) and "=" not in {t for _, t, d in tokens if d == 0}
+            tokens.append((kind, text, depth))
+            depth += 1
+            continue
+        if text in "})]":
+            depth = max(0, depth - 1)
+            tokens.append((kind, text, depth))
+            if text == "}" and depth == 0 and function_body:
+                finish(m.end())
+            continue
+        tokens.append((kind, text, depth))
+        if text == ";" and depth == 0:
+            finish(m.end())
+    finish(len(header))
+    return out
+
+
+class HeaderIndex:
+    """A header's declarations, with what declares each name: `used(roots)` is the part a function needs."""
+
+    def __init__(self, header: str):
+        self.decls = declarations(header)
+        self.by_name: dict[str, list[int]] = {}
+        for i, d in enumerate(self.decls):
+            for name in d.names:
+                self.by_name.setdefault(name, []).append(i)
+
+    def used(self, roots) -> list[Declaration]:
+        """The declarations of the names in `roots` and, in turn, of every name those mention, in the header's
+        order (so each comes after what it needs, as in the header)."""
+        return [self.decls[i] for i in sorted(self.reach(roots))]
+
+    def reach(self, roots) -> list[int]:
+        """Where those declarations are in `decls`, nearest first: those `roots` name, then what those need..."""
+        taken: dict[int, None] = {}  # (ordered: the order they were reached in)
+        queue = list(dict.fromkeys(roots))
+        queued = set(queue)
+        for name in queue:
+            for i in self.by_name.get(name, ()):
+                if i not in taken:
+                    taken[i] = None
+                    more = [n for n in self.decls[i].uses if n not in queued]
+                    queued.update(more)
+                    queue.extend(sorted(more))
+        return list(taken)
+
+
+_ASM_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_ASM_NAME = re.compile(r"(?<![\w$.%])[A-Za-z_]\w*")
+_ASM_FIRST = re.compile(r"^\s*([\w.]+)", re.M)  # a line's mnemonic, or its directive (glabel, .set)
+
+
+def asm_names(asm_text: str) -> set[str]:
+    """The symbols an assembly listing mentions, which is where m2c reads names from: every word of it but the
+    mnemonics and directives, registers ($a0), local labels (.L...) and relocation operators (%hi)."""
+    text = _ASM_COMMENT.sub(" ", asm_text)
+    return set(_ASM_NAME.findall(text)) - set(_ASM_FIRST.findall(text))
 
 
 def generate(fn: FunctionObj, toolchain_id: str | None, context_header: str = "", timeout: float = 20) -> str | None:
