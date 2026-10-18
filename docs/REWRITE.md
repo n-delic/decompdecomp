@@ -375,6 +375,23 @@ matching, and frontier CLI agents do better here.
 First three: libraries (1), the permuter (2), struct layouts (3), with the scheduler (4) alongside because it's
 small.
 
+## 10. From matching to readable
+
+**Problem.** Matching C is often hard to read: `func_002C73A8`, `var_a0`, casts and odd orderings that only exist
+to make the compiler emit the same bytes. People who want to port or mod a game need code they understand.
+
+**Goal.** A readability pass, run by agents on matched functions: real names for functions, variables, fields and
+globals, types and structs, comments that say what the code does. Every change is judged again: the function must
+still match byte for byte, or the change is refused. Names and types also go into the shared header, so later
+agents start from better context. The project shows two numbers: matched, and readable.
+
+## 11. Built for contributors
+
+The owner doesn't want to be the only maintainer. The rewrite should make the code easy to pick up: one package per
+console (§6), tests that run in CI, CONTRIBUTING.md that says where to start, small issues labelled for newcomers,
+and a development copy that never touches anyone's real projects (§1). People who enjoy the app can give their own
+agents and tokens to improve it.
+
 ## Questions
 
 Answers go here as they come.
@@ -398,3 +415,10 @@ Answers go here as they come.
   private wiring to the CLI helpers it runs. (§1)
 - **Consoles:** in this repo only, one package per console, with a template. (§6)
 - **Order:** §1 standalone app and §4 agents first, then §3 notifications, §2 UI, §5 knowledge, §6 consoles.
+- **Consoles (owner, October 2026):** keep what's supported today and verify each after the rewrite, plus PS2 and
+  PC; scrap the ones that aren't proven. (Which exactly: to confirm.) (§6)
+- **The API helper becomes the main helper** (§4): it talks to a model's API directly with the user's key
+  (Anthropic, OpenAI, DeepSeek, OpenRouter...), so decompdecomp controls its whole loop: prompt, tools, caching,
+  cost. CLI helpers stay, but their updates can't break the app's main path.
+- **The community:** decompdecomp protects itself legally (nothing of the game leaves the user's computer, no game
+  data in the repository) and doesn't shape itself around anyone's opinion of AI.
