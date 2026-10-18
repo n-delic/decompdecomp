@@ -183,10 +183,7 @@ h1 {
 .js .pipeline.on .stations li:nth-child(4) { animation-delay: 120ms; }
 .js .pipeline.on .stations li:nth-child(5) { animation-delay: 160ms; }
 @keyframes rise { from { opacity: 0; transform: translateY(var(--space-3)); } }
-.tell { margin-top: var(--space-11); max-width: 44rem; }
-.tell-label, .step-n { font-family: var(--typography-code-family); font-size: var(--typography-caption-size); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: var(--space-4); }
-.tell-line { display: flex; align-items: center; gap: var(--space-5); padding: var(--space-4) var(--space-4) var(--space-4) var(--space-6); border: var(--border-width-strong) solid var(--color-text-primary); border-radius: var(--radius-card); }
-.tell-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: var(--typography-body-size); font-weight: 600; }
+.step-n { font-family: var(--typography-code-family); font-size: var(--typography-caption-size); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-secondary); margin-bottom: var(--space-4); }
 .fineprint { margin-top: var(--space-9); font-size: var(--typography-body-sm-size); color: var(--color-text-secondary); max-width: 70ch; }
 
 /* ---------------------------------------------------------------- 3 · proof */
@@ -251,7 +248,7 @@ h1 {
 }
 @media print { .top nav, .platforms, .copy { display: none; } }
 /* grid items may shrink below their longest line of code (pre and code scroll inside instead) */
-.claim-side, .check-head > *, .proof > *, .listing > *, .steps > *, .step > *, .yours-list > *, .tell > * { min-width: 0; }
+.claim-side, .check-head > *, .proof > *, .listing > *, .steps > *, .step > *, .yours-list > * { min-width: 0; }
 
 /* the rail runs across on wide screens (after the base rule, so it wins) */
 @media (min-width: 905px) {

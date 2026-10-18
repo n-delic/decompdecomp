@@ -1,12 +1,11 @@
-"""Reputation and per-unit headers."""
+"""Per-unit headers: each part of a library compiles with the header of its own unit."""
 
 import pytest
 
-from decompnet import policy, toolchains
+from decompnet import toolchains
 from decompnet.network import Network, NetworkError
 
 from .handmade import import_project
-from .solutions import SOLUTIONS, WRONG_CLAMP
 from .test_network import DEMO, HOST_GCC, needs_host_gcc
 
 PROJECTS = DEMO.parent
@@ -19,24 +18,6 @@ def net(tmp_path):
     n = Network(tmp_path / "t.db")
     import_project(n.store, DEMO, log=lambda *_: None)
     return n
-
-
-def untrusted_agent(net, name="newbie"):
-    """An agent that hasn't earned anything yet."""
-    return net.authenticate(net.register_agent(name, trusted=False))
-
-
-def test_reputation_gates_header_edits_and_budget(net, monkeypatch):
-    agent = untrusted_agent(net)
-    assert policy.reputation(net.store, agent.id)["level"].name == "new"
-    with pytest.raises(NetworkError, match="member"):
-        net.edit_context(agent, "demo", "", "s32 x;", "add")
-    assert "MATCH" in net.compile_and_diff(agent, "abs_s32", SOLUTIONS["abs_s32"])
-    assert policy.reputation(net.store, agent.id)["level"].name == "member"
-    assert "now v2" in net.edit_context(agent, "demo", "", "s32 entity_default_hp(s16 type);", "add proto")
-    monkeypatch.setattr(policy, "LEVELS", (policy.Level("new", 0, 0, False), policy.Level("member", 1, 1, True)))
-    with pytest.raises(NetworkError, match="compile budget"):
-        net.compile_and_diff(agent, "clamp_s32", WRONG_CLAMP)
 
 
 needs_n64 = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None, reason="gcc-2.7.2-kmc not installed")

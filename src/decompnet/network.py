@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import agents, policy, scoring
+from . import agents, scoring
 from .compiler import compile_source
 from .elfobj import FunctionObj, Reloc, extract_function
 from .project import compiler_config, compiler_for
@@ -143,8 +143,7 @@ class Network:
     # ------------------------------------------------------------------ agents
 
     def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
-        """Mint an agent token. The app's own agents are trusted; an untrusted one starts at reputation level 'new'
-        and earns the rest through verified matches."""
+        """Mint an agent token for one of the app's helpers (`trusted` stays on the record for older databases)."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
@@ -170,17 +169,6 @@ class Network:
         with self.store.tx() as db:
             db.execute("UPDATE agents SET last_seen=? WHERE id=?", (time.time(), row["id"]))
         return Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
-
-    def _require_budget(self, agent: Agent) -> None:
-        ok, why = policy.compile_budget(self.store, agent.id)
-        if not ok:
-            raise NetworkError(why)
-
-    def _require_level(self, agent: Agent, what: str) -> None:
-        rep = policy.reputation(self.store, agent.id)
-        if not rep["level"].can_edit_context:
-            raise NetworkError(f"{what} needs reputation level 'member' (one verified match). You are '{rep['level'].name}': "
-                               f"match a function first; add_note is open to everyone.")
 
     # ---------------------------------------------------------------- helpers
 
@@ -427,7 +415,6 @@ class Network:
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         """Compile, score and record one attempt. Returns {"text", "score", "matched"} (score None: didn't compile)."""
-        self._require_budget(agent)
         fn = self._function(function, project)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         now = time.time()
@@ -557,7 +544,6 @@ class Network:
                      function: str | None = None) -> str:
         """Exact-string edit of a header. Accepted only if every already-matched function compiled against
         that header still matches with the new one — that's the project's test suite."""
-        self._require_level(agent, "Editing the shared header")
         if function:
             fn = self._function(function, project)
             proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
@@ -599,7 +585,6 @@ class Network:
         """Project-wide refactor: rename an identifier (field, type, global, function param...) in every
         header *and* in every matched source / best attempt, then regression-test the result.
         The rename is textual (whole words), so it is meant for unique names like `unk_1C` or `func_80012345`."""
-        self._require_level(agent, "Renaming across the project")
         proj = self._project(project)
         ident = re.compile(r"^[A-Za-z_]\w*$")
         if not (ident.match(old) and ident.match(new)):

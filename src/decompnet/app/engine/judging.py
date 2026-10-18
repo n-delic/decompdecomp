@@ -17,9 +17,6 @@ from .common import _AUTO_TOKEN, BATCH_INSNS
 
 
 class JudgeMixin:
-    def _require_budget(self, agent: Agent) -> None:
-        """Your machine, your agent: no compile budget."""
-
     def _rom_target(self, fn) -> match.RomTarget:
         cfg = self.cfg(self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"]))
         return match.RomTarget(fn["name"], fn["vram"], fn["target"], match.RomTarget.relocs_from_json(json.loads(fn["relocs"])),
