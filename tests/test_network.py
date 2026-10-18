@@ -6,8 +6,8 @@ import pytest
 
 from decompnet.compiler import SourceRejected, check_source
 from decompnet.network import Network, NetworkError
-from decompnet.project import import_project
 
+from .handmade import import_project
 from .solutions import SOLUTIONS, WRONG_CLAMP
 
 DEMO = Path(__file__).resolve().parent.parent / "projects" / "demo"
@@ -142,31 +142,6 @@ def test_auth(net):
         net.authenticate("dn_nope")
     with pytest.raises(NetworkError):
         net.register_agent("bad name!")
-
-
-def test_projects_need_a_lawful_basis(tmp_path):
-    import shutil
-
-    from decompnet.project import ProjectRejected
-    proj = tmp_path / "game"
-    shutil.copytree(DEMO, proj)
-    toml = (proj / "project.toml").read_text()
-    net = Network(tmp_path / "l.db")
-
-    (proj / "project.toml").write_text(toml.replace('basis = "own-code"', 'basis = "abandonware"'))
-    with pytest.raises(ProjectRejected, match="basis"):
-        import_project(net.store, proj, log=lambda *_: None)
-    (proj / "project.toml").write_text(toml.replace('basis = "own-code"', 'basis = "permission"'))
-    with pytest.raises(ProjectRejected, match="evidence"):
-        import_project(net.store, proj, log=lambda *_: None)
-    (proj / "project.toml").write_text(toml.replace('license = "CC0-1.0"\n', ""))
-    with pytest.raises(ProjectRejected, match="license"):
-        import_project(net.store, proj, log=lambda *_: None)
-    assert net.store.one("SELECT COUNT(*) AS n FROM projects")["n"] == 0
-
-
-def test_projects_show_their_legal_basis(net):
-    assert "legal basis: own-code" in net.list_projects()
 
 
 def test_removing_a_project_removes_everything_in_it(net, agents):

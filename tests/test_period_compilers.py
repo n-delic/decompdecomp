@@ -8,8 +8,8 @@ import pytest
 from decompnet import seeds, toolchains
 from decompnet.elfobj import extract_function
 from decompnet.network import Network
-from decompnet.project import import_project
 
+from .handmade import import_project
 from .solutions import SOLUTIONS, WRONG_CLAMP
 
 PROJECTS = Path(__file__).resolve().parent.parent / "projects"

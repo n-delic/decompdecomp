@@ -130,10 +130,9 @@ class Network:
 
     # ------------------------------------------------------------------ agents
 
-    def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli",
-                       terms_accepted: bool = False) -> str:
-        """Mint an agent token. Operator-created (CLI) agents are trusted; self-registered (web) agents
-        start at reputation level 'new' and earn the rest through verified matches."""
+    def register_agent(self, name: str, owner: str | None = None, *, trusted: bool = True, origin: str = "cli") -> str:
+        """Mint an agent token. The app's own agents are trusted; an untrusted one starts at reputation level 'new'
+        and earns the rest through verified matches."""
         name = name.strip()
         if not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name):
             raise NetworkError("agent name must be 1-40 chars of [A-Za-z0-9-_.]")
@@ -145,7 +144,7 @@ class Network:
                 raise NetworkError(f"agent name {name!r} is taken")
             db.execute(
                 "INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin,terms_accepted_at) VALUES(?,?,?,?,?,?,?)",
-                (name, owner, _hash_token(token), now, int(trusted), origin, now if terms_accepted else None),
+                (name, owner, _hash_token(token), now, int(trusted), origin, None),
             )
         return token
 
@@ -176,12 +175,12 @@ class Network:
         if slug:
             row = self.store.one("SELECT * FROM projects WHERE slug=?", slug)
             if row is None:
-                raise NetworkError(f"no project {slug!r}; call list_projects")
+                raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
             return row
         rows = self.store.all("SELECT * FROM projects")
         if len(rows) == 1:
             return rows[0]
-        raise NetworkError("several projects exist; pass `project` (see list_projects)")
+        raise NetworkError("several projects exist; pass `project` (its slug)")
 
     def _function(self, name: str, project: str | None):
         if project is None and "/" in name and "@" not in name.split("/", 1)[0]:  # project/name (fork names hold units)
@@ -259,24 +258,6 @@ class Network:
         return []
 
     # ---------------------------------------------------------------- projects
-
-    def list_projects(self) -> str:
-        rows = self.store.all(
-            """SELECT p.slug, p.name, p.arch, p.description, p.config, COUNT(f.id) AS total,
-                      SUM(f.status='matched') AS matched, SUM(f.size) AS bytes,
-                      SUM(CASE WHEN f.status='matched' THEN f.size ELSE 0 END) AS matched_bytes
-               FROM projects p LEFT JOIN functions f ON f.project_id=p.id GROUP BY p.id ORDER BY p.slug"""
-        )
-        if not rows:
-            return "No projects yet."
-        out = []
-        for r in rows:
-            pct = 100 * (r["matched_bytes"] or 0) / (r["bytes"] or 1)
-            legal = json.loads(r["config"]).get("legal", {})
-            out.append(f"- {r['slug']}: {r['name']} [{r['arch']}] — {r['matched'] or 0}/{r['total']} functions "
-                       f"matched ({pct:.1f}% of code); legal basis: {legal.get('basis')}, contributions licensed "
-                       f"{legal.get('license')}\n  {r['description']}".rstrip())
-        return "\n".join(out)
 
     def get_context(self, project: str | None, function: str | None = None) -> str:
         if function:

@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS events(
 CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(project_id, status, n_insns);
 CREATE INDEX IF NOT EXISTS idx_attempts_fn ON attempts(function_id);
 CREATE INDEX IF NOT EXISTS idx_events_time ON events(created_at);
-CREATE TABLE IF NOT EXISTS registrations(ip_hash TEXT NOT NULL, created_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS symbols(
   project_id INTEGER NOT NULL, name TEXT NOT NULL, address INTEGER NOT NULL, size INTEGER NOT NULL DEFAULT 0,
