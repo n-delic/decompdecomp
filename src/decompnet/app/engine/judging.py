@@ -201,6 +201,9 @@ class JudgeMixin:
         if progress is not None and not progress["compiles"]:
             said += ("\nYou didn't compile it, so this release doesn't count against your session's claims: claim "
                      "another one.")
+        elif need is None:  # agents stopped after 2 or 3 of 4 claims because what's left looked hard
+            said += ("\nClaim the next function now, until you've done your session's full count of claims: the "
+                     "functions left are the hard ones, and that's no reason to stop early.")
         return said
 
     def _pivot(self, agent: Agent, project: str | None, need) -> str:
@@ -242,9 +245,13 @@ class JudgeMixin:
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
-        if self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
-                          agent.id, fn["name"], progress["claimed_at"]):
-            return None  # asked again: it goes through
+        pushed = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind='release_pushed' "
+                                "AND detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
+        if pushed is not None and pushed["t"] is not None and self.store.one(
+                "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ?",
+                fn["id"], agent.id, pushed["t"]):
+            return None  # it compiled again after being pushed back: it goes through
+        # (asking again without a compile doesn't: agents just called release_function twice)
         fork = self.fork_slug(project)
         try:
             exempt = self.forks.release_exempt(fork, fn) if fork else self._rom_release_exempt(fn)
@@ -266,7 +273,8 @@ class JudgeMixin:
                  "or register loads around a call mean the callee's declaration (parameters, convention) differs; "
                  "fix structure and calls first, registers last.",
                  *hints,
-                 "Still want to give it up? Call release_function again: it goes through then. If it needs another "
+                 "Compile it once more (that next step), then release_function goes through if it's still no "
+                 "better; asking again without a compile doesn't release it. If it needs another "
                  "function done first, release_function(..., needs=\"<that function>\") records that, puts that one "
                  "first in the queue and hands it to you."]
         return "\n".join(lines)

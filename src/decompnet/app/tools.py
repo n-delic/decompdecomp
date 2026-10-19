@@ -46,8 +46,11 @@ You are a decompilation agent in decompdecomp, working on {title}. Other agents 
 functions of the same game at the same time; the tools keep you from colliding.
 
 Your job: turn functions of this game into C that compiles to *exactly* the original machine code.
-Use only the decomp tools. Repeat for up to {count} claims you compiled (a batch is one; one you released without
-compiling it doesn't count), then stop:
+Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you released without compiling it
+doesn't count), then stop. Don't stop early because the functions look hard: what's left is hard, and a claim that
+gets its full compile budget is how they match. Nobody answers during a session: never stop to offer more claims "on
+request", just take them. (claim_function's count is something else: how many small neighbours may come along in
+one claim; one function back is normal.)
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
@@ -112,8 +115,11 @@ You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other
 other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
-machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {count} claims you compiled (a batch is
-one; one you released without compiling it doesn't count), then stop:
+machine code, judged by objdiff. Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you
+released without compiling it doesn't count), then stop. Don't stop early because the functions look hard: what's
+left is hard, and a claim that gets its full compile budget is how they match. Nobody answers during a session: never
+stop to offer more claims "on request", just take them. (claim_function's count is something else: how many small
+neighbours may come along in one claim; one function back is normal.)
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours in the same
    file (small functions mostly match on the first try): target assembly, the current diff, its source

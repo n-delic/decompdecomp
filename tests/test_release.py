@@ -23,16 +23,21 @@ def _attempts(net, agent, name, scores):
                        "VALUES(?,?,?,?,?,?,?)", (fid, agent.id, s, s is not None, 1, "int f(){}", time.time()))
 
 
-def test_a_release_without_a_compile_is_pushed_back_once_then_goes_through(tmp_path):
+def test_a_release_without_a_compile_is_pushed_back_until_it_compiles_once_more(tmp_path):
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
     a, _ = net.local_agent("a")
     assert net.claim_row(a, "game", "f")["name"] == "f"
     said = net.release_function(a, "f", "needs the struct for D_80123456 first", "game")
     assert said.startswith("Not released yet: you haven't compiled f since you claimed it")
-    assert "ret N" in said and "call release_function again" in said.lower()
+    assert "ret N" in said and "compile it once more" in said.lower()
     assert _held(net, a) == "f"
-    said = net.release_function(a, "f", "needs the struct for D_80123456 first", "game")
-    assert said.startswith("Released f") and "doesn't count against your session's claims" in said
+    # asking again without a compile doesn't release it (agents just called release_function twice)
+    assert net.release_function(a, "f", "same", "game").startswith("Not released yet")
+    assert _held(net, a) == "f"
+    time.sleep(0.01)
+    _attempts(net, a, "f", [40])
+    said = net.release_function(a, "f", "tried the field stores", "game")
+    assert said.startswith("Released f") and "Claim the next function now" in said
     assert _held(net, a) is None
 
 
@@ -126,5 +131,6 @@ def test_the_prompts_count_only_claims_that_were_compiled():
     for prompt in (tools.WORK_PROMPT, tools.FORK_PROMPT):
         text = " ".join(prompt.format(title="t", count=2, compiler_guide="g", platform="p", guides="g",
                                       budget="b", what="w").split())
-        assert "up to 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
+        assert "Do 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
+        assert "Don't stop early" in text and "on request" in text  # agents stopped at 2-3 of 4, or offered more
         assert "needs=" in text
