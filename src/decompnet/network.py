@@ -339,10 +339,27 @@ class Network:
 
     def claim(self, agent: Agent, project: str | None = None, function: str | None = None,
               strategy: str = "easiest") -> str:
+        still = self.still_holding(agent, function)
         fn = self.claim_row(agent, project, function, strategy)
         if fn is None:
             return self.nothing_to_claim(agent, self._project(project))
-        return self._brief(fn, agent, header="CLAIMED")
+        return still + self._brief(fn, agent, header="CLAIMED")
+
+    def still_holding(self, agent: Agent, function: str | None) -> str:
+        """What to say first when claim_function (no function named) gives an agent the one it already holds: after
+        a pushed-back release it still does, and an agent read the same brief coming back as the queue handing it
+        back the function it had just released."""
+        if function:
+            return ""
+        held = self.store.one("SELECT f.name, c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "WHERE c.agent_id=?", agent.id)
+        if held is None or not self.store.one(
+                "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
+                agent.id, held["name"], held["claimed_at"] or 0):
+            return ""  # an ordinary renewal of the claim
+        return (f"You still hold {held['name']}: it wasn't released (a pushed-back release_function keeps it yours "
+                "until you compile it once more), so this is your claim on it, not a new one. Compile the next step, "
+                "then release_function goes through if it's still no better.\n\n")
 
     def _own_release_cutoff(self, db, agent_id: int, now: float) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and

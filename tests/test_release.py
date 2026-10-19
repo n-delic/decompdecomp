@@ -41,6 +41,18 @@ def test_a_release_without_a_compile_is_pushed_back_until_it_compiles_once_more(
     assert _held(net, a) is None
 
 
+def test_claiming_while_a_pushed_back_release_still_holds_says_so(tmp_path):
+    # an agent read its held function coming back as the queue handing back what it had just released
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    assert net.release_function(a, "f", "", "game").startswith("Not released yet")
+    assert net.still_holding(a, None).startswith("You still hold f: it wasn't released")
+    assert net.still_holding(a, "f") == ""  # asked for by name: no note
+    b, _ = net.local_agent("b")
+    assert net.still_holding(b, None) == ""
+
+
 def test_a_release_before_the_move_on_rule_is_pushed_back_and_after_it_is_not(tmp_path):
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
     a, _ = net.local_agent("a")

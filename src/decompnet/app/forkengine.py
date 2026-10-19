@@ -1890,7 +1890,10 @@ class ForkEngine:
     def claim(self, agent: Agent, slug: str, function: str | None = None, strategy: str = "easiest") -> str:
         if (link := self.net.links.get(slug)) is not None:
             return self._claim_in_room(link, agent, slug, function, strategy)
+        still = self.net.still_holding(agent, function)
         fn = self.net.claim_row(agent, slug, function, strategy)
+        if fn is not None and still:
+            return still + self.brief(fn, agent, "CLAIMED")
         if fn is None:
             left = (self.get(slug)[2].get("uncovered") or {}).get("functions")
             return (self.net.nothing_to_claim(agent, self.net._project(slug), " with a source file")
@@ -2092,6 +2095,18 @@ class ForkEngine:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
                 return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
+            best = fn["best_score"]
+            if (not matched and not was_matched and d.match_percent is not None and best is not None
+                    and fn["best_source"] and score > best):
+                # worse than the best so far: the file keeps what it had, so it never ends on a worse variant than
+                # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
+                undo()
+                if quiet is None:
+                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                stall = self.net.stall_note(fn["id"], agent.id)
+                return {"text": f"{percent_text(pct)} match (score {score}), worse than the best so far (score {best}), "
+                                f"so {unit.source} keeps what it had; your attempt is recorded.\n{d.render()}{stall}",
+                        "score": score, "matched": False, "percent": pct}
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
