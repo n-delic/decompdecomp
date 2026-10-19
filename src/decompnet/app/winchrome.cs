@@ -9,6 +9,8 @@ namespace Decompdecomp {
     public sealed class WindowChrome : NativeWindow {
         const int WM_NCCALCSIZE = 0x83, WM_NCHITTEST = 0x84, WM_GETMINMAXINFO = 0x24;
         const int WM_DPICHANGED = 0x2E0;
+        const int WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3;
+        const int WM_MOUSEMOVE = 0x200, WM_LBUTTONUP = 0x202, WM_CANCELMODE = 0x1F, WM_CAPTURECHANGED = 0x215;
         const int HTCLIENT = 1, HTCAPTION = 2, HTMINBUTTON = 8, HTMAXBUTTON = 9, HTCLOSE = 20;
         const int HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
         const int HTBOTTOM = 15, HTBOTTOMLEFT = 16, HTBOTTOMRIGHT = 17;
@@ -16,6 +18,8 @@ namespace Decompdecomp {
         readonly Form form;
         readonly Caption caption;
         readonly CaptionButton[] buttons;
+        CaptionButton pressedButton;
+        bool pressArmed;
         int border, captionHeight, buttonWidth, buttonInset;
         Color hover = Color.FromArgb(48, 47, 42), danger = Color.FromArgb(196, 43, 28);
 
@@ -64,6 +68,38 @@ namespace Decompdecomp {
             else if (hit == HTMINBUTTON) form.WindowState = FormWindowState.Minimized;
             else form.WindowState = form.WindowState == FormWindowState.Maximized
                 ? FormWindowState.Normal : FormWindowState.Maximized;
+        }
+
+        CaptionButton ButtonForHit(int hit) {
+            foreach (CaptionButton button in buttons) if (button.Hit == hit) return button;
+            return null;
+        }
+
+        void CancelPress() {
+            CaptionButton old = pressedButton;
+            pressedButton = null;
+            pressArmed = false;
+            if (form.Capture) form.Capture = false;
+            if (old != null) { old.Hovered = false; old.Invalidate(); }
+        }
+
+        void BeginPress(int hit) {
+            CancelPress();
+            pressedButton = ButtonForHit(hit);
+            if (pressedButton == null) return;
+            pressArmed = true;
+            pressedButton.Hovered = true;
+            pressedButton.Invalidate();
+            form.Capture = true;
+        }
+
+        bool EndPress(IntPtr coordinates, bool screenCoordinates) {
+            if (pressedButton == null) return false;
+            CaptionButton old = pressedButton;
+            bool activate = pressArmed && MouseHit(coordinates, screenCoordinates) == old.Hit;
+            CancelPress();
+            if (activate) Activate(old.Hit);
+            return true;
         }
 
         int MouseHit(IntPtr coordinates, bool screenCoordinates) {
@@ -134,6 +170,28 @@ namespace Decompdecomp {
         }
 
         protected override void WndProc(ref Message message) {
+            if (message.Msg == WM_NCLBUTTONDOWN || message.Msg == WM_NCLBUTTONDBLCLK) {
+                int hit = unchecked((int)message.WParam.ToInt64());
+                if (ButtonForHit(hit) != null) { BeginPress(hit); message.Result = IntPtr.Zero; return; }
+            }
+            if (message.Msg == WM_MOUSEMOVE && pressedButton != null) {
+                bool over = MouseHit(message.LParam, false) == pressedButton.Hit;
+                pressArmed = over;
+                if (pressedButton.Hovered != over) { pressedButton.Hovered = over; pressedButton.Invalidate(); }
+                message.Result = IntPtr.Zero;
+                return;
+            }
+            if (message.Msg == WM_LBUTTONUP && EndPress(message.LParam, false)) { message.Result = IntPtr.Zero; return; }
+            if (message.Msg == WM_NCLBUTTONUP && pressedButton != null) {
+                EndPress(message.LParam, true);
+                message.Result = IntPtr.Zero;
+                return;
+            }
+            if ((message.Msg == WM_CANCELMODE || message.Msg == WM_CAPTURECHANGED) && pressedButton != null) {
+                CancelPress();
+                message.Result = IntPtr.Zero;
+                return;
+            }
             if (message.Msg == WM_NCCALCSIZE) { message.Result = IntPtr.Zero; return; }
             if (message.Msg == WM_NCHITTEST) {
                 message.Result = new IntPtr(MouseHit(message.LParam, true));
@@ -183,6 +241,10 @@ namespace Decompdecomp {
             public CaptionButton(int hit) {
                 Hit = hit; TabStop = false; AccessibleRole = AccessibleRole.PushButton;
                 SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            }
+            protected override void WndProc(ref Message message) {
+                if (message.Msg == WM_NCHITTEST) { message.Result = new IntPtr(-1); return; }
+                base.WndProc(ref message);
             }
             protected override void OnPaint(PaintEventArgs args) {
                 args.Graphics.Clear(Hovered ? HoverColor : BackColor);
