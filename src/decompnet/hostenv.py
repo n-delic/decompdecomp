@@ -55,6 +55,22 @@ def shown_path(path: Path | str) -> str:
     return "~" + shown[len(home):] if shown == home or shown.startswith((home + "/", home + "\\")) else shown
 
 
+def stop_process_tree(proc: subprocess.Popen) -> None:
+    """Stop a cancelled tool and its children, which can otherwise keep the user's input file open on Windows."""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def open_folder(path: Path) -> str | None:
     """Show a folder in the user's file manager. Returns why it couldn't, or None."""
     try:

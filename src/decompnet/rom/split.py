@@ -17,6 +17,7 @@ from pathlib import Path
 import rabbitizer
 
 from . import Picked, RomError
+from ..hostenv import stop_process_tree
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
 _LABEL = re.compile(r"^\s*(?:jlabel\s+)?(\.?L[0-9A-F]{8}):?\s*$")
@@ -171,11 +172,23 @@ def _add_symbols(path: Path, lines: list[str]) -> None:
     path.write_text(text.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in keep), encoding="utf-8")
 
 
-def _splat(args: list[str], cwd: Path) -> str:
-    res = subprocess.run([sys.executable, "-m", "splat", *args], cwd=cwd, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
-    out = (res.stdout + res.stderr).strip()
-    if res.returncode != 0:
+def _splat(args: list[str], cwd: Path, log=print) -> str:
+    check_cancel = getattr(log, "check_cancel", lambda: None)
+    proc = subprocess.Popen([sys.executable, "-m", "splat", *args], cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    try:
+        while True:
+            check_cancel()
+            try:
+                stdout, stderr = proc.communicate(timeout=0.2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        stop_process_tree(proc)
+        raise
+    out = (stdout + stderr).strip()
+    if proc.returncode != 0:
         lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
         reason = next((ln for ln in reversed(lines) if re.match(r"\w*(Error|Exception)\b|error:", ln)), lines[-1] if lines else "")
         err = RomError(f"splat could not analyse this ROM: {reason[:300]}")
@@ -339,7 +352,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
         toolchains.ensure("binutils-mips", log=lambda *_: None)
         objcopy = toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-objcopy"
         args[1:1] = ["--objcopy", str(objcopy)]
-    out = _splat(args, workdir)
+    out = _splat(args, workdir, log)
     configs = sorted(p for p in workdir.glob("*.yaml"))
     if not configs:
         raise RomError("splat did not produce a config for this ROM")
@@ -352,7 +365,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
         _add_symbols(workdir / "symbol_addrs.txt", symbols)
     image = console.add_code(config, workdir, image, picked or Picked(console.id, b"", rom_name, {}, big_endian), log)
     log("disassembling every function")
-    out += "\n" + _splat(["split", config.name], workdir)
+    out += "\n" + _splat(["split", config.name], workdir, log)
 
     functions = []
     for path in sorted((workdir / "asm" / "nonmatchings").glob("*/*.s")):

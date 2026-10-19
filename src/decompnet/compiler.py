@@ -12,10 +12,13 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import contextvars
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW
+from decompnet.hostenv import NO_WINDOW, stop_process_tree
 
 from . import wsl
 
@@ -24,6 +27,17 @@ MAX_SOURCE_BYTES = 64 * 1024
 # concurrency cap, so a hostile submission can't take the host down with it.
 LIMITS = ["--as=2147483648", "--cpu=30", "--fsize=67108864"]
 _SLOTS = threading.BoundedSemaphore(max(2, (os.cpu_count() or 4) - 1))
+_CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
+
+
+@contextmanager
+def cancellable(check):
+    """Make compiler subprocesses stop promptly when their owning background job is cancelled."""
+    token = _CANCEL_CHECK.set(check)
+    try:
+        yield
+    finally:
+        _CANCEL_CHECK.reset(token)
 
 _COMMENTS_AND_STRINGS = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.S)
 _FORBIDDEN = [
@@ -121,8 +135,27 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
         return wsl.run(argv, cwd or work, timeout, **stage)
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
-    return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout, creationflags=NO_WINDOW)
+    check = _CANCEL_CHECK.get()
+    if check is None:
+        return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
+    proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+    started = time.monotonic()
+    try:
+        while True:
+            check()
+            try:
+                stdout, stderr = proc.communicate(timeout=0.1)
+                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                if time.monotonic() - started > timeout:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
+    except BaseException:
+        stop_process_tree(proc)
+        raise
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,

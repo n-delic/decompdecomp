@@ -356,8 +356,11 @@ function openRestore() {
   body.querySelector("#rsOwn").onchange = (e) => { $("rsGo").disabled = !e.target.checked; };
   body.querySelector("#rsCancel").onclick = async () => {
     if (restoreJob && restoreJob.state === "running") {
+      $("rsCancel").disabled = true;
+      $("rsCancel").textContent = "Cancelling…";
       try { await api("/api/job/cancel", { method: "POST", body: { id: restoreJob.id } }); }
       catch (e) { toast(esc(e.message), "err"); }
+      return;
     }
     closeDialog();
   };
@@ -389,6 +392,12 @@ async function watchRestore(id, logEl) {
       logEl = $("rsLog") || logEl;
       if (logEl && logEl.isConnected) { logEl.hidden = false; logEl.textContent = job.log.join("\n"); logEl.scrollTop = logEl.scrollHeight; }
       if (job.state !== "running") {
+        if (job.state === "cancelled") {
+          if (logEl && logEl.isConnected) showJobError(logEl, job.error || "Opening the saved project was cancelled.");
+          if ($("rsGo")) { $("rsGo").textContent = "Open it"; $("rsGo").disabled = !$("rsOwn").checked; }
+          if ($("rsCancel")) { $("rsCancel").textContent = "Cancel"; $("rsCancel").disabled = false; }
+          return;
+        }
         if (job.state === "error") { if (logEl && logEl.isConnected) showJobError(logEl, job.error); return; }
         restoreInput = null;
         toast(`${plural(job.result.matched || 0, "matched function")} back${job.result.lost && job.result.lost.length ? `; ${job.result.lost.length} no longer match` : ""}.`, "match");

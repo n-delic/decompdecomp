@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+import threading
 import time
 
 import httpx
@@ -389,6 +390,29 @@ def test_a_job_always_ends_and_says_why(tmp_path):
     assert wait(jobs.start("build", failed))["error"] == "ninja failed (2): ld: undefined symbol foo"
     logged = (tmp_path / "logs" / "decomp.log").read_text()
     assert "reading the ROM" in logged and "KeyError" in logged and "Traceback" in logged
+
+
+def test_a_cancelled_job_stops_at_its_next_checkpoint(tmp_path):
+    from decompnet.app.support import Jobs
+
+    jobs = Jobs()
+    at_step = threading.Event()
+    finish_step = threading.Event()
+
+    def work(log):
+        at_step.set()
+        finish_step.wait(2)
+        log.check_cancel()
+
+    jid = jobs.start("restore", work)
+    assert at_step.wait(1)
+    assert jobs.cancel(jid)
+    finish_step.set()
+    for _ in range(100):
+        if jobs.jobs[jid]["state"] != "running":
+            break
+        time.sleep(0.01)
+    assert jobs.jobs[jid]["state"] == "cancelled"
 
 
 def test_the_log_can_be_read_from_the_gui(app):
