@@ -102,10 +102,26 @@ judge accepted them as matches.
 - **Compiler:** {compiler_name}
 - **Progress:** {matched} matching function(s), {len(functions) - matched} best attempt(s)
 
-The work is saved here as matched C in `src/`, best attempts in `best/`, shared headers in `include/`, and project
-metadata, notes, names and settings in `{MANIFEST}`. No game data is included. To continue on another computer:
-open decompdecomp, choose **Open a saved project**, then pick this folder (or its git repository) and your own copy
-of the game.
+## What's in this folder
+
+This folder is the whole of the work, and the only part of the project to share or keep in git. It holds no game
+data: everything else in the project's folder was made from the game (the ROM, `asm/`, `assets/`, the build files)
+and stays on your computer.
+
+```
+src/<function>.c      each matched function's C, byte for byte
+best/<function>.c     the closest attempt so far at each function that doesn't match yet
+include/common.h      the shared header every function is compiled with (common_<part>.h: a part's own)
+{MANIFEST}     the game's fingerprint (its SHA-1, never the game), the compiler and its flags, the
+                      functions' layout and names, notes, instructions, what agents learned, who matched what
+README.md             this file
+```
+
+## Continue on another computer
+
+Open decompdecomp, choose **New project → Open a saved project**, then pick this folder (or paste its git
+repository's address) and your own copy of the game. decompdecomp checks it's the same game and judges every saved
+function again: a match counts because it matches, not because a file says so.
 """, encoding="utf-8")
     return {"folder": str(folder), "matched": matched, "best": len(functions) - matched}
 

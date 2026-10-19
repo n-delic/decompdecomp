@@ -94,6 +94,22 @@ The simplest way is to copy your whole `~/Decomp` folder to the same place on th
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
 single N64 or PlayStation 2 project, or to keep it in git:
 
+**Share or commit only `progress/`.** The rest of a project's folder is made from your copy of the game, and the
+game's code is its rights holder's: keep it to yourself.
+
+```
+~/Decomp/<project>/
+├── progress/         your work: share this, commit this
+│   ├── src/              each matched function's C
+│   ├── best/             the closest attempt at each function that doesn't match yet
+│   ├── include/          the shared headers every function is compiled with
+│   ├── decompdecomp.json the game's fingerprint (never the game), compiler, layout, names, notes, settings
+│   └── README.md         what this is and how to continue
+├── rom.z64           your copy of the game: never share it
+├── asm/  assets/     taken out of the game: never share them
+└── src/  include/  *.ld  *.yaml  *.txt   the build decompdecomp makes from the game, again on any computer
+```
+
 1. Copy the project's `progress/` folder to the new computer, or push it to a git repository.
 2. On the new computer, in decompdecomp: **Open a saved project**. Pick the folder (or paste the repository's
    address) and your own copy of the game.

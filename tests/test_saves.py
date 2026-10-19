@@ -47,6 +47,7 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     assert f"**Platform:** {manifest['platform']}" in readme
     assert f"**Compiler:** {manifest['compiler']['toolchain']}" in readme
     assert "**Progress:** 1 matching function(s), 1 best attempt(s)" in readme
+    assert "the only part of the project to share" in readme and "best/<function>.c" in readme  # what to share, what's in it
 
     (tmp_path / "two").mkdir()
     fresh = RomNetwork(tmp_path / "two" / "decomp.db", tmp_path / "two")
