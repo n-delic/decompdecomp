@@ -233,21 +233,22 @@ a.ghost, a.primary { text-decoration: none; }
   background: var(--bg);
   border-bottom: 1px solid var(--line-soft);
 }
-.ph-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.ph-title { min-width: 0; display: grid; gap: 8px; }
+.ph-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; }
+/* a narrow window: the buttons go under the title (they squeezed MARIOKART64 down to "M…") */
+.ph-title { min-width: 0; display: grid; gap: 8px; flex: 1 1 320px; }
 .ph-title h1 { font-size: 24px; letter-spacing: -.025em; line-height: 1.15; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ph-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .plat { font: 600 10.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--bg); background: var(--ink); padding: 5px 7px; border-radius: var(--r-sm); }
 .chip-s { font: 500 11.5px/1 var(--sans); color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 7px; white-space: nowrap; }
 .chip-s.mono { font-family: var(--mono); }
 .chip-s.warn { color: var(--work); border-color: color-mix(in srgb, var(--work) 40%, var(--line)); }
-.ph-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ph-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 0 1 auto; }
 .ghost.together { display: inline-flex; align-items: center; gap: 7px; }
 .ghost.together svg { width: 15px; height: 15px; fill: currentColor; }
 .pill-btn { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: var(--r-sm); background: var(--hl); color: var(--hl-ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .pill-btn.room { background: var(--move-bg); color: var(--move); }
 .pill-btn.room.off { background: var(--bg-alt); color: var(--muted); }
-.ph-progress { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.ph-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 14px; }
 .ph-progress .meter { flex: 0 1 340px; }
 .ph-pct { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .ph-pct b { font: 600 15px/1 var(--mono); color: var(--ink); }
