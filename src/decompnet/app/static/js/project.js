@@ -6,7 +6,7 @@ const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it c
 async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
-  S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false;
+  S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
@@ -227,6 +227,8 @@ function renderHeader(ov) {
     pill.innerHTML = `<span class="dot ${dot}"></span>${esc(text)}`;
   }
   renderRoomCover(room);
+  const roomSig = room ? `${room.role}:${(room.members || []).map((m) => m.name).join(",")}` : "";
+  if (roomSig !== S.roomSig) { S.roomSig = roomSig; retintFeed(); }
   $("agTabCount").textContent = w.n || "";
 }
 // a guest's pill, by the room's state (collab.Link.status): [its dot, its words]

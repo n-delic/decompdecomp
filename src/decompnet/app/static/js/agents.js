@@ -357,6 +357,13 @@ function rowTint(agent) {
   const c = computerColour(computerOf(agent));
   return c == null ? "" : ` tint-row pc-${c}`;
 }
+/* The room reopens a few seconds after the app starts, and members join: lines drawn before had no colour, or an
+   old one. Each line keeps its agent, and takes its colour again when the room changes (renderHeader). */
+function retintFeed() {
+  $("activity").querySelectorAll("li").forEach((li) => {
+    li.className = li.className.replace(/ ?tint-row pc-\d/g, "") + rowTint(li.dataset.agent);
+  });
+}
 function whoHtml(agent, cls = "who") {
   const c = computerColour(computerOf(agent));
   return `<span class="${cls}${c == null ? "" : ` tint pc-${c}`}" title="${esc(agent || "")}">${esc(agent || "")}</span>`;
@@ -426,6 +433,7 @@ function addLine(t, html, first, agent) {
   const list = $("activity");
   const li = document.createElement("li");
   li.className = (first ? "" : "fresh") + rowTint(agent);
+  li.dataset.agent = agent || "";
   li.innerHTML = `<time>${clock(t)}</time><span>${html}</span>`;
   list.querySelector(".placeholder")?.remove();
   list.prepend(li);

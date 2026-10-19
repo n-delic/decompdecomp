@@ -555,7 +555,8 @@ a.ghost, a.primary { text-decoration: none; }
 /* a feed line or a helper's card in its computer's colour: a tinted row and a coloured edge, the name in the colour */
 .tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--panel)); box-shadow: inset 3px 0 0 var(--pc); }
 .session.tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--raise)); }
-.tint-row .who.tint { background: none; padding: 0; color: var(--pc); }
+.tint-row .who { color: var(--pc); }
+.tint-row .who.tint { background: none; padding: 0; }
 #roomAgents { display: grid; gap: 8px; }
 #agentStats:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }  /* one panel: the whole width */
 #agentStats:has(> [hidden] + [hidden]) { display: none; }
