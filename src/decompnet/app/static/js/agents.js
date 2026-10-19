@@ -62,11 +62,9 @@ async function renderCosts(force = false) {
   let rows;
   try { rows = await api(`/api/modelcosts?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
   const box = $("modelCosts");
-  box.hidden = !rows.length;
+  $("costPanel").hidden = !rows.length;
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
-  setHtml(box, `<p class="col-title">What each model cost here</p>
-    <p class="muted small">Cheapest per match first: run more of the models at the top.</p>
-    <ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
+  setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
 }
 
@@ -85,8 +83,7 @@ function renderSessions(sessions) {
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
-    const col = computerColour(computerOf(s.agent));
-    return `<div class="session" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b class="${col == null ? "" : `tint pc-${col}`}" title="${esc(s.agent)}">${esc(s.label)}</b>
+    return `<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
           : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
       <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>
@@ -355,6 +352,11 @@ function computerColour(c) {
   const i = (S.ov.room.members || []).findIndex((m) => m.name === c);
   return i < 0 ? null : (i + 1) % PROJECT_COLOURS;
 }
+// a whole row in its computer's colour (a feed line, a helper's card): the name alone was lost in a busy feed
+function rowTint(agent) {
+  const c = computerColour(computerOf(agent));
+  return c == null ? "" : ` tint-row pc-${c}`;
+}
 function whoHtml(agent, cls = "who") {
   const c = computerColour(computerOf(agent));
   return `<span class="${cls}${c == null ? "" : ` tint pc-${c}`}" title="${esc(agent || "")}">${esc(agent || "")}</span>`;
@@ -369,9 +371,9 @@ function renderRoomAgents() {
     ...(room.role === "guest" ? [{ key: HOST_COMPUTER, name: "Host", online: room.connected }] : []),
     ...(room.members || []).map((m) => ({ key: m.name, name: m.name, online: m.online, matched: m.matched })),
   ].filter((c) => c.key !== mine);
-  box.hidden = !computers.length;
+  $("roomPanel").hidden = !computers.length;
   if (!computers.length) return;
-  setHtml(box, `<h3>On the room's other computers</h3>` + computers.map((c) => {
+  setHtml(box, computers.map((c) => {
     const jobs = S.claims.filter((j) => computerOf(j.agent) === c.key), col = computerColour(c.key);
     return `<div class="line-item"><span class="swatch${col == null ? "" : ` pc-${col}`}" aria-hidden="true"></span><div class="txt"><b>${esc(c.name)}</b>
       <span>${c.online ? "online" : "away"}${c.matched ? ` · ${c.matched} matched` : ""}</span>
@@ -420,10 +422,10 @@ function groupHtml(g) {
   const last = g.lastScore === undefined ? "" : g.lastScore === null ? ` · <span class="bad">last one didn't compile</span>` : "";
   return `${who} working on ${fnLink(g.fn)} <span class="score">${plural(g.tries, "compile")}${p != null ? ` · best ${pctText(p)}` : ""}</span>${last}`;
 }
-function addLine(t, html, first) {
+function addLine(t, html, first, agent) {
   const list = $("activity");
   const li = document.createElement("li");
-  if (!first) li.className = "fresh";
+  li.className = (first ? "" : "fresh") + rowTint(agent);
   li.innerHTML = `<time>${clock(t)}</time><span>${html}</span>`;
   list.querySelector(".placeholder")?.remove();
   list.prepend(li);
@@ -439,7 +441,7 @@ function touchGroup(agent, fn, t, change, first) {
     g.li.querySelector("span").innerHTML = groupHtml(g);
     if (g.li !== $("activity").firstElementChild) $("activity").prepend(g.li);
     if (!first) { g.li.classList.remove("fresh"); void g.li.offsetWidth; g.li.classList.add("fresh"); }
-  } else g.li = addLine(t, groupHtml(g), first);
+  } else g.li = addLine(t, groupHtml(g), first, agent);
   if (g.matched || g.released) groups.delete(key);
 }
 /* A match ends every other agent's line about that function too: they stopped "working on" it. */
@@ -484,7 +486,7 @@ function addActivity(events, attempts, first) {
     } else if (it.ev.kind === "claim") touchGroup(it.ev.agent, it.ev.detail, it.t, () => {}, first);
     else if (it.ev.kind === "match") { matchedBy(it.ev.agent, it.ev.detail); touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first); }
     else if (it.ev.kind === "release") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.released = true; }, first);
-    else addLine(it.t, eventHtml(it.ev), first);
+    else addLine(it.t, eventHtml(it.ev), first, it.ev.agent);
   }
   const list = $("activity");
   while (list.children.length > ACTIVITY_ROWS) list.lastChild.remove();

@@ -552,8 +552,13 @@ a.ghost, a.primary { text-decoration: none; }
 .project.covered .ptabs, .project.covered .ptab { display: none; }
 /* each computer's colour on its agents' names, in a room (agents.js: computerOf) */
 .tint { background: color-mix(in oklch, var(--pc) 18%, transparent); border-radius: var(--r-sm); padding: 0 5px; }
+/* a feed line or a helper's card in its computer's colour: a tinted row and a coloured edge, the name in the colour */
+.tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--panel)); box-shadow: inset 3px 0 0 var(--pc); }
+.session.tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--raise)); }
+.tint-row .who.tint { background: none; padding: 0; color: var(--pc); }
 #roomAgents { display: grid; gap: 8px; }
-#roomAgents h3 { font-size: 13px; color: var(--muted); font-weight: 600; }
+#agentStats:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }  /* one panel: the whole width */
+#agentStats:has(> [hidden] + [hidden]) { display: none; }
 .room-job { display: block; margin-top: 2px; }
 #knowList { display: grid; gap: 8px; min-width: 0; max-height: 420px; overflow: auto; }
 #knowList .note { overflow-wrap: anywhere; }

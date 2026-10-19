@@ -295,14 +295,23 @@
       <section class="panel">
         <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
         <div id="sessions" class="sessions"></div>
-        <div class="pad" id="modelCosts" hidden></div>
-        <div class="pad" id="roomAgents" hidden></div>
         <div class="empty" id="noSessions"><p class="muted small">No agent works on this game yet. Press <b>Start agents</b> at the top: each agent picks functions by itself, and starts again by itself if it stops.</p></div>
       </section>
       <section class="panel feed-panel">
         <header class="panel-head"><h2 id="feedTitle" tabindex="-1">What's happening</h2><span class="muted small" id="feedHint">every agent's work on this game, newest first</span><button class="ghost small-btn" id="helperLogClose" type="button" hidden>Back to everything</button></header>
         <ol class="feed" id="activity" aria-live="off"></ol>
         <ol class="feed thoughts" id="thoughts" hidden></ol>
+      </section>
+    </div>
+    <!-- below the helpers, so their cards keep the room they need: the room's other computers, each model's cost -->
+    <div class="cols" id="agentStats">
+      <section class="panel" id="roomPanel" hidden>
+        <header class="panel-head"><h2>On the room's other computers</h2><span class="muted small">their agents, in each computer's colour</span></header>
+        <div class="pad" id="roomAgents"></div>
+      </section>
+      <section class="panel" id="costPanel" hidden>
+        <header class="panel-head"><h2>What each model cost here</h2><span class="muted small">cheapest per match first: run more of the models at the top</span></header>
+        <div class="pad" id="modelCosts"></div>
       </section>
     </div>
     <div class="cols">
