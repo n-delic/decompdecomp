@@ -72,3 +72,4 @@ def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui
 def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
+    assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]

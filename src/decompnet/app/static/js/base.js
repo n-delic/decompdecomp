@@ -108,7 +108,8 @@ function mapChanged() { baseDirty = true; }
 /* ------------------------------------------------------------------ theme */
 const THEME_KEY = "decomp-wtf-theme";
 function applyTheme(t) {
-  if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  const theme = t || systemTheme();
+  if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
   colors = null; baseDirty = true;
   if (S.map.length) drawMap();
 }
@@ -120,6 +121,12 @@ function setTheme(t) {
 function savedTheme() {
   try { const t = localStorage.getItem(THEME_KEY); return THEMES.some(([k]) => k === t) ? t : ""; } catch { return ""; }
 }
+/* WSLg's WebKitGTK can see the Linux session's preference instead of Windows' preference. The dev launcher passes
+   Windows' choice in the URL; ordinary Linux launches keep using the browser's prefers-color-scheme. */
+function systemTheme() {
+  const t = new URLSearchParams(location.search).get("system-theme");
+  return t === "light" || t === "dark" ? t : "";
+}
 /* The sidebar's button goes round the same three choices as Settings: it only flipped light and dark, so once
    pressed there was no way back to the system's from it. */
 const THEMES = [["", "System"], ["light", "Light"], ["dark", "Dark"]];
@@ -130,8 +137,9 @@ function labelThemeButton(t) {
   $("themeBtn").setAttribute("aria-label", $("themeBtn").title);
 }
 $("themeBtn").onclick = () => setTheme(nextTheme(savedTheme()));
-// the saved choice, before anything is drawn (applyTheme also redraws the map, which loads later)
-if (savedTheme()) document.documentElement.dataset.theme = savedTheme();
+// the saved choice, or the launcher's system choice, before anything is drawn
+const initialTheme = savedTheme() || systemTheme();
+if (initialTheme) document.documentElement.dataset.theme = initialTheme;
 labelThemeButton(savedTheme());
 
 /* ------------------------------------------------------------------ state + routing */

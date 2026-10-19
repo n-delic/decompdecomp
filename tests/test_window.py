@@ -67,6 +67,13 @@ def test_no_window_in_tests(tmp_path, monkeypatch):
     assert not window.Window(tmp_path, "http://127.0.0.1:6464/", "s", lambda: None).open()
 
 
+def test_wsl_launcher_theme_is_passed_to_the_page(fake_window, monkeypatch):
+    monkeypatch.setenv("DECOMP_THEME", "dark")
+    w, _log, _closed = fake_window
+    assert w.open()
+    assert "system-theme=dark" in w.proc.args[w.proc.args.index("--url") + 1]
+
+
 def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
     """No browser to fall back to: the user is told the packages, with their distribution's command."""
     window.missing.cache_clear()

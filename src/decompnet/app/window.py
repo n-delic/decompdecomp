@@ -114,7 +114,10 @@ class Window:
                 return False
             icon = self.internal / "window-icon.svg"
             icon.write_text(edition.icon_svg(), encoding="utf-8")
-            argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
+            url = self.url
+            if os.environ.get("DECOMP_THEME") in ("light", "dark"):
+                url += ("&" if "?" in url else "?") + "system-theme=" + os.environ["DECOMP_THEME"]
+            argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", url, "--title", edition.NAME,
                     "--window-class", edition.WINDOW_CLASS, "--icon", str(icon)] + (["--dev"] if edition.DEV else [])
             try:
                 self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

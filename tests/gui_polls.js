@@ -40,7 +40,7 @@ process.on("unhandledRejection", (e) => errors.push(String(e && e.stack || e)));
 const ctx = {
   console, fetch, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, Uint8Array,
   setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
-  requestAnimationFrame: () => 0, performance: { now: () => 0 }, localStorage: stub(), navigator: stub(),
+  requestAnimationFrame: () => 0, performance: { now: () => 0 }, localStorage: stub(), navigator: stub(), URLSearchParams,
   matchMedia: () => stub(), getComputedStyle: () => stub(), location: { hash: "", href: "" }, confirm: () => false,
   addEventListener: () => {}, scrollTo: () => {}, devicePixelRatio: 1, document: stub(),
 };
@@ -123,6 +123,10 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "a b", copy: "/x.iso", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "/x.iso", own: true }].map(joinProblem),
     themes: ["", "light", "dark"].map(nextTheme),
+    systemThemes: ["", "?system-theme=light", "?system-theme=dark", "?system-theme=invalid"].map((search) => {
+      location.search = search;
+      return systemTheme();
+    }),
     search: (() => {
       const fns = [{ name: "func_80000400", vram: 0x80000400, unit: "main" }, { name: "lerp", vram: 0x80000500, unit: "main" },
                    { name: "main_loop", vram: 0x80000600, unit: "main" }];
