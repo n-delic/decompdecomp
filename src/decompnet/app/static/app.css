@@ -405,7 +405,7 @@ a.ghost, a.primary { text-decoration: none; }
 .stepper button { width: 34px; height: 100%; font-size: 16px; color: var(--muted); }
 .stepper button:hover { color: var(--ink); }
 .stepper output { min-width: 26px; text-align: center; font: 500 14px/1 var(--mono); color: var(--ink); }
-.sessions { display: grid; gap: 10px; padding: 14px; }
+.sessions { display: grid; gap: 10px; padding: 14px; align-content: start; }  /* (a fixed-height panel: one helper's card stretched to fill it) */
 .sessions:empty { display: none; }
 .session { padding: 12px 13px; border-radius: var(--r); border: 1px solid var(--line-soft); background: var(--raise); display: grid; gap: 6px; }
 .session-top { display: flex; align-items: center; gap: 9px; }
@@ -623,6 +623,8 @@ a.ghost, a.primary { text-decoration: none; }
    clicks go through the space between them */
 .toasts { position: fixed; right: 18px; top: 64px; z-index: 60; display: grid; gap: 8px; justify-items: end; pointer-events: none; }
 .toasts > * { pointer-events: auto; }
+/* the Start agents popover opens where notifications pop up: they covered its first choices */
+body:has(#launchPop:not([hidden])) .toasts { top: auto; bottom: 18px; }
 .toast {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--r); background: var(--color-surface-overlay); color: var(--ink);
   border: var(--border-width-hairline) solid var(--faint); font-size: 13.5px; box-shadow: var(--shadow-overlay); animation: toast .3s cubic-bezier(.2, .9, .3, 1.2); max-width: 440px;
