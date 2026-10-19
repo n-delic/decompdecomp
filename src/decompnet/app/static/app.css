@@ -658,8 +658,6 @@ body:has(#launchPop:not([hidden])) .toasts { top: auto; bottom: 18px; }
   .mbar { display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 12px; border-bottom: 1px solid var(--line-soft); position: sticky; top: 0; z-index: 20; background: var(--bg); }
   .view { padding: 18px 16px 56px; }
   .phead { top: 54px; margin: 0 -16px; padding: 14px 16px 0; }
-  .ph-row { flex-direction: column; }
-  .ph-actions { flex-wrap: wrap; }
   .ph-title h1 { font-size: 21px; white-space: normal; }
   .hero { grid-template-columns: 1fr; gap: 24px; padding-top: 6px; }
   .code-cols { grid-template-columns: 1fr; }
