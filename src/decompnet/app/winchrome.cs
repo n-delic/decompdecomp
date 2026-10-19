@@ -1,5 +1,5 @@
 // A client-drawn caption with real Windows hit tests. WebView2 sits below it, so it cannot swallow resize,
-// caption or system-button input. DefWindowProc owns moving, sizing, snapping and caption-button tracking.
+// caption or system-button input. DefWindowProc owns moving, sizing and snapping; we track button clicks.
 using System;
 using System.Drawing;
 using System.Runtime.InteropServices;
@@ -8,6 +8,8 @@ using System.Windows.Forms;
 namespace Decompdecomp {
     public sealed class WindowChrome : NativeWindow {
         const int WM_NCCALCSIZE = 0x83, WM_NCHITTEST = 0x84, WM_GETMINMAXINFO = 0x24;
+        const int WM_NCLBUTTONDOWN = 0xA1, WM_NCLBUTTONUP = 0xA2, WM_NCLBUTTONDBLCLK = 0xA3;
+        const int WM_MOUSEMOVE = 0x200, WM_LBUTTONUP = 0x202, WM_CANCELMODE = 0x1F, WM_CAPTURECHANGED = 0x215;
         const int WM_NCMOUSEMOVE = 0xA0, WM_NCMOUSELEAVE = 0x2A2, WM_DPICHANGED = 0x2E0;
         const int HTCLIENT = 1, HTCAPTION = 2, HTMINBUTTON = 8, HTMAXBUTTON = 9, HTCLOSE = 20;
         const int HTTRANSPARENT = -1, HTLEFT = 10, HTRIGHT = 11, HTTOP = 12, HTTOPLEFT = 13, HTTOPRIGHT = 14;
@@ -17,7 +19,7 @@ namespace Decompdecomp {
         readonly Form form;
         readonly Caption caption;
         readonly CaptionButton[] buttons;
-        int border, captionHeight, buttonWidth;
+        int border, captionHeight, buttonWidth, pressedButton;
         Color hover = Color.FromArgb(48, 47, 42), danger = Color.FromArgb(196, 43, 28);
 
         [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -42,13 +44,22 @@ namespace Decompdecomp {
             };
             foreach (CaptionButton button in buttons) {
                 caption.Controls.Add(button);
+                // The transparent child hit test means Windows can report either non-client messages
+                // to the frame or client enter/leave messages to the button, depending on the WebView
+                // and Windows version. Keep the painted state correct in both cases.
+                button.MouseEnter += delegate {
+                    if (pressedButton == 0) { button.Hovered = true; button.Invalidate(); }
+                };
+                button.MouseLeave += delegate {
+                    if (pressedButton == 0) { button.Hovered = false; button.Invalidate(); }
+                };
                 button.Click += delegate { Activate(button.Hit); };
             }
             form.Controls.Add(caption);
             caption.BringToFront();
             form.SizeChanged += delegate { Layout(); };
             form.Activated += delegate { caption.Invalidate(); };
-            form.Deactivate += delegate { caption.Invalidate(); };
+            form.Deactivate += delegate { CancelPress(); caption.Invalidate(); };
             form.FormClosed += delegate { ReleaseHandle(); };
             SetTheme("#22211e", "#eeece6", "#34332e", "#c42b1c");
             Layout();
@@ -63,6 +74,32 @@ namespace Decompdecomp {
             else if (hit == HTMINBUTTON) form.WindowState = FormWindowState.Minimized;
             else form.WindowState = form.WindowState == FormWindowState.Maximized
                 ? FormWindowState.Normal : FormWindowState.Maximized;
+        }
+
+        static bool IsCaptionButton(int hit) {
+            return hit == HTMINBUTTON || hit == HTMAXBUTTON || hit == HTCLOSE;
+        }
+
+        void UpdateHover(int hit) {
+            foreach (CaptionButton button in buttons) {
+                button.Hovered = button.Hit == hit && (pressedButton == 0 || pressedButton == hit);
+                button.Invalidate();
+            }
+        }
+
+        void CancelPress() {
+            bool wasPressed = pressedButton != 0;
+            pressedButton = 0;
+            if (wasPressed && form.Capture) form.Capture = false;
+            UpdateHover(0);
+        }
+
+        int MouseHit(IntPtr coordinates, bool screenCoordinates) {
+            long packed = coordinates.ToInt64();
+            System.Drawing.Point point = new System.Drawing.Point((short)packed, (short)(packed >> 16));
+            if (screenCoordinates) point = form.PointToClient(point);
+            return HitTest(point.X, point.Y, form.ClientSize.Width, form.ClientSize.Height,
+                           border, captionHeight, buttonWidth, form.WindowState == FormWindowState.Maximized);
         }
 
         void Layout() {
@@ -80,6 +117,7 @@ namespace Decompdecomp {
                 button.AccessibleName = index == 0 ? "Minimize" : index == 2 ? "Close" : maximized ? "Restore" : "Maximize";
                 button.Invalidate();
             }
+            caption.Invalidate();
         }
 
         public void SetTheme(string background, string foreground, string hoverColor, string dangerColor) {
@@ -99,6 +137,7 @@ namespace Decompdecomp {
 
         // Coordinates and dimensions are physical pixels on the window's current monitor.
         public static int HitTest(int x, int y, int width, int height, int edge, int title, int button, bool maximized) {
+            if (x < 0 || y < 0 || x >= width || y >= height) return 0;
             if (!maximized) {
                 bool left = x < edge, right = x >= width - edge;
                 if (y < edge) return left ? HTTOPLEFT : right ? HTTOPRIGHT : HTTOP;
@@ -116,13 +155,35 @@ namespace Decompdecomp {
         }
 
         protected override void WndProc(ref Message message) {
+            // DefWindowProc's modal caption tracking can consume the release before our handler sees it.
+            // Capture custom-button presses ourselves. Captured mouse messages use client coordinates;
+            // releasing outside the original button, losing capture or deactivating cancels the click.
+            if ((message.Msg == WM_NCLBUTTONDOWN || message.Msg == WM_NCLBUTTONDBLCLK)
+                    && IsCaptionButton(message.WParam.ToInt32())) {
+                pressedButton = message.WParam.ToInt32();
+                form.Capture = true;
+                UpdateHover(pressedButton);
+                message.Result = IntPtr.Zero;
+                return;
+            }
+            if (message.Msg == WM_CANCELMODE || message.Msg == WM_CAPTURECHANGED) CancelPress();
+            if (pressedButton != 0 && message.Msg == WM_MOUSEMOVE) {
+                UpdateHover(MouseHit(message.LParam, false));
+                message.Result = IntPtr.Zero;
+                return;
+            }
+            if ((pressedButton != 0 && message.Msg == WM_LBUTTONUP)
+                    || (message.Msg == WM_NCLBUTTONUP && IsCaptionButton(message.WParam.ToInt32()))) {
+                int pressed = pressedButton;
+                int hit = MouseHit(message.LParam, message.Msg == WM_NCLBUTTONUP);
+                CancelPress();
+                if (pressed != 0 && hit == pressed) Activate(pressed);
+                message.Result = IntPtr.Zero;
+                return;
+            }
             if (message.Msg == WM_NCCALCSIZE) { message.Result = IntPtr.Zero; return; }
             if (message.Msg == WM_NCHITTEST) {
-                long coords = message.LParam.ToInt64();
-                System.Drawing.Point point = form.PointToClient(new System.Drawing.Point((short)coords, (short)(coords >> 16)));
-                int hit = HitTest(point.X, point.Y, form.ClientSize.Width, form.ClientSize.Height,
-                                  border, captionHeight, buttonWidth, form.WindowState == FormWindowState.Maximized);
-                message.Result = new IntPtr(hit);
+                message.Result = new IntPtr(MouseHit(message.LParam, true));
                 return;
             }
             if (message.Msg == WM_GETMINMAXINFO) {
@@ -139,17 +200,14 @@ namespace Decompdecomp {
             }
             if (message.Msg == WM_NCMOUSEMOVE || message.Msg == WM_NCMOUSELEAVE) {
                 int hit = message.Msg == WM_NCMOUSEMOVE ? message.WParam.ToInt32() : 0;
-                foreach (CaptionButton button in buttons) {
-                    button.Hovered = button.Hit == hit;
-                    button.Invalidate();
-                }
+                UpdateHover(hit);
                 if (hit != 0) {
                     MouseTracking tracking = new MouseTracking { size = Marshal.SizeOf(typeof(MouseTracking)),
                         flags = TME_LEAVE | TME_NONCLIENT, hwnd = Handle };
                     TrackMouseEvent(ref tracking);
                 }
             }
-            // Windows handles non-client button input itself, including the Windows 11 maximize hover menu.
+            // Keep native caption dragging, resizing and the Windows 11 maximize hover menu.
             base.WndProc(ref message);
             if (message.Msg == WM_DPICHANGED) Layout();
         }

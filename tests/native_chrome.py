@@ -52,6 +52,8 @@ try:
         assert hit(0, 350, maximized=True) == 1  # no resizing while maximized
         assert hit(500, 699, maximized=True) == 1
         assert hit(100, 20, maximized=True) == 2  # caption dragging goes through Windows' restore behavior
+        for point in ((-1, 20), (1000, 20), (970, -1), (970, 700)):
+            assert hit(*point) == 0  # captured releases outside the window must not activate a button
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -105,5 +107,67 @@ try:
     assert buttons[1].AccessibleName == "Maximize"
     assert form.Padding.Left > 0
     assert form.Padding.Top == caption.Height + form.Padding.Left
+
+    # A release alone must never activate a caption button (for example after dragging from the title).
+    user32.SendMessageW(form.Handle.ToInt64(), 0xA2, 8, 0)  # WM_NCLBUTTONUP / HTMINBUTTON
+    assert form.WindowState == FormWindowState.Normal
+
+    def send_mouse(message, hit=0, point=None, screen=False):
+        point = point or Point(0, 0)
+        if screen:
+            point = form.PointToScreen(point)
+        packed = (point.X & 0xffff) | ((point.Y & 0xffff) << 16)
+        return user32.SendMessageW(form.Handle.ToInt64(), message, hit, packed)
+
+    def button_point(index):
+        button = buttons[index]
+        return Point(caption.Left + button.Left + button.Width // 2, caption.Top + button.Height // 2)
+
+    def press(index, message=0xA1):
+        send_mouse(message, (8, 9, 20)[index], button_point(index), screen=True)
+        assert form.Capture
+
+    # A real press is followed by client mouse messages once we own capture. No modal native tracking loop
+    # may swallow that release. These hidden forms never move the pointer or steal the user's focus.
+    press(1)
+    send_mouse(0x202, point=button_point(1))
+    assert not form.Capture and form.WindowState == FormWindowState.Maximized
+    size_changed.Invoke(form, [EventArgs.Empty])
+    press(1, message=0xA3)  # the second press of a fast double click must also restore
+    send_mouse(0x202, point=button_point(1))
+    assert form.WindowState == FormWindowState.Normal
+    size_changed.Invoke(form, [EventArgs.Empty])
+
+    closed = []
+    form.FormClosing += lambda *_: closed.append(True)
+    for release in (Point(-5, 20), button_point(1), Point(form.ClientSize.Width + 5, 20)):
+        press(2)
+        send_mouse(0x200, point=release)
+        assert not buttons[2].Hovered
+        send_mouse(0x202, point=release)
+        assert not closed and not form.Capture
+
+    for cancel in (0x1F, 0x215):  # WM_CANCELMODE, WM_CAPTURECHANGED
+        press(2)
+        send_mouse(cancel)
+        send_mouse(0x202, point=button_point(2))
+        assert not closed and not form.Capture
+
+    press(2)
+    deactivate = form.GetType().GetMethod("OnDeactivate", BindingFlags.Instance | BindingFlags.NonPublic)
+    deactivate.Invoke(form, [EventArgs.Empty])
+    send_mouse(0x202, point=button_point(2))
+    assert not closed and not form.Capture
+
+    press(0)
+    send_mouse(0x200, point=Point(-5, 20))
+    send_mouse(0x200, point=button_point(0))  # returning to the pressed button arms it again
+    assert buttons[0].Hovered
+    send_mouse(0xA2, 8, button_point(0), screen=True)
+    assert form.WindowState == FormWindowState.Minimized
+    form.WindowState = FormWindowState.Normal
+    press(2)
+    send_mouse(0x202, point=button_point(2))
+    assert closed == [True]
 finally:
     form.Dispose()
