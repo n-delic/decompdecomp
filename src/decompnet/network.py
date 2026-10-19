@@ -92,7 +92,10 @@ _FAILING = f"(COALESCE(r.tried, 0) >= {FAILING_TRIED} AND {_SHARE} < {FAILING_SH
 # (a callee whose convention or body it depends on, a helper the original inlines) waits, claimed after everything
 # else, until that one matches; the one it waits for is claimed first meanwhile; once it matches, the waiting one
 # comes first, once (its row goes when it's claimed).
-WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status != 'matched'")
+# (two functions waiting for each other don't wait: each one's convention came from the other, a caller and its
+# callee in one file, and they match together in one batch compile, so the queue mustn't hold both back for good)
+WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status != 'matched' "
+           "AND NOT EXISTS (SELECT 1 FROM waits w2 WHERE w2.function_id=w.needs_id AND w2.needs_id=w.function_id)")
 READY = "SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status = 'matched'"
 WANTED = "SELECT w.needs_id FROM waits w JOIN functions b ON b.id=w.function_id WHERE b.status = 'open'"
 STRATEGIES = {
@@ -719,6 +722,11 @@ class Network:
             if row["status"] == "matched":
                 out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
                             f"first (a callee or an inlined helper): read its code (get_function) and use it here."]
+            elif self.store.one("SELECT 1 FROM waits WHERE function_id=(SELECT id FROM functions WHERE name=? AND "
+                                "project_id=?) AND needs_id=?", row["name"], fn["project_id"], fn["id"]):
+                out += ["", f"### Needs {row['name']}, which needs this one: they depend on each other (a caller and its "
+                            "callee, each one's convention coming from the other), so work on them together: "
+                            f"compile_and_diff(function=\"{fn['name']}, {row['name']}\", source=both definitions)."]
             else:
                 out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} found this function needs it "
                             f"first (a callee or an inlined helper), so it's claimed after everything else until "

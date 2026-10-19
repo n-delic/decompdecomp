@@ -95,6 +95,26 @@ def test_a_release_naming_what_it_needs_waits_and_that_one_goes_first(tmp_path):
         "SELECT * FROM functions WHERE name='g'")))
 
 
+def test_two_functions_that_need_each_other_are_worked_on_together_not_both_held_back(tmp_path):
+    # one function needs the other's call set-up, the other needs the first one's convention
+    net, pid = _game(tmp_path, [("f", 10, "open"), ("g", 50, "open"), ("h", 5, "open")])
+    ids = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
+    with net.store.tx() as db:
+        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["g"], ids["f"], None, time.time()))  # g waits for f
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    with pytest.raises(NetworkError, match=r"depend on each other.*compile_and_diff\(function=\"f, g\""):
+        net.release_function(a, "f", "", "game", needs="g")
+    assert _held(net, a) == "f"  # nothing released
+    # a cycle already in the table (made before this check) holds neither back
+    with net.store.tx() as db:
+        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
+    b, _ = net.local_agent("b")
+    assert net.claim_row(b, "game", None, "easiest")["name"] == "g"  # not last (behind h): the wait is mutual
+    brief = net.dependency_brief(net.store.one("SELECT * FROM functions WHERE name='g'"))
+    assert any("depend on each other" in line for line in brief)
+
+
 def test_what_a_function_waits_for_is_claimed_first_and_its_match_brings_it_back(tmp_path, monkeypatch):
     from decompnet import network
 

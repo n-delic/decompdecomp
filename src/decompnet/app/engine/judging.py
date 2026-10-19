@@ -236,6 +236,18 @@ class JudgeMixin:
         if need["status"] != "open":
             raise NetworkError(f"needs: {need['name']} is {need['status']} (no agent works on it), so this one would "
                                "wait forever; nothing was released.")
+        seen, at = {need["id"]}, need["id"]
+        while (row := self.store.one("SELECT needs_id FROM waits WHERE function_id=?", at)) is not None:
+            at = row["needs_id"]
+            if at == fn["id"]:  # waiting for one that (in the end) waits for this one: they'd both wait for good
+                raise NetworkError(
+                    f"needs: {need['name']} already waits for {fn['name']}, so they depend on each other (a caller "
+                    "and its callee, each one's convention coming from the other): work on them together instead. "
+                    f"compile_and_diff(function=\"{fn['name']}, {need['name']}\", source=both definitions) judges both "
+                    "in one build; nothing was released.")
+            if at in seen:
+                break
+            seen.add(at)
         return need
 
     def _push_back(self, agent: Agent, fn, progress: dict, project: str | None) -> str | None:
