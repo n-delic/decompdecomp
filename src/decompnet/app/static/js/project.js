@@ -173,7 +173,7 @@ function workingAgents() {
 /* A console (consoles/ in the app: its name, status, layout, compilers), by the id or an old id a project or the
    browser's look at a file names it with. */
 function consoleOf(p) {
-  const key = { gcwii: "gc" }[p] || p;
+  const key = { gcwii: "gc", playstation: "ps2" }[p] || p;  // (a PlayStation disc: both are ROM consoles)
   return ((S.st && S.st.consoles) || []).find((c) => c.id === key || c.aliases.includes(key));
 }
 /* recommended | beta | "" for a platform key. */

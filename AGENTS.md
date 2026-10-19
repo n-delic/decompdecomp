@@ -52,7 +52,7 @@ compilers are only installed after the user accepts that in Setup; don't add cod
 
 ## Consoles, and the two ways a game is decompiled
 
-Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps2/`, `gc_wii/` (GameCube and
+Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps1/`, `ps2/`, `gc_wii/` (GameCube and
 Wii), `pc/` (Windows games). Its `__init__.py` makes the console (its facts and parts) and its docstring lists its
 files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
 list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never
@@ -60,7 +60,7 @@ compares console names: a console-specific `if` outside `consoles/` is a bug. Wh
 (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`,
 `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
-1. **ROM mode** (N64, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
+1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
    compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they share). Exported as a
    rebuildable tree by `rom/export*.py`.

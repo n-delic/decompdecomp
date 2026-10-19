@@ -80,6 +80,7 @@ through one file: the connector, `consoles/__init__.py`.
 | Folder | Console | Mode | Its files |
 | :-- | :-- | :-- | :-- |
 | `consoles/n64/` | Nintendo 64 | ROM | `rom.py` the ROM file and its header · `code.py` code the game loads later, compressed code · `guides/` |
+| `consoles/ps1/` | PlayStation | ROM | `exe.py` the game's program (PS-X EXE) and the disc's BOOT line; its discs and overlays through the PS2's readers · `guides/` |
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |

@@ -85,14 +85,14 @@ What changed on the way:
 
 ## Moving to another computer
 
-decompdecomp saves the work on each N64 and PlayStation 2 project as plain files in the project's `progress/`
+decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project as plain files in the project's `progress/`
 folder, every few minutes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
 so you can keep it in a git repository. GameCube, Wii and PC projects and community decomps are git repositories
 already: push them.
 
 The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
-single N64 or PlayStation 2 project, or to keep it in git:
+single N64, PlayStation or PlayStation 2 project, or to keep it in git:
 
 **Share or commit only `progress/`.** The rest of a project's folder is made from your copy of the game, and the
 game's code is its rights holder's: keep it to yourself.
@@ -120,10 +120,11 @@ game's code is its rights holder's: keep it to yourself.
 | Platform | Status |
 | :-- | :-- |
 | Nintendo 64 | Recommended |
+| PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |
-| PlayStation, Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
+| Game Boy Advance, DS, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
 [tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes

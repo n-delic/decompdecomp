@@ -1,6 +1,7 @@
-"""PlayStation 2 overlays: code a game keeps in files on its disc, besides the main executable.
+"""PlayStation overlays: code a game keeps in files on its disc, besides the main executable (the PS1 uses this
+too, with its own RAM).
 
-Many PlayStation 2 games load part of their code from other files when they need it (a battle system, a level's
+Many PlayStation 1 and 2 games load part of their code from other files when they need it (a battle system, a level's
 logic, a minigame): overlays. The community's projects list them by hand with the address each is loaded at, found
 in the code that loads them or with an emulator. Here the code says it: every file on the disc is checked for MIPS
 code, and its load address is the one that makes its own calls (jal: absolute addresses) land on its own functions'
@@ -73,15 +74,15 @@ def elf_segments(data: bytes) -> list[tuple[int, bytes]] | None:
     return out
 
 
-def place(data: bytes, known: list[tuple[int, int]]) -> tuple[int, int] | None:
+def place(data: bytes, known: list[tuple[int, int]], ram: tuple[int, int] = RAM) -> tuple[int, int] | None:
     """(the address a raw overlay file is loaded at, where in it its code starts), or None if it can't be told."""
     swapped = _swap(data)
-    seg = mips.place(swapped, 0, len(swapped), 0, [], known, regions=(RAM,))
+    seg = mips.place(swapped, 0, len(swapped), 0, [], known, regions=(ram,))
     if seg is None:
         return None
     start, _, vram, _ = seg
     base = vram - start
-    lo, hi = RAM
+    lo, hi = ram
     if not lo <= base < hi or base % 4:
         return None
     if any(a < base + len(data) and base < b for a, b in known):  # over the resident program: not where it goes
@@ -89,9 +90,9 @@ def place(data: bytes, known: list[tuple[int, int]]) -> tuple[int, int] | None:
     return base, start
 
 
-def find(disc, boot: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, int]]:
-    """(name, bytes, load address, where its code starts) of the overlays on a PlayStation 2 disc. `main` is
-    the resident program's address range."""
+def find(disc, boot: str, main: tuple[int, int], ram: tuple[int, int] = RAM) -> list[tuple[str, bytes, int, int]]:
+    """(name, bytes, load address, where its code starts) of the overlays on a PlayStation disc. `main` is the
+    resident program's address range, `ram` where the console's programs load."""
     out = []
     names: set[str] = set()
     boot_name = boot.upper().replace("\\", "/").rsplit("/", 1)[-1]
@@ -113,7 +114,7 @@ def find(disc, boot: str, main: tuple[int, int]) -> list[tuple[str, bytes, int, 
             continue
         if not _code_like(data):
             continue
-        placed = place(data, [main])
+        placed = place(data, [main], ram)
         if placed is not None:
             out.append((name, data, *placed))
             names.add(name)

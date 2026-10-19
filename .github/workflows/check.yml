@@ -1,4 +1,4 @@
-# Every push to main and every pull request: ruff, then the tests. The free compilers N64 and PS2 games are built
+# Every push to main and every pull request: ruff, then the tests. The free compilers N64, PS1 and PS2 games are built
 # with are installed (pinned and checked, by decompdecomp's own installer, and cached), so the consoles' conformance
 # tests (tests/test_consoles.py) really run here on those consoles' demo games. The proprietary compilers
 # (CodeWarrior, Visual C++, IDO) can't be: the tests that need them skip, and say why.
@@ -27,11 +27,13 @@ jobs:
             ~/.local/share/decompnet/toolchains/ee-gcc-2.96
             ~/.local/share/decompnet/toolchains/runtime-i386
             ~/.local/share/decompnet/toolchains/binutils-mips
+            ~/.local/share/decompnet/toolchains/gcc-2.7.2-psx
+            ~/.local/share/decompnet/toolchains/maspsx
           key: toolchains-${{ runner.os }}-${{ hashFiles('src/decompnet/toolchains.toml') }}
-      - name: The free compilers N64 and PS2 games were built with, and m2c for drafts
+      - name: The free compilers N64, PS1 and PS2 games were built with, and m2c for drafts
         run: >-
           uv run python -c "import sys; from decompnet import toolchains; [toolchains.install(t) for t in sys.argv[1:]]"
-          gcc-2.7.2-kmc ee-gcc-2.96 binutils-mips m2c
+          gcc-2.7.2-kmc ee-gcc-2.96 gcc-2.7.2-psx binutils-mips m2c
       - name: zlib 1.1.4, part of the demo games (downloaded with a pinned checksum)
         run: uv run python projects/zlib-n64/prepare.py
       - run: uv run pytest -q -rs

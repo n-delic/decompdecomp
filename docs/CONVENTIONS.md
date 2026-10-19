@@ -8,10 +8,10 @@ says how to send a change. Examples point at real code by file and name: search 
 
 | You want to change | Look in |
 | :-- | :-- |
-| Anything about one console (its files, compilers, flags, guides, importer) | `consoles/<id>/` (`n64`, `ps2`, `gc_wii`, `pc`): its `__init__.py` lists its files |
+| Anything about one console (its files, compilers, flags, guides, importer) | `consoles/<id>/` (`n64`, `ps1`, `ps2`, `gc_wii`, `pc`): its `__init__.py` lists its files |
 | What every console has to say, and the list of consoles | `consoles/__init__.py`, the connector |
 | What depends only on the processor (relocations, disassembly, hand-written assembly) | `arch/<processor>.py` |
-| Importing a game from scratch, ROM mode (N64, PS2) | `rom/split.py` (splat), `app/engine/importing.py`; the console reads its file |
+| Importing a game from scratch, ROM mode (N64, PS1, PS2) | `rom/split.py` (splat), `app/engine/importing.py`; the console reads its file |
 | Importing a game from scratch, PROJECT mode (GameCube, Wii, PC) | the console's `scratch.py`, opened by `app/forkengine.py` |
 | Forking a public decomp | `forks/` (`project.py` detects and builds a project), `app/forkengine.py` |
 | The judge | ROM mode: `rom/match.py` (MIPS). Fork mode: objdiff, run from `forks/project.py` |
