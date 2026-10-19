@@ -913,6 +913,9 @@ button.fn { font: inherit; color: inherit; padding: 0; text-align: left; }
 
 /* Settings → Compiler: the answer first, the parts, what waits; the rest one click in */
 .answer { font-size: 17px; line-height: 1.45; color: var(--ink-2); }
+/* a path and its "Choose…" button (home.js: data-pick) */
+.pick-row { display: flex; gap: 8px; align-items: center; }
+.pick-row input { flex: 1; min-width: 0; }
 /* a small window: compiler flags wrap, in the answer and on the suggestions' buttons ("Use IDO 5.3 -O2 -mips2 -G 0
    -non_shared ..."), instead of widening the Settings tab's compiler panel past its column */
 #compilerPanel { min-width: 0; overflow-wrap: anywhere; }

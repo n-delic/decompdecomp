@@ -517,3 +517,19 @@ def test_decomp_stop_stops_a_running_1_0_2_and_says_so_only_when_it_has(tmp_path
     server_alive = cli.stop(None)
     server.server_close()
     assert server_alive == 0
+
+
+def test_paths_are_picked_in_the_systems_own_chooser(app, tmp_path, monkeypatch):
+    """"Open a saved project" asked for two typed paths: the window shows files' contents to the page, never where
+    they are. The system's chooser (picker.py, run like the window by the system's python3) answers with the path."""
+    from decompnet.app import window
+
+    fake = tmp_path / "python3"
+    fake.write_text('#!/bin/sh\n[ "$3" = folder ] && echo /home/you/saves/mario || exit 1\n')  # cancels a file
+    fake.chmod(0o755)
+    monkeypatch.setattr(window, "SYSTEM_PYTHON", str(fake))
+    client, _, _ = app
+    pick = lambda d: client.post("/api/pick", json=d, headers={"X-Decomp": "1"})  # noqa: E731
+    assert pick({"kind": "folder", "title": "The save"}).json() == {"path": "/home/you/saves/mario"}
+    assert pick({"kind": "file"}).json() == {"path": ""}
+    assert pick({"kind": "/etc/passwd"}).status_code == 400

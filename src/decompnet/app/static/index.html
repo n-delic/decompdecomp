@@ -376,7 +376,7 @@
           <header class="panel-head"><h2>Save your progress</h2><span class="muted small" id="saveState"></span></header>
           <div class="pad">
             <p class="muted small">decompdecomp saves your work on this game by itself every few minutes, as plain files in the project's <code>progress</code> folder: matched C, notes, names, compiler ranges and settings, never the game itself. Copy that folder (or push it to git) and open it on another computer with <b>New project → Open a saved project</b>.</p>
-            <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"></label>
+            <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><span class="pick-row"><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"><button class="ghost small-btn" type="button" data-pick="folder" data-for="saveFolder" data-title="Where to save this project">Choose…</button></span></label>
             <div class="row"><button class="ghost small-btn" id="saveGo" type="button">Save now</button></div>
             <pre class="joblog" id="saveLog" hidden></pre>
           </div>
