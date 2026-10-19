@@ -38,7 +38,7 @@ function fetch(url) {
 const toasts = [], errors = [];
 process.on("unhandledRejection", (e) => errors.push(String(e && e.stack || e)));
 const ctx = {
-  console, fetch, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, Uint8Array,
+  console, fetch, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, Uint8Array, URLSearchParams,
   setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
   requestAnimationFrame: () => 0, performance: { now: () => 0 }, localStorage: stub(), navigator: stub(),
   matchMedia: () => stub(), getComputedStyle: () => stub(), location: { hash: "", href: "" }, confirm: () => false,

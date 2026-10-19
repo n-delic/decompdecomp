@@ -28,6 +28,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from ... import toolchains
 from ...forks.project import ForkError, ForkProject
 from ...limits import capped
@@ -146,7 +148,7 @@ def _vfs_read(disc: Path, inner: str) -> bytes:
     with tempfile.TemporaryDirectory(prefix="decompwtf-disc-") as tmp:
         out = Path(tmp) / Path(inner).name
         res = subprocess.run(capped([_dtk(), "vfs", "cp", f"{disc}:{inner}", str(out)]), capture_output=True, text=True,
-                             timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
+                             timeout=DTK_SECONDS, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         if res.returncode != 0 or not out.exists():
             why = (res.stderr or res.stdout).strip()[-ERROR_TAIL:]
             raise ForkError(f"couldn't read {inner} from the disc image: {why}")
@@ -174,7 +176,7 @@ def vfs_copy(disc: Path, inner: list[str], dest: Path) -> None:
     for at in range(0, len(inner), VFS_BATCH):
         batch = [f"{disc}:{name}" for name in inner[at:at + VFS_BATCH]]
         res = subprocess.run(capped([_dtk(), "vfs", "cp", "-q", *batch, f"{dest}{os.sep}"]),
-                             capture_output=True, text=True, timeout=COPY_SECONDS, encoding="utf-8", errors="replace")
+                             capture_output=True, text=True, timeout=COPY_SECONDS, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         if res.returncode != 0:
             why = (res.stderr or res.stdout).strip()[-ERROR_TAIL:]
             raise ForkError(f"couldn't copy files out of the disc image: {why}")
@@ -183,7 +185,7 @@ def vfs_copy(disc: Path, inner: list[str], dest: Path) -> None:
 def vfs_list(disc: Path) -> list[str]:
     """Every file in a disc image (paths like files/dll/m302Dll.rel)."""
     res = subprocess.run(capped([_dtk(), "vfs", "ls", "-r", "-s", f"{disc}:"]), capture_output=True, text=True,
-                         timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
+                         timeout=DTK_SECONDS, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ForkError(f"couldn't list the disc image's files: {(res.stderr or res.stdout).strip()[-ERROR_TAIL:]}")
     return [line.strip() for line in res.stdout.splitlines() if line.strip() and not line.strip().endswith("/")]
@@ -274,7 +276,7 @@ def game_info(path: Path) -> dict:
 def tool_args() -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools."""
     for tid in ("dtk", "gc-wii-binutils", "objdiff-cli", "sjiswrap", "wibo"):
-        if tid != "wibo" or toolchains.get("wibo").supported:
+        if tid != "wibo" or (os.name != "nt" and toolchains.get("wibo").supported):
             toolchains.ensure(tid, log=lambda *_: None)
     if toolchains.installed("mwcc") is None:
         raise ForkError("GameCube and Wii games are built with CodeWarrior, which is proprietary: install it in Setup "
@@ -455,7 +457,7 @@ def differing_files(root: Path, game_id: str, log_tail: str) -> list[str] | None
     if any(e != f"build/{game_id}/ok" for e in re.findall(r"^FAILED: (?:\[code=\d+\] )?(\S+)", log_tail, re.M)):
         return None  # another step failed (what's on disk may be from an earlier build)
     res = subprocess.run(capped([_dtk(), "shasum", "-c", f"config/{game_id}/build.sha1"]), cwd=root, capture_output=True,
-                         text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
+                         text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     lines = [re.sub(r"\x1b\[[0-9;]*m", "", ln) for ln in (res.stdout + res.stderr).splitlines()]
     results = [re.match(r"^(\S+\.(?:dol|rel)): (OK|FAILED)$", ln) for ln in lines]
     if any(m is None for m, ln in zip(results, lines) if re.search(r"\.(dol|rel)\b", ln)):
@@ -553,7 +555,7 @@ def _dtk_sections(dol: bytes) -> list[tuple[str, int, int]]:
     with tempfile.TemporaryDirectory(prefix="decompwtf-dol-") as tmp:
         (Path(tmp) / "main.dol").write_bytes(dol)
         res = subprocess.run(capped([_dtk(), "dol", "info", str(Path(tmp) / "main.dol")]), capture_output=True,
-                             text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace")
+                             text=True, timeout=DTK_SECONDS, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     table = res.stdout.split("Sections:", 1)[-1].split("\n\n", 1)[0]
     return [(m.group(1), int(m.group(2), 16), int(m.group(3), 16))
             for m in re.finditer(r"^[ \t]*(\S+) \| 0x([0-9A-Fa-f]+)\s*\| 0x([0-9A-Fa-f]+)\s*\|", table, re.M)]
@@ -774,6 +776,6 @@ Compiler: CodeWarrior {compiler} (change `config.linker_version` in configure.py
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {gid} decompilation (decompdecomp, dtk-template)"]):
-            subprocess.run(cmd, cwd=root, capture_output=True)
+            subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
     return {"platform": platform, "id": gid, "title": info["title"], "compiler": compiler, "sources": len(sources),
             "rebuild": rebuild}

@@ -26,7 +26,7 @@ GAME = ROOT / "projects" / "demo-n64" / "original" / "game.c"
 
 pytestmark = pytest.mark.skipif(
     any(toolchains.installed(t) is None for t in ("mwcc", "dtk", "gc-wii-binutils", "objdiff-cli", "sjiswrap", "dtk-template"))
-    or (toolchains.get("wibo").supported and toolchains.installed("wibo") is None),
+    or (sys.platform != "win32" and toolchains.get("wibo").supported and toolchains.installed("wibo") is None),
     reason="needs CodeWarrior (mwcc, proprietary) and the GameCube toolbelt")
 
 

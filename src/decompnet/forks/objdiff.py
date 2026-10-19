@@ -9,6 +9,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from .. import toolchains
 from ..network import NetworkError
 
@@ -41,7 +43,7 @@ def judge_options(project_options: dict | None = None, unit_options: dict | None
 
 def _run(args: list[str], cwd: Path, timeout: float = 600) -> str:
     res = subprocess.run([_exe(), "--no-color", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout,
-                         encoding="utf-8", errors="replace")
+                         encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ObjdiffError((res.stderr or res.stdout).strip()[-1500:] or f"objdiff-cli exited with {res.returncode}")
     return res.stdout

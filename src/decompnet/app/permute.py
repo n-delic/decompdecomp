@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import queue
 import random
-import select
 import subprocess
 import threading
 import time
@@ -34,6 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import consoles, scoring, seeds, toolchains
+from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
 from ..project import compiler_for
@@ -83,8 +83,18 @@ class Generator:
 
     def __init__(self, argv: list[str] | None = None):
         self.proc = subprocess.Popen(argv or generator_argv(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.DEVNULL)
-        self._pending = b""
+                                     stderr=subprocess.DEVNULL,
+                                     creationflags=NO_WINDOW | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0))
+        # Windows select() accepts sockets only. A reader thread also gives pipe reads a deadline there.
+        self._lines = queue.Queue()
+        threading.Thread(target=self._read, daemon=True, name="permuter-output").start()
+
+    def _read(self) -> None:
+        try:
+            for line in self.proc.stdout:
+                self._lines.put(line)
+        finally:
+            self._lines.put(None)
 
     def batch(self, job: dict) -> list[str] | None:
         """Variants of a function's C (the job's fields: permuter_gen.py), or None when the generator can't read
@@ -116,16 +126,10 @@ class Generator:
 
     def _line(self, deadline: float) -> bytes | None:
         """The generator's next line, or None when it has stopped or hasn't answered by `deadline`."""
-        while b"\n" not in self._pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0 or not select.select([self.proc.stdout], [], [], remaining)[0]:
-                return None
-            chunk = os.read(self.proc.stdout.fileno(), READ_BYTES)
-            if not chunk:
-                return None
-            self._pending += chunk
-        line, self._pending = self._pending.split(b"\n", 1)
-        return line
+        try:
+            return self._lines.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty:
+            return None
 
     def close(self) -> None:
         if self.proc.poll() is None:

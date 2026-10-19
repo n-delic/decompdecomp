@@ -84,6 +84,11 @@ Where to start on a gap:
 - **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1, GBA
   and DS are public decomps only now; the git history keeps their code.
 - **Linux packages**: a `.deb`, an `.rpm` and an AppImage with their own Python, built for each release.
+- **Windows native app**: a WebView2 window, Start menu and desktop shortcuts, and a native tray icon.
+  A custom native caption follows the app's theme, with Windows resizing, snapping and drag-to-restore. Scrollbars
+  follow the page's theme too. Closing asks whether to keep helpers working. Kernel jobs end helper children after
+  a session or an app crash. Tools have pinned Windows builds; Linux-only compilers use WSL 2 with Linux-side tool
+  and build caches. Windows CI checks the native and portable code beside the existing Linux checks.
 - **Struct layouts from loads and stores** (MIPS: PlayStation 2, N64). Every load and store through a function's
   pointer arguments, the pointers loaded from them and globals, made into types along the call graph: the brief
   names each pointer argument's likely fields (offset, width, how many functions agree), `guess_struct` writes the
@@ -113,31 +118,10 @@ Where to start on a gap:
 
 ## Next
 
-### Windows, in 1.0.4-alpha
+### Windows distribution
 
-Windows isn't supported in 1.0.3: many users come from Windows, so it comes back next. The plan is a hybrid. The
-Linux app runs unchanged in its own WSL 2 distribution: every compiler, the sandbox and the helpers' process groups
-work as on Linux. A small native Windows window program (pywebview on WebView2, `app/winwindow.py`) shows its page.
-It keeps the contract of `gtkwindow.py`: its arguments, the stdin words `present` and `close`, the secret in its
-user agent, the close question to the page. The Linux app starts it through WSL interop. Projects live on WSL's own
-disk: the 32-bit compilers fail on `/mnt/c`, and it's about 7 times slower. Games are read from C: once, at import.
-
-Rejected: WSLg's GTK window (blank windows on some GPUs, no tray, a window that looks like Linux), a native Windows
-app (0.9.x tried it, and most Windows releases broke something only Windows has; KMC GCC and EE-GCC run only on
-Linux anyway), and Docker.
-
-In order:
-1. A spike on a Windows 11 VM: a Linux process starts Windows `python.exe winwindow.py` with pipes and WSLENV, and
-   the window loads 127.0.0.1:<port> from WSL. Find out whether GitHub's windows-latest runner has WSL 2.
-2. `app/winwindow.py`, tested on windows-latest against a stub server.
-3. `hostenv.py` becomes the only place that knows about WSL (detection, C:\ paths, explorer.exe for links and
-   folders, the window's command line), with a test that fails when WSL or win32 appears anywhere else.
-4. The native-Windows leftovers go: `wsl.py`, `CompilerConfig.wsl`, `Toolchain.via_wsl`, the `wsl-x86_64` parts.
-5. `install.ps1` again, from the old one (`git show 6d438ca:site/public/install.ps1`) without the agent connection
-   and the browser: the distribution with systemd, the window program, a WebView2 check, Start menu shortcuts,
-   `decomp.cmd`.
-6. release.yml attaches the window program; the docs, a ROADMAP column "Windows (WSL 2)"; a manual pass on a VM;
-   the tag.
+A standalone Windows installer and signed packages. The native app can already be installed with uv; the installer
+should check WebView2 and WSL, create its shortcuts, and make upgrades straightforward.
 
 ### How much usage each agent has left
 

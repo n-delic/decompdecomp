@@ -33,6 +33,7 @@ class ClaudeCode(Agent):
     command = "claude"
     vendor = "Anthropic"
     install = "curl -fsSL https://claude.ai/install.sh | bash"
+    windows_install = "irm https://claude.ai/install.ps1 | iex"
     signin = "Open a terminal, run `claude` and sign in with /login."
     docs = "https://docs.claude.com/en/docs/claude-code"
     family = "claude"

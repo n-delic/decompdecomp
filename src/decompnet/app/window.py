@@ -11,10 +11,12 @@ No browser is involved: the page is served only to a window whose user agent car
 from __future__ import annotations
 
 import functools
+import importlib.util
 import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from pathlib import Path
 from typing import Callable
@@ -24,9 +26,13 @@ from . import edition
 log = logging.getLogger("decompdecomp")
 SYSTEM_PYTHON = "/usr/bin/python3"
 WINDOW_PROGRAM = Path(__file__).with_name("gtkwindow.py")
+WIN_WINDOW_PROGRAM = Path(__file__).with_name("winwindow.py")
 TOKEN_AGENT = "decompdecomp-window/"  # gtkwindow.py puts this, then the secret, in its user agent
+TOKEN_QUERY = "decomp_token"
+TOKEN_COOKIE = "decomp_window"
 CHECK_SECONDS = 20
 CLOSE_SECONDS = 5  # a window told to close that's still there after this long is ended
+IS_WINDOWS = sys.platform == "win32"
 
 # what the window needs from the system, per family of distributions (/etc/os-release ID and ID_LIKE)
 INSTALL_COMMANDS = {
@@ -56,6 +62,25 @@ def _distro_family() -> str | None:
 @functools.cache
 def missing() -> str | None:
     """Why the window can't open here (what to install, and how), or None when it can."""
+    if IS_WINDOWS:
+        if importlib.util.find_spec("webview") is None:
+            return ("decompdecomp's Windows window needs pywebview and the Microsoft Edge WebView2 Runtime. "
+                    "Install the app's dependencies again, then start decompdecomp.")
+        probe = ('import os, clr; from webview.util import interop_dll_path; '
+                 'os.environ["PATH"] += os.pathsep + interop_dll_path("win-x64"); '
+                 'clr.AddReference(interop_dll_path("Microsoft.Web.WebView2.Core.dll")); '
+                 'from Microsoft.Web.WebView2.Core import CoreWebView2Environment; '
+                 'CoreWebView2Environment.GetAvailableBrowserVersionString()')
+        try:
+            ready = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, timeout=CHECK_SECONDS,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            ready = False
+        if not ready:
+            return ("decompdecomp needs the Microsoft Edge WebView2 Runtime and .NET Framework 4.8. "
+                    "Install WebView2 from https://developer.microsoft.com/microsoft-edge/webview2/ "
+                    "and any Windows updates, then start decompdecomp again.")
+        return None
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):  # over ssh, or a text console
         return ("decompdecomp opens its own window, and there's no desktop here to show it on. "
                 "Start decompdecomp from a terminal in your desktop session (or from the apps menu).")
@@ -75,6 +100,11 @@ def missing() -> str | None:
 def tell_desktop(title: str, text: str) -> None:
     """A desktop notification: started from the apps menu (an AppImage without WebKitGTK), there's no terminal to
     read what `decomp` printed. gdbus comes with GLib, which every desktop has."""
+    if IS_WINDOWS:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x10)  # MB_ICONERROR: shortcuts have no console
+        return
     gdbus = shutil.which("gdbus")
     if not gdbus:
         return
@@ -114,11 +144,18 @@ class Window:
                 return False
             icon = self.internal / "window-icon.svg"
             icon.write_text(edition.icon_svg(), encoding="utf-8")
-            argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
-                    "--window-class", edition.WINDOW_CLASS, "--icon", str(icon)] + (["--dev"] if edition.DEV else [])
+            win_icon = Path(__file__).with_name("static") / ("favicon-dev.ico" if edition.DEV else "favicon.ico")
+            if IS_WINDOWS:
+                argv = [sys.executable, "-I", str(WIN_WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
+                        "--window-class", edition.WINDOW_CLASS, "--icon", str(win_icon)] + (["--dev"] if edition.DEV else [])
+            else:
+                argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
+                        "--window-class", edition.WINDOW_CLASS, "--icon", str(icon)] + (["--dev"] if edition.DEV else [])
             try:
                 self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                              stderr=subprocess.STDOUT, text=True, errors="replace",
+                                             encoding="utf-8",
+                                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0,
                                              env=dict(os.environ, DECOMP_WINDOW_TOKEN=self.secret))
             except OSError:
                 log.exception("the window didn't start")
@@ -184,3 +221,9 @@ def token_of(user_agent: str) -> str:
     commands talking to the running app (cli.py)."""
     _, found, rest = user_agent.partition(TOKEN_AGENT)
     return rest.split(" ", 1)[0] if found else ""
+
+
+def request_token(request) -> str:
+    """The window secret from its user agent, or the cookie installed by the native Windows window."""
+    return (token_of(request.headers.get("user-agent", "")) or request.cookies.get(TOKEN_COOKIE) or
+            request.query_params.get(TOKEN_QUERY, ""))

@@ -7,6 +7,7 @@ program is ever run here: a stand-in prints a version.
 """
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,9 @@ PROMPT = "line one\nline two"
 @pytest.fixture
 def stand_in(tmp_path, monkeypatch):
     """A program that only says its version, and a home without any agent's settings."""
-    exe = tmp_path / "bin" / "agent"
+    exe = tmp_path / "bin" / ("agent.cmd" if sys.platform == "win32" else "agent")
     exe.parent.mkdir()
-    exe.write_text("#!/bin/sh\necho 1.0.0\n")
+    exe.write_text("@echo off\necho 1.0.0\n" if sys.platform == "win32" else "#!/bin/sh\necho 1.0.0\n")
     exe.chmod(0o755)
     for var in ("HOME", "XDG_CONFIG_HOME", "CODEX_HOME"):
         monkeypatch.setenv(var, str(tmp_path / "home"))
@@ -66,6 +67,20 @@ def test_ids_are_unique_and_older_ids_lead_to_their_agent():
 def test_an_unknown_agent_says_which_there_are():
     with pytest.raises(ValueError, match="no agent called 'gemini-cli'.*Claude Code.*API key"):
         agents.get("gemini-cli")
+
+
+@pytest.mark.parametrize("platform", ["win32", "linux"])
+def test_every_agent_installer_uses_the_hosts_shell(monkeypatch, platform):
+    monkeypatch.setattr(agents.sys, "platform", platform)
+    for agent in EVERY:
+        if not agent.command:
+            continue
+        text, command = agent.install_text(), agent.install_command()
+        assert agent.describe()["install"] == text
+        if platform == "win32":
+            assert command[0] == "powershell.exe" and text in command[-1] and "| bash" not in text
+        else:
+            assert command[0] == "bash" and command[-1] == agent.install
 
 
 def test_the_template_is_not_registered():

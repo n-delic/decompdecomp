@@ -47,6 +47,19 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+/* Windows owns the caption and resize frame outside WebView2. Scrollbars use the same surfaces as the page,
+   including nested panes; forced-colour mode keeps the system's high-contrast scrollbars. */
+@media (forced-colors: none) {
+  html.windows-window { scrollbar-color: var(--faint) var(--bg); scrollbar-width: thin; }
+  html.windows-window * { scrollbar-color: var(--faint) transparent; scrollbar-width: thin; }
+  html.windows-window ::-webkit-scrollbar { width: 10px; height: 10px; }
+  html.windows-window ::-webkit-scrollbar-track, html.windows-window ::-webkit-scrollbar-corner { background: transparent; }
+  html.windows-window ::-webkit-scrollbar-thumb {
+    background: var(--faint); border: 3px solid transparent; background-clip: padding-box; border-radius: 8px;
+  }
+  html.windows-window ::-webkit-scrollbar-thumb:hover { background-color: var(--muted); }
+  html.windows-window ::-webkit-scrollbar-button { display: none; }
+}
 body.locked { overflow: hidden; }
 h1, h2, h3, p, dl, dd, ol { margin: 0; }
 ol { padding: 0; list-style: none; }

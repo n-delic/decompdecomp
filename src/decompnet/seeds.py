@@ -14,6 +14,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from . import scoring, toolchains
 from .elfobj import FunctionObj
 
@@ -372,7 +374,7 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
             argv[1:1] = ["--context", str(ctx)]
         try:
             res = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace")
+                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired:
             if strict:
                 raise DraftError(f"m2c took longer than {timeout:g} s") from None
@@ -382,6 +384,6 @@ def run_m2c(asm_text: str, name: str, target: str, context_header: str = "", dat
         if res.returncode != 0 and "--context" in argv:  # an unparsable context must not cost us the seed
             i = argv.index("--context")
             res = subprocess.run(argv[:i] + argv[i + 2:], capture_output=True, text=True, timeout=timeout,
-                                 encoding="utf-8", errors="replace")
+                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         out = res.stdout.strip()
         return out if res.returncode == 0 and out else None

@@ -24,11 +24,23 @@ _pool: ThreadPoolExecutor | None = None
 _lock = threading.Lock()
 
 
+def _lower_priority() -> None:
+    """Lower only this worker, without lowering the GUI or the agent threads beside it."""
+    if os.name == "nt":
+        import ctypes
+
+        kernel = ctypes.windll.kernel32
+        kernel.GetCurrentThread.restype = ctypes.c_void_p
+        kernel.SetThreadPriority.argtypes = (ctypes.c_void_p, ctypes.c_int)
+        kernel.SetThreadPriority(kernel.GetCurrentThread(), -1)  # THREAD_PRIORITY_BELOW_NORMAL
+    else:
+        os.nice(NICE)
+
+
 def pool() -> ThreadPoolExecutor:
     """The shared workers, started the first time something needs them."""
     global _pool
     with _lock:
         if _pool is None:
-            _pool = ThreadPoolExecutor(WORKERS, thread_name_prefix="background-worker", initializer=os.nice,
-                                       initargs=(NICE,))
+            _pool = ThreadPoolExecutor(WORKERS, thread_name_prefix="background-worker", initializer=_lower_priority)
         return _pool

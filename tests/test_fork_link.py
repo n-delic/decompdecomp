@@ -8,6 +8,8 @@ link uses (the compiled one for a Matching file, the original's otherwise); buil
 """
 
 import hashlib
+import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,6 +20,10 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app.engine import RomNetwork
+from decompnet.compiler import compile_source
+from decompnet.project import compiler_config
+
+from .handmade import write_compiler
 
 pytestmark = pytest.mark.skipif(
     toolchains.installed("gcc-2.7.2-kmc") is None or toolchains.installed("objdiff-cli") is None
@@ -43,13 +49,14 @@ objects = [
 '''
 
 CONFIGURE_TAIL = '''
-TC = sys.argv[1] if len(sys.argv) > 1 else "{tc}"
+PY = {python}
+CC = {compiler}
 lines = [
-    "rule configure", "  command = python3 configure.py", "  generator = 1",
+    "rule configure", f"  command = {{PY}} configure.py", "  generator = 1",
     "build build.ninja: configure | configure.py",
-    "rule cc", f"  command = {{TC}}/gcc -B{{TC}}/ -c -G0 -mips3 -mgp32 -mfp32 -O2 $in -o $out",
-    "rule game", "  command = python3 link.py $out $in",
-    "rule check", "  command = python3 check.py $in $out",
+    "rule cc", f"  command = {{CC}} $in $out",
+    "rule game", f"  command = {{PY}} link.py $out $in",
+    "rule check", f"  command = {{PY}} check.py $in $out",
 ]
 units, game = [], []
 for linked, src in objects:
@@ -90,22 +97,27 @@ print("1 files OK")
 
 def _run(cwd: Path, *argv: str) -> None:
     subprocess.run(argv, cwd=cwd, check=True, capture_output=True,
-                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-                        "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)})
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                        "GIT_COMMITTER_EMAIL": "t@t", "HOME": str(cwd)})
 
 
 @pytest.fixture
 def fork(tmp_path):
-    tc = toolchains.require("gcc-2.7.2-kmc")
     repo = tmp_path / "upstream"
     (repo / "src").mkdir(parents=True)
     (repo / "expected").mkdir()
     (repo / "src" / "math.c").write_text(ADD)  # sub isn't decompiled yet
     (repo / "expected" / "math.c").write_text(ADD + "\n" + SUB)
-    _run(repo, str(tc / "gcc"), f"-B{tc}/", "-c", "-G0", "-mips3", "-mgp32", "-mfp32", "-O2", "expected/math.c",
-         "-o", "expected/math.o")
+    flags = ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"]
+    cfg = compiler_config(repo, {"compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": flags}})
+    result = compile_source(cfg, "", ADD + "\n" + SUB)
+    assert result.ok, result.log
+    (repo / "expected" / "math.o").write_bytes(result.obj)
     (repo / "expected" / "math.c").unlink()
-    (repo / "configure.py").write_text(CONFIGURE + CONFIGURE_TAIL.format(tc=tc))
+    command = write_compiler(repo, flags)
+    quote = subprocess.list2cmdline if sys.platform == "win32" else shlex.join
+    python = quote([sys.executable]).replace("$", "$$")
+    (repo / "configure.py").write_text(CONFIGURE + CONFIGURE_TAIL.format(python=repr(python), compiler=repr(command)))
     (repo / "link.py").write_text(LINK)
     (repo / "check.py").write_text(CHECK)
     _run(repo, sys.executable, "-c", LINK, "game.bin", "expected/math.o")
@@ -119,7 +131,7 @@ def fork(tmp_path):
     net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
     slug = net.forks.clone(str(repo), name="Linking", platform="n64", log=lambda *_: None)
     fp = net.forks.get(slug)[1]
-    assert fp.run(["python3", "configure.py"])[0]
+    assert fp.run([sys.executable, "configure.py"])[0]
     assert fp.build_all()[0] and fp.verify()[0]
     net.forks.check(slug, log=lambda *_: None)
     agent, _ = net.local_agent("agent-1")

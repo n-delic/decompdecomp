@@ -121,7 +121,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def guard(request: Request, write: bool = False) -> Response | None:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
+        if not secrets.compare_digest(window.request_token(request), secret):
             return JSONResponse({"error": "decompdecomp only answers its own window: open it with `decomp`"},
                                 status_code=401)
         if write and request.headers.get("x-decomp") != "1":

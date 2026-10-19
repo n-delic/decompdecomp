@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
 from . import objdiff
@@ -69,7 +71,7 @@ class Unit:
 def _git_env(root: Path) -> dict | None:
     """Commits need an identity: when git has none set up on this computer, commits are by decompdecomp."""
     res = subprocess.run(["git", "config", "user.email"], cwd=root, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+                         encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode == 0 and res.stdout.strip():
         return None
     who = {"GIT_AUTHOR_NAME": "decompdecomp", "GIT_AUTHOR_EMAIL": "noreply@decompdecomp.invalid"}
@@ -264,7 +266,7 @@ class ForkProject:
                 first = cmds[0]
                 keep = next((i for i, c in enumerate(first) if c.startswith("--")), len(first))
                 cmds = [[*first[:keep], *args], *cmds[1:]]
-            return [[sys.executable if c == "python" else c for c in cmd] for cmd in cmds]
+            return [[sys.executable if c in ("python", "python3") else c for c in cmd] for cmd in cmds]
         if kind == "dtk":
             cmd = [sys.executable, "configure.py"]
             if version and len(self.versions()) > 1:
@@ -288,11 +290,12 @@ class ForkProject:
         env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
-        cmd = [shutil.which(cmd[0], path=env["PATH"]) or cmd[0], *cmd[1:]]
+        executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
+        cmd = [executable, *cmd[1:]]
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8")
+                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8", creationflags=NO_WINDOW)
         except FileNotFoundError:
             return False, f"{cmd[0]} isn't installed"
         out, seen, quiet = [], collections.Counter(), 0
@@ -556,5 +559,5 @@ class ForkProject:
         if not (self.root / ".git").exists() or not shutil.which("git"):
             return False, "not a git checkout"
         res = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True, env=_git_env(self.root),
-                             encoding="utf-8", errors="replace")
+                             encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         return res.returncode == 0, (res.stdout + res.stderr).strip()

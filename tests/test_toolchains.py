@@ -32,6 +32,15 @@ def test_proprietary_toolchains_need_explicit_acceptance(tc_root):
     assert toolchains.installed("ido-7.1") is None
 
 
+def test_an_already_installed_proprietary_tool_needs_no_new_acceptance(tc_root):
+    directory = toolchains.path("ido-7.1")
+    directory.mkdir(parents=True)
+    (directory / toolchains.MANIFEST).write_text('{"license_accepted":true}')
+    assert toolchains.install("ido-7.1", log=lambda _: None) == directory
+    with pytest.raises(toolchains.ToolchainError, match="accept-license"):
+        toolchains.install("ido-7.1", force=True, log=lambda _: None)
+
+
 def test_an_arm_computer_is_told_why_nothing_compiles(tc_root, monkeypatch):
     """Issue #18: on an ARM Linux computer the games' compilers (x86 programs) don't install: the error says why."""
     monkeypatch.setattr(toolchains._platform, "machine", lambda: "aarch64")

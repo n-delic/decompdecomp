@@ -1,4 +1,4 @@
-"""Add decompdecomp to the apps menu (Linux): a .desktop entry that runs `decomp`, which opens the app's window.
+"""Add decompdecomp to the Linux apps menu, or the Windows Start menu and desktop, opening its own window.
 
 The entry is named like the .deb's and the .rpm's (decompdecomp.desktop), so a desktop shows one decompdecomp even
 when a package is installed too: the user's own entry takes the place of the system's. The entry older versions made
@@ -7,8 +7,10 @@ when a package is installed too: the user's own entry takes the place of the sys
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,11 +24,68 @@ def _decomp_exe() -> str:
     return shutil.which("decomp") or str(Path(sys.argv[0]).resolve())
 
 
+def _windows_folder(folder: int) -> Path:
+    """Ask Windows for redirected folders too (Desktop may live in OneDrive or on another drive)."""
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(260)
+    if ctypes.windll.shell32.SHGetFolderPathW(None, folder, None, 0, buffer):
+        raise OSError("Windows couldn't find the shortcut folder")
+    return Path(buffer.value)
+
+
+def _shortcut_app_id(shortcut: Path) -> None:
+    """Use the window's identity so a pinned shortcut and its running window share one taskbar button."""
+    import pythoncom
+    from win32com.propsys import propsys
+    from win32com.shell import shellcon
+
+    pythoncom.CoInitialize()
+    try:
+        store = propsys.SHGetPropertyStoreFromParsingName(str(shortcut), None, shellcon.GPS_READWRITE,
+                                                        propsys.IID_IPropertyStore)
+        key = propsys.PSGetPropertyKeyFromName("System.AppUserModel.ID")
+        store.SetValue(key, propsys.PROPVARIANTType(ENTRY_NAME, pythoncom.VT_LPWSTR))
+        store.Commit()
+        store = None
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def install_launcher() -> str:
     """Put decompdecomp in the apps menu (a .desktop entry and its icon). A development copy gets none: it's started
     from its checkout."""
     if edition.DEV:
         return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
+    if sys.platform == "win32":
+        desktop = _windows_folder(0x10)  # CSIDL_DESKTOPDIRECTORY
+        programs = _windows_folder(0x02)  # CSIDL_PROGRAMS: the current user's Start menu
+        desktop.mkdir(parents=True, exist_ok=True)
+        programs.mkdir(parents=True, exist_ok=True)
+        shortcut = desktop / "decompdecomp.lnk"
+        icons = _windows_folder(0x1c) / "decompnet"  # CSIDL_LOCAL_APPDATA
+        icons.mkdir(parents=True, exist_ok=True)
+        icon = icons / "decompdecomp.ico"
+        icon.write_bytes((Path(__file__).with_name("static") / "favicon.ico").read_bytes())
+        # pythonw uses this installation's environment without leaving a console behind the app.
+        target = str(Path(sys.executable).with_name("pythonw.exe"))
+        def ps(text: str) -> str:
+            return text.replace("'", "''")
+        script = (f"$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; "
+                  f"$s=$w.CreateShortcut('{ps(str(shortcut))}'); "
+                  f"$s.TargetPath='{ps(target)}'; $s.Arguments='-m decompnet.app.cli'; "
+                  f"$s.WorkingDirectory=(Split-Path '{ps(target)}'); "
+                  f"$s.IconLocation='{ps(str(icon))},0'; $s.Description='AI game decompilation'; $s.Save()")
+        script += f"; Copy-Item -LiteralPath '{ps(str(shortcut))}' -Destination '{ps(str(programs / shortcut.name))}' -Force"
+        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        res = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                             capture_output=True, text=True, timeout=30,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if res.returncode:
+            return f"couldn't add the desktop shortcut: {res.stderr.strip() or res.returncode}"
+        for link in (shortcut, programs / shortcut.name):
+            _shortcut_app_id(link)
+        return f"added decompdecomp to the desktop and Start menu ({shortcut})"
     share = Path.home() / ".local" / "share"
     icons = share / "icons" / "hicolor" / "scalable" / "apps"
     apps = share / "applications"

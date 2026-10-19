@@ -8,10 +8,9 @@
 # app's Compilers & tools (`accept_license` in toolchains.install).
 # An empty sha256 means "pin on first install" (trust on first use); the installer records it.
 #
-# Each part lists the platforms it is for. decompdecomp runs on linux-x86_64; the macos-* parts stay
-# for a later macOS version (Apple Silicon Macs would run the x86_64 builds through Rosetta 2).
-# A part for wsl-x86_64 replaces the Linux one when a toolchain runs inside WSL 2 (wsl.py), kept
-# for the Windows version that comes next.
+# Each part lists its host platforms. Windows uses native tools where available, and Linux-only compilers
+# through WSL 2 (wsl.py). A part for wsl-x86_64 replaces the Linux archive there (a .deb Windows can unpack).
+# The macos-* parts stay for a later macOS version.
 
 [runtime-i386]
 name = "32-bit x86 C runtime (glibc 2.44)"
@@ -189,6 +188,10 @@ platforms = ["linux-x86_64"]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-7.1-recomp-macos.tar.gz"
 sha256 = "7f75570ed1ca14e6161b84b10743d440c685f27291bfbfaf87c6a82236553bc6"
 platforms = ["macos-x86_64", "macos-arm64"]
+[["ido-7.1".parts]]
+url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-7.1-recomp-windows.tar.gz"
+sha256 = "28487a90a47d2565d8c38235750500f6fbd3479b758e966b529166825804c926"
+platforms = ["windows-x86_64"]
 
 ["ido-5.3"]
 name = "IDO 5.3 (static recompilation)"
@@ -207,6 +210,10 @@ platforms = ["linux-x86_64"]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-5.3-recomp-macos.tar.gz"
 sha256 = "5b1ca006ee4b158ffba0422fc3f00b9b330f9036f279bae2ea1b4703317ad9c0"
 platforms = ["macos-x86_64", "macos-arm64"]
+[["ido-5.3".parts]]
+url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-5.3-recomp-windows.tar.gz"
+sha256 = "2268f64cab973750e78bdf7aa2ff3cccf78ad1d181507da6faeb61f3d22c2e1e"
+platforms = ["windows-x86_64"]
 
 [m2c]
 name = "m2c decompiler"
@@ -257,6 +264,15 @@ platforms = ["macos-arm64"]
 
 # ------------------------------------------------------------------------------------------------
 # The decomp community's toolbelt. Downloaded on demand; every part is pinned to its release digest.
+[[cloudflared.parts]]
+url = "https://github.com/cloudflare/cloudflared/releases/download/2026.10.0/cloudflared-windows-amd64.exe"
+sha256 = "86aee4017b26625cee8484c113558f48effa4cd47f7aa05fcf425604e5d2b23c"
+binary = "cloudflared.exe"
+platforms = ["windows-x86_64"]
+
+
+# ------------------------------------------------------------------------------------------------
+# The decomp community's toolbelt. Downloaded on demand; every part is pinned to its release digest.
 
 [objdiff-cli]
 name = "objdiff-cli"
@@ -285,6 +301,11 @@ url = "https://github.com/encounter/objdiff/releases/download/v3.8.2/objdiff-cli
 sha256 = "2cfe0f46fc84cef7d96813f100a0f01fbf99ac7e423b7fda1d314aada4d5ff72"
 binary = "objdiff-cli"
 platforms = ["macos-x86_64"]
+[[objdiff-cli.parts]]
+url = "https://github.com/encounter/objdiff/releases/download/v3.8.2/objdiff-cli-windows-x86_64.exe"
+sha256 = "36d229ac6ce74a26b47f42cf86ea8e808d8cd834a54aa62d7ed3f47b765d971b"
+binary = "objdiff-cli.exe"
+platforms = ["windows-x86_64"]
 
 [dtk]
 name = "decomp-toolkit"
@@ -313,6 +334,11 @@ url = "https://github.com/encounter/decomp-toolkit/releases/download/v1.8.4/dtk-
 sha256 = "84bcab745a070bb970cf4bc0d69ddce9f6a58d5de257999ccc8adfa1567d17c9"
 binary = "dtk"
 platforms = ["macos-x86_64"]
+[[dtk.parts]]
+url = "https://github.com/encounter/decomp-toolkit/releases/download/v1.8.4/dtk-windows-x86_64.exe"
+sha256 = "6a693e95aa4d30acccc673343302a4abdfa3146bd0fb15cb1a2bce924cbc782a"
+binary = "dtk.exe"
+platforms = ["windows-x86_64"]
 
 [wibo]
 name = "wibo"
@@ -348,6 +374,10 @@ url = "https://github.com/encounter/gc-wii-binutils/releases/download/2.42-2/mac
 sha256 = "c40bad23fd7d9eb22d4533875922fc19785ed067978b605804e345bc6e62449d"
 executable = true
 platforms = ["macos-x86_64", "macos-arm64"]
+[["gc-wii-binutils".parts]]
+url = "https://github.com/encounter/gc-wii-binutils/releases/download/2.42-2/windows-x86_64.zip"
+sha256 = "bd95bd57607efb45c437e97b77ec199073e242869027eb72196b0720611bb1c1"
+platforms = ["windows-x86_64"]
 
 [ghidra]
 name = "Ghidra"
@@ -376,6 +406,10 @@ platforms = ["linux-x86_64"]
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-macos-arm64.tar.gz"
 sha256 = "948cc736e01b2c135168caabfb616f6ed8efe89f1dad1ed8ef1ca74acb1b742c"
 platforms = ["macos-arm64"]
+[[binutils-mips.parts]]
+url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-windows-x86-64.zip"
+sha256 = "2bb5904ee174e04f1600cc70ffdb3dc36b0efa4d1892ea446be588ba8dc6198c"
+platforms = ["windows-x86_64"]
 
 [mwcc]
 name = "CodeWarrior for GameCube and Wii"

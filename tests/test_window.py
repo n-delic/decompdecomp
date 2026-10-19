@@ -25,6 +25,7 @@ def fake_window(tmp_path, monkeypatch):
     program.write_text(FAKE_WINDOW)
     monkeypatch.setattr(window, "WINDOW_PROGRAM", program)
     monkeypatch.setattr(window, "SYSTEM_PYTHON", sys.executable)
+    monkeypatch.setattr(window, "IS_WINDOWS", False)
     monkeypatch.setattr(window, "missing", functools.cache(lambda: None))  # (open() asks it to look again)
     monkeypatch.delenv("DECOMP_WINDOW", raising=False)
     log = tmp_path / "said.txt"
@@ -70,6 +71,7 @@ def test_no_window_in_tests(tmp_path, monkeypatch):
 def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
     """No browser to fall back to: the user is told the packages, with their distribution's command."""
     window.missing.cache_clear()
+    monkeypatch.setattr(window, "IS_WINDOWS", False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(window, "SYSTEM_PYTHON", "/bin/false")
     monkeypatch.setattr(window, "_distro_family", lambda: "fedora")
@@ -85,6 +87,7 @@ def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
 def test_with_no_desktop_it_says_so_instead_of_vanishing(monkeypatch):
     """Started over ssh, the app exited without a word: the window had nowhere to open."""
     window.missing.cache_clear()
+    monkeypatch.setattr(window, "IS_WINDOWS", False)
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     try:
@@ -97,6 +100,66 @@ def test_the_secret_rides_in_the_windows_user_agent():
     ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 {window.TOKEN_AGENT}abc_DEF-123 Safari/605.1.15"
     assert window.token_of(ua) == "abc_DEF-123"
     assert window.token_of("Mozilla/5.0 Firefox/140.0") == ""
+
+
+@pytest.mark.parametrize("returncode", [0, 1])
+def test_windows_startup_checks_webview2_before_opening(monkeypatch, returncode):
+    from types import SimpleNamespace
+
+    window.missing.cache_clear()
+    monkeypatch.setattr(window, "IS_WINDOWS", True)
+    monkeypatch.setattr(window.importlib.util, "find_spec", lambda _: SimpleNamespace())
+    monkeypatch.setattr(window.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=returncode))
+    try:
+        result = window.missing()
+        assert result is None if returncode == 0 else "WebView2 Runtime" in result
+    finally:
+        window.missing.cache_clear()
+
+
+def test_windows_shortcut_startup_errors_have_a_native_dialog(monkeypatch):
+    import ctypes
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(window, "IS_WINDOWS", True)
+    monkeypatch.setattr(ctypes, "windll", SimpleNamespace(user32=SimpleNamespace(
+        MessageBoxW=lambda *args: calls.append(args))), raising=False)
+    window.tell_desktop("decompdecomp can't open", "Install WebView2")
+    assert calls[0][1:3] == ("Install WebView2", "decompdecomp can't open")
+
+
+@pytest.mark.parametrize("dev,filename", [(False, "favicon.ico"), (True, "favicon-dev.ico")])
+def test_windows_window_uses_the_favicon(monkeypatch, tmp_path, dev, filename):
+    monkeypatch.setattr(window.edition, "DEV", dev)
+    monkeypatch.setattr(window, "IS_WINDOWS", True)
+    monkeypatch.setattr(window, "missing", functools.cache(lambda: None))
+    monkeypatch.setenv("DECOMP_WINDOW", "1")
+    calls = []
+
+    class Process:
+        stdout = []
+        returncode = 0
+
+        def poll(self):
+            return None
+
+        def wait(self):
+            return 0
+
+    class Thread:
+        def __init__(self, **kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(window.subprocess, "Popen", lambda argv, **kwargs: calls.append(argv) or Process())
+    monkeypatch.setattr(window.threading, "Thread", Thread)
+    w = window.Window(tmp_path, "http://127.0.0.1:6464/", "secret", lambda: None)
+    assert w.open()
+    icon = calls[0][calls[0].index("--icon") + 1]
+    assert icon.replace("\\", "/").endswith("static/" + filename)
 
 
 def test_the_tray_borrows_the_systems_gtk_without_its_other_packages(monkeypatch):

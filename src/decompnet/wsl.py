@@ -2,7 +2,7 @@
 
 KMC GCC (N64) and EE-GCC (PS2) exist only as Linux programs. On Windows they're
 installed like any toolchain (downloaded and checked on the Windows side, under the user's toolchain folder) and run
-inside WSL 2, which reads that folder through /mnt/<drive>. WSL 1 can't run them: their compilers are 32-bit.
+inside WSL 2, from cached copies on its Linux filesystem. WSL 1 can't run them: their compilers are 32-bit.
 
 Commands go to WSL as a small shell script in the compile's own folder, so nothing in them depends on how wsl.exe
 splits a Windows command line.
@@ -10,6 +10,8 @@ splits a Windows command line.
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import os
 import posixpath
 import secrets
@@ -26,6 +28,17 @@ INSTALL = "In PowerShell as administrator: wsl --install (then restart Windows a
 _lock = threading.Lock()
 _status: tuple[bool, str, float] | None = None
 _mount: str | None = None
+_tools_lock = threading.Lock()
+_prepared_tools: set[str] = set()
+
+
+@functools.cache
+def _cache_directory() -> str:
+    code, home = _run(["-e", "printenv", "HOME"], 30)
+    if code or not home.startswith("/") or "\n" in home:
+        raise OSError("WSL couldn't find its home directory for the compiler cache")
+    # WSL may stop between compiles. /tmp can be cleared at its next start while this Windows process lives on.
+    return home.rstrip("/") + "/.cache/decompnet/toolchains"
 
 
 def wanted() -> bool:
@@ -114,6 +127,37 @@ def mount() -> str:
 def stage_dir() -> str:
     """A new folder in WSL's own file system, for run(stage=...)."""
     return f"/tmp/decompnet-{secrets.token_hex(8)}"
+
+
+def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
+    """Keep a Linux-side copy of the pinned compiler and its dependencies, keyed by their install manifests.
+
+    EE-GCC's 32-bit access() cannot find its compiler passes on a Windows drive, even when the source is staged
+    in Linux. Copying the toolchain too fixes that. The complete tree is published by rename, so parallel starts
+    never see half a compiler; a fresh install gets a fresh cache without modifying another app's copy.
+    """
+    digest = hashlib.sha256(b"tool-cache-v1")
+    for directory in directories:
+        digest.update(str(directory.resolve()).encode("utf-8"))
+        digest.update((directory / ".decompnet-toolchain.json").read_bytes())
+    cache = f"{_cache_directory()}/{digest.hexdigest()[:24]}"
+    result = tuple(f"{cache}/{directory.name}" for directory in directories)
+    q = shlex.quote
+    with _tools_lock:
+        if cache in _prepared_tools:
+            return result
+        lines = [f"mkdir -p {q(_cache_directory())} || exit 1", f"if [ ! -f {q(cache + '/.ready')} ]; then",
+                 f"  stage=$(mktemp -d {q(cache + '.XXXXXX')}) || exit 1",
+                 "  trap 'rm -rf \"$stage\"' EXIT"]
+        lines += [f'  cp -R {q(path(directory))} "$stage"/{q(directory.name)} || exit 1' for directory in directories]
+        lines += ['  touch "$stage/.ready" || exit 1',
+                  f'  mv -T "$stage" {q(cache)} 2>/dev/null || [ -f {q(cache + "/.ready")} ] || exit 1', "fi"]
+        with tempfile.TemporaryDirectory(prefix="decomp-wsl-tools-") as work:
+            copied = run(["sh", "-c", "\n".join(lines)], Path(work), 120)
+        if copied.returncode:
+            raise OSError(f"WSL couldn't copy the compiler to its Linux filesystem: {copied.stderr[-400:]}")
+        _prepared_tools.add(cache)
+    return result
 
 
 def run(argv: list[str], cwd: Path, timeout: float, *, outputs: list[str] | None = None,

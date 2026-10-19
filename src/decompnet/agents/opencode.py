@@ -22,6 +22,7 @@ class Opencode(Agent):
     command = "opencode"
     vendor = "any provider (DeepSeek, Qwen, Kimi, ...)"
     install = "curl -fsSL https://opencode.ai/install | bash"
+    windows_install = "npm install -g opencode-ai"
     signin = "Run `opencode auth login` once to add a provider (DeepSeek, OpenRouter, ...)."
     docs = "https://opencode.ai"
     models_args = ("models",)

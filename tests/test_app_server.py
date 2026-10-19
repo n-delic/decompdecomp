@@ -159,6 +159,28 @@ def test_settings_never_echo_the_api_key(app):
     assert "sk-abcdef" not in json.dumps(client.get("/api/state").json())
 
 
+def test_windows_installer_route_uses_the_native_installer(app, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app.routes import setup
+
+    client, _, manager = app
+    calls = []
+    monkeypatch.setattr(kinds.sys, "platform", "win32")
+    monkeypatch.setattr(manager, "refresh_detected", lambda **kwargs: None)
+    proc = SimpleNamespace(stdout=["installed\n"], wait=lambda: 0, returncode=0)
+    monkeypatch.setattr(setup.subprocess, "Popen", lambda argv, **kwargs: calls.append(argv) or proc)
+    response = client.post("/api/agents/install", json={"kind": "claude"}, headers={"X-Decomp": "1"})
+    assert response.status_code == 200
+    for _ in range(200):
+        job = client.get("/api/job", params={"id": response.json()["job"]}).json()
+        if job["state"] != "running":
+            break
+        time.sleep(0.01)
+    assert job["state"] == "done", job
+    assert calls[0][0] == "powershell.exe" and "claude.ai/install.ps1" in calls[0][-1]
+
+
 def test_the_notice_of_the_removed_bridge_stays_dismissed(app):
     """The home page says once which old `decomp mcp` entries the first start removed; Dismiss is remembered."""
     client, _, _ = app

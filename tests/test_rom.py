@@ -32,6 +32,8 @@ pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or
 
 @pytest.fixture(scope="module")
 def built():
+    if toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"):
+        pytest.skip("needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
     if not ROM.exists():
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     return ROM.read_bytes()

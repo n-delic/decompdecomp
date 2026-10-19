@@ -31,6 +31,7 @@ class Antigravity(Agent):
     command = "agy"
     vendor = "Google"
     install = "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+    windows_install = "irm https://antigravity.google/cli/install.ps1 | iex"
     signin = "Open a terminal and run `agy` once to sign in."
     docs = "https://antigravity.google/docs/cli"
     # Google retired Gemini CLI on 2026-06-18; Antigravity CLI replaced it. Helpers and launcher choices saved by

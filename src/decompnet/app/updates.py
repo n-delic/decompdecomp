@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -23,6 +22,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+from decompnet.hostenv import NO_WINDOW, find_uv
 
 from .. import __version__, toolchains
 from . import edition, window
@@ -150,13 +151,7 @@ def check() -> dict:
 
 def uv() -> str | None:
     """Where uv is, which installs updates: on PATH, or where its installer puts it."""
-    found = shutil.which("uv")
-    if found:
-        return found
-    for d in (Path.home() / ".local" / "bin", Path.home() / ".cargo" / "bin"):
-        if (d / "uv").exists():
-            return str(d / "uv")
-    return None
+    return find_uv()
 
 
 def can_apply() -> tuple[bool, str]:
@@ -178,10 +173,13 @@ def install(found: dict, log=print) -> dict:
     cur = found["current"]
     log(f"installing decompdecomp {found['latest'].get('version') or ''}".rstrip()
         + (f" ({cur.get('branch')} @ {found['latest']['commit'][:7]})" if cur["channel"] == "branch" else ""))
-    cmd = [uv(), "tool", "install", "--force", "--python", "3.12", found["spec"]]
+    # uv tool install replaces the whole environment, including the running python.exe on Windows. Updating its
+    # packages instead keeps that executable and the tool's launcher in place; dependencies change only as needed.
+    cmd = ([uv(), "pip", "install", "--python", sys.executable, "--reinstall-package", "decompnet", found["spec"]]
+           if sys.platform == "win32" else [uv(), "tool", "install", "--force", "--python", "3.12", found["spec"]])
     _stream(cmd, log, "installing the update failed")
-    bindir = subprocess.run([uv(), "tool", "dir", "--bin"], capture_output=True, text=True).stdout.strip()
-    decomp = Path(bindir) / "decomp" if bindir else None
+    bindir = subprocess.run([uv(), "tool", "dir", "--bin"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
+    decomp = Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp") if bindir else None
     if not decomp or not decomp.exists():
         raise RuntimeError("the update was installed, but its decomp command isn't there")
     log("getting the tools this version needs")
@@ -189,13 +187,14 @@ def install(found: dict, log=print) -> dict:
     data = {"channel": cur["channel"], "repo": cur.get("repo") or REPO, "branch": cur.get("branch") or "",
             "commit": found["latest"].get("commit") or "", "version": found["latest"].get("version") or "",
             "t": time.time()}
+    info_file().parent.mkdir(parents=True, exist_ok=True)
     info_file().write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return data
 
 
 def _stream(cmd: list[str], log, failure: str) -> None:
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                            text=True, encoding="utf-8", errors="replace", env=dict(os.environ, NO_COLOR="1"))
+                            text=True, encoding="utf-8", errors="replace", env=dict(os.environ, NO_COLOR="1"), creationflags=NO_WINDOW)
     tail: list[str] = []
     for line in proc.stdout:
         line = line.rstrip()
@@ -217,8 +216,8 @@ def restart(port: int, secret: str, window: bool) -> None:
             pass
     argv = [sys.executable, "-m", "decompnet.app.cli", "--port", str(port)]
     if not Path(sys.executable).exists():  # the environment moved: its decomp command starts the same way
-        bindir = subprocess.run([uv() or "uv", "tool", "dir", "--bin"], capture_output=True, text=True).stdout.strip()
-        argv = [str(Path(bindir) / "decomp"), "--port", str(port)]
+        bindir = subprocess.run([uv() or "uv", "tool", "dir", "--bin"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
+        argv = [str(Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp")), "--port", str(port)]
     os.execve(argv[0], argv, env)
 
 

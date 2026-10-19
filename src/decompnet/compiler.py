@@ -15,6 +15,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from . import wsl
 
 MAX_SOURCE_BYTES = 64 * 1024
@@ -120,7 +122,7 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=timeout)
+                          errors="replace", timeout=timeout, creationflags=NO_WINDOW)
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,
@@ -148,6 +150,11 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         inc.mkdir()
         for d in cfg.include_dirs:
             shutil.copytree(d, inc, dirs_exist_ok=True)
+        for header in inc.rglob("*"):
+            if header.is_file() and header.suffix.lower() in (".h", ".hpp", ".hxx", ".inc", ".inl"):
+                data = header.read_bytes()
+                if b"\r\n" in data:  # old GCCs don't continue a macro before CRLF, even in copied headers
+                    header.write_bytes(data.replace(b"\r\n", b"\n"))
         # LF on every platform: to the old GCCs a backslash before CRLF doesn't continue a line ("stray '\' in program")
         (inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
         root = _root(cfg, work)

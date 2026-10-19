@@ -21,9 +21,14 @@ the steps).
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+from decompnet.hostenv import NO_WINDOW
 
 # An agent's `--version` and its list of models are asked at most this often (seconds): running an agent takes
 # seconds, and `agy models` starts the MCP servers in Antigravity's settings
@@ -41,6 +46,27 @@ known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
 
 
+def cli_argv(argv: list[str]) -> list[str]:
+    """Run npm's Windows shim through Node directly: cmd.exe would reinterpret quoted MCP config and shell symbols."""
+    shim = Path(argv[0])
+    if sys.platform != "win32" or shim.suffix.lower() != ".cmd":
+        return argv
+    try:
+        text = shim.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return argv
+    match = re.search(r'"%dp0%[\\/](.+?)"\s+%\*', text, re.I)
+    if match:
+        script = shim.parent / match.group(1).replace("\\", "/")
+        if script.suffix.lower() not in (".js", ".cjs", ".mjs") and not re.search(r"_prog=node|node\.exe", text, re.I):
+            return argv
+        own_node = shim.parent / "node.exe"
+        node = str(own_node) if own_node.is_file() else shutil.which("node")
+        if node and script.is_file():
+            return [node, str(script), *argv[1:]]
+    return argv
+
+
 class Agent:
     """One agent: the facts below, and the parts the app calls. A part an agent doesn't need keeps the default here,
     which does nothing or says the agent can't do it."""
@@ -50,6 +76,7 @@ class Agent:
     command = ""  # its program, looked for on PATH ("claude"); "" for an agent built into the app (see `run`)
     vendor = ""  # who makes it, or whose models it runs, for the launcher: "Anthropic"
     install = ""  # the shell command that installs it ("Install it for me" runs it); "" when there's nothing to install
+    windows_install = ""  # its native PowerShell installer; empty uses `install` (npm works on either host)
     signin = ""  # how to sign in to it, in a sentence: shown when it isn't signed in, and when it fails on a sign-in
     docs = ""  # its documentation, linked from the launcher
     aliases: tuple[str, ...] = ()  # ids older versions stored for it ("gemini" for "antigravity")
@@ -66,8 +93,19 @@ class Agent:
     def describe(self) -> dict:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
-                "install": self.install, "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
+                "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
                 "takes_effort": self.takes_effort}
+
+    def install_text(self) -> str:
+        return (self.windows_install or self.install) if sys.platform == "win32" else self.install
+
+    def install_command(self) -> list[str]:
+        """Run the vendor's installer in the host's own shell, without changing the user's execution policy."""
+        if sys.platform == "win32":
+            return ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-Command", "$ErrorActionPreference='Stop'; " + self.install_text()
+                    + "; if ($LASTEXITCODE) { exit $LASTEXITCODE }"]
+        return ["bash", "-o", "pipefail", "-lc", self.install_text()]
 
     def label(self, name: str, options: dict, used: set[str]) -> str:
         """What the GUI calls a helper of it (`name`: its identity; `used`: the labels its working helpers have)."""
@@ -81,8 +119,8 @@ class Agent:
         cached = known_versions.get(self.id)
         if run and (cached is None or time.time() - cached[0] > VERSION_CACHE):
             try:
-                res = subprocess.run([path, "--version"], capture_output=True, text=True, encoding="utf-8",
-                                     errors="replace", stdin=subprocess.DEVNULL, timeout=CLI_TIMEOUT)
+                res = subprocess.run(cli_argv([path, "--version"]), capture_output=True, text=True, encoding="utf-8",
+                                     errors="replace", stdin=subprocess.DEVNULL, timeout=CLI_TIMEOUT, creationflags=NO_WINDOW)
                 said = (res.stdout or res.stderr).strip()
                 version = said.splitlines()[0][:VERSION_CHARS] if said else None
             except (OSError, subprocess.TimeoutExpired):
@@ -102,8 +140,8 @@ class Agent:
         if not run:
             return []
         try:
-            res = subprocess.run([path, *self.models_args], capture_output=True, text=True, encoding="utf-8",
-                                 errors="replace", stdin=subprocess.DEVNULL, timeout=MODELS_TIMEOUT)
+            res = subprocess.run(cli_argv([path, *self.models_args]), capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", stdin=subprocess.DEVNULL, timeout=MODELS_TIMEOUT, creationflags=NO_WINDOW)
             lines = [line.strip() for line in res.stdout.splitlines()]
         except (OSError, subprocess.TimeoutExpired):
             lines = []

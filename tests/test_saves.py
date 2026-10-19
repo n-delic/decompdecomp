@@ -86,6 +86,11 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     net = RomNetwork(old_home / "decomp.db", old_home)
     with net.store.tx() as db:
         db.execute("INSERT INTO projects(slug, name, root, config) VALUES('game', 'Game', ?, '{}')", (str(old_home / "game"),))
+    # Moving the folder is an offline operation; Windows won't remove open database files.
+    reader = getattr(net.store._local, "conn", None)
+    if reader is not None:
+        reader.close()
+    net.store.conn.close()
     shutil.copytree(old_home, new_home)
     shutil.rmtree(tmp_path / "old")
     moved = RomNetwork(new_home / "decomp.db", new_home)

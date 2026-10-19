@@ -11,6 +11,29 @@
    one defines. Not ES modules: they would need an import for every name used across files. */
 
 const $ = (id) => document.getElementById(id);
+if (new URLSearchParams(location.search).get("native") === "1") document.documentElement.classList.add("windows-window");
+window.addEventListener("pywebviewready", () => {
+  if (!window.pywebview.api.set_theme) return;
+  // Canvas converts the app's OKLCH tokens to sRGB for the native caption, so it uses exactly the page's colors.
+  const pixel = document.createElement("canvas");
+  pixel.width = pixel.height = 1;
+  const context = pixel.getContext("2d", { willReadFrequently: true });
+  function syncWindowTheme() {
+    const style = getComputedStyle(document.body);
+    const rgb = (color) => {
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      return "#" + [...context.getImageData(0, 0, 1, 1).data].slice(0, 3)
+        .map((channel) => channel.toString(16).padStart(2, "0")).join("");
+    };
+    // Background and text are computed properties; use the tokens for hover and the close button.
+    window.pywebview.api.set_theme(rgb(style.backgroundColor), rgb(style.color),
+      rgb(style.getPropertyValue("--color-surface-sunken")), rgb(style.getPropertyValue("--color-status-danger-text")));
+  }
+  new MutationObserver(syncWindowTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", syncWindowTheme);
+  syncWindowTheme();
+});
 /* A list the live feed redraws every second or two: replaced only when it changed. Replacing it while someone
    presses one of its buttons swallows the click (Dismiss on a suggestion did nothing while 8 agents worked). */
 const setHtml = (el, html) => { if (el._html !== html) { el.innerHTML = html; el._html = html; } };

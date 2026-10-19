@@ -2,6 +2,9 @@
 from the user's agents (app/cleanup.py), touching nothing else in their settings."""
 
 import json
+import shutil
+
+import pytest
 
 from decompnet.app import cleanup, edition, launcher
 
@@ -27,6 +30,7 @@ def test_a_development_copys_icon_is_another_colour(monkeypatch):
 def test_the_apps_menu_shows_one_decompdecomp(monkeypatch, tmp_path):
     """The entry is named like the packages' and the old decomp-wtf entry goes: the owner's menu showed two."""
     monkeypatch.setattr(launcher.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(launcher.sys, "platform", "linux")
     monkeypatch.setattr(edition, "DEV", False)
     apps = tmp_path / ".local" / "share" / "applications"
     apps.mkdir(parents=True)
@@ -105,6 +109,7 @@ def test_an_app_given_its_own_home_leaves_the_users_agents_alone(monkeypatch, tm
     assert ran == []
 
 
+@pytest.mark.skipif(not shutil.which("sed"), reason="needs sed to check the Linux package's menu entry")
 def test_the_packages_menu_entry_runs_the_packages_own_decomp():
     """With the install command's copy also there (~/.local/bin, first on PATH), the .deb's menu entry started that
     older copy instead of the package: the owner's 1.0.3 .deb "installed but can't launch"."""

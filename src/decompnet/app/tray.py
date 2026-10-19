@@ -1,7 +1,8 @@
-"""decompdecomp's icon in the system tray, on Linux: closing the window leaves the app running there, and its menu
+"""decompdecomp's icon in the system tray: closing the window leaves the app running there, and its menu
 opens the window again or quits.
 
-It speaks the freedesktop StatusNotifierItem protocol (and the dbusmenu one for its menu) over D-Bus with Gio, which
+Windows uses wintray.py's native NotifyIcon in a separate process. Linux speaks the freedesktop StatusNotifierItem
+protocol (and the dbusmenu one for its menu) over D-Bus with Gio, which
 every desktop that shows tray icons this way already has: KDE, COSMIC, GNOME with the AppIndicator extension, Xfce,
 Cinnamon. No new dependency: Gio comes with the system's PyGObject. Without a tray host, or without PyGObject, start()
 says so, and helpers kept working without the window are reached again by running `decomp`.
@@ -11,8 +12,10 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import threading
+from pathlib import Path
 from typing import Callable
 
 from . import edition
@@ -123,7 +126,11 @@ def _gi():
 
 def start(on_open: Callable[[], None], on_quit: Callable[[], None]) -> bool:
     """Show the tray icon (on its own thread). False when there's no tray to show it in."""
-    if os.environ.get("DECOMP_TRAY") == "0" or sys.platform != "linux":
+    if os.environ.get("DECOMP_TRAY") == "0":
+        return False
+    if sys.platform == "win32":
+        return _start_windows(on_open, on_quit)
+    if sys.platform != "linux":
         return False
     mods = _gi()
     if mods is None:
@@ -142,6 +149,38 @@ def start(on_open: Callable[[], None], on_quit: Callable[[], None]) -> bool:
     threading.Thread(target=_run, args=(Gio, GLib, on_open, on_quit, ready, ok), daemon=True, name="tray").start()
     ready.wait(START_SECONDS)
     return bool(ok)
+
+
+def _start_windows(on_open, on_quit) -> bool:
+    """Keep a native tray icon alive while helpers work without a window."""
+    ready, shown = threading.Event(), []
+    try:
+        icon_file = Path(__file__).with_name("static") / ("favicon-dev.ico" if edition.DEV else "favicon.ico")
+        proc = subprocess.Popen([sys.executable, "-I", str(Path(__file__).with_name("wintray.py")), edition.NAME,
+                                 str(icon_file)],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, encoding="utf-8", errors="replace",
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except OSError:
+        logging.getLogger("decompdecomp").info("the Windows tray couldn't start", exc_info=True)
+        return False
+
+    def relay():
+        for line in proc.stdout:
+            word = line.strip()
+            if word == "ready":
+                shown.append(True)
+                ready.set()
+            elif word in ("open", "quit"):
+                threading.Thread(target=on_open if word == "open" else on_quit, daemon=True).start()
+            else:
+                logging.getLogger("decompdecomp").info("tray: %s", word)
+        proc.wait()
+        ready.set()
+
+    threading.Thread(target=relay, daemon=True, name="tray-output").start()
+    ready.wait(START_SECONDS)
+    return bool(shown)
 
 
 def _run(Gio, GLib, on_open, on_quit, ready: threading.Event, ok: list) -> None:

@@ -10,6 +10,17 @@ on:
   pull_request:
 
 jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.0
+      - run: uv sync
+      - run: uv run ruff check src tests projects
+      - name: Native Windows and portable regression tests
+        run: uv run pytest -q -rs
+        env:
+          DECOMP_TRAY: "0"
   check:
     runs-on: ubuntu-24.04
     steps:

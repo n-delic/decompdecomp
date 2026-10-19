@@ -23,6 +23,7 @@ class Example(Agent):
     command = "example"  # its program on PATH
     vendor = "Example Inc."  # who makes it, or whose models it runs
     install = "curl -fsSL https://example.com/install.sh | bash"  # FILL IN: what "Install it for me" runs
+    windows_install = "npm install -g example-cli"  # FILL IN: the native Windows installer
     signin = "Run `example login` once in a terminal."  # FILL IN: how the user signs in
     docs = "https://example.com/docs"
     family = ""  # who made its models, when it runs only one maker's ("gpt"); "": the model in a helper's name says

@@ -17,6 +17,7 @@ from decompnet.app import updates
 @pytest.fixture(autouse=True)
 def data_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "data"))
     return tmp_path / "data"
 
 
@@ -107,6 +108,28 @@ def test_install_runs_uv_then_the_new_setup(tmp_path, monkeypatch):
     (bindir / "decomp").write_text("#!/bin/sh\necho broken >&2\nexit 3\n")
     with pytest.raises(RuntimeError, match="exit code 3"):
         updates.install(found, log=said.append)
+
+
+def test_windows_update_runs_the_new_exe(tmp_path, monkeypatch):
+    import subprocess
+
+    bindir = tmp_path / "Tool bin ü"
+    bindir.mkdir()
+    executable = bindir / "decomp.exe"
+    executable.write_bytes(b"stand-in")
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(updates, "uv", lambda: "uv.exe")
+    monkeypatch.setattr(updates, "can_apply", lambda: (True, ""))
+    calls = []
+    monkeypatch.setattr(updates, "_stream", lambda argv, log, failure: calls.append(argv))
+    monkeypatch.setattr(updates.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(
+        argv, 0, str(bindir), ""))
+    found = {"current": updates.installed(), "latest": {"version": "1.0.4"}, "spec": "test-wheel.whl"}
+    updates.install(found, log=lambda _: None)
+    assert calls[0] == ["uv.exe", "pip", "install", "--python", sys.executable,
+                        "--reinstall-package", "decompnet", found["spec"]]
+    assert calls[1] == [str(executable), "setup"]
+    assert json.loads(updates.info_file().read_text())["version"] == "1.0.4"
 
 
 def test_restart_keeps_port_and_secret(monkeypatch):

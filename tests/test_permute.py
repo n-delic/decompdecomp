@@ -167,9 +167,19 @@ def test_a_project_is_permuted_by_the_shared_workers_until_stopped(monkeypatch):
 def test_workers_yield_the_cpu_to_the_app():
     """A worker's CPU priority is lower than the app's, and the compilers it runs inherit it (Linux: per thread)."""
     def priority():
+        if os.name == "nt":
+            import ctypes
+
+            kernel = ctypes.windll.kernel32
+            kernel.GetCurrentThread.restype = ctypes.c_void_p
+            kernel.GetThreadPriority.argtypes = (ctypes.c_void_p,)
+            return kernel.GetThreadPriority(kernel.GetCurrentThread())
         return os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
 
     app = priority()
+    if os.name == "nt":
+        assert workers.pool().submit(priority).result() == -1 and priority() == app
+        return
     if app >= 19:
         pytest.skip("this test already runs at the lowest priority")
     assert workers.pool().submit(priority).result() == min(19, app + workers.NICE) and priority() == app

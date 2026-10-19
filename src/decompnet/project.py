@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from . import toolchains, wsl
@@ -35,7 +36,11 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         if linux and not (ok := wsl.status())[0]:
             raise toolchains.ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {ok[1]}")
         dirs = toolchains.runtime_dirs(tc.id)
-        tc_dir = wsl.path(dirs[0]) if linux else str(dirs[0])
+        try:
+            where_tools = wsl.prepare_tools(dirs) if linux else tuple(str(directory) for directory in dirs)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise toolchains.ToolchainError(f"{tc.name} couldn't be prepared in WSL: {error}") from None
+        tc_dir = where_tools[0]
         ro_paths += [str(d) for d in dirs]
         if "runtime-i386" in tc.requires and not linux:  # in WSL its programs bring the runtime themselves
             runtime32 = str(toolchains.require("runtime-i386"))
@@ -47,9 +52,8 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         else:
             base = [*tc.cc, *flags, "-I{include}", "{src}", "-o", "{obj}"]
         cmd = [a.replace("{tc}", tc_dir) for a in base]
-        for dep in tc.requires:  # {tc:<id>} is another toolchain this one needs
-            where = toolchains.path(dep, linux)
-            cmd = [a.replace(f"{{tc:{dep}}}", wsl.path(where) if linux else str(where)) for a in cmd]
+        for dep, where in zip(tc.requires, where_tools[1:]):  # {tc:<id>} is another toolchain this one needs
+            cmd = [a.replace(f"{{tc:{dep}}}", where) for a in cmd]
     else:
         cmd = list(c["cmd"])
     return CompilerConfig(

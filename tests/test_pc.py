@@ -6,7 +6,9 @@ must find every function with its exact extent, and agents' C must be judged by 
 Visual C++ is proprietary, so the end-to-end part runs only where `msvc` was installed with its license accepted.
 """
 
+import json
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -17,6 +19,7 @@ import pytest
 from decompnet import toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
+from decompnet.forks.project import ForkProject
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -25,7 +28,7 @@ GAME = ROOT / "projects" / "demo-n64" / "original" / "game.c"
 
 needs_tools = pytest.mark.skipif(
     any(toolchains.installed(t) is None for t in ("msvc", "objdiff-cli")) or not ghidra.available()
-    or (toolchains.get("wibo").supported and toolchains.installed("wibo") is None),
+    or (sys.platform != "win32" and toolchains.get("wibo").supported and toolchains.installed("wibo") is None),
     reason="needs Visual C++ (msvc, proprietary), Ghidra and objdiff")
 
 
@@ -36,6 +39,56 @@ def test_decorated_names():
     assert scratch_pe.decorate("func_00401000", "__fastcall", 0, 2) == "@func_00401000@8"
     assert scratch_pe.decorate("func_00401000", "__fastcall", 4, 3) == "@func_00401000@12"
     assert scratch_pe.decorate("func_00401000", "__thiscall", 4, 2) == "@func_00401000@12"  # this, unused edx, one int
+
+
+def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp_path, monkeypatch):
+    """The compiler and its includes may live in a Windows user folder with spaces or shell characters."""
+    root = tmp_path / "Project with spaces ü"
+    tools = Path(scratch_pe.__file__).with_name("project_template") / "tools"
+    shutil.copytree(tools, root / "tools")
+    source = root / "src/auto/sample.cpp"
+    source.parent.mkdir(parents=True)
+    source.write_text("int sample(void) { return 1; }\n")
+    config = root / "config/TEST/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"units": {"sample": {}}}))
+    (root / "include").mkdir()
+    compiler_root = tmp_path / "Compiler & tools $ ü"
+    compiler = compiler_root / "6.0/Bin/CL.EXE"
+    compiler.parent.mkdir(parents=True)
+    (compiler_root / "6.0/Include").mkdir()
+    record = root / "compiler-args.txt"
+    monkeypatch.setenv("DECOMP_TEST_CL_ARGS", str(record))
+    monkeypatch.delenv("DECOMP_TEST_CL_FAIL", raising=False)
+    if sys.platform == "win32":
+        subprocess.run([sys.executable, str(Path(__file__).with_name("fake_clr_compiler.py")), str(compiler)],
+                       check=True, capture_output=True, timeout=30)
+    else:
+        compiler.write_text('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
+                            'Path(os.environ["DECOMP_TEST_CL_ARGS"]).write_text("\\n".join(sys.argv[1:]))\n'
+                            'if os.environ.get("DECOMP_TEST_CL_FAIL") == "1": sys.exit(3)\n'
+                            'out = Path(next(arg[3:] for arg in sys.argv if arg.startswith("/Fo")))\n'
+                            'out.parent.mkdir(parents=True, exist_ok=True)\nout.write_text("object")\n')
+        compiler.chmod(0o755)
+    # Only command routing is under test: no fake object ever reaches the real judge.
+    (root / "tools/names.py").write_text('import sys\nfrom pathlib import Path\n'
+                                        'out = Path(sys.argv[2])\nassert out.read_text() == "object"\n'
+                                        'out.with_suffix(".named").write_text("processed")\n')
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
+                   check=True, capture_output=True, timeout=30)
+    project = ForkProject(root)
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    obj = root / "build/TEST/src/auto/sample.obj"
+    assert obj.with_suffix(".named").read_text() == "processed"
+    args = record.read_text(encoding="utf-8-sig").splitlines()
+    assert "/I" + str(compiler_root / "6.0/Include") in args and "/GX" in args
+    obj.with_suffix(".named").unlink()
+    obj.unlink()
+    source.write_text("int sample(void) { return 2; }\n")  # also exercise configure.py's regeneration command
+    monkeypatch.setenv("DECOMP_TEST_CL_FAIL", "1")
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert not ok and not obj.with_suffix(".named").exists(), output
 
 
 def test_only_32_bit_x86_programs():

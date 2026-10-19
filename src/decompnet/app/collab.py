@@ -31,6 +31,8 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from decompnet.hostenv import NO_WINDOW
+
 from .. import toolchains
 from ..network import Agent, NetworkError, hash_token
 from ..rom.symbols import AUTO_NAME
@@ -473,7 +475,7 @@ class Tunnel:
         exe = toolchains.path("cloudflared") / "cloudflared"
         self.proc = subprocess.Popen([str(exe), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{self.port}"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                                     errors="replace")
+                                     errors="replace", creationflags=NO_WINDOW)
         found = threading.Event()
 
         def read():
@@ -838,7 +840,7 @@ def _local_addresses() -> list[dict]:
     if ts:
         try:
             res = subprocess.run([ts, "status", "--json"], capture_output=True, text=True, timeout=5,
-                                 encoding="utf-8", errors="replace")
+                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
             me = json.loads(res.stdout).get("Self") or {}
             name = (me.get("DNSName") or "").rstrip(".")
             ips = [a for a in me.get("TailscaleIPs") or [] if "." in a]

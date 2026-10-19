@@ -35,8 +35,10 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from decompnet.hostenv import NO_WINDOW
 
 from .. import agents, consoles, network
 from ..network import NetworkError
@@ -44,6 +46,17 @@ from . import tools
 from .engine import RomNetwork
 
 log = logging.getLogger("decompdecomp")
+_windows_jobs: dict[int, object] = {}
+_jobs_lock = threading.Lock()
+
+
+def _close_windows_job(pid: int) -> bool:
+    with _jobs_lock:
+        job = _windows_jobs.pop(pid, None)
+    if job is not None:
+        job.close()
+        return True
+    return False
 
 
 class Fatal(RuntimeError):
@@ -98,6 +111,7 @@ STOP_GRACE = 5  # seconds between asking a helper's processes to end (SIGTERM) a
 HELPER_ENV = "DECOMP_HELPER_OF"
 # /proc/<pid>/stat after the command's closing parenthesis: field 22 (starttime) is the 20th, counted from 0 at 19
 STAT_STARTTIME_INDEX = 19
+PROCFS = Path("/proc")
 
 # finding which agents are installed: DECOMP_DETECT_AGENTS=off never runs one (the tests set it: `agy models` starts
 # the MCP servers in Antigravity's settings)
@@ -181,7 +195,9 @@ def limit_reset(said: str, now: float | None = None) -> float | None:
         if half:
             hour = hour % HOURS_HALF_DAY + (HOURS_HALF_DAY if half == "p" else 0)
         tz = None
-        if zone:
+        if zone and zone.upper() == "UTC":
+            tz = timezone.utc
+        elif zone:
             from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
             try:
@@ -220,7 +236,16 @@ def _which(cmd: str) -> str | None:
     if found:
         return found
     home = Path.home()
-    for d in (home / ".local" / "bin", home / ".claude" / "local", home / ".opencode" / "bin", home / ".npm-global" / "bin"):
+    directories = [home / ".local" / "bin", home / ".claude" / "local", home / ".opencode" / "bin",
+                   home / ".npm-global" / "bin"]
+    if os.name == "nt":
+        directories.append(Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "npm")
+        directories.append(Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "agy" / "bin")
+    for d in directories:
+        if os.name == "nt":
+            found = shutil.which(cmd, path=str(d))
+            if found:
+                return found
         if (d / cmd).exists():
             return str(d / cmd)
     return None
@@ -327,6 +352,12 @@ def _group_alive(pgid: int) -> bool:
 
 def _end_groups(pgids: set[int], grace: float = STOP_GRACE) -> None:
     """End these process groups: asked first (SIGTERM), ended (SIGKILL) whatever is left after `grace` seconds."""
+    if os.name == "nt":
+        for pid in pgids:
+            if pid > 1 and not _close_windows_job(pid):  # fallback for processes started without a job
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
+        return
     pgids = {g for g in pgids if g > 1 and g != os.getpgid(0)}  # never the app's own group
     for g in pgids:
         try:
@@ -347,7 +378,13 @@ def _end_groups(pgids: set[int], grace: float = STOP_GRACE) -> None:
 def _terminate(proc: subprocess.Popen) -> None:
     """End a helper's agent with everything it started (node starts opencode, opencode its server...): its process
     group, asked to end now and ended for good STOP_GRACE seconds later, without waiting here."""
-    threading.Thread(target=_end_groups, args=({proc.pid},), daemon=True, name=f"end-{proc.pid}").start()
+    def end():
+        # Keep the process handle until cleanup ends: Windows must not reuse its pid for an unrelated program.
+        if os.name == "nt" and proc.poll() is not None:
+            _close_windows_job(proc.pid)
+        else:
+            _end_groups({proc.pid})
+    threading.Thread(target=end, daemon=True, name=f"end-{proc.pid}").start()
 
 
 class Manager:
@@ -554,8 +591,9 @@ class Manager:
             if sid not in (None, s.id):
                 continue
             s.stop.set()
-            if s.proc is not None and s.proc.poll() is None:
-                _terminate(s.proc)
+            proc = s.proc
+            if proc is not None and proc.poll() is None:
+                _terminate(proc)
             with self._lock:
                 if s.state in LIVE:
                     s.state, s.stopped_by, s.until, s.todo = "stopped", by, None, ""
@@ -601,7 +639,8 @@ class Manager:
         if self._down:
             return
         self._down = True
-        groups = {s.proc.pid for s in self.sessions.values() if s.proc is not None and s.proc.poll() is None}
+        processes = [s.proc for s in list(self.sessions.values())]  # retain Windows handles until _end_groups returns
+        groups = {proc.pid for proc in processes if proc is not None and proc.poll() is None}
         self.stop()
         _end_groups(groups | self._strays())
         try:
@@ -611,9 +650,13 @@ class Manager:
 
     def _strays(self) -> set[int]:
         """Process groups of processes this app's helpers started, found by HELPER_ENV in their environment."""
+        # Linux exposes child environments through /proc. On Windows there is no equivalent filesystem, so there
+        # are no stray groups to recover here; the live sessions are still stopped through their Popen handles.
+        if not PROCFS.is_dir():
+            return set()
         mark = f"{HELPER_ENV}={self.home}".encode()
         out = set()
-        for d in Path("/proc").iterdir():
+        for d in PROCFS.iterdir():
             if not d.name.isdigit() or int(d.name) == os.getpid():
                 continue
             try:
@@ -903,6 +946,7 @@ class Manager:
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
         cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
+        cmd = agents.cli_argv(cmd)
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
@@ -912,17 +956,37 @@ class Manager:
         k = agents.get(s.kind)
         cmd, env, prompt = self._command(s, token, workdir)
         s.push("info", f"session {s.runs}: {k.name} started")
+        if os.name == "nt":
+            import sys
+
+            cmd = [sys.executable, "-I", str(Path(__file__).with_name("winhelper.py")), *cmd]
         # its own session and process group: stopping it ends everything it started
         proc = subprocess.Popen(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                start_new_session=True)
+                                start_new_session=True, creationflags=NO_WINDOW)
+        if os.name == "nt":
+            from ..winprocess import Job
+
+            try:
+                job = Job(proc)
+            except OSError:
+                log.warning("couldn't assign helper %s to a Windows job; stopping it will use taskkill", proc.pid,
+                            exc_info=True)
+            else:
+                with _jobs_lock:
+                    _windows_jobs[proc.pid] = job
+
+                def reap_job():
+                    proc.wait()
+                    _close_windows_job(proc.pid)
+                threading.Thread(target=reap_job, daemon=True, name=f"job-{proc.pid}").start()
         s.proc, s.pid_start = proc, _proc_start(proc.pid)
         self._save(s)  # its process, should the app crash: the next start ends it
         errors: collections.deque = collections.deque(maxlen=20)
 
         def feed_prompt():
             try:
-                proc.stdin.write(prompt)
+                proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
                 proc.stdin.close()  # end of input: the agent works on this one prompt, then exits
             except OSError:  # it exited before reading (stderr says why)
                 pass
@@ -954,6 +1018,7 @@ class Manager:
                 _terminate(proc)
                 break
         code = proc.wait()
+        _close_windows_job(proc.pid)
         s.proc = None
         if s.stop.is_set():
             return True

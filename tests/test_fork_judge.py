@@ -8,6 +8,8 @@ and the guards reject every change next to it.
 """
 
 import json
+import os
+import posixpath
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +18,10 @@ import pytest
 
 from decompnet import toolchains
 from decompnet.app.engine import RomNetwork
+from decompnet.compiler import run_in
+from decompnet.project import compiler_config
+
+from .handmade import write_compiler
 
 pytestmark = pytest.mark.skipif(
     toolchains.installed("gcc-2.7.2-kmc") is None or toolchains.installed("objdiff-cli") is None
@@ -76,23 +82,26 @@ GAIN = "float read_gain(void) {\n    return gVolume;\n}\n"
 
 def _run(cwd: Path, *argv: str) -> None:
     subprocess.run(argv, cwd=cwd, check=True, capture_output=True,
-                   env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
-                        "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin", "HOME": str(cwd)})
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                        "GIT_COMMITTER_EMAIL": "t@t", "HOME": str(cwd)})
 
 
 @pytest.fixture
 def fork(tmp_path):
-    tc = toolchains.require("gcc-2.7.2-kmc")
     repo = tmp_path / "upstream"
     (repo / "src").mkdir(parents=True)
     (repo / "include").mkdir()
     (repo / "expected").mkdir()
     (repo / "include" / "lit.h").write_text("extern float gVolume;\n")
     (repo / "src" / "lit.c").write_text('#include "lit.h"\n\n' + OFFSET)
-    (repo / "expected" / "target.s").write_text(TARGET)
-    _run(repo, str(tc / "as"), "-mips3", "-EB", "-o", "expected/lit.o", "expected/target.s")
+    (repo / "expected" / "target.s").write_text(TARGET, newline="\n")
+    cfg = compiler_config(repo, {"compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+    assembled = run_in(cfg, repo, [posixpath.dirname(cfg.cmd[0]) + "/as", "-mips3", "-EB", "-o", "expected/lit.o",
+                                   "expected/target.s"], inputs=["expected/target.s"], outputs=["expected/lit.o"])
+    assert assembled.returncode == 0, assembled.stderr
+    command = write_compiler(repo, ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"])
     (repo / "build.ninja").write_text(
-        f"rule cc\n  command = {tc}/gcc -B{tc}/ -c -G0 -mips3 -mgp32 -mfp32 -O2 -Iinclude $in -o $out\n"
+        f"rule cc\n  command = {command} $in $out\n"
         "build build/lit.o: cc src/lit.c | include/lit.h\n")
     (repo / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
         {"name": "lit", "target_path": "expected/lit.o", "base_path": "build/lit.o",

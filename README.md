@@ -8,6 +8,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="AGPL-3.0 license" src="https://img.shields.io/badge/license-AGPL--3.0-157a49?style=flat-square"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-15140f?style=flat-square">
+  <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
   <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
@@ -29,7 +30,7 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Install
 
-decompdecomp runs on **Linux**, on a 64-bit Intel or AMD PC. Install it with one command. The installer also gets
+decompdecomp runs on **Linux and Windows 10/11**, on a 64-bit Intel or AMD PC. On Linux, install it with one command. The installer also gets
 the free compilers and keeps decompdecomp up to date:
 
 ```
@@ -44,7 +45,22 @@ sudo dnf install ./decompdecomp-*.x86_64.rpm       # Fedora
 chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # any other distribution
 ```
 
-Windows and macOS aren't supported in this version.
+On **Windows**, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the
+[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). Open a new PowerShell
+window, then run:
+
+```powershell
+uv tool install --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/heads/main.tar.gz"
+decomp setup
+decomp shortcut
+decomp
+```
+
+The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
+brings back a window closed while helpers work. Free tools use Windows builds where available. Linux-only period
+compilers run through **WSL 2**: run `wsl --install` in an administrator PowerShell, restart if asked, and open Ubuntu
+once to finish setup before importing a game that needs one. Projects stay in your Windows `Decomp` folder.
+macOS isn't supported in this version.
 
 ## Start
 
@@ -82,22 +98,10 @@ What changed on the way:
   others), and its home page says what it removed. Before that, those entries started the old app again whenever
   you closed it.
 - **The Source tab is now the Export button** in the project's header.
-- **Windows (WSL) isn't supported in this version.** Windows comes back in 1.0.4: until then, stay on 1.0.2. In
-  its Settings, untick **Install updates by itself** and **Look for updates**. Updated already? This version turns
-  both off, and its old browser tab shows how to go back. In PowerShell:
-
-  ```powershell
-  wsl --terminate decomp-wtf
-  wsl -d decomp-wtf -u decomp --exec /home/decomp/.local/bin/uv tool install --force --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/tags/v1.0.2-alpha.tar.gz"
-  wsl -d decomp-wtf -u root --exec sh -c "echo 'export DECOMP_TRAY=0' >> /etc/profile.d/decomp-wtf.sh"
-  ```
-
-  The last line turns off 1.0.2's tray icon: with the system packages 1.0.3's window uses, it made 1.0.2 quit at
-  start ("127.0.0.1 refused to connect").
-
-  Then start decompdecomp as before. To move to Linux instead: your projects are in
-  `\\wsl.localhost\decomp-wtf\home\decomp\Decomp`. Copy that whole folder to `~/Decomp` on a Linux computer, with
-  the hidden `.decomp` folder in it, and install decompdecomp there: it finds every project in it.
+- **Windows projects and compilers.** The app server and window run natively on Windows. Linux-only period compilers
+  run through WSL 2, using temporary Linux-side build stages so old 32-bit tools work. Run `decomp shortcut` once to
+  put native shortcuts on the Windows desktop and in Start. The Microsoft Edge WebView2 Runtime is required; pywebview is
+  installed with the app.
 
 ## Moving to another computer
 

@@ -417,6 +417,10 @@ def test_quitting_ends_everything_a_helper_started(tmp_path):
     proc.wait(10)
 
     def alive(pid: int) -> bool:  # (a process that ended but nobody collected yet counts as ended)
+        if sys.platform == "win32":
+            from .test_platform import _alive
+
+            return _alive(pid)
         try:
             return open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0] != "Z"
         except OSError:
@@ -426,6 +430,13 @@ def test_quitting_ends_everything_a_helper_started(tmp_path):
             break
         time.sleep(0.1)
     assert not alive(service) and s.state == "stopped" and s.stopped_by == agents.BY_QUIT
+
+
+def test_startup_without_proc_filesystem(tmp_path, monkeypatch):
+    """Windows has no /proc: starting with no previous helper groups must still work."""
+    monkeypatch.setattr(agents, "PROCFS", tmp_path / "proc")
+    m = agents.Manager(RomNetwork(tmp_path / "app.db", tmp_path), tmp_path, URL)
+    assert m._strays() == set()
 
 
 def test_finding_the_installed_agents_never_holds_up_a_page(tmp_path, monkeypatch):

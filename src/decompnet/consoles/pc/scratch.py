@@ -33,6 +33,8 @@ from pathlib import Path
 import capstone
 from capstone import x86
 
+from decompnet.hostenv import NO_WINDOW
+
 from ... import toolchains
 from ...forks.project import ForkError, ForkProject
 
@@ -555,6 +557,6 @@ function's address, size, symbol and relocations.
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
-            subprocess.run(cmd, cwd=root, capture_output=True)
+            subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
     return {"platform": "pc", "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
             "sources": len(groups), "sha1": info["sha1"]}

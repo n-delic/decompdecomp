@@ -16,6 +16,8 @@ import tempfile
 from importlib import resources
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from .. import toolchains
 from ..limits import capped
 
@@ -44,7 +46,7 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
                 "-postScript", script, str(out), "-deleteProject", *([] if analyse else ["-noanalysis"])]
         try:
             subprocess.run(capped(argv), capture_output=True, text=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except (OSError, subprocess.TimeoutExpired):
             return []
         rows = []

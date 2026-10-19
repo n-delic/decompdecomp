@@ -26,6 +26,8 @@ import threading
 import tomllib
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW
+
 from . import edition
 
 CLI_TIMEOUT_SECONDS = 30
@@ -96,7 +98,7 @@ def _cli_client(name: str, exe: str, servers: list[str], extra: list[str], home:
         else:
             try:
                 removed = subprocess.run([found, "mcp", "remove", *extra, server], capture_output=True, text=True,
-                                         timeout=CLI_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL).returncode == 0
+                                         timeout=CLI_TIMEOUT_SECONDS, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW).returncode == 0
             except (OSError, subprocess.TimeoutExpired):
                 removed = False
         if removed:

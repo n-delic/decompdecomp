@@ -10,6 +10,8 @@ import subprocess
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from decompnet.hostenv import NO_WINDOW
+
 from ... import agents as kinds
 from ... import toolchains
 from ...network import NetworkError
@@ -39,16 +41,17 @@ def register(app: App) -> None:
             kind = kinds.get(str((await body(request)).get("kind", "")))
         except ValueError:
             kind = None
-        if kind is None or not kind.install:
+        if kind is None or not kind.install_text():
             return fail(ValueError("nothing to install"))
-        if kind.install.startswith("npm ") and not shutil.which("npm"):
+        if kind.install_text().startswith("npm ") and not shutil.which("npm"):
             return fail(ValueError(f"{kind.name} is installed with npm: install Node.js from https://nodejs.org "
                                    "first (the LTS version), then try again"))
 
         def work(log):
-            log(f"$ {kind.install}")
-            proc = subprocess.Popen(["bash", "-lc", kind.install], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    text=True, encoding="utf-8", errors="replace")
+            log(f"$ {kind.install_text()}")
+            proc = subprocess.Popen(kind.install_command(), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+                                    creationflags=NO_WINDOW)
             for line in proc.stdout:
                 log(line.rstrip())
             if proc.wait() != 0:

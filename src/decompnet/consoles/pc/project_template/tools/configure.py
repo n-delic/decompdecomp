@@ -12,6 +12,7 @@ Made by decompdecomp.
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -35,13 +36,13 @@ CONFIG = Path("config") / VERSION / "functions.json"
 BUILD = Path("build") / VERSION
 MSVC = Path(args.msvc) / MSVC_VERSION
 CL = next((p for p in (MSVC / "Bin" / "CL.EXE", MSVC / "Bin" / "cl.exe") if p.exists()), MSVC / "Bin" / "CL.EXE")
-WRAP = f'"{args.wibo}" ' if args.wibo and sys.platform != "win32" else ""
-PY = f'"{sys.executable}"'
-SH = "cmd /c " if sys.platform == "win32" else ""  # ninja starts commands without a shell: && needs one on Windows
 
 
 def q(argv: list[str]) -> str:
-    return subprocess.list2cmdline(argv)
+    return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
+
+
+PY = q([sys.executable]).replace("$", "$$")
 
 
 def files(top: str, suffixes: tuple[str, ...]) -> list[Path]:
@@ -60,17 +61,21 @@ def main() -> None:
     with open("build.ninja", "w", encoding="utf-8") as f:
         n = ninja_syntax.Writer(f)
         n.rule("delink", f"{PY} tools/delink.py {CONFIG} {BUILD / 'target'}", restat=True)
-        # then the original's names on what it compiled to (C++ mangles them: tools/names.py)
-        n.rule("cl", f'{SH}{WRAP}"{CL}" {q(CL_FLAGS)} /Iinclude "/I{MSVC / "Include"}" $cflags /Fo$out $in'
-               f' && {PY} tools/names.py {CONFIG} $out')
-        n.rule("configure", f"{PY} tools/configure.py {q(sys.argv[1:])}", generator=True)
+        compiler = [sys.executable, "tools/compile.py", "--compiler", str(CL), "--include", str(MSVC / "Include"),
+                    "--config", str(CONFIG)]
+        if args.wibo and sys.platform != "win32":
+            compiler += ["--wrapper", args.wibo]
+        # The runner invokes the compiler and names.py separately: cmd /c misparsed quoted compiler paths.
+        n.rule("cl", q(compiler).replace("$", "$$") + " --output $out --source $in -- "
+               + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+        n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
 
         targets = [str(BUILD / "target" / f"{u}.obj") for u in units]
         n.build(targets, "delink", [str(CONFIG), "tools/delink.py"])
         objs = []
         for src in files("src", (".c", ".cpp")):
             obj = BUILD / src.with_suffix(".obj")
-            n.build(str(obj), "cl", str(src), implicit=[*headers, str(CONFIG), "tools/names.py"])
+            n.build(str(obj), "cl", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/names.py"])
             objs.append(str(obj))
         n.build("all_source", "phony", objs)
         n.build("prepare", "phony", [*targets, *objs])

@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
+from decompnet.hostenv import NO_WINDOW, find_uv
+
 from . import wsl
 
 MANIFEST = ".decompnet-toolchain.json"
@@ -118,6 +120,8 @@ def get(tid: str) -> Toolchain:
 
 def data_dir() -> Path:
     """Per-user data directory for decompnet (toolchains, caches)."""
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "decompnet"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "decompnet"
     return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "decompnet"
@@ -215,7 +219,7 @@ def _extract(archive: Path, dest: Path, subdir: str | None) -> None:
                 with open(archive, "rb") as src, open(plain, "wb") as out:
                     zstandard.ZstdDecompressor().copy_stream(src, out)
                 subprocess.run(["tar", "-xf", str(plain), "-C", tmp, "--no-same-owner", "--no-same-permissions"],
-                               check=True, capture_output=True)
+                               check=True, capture_output=True, creationflags=NO_WINDOW)
             finally:
                 plain.unlink(missing_ok=True)
         else:
@@ -238,6 +242,10 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     that's how it runs on this computer)."""
     tc = get(tid)
     linux = tc.via_wsl if linux is None else linux
+    if tc.proprietary and not accept_license and (force or installed(tid, linux) is None):
+        raise ToolchainError(
+            f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
+            f"decision; re-run with --accept-license if you accept that.")
     if linux:
         ok, why = wsl.status()
         if not ok:
@@ -255,10 +263,6 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
                              + (f": {why}" if why else ""))
     if tc.requires_java and java_version() < tc.requires_java:
         raise ToolchainError(f"{tc.name} needs Java {tc.requires_java} or newer: install it from https://adoptium.net first")
-    if tc.proprietary and not accept_license:
-        raise ToolchainError(
-            f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
-            f"decision; re-run with --accept-license if you accept that.")
 
     dest = path(tid, linux)
     if dest.exists():
@@ -310,13 +314,13 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
 
 def venv_bin(venv: Path, name: str) -> Path:
     """Path of an executable inside a virtual environment."""
-    return venv / "bin" / name
+    return venv / "Scripts" / f"{name}.exe" if sys.platform == "win32" else venv / "bin" / name
 
 
 def _install_python_env(tc: Toolchain, dest: Path, log) -> None:
     """An isolated environment for a Python tool: its pinned git package, or for a folder of scripts unpacked from
     its parts (decomp-permuter isn't a package), only the libraries those scripts import (`pip_extra`)."""
-    uv = shutil.which("uv")
+    uv = find_uv()
     if not uv:
         raise ToolchainError(f"{tc.id} needs `uv` to create its isolated environment")
     specs = []
@@ -326,9 +330,9 @@ def _install_python_env(tc: Toolchain, dest: Path, log) -> None:
     elif tc.git:
         specs = [f"{tc.id} @ git+{tc.git}@{tc.commit}"]
     log(f"  creating an isolated environment for {f'{tc.git} @ {tc.commit[:10]}' if tc.git else tc.name}")
-    subprocess.run([uv, "venv", "--quiet", "--python", "3.12", str(dest / "venv")], check=True)
+    subprocess.run([uv, "venv", "--quiet", "--python", "3.12", str(dest / "venv")], check=True, creationflags=NO_WINDOW)
     subprocess.run([uv, "pip", "install", "--quiet", "--python", str(venv_bin(dest / "venv", "python")), *specs,
-                    *tc.pip_extra], check=True)
+                    *tc.pip_extra], check=True, creationflags=NO_WINDOW)
 
 
 def binary(tid: str) -> Path:
@@ -336,7 +340,7 @@ def binary(tid: str) -> Path:
     tc = get(tid)
     base = require(tid)
     name = tc.binary_name or tid
-    for candidate in (base / f"{name}.exe", base / name, base / "bin" / name):
+    for candidate in (base / f"{name}.exe", base / name, base / "bin" / f"{name}.exe", base / "bin" / name):
         if candidate.exists():
             return candidate
     raise ToolchainError(f"{tid} is installed but {name} wasn't found in {base}")
@@ -361,7 +365,7 @@ def java_version() -> int:
         return 0
     try:
         out = subprocess.run([exe, "-version"], capture_output=True, text=True, timeout=20,
-                             encoding="utf-8", errors="replace")
+                             encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired):
         return 0
     m = _re.search(r'version "(\d+)', out.stderr + out.stdout)

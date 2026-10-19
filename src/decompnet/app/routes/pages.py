@@ -33,9 +33,12 @@ def register(app: App) -> None:
     async def index(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
+        if not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_wsl() else OLD_PAGE_LINUX), status_code=401)
-        return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
+        response = HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
+        if request.query_params.get(window.TOKEN_QUERY):
+            response.set_cookie(window.TOKEN_COOKIE, secret, httponly=True, samesite="strict", max_age=86400)
+        return response
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:

@@ -5,7 +5,9 @@ project.toml, its source and the objects built from it. Real games are imported 
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import sys
 import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
@@ -16,6 +18,26 @@ from decompnet.compiler import compile_source
 from decompnet.elfobj import extract_function, list_functions
 from decompnet.project import compiler_config
 from decompnet.store import Store
+
+
+def write_compiler(root: Path, flags: list[str]) -> str:
+    """A tiny fixture project's compiler command, using the same pinned sandbox on Linux and Windows."""
+    (root / "compile.py").write_text('''import sys
+from pathlib import Path
+from decompnet.compiler import compile_source
+from decompnet.project import compiler_config
+root = Path(__file__).resolve().parent
+cfg = compiler_config(root, {"compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": FLAGS}})
+cfg.include_dirs = (str(root / "include"),) if (root / "include").exists() else ()
+result = compile_source(cfg, "", Path(sys.argv[1]).read_text(encoding="utf-8"), trusted=True)
+if not result.ok:
+    sys.exit(result.log)
+output = Path(sys.argv[2])
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_bytes(result.obj)
+'''.replace("FLAGS", repr(flags)), encoding="utf-8")
+    quote = subprocess.list2cmdline if sys.platform == "win32" else shlex.join
+    return quote([sys.executable, "compile.py"]).replace("$", "$$")
 
 
 def load_config(root: Path) -> dict:
