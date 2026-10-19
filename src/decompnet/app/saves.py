@@ -148,6 +148,7 @@ def restore(net, source: str, game: Path, log=print) -> dict:
     """Rebuild a project from a save (a folder or a git repository) and the user's own copy of the game: import it
     (or find it already imported), check it's the same game, then put back the layout, names, headers, settings and
     notes, and judge every saved function again. Returns the project and what came back."""
+    log("checking the saved project and your game copy")
     with tempfile.TemporaryDirectory(prefix="decomp-restore-") as tmp:
         folder = fetch(source, Path(tmp) / "save", log)
         try:
@@ -160,6 +161,7 @@ def restore(net, source: str, game: Path, log=print) -> dict:
         if consoles.identify(data).read_game(data, data.name).info["sha1"] != manifest["game"]["sha1"]:
             raise NetworkError(f"that's not the same game: this save is for {manifest['title']} "
                                f"({manifest['game'].get('file') or 'its original file'}); pick your copy of that one")
+        log("importing and splitting your game copy")
         slug = net.import_rom(data, confirmed=True, name=data.name, log=log)
         return _apply(net, slug, folder, manifest, log) | {"slug": slug}
 

@@ -342,27 +342,63 @@ document.addEventListener("click", async (e) => {
 
 /* Open a saved project (app/saves.py): a save folder, or the git repository it was pushed to, and the user's own copy
    of the game (never in the save). Like an import, it runs in the background and opens the project when it's done. */
+let restoreJob = null, restoreInput = null, restorePolling = false;
 function openRestore() {
+  const running = restoreJob && restoreJob.state === "running";
   const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
     <label class="field"><span>The save: its folder, or the git address you pushed it to</span><span class="pick-row"><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"><button class="ghost small-btn" type="button" data-pick="folder" data-for="rsSource" data-title="The saved project's folder">Choose…</button></span></label>
     <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
-    <div class="row"><button class="primary" id="rsGo" type="button" disabled>Open it</button><button class="ghost" data-close type="button">Cancel</button></div>
-    <pre class="joblog tall" id="rsLog" hidden></pre>`, "restore");
+    <div class="row"><button class="primary" id="rsGo" type="button" disabled>${running ? "Opening…" : "Open it"}</button><button class="ghost" id="rsCancel" type="button">${running ? "Cancel opening" : "Cancel"}</button></div>
+    <pre class="joblog tall" id="rsLog"${running ? "" : " hidden"}></pre>`, "restore");
+  if (restoreInput) { $("rsSource").value = restoreInput.source; $("rsGame").value = restoreInput.path; $("rsOwn").checked = true; }
+  if (running) { $("rsGo").disabled = true; $("rsLog").textContent = (restoreJob.log || []).join("\n"); }
   body.querySelector("#rsOwn").onchange = (e) => { $("rsGo").disabled = !e.target.checked; };
+  body.querySelector("#rsCancel").onclick = async () => {
+    if (restoreJob && restoreJob.state === "running") {
+      try { await api("/api/job/cancel", { method: "POST", body: { id: restoreJob.id } }); }
+      catch (e) { toast(esc(e.message), "err"); }
+    }
+    closeDialog();
+  };
+  if (running) { watchRestore(restoreJob.id, $("rsLog")); return; }
   body.querySelector("#rsGo").onclick = async () => {
     const source = $("rsSource").value.trim(), path = $("rsGame").value.trim();
     if (!source || !path) return showJobError($("rsLog"), "Say where the save is and where your copy of the game is.");
     $("rsGo").disabled = true;
     showJobError($("rsLog"), "");
+    $("rsLog").textContent = "Starting saved project…";
     try {
+      restoreInput = { source, path };
       const { job } = await api("/api/restore", { method: "POST", body: { source, path, confirmed: true } });
-      const r = await followJob(job, $("rsLog"));
-      toast(`${plural(r.matched || 0, "matched function")} back${r.lost && r.lost.length ? `; ${r.lost.length} no longer match` : ""}.`, "match");
-      closeDialog();
-      loadNav();
-      location.hash = `#/p/${r.slug}`;
+      restoreJob = { id: job, state: "running", log: [] };
+      $("rsGo").textContent = "Opening…";
+      $("rsLog").hidden = false;
+      await watchRestore(job, $("rsLog"));
     } catch (e) { if ($("rsLog")) { showJobError($("rsLog"), e.message); $("rsGo").disabled = false; } }
   };
+}
+
+async function watchRestore(id, logEl) {
+  if (restorePolling) return;
+  restorePolling = true;
+  try {
+    for (;;) {
+      const job = await api(`/api/job?id=${id}`);
+      restoreJob = job;
+      logEl = $("rsLog") || logEl;
+      if (logEl && logEl.isConnected) { logEl.hidden = false; logEl.textContent = job.log.join("\n"); logEl.scrollTop = logEl.scrollHeight; }
+      if (job.state !== "running") {
+        if (job.state === "error") { if (logEl && logEl.isConnected) showJobError(logEl, job.error); return; }
+        restoreInput = null;
+        toast(`${plural(job.result.matched || 0, "matched function")} back${job.result.lost && job.result.lost.length ? `; ${job.result.lost.length} no longer match` : ""}.`, "match");
+        closeDialog(); loadNav(); location.hash = `#/p/${job.result.slug}`;
+        return;
+      }
+      await sleep(JOB_POLL_MS);
+    }
+  } catch (e) {
+    if (logEl && logEl.isConnected) showJobError(logEl, e.message);
+  } finally { restorePolling = false; }
 }
 

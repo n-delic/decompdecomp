@@ -21,15 +21,33 @@ def choose(kind: str, title: str) -> str:
 
     if kind not in KINDS:
         raise ValueError("pick a folder or a file")
+    python = sys.executable if window.IS_WINDOWS else window.SYSTEM_PYTHON
     try:
-        res = subprocess.run([window.SYSTEM_PYTHON, "-I", str(Path(__file__)), kind, title[:200]],
-                             capture_output=True, text=True, timeout=PICK_SECONDS)
+        res = subprocess.run([python, "-I", str(Path(__file__)), kind, title[:200]],
+                             capture_output=True, text=True, timeout=PICK_SECONDS,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if window.IS_WINDOWS else 0)
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return res.stdout.strip() if res.returncode == 0 else ""
 
 
 def main(kind: str, title: str) -> None:
+    if sys.platform == "win32":
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            path = (filedialog.askdirectory(title=title) if kind == "folder" else
+                    filedialog.askopenfilename(title=title))
+            if path:
+                print(path)
+        finally:
+            root.destroy()
+        return
+
     import gi
 
     gi.require_version("Gtk", "3.0")

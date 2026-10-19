@@ -544,14 +544,43 @@ def test_decomp_stop_stops_a_running_1_0_2_and_says_so_only_when_it_has(tmp_path
 def test_paths_are_picked_in_the_systems_own_chooser(app, tmp_path, monkeypatch):
     """"Open a saved project" asked for two typed paths: the window shows files' contents to the page, never where
     they are. The system's chooser (picker.py, run like the window by the system's python3) answers with the path."""
-    from decompnet.app import window
+    import subprocess
 
-    fake = tmp_path / "python3"
-    fake.write_text('#!/bin/sh\n[ "$3" = folder ] && echo /home/you/saves/mario || exit 1\n')  # cancels a file
-    fake.chmod(0o755)
-    monkeypatch.setattr(window, "SYSTEM_PYTHON", str(fake))
+    from decompnet.app import picker, window
+
+    monkeypatch.setattr(window, "IS_WINDOWS", False)
+    monkeypatch.setattr(window, "SYSTEM_PYTHON", str(tmp_path / "python3"))
+    monkeypatch.setattr(picker.subprocess, "run", lambda argv, **kwargs:
+                        subprocess.CompletedProcess(argv, 0 if argv[3] == "folder" else 1,
+                                                    stdout="/home/you/saves/mario\n", stderr=""))
     client, _, _ = app
     pick = lambda d: client.post("/api/pick", json=d, headers={"X-Decomp": "1"})  # noqa: E731
     assert pick({"kind": "folder", "title": "The save"}).json() == {"path": "/home/you/saves/mario"}
     assert pick({"kind": "file"}).json() == {"path": ""}
     assert pick({"kind": "/etc/passwd"}).status_code == 400
+
+
+def test_windows_path_picker_uses_the_apps_python(app, monkeypatch):
+    """Windows has no /usr/bin/python3: run the native chooser with the app's own Python."""
+    import subprocess
+    import sys
+
+    from decompnet.app import picker, window
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, stdout="C:\\Users\\you\\save\n", stderr="")
+
+    monkeypatch.setattr(window, "IS_WINDOWS", True)
+    monkeypatch.setattr(picker, "subprocess", type("Subprocess", (), {
+        "run": staticmethod(run), "TimeoutExpired": subprocess.TimeoutExpired,
+        "CREATE_NO_WINDOW": 0x08000000,
+    }))
+    client, _, _ = app
+    response = client.post("/api/pick", json={"kind": "folder"}, headers={"X-Decomp": "1"})
+
+    assert response.json() == {"path": "C:\\Users\\you\\save"}
+    assert calls[0][0][0] == sys.executable
+    assert calls[0][1]["creationflags"] == 0x08000000

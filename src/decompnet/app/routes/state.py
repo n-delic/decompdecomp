@@ -240,4 +240,11 @@ def register(app: App) -> None:
         job = jobs.jobs.get(request.query_params.get("id", ""))
         return JSONResponse(job) if job else fail(ValueError("no such job"), 404)
 
+    @mcp.custom_route("/api/job/cancel", methods=["POST"])
+    async def api_cancel_job(request: Request) -> Response:
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        return JSONResponse({"cancelled": jobs.cancel(str(data.get("id") or ""))})
+
     app.autopilot = autopilot

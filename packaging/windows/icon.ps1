@@ -5,6 +5,8 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $source = Get-Content -LiteralPath (Join-Path $repoRoot 'site/public/favicon.svg') -Raw
+# The Windows icon cannot follow the OS colour scheme; keep the favicon's two letter colours in either theme.
+$source = $source -replace '\.i\{fill:#[0-9a-fA-F]+\}', '.i{fill:#edebe5}'
 if ($Development) { $source = $source -replace '#f6d43a', '#3ac8f6' }
 [xml]$svg = $source
 $bounds = $svg.DocumentElement.GetAttribute('viewBox').Split(' ') | ForEach-Object { [float]::Parse($_, [cultureinfo]::InvariantCulture) }

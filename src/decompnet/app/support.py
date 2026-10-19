@@ -95,17 +95,21 @@ class Jobs:
 
     def __init__(self, log_path: Path | None = None):
         self.jobs: dict[str, dict] = {}
+        self.cancel_events: dict[str, threading.Event] = {}
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
     def start(self, kind: str, fn) -> str:
         jid = uuid.uuid4().hex[:JOB_ID_CHARS]
         job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+        cancel = self.cancel_events[jid] = threading.Event()
         self.jobs[jid] = job
         logger = self.logger
         logger.info("job %s %s started", kind, jid)
 
         def log(line: str) -> None:
+            if cancel.is_set():
+                raise RuntimeError("opening the saved project was cancelled")
             job["log"].append(str(line))
             logger.info("[%s %s] %s", kind, jid[:6], line)
 
@@ -126,6 +130,13 @@ class Jobs:
                     raise
         threading.Thread(target=run, daemon=True, name=f"job-{kind}").start()
         return jid
+
+    def cancel(self, jid: str) -> bool:
+        job = self.jobs.get(jid)
+        if not job or job["state"] != "running":
+            return False
+        self.cancel_events[jid].set()
+        return True
 
 
 class Settings:
