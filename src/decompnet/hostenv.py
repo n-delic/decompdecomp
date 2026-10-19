@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -21,12 +22,14 @@ WSL_GO_BACK = (f"wsl --terminate {WSL_DISTRO}\n"
                f"wsl -d {WSL_DISTRO} -u root --exec sh -c \"echo 'export DECOMP_TRAY=0' >> /etc/profile.d/{WSL_DISTRO}.sh\"")
 
 
-def in_wsl() -> bool:
-    """Running inside Windows' WSL, where this version isn't supported (1.0.4 brings Windows back)."""
+def in_old_windows_install() -> bool:
+    """Running in the WSL distribution 1.0.2's Windows installer made, which 1.0.2 updated into this version and where
+    it doesn't run. Not in a WSL distribution of the user's own, where the Linux install is supported (README)."""
     try:
-        return "microsoft" in KERNEL_RELEASE.read_text(encoding="utf-8").lower()
+        wsl = "microsoft" in KERNEL_RELEASE.read_text(encoding="utf-8").lower()
     except OSError:
         return False
+    return wsl and (os.environ.get("WSL_DISTRO_NAME") == WSL_DISTRO or Path.home() == Path("/home") / WSL_USER)
 
 
 def find_uv() -> str | None:

@@ -246,21 +246,22 @@ a.ghost, a.primary { text-decoration: none; }
   background: var(--bg);
   border-bottom: 1px solid var(--line-soft);
 }
-.ph-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.ph-title { min-width: 0; display: grid; gap: 8px; }
+.ph-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px 16px; }
+/* a narrow window: the buttons go under the title (they squeezed MARIOKART64 down to "M…") */
+.ph-title { min-width: 0; display: grid; gap: 8px; flex: 1 1 320px; }
 .ph-title h1 { font-size: 24px; letter-spacing: -.025em; line-height: 1.15; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ph-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .plat { font: 600 10.5px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--bg); background: var(--ink); padding: 5px 7px; border-radius: var(--r-sm); }
 .chip-s { font: 500 11.5px/1 var(--sans); color: var(--muted); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 4px 7px; white-space: nowrap; }
 .chip-s.mono { font-family: var(--mono); }
 .chip-s.warn { color: var(--work); border-color: color-mix(in srgb, var(--work) 40%, var(--line)); }
-.ph-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.ph-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 0 1 auto; }
 .ghost.together { display: inline-flex; align-items: center; gap: 7px; }
 .ghost.together svg { width: 15px; height: 15px; fill: currentColor; }
 .pill-btn { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: var(--r-sm); background: var(--hl); color: var(--hl-ink); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .pill-btn.room { background: var(--move-bg); color: var(--move); }
 .pill-btn.room.off { background: var(--bg-alt); color: var(--muted); }
-.ph-progress { display: flex; align-items: center; gap: 14px; margin-top: 14px; }
+.ph-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 14px; }
 .ph-progress .meter { flex: 0 1 340px; }
 .ph-pct { font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .ph-pct b { font: 600 15px/1 var(--mono); color: var(--ink); }
@@ -418,7 +419,7 @@ a.ghost, a.primary { text-decoration: none; }
 .stepper button { width: 34px; height: 100%; font-size: 16px; color: var(--muted); }
 .stepper button:hover { color: var(--ink); }
 .stepper output { min-width: 26px; text-align: center; font: 500 14px/1 var(--mono); color: var(--ink); }
-.sessions { display: grid; gap: 10px; padding: 14px; }
+.sessions { display: grid; gap: 10px; padding: 14px; align-content: start; }  /* (a fixed-height panel: one helper's card stretched to fill it) */
 .sessions:empty { display: none; }
 .session { padding: 12px 13px; border-radius: var(--r); border: 1px solid var(--line-soft); background: var(--raise); display: grid; gap: 6px; }
 .session-top { display: flex; align-items: center; gap: 9px; }
@@ -558,6 +559,41 @@ a.ghost, a.primary { text-decoration: none; }
 .note { padding: 10px 12px; font-size: 13.5px; color: var(--ink-2); }
 .note small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .note > .row { margin-top: 10px; }  /* a suggestion's buttons, clear of its text */
+/* agents learn long unbroken lines (paths, symbol lists) that widened the panel past the page */
+/* a guest's project until the host's work is here (project.js: renderRoomCover) */
+.room-cover { margin: 56px auto; max-width: 32em; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.room-cover .meter { width: 100%; max-width: 340px; }
+.project.covered .ptabs, .project.covered .ptab { display: none; }
+/* each computer's colour on its agents' names, in a room (agents.js: computerOf) */
+.tint { background: color-mix(in oklch, var(--pc) 18%, transparent); border-radius: var(--r-sm); padding: 0 5px; }
+/* a feed line or a helper's card in its computer's colour: a tinted row and a coloured edge, the name in the colour */
+.tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--panel)); box-shadow: inset 3px 0 0 var(--pc); }
+.session.tint-row { background: color-mix(in oklch, var(--pc) 10%, var(--raise)); }
+.tint-row .who { color: var(--pc); }
+.tint-row .who.tint { background: none; padding: 0; }
+#roomAgents { display: grid; gap: 8px; }
+#agentStats:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }  /* one panel: the whole width */
+#agentStats:has(> [hidden] + [hidden]) { display: none; }
+.room-job { display: block; margin-top: 2px; }
+/* each suggestion its own card: they ran together as one block */
+#compilerWaiting, #suggestList { display: flex; flex-direction: column; gap: 10px; }
+#compilerWaiting:not(:empty) { margin-bottom: 14px; }
+/* a tab's content stays under the project's sticky header: its panels' scrollbars were drawn over the header */
+.ptab { position: relative; z-index: 0; }
+/* (a column, not a grid: a grid squeezed each note to fit the list's height and cut it mid-sentence) */
+#knowList { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 560px; overflow: auto; }
+#knowList > * { flex: none; }
+/* what agents said (steering.js: saidHead): a status, who and when on a line of their own, then what they said */
+.said-head { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 8px; }
+.said-badge { font: 650 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--hl-ink); background: var(--hl); border-radius: var(--r-sm); padding: 4px 6px; }
+.said-badge.quiet { color: var(--ink-2); background: none; border: 1px solid var(--line); }
+.said-who { font: 500 11.5px/1 var(--mono); color: var(--ink-2); background: var(--bg-alt); border-radius: var(--r-sm); padding: 4px 6px; }
+.said-head time { margin-left: auto; font: 11.5px/1 var(--mono); color: var(--muted); }
+.said-text { color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; }
+.said-text code { font: 12px var(--mono); background: var(--bg-alt); padding: 1px 5px; border-radius: var(--r-sm); }
+.said-check { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.said-check.ok { color: var(--match); }
+#knowList .note { overflow-wrap: anywhere; }
 .note-box { display: grid; gap: 8px; }
 .note-box textarea { width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 9px 11px; font: 13px/1.5 var(--sans); color: var(--ink); resize: vertical; }
 .pin.on { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
@@ -624,6 +660,10 @@ a.ghost, a.primary { text-decoration: none; }
    clicks go through the space between them */
 .toasts { position: fixed; right: 18px; top: 64px; z-index: 60; display: grid; gap: 8px; justify-items: end; pointer-events: none; }
 .toasts > * { pointer-events: auto; }
+/* the Start agents popover opens where notifications pop up: they covered its first choices */
+body:has(#launchPop:not([hidden])) .toasts { top: auto; bottom: 18px; }
+/* a side panel (a function, Decompile together...) fills the right: notifications pop up on the left, over the shade */
+body:has(.drawer:not([hidden])) .toasts { right: auto; left: 18px; justify-items: start; }
 .toast {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--r); background: var(--color-surface-overlay); color: var(--ink);
   border: var(--border-width-hairline) solid var(--faint); font-size: 13.5px; box-shadow: var(--shadow-overlay); animation: toast .3s cubic-bezier(.2, .9, .3, 1.2); max-width: 440px;
@@ -650,8 +690,6 @@ a.ghost, a.primary { text-decoration: none; }
   .mbar { display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 12px; border-bottom: 1px solid var(--line-soft); position: sticky; top: 0; z-index: 20; background: var(--bg); }
   .view { padding: 18px 16px 56px; }
   .phead { top: 54px; margin: 0 -16px; padding: 14px 16px 0; }
-  .ph-row { flex-direction: column; }
-  .ph-actions { flex-wrap: wrap; }
   .ph-title h1 { font-size: 21px; white-space: normal; }
   .hero { grid-template-columns: 1fr; gap: 24px; padding-top: 6px; }
   .code-cols { grid-template-columns: 1fr; }
@@ -888,6 +926,14 @@ button.fn { font: inherit; color: inherit; padding: 0; text-align: left; }
 
 /* Settings → Compiler: the answer first, the parts, what waits; the rest one click in */
 .answer { font-size: 17px; line-height: 1.45; color: var(--ink-2); }
+/* a path and its "Choose…" button (home.js: data-pick) */
+.pick-row { display: flex; gap: 8px; align-items: center; }
+.pick-row input { flex: 1; min-width: 0; }
+/* a small window: compiler flags wrap, in the answer and on the suggestions' buttons ("Use IDO 5.3 -O2 -mips2 -G 0
+   -non_shared ..."), instead of widening the Settings tab's compiler panel past its column */
+#compilerPanel { min-width: 0; overflow-wrap: anywhere; }
+#compilerPanel .primary, #compilerPanel .ghost { white-space: normal; height: auto; min-height: 30px; padding-block: 6px; max-width: 100%; text-align: left; }
+#compilerPanel .parts code { white-space: normal; }
 .answer b { color: var(--ink); font-weight: 700; }
 .answer .muted { font-size: 14px; }
 .parts { display: grid; }

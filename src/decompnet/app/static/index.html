@@ -195,6 +195,12 @@
 
   <div class="notice" id="compilerNotice" hidden></div>
   <section class="fork-setup" id="forkSetup" hidden></section>
+  <section class="room-cover" id="roomCover" aria-live="polite" hidden>
+    <div class="spinner" id="roomCoverSpin"></div>
+    <h2 id="roomCoverTitle"></h2>
+    <p class="muted" id="roomCoverText"></p>
+    <div class="meter"><i id="roomCoverBar"></i></div>
+  </section>
 
   <!-- overview: the map first, then the numbers, then what to do next -->
   <section class="ptab" data-pane="overview">
@@ -289,13 +295,23 @@
       <section class="panel">
         <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
         <div id="sessions" class="sessions"></div>
-        <div class="pad" id="modelCosts" hidden></div>
         <div class="empty" id="noSessions"><p class="muted small">No agent works on this game yet. Press <b>Start agents</b> at the top: each agent picks functions by itself, and starts again by itself if it stops.</p></div>
       </section>
       <section class="panel feed-panel">
         <header class="panel-head"><h2 id="feedTitle" tabindex="-1">What's happening</h2><span class="muted small" id="feedHint">every agent's work on this game, newest first</span><button class="ghost small-btn" id="helperLogClose" type="button" hidden>Back to everything</button></header>
         <ol class="feed" id="activity" aria-live="off"></ol>
         <ol class="feed thoughts" id="thoughts" hidden></ol>
+      </section>
+    </div>
+    <!-- below the helpers, so their cards keep the room they need: the room's other computers, each model's cost -->
+    <div class="cols" id="agentStats">
+      <section class="panel" id="roomPanel" hidden>
+        <header class="panel-head"><h2>On the room's other computers</h2><span class="muted small">their agents, in each computer's colour</span></header>
+        <div class="pad" id="roomAgents"></div>
+      </section>
+      <section class="panel" id="costPanel" hidden>
+        <header class="panel-head"><h2>What each model cost here</h2><span class="muted small">cheapest per match first: run more of the models at the top</span></header>
+        <div class="pad" id="modelCosts"></div>
       </section>
     </div>
     <div class="cols">
@@ -360,7 +376,7 @@
           <header class="panel-head"><h2>Save your progress</h2><span class="muted small" id="saveState"></span></header>
           <div class="pad">
             <p class="muted small">decompdecomp saves your work on this game by itself every few minutes, as plain files in the project's <code>progress</code> folder: matched C, notes, names, compiler ranges and settings, never the game itself. Copy that folder (or push it to git) and open it on another computer with <b>New project → Open a saved project</b>.</p>
-            <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"></label>
+            <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><span class="pick-row"><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"><button class="ghost small-btn" type="button" data-pick="folder" data-for="saveFolder" data-title="Where to save this project">Choose…</button></span></label>
             <div class="row"><button class="ghost small-btn" id="saveGo" type="button">Save now</button></div>
             <pre class="joblog" id="saveLog" hidden></pre>
           </div>

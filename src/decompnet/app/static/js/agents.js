@@ -27,7 +27,7 @@ function renderNow(claims) {
     const sc = S.scores.get(c.name) || [];
     const p = pctOf(c.best_score, c.n_insns);
     const [sym, unit] = c.name.split(/@(.*)/s);  // a fork's symbol@file: the symbol first, the file after it
-    return `<div class="job" data-fn="${esc(c.name)}" role="button" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.agent)} works on it"><div class="job-top"><span class="job-name" title="${esc(c.name)}">${esc(sym)}${unit ? `<small>@${esc(unit)}</small>` : ""}</span><span class="job-who" title="${esc(c.agent)}">${esc(c.agent)}</span></div>
+    return `<div class="job" data-fn="${esc(c.name)}" role="button" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.agent)} works on it"><div class="job-top"><span class="job-name" title="${esc(c.name)}">${esc(sym)}${unit ? `<small>@${esc(unit)}</small>` : ""}</span>${whoHtml(c.agent, "job-who")}</div>
       ${spark(sc)}<div class="job-foot"><span>${c.n_insns} insns · ${c.attempts} tries</span><b>${p == null ? reading(c) : pctText(p)}</b></div></div>`;
   }).join("");
   box.querySelectorAll(".job").forEach((j) => { j.onclick = () => openFn(j.dataset.fn); });
@@ -62,11 +62,9 @@ async function renderCosts(force = false) {
   let rows;
   try { rows = await api(`/api/modelcosts?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
   const box = $("modelCosts");
-  box.hidden = !rows.length;
+  $("costPanel").hidden = !rows.length;
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
-  setHtml(box, `<p class="col-title">What each model cost here</p>
-    <p class="muted small">Cheapest per match first: run more of the models at the top.</p>
-    <ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
+  setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
 }
 
@@ -85,7 +83,7 @@ function renderSessions(sessions) {
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
-    return `<div class="session" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
+    return `<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
           : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
       <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>
@@ -97,6 +95,7 @@ function renderSessions(sessions) {
   setHtml(box, html);
   box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
   $("noSessions").hidden = sessions.length > 0;
+  renderRoomAgents();
   const act = (sel, path, body) => box.querySelectorAll(sel).forEach((b) => {
     b.onclick = async () => {
       b.disabled = true;
@@ -332,11 +331,70 @@ document.addEventListener("click", (e) => {
   if (!$("launchPop").hidden && !e.composedPath().some((el) => el.classList && el.classList.contains("pop-wrap"))) hideLaunch();
 });
 
+/* ------------------------------------------------------------------ which computer */
+/* Decompiling together: each computer has a colour, on its agents' names everywhere, so in a busy room you see who
+   does what. A name says whose agent it is: the host's are plain on the host (claude-1) and "@claude-1" on a guest;
+   a member's are "alex.claude-1" on the host and "@alex.claude-1" on another guest; your own are always plain. The
+   host first, then the members in the order they joined: the same colours on every computer. */
+const HOST_COMPUTER = "\u0000host";
+function computerOf(agent) {
+  const room = S.ov && S.ov.room;
+  if (!room || !agent || agent === AUTO) return null;
+  const remote = agent.startsWith("@"), name = remote ? agent.slice(1) : agent;
+  // (a member's name has no dot, a model's may: opencode-deepseek-v4.1-flash-1 is the host's own)
+  const member = name.slice(0, Math.max(0, name.indexOf(".")));
+  if (member && (room.members || []).some((m) => m.name === member)) return member;
+  return remote || room.role === "host" ? HOST_COMPUTER : room.member;
+}
+function computerColour(c) {
+  if (c == null) return null;
+  if (c === HOST_COMPUTER) return 0;
+  const i = (S.ov.room.members || []).findIndex((m) => m.name === c);
+  return i < 0 ? null : (i + 1) % PROJECT_COLOURS;
+}
+// a whole row in its computer's colour (a feed line, a helper's card): the name alone was lost in a busy feed
+function rowTint(agent) {
+  const c = computerColour(computerOf(agent));
+  return c == null ? "" : ` tint-row pc-${c}`;
+}
+/* The room reopens a few seconds after the app starts, and members join: lines drawn before had no colour, or an
+   old one. Each line keeps its agent, and takes its colour again when the room changes (renderHeader). */
+function retintFeed() {
+  $("activity").querySelectorAll("li").forEach((li) => {
+    li.className = li.className.replace(/ ?tint-row pc-\d/g, "") + rowTint(li.dataset.agent);
+  });
+}
+function whoHtml(agent, cls = "who") {
+  const c = computerColour(computerOf(agent));
+  return `<span class="${cls}${c == null ? "" : ` tint pc-${c}`}" title="${esc(agent || "")}">${esc(agent || "")}</span>`;
+}
+
+/* The room's other computers and what their agents are on (each computer's own helpers are on its own screen): the
+   host sees its guests', a guest sees the host's and the other guests'. */
+function renderRoomAgents() {
+  const box = $("roomAgents"), room = S.ov && S.ov.room;
+  const mine = room && (room.role === "host" ? HOST_COMPUTER : room.member);
+  const computers = !room ? [] : [
+    ...(room.role === "guest" ? [{ key: HOST_COMPUTER, name: "Host", online: room.connected }] : []),
+    ...(room.members || []).map((m) => ({ key: m.name, name: m.name, online: m.online, matched: m.matched })),
+  ].filter((c) => c.key !== mine);
+  $("roomPanel").hidden = !computers.length;
+  if (!computers.length) return;
+  setHtml(box, computers.map((c) => {
+    const jobs = S.claims.filter((j) => computerOf(j.agent) === c.key), col = computerColour(c.key);
+    return `<div class="line-item"><span class="swatch${col == null ? "" : ` pc-${col}`}" aria-hidden="true"></span><div class="txt"><b>${esc(c.name)}</b>
+      <span>${c.online ? "online" : "away"}${c.matched ? ` · ${c.matched} matched` : ""}</span>
+      ${jobs.length ? jobs.map((j) => `<span class="room-job">${whoHtml(j.agent)} on ${fnLink(j.name)}${j.attempts ? ` · ${plural(j.attempts, "compile")}` : ""}</span>`).join("")
+        : `<span class="room-job">no agent working right now</span>`}</div></div>`;
+  }).join(""));
+  box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
+}
+
 /* ------------------------------------------------------------------ feeds */
 // a button, so the keyboard reaches every function named on the page
 function fnLink(name) { return `<button type="button" class="fn" data-fn="${esc(name)}">${esc(name)}</button>`; }
 function eventHtml(ev) {
-  const who = `<span class="who">${esc(ev.agent || "")}</span>`;
+  const who = whoHtml(ev.agent);
   const d = ev.detail || "";
   switch (ev.kind) {
     case "claim": return `${who} started ${fnLink(d)}`;
@@ -362,7 +420,7 @@ function eventHtml(ev) {
 /* One line per agent and function, updated in place: "claude-1 · lerp · 4 compiles · best 87%" until it's matched. */
 const groups = new Map();
 function groupHtml(g) {
-  const who = `<span class="who">${esc(g.agent || "")}</span>`;
+  const who = whoHtml(g.agent);
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
   if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;
@@ -371,10 +429,11 @@ function groupHtml(g) {
   const last = g.lastScore === undefined ? "" : g.lastScore === null ? ` · <span class="bad">last one didn't compile</span>` : "";
   return `${who} working on ${fnLink(g.fn)} <span class="score">${plural(g.tries, "compile")}${p != null ? ` · best ${pctText(p)}` : ""}</span>${last}`;
 }
-function addLine(t, html, first) {
+function addLine(t, html, first, agent) {
   const list = $("activity");
   const li = document.createElement("li");
-  if (!first) li.className = "fresh";
+  li.className = (first ? "" : "fresh") + rowTint(agent);
+  li.dataset.agent = agent || "";
   li.innerHTML = `<time>${clock(t)}</time><span>${html}</span>`;
   list.querySelector(".placeholder")?.remove();
   list.prepend(li);
@@ -390,7 +449,7 @@ function touchGroup(agent, fn, t, change, first) {
     g.li.querySelector("span").innerHTML = groupHtml(g);
     if (g.li !== $("activity").firstElementChild) $("activity").prepend(g.li);
     if (!first) { g.li.classList.remove("fresh"); void g.li.offsetWidth; g.li.classList.add("fresh"); }
-  } else g.li = addLine(t, groupHtml(g), first);
+  } else g.li = addLine(t, groupHtml(g), first, agent);
   if (g.matched || g.released) groups.delete(key);
 }
 /* A match ends every other agent's line about that function too: they stopped "working on" it. */
@@ -435,7 +494,7 @@ function addActivity(events, attempts, first) {
     } else if (it.ev.kind === "claim") touchGroup(it.ev.agent, it.ev.detail, it.t, () => {}, first);
     else if (it.ev.kind === "match") { matchedBy(it.ev.agent, it.ev.detail); touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first); }
     else if (it.ev.kind === "release") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.released = true; }, first);
-    else addLine(it.t, eventHtml(it.ev), first);
+    else addLine(it.t, eventHtml(it.ev), first, it.ev.agent);
   }
   const list = $("activity");
   while (list.children.length > ACTIVITY_ROWS) list.lastChild.remove();

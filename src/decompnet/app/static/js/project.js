@@ -6,7 +6,7 @@ const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it c
 async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
-  S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = [];
+  S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
@@ -222,12 +222,45 @@ function renderHeader(ov) {
   if (room) {
     const members = room.members || [];
     const online = members.filter((m) => m.online).length;
-    pill.classList.toggle("off", room.role === "guest" && !room.connected);
-    pill.innerHTML = room.role === "host" ? `<span class="dot ${online ? "on" : ""}"></span>Sharing · ${online} online`
-      : /waiting for the host/i.test(room.error || "") ? `<span class="dot work"></span>Waiting to be let in`
-      : `<span class="dot ${room.connected ? "on" : "err"}"></span>${room.connected ? `In a room as ${esc(room.member)}` : "Room offline"}`;
+    const [dot, text] = room.role === "host" ? [online ? "on" : "", `Sharing · ${online} online`] : ROOM_PILL[room.state](room);
+    pill.classList.toggle("off", dot === "err");
+    pill.innerHTML = `<span class="dot ${dot}"></span>${esc(text)}`;
   }
+  renderRoomCover(room);
+  const roomSig = room ? `${room.role}:${(room.members || []).map((m) => m.name).join(",")}` : "";
+  if (roomSig !== S.roomSig) { S.roomSig = roomSig; retintFeed(); }
   $("agTabCount").textContent = w.n || "";
+}
+// a guest's pill, by the room's state (collab.Link.status): [its dot, its words]
+const ROOM_PILL = {
+  waiting: () => ["work", "Waiting to be let in"],
+  out: () => ["err", "Not in the room"],
+  syncing: () => ["work", "Getting the host's work"],
+  connected: (r) => ["on", `In a room as ${r.member}`],
+  offline: () => ["err", "Room offline"],
+};
+
+/* A guest's project is covered until the host's work is here: while it waits to be let in, then while it gets what
+   the room has done. It showed an empty project and a red "offline" instead, then everything at once. */
+function renderRoomCover(room) {
+  const st = room && room.role === "guest" ? room.state : null;
+  const on = st === "waiting" || st === "out" || st === "syncing";
+  $("project").classList.toggle("covered", on);
+  $("roomCover").hidden = !on;
+  if (S.covered && !on) refreshMap();  // the room's matches came in under the cover
+  S.covered = on;
+  if (!on) return;
+  const total = room.received + room.behind;
+  $("roomCoverTitle").textContent = { waiting: "Waiting for the host to let you in", out: "You're not in this room",
+    syncing: "Getting the host's work" }[st];
+  $("roomCoverText").textContent = st === "waiting"
+    ? `You asked to join as ${room.member}. This opens by itself once the host lets you in, and your agents start working with the room then.`
+    : st === "out" ? `The host says: ${room.error}. Ask them for a new invite, or leave the room from its button above.`
+    : room.error ? `Something went wrong with what the host sent: ${room.error}. Trying again…`
+    : total ? `${room.received.toLocaleString()} of ${total.toLocaleString()} updates` : "What the room has done so far: matches, names and notes.";
+  $("roomCoverSpin").hidden = st === "out";
+  $("roomCoverBar").parentElement.hidden = !(st === "syncing" && total);
+  $("roomCoverBar").style.width = total ? `${(100 * room.received) / total}%` : "0";
 }
 $("phWorking").onclick = () => { location.hash = `#/p/${S.slug}/agents`; };
 $("phRoom").onclick = $("phTogether").onclick = () => openTeam();
@@ -434,10 +467,11 @@ async function renderTeam(box) {
 
 function renderGuest(box, room) {
   const members = room.members || [];
-  const waiting = /waiting for the host/i.test(room.error || "");
+  const waiting = room.state === "waiting";
   const people = members.map((m) => `<div class="line-item"><span class="dot ${m.online ? "on" : ""}"></span><div class="txt"><b>${esc(m.name)}${m.name === room.member ? " (you)" : ""}</b>
       <span>${m.agents && m.agents.length ? esc(m.agents.join(", ")) : "no agents yet"} · ${m.matched || 0} matched${m.working && m.working.length ? ` · on ${esc(m.working.slice(0, 3).join(", "))}` : ""}</span></div></div>`).join("");
-  $("dialogTitle").textContent = waiting ? "Waiting for the host to let you in" : room.connected ? "In a team room" : "The room is offline";
+  $("dialogTitle").textContent = waiting ? "Waiting for the host to let you in" : room.state === "out" ? "Not in the room"
+    : room.connected ? "In a team room" : "The room is offline";
   setHtml(box, `<p class="muted">${waiting ? `You asked to join as <b>${esc(room.member)}</b>. Your agents start working with the room as soon as the host lets you in.`
       : room.connected ? `You're <b>${esc(room.member)}</b>. Your agents claim functions through the room, so nobody does the same one twice; matches are checked and shared by the host.`
       : `${esc(room.error || "Waiting for the host…")} Your agents wait and carry on when it's back.`}</p>

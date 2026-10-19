@@ -328,12 +328,24 @@ $("pathPick").onclick = (e) => {
 };
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");
 
+/* A "Choose…" button beside a path: the system's own chooser (app/picker.py) fills it in. Typing still works. */
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-pick]");
+  if (!b) return;
+  e.preventDefault();  // (inside a label: not a click on its input)
+  b.disabled = true;
+  try {
+    const { path } = await api("/api/pick", { method: "POST", body: { kind: b.dataset.pick, title: b.dataset.title || "" } });
+    if (path) { $(b.dataset.for).value = path; $(b.dataset.for).dispatchEvent(new Event("input")); }
+  } catch (err) { toast(esc(err.message), "err"); } finally { b.disabled = false; }
+});
+
 /* Open a saved project (app/saves.py): a save folder, or the git repository it was pushed to, and the user's own copy
    of the game (never in the save). Like an import, it runs in the background and opens the project when it's done. */
 function openRestore() {
   const body = dialog("Open a saved project", `<p class="muted">Your progress on a game, saved by decompdecomp (on this computer or another one): the matched C, notes, names and settings. The game itself is never in a save: you add your own copy, and decompdecomp checks it's the same game.</p>
-    <label class="field"><span>The save: its folder, or the git address you pushed it to</span><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"></label>
-    <label class="field"><span>Your copy of the game: its path on this computer</span><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"></label>
+    <label class="field"><span>The save: its folder, or the git address you pushed it to</span><span class="pick-row"><input id="rsSource" class="mono" placeholder="/home/you/saves/my-game, or a git address"><button class="ghost small-btn" type="button" data-pick="folder" data-for="rsSource" data-title="The saved project's folder">Choose…</button></span></label>
+    <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
     <div class="row"><button class="primary" id="rsGo" type="button" disabled>Open it</button><button class="ghost" data-close type="button">Cancel</button></div>
     <pre class="joblog tall" id="rsLog" hidden></pre>`, "restore");

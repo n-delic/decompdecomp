@@ -146,10 +146,16 @@ class Window:
             icon.write_text(edition.icon_svg(), encoding="utf-8")
             win_icon = Path(__file__).with_name("static") / ("favicon-dev.ico" if edition.DEV else "favicon.ico")
             if IS_WINDOWS:
-                argv = [sys.executable, "-I", str(WIN_WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
+                url = self.url
+                if os.environ.get("DECOMP_THEME") in ("light", "dark"):
+                    url += ("&" if "?" in url else "?") + "system-theme=" + os.environ["DECOMP_THEME"]
+                argv = [sys.executable, "-I", str(WIN_WINDOW_PROGRAM), "--url", url, "--title", edition.NAME,
                         "--window-class", edition.WINDOW_CLASS, "--icon", str(win_icon)] + (["--dev"] if edition.DEV else [])
             else:
-                argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", self.url, "--title", edition.NAME,
+                url = self.url
+                if os.environ.get("DECOMP_THEME") in ("light", "dark"):
+                    url += ("&" if "?" in url else "?") + "system-theme=" + os.environ["DECOMP_THEME"]
+                argv = [SYSTEM_PYTHON, "-I", str(WINDOW_PROGRAM), "--url", url, "--title", edition.NAME,
                         "--window-class", edition.WINDOW_CLASS, "--icon", str(icon)] + (["--dev"] if edition.DEV else [])
             try:
                 self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,

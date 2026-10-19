@@ -55,7 +55,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         os._exit(0)
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
-    if hostenv.in_wsl() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
+    if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
         # updated here from 1.0.2 on Windows: the way back is 1.0.2, which shares these settings and mustn't update
         # itself into this version again (README: Coming from an older version)
         settings.data.update(auto_update=False, check_updates=False)

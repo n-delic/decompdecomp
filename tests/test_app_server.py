@@ -46,6 +46,7 @@ def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, 
     kernel = tmp_path / "osrelease"
     kernel.write_text("6.6.87.2-microsoft-standard-WSL2\n")
     monkeypatch.setattr(hostenv, "KERNEL_RELEASE", kernel)
+    monkeypatch.setenv("WSL_DISTRO_NAME", hostenv.WSL_DISTRO)  # the distribution 1.0.2's installer made
     home = tmp_path / "home"
     (home / ".decomp").mkdir(parents=True)
     (home / ".decomp" / "settings.json").write_text(json.dumps({"auto_update": True}))
@@ -59,6 +60,22 @@ def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, 
     assert "doesn't run on Windows" in page and "v1.0.2-alpha.tar.gz" in page and "DECOMP_TRAY=0" in page
     kernel.write_text("6.12.0-generic\n")
     assert "doesn't run on Windows" not in anon.get("/").text
+
+
+def test_in_a_wsl_distribution_of_your_own_it_keeps_updating(tmp_path, monkeypatch):
+    """1.0.4 supports WSL 2 (the Linux install, in a distribution of the user's own), and every start there switched
+    update checks off and its old tab said Windows wasn't supported: that's for 1.0.2's own distribution only."""
+    from decompnet import hostenv
+
+    kernel = tmp_path / "osrelease"
+    kernel.write_text("6.6.87.2-microsoft-standard-WSL2\n")
+    monkeypatch.setattr(hostenv, "KERNEL_RELEASE", kernel)
+    monkeypatch.setenv("WSL_DISTRO_NAME", "Ubuntu")
+    home = tmp_path / "home"
+    (home / ".decomp").mkdir(parents=True)
+    (home / ".decomp" / "settings.json").write_text(json.dumps({"auto_update": True}))
+    build(RomNetwork(home / ".decomp" / "decomp.db", home), home / ".decomp", PORT, SECRET)
+    assert json.loads((home / ".decomp" / "settings.json").read_text()) == {"auto_update": True}
 
 def test_only_the_apps_own_window_gets_the_gui(app):
     """The page and its API answer only the app's window, whose user agent carries the per-launch secret: the
@@ -522,3 +539,19 @@ def test_decomp_stop_stops_a_running_1_0_2_and_says_so_only_when_it_has(tmp_path
     server_alive = cli.stop(None)
     server.server_close()
     assert server_alive == 0
+
+
+def test_paths_are_picked_in_the_systems_own_chooser(app, tmp_path, monkeypatch):
+    """"Open a saved project" asked for two typed paths: the window shows files' contents to the page, never where
+    they are. The system's chooser (picker.py, run like the window by the system's python3) answers with the path."""
+    from decompnet.app import window
+
+    fake = tmp_path / "python3"
+    fake.write_text('#!/bin/sh\n[ "$3" = folder ] && echo /home/you/saves/mario || exit 1\n')  # cancels a file
+    fake.chmod(0o755)
+    monkeypatch.setattr(window, "SYSTEM_PYTHON", str(fake))
+    client, _, _ = app
+    pick = lambda d: client.post("/api/pick", json=d, headers={"X-Decomp": "1"})  # noqa: E731
+    assert pick({"kind": "folder", "title": "The save"}).json() == {"path": "/home/you/saves/mario"}
+    assert pick({"kind": "file"}).json() == {"path": ""}
+    assert pick({"kind": "/etc/passwd"}).status_code == 400

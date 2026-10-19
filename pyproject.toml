@@ -1,6 +1,6 @@
 [project]
 name = "decompnet"
-version = "1.0.3-alpha.1"
+version = "1.0.4-alpha"
 description = "A desktop app where AI agents decompile the games you own into C that rebuilds them byte for byte. Runs locally."
 readme = "README.md"
 license = "AGPL-3.0-only"

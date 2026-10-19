@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from ... import __version__, consoles, hostenv, toolchains
 from ...agents.api import API_PRESETS
 from ...network import NetworkError
-from .. import cleanup, edition, saves, updates
+from .. import cleanup, edition, picker, saves, updates
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
@@ -98,6 +98,17 @@ def register(app: App) -> None:
         if not source or not game.is_file():
             return fail(ValueError("pick the saved project (a folder or a git address) and your copy of the game"))
         return JSONResponse({"job": jobs.start("restore", lambda log: saves.restore(net, source, game, log=log))})
+
+    @mcp.custom_route("/api/pick", methods=["POST"])
+    async def api_pick(request: Request) -> Response:
+        """A folder or file the user picks in the system's own chooser (picker.py): "" if they cancelled."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        try:
+            return JSONResponse({"path": await call(picker.choose, str(data.get("kind") or ""), str(data.get("title") or ""))})
+        except ValueError as e:
+            return fail(e)
 
     @mcp.custom_route("/api/events", methods=["GET"])
     async def api_events(request: Request) -> Response:

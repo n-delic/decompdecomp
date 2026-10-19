@@ -1,7 +1,0 @@
-#! design/contrast-pairs.txt — pairs contrast.py --tokens cannot derive. Run: python3 scripts/contrast.py --pairs design/contrast-pairs.txt
-#! light
-#18160f #ffdc2f mark.text on mark.fill — highlighted bytes, the "Yours" field, the logo (light)
-#2e2600 #ffdc2f button.primary.bg as text-on-field check: olive ink on highlighter (light)
-#88867e #fbfaf6 faded second byte row, aria-hidden poster type at 136px+ (large text, 3:1) (light)
-#! dark
-#100f0c #f2cf24 mark.text on mark.fill — highlighted bytes, the "Yours" field, the logo (dark)

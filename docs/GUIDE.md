@@ -258,6 +258,10 @@ Helper agents continue their work. To change this behavior, go to Settings.
 **Saving.** decompdecomp saves the work on each N64 and PlayStation 2 project by itself, every few minutes, as plain
 files in the project's `progress/` folder: matched C, best attempts, headers, names, notes, compiler ranges and
 settings. It never saves the game. **Save now**, in the project's Settings, saves at once, also to another folder.
+`progress/` is the only part of a project to share or keep in git: matched C in `src/`, best attempts in `best/`, the
+shared headers in `include/`, and `decompdecomp.json` (the game's fingerprint, compiler, layout, names, notes and
+settings). The rest of the project's folder (the ROM, `asm/`, `assets/`, the build files) is made from your copy of
+the game: keep it to yourself.
 To continue on another computer, copy the folder (or push it to git) and click **New project → Open a saved
 project**. decompdecomp checks that your copy is the same game, and judges every saved function again. GameCube, Wii
 and PC projects and public decomps keep their work in their own git repository.
