@@ -41,6 +41,12 @@ def test_a_saved_project_comes_back_on_another_computer(worked, tmp_path):
     manifest = json.loads((tmp_path / "save" / saves.MANIFEST).read_text())
     assert (tmp_path / "save" / "src" / "clamp_s32.c").exists() and manifest["game"]["sha1"]
     assert not any(p.suffix in (".z64", ".bin", ".iso") for p in (tmp_path / "save").rglob("*"))  # no game data
+    readme = (tmp_path / "save" / "README.md").read_text()
+    assert "https://github.com/n-delic/decompdecomp" in readme
+    assert "AI agents were used during the decompilation" in readme
+    assert f"**Platform:** {manifest['platform']}" in readme
+    assert f"**Compiler:** {manifest['compiler']['toolchain']}" in readme
+    assert "**Progress:** 1 matching function(s), 1 best attempt(s)" in readme
 
     (tmp_path / "two").mkdir()
     fresh = RomNetwork(tmp_path / "two" / "decomp.db", tmp_path / "two")

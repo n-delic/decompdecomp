@@ -85,12 +85,28 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
         "notes": notes,
     }
     (folder / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
-    (folder / "README.md").write_text(
-        f"# {proj['name']}: decompdecomp progress\n\nThe work on this game, saved by decompdecomp: matched C in "
-        "`src/`, best attempts in `best/`, the shared headers in `include/`, and everything else in "
-        f"`{MANIFEST}`. No game data. To continue on another computer: decompdecomp → Open a saved project, then "
-        "pick this folder (or its git repository) and your own copy of the game.\n", encoding="utf-8")
     matched = sum(1 for f in functions.values() if "matched_by" in f)
+    compiler = cfg.get("compiler") or {}
+    compiler_name = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
+    compiler_name = compiler_name or "not recorded"
+    (folder / "README.md").write_text(f"""# {proj['name']}: decompdecomp progress
+
+This is a saved decompilation project created with [decompdecomp](https://github.com/n-delic/decompdecomp).
+AI agents were used during the decompilation; their C attempts were kept only when decompdecomp's byte-for-byte
+judge accepted them as matches.
+
+## Project details
+
+- **Game:** {proj['name']}
+- **Platform:** {cfg.get('platform') or 'not recorded'}
+- **Compiler:** {compiler_name}
+- **Progress:** {matched} matching function(s), {len(functions) - matched} best attempt(s)
+
+The work is saved here as matched C in `src/`, best attempts in `best/`, shared headers in `include/`, and project
+metadata, notes, names and settings in `{MANIFEST}`. No game data is included. To continue on another computer:
+open decompdecomp, choose **Open a saved project**, then pick this folder (or its git repository) and your own copy
+of the game.
+""", encoding="utf-8")
     return {"folder": str(folder), "matched": matched, "best": len(functions) - matched}
 
 
