@@ -79,6 +79,7 @@ def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
     """In a room, every agent's name had the same look whoever ran it. Each computer has a colour now, the same on
     the host's screen and every guest's: the host's first, then the members in the order they joined."""
     c = gui["checks"]["computers"]
-    assert c["guest"] == [0, 1, 2, None]  # the host's, alex's, kim's own (kim's screen), the autopilot: none
-    assert c["host"] == [0, 1, 2]  # the same colours on the host's screen
+    # the host's, alex's, kim's own (kim's screen), the autopilot (none), the host's with a dot in its model's name
+    assert c["guest"] == [0, 1, 2, None, 0]
+    assert c["host"] == [0, 1, 2, 0]  # the same colours on the host's screen
     assert c["alone"] is None  # no room, no colours

@@ -126,9 +126,9 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     computers: (() => {
       const before = S.ov, members = [{ name: "alex" }, { name: "kim" }];
       S.ov = { room: { role: "guest", member: "kim", members } };
-      const guest = ["@claude-1", "@alex.claude-2", "claude-3", "autopilot"].map((a) => computerColour(computerOf(a)));
+      const guest = ["@claude-1", "@alex.claude-2", "claude-3", "autopilot", "@deepseek-v4.1-2"].map((a) => computerColour(computerOf(a)));
       S.ov = { room: { role: "host", members } };
-      const host = ["claude-1", "alex.claude-2", "kim.claude-3"].map((a) => computerColour(computerOf(a)));
+      const host = ["claude-1", "alex.claude-2", "kim.claude-3", "opencode-deepseek-v4.1-flash-1"].map((a) => computerColour(computerOf(a)));
       S.ov = { room: null };
       const alone = computerColour(computerOf("claude-1"));
       S.ov = before;

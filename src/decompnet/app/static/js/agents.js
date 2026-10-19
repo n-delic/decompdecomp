@@ -344,8 +344,9 @@ function computerOf(agent) {
   const room = S.ov && S.ov.room;
   if (!room || !agent || agent === AUTO) return null;
   const remote = agent.startsWith("@"), name = remote ? agent.slice(1) : agent;
-  const dot = name.indexOf(".");
-  if (dot > 0) return name.slice(0, dot);
+  // (a member's name has no dot, a model's may: opencode-deepseek-v4.1-flash-1 is the host's own)
+  const member = name.slice(0, Math.max(0, name.indexOf(".")));
+  if (member && (room.members || []).some((m) => m.name === member)) return member;
   return remote || room.role === "host" ? HOST_COMPUTER : room.member;
 }
 function computerColour(c) {
