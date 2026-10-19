@@ -562,7 +562,19 @@ a.ghost, a.primary { text-decoration: none; }
 #agentStats:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }  /* one panel: the whole width */
 #agentStats:has(> [hidden] + [hidden]) { display: none; }
 .room-job { display: block; margin-top: 2px; }
-#knowList { display: grid; gap: 8px; min-width: 0; max-height: 420px; overflow: auto; }
+/* (a column, not a grid: a grid squeezed each note to fit the list's height and cut it mid-sentence) */
+#knowList { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 560px; overflow: auto; }
+#knowList > * { flex: none; }
+/* what agents said (steering.js: saidHead): a status, who and when on a line of their own, then what they said */
+.said-head { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-bottom: 8px; }
+.said-badge { font: 650 10.5px/1 var(--sans); text-transform: uppercase; letter-spacing: .05em; color: var(--hl-ink); background: var(--hl); border-radius: var(--r-sm); padding: 4px 6px; }
+.said-badge.quiet { color: var(--ink-2); background: none; border: 1px solid var(--line); }
+.said-who { font: 500 11.5px/1 var(--mono); color: var(--ink-2); background: var(--bg-alt); border-radius: var(--r-sm); padding: 4px 6px; }
+.said-head time { margin-left: auto; font: 11.5px/1 var(--mono); color: var(--muted); }
+.said-text { color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; }
+.said-text code { font: 12px var(--mono); background: var(--bg-alt); padding: 1px 5px; border-radius: var(--r-sm); }
+.said-check { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+.said-check.ok { color: var(--match); }
 #knowList .note { overflow-wrap: anywhere; }
 .note-box { display: grid; gap: 8px; }
 .note-box textarea { width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 9px 11px; font: 13px/1.5 var(--sans); color: var(--ink); resize: vertical; }

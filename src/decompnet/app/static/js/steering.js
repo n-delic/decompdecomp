@@ -103,17 +103,24 @@ function renderSteering(ov) {
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
   $("suggestPanel").hidden = !sg.length && !bd.length;
-  setHtml($("suggestList"), bd.map((r) => `<div class="note"><small>${esc(r.agent)} · ${clock(r.t)} · where a function ends</small>
+  setHtml($("suggestList"), bd.map((r) => `<div class="note">${saidHead("where a function ends", [r.agent], r.t, true)}
     <b class="mono">${esc(r.function)}</b> ends at <span class="mono">${hex8(r.end)}</span>: the ${r.cut} bytes after it aren't code. ${esc(r.reason)}
     <p class="small muted mono">after ${hex8(r.end)}: ${esc(r.rest)}</p>
     <div class="row"><button class="primary small-btn" type="button" data-bapply="${r.id}">Cut it there</button><button class="ghost small-btn" type="button" data-bdismiss="${r.id}">Dismiss</button></div></div>`).join("") + sg.map(suggestionHtml).join(""));
   if (S.tab === "settings") renderCompilerWaiting(ov);
 }
+/* What agents said, for the user to read (suggestions, what they learned): a status, who (as chips) and when on a
+   line of their own, then what they said with its `code` and **bold**. It was one run of plain text, hard to tell
+   where one agent's words ended and the next began. */
+function saidHead(badge, agents, t, quiet = false) {
+  return `<div class="said-head">${badge ? `<span class="said-badge${quiet ? " quiet" : ""}">${esc(badge)}</span>` : ""}${agents.map((a) => `<span class="said-who">${esc(a)}</span>`).join("")}${t ? `<time>${clock(t)}</time>` : ""}</div>`;
+}
+const saidText = (text) => `<div class="said-text">${miniMarkdown(text)}</div>`;
 const tcName = (id) => (S.st?.toolchains || []).find((t) => t.id === id)?.name || id;
 function suggestionHtml(s) {
   const ok = s.check && s.check.includes("matches the game");
-  return `<div class="note"><small>${esc(s.agents.join(", "))}${s.agents.length > 1 ? ` · ${s.agents.length} agents agree` : ""} · ${clock(s.t)}</small>${esc(s.text)}
-    ${s.check ? `<p class="small ${ok ? "" : "muted"}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
+  return `<div class="note">${saidHead(s.agents.length > 1 ? `${s.agents.length} agents agree` : "suggested", s.agents, s.t, true)}${saidText(s.text)}
+    ${s.check ? `<p class="said-check${ok ? " ok" : ""}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
     <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
@@ -163,14 +170,13 @@ async function renderKnowledge(force = false) {
   let k;
   try { k = await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
   $("knowAuto").checked = k.auto;
-  const by = (it) => it.models.map(esc).join(", ");
   const row = (it) => {
-    if (it.status === "agreed") return `<div class="note"><small>agreed by ${by(it)} · waiting for you</small>${esc(it.text)}
+    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}
       <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
       <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
-    if (it.status === "accepted") return `<div class="note"><small>agents get this · agreed by ${by(it)}</small>${esc(it.text)}
+    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}
       <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note muted"><small>waiting for a second model · proposed by ${by(it)}</small>${esc(it.text)}</div>`;
+    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}</div>`;
   };
   const waiting = k.items.filter((it) => it.status === "agreed").length;
   $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
