@@ -28,7 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
-from ..network import Agent, Network, NetworkError
+from ..network import Agent, Network, NetworkError, stale_note
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -1825,10 +1825,11 @@ class ForkEngine:
         why = (cfg.get("link_failed") or {}).get(unit.source or "")
         if why and not unit.complete:
             lines += ["", f"### {unit.source} didn't link yet (file_status shows its data)", why]
+        lines += self.net.dependency_brief(fn)
         notes = self.net.store.all("SELECT n.text, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
                                    "WHERE n.function_id=? ORDER BY n.id DESC LIMIT 6", fn["id"])
         if notes:
-            lines += ["", "### Notes"] + [f"- ({n['name']}) {n['text']}" for n in notes]
+            lines += ["", "### Notes"] + [f"- ({n['name']}) {stale_note(n['text'], fn['status'])}" for n in notes]
         lines += ["", "Send compile_and_diff the complete function definition (same name and signature as the original), "
                       "with any #include \"...\", prototypes or #pragma lines it needs. Structs, globals and helper "
                       "functions go in with edit_file."]
@@ -2113,6 +2114,7 @@ class ForkEngine:
                                                     f"Decompiled by {agent.name} with decompdecomp.")
                 return {"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
+                                f"{self.net.dependents_note(fn['id'])}"
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
@@ -2296,6 +2298,25 @@ class ForkEngine:
             except NetworkError:
                 pass
         return Network.release(self.net, agent, function, notes, slug)
+
+    def release_exempt(self, slug: str, fn) -> str | None:
+        """Why compiling can't help with this function (release_function lets such a release through at once), or
+        None: its unit has no source file, or its identical twin elsewhere is hand-written assembly."""
+        proj, fp, _ = self.get(slug)
+        if not fp.unit(fn["unit"]).source:
+            return "its unit has no source file"
+        try:
+            twin = self.net.twins.twin_of(proj, fn["id"])
+            if twin is not None and self.is_asm(proj, self.net.store.one("SELECT * FROM functions WHERE id=?", twin)):
+                return "its twin is hand-written assembly"
+        except Exception:  # a heuristic: never in the way of a release
+            return None
+        return None
+
+    def release_hints(self, slug: str, fn) -> list[str]:
+        """For a release pushed back: what this project knows about what to do next with the function (nothing yet
+        in general)."""
+        return []
 
     def read_file(self, slug: str, path: str, start: int = 1, count: int = 200) -> str:
         _, fp, _ = self.get(slug)

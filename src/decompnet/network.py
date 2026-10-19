@@ -88,6 +88,13 @@ _REGION = (f"(SELECT vram / {REGION_BYTES} AS region, SUM(status = 'matched') AS
            f"AND status != 'asm' AND vram IS NOT NULL GROUP BY region)")
 _SHARE = f"((COALESCE(r.won, 0) + {REGION_PRIOR} * :overall) / (COALESCE(r.tried, 0) + {REGION_PRIOR}))"
 _FAILING = f"(COALESCE(r.tried, 0) >= {FAILING_TRIED} AND {_SHARE} < {FAILING_SHARE})"
+# Prerequisites (release_function's `needs`, the waits table): a function an agent found needs another one first
+# (a callee whose convention or body it depends on, a helper the original inlines) waits, claimed after everything
+# else, until that one matches; the one it waits for is claimed first meanwhile; once it matches, the waiting one
+# comes first, once (its row goes when it's claimed).
+WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status != 'matched'")
+READY = "SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status = 'matched'"
+WANTED = "SELECT w.needs_id FROM waits w JOIN functions b ON b.id=w.function_id WHERE b.status = 'open'"
 STRATEGIES = {
     # (a failing part waits even for its twins: they'd fail the same way)
     "easiest": f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
@@ -107,6 +114,38 @@ STRATEGIES = {
 
 class NetworkError(Exception):
     """An error meant to be shown to the agent as-is."""
+
+
+
+def _no_better(scores: list[int | None]) -> int:
+    """How many of the last compiles in a row (oldest first in `scores`) didn't beat the best before them."""
+    best, since = None, 0
+    for s in scores:
+        if s is not None and (best is None or s < best):
+            best, since = s, 0
+        else:
+            since += 1
+    return since
+
+
+# A note that says the function matches (written while a function that later stopped matching counted as matched,
+# its best score 0): agents read it over the brief's real score and stopped
+_SAYS_MATCHED = re.compile(r"already\s+(?:at\s+)?100\s*%|already\s+match(?:es|ed)\b|\b(?:is|was|now)\s+(?:100\s*%|"
+                           r"matched\b|a\s+match\b)|100(?:\.0+)?\s*%\s*(?:match|identical)|\bscore\s+0(?![\d.])|✅\s*MATCH|"
+                           r"byte[- ]identical", re.I)
+_NEGATED = re.compile(r"\b(?:not|n't|never|no|without)\b[^.;]{0,24}$", re.I)
+
+
+def stale_note(text: str, status: str) -> str:
+    """A note as a brief shows it: one saying the function matches, on a function that doesn't, is marked out of
+    date (the note itself stays as it was), so the brief's score is the number agents go by."""
+    if status == "matched":
+        return text
+    for m in _SAYS_MATCHED.finditer(text):
+        if not _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
+            return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the "
+                    "score above] " + text)
+    return text
 
 
 @dataclass
@@ -355,7 +394,10 @@ class Network:
                               (agent.id,)).fetchone()
             if held is not None:
                 if function and held["id"] != self._function(function, proj["slug"] if proj else None)["id"]:
-                    raise NetworkError(f"you already hold {held['name']}; match it or release_function it first")
+                    want = self._function(function, proj["slug"] if proj else None)["name"]
+                    raise NetworkError(f"you already hold {held['name']}; match it or release_function it first (if "
+                                       f"{held['name']} needs {want} done first, release_function with "
+                                       f"needs=\"{want}\": that records it and hands you {want})")
                 fn = held
                 db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
             elif function:
@@ -378,21 +420,25 @@ class Network:
                                    "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
                 overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
                 # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
+                # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
+                # wait is over, first (after what the release rules put back, before model routing's escalations)
                 query = (
                     f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
                         WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                            AND kind='release' AND created_at > :mine)
-                        ORDER BY f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                        ORDER BY f.id IN ({WAITING}),
+                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                             AND kind='release'),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
                                             AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
                                             COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
                                                       AND kind IN ('context', 'compiler')), 0)),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND created_at > :cooled), :strong AND f.abandons >= :escalate DESC,
-                                 {STRATEGIES[strategy]} LIMIT 1""")
+                                            AND created_at > :cooled),
+                                 f.id IN ({READY}) DESC, f.id IN ({WANTED}) DESC,
+                                 :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
                 args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
                         "overall": overall, "escalate": ESCALATE_AFTER, "weak": route == "weak", "strong": route == "strong",
                         "mine": self._own_release_cutoff(db, agent.id, now)}
@@ -403,6 +449,9 @@ class Network:
                     return None
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+            # a wait that's over has had its turn at the front once it's claimed
+            db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
+                       "WHERE status='matched')", (fn["id"],))
         return fn
 
     def _route(self, db, project_id: int, agent: Agent, now: float) -> str | None:
@@ -522,7 +571,8 @@ class Network:
             f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES}", fn["id"])
         if notes:
             lines += ["", "### Notes from previous agents on this function"]
-            lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {n['text']}" for n in notes]
+            lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {stale_note(n['text'], fn['status'])}" for n in notes]
+        lines += self.dependency_brief(fn)
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":
@@ -587,7 +637,8 @@ class Network:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
-                            f"Credited to {agent.name}; your claim is released. Call claim_function for the next one.",
+                            f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
+                            f"{self.dependents_note(fn['id'])}",
                     "score": 0, "matched": True}
         else:
             best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
@@ -629,17 +680,65 @@ class Network:
             after = stall_budget((row["n_insns"] if row else 0) or 0)
         rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT {STALL_LOOKBACK}",
                               function_id, agent_id)
-        best, since = None, 0
-        for r in reversed(rows):
-            if r["score"] is not None and (best is None or r["score"] < best):
-                best, since = r["score"], 0
-            else:
-                since += 1
+        since = _no_better([r["score"] for r in reversed(rows)])
         if since < after:
             return ""
         return (f"\n\n⏭ No better in your last {since} compiles. release_function with notes (what you tried, what's "
                 "left) and claim the next one: functions that match mostly do in the first few tries, and this one "
                 "keeps your best attempt for whoever comes next.")
+
+    def claim_progress(self, agent: Agent, fn) -> dict | None:
+        """This agent's claim on `fn` as release_function judges it: compiles since it claimed it, how many in a row
+        were no better than its best, and compile_and_diff's move-on rule (stall_note's). None: no claim."""
+        claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
+        if claim is None:
+            return None
+        start = claim["claimed_at"] or 0
+        rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+                              "ORDER BY id", fn["id"], agent.id, start)
+        scores = [r["score"] for r in rows]
+        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores),
+                "after": stall_budget(fn["n_insns"] or 0),
+                "best": min((s for s in scores if s is not None), default=None)}
+
+    # ---------------------------------------------------------- prerequisites
+
+    def wait_for(self, agent: Agent, fn, needs) -> None:
+        """Record that `fn` needs `needs` done first (see WAITING)."""
+        with self.store.tx() as db:
+            db.execute("INSERT OR REPLACE INTO waits(function_id, needs_id, agent_id, created_at) VALUES(?,?,?,?)",
+                       (fn["id"], needs["id"], agent.id, time.time()))
+            self._event(db, fn["project_id"], agent.id, "waits", f"{fn['name']} -> {needs['name']}")
+
+    def dependency_brief(self, fn) -> list[str]:
+        """For a brief: what this function waits for, and what waits for it."""
+        out = []
+        row = self.store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
+                             "LEFT JOIN agents a ON a.id=w.agent_id WHERE w.function_id=?", fn["id"])
+        if row is not None and fn["status"] != "matched":
+            if row["status"] == "matched":
+                out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
+                            f"first (a callee or an inlined helper): read its code (get_function) and use it here."]
+            else:
+                out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} found this function needs it "
+                            f"first (a callee or an inlined helper), so it's claimed after everything else until "
+                            f"{row['name']} matches. Work on it if you can; else release_function with "
+                            f"needs=\"{row['name']}\"."]
+        waiting = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+                                 "AND b.status='open' ORDER BY b.name LIMIT 8", fn["id"])
+        if waiting and fn["status"] != "matched":
+            out += ["", f"### Waited for by {', '.join(r['name'] for r in waiting)}: they need this one first, so "
+                        "matching it unblocks them."]
+        return out
+
+    def dependents_note(self, function_id: int) -> str:
+        """For a match: the functions that were waiting for it."""
+        rows = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+                              "AND b.status='open' ORDER BY b.name LIMIT 6", function_id)
+        if not rows:
+            return ""
+        return (f"\nWaiting for this one: {', '.join(r['name'] for r in rows)}. They come first in the queue now; "
+                f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent"):

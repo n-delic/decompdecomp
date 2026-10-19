@@ -1,0 +1,130 @@
+"""Release discipline and prerequisites. On a large x86 game, agents (mostly Claude Haiku) claimed a function and
+released it seconds later without compiling (12,565 releases, median 5 s after the claim), giving reasons a compile
+would have shown were none ("needs the struct for D_... first"), and sessions of two claims ended
+with nothing tried. release_function now answers a release before compile_and_diff's move-on rule once with what to
+do instead; a release without a compile doesn't count against the session; and a function that needs another one
+done first can say so (`needs`): it waits, that one goes first."""
+
+import json
+import time
+
+import pytest
+
+from decompnet.network import NetworkError, stale_note, stall_budget
+
+from .test_claims import _game, _held
+
+
+def _attempts(net, agent, name, scores):
+    fid = net.store.one("SELECT id FROM functions WHERE name=?", name)["id"]
+    with net.store.tx() as db:
+        for s in scores:
+            db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                       "VALUES(?,?,?,?,?,?,?)", (fid, agent.id, s, s is not None, 1, "int f(){}", time.time()))
+
+
+def test_a_release_without_a_compile_is_pushed_back_once_then_goes_through(tmp_path):
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    assert net.claim_row(a, "game", "f")["name"] == "f"
+    said = net.release_function(a, "f", "needs the struct for D_80123456 first", "game")
+    assert said.startswith("Not released yet: you haven't compiled f since you claimed it")
+    assert "ret N" in said and "call release_function again" in said.lower()
+    assert _held(net, a) == "f"
+    said = net.release_function(a, "f", "needs the struct for D_80123456 first", "game")
+    assert said.startswith("Released f") and "doesn't count against your session's claims" in said
+    assert _held(net, a) is None
+
+
+def test_a_release_before_the_move_on_rule_is_pushed_back_and_after_it_is_not(tmp_path):
+    net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    _attempts(net, a, "f", [40])  # compiled once (68.7% and "released with the accurate state", as a live agent did)
+    said = net.release_function(a, "f", "", "game")
+    assert "Not released yet: 1 compile of f since you claimed it" in said and "no better in 3 compiles" in said
+    assert _held(net, a) == "f"
+    b, _ = net.local_agent("b")
+    net.claim_row(b, "game", "g")
+    assert stall_budget(10) == 3
+    _attempts(net, b, "g", [40, 41, 40, 45])  # no better in 3 in a row: compile_and_diff said to move on
+    said = net.release_function(b, "g", "tried a, b, c", "game")
+    assert said.startswith("Released g") and "doesn't count" not in said
+
+
+def test_compiling_cant_help_with_a_boundary_report_waiting_for_the_user(tmp_path):
+    net, pid = _game(tmp_path, [("f", 10, "open")])
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=? WHERE id=?",
+                   (json.dumps({"kind": "rom", "boundaries": [{"status": "open", "function": "f"}]}), pid))
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    assert net.release_function(a, "f", "padding after 0x80001234", "game").startswith("Released f")
+
+
+def test_a_release_naming_what_it_needs_waits_and_that_one_goes_first(tmp_path):
+    net, pid = _game(tmp_path, [("f", 10, "open"), ("g", 50, "open"), ("h", 5, "open"), ("k", 3, "open"),
+                                ("done", 3, "matched")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    with pytest.raises(NetworkError, match="already matches"):
+        net.release_function(a, "f", "", "game", needs="done")
+    with pytest.raises(NetworkError, match="can't wait for itself"):
+        net.release_function(a, "f", "", "game", needs="f")
+    with pytest.raises(NetworkError, match="you already hold f; .*needs=\"g\""):
+        net.claim_row(a, "game", "g")
+    said = net.release_function(a, "f", "calls g with esi; its convention comes from g's definition", "game", needs="g")
+    assert said.startswith("Released f") and "f now waits for g" in said
+    assert _held(net, a) == "g"  # handed over (no push-back: the agent said why compiling can't help yet)
+    assert "doesn't count against your session's claims" in said
+    assert net.store.one("SELECT needs_id FROM waits")["needs_id"] == net.store.one(
+        "SELECT id FROM functions WHERE name='g'")["id"]
+    order = []
+    for k in range(3):
+        b, _ = net.local_agent(f"b{k}")
+        order.append(net.claim_row(b, "game", None, "easiest")["name"])
+    assert order == ["k", "h", "f"]  # f waits: last, even before its release cooldown counts
+    brief = net.dependency_brief(net.store.one("SELECT * FROM functions WHERE name='f'"))
+    assert any("Waits for g" in line for line in brief)
+    assert any("Waited for by f" in line for line in net.dependency_brief(net.store.one(
+        "SELECT * FROM functions WHERE name='g'")))
+
+
+def test_what_a_function_waits_for_is_claimed_first_and_its_match_brings_it_back(tmp_path, monkeypatch):
+    from decompnet import network
+
+    monkeypatch.setattr(network, "RELEASE_COOLDOWN", 0)
+    net, pid = _game(tmp_path, [("f", 10, "open"), ("g", 50, "open"), ("h", 5, "open")])
+    ids = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
+    with net.store.tx() as db:
+        db.execute("INSERT INTO waits VALUES(?,?,?,?)", (ids["f"], ids["g"], None, time.time()))
+    a, _ = net.local_agent("a")
+    assert net.claim_row(a, "game", None, "easiest")["name"] == "g"  # wanted: before the smaller h
+    assert "Waiting for this one: f" in net.dependents_note(ids["g"])
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (ids["g"],))
+        db.execute("DELETE FROM claims")
+    b, _ = net.local_agent("b")
+    assert net.claim_row(b, "game", None, "easiest")["name"] == "f"  # its wait is over: first, once
+    assert net.store.all("SELECT * FROM waits") == []  # the row went with the claim
+    assert net.dependency_brief(net.store.one("SELECT * FROM functions WHERE name='f'")) == []
+
+
+def test_notes_that_say_it_matches_are_marked_out_of_date_on_a_function_that_doesnt():
+    for text in ("Already 100% - the data check failed earlier", "f is matched; nothing to do", "score 0 now",
+                 "✅ MATCH with the stand-in", "objdiff 100% match"):
+        assert stale_note(text, "open").startswith("[out of date"), text
+        assert stale_note(text, "matched") == text
+    for text in ("not 100% match yet: the call to g differs", "68.7%: reads this from the stack, ret 4",
+                 "never matched, tried 4 times", "score 0.5"):
+        assert stale_note(text, "open") == text, text
+
+
+def test_the_prompts_count_only_claims_that_were_compiled():
+    from decompnet.app import tools
+
+    for prompt in (tools.WORK_PROMPT, tools.FORK_PROMPT):
+        text = " ".join(prompt.format(title="t", count=2, compiler_guide="g", platform="p", guides="g",
+                                      budget="b", what="w").split())
+        assert "up to 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
+        assert "needs=" in text

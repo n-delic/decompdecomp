@@ -46,7 +46,8 @@ You are a decompilation agent in decompdecomp, working on {title}. Other agents 
 functions of the same game at the same time; the tools keep you from colliding.
 
 Your job: turn functions of this game into C that compiles to *exactly* the original machine code.
-Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
+Use only the decomp tools. Repeat for up to {count} claims you compiled (a batch is one; one you released without
+compiling it doesn't count), then stop:
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
@@ -68,7 +69,9 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
    its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
 5. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next one.
+   release_function with precise notes (what you tried, what is left) and claim the next one. Before
+   that, compile the next step instead of releasing. Needs another function done first (a callee, an inlined
+   helper)? release_function(needs=that one) hands it to you.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
@@ -109,7 +112,8 @@ You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other
 other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
-machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
+machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {count} claims you compiled (a batch is
+one; one you released without compiling it doesn't count), then stop:
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours in the same
    file (small functions mostly match on the first try): target assembly, the current diff, its source
@@ -130,8 +134,10 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
 6. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next. Very large
-   functions: get the structure right first; a near miss is worth the extra compiles.
+   release_function with precise notes (what you tried, what is left) and claim the next. Before that,
+   compile the next step instead of releasing. Very large functions: get the structure right first; a near miss
+   is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
+   helper): release_function(needs=that one) hands it to you.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
@@ -224,7 +230,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         _claim(net, agent, slug, function, strategy, count),
     "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
     "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
-    "release_function": lambda net, agent, slug, function, notes: net.release(agent, function, notes, slug),
+    "release_function": lambda net, agent, slug, function, notes, needs="":
+        net.release_function(agent, function, notes, slug, needs or ""),
     "get_context": lambda net, agent, slug, function="": net.get_context(slug, function or None),
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -357,10 +364,19 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "compile_and_diff", function=function, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def release_function(ctx: Context, function: str, notes: str) -> str:
-        """Give up a function you're stuck on. Notes are required: what you tried, what is left. Your best
-        attempt is kept for the next agent."""
-        return await run(ctx, "release_function", function=function, notes=notes)
+    async def release_function(ctx: Context, function: str, notes: str, needs: str = "") -> str:
+        """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
+        tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
+        the move-on rule), it answers once with what to try instead; call it again to release anyway.
+
+        Args:
+            function: the function you hold
+            notes: what you tried, what is left
+            needs: optional: another function of the game this one needs done first (a callee whose convention or
+                body it depends on, a helper the original inlines). This one then waits, that one goes first in the
+                queue, and you get it when it's free.
+        """
+        return await run(ctx, "release_function", function=function, notes=notes, needs=needs)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_context(ctx: Context, function: str = "") -> str:
