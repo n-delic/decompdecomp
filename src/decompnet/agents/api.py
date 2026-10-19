@@ -121,8 +121,15 @@ class Api(Agent):
                                    "Studio: Context Length) and set it in Agents & models")
                     s.push("error", s.error)
                     return False
-                reply = r.json()
-                msg = reply["choices"][0]["message"]
+                try:
+                    reply = r.json()
+                    msg = reply["choices"][0]["message"]
+                except (ValueError, KeyError, IndexError, TypeError):  # LM Studio's address without /v1 answers so
+                    s.error = (f"{base}/chat/completions answered with no reply from a model ({r.text[:ERROR_SHOWN]}): "
+                               "the address must be the API's own, which often ends in /v1 (LM Studio: "
+                               "http://127.0.0.1:1234/v1)")
+                    s.push("error", s.error)
+                    return False
                 if isinstance(reply.get("usage"), dict):
                     manager.account(s, api_usage(reply["usage"]))
                 if msg.get("reasoning_content"):
@@ -132,6 +139,11 @@ class Api(Agent):
                 calls = msg.get("tool_calls") or []
                 messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")} | {"role": "assistant"})
                 if not calls:
+                    if not used_tool:  # a model that can't call tools answers in words, and never starts
+                        s.error = (f"{model} answered in words without calling a tool: helpers work through tools "
+                                   "(claim_function, compile_and_diff...), so the model must support tool calls "
+                                   "(function calling). A model trained only to write C can't be a helper")
+                        s.push("error", s.error)
                     return used_tool
                 finishing = False
                 for c in calls:

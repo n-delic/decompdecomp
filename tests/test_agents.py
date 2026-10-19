@@ -505,6 +505,28 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
     assert (row["turns"], row["tool_calls"], row["outcome"]) == (4, 4, "ok")
 
 
+@pytest.mark.parametrize("answer, said", [
+    ({"choices": [{"message": {"role": "assistant", "content": "int f(void) { return 0; }"}}]}, "without calling a tool"),
+    ({"error": "Unexpected endpoint or method"}, "often ends in /v1"),
+])
+def test_an_api_helper_that_never_starts_says_why(tmp_path, monkeypatch, answer, said):
+    """A model fine-tuned to write C (in LM Studio) answered in words: the helper started again and again with an
+    empty error. LM Studio's address without /v1 failed with KeyError: 'choices'."""
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m", "context_tokens": 32768})
+    s.stop = Quick()
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=answer)), **kw))
+    m._run(s)
+    assert said in s.error and said in s.why
+
+
 def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match
     first, models that matched nothing last."""
