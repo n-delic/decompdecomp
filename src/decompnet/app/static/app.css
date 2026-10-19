@@ -562,6 +562,11 @@ a.ghost, a.primary { text-decoration: none; }
 #agentStats:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }  /* one panel: the whole width */
 #agentStats:has(> [hidden] + [hidden]) { display: none; }
 .room-job { display: block; margin-top: 2px; }
+/* each suggestion its own card: they ran together as one block */
+#compilerWaiting, #suggestList { display: flex; flex-direction: column; gap: 10px; }
+#compilerWaiting:not(:empty) { margin-bottom: 14px; }
+/* a tab's content stays under the project's sticky header: its panels' scrollbars were drawn over the header */
+.ptab { position: relative; z-index: 0; }
 /* (a column, not a grid: a grid squeezed each note to fit the list's height and cut it mid-sentence) */
 #knowList { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 560px; overflow: auto; }
 #knowList > * { flex: none; }
