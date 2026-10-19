@@ -16,8 +16,8 @@ from pathlib import Path
 
 import rabbitizer
 
-from . import Picked, RomError
 from ..hostenv import stop_process_tree
+from . import Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
 _LABEL = re.compile(r"^\s*(?:jlabel\s+)?(\.?L[0-9A-F]{8}):?\s*$")

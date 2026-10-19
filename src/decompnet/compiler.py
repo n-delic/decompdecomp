@@ -6,13 +6,13 @@ every match is produced here, on the coordinator, with the project's pinned tool
 
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 import shutil
 import subprocess
 import tempfile
 import threading
-import contextvars
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
