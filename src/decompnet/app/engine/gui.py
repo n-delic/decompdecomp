@@ -123,8 +123,9 @@ class GuiMixin:
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:
             link = self.links[slug]
+            status = link.status()
             return {"role": "guest", "host": link.url, "member": link.member, "error": link.error,
-                    "members": link.members, "connected": time.time() - link.last_ok < 15}
+                    "members": link.members, "connected": status["state"] in ("syncing", "connected"), **status}
         if slug in self.rooms:
             return {"role": "host", "members": self.rooms[slug].members()}
         return None

@@ -27,7 +27,7 @@ function renderNow(claims) {
     const sc = S.scores.get(c.name) || [];
     const p = pctOf(c.best_score, c.n_insns);
     const [sym, unit] = c.name.split(/@(.*)/s);  // a fork's symbol@file: the symbol first, the file after it
-    return `<div class="job" data-fn="${esc(c.name)}" role="button" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.agent)} works on it"><div class="job-top"><span class="job-name" title="${esc(c.name)}">${esc(sym)}${unit ? `<small>@${esc(unit)}</small>` : ""}</span><span class="job-who" title="${esc(c.agent)}">${esc(c.agent)}</span></div>
+    return `<div class="job" data-fn="${esc(c.name)}" role="button" tabindex="0" aria-label="${esc(c.name)}, ${esc(c.agent)} works on it"><div class="job-top"><span class="job-name" title="${esc(c.name)}">${esc(sym)}${unit ? `<small>@${esc(unit)}</small>` : ""}</span>${whoHtml(c.agent, "job-who")}</div>
       ${spark(sc)}<div class="job-foot"><span>${c.n_insns} insns · ${c.attempts} tries</span><b>${p == null ? reading(c) : pctText(p)}</b></div></div>`;
   }).join("");
   box.querySelectorAll(".job").forEach((j) => { j.onclick = () => openFn(j.dataset.fn); });
@@ -85,7 +85,8 @@ function renderSessions(sessions) {
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
-    return `<div class="session" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
+    const col = computerColour(computerOf(s.agent));
+    return `<div class="session" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b class="${col == null ? "" : `tint pc-${col}`}" title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
           : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
       <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>
@@ -97,6 +98,7 @@ function renderSessions(sessions) {
   setHtml(box, html);
   box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
   $("noSessions").hidden = sessions.length > 0;
+  renderRoomAgents();
   const act = (sel, path, body) => box.querySelectorAll(sel).forEach((b) => {
     b.onclick = async () => {
       b.disabled = true;
@@ -332,11 +334,57 @@ document.addEventListener("click", (e) => {
   if (!$("launchPop").hidden && !e.composedPath().some((el) => el.classList && el.classList.contains("pop-wrap"))) hideLaunch();
 });
 
+/* ------------------------------------------------------------------ which computer */
+/* Decompiling together: each computer has a colour, on its agents' names everywhere, so in a busy room you see who
+   does what. A name says whose agent it is: the host's are plain on the host (claude-1) and "@claude-1" on a guest;
+   a member's are "alex.claude-1" on the host and "@alex.claude-1" on another guest; your own are always plain. The
+   host first, then the members in the order they joined: the same colours on every computer. */
+const HOST_COMPUTER = "\u0000host";
+function computerOf(agent) {
+  const room = S.ov && S.ov.room;
+  if (!room || !agent || agent === AUTO) return null;
+  const remote = agent.startsWith("@"), name = remote ? agent.slice(1) : agent;
+  const dot = name.indexOf(".");
+  if (dot > 0) return name.slice(0, dot);
+  return remote || room.role === "host" ? HOST_COMPUTER : room.member;
+}
+function computerColour(c) {
+  if (c == null) return null;
+  if (c === HOST_COMPUTER) return 0;
+  const i = (S.ov.room.members || []).findIndex((m) => m.name === c);
+  return i < 0 ? null : (i + 1) % PROJECT_COLOURS;
+}
+function whoHtml(agent, cls = "who") {
+  const c = computerColour(computerOf(agent));
+  return `<span class="${cls}${c == null ? "" : ` tint pc-${c}`}" title="${esc(agent || "")}">${esc(agent || "")}</span>`;
+}
+
+/* The room's other computers and what their agents are on (each computer's own helpers are on its own screen): the
+   host sees its guests', a guest sees the host's and the other guests'. */
+function renderRoomAgents() {
+  const box = $("roomAgents"), room = S.ov && S.ov.room;
+  const mine = room && (room.role === "host" ? HOST_COMPUTER : room.member);
+  const computers = !room ? [] : [
+    ...(room.role === "guest" ? [{ key: HOST_COMPUTER, name: "Host", online: room.connected }] : []),
+    ...(room.members || []).map((m) => ({ key: m.name, name: m.name, online: m.online, matched: m.matched })),
+  ].filter((c) => c.key !== mine);
+  box.hidden = !computers.length;
+  if (!computers.length) return;
+  setHtml(box, `<h3>On the room's other computers</h3>` + computers.map((c) => {
+    const jobs = S.claims.filter((j) => computerOf(j.agent) === c.key), col = computerColour(c.key);
+    return `<div class="line-item"><span class="swatch${col == null ? "" : ` pc-${col}`}" aria-hidden="true"></span><div class="txt"><b>${esc(c.name)}</b>
+      <span>${c.online ? "online" : "away"}${c.matched ? ` · ${c.matched} matched` : ""}</span>
+      ${jobs.length ? jobs.map((j) => `<span class="room-job">${whoHtml(j.agent)} on ${fnLink(j.name)}${j.attempts ? ` · ${plural(j.attempts, "compile")}` : ""}</span>`).join("")
+        : `<span class="room-job">no agent working right now</span>`}</div></div>`;
+  }).join(""));
+  box.querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn); });
+}
+
 /* ------------------------------------------------------------------ feeds */
 // a button, so the keyboard reaches every function named on the page
 function fnLink(name) { return `<button type="button" class="fn" data-fn="${esc(name)}">${esc(name)}</button>`; }
 function eventHtml(ev) {
-  const who = `<span class="who">${esc(ev.agent || "")}</span>`;
+  const who = whoHtml(ev.agent);
   const d = ev.detail || "";
   switch (ev.kind) {
     case "claim": return `${who} started ${fnLink(d)}`;
@@ -362,7 +410,7 @@ function eventHtml(ev) {
 /* One line per agent and function, updated in place: "claude-1 · lerp · 4 compiles · best 87%" until it's matched. */
 const groups = new Map();
 function groupHtml(g) {
-  const who = `<span class="who">${esc(g.agent || "")}</span>`;
+  const who = whoHtml(g.agent);
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
   if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;

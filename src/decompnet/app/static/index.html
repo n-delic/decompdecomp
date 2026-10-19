@@ -195,6 +195,12 @@
 
   <div class="notice" id="compilerNotice" hidden></div>
   <section class="fork-setup" id="forkSetup" hidden></section>
+  <section class="room-cover" id="roomCover" aria-live="polite" hidden>
+    <div class="spinner" id="roomCoverSpin"></div>
+    <h2 id="roomCoverTitle"></h2>
+    <p class="muted" id="roomCoverText"></p>
+    <div class="meter"><i id="roomCoverBar"></i></div>
+  </section>
 
   <!-- overview: the map first, then the numbers, then what to do next -->
   <section class="ptab" data-pane="overview">
@@ -290,6 +296,7 @@
         <header class="panel-head"><h2>Your agents here <span class="muted small" id="spendLine"></span></h2><button class="ghost small-btn" id="stopAll" type="button" hidden>Stop all</button></header>
         <div id="sessions" class="sessions"></div>
         <div class="pad" id="modelCosts" hidden></div>
+        <div class="pad" id="roomAgents" hidden></div>
         <div class="empty" id="noSessions"><p class="muted small">No agent works on this game yet. Press <b>Start agents</b> at the top: each agent picks functions by itself, and starts again by itself if it stops.</p></div>
       </section>
       <section class="panel feed-panel">

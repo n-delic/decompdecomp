@@ -73,3 +73,12 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
+
+
+def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
+    """In a room, every agent's name had the same look whoever ran it. Each computer has a colour now, the same on
+    the host's screen and every guest's: the host's first, then the members in the order they joined."""
+    c = gui["checks"]["computers"]
+    assert c["guest"] == [0, 1, 2, None]  # the host's, alex's, kim's own (kim's screen), the autopilot: none
+    assert c["host"] == [0, 1, 2]  # the same colours on the host's screen
+    assert c["alone"] is None  # no room, no colours

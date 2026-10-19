@@ -1,12 +1,14 @@
 """How decompdecomp reaches the Linux desktop around it: file paths the user types, opening a folder in the file
 manager. (Links to other sites open in the user's browser from the window itself: gtkwindow.py.)
 
-decompdecomp runs on Linux only. Windows (through WSL 2) and Docker were supported until 1.0.2 and removed in the
-rewrite: nobody tested them, and most of their code served the agent bridge that went with it.
+decompdecomp runs on Linux, and on Windows as the Linux install inside a WSL 2 distribution of the user's own (from
+1.0.4). 1.0.2's own Windows installer, its distribution and Docker were removed in the rewrite: nobody tested them,
+and most of their code served the agent bridge that went with it.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -22,12 +24,14 @@ WSL_GO_BACK = (f"wsl --terminate {WSL_DISTRO}\n"
                f"wsl -d {WSL_DISTRO} -u root --exec sh -c \"echo 'export DECOMP_TRAY=0' >> /etc/profile.d/{WSL_DISTRO}.sh\"")
 
 
-def in_wsl() -> bool:
-    """Running inside Windows' WSL, where this version isn't supported (1.0.4 brings Windows back)."""
+def in_old_windows_install() -> bool:
+    """Running in the WSL distribution 1.0.2's Windows installer made, which 1.0.2 updated into this version and where
+    it doesn't run. Not in a WSL distribution of the user's own, where the Linux install is supported (README)."""
     try:
-        return "microsoft" in KERNEL_RELEASE.read_text(encoding="utf-8").lower()
+        wsl = "microsoft" in KERNEL_RELEASE.read_text(encoding="utf-8").lower()
     except OSError:
         return False
+    return wsl and (os.environ.get("WSL_DISTRO_NAME") == WSL_DISTRO or Path.home() == Path("/home") / WSL_USER)
 
 
 def local_path(text: str) -> Path:

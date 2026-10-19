@@ -123,6 +123,17 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "a b", copy: "/x.iso", own: true },
            { link: "https://abc.trycloudflare.com/join/CODE1", name: "alex", copy: "/x.iso", own: true }].map(joinProblem),
     themes: ["", "light", "dark"].map(nextTheme),
+    computers: (() => {
+      const before = S.ov, members = [{ name: "alex" }, { name: "kim" }];
+      S.ov = { room: { role: "guest", member: "kim", members } };
+      const guest = ["@claude-1", "@alex.claude-2", "claude-3", "autopilot"].map((a) => computerColour(computerOf(a)));
+      S.ov = { room: { role: "host", members } };
+      const host = ["claude-1", "alex.claude-2", "kim.claude-3"].map((a) => computerColour(computerOf(a)));
+      S.ov = { room: null };
+      const alone = computerColour(computerOf("claude-1"));
+      S.ov = before;
+      return { guest, host, alone };
+    })(),
     systemThemes: ["", "?system-theme=light", "?system-theme=dark", "?system-theme=invalid"].map((search) => {
       location.search = search;
       return systemTheme();

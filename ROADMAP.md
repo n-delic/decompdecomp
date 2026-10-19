@@ -54,6 +54,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Rooms that say what's happening** (1.0.4-alpha). A guest waiting for the host sees "Waiting for the host to let
+  you in" over the project, not an empty one and a red "Room offline"; then "Getting the host's work", counting down.
+  A new guest starts at the room's newest event instead of replaying its history into the feed and notifications,
+  and one that was away catches up a page at a time (the sync started from nothing at every start). Each computer
+  has a colour on its agents' names, the same on every screen, and the Agents tab lists what the room's other
+  computers' agents are on. A git project's join waits to be let in (with approval on, it failed), and a declined
+  or removed guest is told so.
 - **A standalone app.** Its own window (GTK and WebKitGTK) and a tray icon, so closing the window doesn't stop
   helper agents; **Quit** ends everything the app started. Only helpers the app starts work on projects: the old
   `decomp mcp` bridge is gone, and the first start removes its registrations from your agents. A development copy is

@@ -545,6 +545,18 @@ a.ghost, a.primary { text-decoration: none; }
 .note { padding: 10px 12px; font-size: 13.5px; color: var(--ink-2); }
 .note small { display: block; color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .note > .row { margin-top: 10px; }  /* a suggestion's buttons, clear of its text */
+/* agents learn long unbroken lines (paths, symbol lists) that widened the panel past the page */
+/* a guest's project until the host's work is here (project.js: renderRoomCover) */
+.room-cover { margin: 56px auto; max-width: 32em; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.room-cover .meter { width: 100%; max-width: 340px; }
+.project.covered .ptabs, .project.covered .ptab { display: none; }
+/* each computer's colour on its agents' names, in a room (agents.js: computerOf) */
+.tint { background: color-mix(in oklch, var(--pc) 18%, transparent); border-radius: var(--r-sm); padding: 0 5px; }
+#roomAgents { display: grid; gap: 8px; }
+#roomAgents h3 { font-size: 13px; color: var(--muted); font-weight: 600; }
+.room-job { display: block; margin-top: 2px; }
+#knowList { display: grid; gap: 8px; min-width: 0; max-height: 420px; overflow: auto; }
+#knowList .note { overflow-wrap: anywhere; }
 .note-box { display: grid; gap: 8px; }
 .note-box textarea { width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 9px 11px; font: 13px/1.5 var(--sans); color: var(--ink); resize: vertical; }
 .pin.on { background: var(--hl); color: var(--hl-ink); border-color: transparent; }

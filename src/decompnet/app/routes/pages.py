@@ -34,7 +34,7 @@ def register(app: App) -> None:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
         if not secrets.compare_digest(window.token_of(request.headers.get("user-agent", "")), secret):
-            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_wsl() else OLD_PAGE_LINUX), status_code=401)
+            return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
         return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])

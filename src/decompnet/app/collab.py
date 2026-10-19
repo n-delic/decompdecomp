@@ -39,6 +39,13 @@ from . import forkroom
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
 MAX_BODY = 256 * 1024
 TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+# what the host answers someone it hasn't let in; the guest's screen says which (gui.py: the room's state)
+WAITING = "waiting for the host to let you in"
+NOT_MEMBER = "not a member of this room"
+EVENTS_PAGE = 500  # events per answer; a guest that's behind asks again at once
+LET_IN_WAIT = 30 * 60  # longest a git project's join waits to be let in: it needs the host's files before anything
+LET_IN_EVERY = 3  # seconds between its looks
+ROOM_QUIET = 15  # seconds without an answer from the host before the guest's screen says it's away
 
 
 def _hash(code: str) -> str:
@@ -150,8 +157,9 @@ class Room:
         return out
 
     def _members_now(self) -> list[dict]:
-        rows = self.net.store.all("SELECT id, name, created_at, last_seen FROM agents WHERE origin=? AND owner IS NULL",
-                                  self.origin)
+        # in the order they joined: each member's colour on every computer's screen (agents.js: computerColour)
+        rows = self.net.store.all("SELECT id, name, created_at, last_seen FROM agents WHERE origin=? AND owner IS NULL "
+                                  "ORDER BY created_at, id", self.origin)
         out = []
         for r in rows:
             agents = self.net.store.all("SELECT id, name FROM agents WHERE origin=? AND owner=?", self.origin, r["name"])
@@ -194,12 +202,15 @@ class Room:
 
     def member(self, request: Request) -> Agent:
         token = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        agent = self.net.authenticate(token or None)
+        try:
+            agent = self.net.authenticate(token or None)
+        except NetworkError:  # declined or taken out: their token was retired ("invalid API token" said nothing)
+            raise NetworkError(NOT_MEMBER) from None
         row = self.net.store.one("SELECT origin, owner FROM agents WHERE id=?", agent.id)
         if row["origin"] == self.origin + ":pending":
-            raise NetworkError("waiting for the host to let you in")
+            raise NetworkError(WAITING)
         if row["origin"] != self.origin or row["owner"] is not None:
-            raise NetworkError("not a member of this room")
+            raise NetworkError(NOT_MEMBER)
         hits = self._hits[agent.name]
         now = time.time()
         hits.append(now)
@@ -219,20 +230,34 @@ class Room:
             return Agent(aid, name, member.name, True)
         return Agent(row["id"], name, member.name, True)
 
-    def state(self, e: int, a: int, ctx_version: int, member: Agent) -> dict:
+    def _events(self, e: int, fresh: bool) -> dict:
+        """The events after the guest's cursor, a page at a time, and how many more wait (`behind`: the guest's
+        "getting the host's work" counts it down). A guest that just joined (`fresh`) starts at the newest: the
+        room's whole history landed in its feed and notifications as if it had all just happened."""
+        pid, store = self.proj["id"], self.net.store
+        if fresh:
+            last = store.one("SELECT COALESCE(MAX(id), 0) AS m FROM events WHERE project_id=?", pid)["m"]
+            return {"e": last, "events": [], "behind": 0}
+        events = [dict(ev) for ev in store.all(
+            "SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
+            "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT ?", pid, e, EVENTS_PAGE)]
+        last = events[-1]["id"] if events else e
+        behind = store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND id>?", pid, last)["n"] \
+            if len(events) == EVENTS_PAGE else 0
+        return {"e": last, "events": events, "behind": behind}
+
+    def state(self, e: int, a: int, ctx_version: int, member: Agent, fresh: bool = False) -> dict:
         """What changed since the guest's cursors: work product only, never ROM-derived data."""
         if self.fork:
-            return self._fork_state(e, member)
+            return self._fork_state(e, member, fresh)
         pid = self.proj["id"]
         net = self.net
         with net.store.tx() as db:
             net._expire_claims(db)
-        events = net.store.all("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-                               "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT 500", pid, e)
-        max_e = events[-1]["id"] if events else e
+        out: dict = self._events(e, fresh)
+        events = out["events"]
         kinds = {ev["kind"] for ev in events}
         names = {ev["detail"] for ev in events if ev["kind"] in ("match",)}
-        out: dict = {"e": max_e, "events": [dict(ev) for ev in events]}
         first = e == 0
         if first or names:
             rows = net.store.all("SELECT f.name, f.vram, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
@@ -262,15 +287,14 @@ class Room:
         out["members"] = self.members()
         return out
 
-    def _fork_state(self, e: int, member: Agent) -> dict:
+    def _fork_state(self, e: int, member: Agent, fresh: bool = False) -> dict:
         """A git project's room: events, matches (by name), claims and notes; the tree itself travels as bundles
         (GET /collab/bundle) when `head` moves."""
         pid, net = self.proj["id"], self.net
         with net.store.tx() as db:
             net._expire_claims(db)
-        events = net.store.all("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent FROM events e LEFT JOIN agents a "
-                               "ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id LIMIT 500", pid, e)
-        out: dict = {"e": events[-1]["id"] if events else e, "events": [dict(ev) for ev in events]}
+        out: dict = self._events(e, fresh)
+        events = out["events"]
         names = {ev["detail"] for ev in events if ev["kind"] == "match"}
         if e == 0 or names:
             rows = net.store.all("SELECT f.name, a.name AS agent FROM functions f LEFT JOIN agents a ON a.id=f.matched_agent_id "
@@ -349,7 +373,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         return {"name": member.name, "room": room.slug}
 
     def state(room, member, q):
-        return room.state(int(q.get("e") or 0), int(q.get("a") or 0), int(q.get("v") or 0), member)
+        return room.state(int(q.get("e") or 0), int(q.get("a") or 0), int(q.get("v") or 0), member, q.get("fresh") == "1")
 
     def claim(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
@@ -509,21 +533,32 @@ def parse_invite(link: str) -> tuple[str, str]:
     return m.group(1), m.group(2) + (f"#{m.group(3)}" if m.group(3) else "")
 
 
+class Refused(NetworkError):
+    """The host answered, and said no: not let in yet, taken out of the room, a claim someone else has."""
+
+
 class Link:
     """The guest's connection to a host's room."""
 
     def __init__(self, net, slug: str, url: str, room: str, token: str, member: str, client: httpx.Client | None = None):
         self.net, self.slug, self.url, self.room, self.token, self.member = net, slug, url.rstrip("/"), room, token, member
         self.client = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
-        self.cursor = {"e": 0, "a": 0, "v": 0}
+        info = json.loads(net.project_row(slug)["config"]).get("link") or {}
+        # kept with the link: from 0 after every restart, the room's whole history came again, twice in the feed
+        self.cursor = {"e": 0, "a": 0, "v": 0} | (info.get("cursor") or {})
+        self.saved = dict(self.cursor)
         self.claims: list[dict] = []
         self.members: list[dict] = []
         self.error = ""
+        self.refused = False  # the host's last answer to our sync was no (`error` says why)
         self.last_ok = 0.0
+        self.behind = 0  # events the host still has for us
+        self.received = 0  # events caught up so far (with `behind`, how far "getting the host's work" is)
+        self.synced = False  # caught up with the host since the app started
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self.fork = bool(net.fork_slug(slug))  # a git source tree: follows the host's commits (forkroom.py)
-        self.head = (json.loads(net.project_row(slug)["config"]).get("link") or {}).get("head", "")
+        self.head = info.get("head", "")
 
     # -- transport
 
@@ -539,7 +574,7 @@ class Link:
             raise NetworkError(f"the room's host isn't reachable right now: {self.error}") from None
         out = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code != 200:
-            raise NetworkError(out.get("error") or f"host answered {r.status_code}")
+            raise Refused(out.get("error") or f"host answered {r.status_code}")
         self.error, self.last_ok = "", time.time()
         return out
 
@@ -574,8 +609,37 @@ class Link:
 
     def sync(self) -> None:
         with self._lock:
-            st = self._req("GET", "/collab/state", self.cursor)
+            try:  # never synced: from the newest event, without the room's history (Room._events)
+                st = self._req("GET", "/collab/state", self.cursor | ({"fresh": 1} if not self.cursor["e"] else {}))
+            except Refused as e:  # not let in yet, or out: the screen says which (status)
+                self.error, self.refused = str(e), True
+                raise
+            self.refused = False
             self.apply(st)
+            self.behind = int(st.get("behind") or 0)
+            self.received += len(st.get("events") or []) if self.behind or self.received else 0
+            self.synced = self.synced or not self.behind
+            if self.cursor != self.saved:
+                self._save_cursor()
+
+    def _save_cursor(self) -> None:
+        proj = self.net.project_row(self.slug)
+        cfg = json.loads(proj["config"])
+        if "link" in cfg:  # (left the room meanwhile: nothing to keep)
+            cfg["link"]["cursor"] = self.saved = dict(self.cursor)
+            with self.net.store.tx() as db:
+                db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+
+    def status(self) -> dict:
+        """What the guest's screen says: waiting to be let in, out of the room, getting the host's work (how far),
+        in the room, or the host is away."""
+        if self.refused:  # (out: declined, taken out, or the room closed; `error` says which)
+            state = "waiting" if self.error == WAITING else "out"
+        elif (self.error and not self.last_ok) or (self.last_ok and time.time() - self.last_ok >= ROOM_QUIET):
+            state = "offline"  # (never answered yet and no error: just started, getting the host's work)
+        else:
+            state = "connected" if self.synced else "syncing"
+        return {"state": state, "received": self.received, "behind": self.behind}
 
     def apply(self, st: dict) -> None:
         if self.fork:
@@ -648,7 +712,7 @@ class Link:
                     pass
                 except Exception as e:  # keep syncing; show the problem in the GUI
                     self.error = f"{type(e).__name__}: {e}"
-                self._stop.wait(every)
+                self._stop.wait(0 if self.behind else every)  # catching up: the next page at once
         threading.Thread(target=loop, daemon=True, name=f"link-{self.slug}").start()
 
     def stop(self) -> None:
@@ -773,6 +837,9 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         if r.status_code != 200:
             raise NetworkError(joined.get("error", "couldn't join"))
         headers = {"authorization": f"Bearer {joined['token']}", "x-room": hello["room"]}
+        if joined.get("waiting"):  # the host's files come only to members it let in
+            log("waiting for the host to let you in")
+            _wait_to_be_let_in(http, url, hello["room"], headers)
 
         def get_bundle(have: str) -> bytes:
             res = http.get(f"{url}/collab/bundle", params={"have": have, "room": hello["room"]}, headers=headers,
@@ -804,6 +871,23 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
     finally:
         if tmp is not None:
             Path(tmp.name).unlink(missing_ok=True)
+
+
+def _wait_to_be_let_in(http: httpx.Client, url: str, room: str, headers: dict) -> None:
+    end = time.monotonic() + LET_IN_WAIT
+    while time.monotonic() < end:
+        try:
+            r = http.get(f"{url}/collab/whoami", params={"room": room}, headers=headers)
+        except httpx.HTTPError:  # the host's connection blinked: look again
+            r = None
+        if r is not None and r.status_code == 200:
+            return
+        error = (r.json() if r is not None and r.headers.get("content-type", "").startswith("application/json")
+                 else {}).get("error", WAITING)
+        if error != WAITING:
+            raise NetworkError(f"the host didn't let you in ({error})")
+        time.sleep(LET_IN_EVERY)
+    raise NetworkError("the host hasn't let you in yet: join again once they have")
 
 
 def cloudflared_available() -> bool:

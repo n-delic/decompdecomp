@@ -193,6 +193,71 @@ def test_the_host_lets_people_in_and_can_take_them_out(built, tmp_path):  # noqa
     assert room.members() == []
 
 
+def test_the_guests_screen_says_whether_it_waits_is_in_or_is_out(built, tmp_path):  # noqa: F811
+    """A laptop that asked to join said "Room offline" beside an empty project: the host's answer (waiting to be let
+    in) never reached its screen. A declined or removed guest was told "invalid API token"."""
+    host, slug, room, code, client = _host(built, tmp_path, approve=True)
+    g, gslug = _guest(tmp_path, "kim", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    link = g.links[gslug]
+    with pytest.raises(NetworkError):
+        link.sync()
+    assert g._room_info(gslug)["state"] == "waiting"
+    room.approve("kim")
+    link.sync()
+    assert g._room_info(gslug)["state"] == "connected"
+    room.remove("kim")
+    with pytest.raises(NetworkError, match="not a member"):
+        link.sync()
+    assert g._room_info(gslug)["state"] == "out"
+
+
+def test_a_new_guest_starts_at_the_newest_and_catches_up_page_by_page(built, tmp_path, monkeypatch):  # noqa: F811
+    """The room's history landed in a new guest's feed (and its notifications) all at once, as if it had just happened,
+    and again after every restart: the sync started from nothing each time. A new guest starts at the newest event;
+    one that was away catches up on what it missed a page at a time, its screen counting it down."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    for i in range(3):
+        host.record_event(slug, "collab", f"before {i}")
+    g, gslug = _guest(tmp_path, "sam", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    assert g._room_info(gslug)["state"] == "syncing"  # nothing from the host yet
+    g.links[gslug].sync()
+    assert g._room_info(gslug)["state"] == "connected"
+    assert not g.store.one("SELECT 1 FROM events WHERE detail LIKE 'before %'")  # history isn't news
+    monkeypatch.setattr(collab, "EVENTS_PAGE", 2)
+    for i in range(5):
+        host.record_event(slug, "collab", f"away {i}")
+    again = RomNetwork(tmp_path / "sam.db", tmp_path / "sam")  # sam's app starts again, without the link's thread
+    link = again.link_project(gslug, json.loads(again.project_row(gslug)["config"])["link"], client=client, start=False)
+    link.sync()
+    st = again._room_info(gslug)
+    assert (st["state"], st["received"], st["behind"]) == ("syncing", 2, 3)
+    while link.behind:
+        link.sync()
+    assert again._room_info(gslug)["state"] == "connected"
+    assert again.store.one("SELECT COUNT(*) AS n FROM events WHERE detail LIKE 'away %'")["n"] == 5  # each once
+
+
+def test_a_git_projects_join_waits_to_be_let_in(built, tmp_path, monkeypatch):  # noqa: F811
+    """Joining a git project's room asks for the host's files at once, which the host gives only to members: with
+    "let people in" on, the join failed. It waits for the host now, and stops when the host says no."""
+    import threading
+
+    host, slug, room, code, client = _host(built, tmp_path, approve=True)
+    monkeypatch.setattr(collab, "LET_IN_EVERY", 0.05)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+
+    def ask(name):
+        token = client.post(f"/collab/join?room={slug}", json={"invite": code, "name": name, "sha1": sha1}).json()["token"]
+        return {"authorization": f"Bearer {token}", "x-room": slug}
+
+    threading.Timer(0.2, room.approve, ("kim",)).start()
+    collab._wait_to_be_let_in(client, "", slug, ask("kim"))  # returns once kim is let in
+    assert [m["name"] for m in room.members()] == ["kim"]
+    threading.Timer(0.2, room.approve, ("eve", False)).start()
+    with pytest.raises(NetworkError, match="didn't let you in"):
+        collab._wait_to_be_let_in(client, "", slug, ask("eve"))
+
+
 def test_better_attempts_reach_the_host_without_a_compile_there(built, tmp_path):  # noqa: F811
     host, slug, room, code, client = _host(built, tmp_path)
     g, gslug = _guest(tmp_path, "lee", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
