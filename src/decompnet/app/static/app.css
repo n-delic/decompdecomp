@@ -649,6 +649,8 @@ a.ghost, a.primary { text-decoration: none; }
 .toasts > * { pointer-events: auto; }
 /* the Start agents popover opens where notifications pop up: they covered its first choices */
 body:has(#launchPop:not([hidden])) .toasts { top: auto; bottom: 18px; }
+/* a side panel (a function, Decompile together...) fills the right: notifications pop up on the left, over the shade */
+body:has(.drawer:not([hidden])) .toasts { right: auto; left: 18px; justify-items: start; }
 .toast {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px; border-radius: var(--r); background: var(--color-surface-overlay); color: var(--ink);
   border: var(--border-width-hairline) solid var(--faint); font-size: 13.5px; box-shadow: var(--shadow-overlay); animation: toast .3s cubic-bezier(.2, .9, .3, 1.2); max-width: 440px;
