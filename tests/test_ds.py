@@ -178,10 +178,9 @@ def test_the_projects_build_compiles_each_file_with_its_version(tmp_path):
     for version in ("2.0/sp1p5", "1.2/sp4"):
         (compilers / version).mkdir(parents=True)
         (compilers / version / "mwccarm.exe").write_text("")
-    dsd = tmp_path / "dsd"  # what `dsd json delinks` says, for a project with nothing delinked yet
+    dsd = tmp_path / "dsd.py"  # what `dsd json delinks` says, for a project with nothing delinked yet
     dsd.write_text(f"#!{sys.executable}\nimport json\nprint(json.dumps({{'files': [], 'arm9_lcf_file': 'build/arm9.lcf', "
                    "'arm9_objects_file': 'build/objects.txt'}))\n")
-    dsd.chmod(0o755)
     subprocess.run([sys.executable, "tools/configure.py", "adqe", "--dsd", str(dsd), "--compilers", str(compilers)],
                    cwd=root, check=True, capture_output=True)
     ninja = re.sub(r"\$\n\s*", "", (root / "build.ninja").read_text())  # (ninja_syntax wraps long lines)
@@ -393,12 +392,11 @@ def test_a_function_dsd_refuses_is_dropped_with_what_points_to_it(tmp_path):
     recover.find_functions([m], log=lambda *_: None)
     recover.relocations([m])
     (tmp_path / "config" / "v" / "arm9").mkdir(parents=True)
-    dsd = tmp_path / "dsd"  # refuses c once, then delinks
+    dsd = tmp_path / "dsd.py"  # refuses c once, then delinks
     dsd.write_text(f"#!{sys.executable}\nimport pathlib, sys\nflag = pathlib.Path({str(tmp_path / 'once')!r})\n"
                    "if not flag.exists():\n    flag.write_text('')\n"
                    f"    print('Error: function func_{BASE + 0x10:08x} could not be analyzed: InvalidStart {{ }}')\n"
                    "    sys.exit(1)\n")
-    dsd.chmod(0o755)
     assert recover.check_with_dsd(tmp_path, "v", str(dsd), [m], log=lambda *_: None) == 1
     assert list(m.added) == [BASE + 4] and BASE + 0x28 not in m.relocs  # the pointer to it went with it
     assert f"func_{BASE + 0x10:08x}" not in (m.folder / "symbols.txt").read_text()

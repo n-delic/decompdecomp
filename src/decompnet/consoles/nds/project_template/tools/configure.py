@@ -52,7 +52,8 @@ SH = "cmd /c " if sys.platform == "win32" else ""
 LICENSE = Path(args.compilers).resolve() / "license.dat"
 if sys.platform == "win32" and LICENSE.exists():
     WRAP = f'cmd /c set "LM_LICENSE_FILE={LICENSE}" && '
-DSD = f'"{args.dsd}"'
+DSD_COMMAND = [sys.executable, args.dsd] if Path(args.dsd).suffix.lower() == ".py" else [args.dsd]
+DSD = subprocess.list2cmdline(DSD_COMMAND)
 PY = f'"{sys.executable}"'
 
 
@@ -76,7 +77,7 @@ def sources() -> list[Path]:
 
 
 def main() -> None:
-    delinks = json.loads(subprocess.run([args.dsd, "json", "delinks", "--config-path", str(CONFIG)], check=True,
+    delinks = json.loads(subprocess.run([*DSD_COMMAND, "json", "delinks", "--config-path", str(CONFIG)], check=True,
                                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout)
     files = delinks["files"]
     dsd_configs = [str(p) for p in Path("config", VERSION).rglob("*.txt")]

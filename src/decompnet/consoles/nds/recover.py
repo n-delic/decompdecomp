@@ -517,8 +517,9 @@ def check_with_dsd(root: Path, version: str, dsd: str, modules: list[Module], lo
     from ...limits import capped
 
     config = root / "config" / version / "arm9" / "config.yaml"
+    command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
     for refused in range(MAX_REFUSALS + 1):
-        res = subprocess.run(capped([dsd, "delink", "--config-path", str(config)]), cwd=root, capture_output=True,
+        res = subprocess.run(capped([*command, "delink", "--config-path", str(config)]), cwd=root, capture_output=True,
                              text=True, timeout=3600, encoding="utf-8", errors="replace")
         if res.returncode == 0:
             if refused:
