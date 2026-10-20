@@ -110,7 +110,7 @@ class Agent:
     def describe(self) -> dict:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
-                "install": self.install, "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
+                "install": self.install_text(), "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
                 "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
 
     def install_text(self) -> str:

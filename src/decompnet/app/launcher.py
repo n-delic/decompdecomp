@@ -12,7 +12,7 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from . import edition
 
@@ -70,10 +70,11 @@ def install_launcher() -> str:
         # pythonw uses this installation's environment without leaving a console behind the app. The MSI's bundled
         # runtime loads the app from its adjacent packages folder through this small launcher script.
         bundled = os.environ.get("DECOMP_PACKAGE") == "windows"
-        target = str(Path(sys.executable).with_name("pythonw.exe"))
+        executable = PureWindowsPath(sys.executable) if sys.platform == "win32" else Path(sys.executable)
+        target = str(executable.with_name("pythonw.exe"))
         def ps(text: str) -> str:
             return text.replace("'", "''")
-        arguments = (f"'{ps(str(Path(sys.executable).resolve().parent.parent / 'decomp-launch.pyw'))}'"
+        arguments = (f"'{ps(str(executable.parent.parent / 'decomp-launch.pyw'))}'"
                      if bundled else "'-m decompnet.app.cli'")
         script = (f"$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; "
                   f"$s=$w.CreateShortcut('{ps(str(shortcut))}'); "
