@@ -450,7 +450,10 @@ class Manager:
         self._prepare(slug)
         with self._lock:
             for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
-                name = helper_name(kind, options.get("model") or agent.config_model(), self._taken())
+                model = options.get("model") or agent.config_model() or ""
+                if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
+                    model = f"{model}#{options['effort']}"
+                name = helper_name(kind, model, self._taken())
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
                 self._launch(s)

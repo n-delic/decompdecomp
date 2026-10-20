@@ -63,6 +63,10 @@ Where to start on a gap:
 - **The permuter's real rewrites in forks.** decomp-permuter got no header in a fork, so it refused every
   function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
   fork and on DS. It now reads what the function's file includes and declares.
+- **Helpers' effort.** The launcher's Effort, opencode's until now, is every helper's: Claude Code's (`--effort`,
+  Low to Max with Extra high), Codex's (`model_reasoning_effort`, Minimal to Extra high) and the API helper's
+  (OpenAI's `reasoning_effort`, Minimal to High, for servers whose models reason). A model at another effort is a
+  helper of its own (`claude-opus-xhigh-1`), so its matches and spend are counted apart.
 
 - **Rooms that say what's happening** (1.0.4-alpha). A guest waiting for the host sees "Waiting for the host to let
   you in" over the project, not an empty one and a red "Room offline"; then "Getting the host's work", counting down.

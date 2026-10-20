@@ -210,6 +210,18 @@ def test_claude_offers_each_version_as_well_as_the_latest():
     assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
 
 
+def test_claude_helpers_think_as_hard_as_the_launcher_says(tmp_path):
+    """The launcher sends an effort with the model's name ("opus#xhigh", as for opencode); Claude Code takes it as
+    --effort, and an effort-less helper gets none (the model's default)."""
+    claude = kinds.get("claude")
+    assert claude.describe()["takes_effort"] and "xhigh" in claude.describe()["efforts"]
+    cmd, _ = claude.session_command("claude", tmp_path, URL, "token", "opus#xhigh")
+    assert cmd[-4:] == ["--model", "opus", "--effort", "xhigh"]
+    cmd, _ = claude.session_command("claude", tmp_path, URL, "token", "opus")
+    assert cmd[-2:] == ["--model", "opus"] and "--effort" not in cmd
+    assert agents.helper_name("claude", "opus#xhigh", set()) == "claude-opus-xhigh-1"  # a record of its own
+
+
 # ---------------------------------------------------------------------------------- helpers as records
 
 URL = "http://127.0.0.1:1/mcp"
@@ -534,3 +546,38 @@ def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     # a model counted only in tokens isn't the cheapest: it comes after the priced ones
     assert [r["model"] for r in m.costs("game")] == ["deepseek-v4.1-flash", "claude-opus-5.5", "local-qwen", "muse-1.3"]
     assert m.costs("other") == []
+
+
+def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):
+    """Codex gets it as its model_reasoning_effort setting (from the model's name, as Claude Code and opencode);
+    an API helper, whose model is its endpoint's, as the `effort` option, sent as OpenAI's reasoning_effort."""
+    codex = kinds.get("codex")
+    monkeypatch.setattr("decompnet.agents.codex.codex_config", lambda: {})
+    cmd, _ = codex.session_command("codex", tmp_path, URL, "token", "gpt-5#xhigh")
+    assert cmd[-5:] == ["-c", 'model_reasoning_effort="xhigh"', "-m", "gpt-5", "-"]
+    cmd, _ = codex.session_command("codex", tmp_path, URL, "token", 'gpt-5#"high"')  # its own words only
+    assert not any("model_reasoning_effort" in c for c in cmd)
+    api = kinds.get("api")
+    assert api.describe()["takes_effort"] and api.describe()["efforts"] == ["minimal", "low", "medium", "high"]
+
+
+def test_an_api_helper_asks_its_model_for_the_effort_it_was_given(tmp_path, monkeypatch):
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "done"}}]})
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    for effort in ("high", None):
+        options = {"base_url": "http://mock/v1", "model": "m", "context_tokens": 32768} | ({"effort": effort} if effort else {})
+        s = m._record("game", "api", f"api-m-{effort}", "box #1", options)
+        s.stop = Quick()
+        m._run(s)
+        assert sent[-1].get("reasoning_effort") == effort  # none at all without one: the model's default

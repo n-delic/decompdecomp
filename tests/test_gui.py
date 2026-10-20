@@ -28,6 +28,10 @@ def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     assert nds["broken"] is None and "checksum" in nds["said"]
 
 
+def test_an_effort_goes_only_to_an_agent_that_offers_it(gui):
+    assert gui["checks"]["efforts"] == ["opus#xhigh", "deepseek/v4", "m"]
+
+
 def test_opening_another_project_shows_nothing_from_before(gui):
     """Two games with agents at work: opening the second one flooded it with notifications. The first game's poll,
     slow under load, kept the second one's first poll from running, and its next poll took the last 60 events as
