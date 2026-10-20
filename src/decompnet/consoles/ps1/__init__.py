@@ -90,7 +90,13 @@ class PlayStation(Console):
         if raw is None:
             raise RomError(f"the disc names {boot} as its program, but it isn't on the disc")
         boot = boot.replace("\\", "/").rsplit("/", 1)[-1]
-        program, info = exe.read_exe(raw, boot)
+        if (loaded := exe.loaded_program(image, raw)) is not None:
+            # the boot program is a loader (a 32 KB one on a PS1 game, the rest of it a picture): the game is the
+            # program it loads. shortcut: the loader's own code is left out, the game's is what's worth decompiling
+            path, raw = loaded
+        program, info = exe.read_exe(raw, boot)  # (named as the disc boots it: its game code and region)
+        if loaded is not None:
+            info["program"] = path.replace("\\", "/")
         picked = Picked(self.id, program, "game.exe", info, False)
         main = (info["load"], info["load"] + info["size"] - exe.HEADER)
         try:
@@ -107,6 +113,7 @@ class PlayStation(Console):
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         from ..ps2.overlays import add_to_config
 
+        _place_text(config, (workdir / image).read_bytes(), log)
         return add_to_config(config, workdir, image, picked.overlays, log) if picked.overlays else image
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
@@ -126,6 +133,38 @@ class PlayStation(Console):
         if {w & 0xFFFF for w in words if w & 0xFFFF0000 == LI_T2} & BIOS_TABLES and JR_T2 in words:
             return "calls the BIOS through its A0/B0/C0 table with the function's number in t1: a stub written in assembly"
         return mips.asm_reason(code, False, cop2="the GTE")
+
+
+def _place_text(config: Path, program: bytes, log=print) -> None:
+    """splat's guess at where the code is takes the first run of 33 varied instructions it can read: a picture in a
+    program read that way (a loader's: 320 KB of 16-bit pixels, then its 32 KB of code), and its one "function" was
+    there. When the code it guesses doesn't hold the entry point, .text is where the code's own marks say."""
+    import struct
+
+    import yaml
+
+    from . import exe
+
+    cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
+    segments = cfg.get("segments", [])
+    main = next((s for s in segments if isinstance(s, dict) and s.get("name") == "main"), None)
+    if main is None or not main.get("subsegments"):
+        return
+    pc, _, load, _ = struct.unpack_from("<4I", program, exe.HEADER_FIELDS)
+    entry = pc - load + exe.HEADER
+    subs = main["subsegments"]
+    end = next((s[0] if isinstance(s, list) else s.get("start") for s in segments[segments.index(main) + 1:]),
+               len(program))
+    starts = [s[0] for s in subs] + [end]
+    if any(s[1] in ("c", "asm") and starts[i] <= entry < starts[i + 1] for i, s in enumerate(subs)):
+        return
+    if (found := exe.text_range(program)) is None or not found[0] <= entry < found[1]:
+        return
+    lo, hi = found
+    main["subsegments"] = ([[exe.HEADER, "rodata", f"{exe.HEADER:X}"]] if lo > exe.HEADER else []) + [
+        [lo, "c", "main"]] + ([[hi, "rodata", f"{hi:X}"]] if hi < end else [])
+    config.write_text(yaml.safe_dump(cfg, sort_keys=False, default_flow_style=None), encoding="utf-8")
+    log(f"the code is at {lo:#x}-{hi:#x} of the program ({(hi - lo) // 1024} KiB), not where splat guessed")
 
 
 PS1 = PlayStation()

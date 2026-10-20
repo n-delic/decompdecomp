@@ -58,7 +58,9 @@ Where to start on a gap:
   program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.6.3,
   2.7.2 or 2.8.1, then maspsx, which does what Sony's assembler ASPSX did, then GNU as; the import tries the three on
   the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
-  and rebuilds byte for byte; no real game is tested from start to end yet.
+  and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
+  gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
+  loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
 - **Helpers' effort.** The launcher's Effort, opencode's until now, is every helper's: Claude Code's (`--effort`,
   Low to Max with Extra high), Codex's (`model_reasoning_effort`, Minimal to Extra high) and the API helper's
   (OpenAI's `reasoning_effort`, Minimal to High, for servers whose models reason). A model at another effort is a

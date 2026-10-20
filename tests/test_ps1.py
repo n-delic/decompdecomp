@@ -66,6 +66,48 @@ def test_an_overlay_on_the_disc_is_placed_in_the_ps1s_ram():
     assert [(name, at) for name, _, at, _ in picked.overlays] == [("battle", OVERLAY_AT)]
 
 
+def test_a_loader_on_the_disc_leads_to_the_program_it_loads():
+    """A disc can boot a loader (a logo, then `cdrom:\\GAME\\MAIN.EXE`): its own code is a few functions, and the
+    game is the program it loads. That one is imported, named as the disc boots it."""
+    loader = _exe(b"cdrom:\\GAME.EXE;1\0".ljust(4096, b"\0"))
+    game = _exe(bytes(range(256)) * 64)
+    disc = _iso({"SYSTEM.CNF": b"BOOT = cdrom:\\SLES_123.45;1\r\n", "SLES_123.45": loader, "GAME.EXE": game})
+    picked = PS1.read_game(disc)
+    assert picked.data == game and picked.info["program"] == "GAME.EXE"
+    assert picked.info["game_code"] == "SLES-12345"
+    plain = _iso({"SYSTEM.CNF": b"BOOT = cdrom:\\SLES_123.45;1\r\n", "SLES_123.45": game})
+    assert PS1.read_game(plain).data == game and "program" not in PS1.read_game(plain).info
+
+
+def test_the_code_is_found_where_its_returns_and_frames_are(tmp_path):
+    """splat takes the first run of 33 varied instructions it can read for the start of the code: on a program that
+    is mostly a picture (16-bit pixels read as loads) it put the code in the picture, and found one function. When
+    its guess doesn't hold the entry point, .text is the clusters of returns, frames and BIOS stubs."""
+    from decompnet.consoles.ps1 import _place_text
+
+    words = lambda *ws: b"".join(w.to_bytes(4, "little") for w in ws)  # noqa: E731
+    picture = words(0x80008000, 0x6F726463, 0x10101010) * 400  # pixels, and a stray frame-like word or none
+    function = words(0x27BDFFE0, 0xAFBF0018, 0x0C000000, 0x00000000, 0x8FBF0018, 0x03E00008, 0x27BD0020)
+    code = function * 8 + words(0x240A00A0, 0x01400008, 0x24090039)  # functions, then a BIOS stub
+    body = picture + code + words(0x80060028, 0x80062AA8) * 8  # and a jump table
+    program = bytearray(_exe(body))
+    lo = exe.HEADER + len(picture)
+    struct.pack_into("<I", program, exe.HEADER_FIELDS, LOAD + len(picture) + 4 * 7)  # the entry: the 2nd function
+    assert exe.text_range(bytes(program)) == (lo, lo + len(code))
+    config = tmp_path / "game.yaml"
+    config.write_text("segments:\n- {name: header, type: header, start: 0}\n"
+                      "- name: main\n  type: code\n  start: 0x800\n  vram: 0x80010000\n  subsegments:\n"
+                      "  - [0x800, rodata, '800']\n  - [0x900, c, main]\n  - [0xA00, data, A00]\n"
+                      f"- [{len(program):#x}]\n")
+    _place_text(config, bytes(program), log=lambda *_: None)
+    import yaml
+
+    subs = yaml.safe_load(config.read_text())["segments"][1]["subsegments"]
+    assert subs == [[0x800, "rodata", "800"], [lo, "c", "main"], [lo + len(code), "rodata", f"{lo + len(code):X}"]]
+    _place_text(config, bytes(program), log=lambda *_: None)  # a guess that holds the entry point stays
+    assert yaml.safe_load(config.read_text())["segments"][1]["subsegments"] == subs
+
+
 def test_bios_calls_and_the_gte_are_set_aside_as_assembly():
     def code(*words):
         return struct.pack(f"<{len(words)}I", *words)
