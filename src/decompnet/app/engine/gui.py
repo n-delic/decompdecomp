@@ -52,19 +52,22 @@ class GuiMixin:
             "SELECT COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id WHERE f.project_id=? "
             "AND f.status='matched' AND a.origin='local' AND a.name NOT IN ('you','autopilot')", proj["id"])["n"]
         twins = self.twins.jobs.get(proj["slug"])
-        return self._overview(slug, proj) | {"last_activity": last, "autopilot": self.autopilot_status(slug),
-                                             "permuter": self.permuter.status(proj["slug"]),
-                                             "twins": None if twins is None else {
-                                                 k: getattr(twins, k) for k in ("state", "pairs", "tried", "matched", "asm")},
-                                             "helper_matches": helpers,
-                                             "readable": self.readability.counts(proj)["readable"],
-                                             "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
-                                             "priority": cfg.get("priority", []),
-                                             # (a suggestion its own check disproved isn't one: older ones were filed)
-                                             "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
-                                                             and not re.search(r"does not match|doesn't compile", s["check"] or "")],
-                                             "boundaries": [r for r in cfg.get("boundaries", []) if r["status"] == "open"],
-                                             "compiler_ranges": self._range_rows(cfg), "auto_compiler": self.auto_adjusts(proj)}
+        base = self._overview(slug, proj)
+        return base | {"last_activity": last, "autopilot": self.autopilot_status(slug),
+                       "permuter": self.permuter.status(proj["slug"]),
+                       "twins": None if twins is None else {
+                           k: getattr(twins, k) for k in ("state", "pairs", "tried", "matched", "asm")},
+                       "helper_matches": helpers,
+                       "readable": self.readability.counts(proj)["readable"],
+                       "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
+                       "priority": cfg.get("priority", []),
+                       # (a suggestion its own check disproved isn't one: older ones were filed)
+                       "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
+                                       and not re.search(r"does not match|doesn't compile", s["check"] or "")],
+                       "boundaries": [r for r in cfg.get("boundaries", []) if r["status"] == "open"],
+                       # (a fork whose files each have a compiler says its own: DS)
+                       "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
+                       "auto_compiler": self.auto_adjusts(proj)}
 
     def _overview(self, slug: str, proj) -> dict:
         if (fork := self.fork_slug(slug)):

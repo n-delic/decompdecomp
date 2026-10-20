@@ -94,5 +94,20 @@ class NintendoDS(Console):
         scratch.set_file_compiler(fp.root, manifest["version"], source, compiler, manifest.get("compiler", self.usual))
         return scratch.compilers_file(fp.root, manifest["version"]).relative_to(fp.root).as_posix()
 
+    def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        return scratch.file_ranges(fp.root, manifest["version"]) if "version" in manifest else {}
+
+    def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
+        from ...forks.project import ForkError
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        if "version" not in manifest:
+            raise ForkError("this project's own build sets its compilers")
+        return scratch.set_own_compiler(fp.root, manifest, compiler, sources)
+
 
 NDS = NintendoDS()

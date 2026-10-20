@@ -244,3 +244,54 @@ def test_decomp_permuter_reads_a_forks_function_with_its_files_declarations(per_
         assert variants and all("add_score(" in v for v in variants)
     finally:
         gen.close()
+
+
+def test_the_projects_compiler_changes_with_every_file_keeping_its_own(tmp_path):
+    """The Settings panel's compiler for the whole game: it becomes the project's own (configure.py, the manifest)
+    and files built with another keep theirs, the ones on the old one included. Its address ranges are the files'
+    own lines in delinks.txt."""
+    root = tmp_path / "game"
+    shutil.copytree(scratch.TEMPLATE, root)
+    arm9 = root / "config" / "adqe" / "arm9"
+    (arm9 / "overlays" / "ov000").mkdir(parents=True)
+    (arm9 / "delinks.txt").write_text("    .text       start:0x02000000 end:0x02000800 kind:code align:32\n\n"
+                                      "src/auto/main_02000000.c:\n    .text start:0x02000000 end:0x02000400\n\n"
+                                      "src/auto/main_02000400.c:\n    .text start:0x02000400 end:0x02000800\n")
+    (arm9 / "overlays" / "ov000" / "delinks.txt").write_text("src/auto/ov000_02200000.c:\n    .text start:0x02200000 end:0x02200100\n")
+    assert scratch.file_ranges(root, "adqe") == {"src/auto/main_02000000.c": [(0x02000000, 0x02000400)],
+                                                 "src/auto/main_02000400.c": [(0x02000400, 0x02000800)],
+                                                 "src/auto/ov000_02200000.c": [(0x02200000, 0x02200100)]}
+    (arm9 / "file_compilers.json").write_text(json.dumps({"src/auto/main_02000400.c": "1.2/sp4"}))
+    manifest = {"version": "adqe", "compiler": "DS/2.0/sp1p5"}
+    sources = sorted(scratch.file_ranges(root, "adqe"))
+    changed = scratch.set_own_compiler(root, manifest, "DS/1.2/sp4", sources)
+    assert set(changed) == {"config/adqe/arm9/file_compilers.json", "tools/configure.py", ".decomp.wtf.json"}
+    # main_02000400 was built with 1.2sp4 already: no line; the two others stay on 2.0sp1p5, so they get one
+    assert json.loads((arm9 / "file_compilers.json").read_text()) == {"src/auto/main_02000000.c": "2.0/sp1p5",
+                                                                      "src/auto/ov000_02200000.c": "2.0/sp1p5"}
+    assert 'MWCC_VERSION = "1.2/sp4"' in (root / "tools" / "configure.py").read_text()
+    assert json.loads((root / ".decomp.wtf.json").read_text())["compiler"] == "DS/1.2/sp4"
+
+
+def test_the_settings_panel_switches_files_only_where_their_matches_hold(per_file, monkeypatch):
+    """The project Settings' compiler, as for a ROM project: for address ranges (the files whose code is in them)
+    or for the whole game (every file in turn), each file kept only when its matched functions still match."""
+    net, slug, agent, root, state, lerp = per_file
+    monkeypatch.setattr(N64, "file_ranges", lambda fp: {"src/game.c": [(0x80000400, 0x80000800)]})
+    owned = []
+    monkeypatch.setattr(N64, "set_own_compiler", lambda fp, compiler, sources: owned.append((compiler, sources)) or [])
+    ov = net.overview(slug)
+    assert ov["compiler"]["toolchain"] == GOOD and ov["compilers"] == [GOOD, BAD] and ov["compiler_ranges"] == []
+    assert net.compiler_answer(slug)["parts"] == []
+    with pytest.raises(NetworkError, match="no longer match"):  # -O0 breaks game.c's matched functions
+        net.forks.set_compiler_ranges(slug, [[0x80000500, 0x80000600]], BAD)
+    with pytest.raises(NetworkError, match="no source file"):
+        net.forks.set_compiler_ranges(slug, [[0x90000000, 0x90000100]], BAD)
+    said = net.forks.set_compiler_everywhere(slug, BAD, log=lambda *_: None)
+    assert said["switched"] == 0 and len(said["stayed"]) == 1 and state["compiler"] == GOOD
+    assert owned == [(BAD, ["src/game.c"])]  # the project's own now, game.c keeping its compiler
+    assert {r["name"]: r for r in net.function_map(slug)}["clamp_s32"]["status"] == "matched"
+    # the project's own is BAD now, game.c kept GOOD: a part of its own, in the overview as in the answer
+    monkeypatch.setattr(N64, "file_compiler", lambda fp, source: BAD if source == "" else GOOD)
+    assert [(p["file"], p["start"]) for p in net.overview(slug)["compiler_ranges"]] == [("src/game.c", 0x80000400)]
+    assert [p["file"] for p in net.compiler_answer(slug)["parts"]] == ["src/game.c"]

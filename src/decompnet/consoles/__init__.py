@@ -191,6 +191,16 @@ class Console:
         that says so, relative to the project (to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
 
+    def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
+        """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a
+        project whose files each have a compiler."""
+        return {}
+
+    def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
+        """Make `compiler` the project's own, every one of `sources` keeping the compiler it has; returns the files
+        changed (relative to the project, to commit)."""
+        raise RomError(f"{self.name} projects set their compilers in their own build")
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:

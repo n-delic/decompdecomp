@@ -53,6 +53,12 @@ def register(app: App) -> None:
         return out
 
     def p_compiler(slug, request, data):
+        if net.fork_slug(slug) and "auto" not in data:  # its source files each have a compiler (DS)
+            tc = str(data.get("toolchain", ""))
+            if not str(data.get("ranges") or "").strip():  # the whole game: every file, one at a time
+                return {"job": jobs.start("compiler", lambda log: net.forks.set_compiler_everywhere(slug, tc, log))}
+            said = net.forks.set_compiler_ranges(slug, parse_ranges(str(data["ranges"])), None if data.get("remove") else tc)
+            return net.overview(slug) | {"said": said}
         if "auto" in data:  # this project's suggestions apply by themselves once proven, or wait for the user
             net.set_auto_adjust(slug, bool(data["auto"]))
         elif str(data.get("ranges") or "").strip():  # these address ranges only (or back to the project's: remove)

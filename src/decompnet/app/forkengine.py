@@ -2504,12 +2504,144 @@ class ForkEngine:
             "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
                          "proprietary": False, "supported": True},
             "compilers": [],
+            **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
         }
+
+    def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
+        """(the project's own compiler, the parts built with another: one per source file, with its address range),
+        for a project whose files each have a compiler (Console.file_compiler: DS); None: its build decides."""
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, "")
+        if own is None:
+            return None
+        ranges = console.file_ranges(fp)
+        parts = []
+        for source in sorted({u.source for u in fp.units() if u.source}):
+            if (c := console.file_compiler(fp, source)) != own:
+                for start, end in ranges.get(source) or [(0, 0)]:
+                    parts.append({"file": source, "start": start, "end": end, "toolchain": c,
+                                  "name": consoles.compiler_name(c), "flags": []})
+        return own, parts
+
+    def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:
+        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same."""
+        found = self._file_parts(fp, cfg)
+        if found is None:
+            return {}
+        own, parts = found
+        return {"compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
+                             "proprietary": False, "supported": True},
+                "compilers": [c.id for c in consoles.get(cfg.get("platform")).compilers], "compiler_ranges": parts}
+
+    def compiler_answer(self, slug: str) -> dict:
+        """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
+        with another, each kept because its matched functions match with it."""
+        _, fp, cfg = self.get(slug)
+        found = self._file_parts(fp, cfg)
+        if found is None:
+            raise NetworkError("this project's own build sets its compilers")
+        own, parts = found
+        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": False, "elsewhere": [],
+                "elsewhere_count": 0, "checking": False, "survey": {}, "checks": [],
+                "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
+                           "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
+                          for p in parts]}
+
+    def set_compiler_ranges(self, slug: str, ranges: list[list[int]], compiler: str | None) -> str:
+        """The Settings panel's "only for these address ranges", where each source file has a compiler: the files
+        whose code is in them get `compiler` (None: the project's own again), each only when its matches hold."""
+        _, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, "")
+        if own is None:
+            raise NetworkError("this project's own build sets its compilers")
+        files = sorted(f for f, spans in console.file_ranges(fp).items()
+                       if any(a < e and s < b for a, b in ranges for s, e in spans))
+        if not files:
+            raise NetworkError("no source file's code is in those ranges")
+        done, stayed = [], []
+        for f in files:
+            try:
+                self.set_file_compiler_by_hand(slug, f, compiler or own)
+                done.append(f)
+            except NetworkError as e:
+                stayed.append(str(e))
+        if not done:
+            raise NetworkError("; ".join(stayed[:4]))
+        said = f"{len(done)} source file{'s' if len(done) != 1 else ''} built with {consoles.compiler_name(compiler or own)}"
+        return said + (f"; {len(stayed)} stay as they were ({stayed[0]})" if stayed else "") + "."
+
+    def set_compiler_everywhere(self, slug: str, compiler: str, log=print) -> dict:
+        """The Settings panel's compiler for the whole game, where each source file has one: every file switches,
+        one at a time and only when its matches hold (a minute or two: it's a job), and then it's the project's
+        own, the files that stayed keeping theirs."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        if console.file_compiler(fp, "") is None:
+            raise NetworkError("this project's own build sets its compilers")
+        if compiler not in {c.id for c in console.compilers}:
+            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        sources = sorted({u.source for u in fp.units() if u.source})
+        stayed = []
+        for n, source in enumerate(sources, 1):
+            try:
+                self.set_file_compiler_by_hand(slug, source, compiler)
+            except NetworkError as e:
+                stayed.append(str(e))
+            if n % 20 == 0 or n == len(sources):
+                log(f"{n} of {len(sources)} source files tried, {len(stayed)} kept their compiler")
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            changed = console.set_own_compiler(fp, compiler, sources)
+        self._commit_paths(proj, fp, changed, f"Build the game with {compiler}\n\nChosen in decompdecomp's project "
+                                              f"settings; {len(stayed)} source files keep the compiler they had.")
+        self.net._update_cfg(slug, lambda c: c.update(compiler=compiler))
+        return {"switched": len(sources) - len(stayed), "stayed": stayed[:20]}
+
+    def set_file_compiler_by_hand(self, slug: str, source: str, compiler: str) -> None:
+        """The user's choice of a source file's compiler (the project's Settings), kept only when every function of
+        the file that matched still matches with it: the rule try_compiler's switches follow. What matches with it
+        now is a match like any other."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, source)
+        units = fp.units_for(source)
+        if own is None or not units:
+            raise NetworkError(f"{source} isn't a source file whose compiler this project lets you choose")
+        if compiler not in {c.id for c in console.compilers}:
+            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler == own:
+            return
+        text = (fp.root / source).read_text(errors="replace", encoding="utf-8")
+        with self._tree(proj).exclusive(), self._units_locked(proj, [u.name for u in units]):
+            before = {u.name: self._baseline(proj, fp, u, text)[0] or {} for u in units}
+            with self._build_locks[proj["id"]]:
+                rel = console.set_file_compiler(fp, source, compiler)
+            after, broken = {}, []
+            for u in units:
+                ok, log = self._build_unit(proj, fp, u)
+                try:
+                    after[u.name] = fp.diff(u, None).unit_scores if ok else {}
+                except (ObjdiffError, ForkError):
+                    after[u.name] = {}
+                broken += [n for n, pct in before[u.name].items()
+                           if (pct or 0) >= 100 and (after[u.name].get(n) or 0) < 100]
+            if broken or not all(after.values()):
+                with self._build_locks[proj["id"]]:
+                    console.set_file_compiler(fp, source, own)
+                for u in units:
+                    self._build_unit(proj, fp, u)
+                why = (f"{', '.join(sorted(broken)[:8])} no longer match with it" if broken
+                       else f"the file doesn't build with it:\n{_tail(log)}")
+                raise NetworkError(f"{source} stays with {own}: {why}")
+            self._commit(proj, fp, rel, f"Build {source} with {compiler}\n\nChosen in decompdecomp's project settings.")
+            for u in units:
+                self._keep_scores(proj, u, text, after[u.name])
+                self._apply_scores(proj, u.name, after[u.name], text=text)
 
     def function_diff(self, slug: str, name: str) -> dict:
         """objdiff's diff of the function as it is in the source tree now."""

@@ -148,6 +148,39 @@ def set_file_compiler(root: Path, version: str, source: str, compiler: str, defa
     tmp.replace(path)
 
 
+_DELINK_FILE = re.compile(r"^(\S+):[ \t]*$", re.M)
+_TEXT_RANGE = re.compile(r"^\s+\.text\s+start:(0x[0-9a-fA-F]+)\s+end:(0x[0-9a-fA-F]+)", re.M)
+
+
+def file_ranges(root: Path, version: str) -> dict[str, list[tuple[int, int]]]:
+    """{source file: [(start, end)]} of its code, from the delinks.txt of every module (each file's lines there)."""
+    out: dict[str, list[tuple[int, int]]] = {}
+    for delinks in sorted((root / "config" / version).rglob("delinks.txt")):
+        text = delinks.read_text(encoding="utf-8")
+        heads = list(_DELINK_FILE.finditer(text))
+        for k, m in enumerate(heads):
+            body = text[m.end():heads[k + 1].start() if k + 1 < len(heads) else len(text)]
+            out.setdefault(m.group(1), []).extend((int(s, 16), int(e, 16)) for s, e in _TEXT_RANGE.findall(body))
+    return out
+
+
+def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[str]) -> list[str]:
+    """`compiler` ("DS/1.2/sp4") as the project's own version (tools/configure.py's MWCC_VERSION and the manifest's),
+    every source file keeping the version it has: the map then names the files built with another."""
+    version, old, new = manifest["version"], manifest.get("compiler", f"DS/{DS_DEFAULT}"), compiler.removeprefix("DS/")
+    found = file_compilers(root, version)
+    has = {s: found.get(s, old.removeprefix("DS/")) for s in sources}
+    path = compilers_file(root, version)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({s: v for s, v in sorted(has.items()) if v != new}, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    cfg = root / "tools" / "configure.py"
+    cfg.write_text(re.sub(r'^MWCC_VERSION = "[^"]*"', f'MWCC_VERSION = "{new}"', cfg.read_text(encoding="utf-8"),
+                          count=1, flags=re.M), encoding="utf-8")
+    (root / ".decomp.wtf.json").write_text(json.dumps({**manifest, "compiler": compiler}, indent=2), encoding="utf-8")
+    return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
+
+
 def _modules(config: Path) -> list[tuple[str, Path]]:
     """(file name prefix, module directory) for every module dsd made: main, ITCM, DTCM, overlays."""
     out = []

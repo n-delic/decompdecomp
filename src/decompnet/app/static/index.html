@@ -347,7 +347,7 @@
           <p class="answer" id="compilerAnswer"></p>
           <div id="compilerParts"></div>
           <div id="compilerWaiting"></div>
-          <label class="check"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
+          <label class="check" id="autoAdjustRow"><input type="checkbox" id="autoAdjust"><span><b>Apply proven changes by themselves.</b> When agents prove a part of the game was built with another compiler (its code matches with it, and its neighbours agree), the app uses it without asking you.</span></label>
           <details class="more" id="compilerHow">
             <summary>How the app checks</summary>
             <div class="more-body" id="compilerEvidence"></div>
@@ -355,11 +355,12 @@
           <details class="more">
             <summary>Change the compiler yourself</summary>
             <div class="more-body">
-              <p class="muted small">Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.</p>
+              <p class="muted small" id="setTcWhat">Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.</p>
               <label class="field"><span>Compiler</span><select id="setTc"></select></label>
-              <label class="field"><span>Flags</span><input id="setFlags" class="mono"></label>
+              <label class="field" id="setFlagsRow"><span>Flags</span><input id="setFlags" class="mono"></label>
               <label class="field"><span>Only for these address ranges (optional: parts of the game built with another compiler)</span><input id="setRanges" class="mono" placeholder="0x10BFD0-0x10CD40, 0x1106C0-0x1107C0"></label>
               <div class="row"><button class="primary small-btn" id="setTcSave" type="button">Save</button><button class="ghost small-btn" id="setTcReset" type="button">Default flags</button></div>
+              <pre class="joblog" id="setTcLog" hidden></pre>
             </div>
           </details>
         </div>

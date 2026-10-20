@@ -345,6 +345,8 @@ class CompilerMixin:
         it's older than SURVEY_AGAIN_SECONDS, and every applied range gets looked at again once. "Survey again" and
         "Check the applied ranges" were buttons nobody could say when to press, the owner and their author included.
         `check_now`: both at once, whatever their age."""
+        if self.fork_slug(slug):  # a project whose source files each have a compiler (DS): the files are its parts
+            return self.forks.compiler_answer(slug)
         self._rom_only(slug, "the compiler answer")
         proj = self._project(slug)
         cfg = self.cfg(proj)

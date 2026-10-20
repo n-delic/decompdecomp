@@ -392,7 +392,7 @@ function renderAgentsKpi(ov) {
    for the user. Everything else about it is one click in (Settings → Compiler). */
 function renderCompilerLine(ov) {
   const box = $("compilerLine");
-  box.hidden = ov.kind === "fork";
+  box.hidden = !(ov.compilers || []).length;  // a fork's build sets its compilers, unless its files each have one (DS)
   if (box.hidden) return;
   const parts = (ov.compiler_ranges || []).length, waiting = compilerSuggestions(ov).length;
   setHtml(box, `<span class="al-label">Compiler</span><span class="al-text">Built with <b>${esc(ov.compiler.name)}</b>${parts ? `; ${plural(parts, "part")} with another compiler` : ""}.${
