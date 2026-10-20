@@ -100,6 +100,17 @@ def test_with_no_desktop_it_says_so_instead_of_vanishing(monkeypatch):
         window.missing.cache_clear()
 
 
+def test_on_nvidia_the_window_skips_the_renderer_that_crashes_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("WEBKIT_DISABLE_DMABUF_RENDERER", raising=False)
+    monkeypatch.setattr(window, "NVIDIA_MODULE", tmp_path / "nvidia")
+    assert "WEBKIT_DISABLE_DMABUF_RENDERER" not in window.window_env("s")
+    (tmp_path / "nvidia").mkdir()
+    env = window.window_env("s")
+    assert env["WEBKIT_DISABLE_DMABUF_RENDERER"] == "1" and env["DECOMP_WINDOW_TOKEN"] == "s"
+    monkeypatch.setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "0")
+    assert window.window_env("s")["WEBKIT_DISABLE_DMABUF_RENDERER"] == "0"
+
+
 def test_the_secret_rides_in_the_windows_user_agent():
     ua = f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 {window.TOKEN_AGENT}abc_DEF-123 Safari/605.1.15"
     assert window.token_of(ua) == "abc_DEF-123"

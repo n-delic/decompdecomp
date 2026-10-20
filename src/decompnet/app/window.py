@@ -27,6 +27,7 @@ WINDOW_PROGRAM = Path(__file__).with_name("gtkwindow.py")
 TOKEN_AGENT = "decompdecomp-window/"  # gtkwindow.py puts this, then the secret, in its user agent
 CHECK_SECONDS = 20
 CLOSE_SECONDS = 5  # a window told to close that's still there after this long is ended
+NVIDIA_MODULE = Path("/sys/module/nvidia")  # there while NVIDIA's own driver is loaded
 
 # what the window needs from the system, per family of distributions (/etc/os-release ID and ID_LIKE)
 INSTALL_COMMANDS = {
@@ -122,7 +123,7 @@ class Window:
             try:
                 self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                              stderr=subprocess.STDOUT, text=True, errors="replace",
-                                             env=dict(os.environ, DECOMP_WINDOW_TOKEN=self.secret))
+                                             env=window_env(self.secret))
             except OSError:
                 log.exception("the window didn't start")
                 return False
@@ -163,6 +164,16 @@ class Window:
         if proc is self.proc:
             self.proc = None
             self.on_close()
+
+
+def window_env(secret: str) -> dict[str, str]:
+    """The window program's environment. On NVIDIA's driver WebKitGTK's DMA-BUF renderer kills the window at once
+    under Wayland ("Error 71 (Protocol error) dispatching to Wayland display", the app quits with it), so there it
+    draws the older way; a user's own setting of the variable wins."""
+    env = dict(os.environ, DECOMP_WINDOW_TOKEN=secret)
+    if NVIDIA_MODULE.exists():
+        env.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
+    return env
 
 
 WINDOW: Window | None = None  # set by the server (server.build)

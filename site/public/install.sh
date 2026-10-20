@@ -21,7 +21,7 @@
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.4-alpha"
+VERSION="1.0.4-alpha.1"
 REPO="n-delic/decompdecomp"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"
