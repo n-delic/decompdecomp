@@ -1,6 +1,6 @@
 """Ghidra drafts: decompiled C for platforms m2c doesn't read (x86, AArch64, Xbox 360 PowerPC, SuperH...).
 
-Optional: Ghidra is large (540 MB) and needs Java 21+. Headless Ghidra analyses a unit's target object once
+Optional: Ghidra is large (540 MB) and needs a Java 21+ JDK: the computer's, or the pinned one (java_home). Headless Ghidra analyses a unit's target object once
 and decompiles all its functions; the result is cached next to the project, so the cost (tens of seconds,
 mostly starting the JVM) is paid once per source file.
 """
@@ -18,10 +18,27 @@ from pathlib import Path
 
 from .. import toolchains
 from ..limits import capped
+from .project import ForkError
+
+JAVA_NEEDED = 21  # what the pinned Ghidra needs
+
+
+def java_home() -> Path | None:
+    """The JDK Ghidra runs with: None for the computer's own (a JDK, new enough), else the pinned one (toolchains.toml
+    `jdk`), installed or not."""
+    return None if toolchains.jdk_version() >= JAVA_NEEDED else toolchains.path("jdk")
 
 
 def available() -> bool:
-    return toolchains.installed("ghidra") is not None and toolchains.java_version() >= 21
+    home = java_home()
+    return toolchains.installed("ghidra") is not None and (home is None or toolchains.installed("jdk") is not None)
+
+
+def _env() -> dict | None:
+    home = java_home()
+    if home is None:
+        return None
+    return dict(os.environ, JAVA_HOME=str(home), PATH=os.pathsep.join([str(home / "bin"), os.environ.get("PATH", "")]))
 
 
 def _headless() -> Path:
@@ -31,7 +48,8 @@ def _headless() -> Path:
 
 def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = True) -> list[dict]:
     """Import `binary` into a throwaway Ghidra project, run one of our post-scripts on it and return the JSON objects
-    it wrote, one per line ([] when Ghidra failed or took longer than `timeout`)."""
+    it wrote, one per line ([] when it took longer than `timeout`). A Ghidra that didn't get to run the script says
+    why (ForkError): that was "found no functions" before, which sent the user after packers and DRM."""
     with tempfile.TemporaryDirectory(prefix="decompwtf-ghidra-") as tmp:
         scripts = Path(tmp) / "scripts"
         scripts.mkdir()
@@ -43,10 +61,18 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
         argv = [str(_headless()), tmp, "decompwtf", "-import", str(target), "-scriptPath", str(scripts),
                 "-postScript", script, str(out), "-deleteProject", *([] if analyse else ["-noanalysis"])]
         try:
-            subprocess.run(capped(argv), capture_output=True, text=True, timeout=timeout,
-                           encoding="utf-8", errors="replace")
-        except (OSError, subprocess.TimeoutExpired):
+            res = subprocess.run(capped(argv), capture_output=True, text=True, timeout=timeout, env=_env(),
+                                 encoding="utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
             return []
+        except OSError as e:
+            raise ForkError(f"Ghidra couldn't start: {e}") from e
+        if not out.exists():
+            said = [ln for ln in (res.stdout + res.stderr).splitlines() if ln.strip()]
+            why = next((ln for ln in said if "ERROR" in ln), said[-1] if said else f"exit status {res.returncode}")
+            if "JDK" in why:
+                why += f" (Ghidra needs {toolchains.JDK_HINT})"
+            raise ForkError(f"Ghidra didn't run: {why.strip()}")
         rows = []
         if out.exists():
             for line in out.read_text(encoding="utf-8").splitlines():
@@ -65,7 +91,10 @@ def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[s
         return json.loads(cache.read_text(encoding="utf-8"))
     if not available():
         return {}
-    result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
+    try:
+        result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
+    except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
+        return {}
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache.write_text(json.dumps(result), encoding="utf-8")
     return result
