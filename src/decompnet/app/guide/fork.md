@@ -16,8 +16,10 @@ The loop
    placed where it was in the original. The file is built and diffed. A build error is undone.
 4. 100% is committed to the local `decomp-wtf` git branch. Matched functions in the same file are
    protected: a change that breaks one is undone.
-5. Need a struct, prototype, global, static helper or `#include`? `edit_file` on a header or the top of
-   the source file. The whole project is rebuilt and measured; the edit is undone if any match breaks.
+5. Helper functions (a `static inline` the original inlined), structs and shared prototypes go in through
+   `edit_file` (a header, or the top of the source file), never inside the compile_and_diff source: it
+   takes the one definition and refuses anything else but #include, one-line prototype, extern and
+   #pragma lines. The whole project is rebuilt and measured; the edit is undone if any match breaks.
 
 The goal: linked files
 A decomp is done when the game is built from its C, file by file, and still comes out byte for byte: that's what

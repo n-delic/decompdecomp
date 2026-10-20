@@ -122,8 +122,9 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    or #pragma lines it needs); several at once: function="a, b, c" with all definitions in source. Each
    goes into the source file in place of the old one, the file is built with the project's compiler and
    diffed. Fix structure first (control flow, calls), then types and expressions, registers last.
-4. 100% = matched, committed to git. Structs, prototypes, globals or helpers you need go in with
-   edit_file (a header or the top of the source file); an edit that breaks any match is undone. Found a
+4. 100% = matched, committed to git. Helper functions, structs, shared prototypes and globals you need go
+   in with edit_file (a header or the top of the source file), never inside compile_and_diff's source
+   (it refuses them); an edit that breaks any match is undone. Found a
    project convention every agent should know? share_knowledge(text): it reaches them once a model other
    than yours agrees.
 5. The goal is linked files: the game built from the C, byte for byte. When a match finishes a file's
