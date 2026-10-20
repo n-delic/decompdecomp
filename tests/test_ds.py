@@ -298,7 +298,7 @@ def test_the_settings_panel_switches_files_only_where_their_matches_hold(per_fil
 
 
 def test_bios_call_stubs_are_set_aside_as_hand_written():
-    """Ace Attorney Investigations' DS ROM: 19 BIOS call stubs (CpuSet, Div, WaitByLoop...: `svc #n; bx lr`) were
+    """A DS game: 19 BIOS call stubs (CpuSet, Div, WaitByLoop...: `svc #n; bx lr`) were
     open functions, and agents spent 30 tries finding each can't be C. Their bytes, as dsd delinked them."""
     from decompnet import arch
 

@@ -23,8 +23,8 @@ THUMB_RELOC_MASKS = {
 THUMB_CAPSTONE = {False: (capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)}
 
 # A BIOS call stub: `svc #n; bx lr` and maybe a move around it (Nintendo's SDKs: CpuSet, Div, WaitByLoop...). No C
-# compiler emits svc (CodeWarrior for DS has no intrinsic for it), so it's hand-written: on Ace Attorney
-# Investigations' DS ROM agents spent 30 tries on 19 of them. An object doesn't say whether a function is ARM or
+# compiler emits svc (CodeWarrior for DS has no intrinsic for it), so it's hand-written: on a DS game agents spent
+# 30 tries on 19 of them. An object doesn't say whether a function is ARM or
 # Thumb (dsd's don't set bit 0), so both readings are checked, on stubs only: a longer function's halfwords could
 # read as an svc by chance.
 STUB_BYTES = 16
