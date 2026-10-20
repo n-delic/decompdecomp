@@ -32,9 +32,9 @@ TOKEN_QUERY = "decomp_token"
 TOKEN_COOKIE = "decomp_window"
 CHECK_SECONDS = 20
 CLOSE_SECONDS = 5  # a window told to close that's still there after this long is ended
-¡IS_WINDOWS = sys.platform == "win32"
-¡NVIDIA_MODULE = Path("/sys/module/nvidia")  # there while NVIDIA's own driver is loaded
-¡
+IS_WINDOWS = sys.platform == "win32"
+NVIDIA_MODULE = Path("/sys/module/nvidia")  # there while NVIDIA's own driver is loaded
+
 # what the window needs from the system, per family of distributions (/etc/os-release ID and ID_LIKE)
 INSTALL_COMMANDS = {
     "debian": "sudo apt install python3-gi gir1.2-webkit2-4.1",
