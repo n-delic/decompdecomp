@@ -12,8 +12,7 @@ instruction overwrites it or a call clobbers it. A register holds a pointer (a s
 - the stack: a pointer spilled to the frame and loaded back is still the same pointer;
 - walks: an argument moved along by a constant inside a loop (memset, strcpy, an array's loop) is a walk;
 - indexing: a pointer plus a register that isn't one (`addu s0, s1, v0`: an array's base and an index, as PSY-Q's
-  GCC 2.7.2 walks an array of structs where EE-GCC moves a pointer along) points at an element, read as the first;
-  an argument indexed this way is a buffer, a walk too.
+  GCC 2.7.2 walks an array of structs where EE-GCC moves a pointer along) points at an element, read as the first.
 """
 
 from __future__ import annotations
@@ -160,9 +159,7 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
             value = regs.get(rt if rs == ZERO else rs)
         elif op == SPECIAL and funct == ADDU and (rs in regs) != (rt in regs):  # a base and an index
             term, delta = regs[rs] if rs in regs else regs[rt]
-            value = (term, delta)
-            if term[0] == ARGUMENT:
-                out.walked.add(term)
+            value = (term, delta)  # not a walk: p->items[i] indexes a struct the callers share (loops are caught above)
         target = _destination(w)
         if target and target != ZERO:
             regs.pop(target, None)
