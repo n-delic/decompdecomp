@@ -54,6 +54,10 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Model routing.** Each model's share of its claims that matched, in the project, tells the models at work
+  apart (on an N64 game free models matched 14-25% of what they claimed, stronger ones 42-77%). A model well behind
+  the strongest one at work leaves functions given up on three times to it, and the strongest takes those first;
+  near misses already go to the permuter. Nothing changes until two models have 20 claims each.
 - **Helpers' effort.** The launcher's Effort, opencode's until now, is every helper's: Claude Code's (`--effort`,
   Low to Max with Extra high), Codex's (`model_reasoning_effort`, Minimal to Extra high) and the API helper's
   (OpenAI's `reasoning_effort`, Minimal to High, for servers whose models reason). A model at another effort is a
@@ -162,8 +166,6 @@ An image with % matched, functions and platform, for READMEs and posts. No game 
 
 ## Later
 
-- **Model routing with early escalation.** Easy functions to cheap models. After about three failed attempts, hand a
-  function to a stronger model or to the permuter. Most matches come at the first attempt.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command

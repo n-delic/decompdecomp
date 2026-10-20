@@ -7,6 +7,7 @@ a tool result.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import re
@@ -44,6 +45,16 @@ BRIEF_NOTES = 8  # the newest notes on a function its brief shows
 NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
 NOTES_FOUND = 20  # search_notes' answer at most
 MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their claims never mean "given up on"
+# Routing between models (claim_row): on an N64 game free models matched 14-25% of the functions they claimed and
+# spent 17-31 compiles a match, stronger ones 42-77% and 3-6, and every model was handed the functions the others
+# gave up on. A model well behind the strongest one at work leaves functions given up on ESCALATE_AFTER times to it;
+# the strongest takes those first. A model's share: its matches over its claims in the project, pulled towards the
+# game's overall share while it has made few.
+ESCALATE_AFTER = 3
+WEAK_SHARE = 0.6  # of the strongest model's share: below it, a model is the weaker one
+ROUTE_PRIOR = 10  # claims' worth of the overall share
+ROUTE_ACTIVE_SECONDS = 3600  # the models at work: claimed something this recently
+ROUTE_MIN_CLAIMS = 20  # claims a model has made in the project before it's judged
 # Twins first (see app/twins.py): a function whose code the game has more than once (boost: how many more times)
 # and isn't too big or given up on, best value per instruction first; its twins (boost -1) last, as they match for
 # free once it does.
@@ -315,14 +326,15 @@ class Network:
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
             else:
+                route = self._route(db, proj["id"], agent, now)
                 family = model_family(agent.name)
                 kin = [r["id"] for r in db.execute("SELECT id, name FROM agents") if model_family(r["name"]) == family]
                 tried = db.execute("SELECT SUM(status = 'matched') AS won, SUM(status = 'matched' OR attempts > 0) "
                                    "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
                 overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
-                fn = db.execute(
+                query = (
                     f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
-                        WHERE f.project_id=:pid AND f.status='open'
+                        WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                            AND kind='release')
@@ -331,15 +343,49 @@ class Network:
                                             COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
                                                       AND kind IN ('context', 'compiler')), 0)),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND created_at > :cooled), {STRATEGIES[strategy]} LIMIT 1""",
-                    {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
-                     "overall": overall},
-                ).fetchone()
+                                            AND created_at > :cooled), :strong AND f.abandons >= :escalate DESC,
+                                 {STRATEGIES[strategy]} LIMIT 1""")
+                args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
+                        "overall": overall, "escalate": ESCALATE_AFTER, "weak": route == "weak", "strong": route == "strong"}
+                fn = db.execute(query, args).fetchone()
+                if fn is None and route == "weak":  # only what stronger models are for is left: better tried than idle
+                    fn = db.execute(query, args | {"weak": False}).fetchone()
                 if fn is None:
                     return None
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
         return fn
+
+    def _route(self, db, project_id: int, agent: Agent, now: float) -> str | None:
+        """"weak" for a model at work in the project well behind the strongest one at work, "strong" for that one
+        while a weak one works too (see ESCALATE_AFTER), None otherwise: no routing until both are told apart by
+        ROUTE_MIN_CLAIMS claims each."""
+        def model(name: str) -> str:
+            return re.sub(r"-\d+$", "", name)  # an agent's model: its name less its number (claude-sonnet-5-5-1)
+
+        names = {r["id"]: r["name"] for r in db.execute("SELECT id, name FROM agents")}
+        claims, won, busy = collections.Counter(), collections.Counter(), {model(agent.name)}
+        for r in db.execute("SELECT agent_id, COUNT(*) AS n, MAX(created_at) AS last FROM events WHERE project_id=? "
+                            "AND kind='claim' GROUP BY agent_id", (project_id,)):
+            if names.get(r["agent_id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
+                claims[model(names[r["agent_id"]])] += r["n"]
+                if r["last"] > now - ROUTE_ACTIVE_SECONDS:
+                    busy.add(model(names[r["agent_id"]]))
+        for r in db.execute("SELECT matched_agent_id AS id, COUNT(*) AS n FROM functions WHERE project_id=? "
+                            "AND status='matched' GROUP BY matched_agent_id", (project_id,)):
+            if names.get(r["id"], MACHINE_AGENTS[0]) not in MACHINE_AGENTS:
+                won[model(names[r["id"]])] += r["n"]
+        overall = sum(won.values()) / sum(claims.values()) if sum(claims.values()) else 0.5
+        share = {m: (won[m] + ROUTE_PRIOR * overall) / (claims[m] + ROUTE_PRIOR) for m in busy
+                 if claims[m] >= ROUTE_MIN_CLAIMS}
+        mine = model(agent.name)
+        if mine not in share or len(share) < 2:
+            return None
+        best = max(share.values())
+        if share[mine] < WEAK_SHARE * best:
+            return "weak"
+        weak = any(s < WEAK_SHARE * best for s in share.values())
+        return "strong" if share[mine] == best and weak else None
 
     def release(self, agent: Agent, function: str, notes: str, project: str | None = None) -> str:
         """An agent gives a function back: its claim ends, its notes stay for the next agent, and the function
