@@ -517,6 +517,38 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
     assert (row["turns"], row["tool_calls"], row["outcome"]) == (4, 4, "ok")
 
 
+def test_the_api_helper_sends_a_thinking_models_reasoning_back(tmp_path, monkeypatch):
+    """DeepSeek in thinking mode refuses a request whose tool calls come without the reasoning that made them ("The
+    reasoning_content in the thinking mode must be passed back to the API"): two DeepSeek helpers waited out that
+    error 106 times in a day. It goes back with them; a reply without one gets none."""
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path, functions=1)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m", "per_session": 1,
+                                                       "context_tokens": 32768})
+    s.stop = Quick()
+    monkeypatch.setattr(agents.tools, "call", lambda net, agent, slug, name, args: "## CLAIMED: game/f0")
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content)["messages"])
+        msg = {"role": "assistant", "content": None, "tool_calls": [{"id": f"c{len(sent)}", "type": "function",
+                                                                     "function": {"name": "claim_function", "arguments": "{}"}}]}
+        if len(sent) == 1:
+            msg["reasoning_content"] = "The smallest function first."
+        elif len(sent) == 3:
+            msg = {"role": "assistant", "content": "done"}
+        return httpx.Response(200, json={"choices": [{"message": msg}]})
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    m._run(s)
+    turns = [x for x in sent[2] if x["role"] == "assistant"]
+    assert turns[0]["reasoning_content"] == "The smallest function first." and "reasoning_content" not in turns[1]
+
+
 def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     """The Agents view says what each model cost on a game, to tell which models to run more of: cheapest per match
     first, models that matched nothing last."""
