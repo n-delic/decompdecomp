@@ -214,6 +214,21 @@ def _headers_defining(fp: ForkProject, rel: str, include_lines: list[str], names
     return out
 
 
+def _data_symbols(target: Path | None) -> set[str]:
+    """The data symbols of a target object: objdiff's report counts data in a code section as a function (a DS
+    program's BuildInfo, the SDK's build information with its RSA text, sits in .text), and agents tried to write it
+    as one. Empty when it can't be read (a COFF object: PC, Xbox)."""
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+
+    try:
+        with open(target, "rb") as f:
+            symtab = ELFFile(f).get_section_by_name(".symtab")
+            return {s.name for s in symtab.iter_symbols() if s["st_info"]["type"] == "STT_OBJECT"} if symtab else set()
+    except (OSError, TypeError, ELFError):
+        return set()
+
+
 _QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 MAX_HEADERS = 64  # headers permuter_header follows from one file
 
@@ -588,7 +603,9 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
-        rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])]
+        data = {n: _data_symbols(u.target) for n, u in units.items()}
+        rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
+                if f["name"] not in data.get(u["name"], ())]
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1

@@ -23,7 +23,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ methods drafted as `Class::method` | ✓ | ✓ | — | — | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | — | MIPS, PowerPC |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | BIOS call stubs | MIPS, PowerPC, ARM's BIOS stubs |
 | Kernel stubs set aside and named | — | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | — | — | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |

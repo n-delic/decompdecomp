@@ -34,7 +34,7 @@ from ..project import compiler_for
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 _MACHINE = {"EM_PPC": ("ppc", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
-_CACHE_VERSION = 2  # of twins.json: 2 added why code is hand-written assembly
+_CACHE_VERSION = 3  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.

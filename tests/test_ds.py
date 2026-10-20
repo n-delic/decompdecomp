@@ -295,3 +295,30 @@ def test_the_settings_panel_switches_files_only_where_their_matches_hold(per_fil
     monkeypatch.setattr(N64, "file_compiler", lambda fp, source: BAD if source == "" else GOOD)
     assert [(p["file"], p["start"]) for p in net.overview(slug)["compiler_ranges"]] == [("src/game.c", 0x80000400)]
     assert [p["file"] for p in net.compiler_answer(slug)["parts"]] == ["src/game.c"]
+
+
+def test_bios_call_stubs_are_set_aside_as_hand_written():
+    """Ace Attorney Investigations' DS ROM: 19 BIOS call stubs (CpuSet, Div, WaitByLoop...: `svc #n; bx lr`) were
+    open functions, and agents spent 30 tries finding each can't be C. Their bytes, as dsd delinked them."""
+    from decompnet import arch
+
+    for stub in ("0cdf7047", "00df7047", "002205df7047", "09df081c7047"):  # CpuFastSet, SoftReset, VBlankIntrWait, Mod
+        assert "BIOS" in NDS.asm_reason(bytes.fromhex(stub)), stub
+    swi_arm = (0xEF00000B).to_bytes(4, "little") + (0xE12FFF1E).to_bytes(4, "little")
+    assert "swi" in arch.get("arm").asm_reason(swi_arm)
+    assert NDS.asm_reason(bytes.fromhex("1eff2fe1")) is None  # AutoloadCallback: an empty function, which C makes
+    assert NDS.asm_reason(bytes.fromhex("0cdf7047") + bytes(16)) is None  # a longer function: no guessing
+
+
+def test_data_in_a_code_section_isnt_a_function(per_file, monkeypatch):
+    """objdiff's report counted BuildInfo (the DS SDK's build information, data in .text) as a function, and
+    agents tried to write it. A target object's data symbols are left out of the functions."""
+    from decompnet.app import forkengine
+
+    net, slug, agent, root, state, lerp = per_file
+    target = net.forks.get(slug)[1].unit("game").target
+    assert "g_score" in forkengine._data_symbols(target) and "lerp" not in forkengine._data_symbols(target)
+    assert forkengine._data_symbols(None) == set()
+    monkeypatch.setattr(forkengine, "_data_symbols", lambda target: {"lerp"})  # as if lerp were data
+    net.forks.sync(slug, log=lambda *_: None)
+    assert "lerp" not in {r["name"] for r in net.function_map(slug)}
