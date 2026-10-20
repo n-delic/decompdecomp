@@ -66,6 +66,12 @@ Where to start on a gap:
   dsd refuses to delink: 1,784 more functions in that game, every match kept. Projects made before it get them once
   when the app starts (`ForkEngine.reanalyse`): kept only when the rebuilt ROM is unchanged, and the project's
   activity says so. Still open: code past the main program's `.text` that dsd labels `.rodata`.
+- **A DS game rebuilt byte for byte.** The link stripped what nothing points at, and nothing points at an overlay
+  holding only data (the game loads it by number): those came out empty, every overlay after them moved, and the
+  rebuild differed in 209 overlays and every pointer to them. It links everything now (`-nodead`), and the header
+  gets the copy's secure area checksum (of the area encrypted, which a dump no longer is; dsd left it 0). The game
+  that differed rebuilds identical, its 1,784 recovered functions included. Projects made before get their build
+  fixed at start (`scratch.write_tools`, kept unless an identical rebuild stops being one).
 - **The permuter's real rewrites in forks.** decomp-permuter got no header in a fork, so it refused every
   function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
   fork and on DS. It now reads what the function's file includes and declares.

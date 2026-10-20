@@ -62,7 +62,7 @@ def test_each_source_file_can_have_its_own_codewarrior(tmp_path):
 
 
 def test_a_call_to_code_dsd_found_no_function_for_is_analysed_again(tmp_path, monkeypatch):
-    """Sonic & SEGA All-Stars Racing calls 0x0206135C, which dsd's analysis didn't take for a function ("Local
+    """A DS game calls 0x0206135C, which dsd's analysis didn't take for a function ("Local
     function call ... leads to no function"): the analysis runs again with dsd's option for such calls."""
     runs = []
 
@@ -416,3 +416,55 @@ def test_a_project_is_analysed_again_and_says_so(per_file):
     assert net.forks.reanalyse(slug, broken, log=lambda *_: None) is None
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE kind='analysis' ORDER BY id")]
     assert said[0] == "3 more functions" and "stays as it was" in said[1] and "dsd refused it" in said[1]
+
+    def tools(fp):  # a fix to the project's build tools is committed with it, and taken back with it
+        (fp.root / "tools" / "reference" / "game.c").write_text("/* fixed */\n")
+        return "its build is fixed"
+    assert net.forks.reanalyse(slug, tools, paths=("config", "tools"), log=lambda *_: None) == "its build is fixed"
+    assert ForkProject(root).git("status", "--porcelain", "--", "tools")[1].strip() == ""
+
+    def tools_broken(fp):
+        (fp.root / "tools" / "reference" / "game.c").write_text("/* half done */\n")
+        raise ForkError("dsd refused it")
+    assert net.forks.reanalyse(slug, tools_broken, paths=("config", "tools"), log=lambda *_: None) is None
+    assert (root / "tools" / "reference" / "game.c").read_text() == "/* fixed */\n"
+
+
+def test_an_older_projects_build_tools_get_the_fixes_and_keep_its_settings(tmp_path):
+    """Its tools/ came from the template when it was made: dead stripping in its link dropped every overlay holding
+    only data (nothing points at one: the game loads it by number), so the overlays after it moved and the rebuild
+    differed. write_tools brings them up to date, keeping the game and compiler its configure.py names."""
+    (tmp_path / "tools").mkdir()
+    old = (scratch.TEMPLATE / "tools" / "configure.py").read_text().replace('"-nodead"', '"-dead"')
+    old = re.sub(r'^GAME = "[^"]*"', 'GAME = "c32p"', old, flags=re.M)
+    (tmp_path / "tools" / "configure.py").write_text(re.sub(r'^MWCC_VERSION = "[^"]*"', 'MWCC_VERSION = "1.2/sp4"',
+                                                            old, flags=re.M))
+    assert "tools/configure.py" in scratch.write_tools(tmp_path)
+    new = (tmp_path / "tools" / "configure.py").read_text()
+    assert '"-nodead"' in new and 'GAME = "c32p"' in new and 'MWCC_VERSION = "1.2/sp4"' in new
+    assert (tmp_path / "tools" / "same.py").exists() and scratch.write_tools(tmp_path) == []
+
+
+def test_the_rebuilt_rom_carries_the_secure_area_checksum_of_the_copy(tmp_path):
+    """The header's secure area checksum is of the area encrypted; a dump holds it decrypted, as dsd builds it, and
+    dsd leaves the field 0 (encrypting needs the console's BIOS). With the same secure area, the build takes the
+    copy's checksum, so the ROM comes out byte for byte (tools/same.py --header)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("ds_same", scratch.TEMPLATE / "tools" / "same.py")
+    same = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(same)
+    original = bytearray(_header() + bytes(range(256)) * 64)
+    struct.pack_into("<H", original, 0x6C, 0xA429)
+    struct.pack_into("<H", original, 0x15E, scratch.crc16(bytes(original[:0x15E])))
+    built = bytearray(original)
+    struct.pack_into("<H", built, 0x6C, 0)
+    struct.pack_into("<H", built, 0x15E, scratch.crc16(bytes(built[:0x15E])))
+    (tmp_path / "o.nds").write_bytes(original)
+    (tmp_path / "b.nds").write_bytes(built)
+    assert same.main(["--header", str(tmp_path / "b.nds"), str(tmp_path / "o.nds")]) == 0
+    assert (tmp_path / "b.nds").read_bytes() == bytes(original)
+    built[0x4100] ^= 0xFF  # a secure area of its own: the checksum stays dsd's
+    (tmp_path / "b.nds").write_bytes(built)
+    same.main(["--header", str(tmp_path / "b.nds"), str(tmp_path / "o.nds")])
+    assert (tmp_path / "b.nds").read_bytes() == bytes(built)

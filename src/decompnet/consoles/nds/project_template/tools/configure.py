@@ -7,7 +7,7 @@
 The build extracts your copy of the game (extract/baserom.nds), delinks its code into objects with ds-decomp (dsd),
 compiles src/ with CodeWarrior for DS (each file with its own version when file_compilers.json names one), links everything with CodeWarrior's linker, rebuilds the ROM and checks it
 against your copy, byte for byte. objdiff.json (for objdiff and decompdecomp) compares every source file with the
-original. Made by decompdecomp, modeled on the build of AetiasHax's Princess Maker 4 decomp (CC0).
+original. Made by decompdecomp, modeled on the build of one of AetiasHax's DS decomps (CC0).
 """
 
 import argparse
@@ -25,7 +25,9 @@ MWCC_VERSION = "2.0/sp1p5"  # every file's, unless config/<version>/arm9/file_co
 CC_FLAGS = ["-O4,p", "-enum", "int", "-char", "signed", "-str", "noreuse", "-proc", "arm946e", "-gccext,on", "-fp",
             "soft", "-inline", "noauto", "-Cpp_exceptions", "off", "-RTTI", "off", "-interworking", "-w", "off",
             "-sym", "on", "-gccinc", "-nolink", "-msgstyle", "gcc"]
-LD_FLAGS = ["-proc", "arm946e", "-dead", "-nostdlib", "-interworking", "-map", "closure,unused", "-msgstyle", "gcc"]
+# -nodead: every object is the game's own, and nothing points at an overlay holding only data (the game loads it
+# by number), so dead stripping dropped those and moved every overlay after them
+LD_FLAGS = ["-proc", "arm946e", "-nodead", "-nostdlib", "-interworking", "-map", "closure,unused", "-msgstyle", "gcc"]
 
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
@@ -89,7 +91,7 @@ def main() -> None:
         n.rule("lcf", f"{DSD} lcf -c {CONFIG}")
         n.rule("mwld", f"{WRAP}\"{LD}\" {q(LD_FLAGS)} -m Entry @$objects $lcf -o $out")
         n.rule("rom_config", f"{DSD} rom config --elf $in --config {CONFIG}")
-        n.rule("rom_build", f"{DSD} rom build --config $in --rom $out")
+        n.rule("rom_build", f"{SH}{DSD} rom build --config $in --rom $out && {PY} tools/same.py --header $out {BASEROM}")
         n.rule("same", f"{PY} tools/same.py $in {BASEROM} $out")
         n.rule("objdiff", f"{DSD} objdiff --config-path {CONFIG} --custom-make ninja")
         n.rule("check", f"{SH}{DSD} check modules --config-path {CONFIG} --fail && {PY} tools/same.py --touch $out")

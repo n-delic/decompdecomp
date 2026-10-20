@@ -1,5 +1,5 @@
 """A DS game's rebuilt ROM against the user's copy (the DS template's tools/same.py): a trimmed copy is the same game,
-and anything else that differs is named, part by part (issue #6: a Pokemon Platinum import stopped at "differs from
+and anything else that differs is named, part by part (issue #6: a DS game's import stopped at "differs from
 your copy" with nothing more to go on). Runs on the demo ROM's bytes; needs no compiler."""
 
 import importlib.util

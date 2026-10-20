@@ -2,7 +2,7 @@
 
 ds-decomp (dsd, MIT) is the community's DS toolkit: it extracts the ROM, analyses the ARM9 program, its ITCM and DTCM
 parts and every overlay, finds the functions and delinks the code into objects. The generated project (tools/
-configure.py, modeled on the CC0 build of AetiasHax's Princess Maker 4 decomp) compiles src/ with CodeWarrior for DS,
+configure.py, modeled on the CC0 build of one of AetiasHax's DS decomps) compiles src/ with CodeWarrior for DS,
 links it with CodeWarrior's linker, rebuilds the ROM and checks it against the user's copy, byte for byte, on every
 build. So the result is the base for ports and mods from the first minute, and the same kind of project as the DS
 decomps on decomp.dev.
@@ -234,7 +234,7 @@ def _init(dsd: str, root: Path, version: str, log) -> None:
     try:
         _run(init, root, "analysing the game")
     except ForkError as e:
-        # a call into code dsd's analysis didn't take for a function (Sonic & SEGA All-Stars Racing calls 0x0206135C):
+        # a call into code dsd's analysis didn't take for a function (a DS game calls 0x0206135C):
         # dsd's own option gives each such target a function symbol of unknown size, and the analysis goes on
         if "leads to no function" not in str(e):
             raise
@@ -242,6 +242,28 @@ def _init(dsd: str, root: Path, version: str, log) -> None:
             "target as a function of its own")
         shutil.rmtree(root / "config" / version, ignore_errors=True)
         _run([*init, "--allow-unknown-function-calls"], root, "analysing the game")
+
+
+def write_tools(root: Path, game: str | None = None, compiler: str | None = None) -> list[str]:
+    """The template's build tools in a project, for `game` built with `compiler` ("2.0/sp1p5"; None: what its
+    configure.py has now). A project made by an older decompdecomp gets the fixes its build has had since (agents
+    never edit tools/: forks/project.py). Returns the files that changed."""
+    cfg = root / "tools" / "configure.py"
+    now = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+    keep = {key: value or (m.group(1) if (m := re.search(rf'^{key} = "([^"]*)"', now, re.M)) else None)
+            for key, value in (("GAME", game), ("MWCC_VERSION", compiler))}
+    changed = []
+    for src in sorted((TEMPLATE / "tools").glob("*.py")):
+        text = src.read_text(encoding="utf-8")
+        if src.name == "configure.py":
+            for key, value in keep.items():
+                if value:
+                    text = re.sub(rf'^{key} = "[^"]*"', f'{key} = "{value}"', text, count=1, flags=re.M)
+        dest = root / "tools" / src.name
+        if not dest.exists() or dest.read_text(encoding="utf-8") != text:
+            dest.write_text(text, encoding="utf-8")
+            changed.append(f"tools/{src.name}")
+    return changed
 
 
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
@@ -260,9 +282,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         shutil.copyfile(game, root / "extract" / "baserom.nds")
     (root / "include").mkdir()
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
-    cfg = root / "tools" / "configure.py"
-    cfg.write_text(cfg.read_text(encoding="utf-8").replace('GAME = "game"', f'GAME = "{version}"')
-                   .replace(f'MWCC_VERSION = "{DS_DEFAULT}"', f'MWCC_VERSION = "{compiler}"'), encoding="utf-8")
+    write_tools(root, version, compiler)
 
     dsd = args[args.index("--dsd") + 1]
     log(f"extracting {info['title']} ({info['id']}) with ds-decomp")
@@ -305,7 +325,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "nds", "version": version, "compiler": f"DS/{compiler}",
-        "analysis": 2,  # (consoles/nds: NintendoDS.ANALYSIS)
+        "analysis": 3,  # (consoles/nds: NintendoDS.ANALYSIS)
         "game": {"what": "your copy of the game (.nds)", "path": "extract/baserom.nds", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,
@@ -338,8 +358,8 @@ def check_rom(root: Path, version: str, log=print) -> dict:
     """Rebuild the ROM from everything delinked and compiled, and compare it with the user's copy (`ninja rom`).
 
     Decompiling doesn't depend on it (each function is compared with its own delinked original), so a ROM that doesn't
-    come out identical yet is reported, not fatal: tools/same.py says which part differs (issue #6: a Pokemon
-    Platinum copy whose rebuild differed stopped the whole import)."""
+    come out identical yet is reported, not fatal: tools/same.py says which part differs (issue #6: a DS game's
+    copy whose rebuild differed stopped the whole import)."""
     ok, tail = ForkProject(root).run(["ninja", "rom"], log=lambda *_: None, timeout=3600)
     stamp = root / "build" / version / "rom.ok"
     if ok and stamp.exists():

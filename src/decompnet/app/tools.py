@@ -97,7 +97,7 @@ Write C people would write. Be brief in your messages: work, don't narrate.
 
 # FORK_PROMPT's {what}: a public decomp, or a project decompdecomp started from the user's copy. Told it was "a
 # public matching-decompilation project", a model on a new DS project spent its first 7 minutes looking for the
-# project's conventions in config/ and build.ninja; on Mario Kart 64 one went to fetch the finished public decomp
+# project's conventions in config/ and build.ninja; on an N64 game one went to fetch the finished public decomp
 FORK_PUBLIC = "a public matching-decompilation project for {platform}"
 FORK_SCRATCH = ("a decompilation of a {platform} game that decompdecomp started from the user's own copy. It's new: "
                 "there's no upstream project, and no existing code or conventions to find beyond what agents wrote. "

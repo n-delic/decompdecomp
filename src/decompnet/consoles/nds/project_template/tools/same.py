@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """python tools/same.py BUILT ORIGINAL STAMP: fail unless the rebuilt ROM is your copy, byte for byte; then write STAMP.
 python tools/same.py --touch STAMP: just write STAMP (after a check that passed).
+python tools/same.py --header BUILT ORIGINAL: give BUILT the secure area checksum ORIGINAL has (see secure_checksum).
 
 A copy that was trimmed (the unused end of the cartridge cut off, as many dumps are) or padded further counts as the
 same when everything before the padding matches. When the ROM differs, this says where: which header fields, the ARM9
@@ -141,7 +142,34 @@ def explain(built: bytes, original: bytes) -> list[str]:
     return out
 
 
+def crc16(data: bytes) -> int:
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
+    return crc
+
+
+def secure_checksum(built: bytes, original: bytes) -> bytes:
+    """`built` with the original's secure area checksum. The checksum is of the secure area encrypted, as cartridges
+    hold it; a dump keeps it decrypted (as dsd builds it), and encrypting it again needs the console's BIOS, so dsd
+    leaves the field 0. Only when the two secure areas are the same: the checksum then says nothing about the build."""
+    b, o = Rom(built), Rom(original)
+    if b.arm9[0] != 0x4000 or o.arm9[0] != 0x4000 or built[0x4000:0x8000] != original[0x4000:0x8000]:
+        return built
+    header = bytearray(built[:0x160])
+    header[0x6C:0x6E] = original[0x6C:0x6E]
+    header[0x15E:0x160] = struct.pack("<H", crc16(header[:0x15E]))
+    return bytes(header) + built[0x160:]
+
+
 def main(argv: list[str]) -> int:
+    if argv[0] == "--header":
+        built, original = open(argv[1], "rb").read(), open(argv[2], "rb").read()
+        if (fixed := secure_checksum(built, original)) != built:
+            open(argv[1], "wb").write(fixed)
+        return 0
     if argv[0] == "--touch":
         open(argv[-1], "w", encoding="utf-8").write("ok\n")
         return 0

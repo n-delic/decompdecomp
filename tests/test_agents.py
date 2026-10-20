@@ -322,8 +322,8 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
 
 def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, monkeypatch):
     """Told a new DS project was "a public matching-decompilation project", a model spent its first 7 minutes
-    looking for the project's conventions in config/ and build.ninja; on Mario Kart 64 one went to fetch the
-    finished public decomp. Every prompt says code from outside the project is out."""
+    looking for the project's conventions in config/ and build.ninja; on an N64 game one went to fetch
+    the finished public decomp. Every prompt says code from outside the project is out."""
     net = _game(tmp_path)
     m = agents.Manager(net, tmp_path, URL)
     s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
