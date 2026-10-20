@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from decompnet import seeds, toolchains
+from decompnet import seeds, toolchains, wsl
 from decompnet.elfobj import extract_function
 from decompnet.network import Network
 
@@ -20,6 +20,8 @@ CASES = [("demo-n64", "gcc-2.7.2-kmc", True), ("demo-ps2", "ee-gcc-2.96", False)
 def test_known_solutions_match_on_period_compilers(tmp_path, slug, toolchain, big_endian):
     if toolchains.installed(toolchain) is None:
         pytest.skip(f"{toolchain} not installed")
+    if toolchains.get(toolchain).via_wsl and not wsl.status()[0]:
+        pytest.skip("needs a working WSL 2 distribution")
     net = Network(tmp_path / "p.db")
     import_project(net.store, PROJECTS / slug, log=lambda *_: None)
     agent = net.authenticate(net.register_agent("t"))

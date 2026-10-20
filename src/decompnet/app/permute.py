@@ -55,6 +55,7 @@ MAX_INSNS = 400  # bigger near misses are left to agents: one variant takes too 
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
 HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
+_EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
 FAMILIES = (("ido", "ido"), ("gcc", "gcc"), ("ee-gcc", "gcc"), ("mwc", "mwcc"))
 
@@ -94,7 +95,7 @@ class Generator:
             for line in self.proc.stdout:
                 self._lines.put(line)
         finally:
-            self._lines.put(None)
+            self._lines.put(_EOF)
 
     def batch(self, job: dict) -> list[str] | None:
         """Variants of a function's C (the job's fields: permuter_gen.py), or None when the generator can't read
@@ -106,7 +107,17 @@ class Generator:
             return None
         deadline = time.monotonic() + GENERATOR_SECONDS
         variants: list[str] | None = []
-        while (line := self._line(deadline)) is not None:
+        while True:
+            line = self._line(deadline)
+            if line is None or line is _EOF:
+                if line is _EOF:
+                    try:
+                        self.proc.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        pass
+                log.info("permuter: the generator stopped or hung on %s", job["function"])
+                self.close()
+                return None
             try:
                 out = json.loads(line)
             except ValueError:
@@ -120,11 +131,7 @@ class Generator:
                 variants = None
             elif variants is not None and isinstance(out.get("variant"), str):
                 variants.append(out["variant"])
-        log.info("permuter: the generator stopped or hung on %s", job["function"])
-        self.close()
-        return None
-
-    def _line(self, deadline: float) -> bytes | None:
+    def _line(self, deadline: float):
         """The generator's next line, or None when it has stopped or hasn't answered by `deadline`."""
         try:
             return self._lines.get(timeout=max(0, deadline - time.monotonic()))

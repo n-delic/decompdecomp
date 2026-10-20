@@ -21,6 +21,7 @@ the steps).
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -46,6 +47,20 @@ known_versions: dict[str, tuple[float, str | None]] = {}
 _models: dict[str, tuple[float, list[dict]]] = {}
 
 
+def _node() -> str | None:
+    """Find Node using the real host's path rules, even when a test simulates another `sys.platform`."""
+    if os.name == "nt" or sys.platform != "win32":
+        return shutil.which("node")
+    # shutil.which consults sys.platform internally. A Windows-host simulation on POSIX must still use POSIX lookup.
+    extensions = ("", *os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").lower().split(";"))
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        for extension in extensions:
+            candidate = Path(folder or ".") / f"node{extension}"
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    return None
+
+
 def cli_argv(argv: list[str]) -> list[str]:
     """Run npm's Windows shim through Node directly: cmd.exe would reinterpret quoted MCP config and shell symbols."""
     shim = Path(argv[0])
@@ -61,7 +76,7 @@ def cli_argv(argv: list[str]) -> list[str]:
         if script.suffix.lower() not in (".js", ".cjs", ".mjs") and not re.search(r"_prog=node|node\.exe", text, re.I):
             return argv
         own_node = shim.parent / "node.exe"
-        node = str(own_node) if own_node.is_file() else shutil.which("node")
+        node = str(own_node) if own_node.is_file() else _node()
         if node and script.is_file():
             return [node, str(script), *argv[1:]]
     return argv

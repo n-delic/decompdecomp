@@ -353,10 +353,14 @@ def _group_alive(pgid: int) -> bool:
 def _end_groups(pgids: set[int], grace: float = STOP_GRACE) -> None:
     """End these process groups: asked first (SIGTERM), ended (SIGKILL) whatever is left after `grace` seconds."""
     if os.name == "nt":
+        from ..winprocess import terminate_tree
+
         for pid in pgids:
             if pid > 1 and not _close_windows_job(pid):  # fallback for processes started without a job
-                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, check=False, creationflags=NO_WINDOW)
+                try:
+                    terminate_tree(pid)
+                except OSError:
+                    log.warning("couldn't stop helper process tree %s", pid, exc_info=True)
         return
     pgids = {g for g in pgids if g > 1 and g != os.getpgid(0)}  # never the app's own group
     for g in pgids:

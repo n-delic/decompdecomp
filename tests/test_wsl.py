@@ -76,6 +76,8 @@ def test_linux_keeps_using_the_original_pinned_compiler(monkeypatch, tmp_path):
 def test_windows_compiles_headers_from_paths_with_spaces_and_unicode(tmp_path):
     if sys.platform != "win32" or toolchains.installed("gcc-2.7.2-kmc") is None:
         pytest.skip("needs the pinned N64 compiler on Windows and WSL 2")
+    if not wsl.status()[0]:
+        pytest.skip("needs a working WSL 2 distribution")
     headers = tmp_path / "headers with spaces ü"
     headers.mkdir()
     (headers / "extra.h").write_bytes(b'#define ANSWER \\\r\n7\r\n')

@@ -2,7 +2,7 @@
 
 import pytest
 
-from decompnet import toolchains
+from decompnet import toolchains, wsl
 from decompnet.network import Network, NetworkError
 
 from .handmade import import_project
@@ -20,7 +20,8 @@ def net(tmp_path):
     return n
 
 
-needs_n64 = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None, reason="gcc-2.7.2-kmc not installed")
+needs_n64 = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None,
+                                reason="gcc-2.7.2-kmc not installed")
 
 
 zlib_ready = (PROJECTS / "zlib-n64" / "original" / "zlib.h").exists()
@@ -29,6 +30,8 @@ zlib_ready = (PROJECTS / "zlib-n64" / "original" / "zlib.h").exists()
 @needs_n64
 @pytest.mark.skipif(not zlib_ready, reason="run projects/zlib-n64/prepare.py first")
 def test_zlib_uses_per_unit_headers(tmp_path):
+    if toolchains.get("gcc-2.7.2-kmc").via_wsl and not wsl.status()[0]:
+        pytest.skip("needs a working WSL 2 distribution")
     net = Network(tmp_path / "z.db")
     import_project(net.store, PROJECTS / "zlib-n64", log=lambda *_: None)
     assert net.store.one("SELECT COUNT(*) AS n FROM functions")["n"] == 71
