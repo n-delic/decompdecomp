@@ -28,7 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
-from ..network import Agent, Network, NetworkError, stale_note
+from ..network import Agent, Network, NetworkError, move_on_brief, stale_note
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -1761,6 +1761,8 @@ class ForkEngine:
         meta = self._meta(fn)
         unit = fp.unit(fn["unit"])
         lines = [f"## {header}: {fn['name']}  ({proj['name']})", f"unit {unit.name}, {fn['size']} bytes"]
+        if fn["status"] != "matched":
+            lines.append(move_on_brief(fn))
         if meta.get("demangled"):
             lines.append(f"C++ name: {meta['demangled']}")
         if unit.scratch:

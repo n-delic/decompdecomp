@@ -29,7 +29,8 @@ def test_a_release_without_a_compile_is_pushed_back_until_it_compiles_once_more(
     assert net.claim_row(a, "game", "f")["name"] == "f"
     said = net.release_function(a, "f", "needs the struct for D_80123456 first", "game")
     assert said.startswith("Not released yet: you haven't compiled f since you claimed it")
-    assert "ret N" in said and "compile it once more" in said.lower()
+    assert "a release with no compile isn't taken" in said
+    assert "ret N" not in said  # x86 advice only for x86 projects (this one is MIPS)
     assert _held(net, a) == "f"
     # asking again without a compile doesn't release it (agents just called release_function twice)
     assert net.release_function(a, "f", "same", "game").startswith("Not released yet")
@@ -57,16 +58,50 @@ def test_a_release_before_the_move_on_rule_is_pushed_back_and_after_it_is_not(tm
     net, _ = _game(tmp_path, [("f", 10, "open"), ("g", 10, "open")])
     a, _ = net.local_agent("a")
     net.claim_row(a, "game", "f")
+    time.sleep(0.01)  # (compiles are counted from the claim's time on)
     _attempts(net, a, "f", [40])  # compiled once (68.7% and "released with the accurate state", as a live agent did)
     said = net.release_function(a, "f", "", "game")
-    assert "Not released yet: 1 compile of f since you claimed it" in said and "no better in 3 compiles" in said
+    assert "Not released yet: 1 compile of f since you claimed it, no better in 0/3 compiles (move on at 3)." in said
     assert _held(net, a) == "f"
     b, _ = net.local_agent("b")
     net.claim_row(b, "game", "g")
+    time.sleep(0.01)
     assert stall_budget(10) == 3
     _attempts(net, b, "g", [40, 41, 40, 45])  # no better in 3 in a row: compile_and_diff said to move on
     said = net.release_function(b, "g", "tried a, b, c", "game")
     assert said.startswith("Released g") and "doesn't count" not in said
+
+
+def test_compile_results_and_release_function_count_the_same_way(tmp_path):
+    """A compile result said "no better in your last 8" (counted across claims) while release_function
+    counted the claim's compiles and refused "no better in 8 compiles in a row", then let the release through after
+    one more compile; agents spent that compile to get past it. Now both say the same count, and the release goes
+    through the moment the count reaches the function's number."""
+    net, _ = _game(tmp_path, [("f", 10, "open")])
+    a, _ = net.local_agent("a")
+    fid = net.store.one("SELECT id FROM functions WHERE name='f'")["id"]
+    _attempts(net, a, "f", [30, 30, 30, 30])  # an earlier claim's compiles: not this claim's
+    time.sleep(0.01)
+    net.claim_row(a, "game", "f")
+    time.sleep(0.01)
+    _attempts(net, a, "f", [40, 40])
+    note = net.stall_note(fid, a.id)
+    assert "Move-on count: no better in 1/3 compiles (move on at 3)." in note
+    said = net.release_function(a, "f", "", "game")
+    assert "no better in 1/3 compiles (move on at 3)" in said  # the very words the compile result used
+    _attempts(net, a, "f", [41, 42])
+    assert "⏭ Move on: no better in 3/3 compiles (move on at 3)" in net.stall_note(fid, a.id)
+    assert net.release_function(a, "f", "tried x", "game").startswith("Released f")  # no compile more needed
+
+
+def test_a_pushed_back_release_asked_again_goes_through_without_another_compile(tmp_path):
+    net, _ = _game(tmp_path, [("f", 10, "open")])
+    a, _ = net.local_agent("a")
+    net.claim_row(a, "game", "f")
+    _attempts(net, a, "f", [40])
+    assert net.release_function(a, "f", "", "game").startswith("Not released yet")
+    assert net.still_holding(a, None).startswith("You still hold f")
+    assert net.release_function(a, "f", "the call to g needs its stand-in", "game").startswith("Released f")
 
 
 def test_compiling_cant_help_with_a_boundary_report_waiting_for_the_user(tmp_path):

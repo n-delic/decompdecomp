@@ -181,9 +181,24 @@ def stall_budget(n_insns: int) -> int:
 
 
 def stall_budget_text() -> str:
-    """The budget in words: the prompt and the workflow guide say exactly this."""
-    return (f"no better score after {STALL_BUDGET[0][1]} compiles in a row for small functions, up to "
-            f"{STALL_BUDGET_BIGGEST} for the biggest")
+    """The budget in words: the prompt and the guides say exactly this. Each function has one number (its brief
+    names it, every compile_and_diff result shows where you stand against it, release_function goes by it): the
+    prompt used to say "3 compiles ... up to 10", and agents guessed which applied."""
+    return ("no better score in N compiles in a row, where N is the function's own number: its brief names it, and "
+            "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"")
+
+
+def move_on_brief(fn) -> str:
+    """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
+    after = stall_budget(fn["n_insns"] or 0)
+    return (f"move on after {after} compiles in a row without a better score (this function's number, by its size; "
+            f"each compile_and_diff result shows the count)")
+
+
+def stall_line(since: int, after: int) -> str:
+    """Where an agent stands against a function's move-on number, as every compile result and the release push-back
+    word it (one wording, so the two can't seem to disagree)."""
+    return f"no better in {since}/{after} compiles (move on at {after})"
 
 
 def _ago(ts: float | None) -> str:
@@ -357,9 +372,9 @@ class Network:
                 "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
                 agent.id, held["name"], held["claimed_at"] or 0):
             return ""  # an ordinary renewal of the claim
-        return (f"You still hold {held['name']}: it wasn't released (a pushed-back release_function keeps it yours "
-                "until you compile it once more), so this is your claim on it, not a new one. Compile the next step, "
-                "then release_function goes through if it's still no better.\n\n")
+        return (f"You still hold {held['name']}: it wasn't released (release_function was pushed back), so this is "
+                "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
+                "compiled it, when you ask again.\n\n")
 
     def _own_release_cutoff(self, db, agent_id: int, now: float) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and
@@ -573,6 +588,8 @@ class Network:
             who = "you" if agent and claim["agent_id"] == agent.id else self._agent_name(claim["agent_id"])
             lines.append(f"claimed by {who}, lease expires in {int(claim['expires_at'] - time.time()) // 60} min "
                          f"(each compile_and_diff renews it)")
+        if fn["status"] != "matched":
+            lines.append(move_on_brief(fn))
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
@@ -690,36 +707,50 @@ class Network:
                      f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
         return said
 
-    def stall_note(self, function_id: int, agent_id: int, after: int | None = None) -> str:
-        """A nudge once an agent's last `after` compiles of a function didn't beat its best: functions that match
-        mostly do in the first few tries, and the agent's time is better spent on the next one. Big functions get
-        longer (a quarter of Mario Party 6's agent matches over 64 instructions took more than 4 compiles, and
-        those functions hold most of the code left): STALL_BUDGET."""
-        if after is None:
-            row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
-            after = stall_budget((row["n_insns"] if row else 0) or 0)
-        rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT {STALL_LOOKBACK}",
-                              function_id, agent_id)
-        since = _no_better([r["score"] for r in reversed(rows)])
-        if since < after:
+    def stall_status(self, function_id: int, agent_id: int) -> dict:
+        """Where an agent stands against a function's move-on number: one count for compile_and_diff's results,
+        the brief and release_function. The compiles of its current claim (with no claim, its last
+        STALL_LOOKBACK). Compile results once counted the agent's last compiles across claims while release_function
+        counted the claim's and said "no better in 8 compiles in a row" whatever the count was: in one project a
+        release was refused with the last 4 of 7 no better, then let through after exactly one more compile, so
+        agents spent a compile to get past the check (446 push-backs, 36 of them improved after it)."""
+        row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
+        after = stall_budget((row["n_insns"] if row else 0) or 0)
+        claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)
+        if claim is not None:
+            start = claim["claimed_at"] or 0
+            rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+                                  "ORDER BY id", function_id, agent_id, start)
+            scores = [r["score"] for r in rows]
+        else:
+            start = None
+            rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
+                                  f"LIMIT {STALL_LOOKBACK}", function_id, agent_id)
+            scores = [r["score"] for r in reversed(rows)]
+        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores), "after": after,
+                "best": min((s for s in scores if s is not None), default=None)}
+
+    def stall_note(self, function_id: int, agent_id: int) -> str:
+        """Every compile result's last line: where the agent stands against the function's move-on number and, once
+        it's reached, the nudge to release: functions that match mostly do in the first few tries, and the agent's
+        time is better spent on the next one. Big functions get longer (a quarter of Mario Party 6's agent matches
+        over 64 instructions took more than 4 compiles, and those functions hold most of the code left):
+        STALL_BUDGET. release_function lets a release through exactly when this says to move on."""
+        st = self.stall_status(function_id, agent_id)
+        if not st["compiles"]:
             return ""
-        return (f"\n\n⏭ No better in your last {since} compiles. release_function with notes (what you tried, what's "
-                "left) and claim the next one: functions that match mostly do in the first few tries, and this one "
-                "keeps your best attempt for whoever comes next.")
+        since, after = st["no_better"], st["after"]
+        if since < after:
+            return f"\n\nMove-on count: {stall_line(since, after)}."
+        return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
+                "left) goes through now; then claim the next one: functions that match mostly do in the first few "
+                "tries, and this one keeps your best attempt for whoever comes next.")
 
     def claim_progress(self, agent: Agent, fn) -> dict | None:
-        """This agent's claim on `fn` as release_function judges it: compiles since it claimed it, how many in a row
-        were no better than its best, and compile_and_diff's move-on rule (stall_note's). None: no claim."""
-        claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", fn["id"], agent.id)
-        if claim is None:
-            return None
-        start = claim["claimed_at"] or 0
-        rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
-                              "ORDER BY id", fn["id"], agent.id, start)
-        scores = [r["score"] for r in rows]
-        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores),
-                "after": stall_budget(fn["n_insns"] or 0),
-                "best": min((s for s in scores if s is not None), default=None)}
+        """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff
+        shows. None: no claim."""
+        st = self.stall_status(fn["id"], agent.id)
+        return None if st["claimed_at"] is None else st
 
     # ---------------------------------------------------------- prerequisites
 

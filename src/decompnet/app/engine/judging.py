@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from ... import scoring
-from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError
+from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError, stall_line
 from ...rom import match, split
 from ...rom.symbols import SymbolTable
 from .common import _AUTO_TOKEN, BATCH_INSNS
@@ -251,19 +251,21 @@ class JudgeMixin:
         return need
 
     def _push_back(self, agent: Agent, fn, progress: dict, project: str | None) -> str | None:
-        """What a release before the move-on rule gets instead, once per claim; None lets it through."""
+        """What a release before the move-on rule gets instead; None lets it through. One rule, compile_and_diff's
+        (stall_status: the same count, the same number): a release goes through once the function's move-on count is
+        reached, with no compile more. Before that it's pushed back once per claim, with where the agent stands; asked
+        again, it goes through. A release with no compile at all is always pushed back (agents called
+        release_function twice to get past it untried). It used to let a pushed-back release through after exactly one
+        more compile, which agents then spent on nothing (446 push-backs, 36 improved after it)."""
         if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
             return None
         n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
         if n and streak >= after:
             return None  # compile_and_diff said to move on
-        pushed = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind='release_pushed' "
-                                "AND detail=? AND created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
-        if pushed is not None and pushed["t"] is not None and self.store.one(
-                "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ?",
-                fn["id"], agent.id, pushed["t"]):
-            return None  # it compiled again after being pushed back: it goes through
-        # (asking again without a compile doesn't: agents just called release_function twice)
+        pushed = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
+                                "created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
+        if n and pushed is not None:
+            return None  # asked again after the push-back, having tried it: it goes through
         fork = self.fork_slug(project)
         try:
             exempt = self.forks.release_exempt(fork, fn) if fork else self._rom_release_exempt(fn)
@@ -276,19 +278,21 @@ class JudgeMixin:
             self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
         head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else
                 f"Not released yet: {n} compile{'s' if n != 1 else ''} of {fn['name']} since you claimed it, "
-                + (f"the last {streak} no better than your best" if streak else "the last one your best so far")
-                + f", and compile_and_diff says when to move on: no better in {after} compiles in a row.")
+                f"{stall_line(streak, after)}.")
+        x86 = self.console(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])).arch == "x86"
         lines = [head,
-                 "Compile the next step your notes name first, and act on what the diff shows: a target that reads "
-                 "`this` or a pointer from the stack ([esp+4]) and ends in `ret N` is a function taking it as a stack "
-                 "parameter (__stdcall; __cdecl with a plain `ret`), not a member function; extra or missing pushes "
-                 "or register loads around a call mean the callee's declaration (parameters, convention) differs; "
-                 "fix structure and calls first, registers last.",
+                 "Compile the next step your notes name first, and act on what the diff shows"
+                 + (": a target that reads `this` or a pointer from the stack ([esp+4]) and ends in `ret N` is a "
+                    "function taking it as a stack parameter (__stdcall; __cdecl with a plain `ret`), not a member "
+                    "function; extra or missing pushes or register loads around a call mean the callee's declaration "
+                    "(parameters, convention) differs" if x86 else "")
+                 + "; fix structure and calls first, registers last.",
                  *hints,
-                 "Compile it once more (that next step), then release_function goes through if it's still no "
-                 "better; asking again without a compile doesn't release it. If it needs another "
-                 "function done first, release_function(..., needs=\"<that function>\") records that, puts that one "
-                 "first in the queue and hands it to you."]
+                 ("Compile it (a release with no compile isn't taken)." if not n else
+                  f"release_function goes through at {after} compiles in a row without a better score, or if you "
+                  "ask again now with notes saying why it can't get closer.")
+                 + " If it needs another function done first, release_function(..., needs=\"<that function>\") "
+                 "records that, puts that one first in the queue and hands it to you."]
         return "\n".join(lines)
 
     def _rom_release_exempt(self, fn) -> str | None:
