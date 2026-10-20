@@ -16,8 +16,6 @@ import tempfile
 from importlib import resources
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW
-
 from .. import toolchains
 from ..limits import capped
 from .project import ForkError
