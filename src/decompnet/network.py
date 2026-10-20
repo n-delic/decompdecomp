@@ -13,6 +13,7 @@ import json
 import re
 import secrets
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,11 @@ STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
+REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
+# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a name, the
+# compiler, the project's files changed
+GENERATION_EVENTS = frozenset({"context", "rename", "compiler", "split", "files", "sync", "link", "import", "fork",
+                               "collab"})
 NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
 NOTES_FOUND = 20  # search_notes' answer at most
 # The agent that released a function doesn't get it back automatically for this long, or until its run ends (the
@@ -267,6 +273,17 @@ def move_on_brief(fn) -> str:
             f"each compile_and_diff result shows the count)")
 
 
+def normalized_source(source: str) -> str:
+    """Source as repeat compiles compare it: each line without its indentation and trailing spaces, no trailing
+    blank lines. Line breaks stay, so __LINE__ and the line numbers a compiler embeds can't differ, and a line
+    continuing the one before it (a backslash at its end: a string or macro going on) is kept as it is."""
+    out, cont = [], False
+    for line in source.splitlines():
+        out.append(line if cont else line.strip())
+        cont = line.rstrip().endswith("\\")
+    return "\n".join(out).rstrip("\n")
+
+
 def stall_line(since: int, after: int) -> str:
     """Where an agent stands against a function's move-on number, as every compile result and the release push-back
     word it (one wording, so the two can't seem to disagree)."""
@@ -287,6 +304,8 @@ class Network:
         self._pool = ThreadPoolExecutor(max_workers=8)
         # (agent id, function id) -> its last compile's diff rows and their legend, for last_diff
         self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
+        self._generation: dict[int, int] = {}  # project id -> changes compiles depend on (bump_generation)
+        self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
 
     # ------------------------------------------------------------------ agents
 
@@ -383,6 +402,62 @@ class Network:
     def _event(self, db, project_id, agent_id, kind, detail) -> None:
         db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                    (project_id, agent_id, kind, detail, time.time()))
+        if kind in GENERATION_EVENTS and project_id is not None:
+            self.bump_generation(project_id)
+
+    # ------------------------------------------------------- repeat compiles
+
+    def bump_generation(self, project_id: int) -> None:
+        """Something every compile of the project can depend on changed (a header, a name, the compiler, a file
+        split, an edit_file): earlier compile results no longer stand for a repeat of the same source."""
+        self._generation[project_id] = self._generation.get(project_id, 0) + 1
+
+    def compile_key(self, fn, *state: str) -> str:
+        """What a compile's result depends on besides the source: the function, the project's generation and `state`
+        (the header, the file around the function...). Sources are compared without per-line indentation and
+        trailing spaces (line numbers stay, for __LINE__)."""
+        h = hashlib.sha1(f"{fn['id']}\0{self._generation.get(fn['project_id'], 0)}".encode())
+        for part in state:
+            h.update(b"\0" + normalized_source(part).encode("utf-8", "replace"))
+        return h.hexdigest()
+
+    def repeat_of(self, key: str, agent: Agent, fn) -> dict | None:
+        """An earlier compile of the same source in the same state: its result again, marked as a repeat, without
+        building anything or counting toward the move-on number (in one project, 3,639 of 9,611 compiles were
+        byte-identical to an earlier one of the same function)."""
+        hit = self._compiled.get(key)
+        if hit is None:
+            return None
+        self._compiled.move_to_end(key)
+        who = "your" if hit["agent_id"] == agent.id else f"{self._agent_name(hit['agent_id'])}'s"
+        head = (f"🔁 REPEAT: this source is the same (indentation aside) as {who} compile #{hit['n']} of {fn['name']} "
+                f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
+                "count toward the move-on number. That compile's result:\n")
+        return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id), "score": hit["score"],
+                "matched": False, "repeat": True}
+
+    def remember_compile(self, key: str, agent: Agent, fn, text: str, score: int | None) -> None:
+        """A compile's result (without its move-on line), for repeat_of."""
+        n = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
+                           agent.id)["n"]
+        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time()}
+        while len(self._compiled) > REPEATS_KEPT:
+            self._compiled.popitem(last=False)
+
+    def same_score_note(self, fn_id: int, agent_id: int, score: int | None, source: str) -> str:
+        """When a new variant only reproduces a score an earlier, different source of this claim had: which compile
+        it equals (in one project, 21 of 56 compiles in two long sessions did, 1001 seven times on one function)."""
+        st = self.stall_status(fn_id, agent_id)
+        if score is None or st["claimed_at"] is None:
+            return ""
+        rows = self.store.all("SELECT score, source FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+                              "ORDER BY id", fn_id, agent_id, st["claimed_at"])
+        mine = normalized_source(source)
+        for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
+            if r["score"] == score and normalized_source(r["source"] or "") != mine:
+                return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
+                        "change made no difference the judge sees. Try a different kind of change.")
+        return ""
 
     def _agent_name(self, agent_id) -> str:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
@@ -733,17 +808,24 @@ class Network:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
 
         ctx = self._context(proj["id"], fn["unit"])
+        key = self.compile_key(fn, ctx["header"], str(ctx["version"]), proj["config"] or "", source)
+        if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
+            return again
         result = self._compile(proj, ctx["header"], source, fn)
 
         if not result.ok:
             self._record(fn, agent, None, source, ctx["version"])
-            return {"text": f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}", "score": None, "matched": False}
+            text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
+            self.remember_compile(key, agent, fn, text, None)
+            return {"text": text, "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
             self._record(fn, agent, None, source, ctx["version"])
-            return {"text": f"❌ Compiled, but the object has no function named `{fn['name']}`. "
-                            f"Define it with exactly that name (non-static).", "score": None, "matched": False}
+            text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
+                    f"Define it with exactly that name (non-static).")
+            self.remember_compile(key, agent, fn, text, None)
+            return {"text": text, "score": None, "matched": False}
         d = scoring.diff(self._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
@@ -772,7 +854,11 @@ class Network:
         warn = f"\ncompiler output:\n{result.log.strip()}" if result.log.strip() else ""
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
-        return {"text": f"{head}\n{d.render()}{warn}{self.stall_note(fn['id'], agent.id)}", "score": d.score, "matched": False}
+        text = f"{head}\n{d.render()}{warn}"
+        if not scratch:
+            self.remember_compile(key, agent, fn, text, d.score)
+            text += self.same_score_note(fn["id"], agent.id, d.score, source)
+        return {"text": text + self.stall_note(fn["id"], agent.id), "score": d.score, "matched": False}
 
     @staticmethod
     def _what_changed(d: scoring.DiffResult, last: int | None) -> str:

@@ -400,6 +400,8 @@ class ForkEngine:
                 log(f"{slug}: {why}; running its setup's configure step again")
                 ok, tail = fp.reconfigure(cfg.get("version"), log=log)
                 why = fp.build_problem() or (None if ok else f"its setup failed: {_tail(tail, 4)}")
+                if why is None:
+                    self.net.bump_generation(proj["id"])
             if self.get(slug)[2].get("build_problem") != why:
                 self.net._update_cfg(slug, lambda c: c.__setitem__("build_problem", why))
         return why
@@ -2120,7 +2122,22 @@ class ForkEngine:
             else:
                 after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
             after = _with_includes(after, includes, prelude)
+            # the same file as an earlier compile of this function made, nothing it depends on changed since: that
+            # compile's result, not another build
+            agents_try = keep and quiet is None and not was_matched
+            key = self.net.compile_key(fn, unit.name, after)
+            if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
+                return again
             path.write_text(after, encoding="utf-8")
+
+            def remembered(text: str, score: int | None, kept: bool = True) -> str:
+                """A result as repeat_of gives it back later (agents' tries only), plus the note when this variant
+                only reproduces an earlier score of the claim."""
+                if not agents_try:
+                    return text
+                if kept:
+                    self.net.remember_compile(key, agent, fn, text, score)
+                return text + self.net.same_score_note(fn["id"], agent.id, score, code)
 
             def undo() -> None:
                 path.write_text(before, encoding="utf-8")
@@ -2159,8 +2176,9 @@ class ForkEngine:
                 undo()
                 if quiet is None:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": f"❌ REJECTED and undone: your change breaks matched function(s) {', '.join(broken[:8])}. "
-                                "Check you replaced the right definition (overloads?) and didn't change shared code.",
+                return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
+                                           f"{', '.join(broken[:8])}. Check you replaced the right definition "
+                                           "(overloads?) and didn't change shared code.", None),
                         "score": None, "matched": False, "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
@@ -2187,9 +2205,10 @@ class ForkEngine:
                 if quiet is None:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
                 stall = self.net.stall_note(fn["id"], agent.id)
-                return {"text": f"{percent_text(pct)} match (score {score}), worse than the best so far (score {best}), "
-                                f"so {unit.source} keeps what it had; your attempt is recorded.\n{d.render()}{stall}",
-                        "score": score, "matched": False, "percent": pct}
+                text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
+                                  f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
+                                  f"{d.render()}", score)
+                return {"text": text + stall, "score": score, "matched": False, "percent": pct}
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
@@ -2216,12 +2235,12 @@ class ForkEngine:
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
-        if d.match_percent is None:
-            stall = self._missing_note(unit, fn) + stall
+        missing = self._missing_note(unit, fn) if d.match_percent is None else ""
         if d.literals:
-            return {"text": f"score {score} (0 = identical). {d.literals_note()}{stall}", "score": score, "matched": False}
-        return {"text": f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{stall}", "score": score,
-                "matched": False}
+            text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
+        else:
+            text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{missing}"
+        return {"text": remembered(text, score) + stall, "score": score, "matched": False}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "") -> str:
@@ -2278,6 +2297,7 @@ class ForkEngine:
                             return f"{c}: {res['text']}\nThat's {unit.source}'s own compiler: nothing to switch."
                         if res["matched"]:
                             kept = c
+                            self.net.bump_generation(proj["id"])  # (earlier compiles of the file aren't repeats)
                             self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "
                                                         f"it (found by {agent.name} with decompdecomp).")
                             return f"{c}: {res['text']}\n{unit.source} is built with {c} from now on."
@@ -2583,6 +2603,7 @@ class ForkEngine:
         p = fp.safe_path(path, write=True)
         if not message.strip():
             raise NetworkError("give a short message explaining the change")
+        self.net.bump_generation(proj["id"])  # (a header or shared file: compiles may come out differently now)
         if _CHEAT.search(_strip_comments(new)):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed")
         rel = Path(os.path.relpath(p, fp.root)).as_posix()
@@ -2837,6 +2858,7 @@ class ForkEngine:
                 log(f"{n} of {len(sources)} source files tried, {len(stayed)} kept their compiler")
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
             changed = console.set_own_compiler(fp, compiler, sources)
+        self.net.bump_generation(proj["id"])
         self._commit_paths(proj, fp, changed, f"Build the game with {compiler}\n\nChosen in decompdecomp's project "
                                               f"settings; {len(stayed)} source files keep the compiler they had.")
         self.net._update_cfg(slug, lambda c: c.update(compiler=compiler))
@@ -2879,6 +2901,7 @@ class ForkEngine:
                        else f"the file doesn't build with it:\n{_tail(log)}")
                 raise NetworkError(f"{source} stays with {own}: {why}")
             self._commit(proj, fp, rel, f"Build {source} with {compiler}\n\nChosen in decompdecomp's project settings.")
+            self.net.bump_generation(proj["id"])  # (the file's compiler: earlier compiles aren't repeats any more)
             for u in units:
                 self._keep_scores(proj, u, text, after[u.name])
                 self._apply_scores(proj, u.name, after[u.name], text=text)
