@@ -404,6 +404,66 @@ def test_a_function_dsd_refuses_is_dropped_with_what_points_to_it(tmp_path):
     assert f"func_{BASE + 0x10:08x}" not in (m.folder / "symbols.txt").read_text()
 
 
+def test_code_dsd_took_for_rodata_joins_text_with_its_calls(tmp_path):
+    """dsd ends .text at the last function it found: code right after it that only pointers reach was .rodata to
+    it, and calls into it from .text had no relocation (on a DS game, 45 KB and 19 calls). .text now ends where that
+    code does, its functions are found, and the calls into them relocated; the data after it stays .rodata."""
+    from decompnet.consoles.nds import recover, scratch
+
+    words = [0xE92D4000, 0xEB000000, 0xE8BD8000,  # a (dsd's): stmdb sp!, {lr}; bl d; ldmia sp!, {pc}
+             0xE3A00001, 0xE12FFF1E,  # d, past .text's end: mov r0, #1; bx lr
+             0xE3A00002, 0xE12FFF1E,  # e: mov r0, #2; bx lr
+             0x00000010, 0x00000020]  # data
+    code = b"".join(w.to_bytes(4, "little") for w in words)
+    folder = tmp_path / "config" / "v" / "arm9"
+    folder.mkdir(parents=True)
+    (folder / "symbols.txt").write_text(f"func_{BASE:08x} kind:function(arm,size=0xc) addr:{BASE:#010x}\n"
+                                        f"data_{BASE + 0xc:08x} kind:data(any) addr:{BASE + 0xc:#010x}\n"
+                                        f"data_{BASE + 0x1c:08x} kind:data(any) addr:{BASE + 0x1c:#010x}\n")
+    (folder / "relocs.txt").write_text("")
+    (folder / "delinks.txt").write_text(
+        f"    .text       start:{BASE:#010x} end:{BASE + 0xc:#010x} kind:code align:32\n"
+        f"    .rodata     start:{BASE + 0xc:#010x} end:{BASE + 0x24:#010x} kind:rodata align:4\n\n"
+        f"src/auto/main_{BASE:08X}.c:\n    .text start:{BASE:#010x} end:{BASE + 0xc:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, code, [(BASE, BASE + 0xc)], covered=bytearray(len(code)),
+                       rodata=(BASE + 0xc, BASE + 0x24))
+    m.symbol_lines = (folder / "symbols.txt").read_text().splitlines()
+    m.symbols |= {BASE, BASE + 0xc, BASE + 0x1c}
+    m.functions[BASE] = (0xc, False)
+    m.cover(BASE, 0xc)
+    m.dsds = bytes(m.covered)
+
+    assert recover.extend_text(m, log=lambda *_: None) == 0x10 and m.text == [(BASE, BASE + 0x1c)]
+    recover.find_functions([m], log=lambda *_: None)
+    assert m.added == {BASE + 0xc: (8, False, True), BASE + 0x14: (8, False, True)}
+    recover.relocations([m])
+    assert m.relocs[BASE + 4] == f"from:{BASE + 4:#010x} kind:arm_call to:{BASE + 0xc:#010x} module:main"
+    recover.write([m])
+    head = (folder / "delinks.txt").read_text().split("\n\n")[0]
+    assert f".text       start:{BASE:#010x} end:{BASE + 0x1c:#010x}" in head
+    assert f".rodata     start:{BASE + 0x1c:#010x} end:{BASE + 0x24:#010x}" in head
+    symbols = (folder / "symbols.txt").read_text()
+    assert f"data_{BASE + 0xc:08x}" not in symbols and f"data_{BASE + 0x1c:08x}" in symbols  # code now, and data
+
+    (tmp_path / "src" / "auto").mkdir(parents=True)  # the code .text gained gets a source file of its own
+    assert scratch.add_sources(tmp_path, "v") == [f"src/auto/main_{BASE + 0xc:08X}.c"]
+    assert f"src/auto/main_{BASE + 0xc:08X}.c:\n    .text start:{BASE + 0xc:#010x} end:{BASE + 0x1c:#010x}" in \
+        (folder / "delinks.txt").read_text()
+    assert '#include "common.h"' in (tmp_path / "src" / "auto" / f"main_{BASE + 0xc:08X}.c").read_text()
+    assert scratch.add_sources(tmp_path, "v") == []
+
+
+def test_code_after_text_that_nothing_calls_stays_rodata(tmp_path):
+    from decompnet.consoles.nds import recover
+
+    code = b"".join(w.to_bytes(4, "little") for w in [0xE12FFF1E, 0xE3A00001, 0xE12FFF1E, 0x10, 0x20])
+    m = recover.Module("main", "main", tmp_path, BASE, code, [(BASE, BASE + 4)], covered=bytearray(len(code)),
+                       rodata=(BASE + 4, BASE + 0x14))
+    m.functions[BASE] = (4, False)
+    m.cover(BASE, 4)
+    assert recover.extend_text(m, log=lambda *_: None) == 0 and m.text == [(BASE, BASE + 4)]
+
+
 def test_a_project_is_analysed_again_and_says_so(per_file):
     """A console's better analysis reaches projects made before it (Console.on_start): what it found is in the
     project's feed, and an analysis that fails leaves the project as it was."""
@@ -428,6 +488,18 @@ def test_a_project_is_analysed_again_and_says_so(per_file):
         raise ForkError("dsd refused it")
     assert net.forks.reanalyse(slug, tools_broken, paths=("config", "tools"), log=lambda *_: None) is None
     assert (root / "tools" / "reference" / "game.c").read_text() == "/* fixed */\n"
+
+    def sources(fp):  # files a step adds (source files for code it found) go with it: kept, or taken back
+        (fp.root / "src" / "found.c").write_text("/* new */\n")
+        return "a new source file"
+    assert net.forks.reanalyse(slug, sources, log=lambda *_: None) == "a new source file"
+    assert ForkProject(root).git("ls-files", "src/found.c")[1] == "src/found.c"
+
+    def sources_broken(fp):
+        (fp.root / "src" / "half.c").write_text("/* half */\n")
+        raise ForkError("dsd refused it")
+    assert net.forks.reanalyse(slug, sources_broken, log=lambda *_: None) is None
+    assert not (root / "src" / "half.c").exists()
 
 
 def test_an_older_projects_build_tools_get_the_fixes_and_keep_its_settings(tmp_path):

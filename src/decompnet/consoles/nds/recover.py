@@ -15,8 +15,13 @@ ds-decomp's own answer is to add them to symbols.txt by hand. This does that for
   an ARM tail call) and pool words pointing to a symbol (load). A load dsd's scan of the gap as data put on what is
   an instruction goes, and pointers elsewhere to a new ARM function get their load.
 
+dsd also ends .text at the last function it found, so code past it reached only through pointers was .rodata to
+it (about 45 KB on a DS game, called from .text 42 times). Where functions start right at .text's end and run on,
+and code dsd knows calls into them, .text ends where they do (extend_text) and its gap is searched like the others.
+
 Every source file keeps its range (delinks.txt): a project's work stays where it is, and the rebuilt ROM is the
-same bytes, the delinked objects only say more about them.
+same bytes, the delinked objects only say more about them. Code that .text gains gets source files of its own
+(scratch.add_sources).
 """
 
 from __future__ import annotations
@@ -63,6 +68,9 @@ class Module:
     dsds: bytes = b""  # 1 for each byte in a function dsd found (covered, before this added any)
     symbol_lines: list[str] = field(default_factory=list)  # symbols.txt as dsd wrote it
     refusals: list[str] = field(default_factory=list)  # what dsd said of the functions it refused
+    rodata: tuple[int, int] | None = None  # .rodata, when it starts where .text ends
+    extended: tuple[int, int] | None = None  # (dsd's end of .text, its end now): code dsd took for .rodata
+    dropped: set[int] = field(default_factory=set)  # dsd's data symbols in that code, taken out
 
     def cover(self, start: int, size: int, value: int = 1) -> None:
         self.covered[start - self.base:start - self.base + size] = bytes([value]) * size
@@ -114,6 +122,7 @@ def load_modules(config: Path, extract: Path) -> list[Module]:
         code = binary.read_bytes()
         m = Module(name, kind, folder, min(a for a, _, _ in sections), code,
                    [(a, b) for a, b, k in sections if k == "code" and b > a], covered=bytearray(len(code)))
+        m.rodata = next(((a, b) for a, b, k in sections if k == "rodata" and m.text and a == m.text[-1][1] < b), None)
         m.symbol_lines = (folder / "symbols.txt").read_text(encoding="utf-8").splitlines()
         for line in m.symbol_lines:
             if not (s := SYMBOL.match(line)):
@@ -241,14 +250,62 @@ def _starts_like_code(m: Module, addr: int, thumb: bool) -> bool:
     return True
 
 
+def extend_text(m: Module, log=print) -> int:
+    """End .text where the code right after it ends, when dsd took that code for .rodata: functions follow one
+    another from .text's end (an ARM one's end told from its code; one that can't be told runs to the next
+    prologue), and a function in .text calls into them. Returns the bytes .text gained."""
+    if m.rodata is None:
+        return 0
+    start, bound = m.text[-1][1], m.rodata[1]
+    known = [(a, s, t) for a, (s, t) in m.functions.items()] + [(a, s, t) for a, (s, t, _) in m.added.items()]
+    calls = {target & ~1 for a, s, t in known if m.in_text(a)
+             for _, target, _ in parse(m, a, a + s, t).calls if start <= target & ~1 < bound}
+    cursor = start
+    while cursor < bound and _starts_like_code(m, cursor, False):
+        p = parse(m, cursor, bound, False)
+        if p.illegal or p.end <= cursor:
+            break
+        if p.sure:
+            cursor = (p.end + 3) & ~3
+            continue
+        # shortcut: ARM only, as the code this was made for; Thumb code past .text stays .rodata
+        nxt = next((a for a in range(cursor + 4, min(bound, cursor + 0x4000), 4) if int.from_bytes(
+            m.code[a - m.base:a - m.base + 4], "little") & ARM_PROLOGUE_MASK == ARM_PROLOGUE), None)
+        if nxt is None:
+            break
+        cursor = nxt
+    words = struct.unpack_from(f"<{(cursor - start) // 4}I", m.code, start - m.base)
+    if not any(start <= c < cursor for c in calls) or sum(w >> 28 == 0xE for w in words) < 0.6 * len(words):
+        return 0  # not reached from code dsd knows, or not code enough: .rodata it stays
+    m.extended = (start, cursor)
+    m.text[-1] = (m.text[-1][0], cursor)
+    m.rodata = (cursor, m.rodata[1])
+    m.dropped = {a for a in m.symbols if start <= a < cursor and a not in m.functions}
+    m.symbols -= m.dropped
+    m.symbol_lines = [ln for ln in m.symbol_lines if not ((s := SYMBOL.match(ln)) and int(s.group(4), 16) in m.dropped)]
+    m.cover(start, cursor - start, 0)
+    dsds = bytearray(m.dsds)  # no function dsd found is there (what was, its data symbols, is gone)
+    dsds[start - m.base:cursor - m.base] = bytes(cursor - start)
+    m.dsds = bytes(dsds)
+    log(f"{m.name}: {cursor - start:#x} bytes of code past the end dsd gave .text")
+    return cursor - start
+
+
 def find_functions(modules: list[Module], log=print) -> int:
     """Fill each module's `added` with the functions its .text gaps hold. Returns how many."""
     words = _word_values(modules)
+    # calls from the functions known (dsd's, and those found before .text grew): inside .text dsd made each target a
+    # function, but not past its end
+    calls = [(src, target & ~1, thumb != (mnem == "blx")) for src in modules
+             for a, (s, thumb) in [*src.functions.items(), *((a, (s, t)) for a, (s, t, _) in src.added.items())]
+             if s and src.in_text(a) for _, target, mnem in parse(src, a, a + s, thumb).calls]
     for m in modules:
         if not m.text:
             continue
         candidates = {(v & ~1, bool(v & 1)) for src, _, v in words
                       if (src is m or src.kind in FIXED_MODULES or m.kind in FIXED_MODULES) and m.gap_at(v & ~1)}
+        candidates |= {(target, thumb) for src, target, thumb in calls
+                       if (src is m or m.kind in FIXED_MODULES) and m.gap_at(target)}
         for a, b in m.text:
             for addr in range(a, b - 1, 2):
                 at = addr - m.base
@@ -341,6 +398,14 @@ def _target(modules: list[Module], m: Module, addr: int) -> Module | None:
 def relocations(modules: list[Module]) -> int:
     """Relocs for the functions each module gained and the pointers to them. Returns how many changed."""
     changed = 0
+    for x in modules:  # dsd wants a symbol at every target: a data symbol that was code and is no function
+        for at, line in list(x.relocs.items()):
+            r = RELOC.match(line)
+            dest = next((m for m in modules if m.kind == line.rsplit("module:", 1)[-1]), None)
+            if r and dest and (v := int(r.group(3), 16)) in dest.dropped and v not in dest.added:
+                del x.relocs[at]
+                x.changed = True
+                changed += 1
     for m in modules:
         for start, (size, thumb, _) in m.added.items():
             p = parse(m, start, start + size, thumb)
@@ -350,22 +415,10 @@ def relocations(modules: list[Module]) -> int:
                     m.changed = True
                     changed += 1
             for at, target, mnem in p.calls:
-                dest = _target(modules, m, target & ~1)
-                if dest is None or at in m.relocs or (dest_thumb := dest.thumb_of(target & ~1)) is None:
-                    continue
-                if dest_thumb != (thumb != (mnem == "blx")):  # a call that can't reach code of that mode: one of
-                    continue  # the modes is a wrong guess, and the linker would add a veneer for it (the ROM grows)
-                if mnem == "b":
-                    if thumb or dest_thumb:
-                        continue  # only an ARM tail call to ARM has a kind of its own
-                    kind = "arm_branch"
-                elif thumb:
-                    kind = "thumb_call_arm" if mnem == "blx" else "thumb_call"
-                else:
-                    kind = "arm_call_thumb" if mnem == "blx" else "arm_call"
-                m.relocs[at] = f"from:{at:#010x} kind:{kind} to:{target & ~1:#010x} module:{dest.kind}"
-                m.changed = True
-                changed += 1
+                if (line := _call(modules, m, at, target, mnem, thumb)) and at not in m.relocs:
+                    m.relocs[at] = line
+                    m.changed = True
+                    changed += 1
             for at in sorted(p.pools):
                 v = int.from_bytes(m.code[at - m.base:at - m.base + 4], "little")
                 # shortcut: a pointer to a Thumb function (bit 0 set) stays a plain word, as dsd leaves it; it
@@ -375,6 +428,18 @@ def relocations(modules: list[Module]) -> int:
                 m.relocs[at] = f"from:{at:#010x} kind:load to:{v:#010x} module:{dest.kind}"
                 m.changed = True
                 changed += 1
+    # calls into the new functions from the ones there were (code dsd took for .rodata, which it never related)
+    for m in modules:
+        for start, (size, thumb) in m.functions.items():
+            if not m.in_text(start) or not size:
+                continue
+            for at, target, mnem in parse(m, start, start + size, thumb).calls:
+                dest = _target(modules, m, target & ~1)
+                if at not in m.relocs and dest and target & ~1 in dest.added and (
+                        line := _call(modules, m, at, target, mnem, thumb)):
+                    m.relocs[at] = line
+                    m.changed = True
+                    changed += 1
     # a new ARM function's address in data (a table of functions) or in a new function's code: a load of it. Not in
     # a function dsd knew: agents matched those with the address as a number (no symbol was there), and objdiff
     # takes a plain word in the original for either a number or a symbol, but not a relocation for a number
@@ -391,6 +456,25 @@ def relocations(modules: list[Module]) -> int:
     return changed
 
 
+def _call(modules: list[Module], m: Module, at: int, target: int, mnem: str, thumb: bool) -> str | None:
+    """The relocation, as dsd writes it, of a call at `at` in `m` (code of `thumb`'s mode) to `target`; None when
+    nothing a relocation can name is there."""
+    dest = _target(modules, m, target & ~1)
+    if dest is None or (dest_thumb := dest.thumb_of(target & ~1)) is None:
+        return None
+    if dest_thumb != (thumb != (mnem == "blx")):  # a call that can't reach code of that mode: one of
+        return None  # the modes is a wrong guess, and the linker would add a veneer for it (the ROM grows)
+    if mnem == "b":
+        if thumb or dest_thumb:
+            return None  # only an ARM tail call to ARM has a kind of its own
+        kind = "arm_branch"
+    elif thumb:
+        kind = "thumb_call_arm" if mnem == "blx" else "thumb_call"
+    else:
+        kind = "arm_call_thumb" if mnem == "blx" else "arm_call"
+    return f"from:{at:#010x} kind:{kind} to:{target & ~1:#010x} module:{dest.kind}"
+
+
 def _in_a_pool(m: Module, addr: int) -> bool:
     """Whether `addr`, inside a function, is a word of its literal pool rather than an instruction."""
     known = {**{a: (s, t) for a, (s, t) in m.functions.items()}, **{a: (s, t) for a, (s, t, _) in m.added.items()}}
@@ -402,6 +486,14 @@ def write(modules: list[Module]) -> list[Path]:
     """symbols.txt and relocs.txt of each module that changed, by address as dsd keeps them."""
     out = []
     for m in modules:
+        if m.extended:
+            old, new = (f"{a:#010x}" for a in m.extended)
+            delinks = (m.folder / "delinks.txt").read_text(encoding="utf-8")
+            head, rest = delinks.split("\n\n", 1) if "\n\n" in delinks else (delinks, "")
+            head = re.sub(rf"^(\s+\.text\s+start:\S+ end:){old}", rf"\g<1>{new}", head, count=1, flags=re.M)
+            head = re.sub(rf"^(\s+\.rodata\s+start:){old}", rf"\g<1>{new}", head, count=1, flags=re.M)
+            (m.folder / "delinks.txt").write_text(head + ("\n\n" + rest if rest else ""), encoding="utf-8")
+            out.append(m.folder / "delinks.txt")
         if not m.added:
             if m.changed:
                 (m.folder / "relocs.txt").write_text("\n".join(m.relocs[k] for k in sorted(m.relocs)) + "\n",
@@ -453,8 +545,12 @@ def recover(root: Path, version: str, dsd: str | None = None, log=print) -> dict
     them. Returns what it found."""
     modules = load_modules(root / "config" / version / "arm9", root / "extract" / version)
     found = find_functions(modules, log=log)
-    changed = relocations(modules) if found else 0
-    files = write(modules) if found else []
+    if sum(extend_text(m, log=log) for m in modules):  # the calls into that code may come from functions just found
+        found = find_functions(modules, log=log)
+    grew = any(m.extended for m in modules)
+    changed = relocations(modules) if found or grew else 0
+    files = write(modules) if found or grew else []
     refused = check_with_dsd(root, version, dsd, modules, log=log) if dsd and found else 0
     return {"functions": sum(len(m.added) for m in modules), "relocations": changed, "refused": refused,
+            "extended": {m.name: m.extended for m in modules if m.extended},
             "files": [p.relative_to(root).as_posix() for p in files]}

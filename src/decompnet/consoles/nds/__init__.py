@@ -47,8 +47,9 @@ class NintendoDS(Console):
     usual = "DS/2.0/sp1p5"  # what most of its games were built with: the default until the game says otherwise
     # what a project's config holds, in its manifest's "analysis": 1 dsd's own analysis, 2 with the functions it
     # misses (recover.py), 3 its build tools brought up to date too (scratch.write_tools: dead stripping dropped
-    # overlays holding only data). A project with less gets the rest when the app starts
-    ANALYSIS = 3
+    # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text). A project with less
+    # gets the rest when the app starts
+    ANALYSIS = 4
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -77,9 +78,9 @@ class NintendoDS(Console):
         return scratch.tool_args()
 
     def on_start(self, net, slug: str, log=print) -> None:
-        """A project made by an older decompdecomp gets, once, the functions dsd's analysis missed (recover.py) and
-        its build tools' fixes (scratch.write_tools), through forkengine.reanalyse: checked by the rebuild, taken back
-        if that breaks."""
+        """A project made by an older decompdecomp gets, once, its build tools' fixes (scratch.write_tools) and the
+        functions dsd's analysis missed (recover.py: in .text's gaps and past its end), through forkengine.reanalyse:
+        checked by the rebuild, taken back if that breaks."""
         from . import recover, scratch
 
         if not net.fork_slug(slug):
@@ -93,13 +94,16 @@ class NintendoDS(Console):
             return ("its build has the fixes decompdecomp's has had since the project was made"
                     if scratch.write_tools(fp.root) else None)
 
-        def functions(fp):
+        def functions(fp):  # again on a project that has them: what it adds is the code past .text's old end
             found = recover.recover(fp.root, manifest["version"], dsd=scratch.dsd_path(), log=log)
-            return (f"{found['functions']} functions dsd's analysis had missed (only pointers reach them) are in its "
-                    "source files now" if found["functions"] else None)
+            files = scratch.add_sources(fp.root, manifest["version"])
+            said = [f"{found['functions']} functions dsd's analysis had missed (only pointers reach them) are in its "
+                    "source files now"] if found["functions"] else []
+            if files:
+                said.append(f"{len(files)} new source files hold the code dsd took for data past the end of .text")
+            return "; ".join(said) or None
         net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
-        if manifest.get("analysis", 1) < 2:
-            net.forks.reanalyse(slug, functions, log=log)
+        net.forks.reanalyse(slug, functions, log=log)
         now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")

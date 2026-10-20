@@ -197,13 +197,15 @@ def _modules(config: Path) -> list[tuple[str, Path]]:
     return out
 
 
-def _units(module: Path) -> list[tuple[int, int, int]]:
-    """(start, end, functions) of the source files for a module's .text: runs of functions of about UNIT_BYTES that
-    together cover the whole section (bytes between functions go with the file before them; a stray piece on its own
-    could be dead-stripped by the linker)."""
+def _units(module: Path, since: int | None = None) -> list[tuple[int, int, int]]:
+    """(start, end, functions) of the source files for a module's .text (from `since`): runs of functions of about
+    UNIT_BYTES that together cover the whole section (bytes between functions go with the file before them; a stray
+    piece on its own could be dead-stripped by the linker)."""
     delinks = (module / "delinks.txt").read_text(encoding="utf-8")
     text = next(((int(s, 16), int(e, 16)) for name, s, e in _SECTION.findall(delinks.split("\n\n")[0]) if name == ".text"),
                 None)
+    if text is not None and since is not None:
+        text = (since, text[1]) if since < text[1] else None
     if text is None:
         return []
     symbols = (module / "symbols.txt").read_text(encoding="utf-8")
@@ -226,6 +228,34 @@ def _units(module: Path) -> list[tuple[int, int, int]]:
     starts = [text[0]] + [u[0] for u in units[1:]]
     ends = [u[0] for u in units[1:]] + [text[1]]
     return [(a, b, u[2]) for a, b, u in zip(starts, ends, units)]
+
+
+def _write_sources(prefix: str, module: Path, root: Path, units: list[tuple[int, int, int]]) -> list[str]:
+    """Each unit's source file, empty but for its header, in the module's delinks.txt."""
+    lines = (module / "delinks.txt").read_text(encoding="utf-8").rstrip("\n") + "\n"
+    names = []
+    for start, end, count in units:
+        name = f"src/auto/{prefix}_{start:08X}.c"
+        lines += f"\n{name}:\n    .text start:0x{start:08x} end:0x{end:08x}\n"
+        src = root / name
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text(f"/* {count} function{'s' if count != 1 else ''} from 0x{start:08X} to 0x{end:08X} "
+                       f"({prefix}), found by ds-decomp. */\n#include \"common.h\"\n", encoding="utf-8")
+        names.append(name)
+    (module / "delinks.txt").write_text(lines, encoding="utf-8")
+    return names
+
+
+def add_sources(root: Path, version: str) -> list[str]:
+    """Source files for the code a module's .text gained past its last one (recover.extend_text). Returns them."""
+    names = []
+    for prefix, module in _modules(root / "config" / version):
+        ends = [int(e, 16) for e in re.findall(r"^\s+\.text start:0x[0-9a-f]+ end:(0x[0-9a-f]+)",
+                                               (module / "delinks.txt").read_text(encoding="utf-8").split("\n\n", 1)[-1],
+                                               re.M)]
+        if ends:
+            names += _write_sources(prefix, module, root, _units(module, since=max(ends)))
+    return names
 
 
 def _init(dsd: str, root: Path, version: str, log) -> None:
@@ -297,19 +327,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     sources = []
     for prefix, module in _modules(root / "config" / version):
-        units = _units(module)
-        if not units:
-            continue
-        lines = (module / "delinks.txt").read_text(encoding="utf-8").rstrip("\n") + "\n"
-        for start, end, count in units:
-            name = f"src/auto/{prefix}_{start:08X}.c"
-            lines += f"\n{name}:\n    .text start:0x{start:08x} end:0x{end:08x}\n"
-            src = root / name
-            src.parent.mkdir(parents=True, exist_ok=True)
-            src.write_text(f"/* {count} function{'s' if count != 1 else ''} from 0x{start:08X} to 0x{end:08X} "
-                           f"({prefix}), found by ds-decomp. */\n#include \"common.h\"\n", encoding="utf-8")
-            sources.append(name)
-        (module / "delinks.txt").write_text(lines, encoding="utf-8")
+        if units := _units(module):
+            sources += _write_sources(prefix, module, root, units)
     log(f"{len(sources)} source files for agents to write into")
     compilers_file(root, version).write_text("{}\n", encoding="utf-8")
 
@@ -325,7 +344,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "nds", "version": version, "compiler": f"DS/{compiler}",
-        "analysis": 3,  # (consoles/nds: NintendoDS.ANALYSIS)
+        "analysis": 4,  # (consoles/nds: NintendoDS.ANALYSIS)
         "game": {"what": "your copy of the game (.nds)", "path": "extract/baserom.nds", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,

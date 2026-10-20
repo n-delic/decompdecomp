@@ -579,7 +579,8 @@ class ForkEngine:
     def reanalyse(self, slug: str, step, paths=("config",), fix=False, log=print) -> str | None:
         """A console's improved analysis of its games, applied to a project made before it (Console.on_start): `step`
         changes the project's `paths` (its config, its build tools; its source files keep their ranges, so the work in
-        them stays) and says what it found, as a sentence, or None when there's nothing to change. The project is set up again and, where the
+        them stays) and may add files (source files for code it found), and says what it found, as a sentence, or None
+        when there's nothing to change. The project is set up again and, where the
         console checks its rebuild, the game rebuilt: a rebuild identical before and not after takes the change back,
         and so does one that differs otherwise than before, unless `fix` (a fix to its build, which may mend part).
         The project's feed says what happened. Returns the sentence (None: nothing changed)."""
@@ -589,12 +590,22 @@ class ForkEngine:
         version = (fp.manifest or {}).get("version") or cfg.get("version")
         checks = cfg.get("origin") == "scratch" and consoles.REBUILD_CHECK in console.features
         paths = [p for p in paths if (fp.root / p).exists()]  # git refuses a path the project hasn't
+        def untracked() -> set[str]:
+            ok, out = fp.git("ls-files", "-z", "--others", "--exclude-standard")
+            return set(out.split("\0")) - {""} if ok else set()
+
+        def undo() -> None:  # the files the step added go too (agents can't add any: the tree is the step's)
+            fp.git("checkout", "HEAD", "--", *paths)
+            for rel in untracked() - there:
+                (fp.root / rel).unlink(missing_ok=True)
+
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
             before = (fp.manifest or {}).get("rebuild") or {}
+            there = untracked()
             try:
                 said = step(fp)
             except (ForkError, NetworkError, OSError) as e:
-                fp.git("checkout", "HEAD", "--", *paths)
+                undo()
                 said, kept = f"a new analysis of the game couldn't be applied, and the project stays as it was: {e}", False
             else:
                 if said is None:
@@ -605,7 +616,7 @@ class ForkEngine:
                 kept = all(setup) and (not checks or after.get("identical") or not before.get("identical") and (
                     fix or after.get("detail") == before.get("detail")))
                 if not kept:
-                    fp.git("checkout", "HEAD", "--", *paths)
+                    undo()
                     for cmd in fp.setup_commands(version):
                         fp.run(cmd, log=log)
                     said = (f"a new analysis of the game ({said}) was taken back: the game "
@@ -615,8 +626,8 @@ class ForkEngine:
                         manifest = json.loads((fp.root / ".decomp.wtf.json").read_text(encoding="utf-8"))
                         manifest["rebuild"] = after | {"t": time.time()}
                         (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-                    if paths:  # (none: `git commit --` would take whatever else is staged)
-                        self._commit_paths(proj, fp, paths, f"Analyse the game again: {said}\n\nBy decompdecomp.")
+                    if added := paths + sorted(untracked() - there):  # (none: `git commit --` takes what's staged)
+                        self._commit_paths(proj, fp, added, f"Analyse the game again: {said}\n\nBy decompdecomp.")
         if kept:
             self.sync(slug, log=log)
         with self.net.store.tx() as db:

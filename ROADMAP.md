@@ -65,7 +65,9 @@ Where to start on a gap:
   reached 100%. `consoles/nds/recover.py` finds them by their starts, adds their calls and pointers, and drops what
   dsd refuses to delink: 1,784 more functions in that game, every match kept. Projects made before it get them once
   when the app starts (`ForkEngine.reanalyse`): kept only when the rebuilt ROM is unchanged, and the project's
-  activity says so. Still open: code past the main program's `.text` that dsd labels `.rodata`.
+  activity says so. dsd also ended `.text` at the last function it found, and the 45 KB of code after it was
+  `.rodata` to it, its 19 calls from `.text` unrelocated: `.text` now ends where that code does
+  (`recover.extend_text`), with 207 more functions and 13 source files of their own. 2,987 functions in all.
 - **A DS game rebuilt byte for byte.** The link stripped what nothing points at, and nothing points at an overlay
   holding only data (the game loads it by number): those came out empty, every overlay after them moved, and the
   rebuild differed in 209 overlays and every pointer to them. It links everything now (`-nodead`), and the header
