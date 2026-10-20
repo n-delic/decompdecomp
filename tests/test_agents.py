@@ -210,6 +210,18 @@ def test_claude_offers_each_version_as_well_as_the_latest():
     assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
 
 
+def test_claude_helpers_think_as_hard_as_the_launcher_says(tmp_path):
+    """The launcher sends an effort with the model's name ("opus#xhigh", as for opencode); Claude Code takes it as
+    --effort, and an effort-less helper gets none (the model's default)."""
+    claude = kinds.get("claude")
+    assert claude.describe()["takes_effort"] and "xhigh" in claude.describe()["efforts"]
+    cmd, _ = claude.session_command("claude", tmp_path, URL, "token", "opus#xhigh")
+    assert cmd[-4:] == ["--model", "opus", "--effort", "xhigh"]
+    cmd, _ = claude.session_command("claude", tmp_path, URL, "token", "opus")
+    assert cmd[-2:] == ["--model", "opus"] and "--effort" not in cmd
+    assert agents.helper_name("claude", "opus#xhigh", set()) == "claude-opus-xhigh-1"  # a record of its own
+
+
 # ---------------------------------------------------------------------------------- helpers as records
 
 URL = "http://127.0.0.1:1/mcp"

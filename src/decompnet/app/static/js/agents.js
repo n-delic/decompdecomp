@@ -119,8 +119,11 @@ $("stopAll").onclick = async () => {
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
 const LZ = { kind: null, model: "", count: 1, per: null, effort: "", task: "" };
-// an agent that takes an effort (opencode 2) picks it as a variant of the model: provider/model#high
-const withEffort = (a, model) => (a.takes_effort && LZ.effort && model ? `${model.split("#")[0]}#${LZ.effort}` : model);
+const EFFORT_NAMES = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+// an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
+// launcher keeps the last one picked, which another agent may not offer (Claude Code's xhigh)
+const effortOf = (a) => (a.takes_effort && (a.efforts || []).includes(LZ.effort) ? LZ.effort : "");
+const withEffort = (a, model) => (effortOf(a) && model ? `${model.split("#")[0]}#${effortOf(a)}` : model);
 function launcherInit() {
   if (LZ.kind || !S.st) return;
   const l = S.st.settings.launcher || {};
@@ -153,7 +156,7 @@ function launchLabel(a, model, count) {
     if (picked.length > 1) return `Start ${count} across ${picked.length} endpoints`;
     return `Start ${picked[0] ? picked[0].name : "API model"}${count > 1 ? ` × ${count}` : ""}`;
   }
-  return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${a.takes_effort && LZ.effort && model ? ` · ${LZ.effort}` : ""}${count > 1 ? ` × ${count}` : ""}`;
+  return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${effortOf(a) && model ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : ""}${count > 1 ? ` × ${count}` : ""}`;
 }
 
 async function startAgents(a, model, count, btn, extra = {}) {
@@ -161,7 +164,7 @@ async function startAgents(a, model, count, btn, extra = {}) {
   try {
     const options = { ...extra };
     if (model && !a.uses_endpoints) options.model = withEffort(a, model);
-    if (a.takes_effort && LZ.effort && !model) throw new Error("pick a model to set its effort");
+    if (effortOf(a) && !model) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
@@ -212,7 +215,7 @@ function renderLauncher(box, compact = true) {
     body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${known && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
         <option value="__other" ${known ? "" : "selected"}>Another model…</option></select></label>
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>
-      ${a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["max", "Max"]].map(([v, l]) => `<option value="${v}" ${LZ.effort === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
+      ${a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : ""}`;
   }
   const ready = a.installed;
   // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches

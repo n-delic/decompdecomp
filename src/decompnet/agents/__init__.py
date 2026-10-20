@@ -59,6 +59,7 @@ class Agent:
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
     takes_effort = False  # the launcher offers a reasoning effort, sent with the model's name ("provider/model#high")
+    efforts: tuple[str, ...] = ("low", "medium", "high", "max")  # the efforts it offers, when it takes one
 
     def __repr__(self) -> str:
         return f"<agent {self.id}>"
@@ -67,7 +68,7 @@ class Agent:
         """What the GUI shows about it, before what app/agents.py `detect` finds out (installed, version, models)."""
         return {"id": self.id, "name": self.name, "vendor": self.vendor, "signin": self.signin, "docs": self.docs,
                 "install": self.install, "recommended": self.recommended, "uses_endpoints": self.uses_endpoints,
-                "takes_effort": self.takes_effort}
+                "takes_effort": self.takes_effort, "efforts": list(self.efforts)}
 
     def label(self, name: str, options: dict, used: set[str]) -> str:
         """What the GUI calls a helper of it (`name`: its identity; `used`: the labels its working helpers have)."""
