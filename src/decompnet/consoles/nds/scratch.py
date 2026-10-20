@@ -76,6 +76,11 @@ def versions() -> list[str]:
     return sorted(p.parent.relative_to(base).as_posix() for p in base.glob("*/*/mwccarm.exe"))
 
 
+def dsd_path() -> str:
+    toolchains.ensure("dsd", log=lambda *_: None)
+    return str(toolchains.binary("dsd"))
+
+
 def tool_args() -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools."""
     toolchains.ensure("dsd", log=lambda *_: None)
@@ -265,6 +270,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
          "extracting the ROM")
     log("analysing the ARM9 program, its autoloads and overlays (dsd init)")
     _init(dsd, root, version, log)
+    from . import recover
+
+    log("finding the functions dsd's analysis missed (functions only pointers reach)")
+    recover.recover(root, version, dsd=dsd, log=log)
 
     sources = []
     for prefix, module in _modules(root / "config" / version):
@@ -296,6 +305,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "nds", "version": version, "compiler": f"DS/{compiler}",
+        "analysis": 2,  # (consoles/nds: NintendoDS.ANALYSIS)
         "game": {"what": "your copy of the game (.nds)", "path": "extract/baserom.nds", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,

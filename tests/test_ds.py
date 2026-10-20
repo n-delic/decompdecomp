@@ -335,3 +335,84 @@ def test_start_up_code_that_sets_the_cpus_mode_is_hand_written():
     assert "msr" in arm.asm_reason(msr, thumb=False) and "p15" in arm.asm_reason(mcr, thumb=False)
     assert arm.asm_reason(msr, thumb=True) is None and arm.asm_reason(msr) is None  # Thumb, or not known
     assert arm.asm_reason(words(0xE0800001, 0xE12FFF1E) + bytes(16), thumb=False) is None  # add r0, r0, r1: C
+
+
+BASE = 0x02100000
+
+
+def _module(tmp_path):
+    """A main program dsd half read: it found `a` (bx lr) but not `b` (it calls a, and nothing calls it), nor `c`
+    (a leaf only a pointer in data reaches); after them, data whose bytes look like a Thumb push."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE12FFF1E,  # a: bx lr
+             0xE92D4000, 0xEBFFFFFC, 0xE8BD8000,  # b: stmdb sp!, {lr}; bl a; ldmia sp!, {pc}
+             0xE3A00001, 0xE12FFF1E,  # c: mov r0, #1; bx lr
+             0, 0xB50C0000]  # data: 0000, then 0xB50C (push {r2, r3, lr}) and more zeros
+    code = b"".join(w.to_bytes(4, "little") for w in words) + bytes(8)
+    code += (BASE + 0x10).to_bytes(4, "little")  # .data: a pointer to c
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    (folder / "symbols.txt").write_text(f"func_{BASE:08x} kind:function(arm,size=0x4) addr:{BASE:#010x}\n")
+    (folder / "relocs.txt").write_text("")
+    m = recover.Module("main", "main", folder, BASE, code, [(BASE, BASE + 0x28)], covered=bytearray(len(code)))
+    m.symbol_lines = (folder / "symbols.txt").read_text().splitlines()
+    m.symbols.add(BASE)
+    m.functions[BASE] = (4, False)
+    m.cover(BASE, 4)
+    m.dsds = bytes(m.covered)  # (as load_modules: what dsd found)
+    return m
+
+
+def test_the_functions_dsd_misses_are_found_with_their_calls(tmp_path):
+    """dsd parses a module's functions one after another until a pointer to data stops it, then follows calls: a
+    function only a pointer reaches, and what it calls, stayed in no function (more than half of a DS game's code)."""
+    from decompnet.consoles.nds import recover
+
+    m = _module(tmp_path)
+    assert recover.find_functions([m], log=lambda *_: None) == 2
+    assert m.added == {BASE + 4: (12, False, True), BASE + 0x10: (8, False, True)}  # not the data's "push"
+    recover.relocations([m])
+    assert m.relocs[BASE + 8] == f"from:{BASE + 8:#010x} kind:arm_call to:{BASE:#010x} module:main"
+    assert m.relocs[BASE + 0x28] == f"from:{BASE + 0x28:#010x} kind:load to:{BASE + 0x10:#010x} module:main"
+    recover.write([m])
+    symbols = (m.folder / "symbols.txt").read_text().splitlines()
+    assert symbols == [f"func_{BASE:08x} kind:function(arm,size=0x4) addr:{BASE:#010x}",
+                       f"func_{BASE + 4:08x} kind:function(arm,size=0xc) addr:{BASE + 4:#010x}",
+                       f"func_{BASE + 0x10:08x} kind:function(arm,size=0x8) addr:{BASE + 0x10:#010x}"]
+    recover.write([m])  # written again (dsd refused one, say): from dsd's own lines, not twice
+    assert (m.folder / "symbols.txt").read_text().splitlines() == symbols
+
+
+def test_a_function_dsd_refuses_is_dropped_with_what_points_to_it(tmp_path):
+    import sys
+
+    from decompnet.consoles.nds import recover
+
+    m = _module(tmp_path)
+    recover.find_functions([m], log=lambda *_: None)
+    recover.relocations([m])
+    (tmp_path / "config" / "v" / "arm9").mkdir(parents=True)
+    dsd = tmp_path / "dsd"  # refuses c once, then delinks
+    dsd.write_text(f"#!{sys.executable}\nimport pathlib, sys\nflag = pathlib.Path({str(tmp_path / 'once')!r})\n"
+                   "if not flag.exists():\n    flag.write_text('')\n"
+                   f"    print('Error: function func_{BASE + 0x10:08x} could not be analyzed: InvalidStart {{ }}')\n"
+                   "    sys.exit(1)\n")
+    dsd.chmod(0o755)
+    assert recover.check_with_dsd(tmp_path, "v", str(dsd), [m], log=lambda *_: None) == 1
+    assert list(m.added) == [BASE + 4] and BASE + 0x28 not in m.relocs  # the pointer to it went with it
+    assert f"func_{BASE + 0x10:08x}" not in (m.folder / "symbols.txt").read_text()
+
+
+def test_a_project_is_analysed_again_and_says_so(per_file):
+    """A console's better analysis reaches projects made before it (Console.on_start): what it found is in the
+    project's feed, and an analysis that fails leaves the project as it was."""
+    net, slug, agent, root, state, lerp = per_file
+    assert net.forks.reanalyse(slug, lambda fp: None, log=lambda *_: None) is None  # nothing to change
+    assert net.forks.reanalyse(slug, lambda fp: "3 more functions", log=lambda *_: None) == "3 more functions"
+
+    def broken(fp):
+        raise ForkError("dsd refused it")
+    assert net.forks.reanalyse(slug, broken, log=lambda *_: None) is None
+    said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE kind='analysis' ORDER BY id")]
+    assert said[0] == "3 more functions" and "stays as it was" in said[1] and "dsd refused it" in said[1]

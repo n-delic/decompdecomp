@@ -576,6 +576,46 @@ class ForkEngine:
         (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return result
 
+    def reanalyse(self, slug: str, step, log=print) -> str | None:
+        """A console's improved analysis of its games, applied to a project made before it (Console.on_start): `step`
+        changes the project's config (its source files keep their ranges, so the work in them stays) and says what it
+        found, as a sentence, or None when there's nothing to change. The project is set up again and, where the
+        console checks its rebuild, the game rebuilt: a rebuild identical before and not after takes the config back.
+        The project's feed says what happened. Returns the sentence (None: nothing changed)."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        version = cfg.get("version")
+        checks = cfg.get("origin") == "scratch" and consoles.REBUILD_CHECK in console.features
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            before = (fp.manifest or {}).get("rebuild") or {}
+            try:
+                said = step(fp)
+            except (ForkError, NetworkError, OSError) as e:
+                fp.git("checkout", "HEAD", "--", "config")
+                said, kept = f"a new analysis of the game couldn't be applied, and the project stays as it was: {e}", False
+            else:
+                if said is None:
+                    return None
+                setup = [fp.run(cmd, log=log)[0] for cmd in fp.setup_commands(version)]
+                after = console.check_rebuild(fp, version, log=log) if checks and all(setup) else {"identical": None}
+                # the config says more about the same bytes: a rebuild that differs where it didn't is its doing
+                kept = all(setup) and (not checks or after.get("identical") or
+                                       (not before.get("identical") and after.get("detail") == before.get("detail")))
+                if not kept:
+                    fp.git("checkout", "HEAD", "--", "config")
+                    for cmd in fp.setup_commands(version):
+                        fp.run(cmd, log=log)
+                    said = (f"a new analysis of the game ({said}) was taken back: the game "
+                            f"{'no longer rebuilt byte for byte' if all(setup) else 'no longer built'} with it")
+                else:
+                    self._commit_paths(proj, fp, ["config"], f"Analyse the game again: {said}\n\nBy decompdecomp.")
+        if kept:
+            self.sync(slug, log=log)
+        with self.net.store.tx() as db:
+            self.net._event(db, proj["id"], None, "analysis", said)
+        log(said)
+        return said if kept else None
+
     def check(self, slug: str, log=print) -> dict:
         """After a manual setup (or to refresh): pick the project up once it has an objdiff.json."""
         proj, fp, cfg = self.get(slug)

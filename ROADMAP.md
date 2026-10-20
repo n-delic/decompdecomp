@@ -60,6 +60,12 @@ Where to start on a gap:
   keeps the one it matches with when the file's other matches still hold: a game whose code mixes 1.2 and 2.0
   (1.2's `ldmia {..., lr}; bx lr` epilogue) no longer sticks at 80-95%. Machine drafts are the gap: a ds-decomp
   project keeps no assembly for m2c to read.
+- **DS functions only pointers reach.** dsd's analysis follows calls, so callbacks, state tables and everything they
+  call stayed outside any function (77% of one game's main program), and functions calling across those gaps never
+  reached 100%. `consoles/nds/recover.py` finds them by their starts, adds their calls and pointers, and drops what
+  dsd refuses to delink: 1,784 more functions in that game, every match kept. Projects made before it get them once
+  when the app starts (`ForkEngine.reanalyse`): kept only when the rebuilt ROM is unchanged, and the project's
+  activity says so. Still open: code past the main program's `.text` that dsd labels `.rodata`.
 - **The permuter's real rewrites in forks.** decomp-permuter got no header in a fork, so it refused every
   function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
   fork and on DS. It now reads what the function's file includes and declares.

@@ -3,7 +3,9 @@ kind DS decomps on decomp.dev are.
 
 - scratch.py: a ds-decomp project for the user's ROM (.nds): dsd extracts it, finds the functions of the ARM9
   program, its ITCM and DTCM parts and its overlays, and delinks them; decompdecomp cuts the code into source files
-  and checks the rebuilt ROM against the user's copy. Each file can have its own CodeWarrior version
+  and checks the rebuilt ROM against the user's copy.
+- recover.py: the functions dsd's analysis misses (only pointers reach them), added to its config; projects made
+  before it get them when the app starts (on_start, ANALYSIS). Each file can have its own CodeWarrior version
   (file_compiler, set_file_compiler: games mix them, issue #23).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/ds.md: what agents read about matching DS code.
@@ -13,6 +15,7 @@ Its demo game is projects/demo-ds (the Demo Quest game built with CodeWarrior fo
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
@@ -42,6 +45,9 @@ class NintendoDS(Console):
     demo_tools = ("mwccarm", "dsd", "arm-gnu", "objdiff-cli", "wibo")
     own_features = frozenset({REBUILD_CHECK})
     usual = "DS/2.0/sp1p5"  # what most of its games were built with: the default until the game says otherwise
+    # what a project's config holds, in its manifest's "analysis": 1 dsd's own analysis, 2 with the functions it
+    # misses (recover.py). A project with less gets the rest when the app starts
+    ANALYSIS = 2
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -68,6 +74,26 @@ class NintendoDS(Console):
         from . import scratch
 
         return scratch.tool_args()
+
+    def on_start(self, net, slug: str, log=print) -> None:
+        """A project made before recover.py gets the functions dsd's analysis missed, once (forkengine.reanalyse:
+        checked by the rebuild, taken back if that breaks)."""
+        from . import recover, scratch
+
+        if not net.fork_slug(slug):
+            return
+        fp = net.forks.get(slug)[1]
+        manifest = fp.manifest or {}
+        if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= self.ANALYSIS:
+            return
+
+        def step(fp):
+            found = recover.recover(fp.root, manifest["version"], dsd=scratch.dsd_path(), log=log)
+            (fp.root / ".decomp.wtf.json").write_text(json.dumps({**manifest, "analysis": self.ANALYSIS}, indent=2),
+                                                     encoding="utf-8")
+            return (f"{found['functions']} functions dsd's analysis had missed (only pointers reach them) are in its "
+                    "source files now" if found["functions"] else None)
+        net.forks.reanalyse(slug, step, log=log)
 
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch
