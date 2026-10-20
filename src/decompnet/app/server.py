@@ -80,6 +80,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
         for row in net.store.all("SELECT slug, config FROM projects"):
             try:
+                if net.is_rom(row):
+                    net.rangechecks.reopen(row["slug"])
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("%s's console work at start failed", row["slug"])
