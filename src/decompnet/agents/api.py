@@ -141,7 +141,11 @@ class Api(Agent):
                 if msg.get("content"):
                     s.push("text", msg["content"])
                 calls = msg.get("tool_calls") or []
-                messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")} | {"role": "assistant"})
+                # its reasoning goes back with the calls it made: DeepSeek's thinking mode refuses the next request
+                # without it ("The reasoning_content in the thinking mode must be passed back to the API": 106 times
+                # in a day, each a 5-10 minute wait); servers that don't send one get none back
+                messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls", "reasoning_content")}
+                                | {"role": "assistant"})
                 if not calls:
                     if not used_tool:  # a model that can't call tools answers in words, and never starts
                         s.error = (f"{model} answered in words without calling a tool: helpers work through tools "

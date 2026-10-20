@@ -34,6 +34,28 @@ def test_a_segment_loaded_later_is_found_at_its_address():
     assert found == [(0x100000, 0x100000 + len(extra), 0x80300000)]
 
 
+def test_a_segment_starts_where_its_code_does_not_at_its_first_frame():
+    """On an N64 game the code after the main segment began with two functions that make no stack frame, and the
+    third loaded a value before making its frame: found at that frame, the segment lost two functions and the first
+    two instructions of the third, which could then never match. It starts where the main segment's data ends."""
+    rom = bytearray(0x200000)
+    main = _code(0x80000400, 64, calls_into=0x80300040)
+    rom[0x1000:0x1000 + len(main)] = main
+    data_end = 0xFFFF0  # the main segment's data, then this segment
+    rom[0xFFF00:data_end] = bytes(range(0xE0)) + bytes(0x10)  # data, then padding
+    leaves = [0x3C0E8010, 0x95CE0004, JR_RA, 0xA42E0008,  # lui; lhu; jr ra; sh: no frame
+              0x3C048010, JR_RA, 0x94840006]  # lui; jr ra; lhu
+    early = [0x3C02800E, 0x8C420010]  # lui v0; lw v0: before the frame of the function after them
+    head = struct.pack(f">{len(leaves) + len(early)}I", *leaves, *early)
+    extra = _code(0x80300040, 120)  # (its first function's frame, right after `early`)
+    start = data_end
+    rom[start:start + len(head)] = head
+    rom[start + len(head):start + len(head) + len(extra)] = extra
+    vram = 0x80300040 - len(head)
+    found = find_segments(bytes(rom), [(0x1000, 0x1000 + len(main), 0x80000400)], ends=(data_end,))
+    assert [(s, hex(v)) for s, _, v in found] == [(start, hex(vram))]
+
+
 def test_code_at_an_address_already_taken_is_left_out():
     rom = bytearray(0x200000)
     main = _code(0x80300000, 64)

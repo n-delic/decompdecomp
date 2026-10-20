@@ -253,8 +253,8 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
         why = unsupported_cpu()
         raise ToolchainError(f"{tid} ({tc.name}) has no build for this computer ({current_platform()})"
                              + (f": {why}" if why else ""))
-    if tc.requires_java and java_version() < tc.requires_java:
-        raise ToolchainError(f"{tc.name} needs Java {tc.requires_java} or newer: install it from https://adoptium.net first")
+    if tc.requires_java and jdk_version() < tc.requires_java:  # the computer has none: the pinned one runs it
+        ensure("jdk", log=log)
     if tc.proprietary and not accept_license:
         raise ToolchainError(
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
@@ -350,6 +350,20 @@ def ensure(tid: str, log=print) -> Path:
             raise ToolchainError(f"{tc.name} is proprietary: install it from Setup if you accept its license")
         install(tid, log=log)
     return path(tid)
+
+
+JDK_HINT = ("a Java development kit (JDK), not the Java runtime alone: your system's JDK package (Fedora: "
+            "java-25-openjdk-devel; Debian, Ubuntu: openjdk-21-jdk) or one from https://adoptium.net")
+
+
+def jdk_version() -> int:
+    """Major version of the java on PATH when it's a JDK's (javac next to it, as Ghidra's launcher wants), else 0. A
+    runtime alone passed the Java check, and Ghidra then quit at once ("Unable to prompt user for JDK path")."""
+    exe = shutil.which("java")
+    if not exe:
+        return 0
+    javac = Path(os.path.realpath(exe)).with_name("javac.exe" if os.name == "nt" else "javac")
+    return java_version() if javac.exists() else 0
 
 
 def java_version() -> int:

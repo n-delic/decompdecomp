@@ -109,3 +109,55 @@ def test_zst_archives_need_no_zstd_command(tmp_path, monkeypatch):
     toolchains._extract(archive, dest, "usr/lib32")
     assert (dest / "ld-linux.so.2").read_bytes() == b"\x7fELF"
     assert not list(tmp_path.glob("tmp*"))  # no leftovers
+
+
+def _java(folder, version, javac):
+    folder.mkdir(parents=True, exist_ok=True)
+    java = folder / "java"
+    java.write_text(f"#!/bin/sh\necho 'openjdk version \"{version}\" 2026-08-18' >&2\n")
+    java.chmod(0o755)
+    if javac:
+        (folder / "javac").write_text("#!/bin/sh\n")
+    return folder
+
+
+@pytest.mark.skipif(os.name == "nt", reason="shell-script stand-ins for java")
+def test_a_java_runtime_alone_is_no_jdk(tmp_path, monkeypatch):
+    """Ghidra's launcher wants a JDK: with only a Java 25 runtime it quit ("Unable to prompt user for JDK path"),
+    and an import said Ghidra found no functions, as if the game were packed."""
+    monkeypatch.setenv("PATH", str(_java(tmp_path / "jre", "25.0.4", javac=False)))
+    assert toolchains.java_version() == 25 and toolchains.jdk_version() == 0
+    monkeypatch.setenv("PATH", str(_java(tmp_path / "jdk", "21.0.12", javac=True)))
+    assert toolchains.jdk_version() == 21
+
+
+def test_ghidra_without_a_jdk_runs_with_the_pinned_one(tc_root, monkeypatch):
+    from decompnet.forks import ghidra
+
+    monkeypatch.setattr(toolchains, "jdk_version", lambda: 0)
+    assert ghidra.java_home() == toolchains.path("jdk") and not ghidra.available()
+    env = ghidra._env()
+    assert env["JAVA_HOME"] == str(toolchains.path("jdk")) and env["PATH"].startswith(str(toolchains.path("jdk") / "bin"))
+    jdk = toolchains.registry()["jdk"]
+    assert jdk.parts_for("linux-x86_64") and all(p["sha256"] for p in jdk.parts)
+    monkeypatch.setattr(toolchains, "jdk_version", lambda: 25)
+    assert ghidra.java_home() is None and ghidra._env() is None  # the computer's own JDK
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a shell-script stand-in for Ghidra")
+def test_a_ghidra_that_didnt_run_says_why(tmp_path, monkeypatch):
+    from decompnet.forks import ghidra
+    from decompnet.forks.project import ForkError
+
+    fake = tmp_path / "analyzeHeadless"
+    fake.write_text("#!/bin/sh\necho 'ERROR: Unable to prompt user for JDK path, no TTY detected.'\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(ghidra, "_headless", lambda: fake)
+    monkeypatch.setattr(ghidra, "_env", lambda: None)
+    program = tmp_path / "game.exe"
+    program.write_bytes(b"MZ" + bytes(64))
+    with pytest.raises(ForkError, match="Unable to prompt user for JDK path.*Java development kit"):
+        ghidra.functions(program)
+    monkeypatch.setattr(ghidra, "available", lambda: True)
+    assert ghidra.decompile_object(program, tmp_path / "cache") == {}  # a draft is optional: none, nothing cached
+    assert not (tmp_path / "cache").exists()

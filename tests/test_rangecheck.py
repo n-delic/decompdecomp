@@ -69,7 +69,10 @@ class FakeNet:
         return next((r for r in self.rows if r["id"] == args[0]), None)
 
     def tx(self):
-        return contextlib.nullcontext(None)
+        return contextlib.nullcontext(self)
+
+    def execute(self, sql, args=()):  # (tx's db)
+        self.sql.append((sql, args))
 
     def _event(self, db, pid, agent, kind, detail):
         self.events.append(detail)
@@ -98,7 +101,8 @@ class FakeNet:
 
     def _judge_with(self, proj, fn, toolchain, flags, source):
         self.judged.append((fn["name"], toolchain))
-        return toolchain in self.matches.get(fn["name"], set()), None, ""
+        said = self.matches.get(fn["name"], set())  # toolchains, or (toolchain, flags) where the flags matter
+        return toolchain in said or (toolchain, tuple(flags)) in said, None, ""
 
     def _context(self, project_id, unit=""):
         return {"unit": "", "version": 1, "header": ""}
@@ -128,12 +132,12 @@ def functions(n):
              "matched_source": None, "target": code, "unit": ""} for i in range(n)]
 
 
-def start(net, origin="f4"):
+def start(net, origin="f4", label=CW):
     s = {"id": 1}
     net._update_cfg("game", lambda cfg: cfg.setdefault("suggestions", []).append(
         {"id": 1, "status": "open", "ranges": [], "check": None}))
     fn = net._function(origin, "game")
-    said = net.rangechecks.propose(net.proj, s, origin, CW[0], CW[1], [[fn["vram"], fn["vram"] + fn["size"]]])
+    said = net.rangechecks.propose(net.proj, s, origin, label[0], label[1], [[fn["vram"], fn["vram"] + fn["size"]]])
     return said, net.cfg(net.proj)["range_checks"][-1]
 
 
@@ -162,6 +166,45 @@ def test_c_that_matches_with_both_compilers_is_no_evidence():
     net = FakeNet(functions(9), {"f4": {CW[0], GCC[0]}})
     _, check = start(net)
     assert check["status"] == "quirk" and "matches the game with today's compiler too" in check["said"]
+
+
+GCC_O1 = (GCC[0], ["-O1", "-G8"])  # the game's compiler with other flags
+
+
+def test_the_games_compiler_with_other_flags_is_tested_not_taken_for_todays():
+    """An N64 game's audio functions matched only with IDO -framepointer, its libultra with -O1: the checks took
+    those for the game's own IDO -O2 (one kind of compiler) and dismissed 85 suggestions without a compile."""
+    net = FakeNet(functions(9), {"f4": {(GCC_O1[0], tuple(GCC_O1[1]))}, "f5": {(GCC_O1[0], tuple(GCC_O1[1]))}})
+    _, check = start(net, label=GCC_O1)
+    assert check["status"] == "confirmed" and check["range"] == [0x100200, 0x1002D0]
+
+
+def test_a_function_too_short_to_tell_leaves_it_to_its_neighbours():
+    rows = functions(9)
+    rows[4]["n_insns"] = 4  # f4: a few instructions come out the same from either compiler
+    net = FakeNet(rows, {"f4": {CW[0], GCC[0]}, "f3": {CW[0]}, "f5": {CW[0]}})
+    _, check = start(net)
+    assert check["status"] == "confirmed"
+
+
+def test_checks_dismissed_without_a_compile_are_weighed_again_once():
+    net = FakeNet(functions(9), {"f4": {(GCC_O1[0], tuple(GCC_O1[1]))}, "f5": {(GCC_O1[0], tuple(GCC_O1[1]))}})
+    origin = 0x100200
+    wrong = {"suggestion": 1, "toolchain": GCC_O1[0], "flags": GCC_O1[1], "origin": origin, "origin_source": None,
+             "spans": [[origin, origin + 0x50]], "status": "quirk", "evidence": {}, "tasks": [], "given_up": [],
+             "range": [origin, origin + 0x50], "said": "a quirk: f4's C matches the game with today's compiler too: it "
+             "says nothing about the compiler", "t": 0}
+    other = dict(wrong, toolchain=CW[0], flags=CW[1], id=3, suggestion=2)  # another compiler: a verdict that stands
+    net._update_cfg("game", lambda cfg: cfg.update(
+        suggestions=[{"id": 1, "status": "dismissed", "ranges": [], "check": None},
+                     {"id": 2, "status": "dismissed", "ranges": [], "check": None}],
+        range_checks=[dict(wrong, id=1), dict(wrong, id=2), other]))
+    assert net.rangechecks.reopen("game") == 1  # the second is the same suggestion again: it stays dismissed
+    cfg = net.cfg(net.proj)
+    assert [c["status"] for c in cfg["range_checks"]] == ["confirmed", "quirk", "quirk"]
+    assert [s["status"] for s in cfg["suggestions"]] == ["applied", "dismissed"]
+    assert any("DELETE FROM notes" in sql[0] and "Range check #1: %" in sql[1] for sql in net.sql if isinstance(sql, tuple))
+    assert net.rangechecks.reopen("game") == 0  # once
 
 
 def test_without_evidence_the_nearest_neighbour_goes_to_an_agent_and_giving_up_moves_on():
