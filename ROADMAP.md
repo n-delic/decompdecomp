@@ -61,6 +61,8 @@ Where to start on a gap:
   and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
   gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
   loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
+  Overlays inside an archive file (a game's areas, each with its code, one after another) are found too
+  (`overlays.embedded`): on one PS1 game, 77 overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
 - **Helpers' effort.** The launcher's Effort, opencode's until now, is every helper's: Claude Code's (`--effort`,
   Low to Max with Extra high), Codex's (`model_reasoning_effort`, Minimal to Extra high) and the API helper's
   (OpenAI's `reasoning_effort`, Minimal to High, for servers whose models reason). A model at another effort is a

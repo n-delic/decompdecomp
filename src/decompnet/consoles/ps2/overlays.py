@@ -11,6 +11,9 @@ starts (arch/mips.py's place, which finds the N64's segments too).
   (.IRX: the I/O processor's code, relocatable) are left out.
 - Several overlays may load at the same address (only one is in memory at a time): each is a segment of its own, and
   function names that repeat get the overlay's name in front (split.py).
+- An archive (one big file of a game's areas, each with its code, models and sounds) holds its overlays inside:
+  stretches of code, each placed by its calls the same way, and those that agree where the file would be loaded are
+  one overlay (embedded). On a PS1 game, 92 areas' code in one 68 MB file, the program itself 630 KB of it.
 """
 
 from __future__ import annotations
@@ -23,6 +26,13 @@ from ...arch import mips
 from ...arch.mips import JR_RA, is_frame
 
 MAX_FILE = 16 << 20
+MAX_ARCHIVE = 256 << 20  # files read whole to look for overlays inside (archives of a game's areas)
+CHUNK = 16 << 20  # a big file's returns are counted this much at a time: one without code is never read whole
+ARCHIVE_LEAST = 64  # returns an archive has at least, when it holds code
+CLUSTER_GAP = 0x1000  # code has a return or a stack frame every few hundred bytes: further apart, another stretch
+CLUSTER_MARKS = 8  # fewer in a stretch: data words that happen to read as code (mips.place wants 8 of each anyway)
+# little-endian, at a word's start: jr ra, and addiu sp, sp, -n (a stack frame)
+_MARK = re.compile(rb"\x08\x00\xe0\x03|[\x00-\xff][\x80-\xff]\xbd\x27", re.S)
 PEEK = 64 << 10  # how much of a file is read first: code shows in its first 64 KiB
 JR_RA_LE = struct.pack("<I", JR_RA)
 RAM = (0x00080000, 0x02000000)  # where the EE's programs load: above the kernel, within its 32 MiB
@@ -90,6 +100,45 @@ def place(data: bytes, known: list[tuple[int, int]], ram: tuple[int, int] = RAM)
     return base, start
 
 
+def embedded(data: bytes, known: list[tuple[int, int]], ram: tuple[int, int] = RAM) -> list[tuple[int, int, int]]:
+    """(start, end, load address) in an archive file of the overlays it holds: its stretches of code (returns and
+    stack frames close together), each placed by its own calls; neighbours that agree where the file's first byte
+    would be are one overlay, with what lies between them (its jump tables, strings). The same code twice is kept
+    once. shortcut: an overlay ends at its last function; its data after that stays out (its code refers to it by
+    address), until a game needs its jump tables there."""
+    marks = [m.start() for m in _MARK.finditer(data) if m.start() % 4 == 0]
+    stretches, cur = [], []
+    for at in marks:
+        if cur and at - cur[-1] > CLUSTER_GAP:
+            stretches.append(cur)
+            cur = []
+        cur.append(at)
+    stretches = [(s[0], s[-1] + 8) for s in stretches + [cur] if len(s) >= CLUSTER_MARKS]
+    runs: list[list[int]] = []  # [start, end, where the file's byte 0 would be]
+    floor = 0
+    for lo, hi in stretches:
+        back = max(floor, lo - 2 * mips.SCAN_BLOCK)  # (place looks this far back for the first function)
+        seg = mips.place(_swap(data[back:hi]), lo - back, hi - back, 0, [], known, regions=(ram,))
+        if seg is None:
+            continue
+        start, end, vram, _ = seg
+        start, end = back + start, back + end
+        floor = end
+        if runs and runs[-1][2] == vram - start:
+            runs[-1][1] = end
+        else:
+            runs.append([start, end, vram - start])
+    out, seen = [], set()
+    for start, end, file_base in runs:
+        vram = file_base + start
+        key = (vram, data[start:end])
+        if key in seen or any(a < vram + end - start and vram < b for a, b in known):
+            continue
+        seen.add(key)
+        out.append((start, end, vram))
+    return out
+
+
 def find(disc, boot: str, main: tuple[int, int], ram: tuple[int, int] = RAM) -> list[tuple[str, bytes, int, int]]:
     """(name, bytes, load address, where its code starts) of the overlays on a PlayStation disc. `main` is the
     resident program's address range, `ram` where the console's programs load."""
@@ -98,14 +147,20 @@ def find(disc, boot: str, main: tuple[int, int], ram: tuple[int, int] = RAM) -> 
     boot_name = boot.upper().replace("\\", "/").rsplit("/", 1)[-1]
     for path, lba, size in disc_files(disc):
         base_name = path.rsplit("/", 1)[-1]
-        if base_name == boot_name or base_name == "SYSTEM.CNF" or not 0x400 <= size <= MAX_FILE:
+        if base_name == boot_name or base_name == "SYSTEM.CNF" or not 0x400 <= size <= MAX_ARCHIVE:
             continue
-        if size > PEEK and not _code_like(disc.read(lba, PEEK), 4):  # a big file with no code where it starts
-            continue
-        data = disc.read(lba, size)
         name = re.sub(r"[^A-Za-z0-9_]", "_", Path(base_name).stem).strip("_").lower() or "overlay"
         while name in names:
             name += "_"
+        if size > MAX_FILE or size > PEEK and not _code_like(disc.read(lba, PEEK), 4):  # no code where it starts
+            returns = sum(disc.read(lba + at // 2048, min(CHUNK, size - at)).count(JR_RA_LE) for at in range(0, size, CHUNK))
+            if returns >= ARCHIVE_LEAST:  # an archive with code inside
+                data = disc.read(lba, size)
+                for start, end, vram in embedded(data, [main], ram):
+                    out.append((f"{name}_{start:x}", data[start:end], vram, 0))
+                names.add(name)
+            continue
+        data = disc.read(lba, size)
         if (segs := elf_segments(data)) is not None:
             for k, (vaddr, code) in enumerate(segs):
                 if _code_like(code):
