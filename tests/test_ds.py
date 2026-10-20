@@ -183,7 +183,7 @@ def test_the_projects_build_compiles_each_file_with_its_version(tmp_path):
                    "'arm9_objects_file': 'build/objects.txt'}))\n")
     subprocess.run([sys.executable, "tools/configure.py", "adqe", "--dsd", str(dsd), "--compilers", str(compilers)],
                    cwd=root, check=True, capture_output=True)
-    ninja = re.sub(r"\$\n\s*", "", (root / "build.ninja").read_text())  # (ninja_syntax wraps long lines)
+    ninja = re.sub(r"\$\n\s*", "", (root / "build.ninja").read_text()).replace("\\", "/")
 
     def compiler_of(name: str) -> str:
         block = ninja.split(f"build build/adqe/src/auto/{name}.o: mwcc", 1)[1].split("\nbuild ", 1)[0]
