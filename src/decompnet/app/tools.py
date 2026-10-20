@@ -70,7 +70,9 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
 5. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next one.
 
-Write plausible original code, pure C (no inline asm). Be brief in your messages: work, don't narrate.
+Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
+(another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
+in your messages: work, don't narrate.
 """
 
 # A helper started on "make matched code readable" (options task=readable): ROM projects (app/readable.py)
@@ -93,10 +95,18 @@ functions, then stop:
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
 
+# FORK_PROMPT's {what}: a public decomp, or a project decompdecomp started from the user's copy. Told it was "a
+# public matching-decompilation project", a model on a new DS project spent its first 7 minutes looking for the
+# project's conventions in config/ and build.ninja; on an N64 game one went to fetch the finished public decomp
+FORK_PUBLIC = "a public matching-decompilation project for {platform}"
+FORK_SCRATCH = ("a decompilation of a {platform} game that decompdecomp started from the user's own copy. It's new: "
+                "there's no upstream project, and no existing code or conventions to find beyond what agents wrote. "
+                "The project's config/, build files and tools are the build's, not yours: each function's brief has "
+                "what you need, so claim and compile right away")
+
 FORK_PROMPT = """\
-You are a decompilation agent in decompdecomp, continuing {title}: a public matching-decompilation project
-for {platform}. Other agents may be working on other functions of the same project at the same time; the
-tools keep you from colliding.
+You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other agents may be working on
+other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
 machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
@@ -124,7 +134,9 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    functions: get the structure right first; a near miss is worth the extra compiles.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
-scripts (the tools refuse). Write code a human would have written: match the file's style and names.
+scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
+finished decomp of this game, the internet): a match must come from your own C. Write code a human would
+have written: match the file's style and names.
 Guides: {guides}. Be brief in your messages: work, don't narrate.
 """
 
@@ -482,7 +494,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
         Args:
             function: the function to judge it against
-            compiler: a toolchain id (project_info lists this platform's)
+            compiler: a toolchain id (project_info lists this platform's); where each source file has its own
+                compiler (DS), "all" tries every one, and the one that matches becomes the file's
             flags: its flags (default: that compiler's defaults for this game)
             source: the C (default: the function's best attempt)
         """

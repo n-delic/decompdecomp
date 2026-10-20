@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps2/, consoles/gc_wii/, consoles/pc/) whose `__init__.py` makes a `Console` below and fills in its parts;
+consoles/ps2/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console` below and fills in its parts;
 the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
 console names. A person or an agent working on PS2 support reads consoles/ps2/ and this file, nothing else.
@@ -10,7 +10,7 @@ A console works in one of two modes:
   compilers and flags, and may add code splat's own look misses (`add_code`). N64 and PS2.
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
-  project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii and PC.
+  project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC and DS.
 
 What's the processor's and not the console's (relocations, disassembly, hand-written assembly, the readers for the
 compiler map and C++ classes) is in arch/. Adding a console: copy consoles/template/, fill in its parts, add a demo
@@ -181,6 +181,26 @@ class Console:
         """A data symbol's bytes, when the project's objects don't hold the game's data; None: they do."""
         return None
 
+    def file_compiler(self, fp, source: str) -> str | None:
+        """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have
+        its own: then try_compiler can switch it. None: the project's build decides alone."""
+        return None
+
+    def set_file_compiler(self, fp, source: str, compiler: str) -> str:
+        """Make the project build a source file with `compiler` (file_compiler says whether it can); returns the file
+        that says so, relative to the project (to commit)."""
+        raise RomError(f"{self.name} projects set their compilers in their own build")
+
+    def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
+        """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a
+        project whose files each have a compiler."""
+        return {}
+
+    def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
+        """Make `compiler` the project's own, every one of `sources` keeping the compiler it has; returns the files
+        changed (relative to the project, to commit)."""
+        raise RomError(f"{self.name} projects set their compilers in their own build")
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:
@@ -213,12 +233,13 @@ class Console:
 def _registry() -> list[Console]:
     from .gc_wii import GAMECUBE, WII
     from .n64 import N64
+    from .nds import NDS
     from .pc import PC
     from .ps2 import PS2
     from .public import PUBLIC_ONLY
 
     # the order sniff is asked in: a file is the first console's that says it's its own
-    return [N64, PS2, GAMECUBE, WII, PC, *PUBLIC_ONLY]
+    return [N64, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

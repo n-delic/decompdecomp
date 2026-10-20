@@ -152,6 +152,7 @@ _MSVC_C = re.compile(r"[_@]([A-Za-z_]\w*?)(?:@\d+)?")  # how MSVC decorates a C 
 # #include "src/Runtime.PPCEABI.H/runtime.c" (its asm helpers, which every module links a copy of)
 _SOURCE_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+\.(?:c|cc|cp|cpp))"', re.M)
 _PRAGMA = re.compile(r"^#\s*pragma\b")
+TRY_ALL_SECONDS = 120  # try_compiler "all" stops trying more versions after this (Codex gives a tool call 180)
 
 
 def _around(source: str, span: tuple[int, int], file_text: str, rel: str) -> tuple[list[str], list[str], list[str]]:
@@ -211,6 +212,42 @@ def _headers_defining(fp: ForkProject, rel: str, include_lines: list[str], names
                 out.append(line)
             break
     return out
+
+
+def _data_symbols(target: Path | None) -> set[str]:
+    """The data symbols of a target object: objdiff's report counts data in a code section as a function (a DS
+    program's BuildInfo, the SDK's build information with its RSA text, sits in .text), and agents tried to write it
+    as one. Empty when it can't be read (a COFF object: PC, Xbox)."""
+    from elftools.common.exceptions import ELFError
+    from elftools.elf.elffile import ELFFile
+
+    try:
+        with open(target, "rb") as f:
+            symtab = ELFFile(f).get_section_by_name(".symtab")
+            return {s.name for s in symtab.iter_symbols() if s["st_info"]["type"] == "STT_OBJECT"} if symtab else set()
+    except (OSError, TypeError, ELFError):
+        return set()
+
+
+_QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
+MAX_HEADERS = 64  # headers permuter_header follows from one file
+
+
+def _without_bodies(text: str) -> str:
+    """A C file with each function's body cut to `;` (its definition becomes its prototype): its declarations, as
+    a parser needs them to read one of its functions."""
+    clean, out, i, depth, start = csource._blank(text), [], 0, 0, None
+    for k, c in enumerate(clean):
+        if c == "{":
+            if depth == 0 and clean[:k].rstrip().endswith(")"):  # a body, not a struct's or an initializer's
+                start = k
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out += [text[i:start], ";"]
+                i, start = k + 1, None
+    return "".join(out) + text[i:]
 
 
 def _type_blocks(text: str) -> list[tuple[set[str], str]]:
@@ -450,9 +487,9 @@ class ForkEngine:
             self.net._event(db, pid, None, "fork", event)
 
     def create_scratch(self, game: Path, console: consoles.Console, *, compiler: str | None = None, log=print) -> str:
-        """A game of a PROJECT-mode console (GameCube, Wii, PC), from scratch: the console generates the community's
-        kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from Ghidra's
-        analysis), opened like a fork."""
+        """A game of a PROJECT-mode console (GameCube, Wii, PC, DS), from scratch: the console generates the
+        community's kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from
+        Ghidra's analysis; for DS, ds-decomp's), opened like a fork."""
         info = console.game_info(game)
         sha1 = info["sha1"]
         for p in self.net.store.all("SELECT slug, config FROM projects"):
@@ -539,6 +576,65 @@ class ForkEngine:
         (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         return result
 
+    def reanalyse(self, slug: str, step, paths=("config",), fix=False, log=print) -> str | None:
+        """A console's improved analysis of its games, applied to a project made before it (Console.on_start): `step`
+        changes the project's `paths` (its config, its build tools; its source files keep their ranges, so the work in
+        them stays) and may add files (source files for code it found), and says what it found, as a sentence, or None
+        when there's nothing to change. The project is set up again and, where the
+        console checks its rebuild, the game rebuilt: a rebuild identical before and not after takes the change back,
+        and so does one that differs otherwise than before, unless `fix` (a fix to its build, which may mend part).
+        The project's feed says what happened. Returns the sentence (None: nothing changed)."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        # the manifest's, as check_rom: the config may hold the game's id ("C32P"), and the build's folder is "c32p"
+        version = (fp.manifest or {}).get("version") or cfg.get("version")
+        checks = cfg.get("origin") == "scratch" and consoles.REBUILD_CHECK in console.features
+        paths = [p for p in paths if (fp.root / p).exists()]  # git refuses a path the project hasn't
+        def untracked() -> set[str]:
+            ok, out = fp.git("ls-files", "-z", "--others", "--exclude-standard")
+            return set(out.split("\0")) - {""} if ok else set()
+
+        def undo() -> None:  # the files the step added go too (agents can't add any: the tree is the step's)
+            fp.git("checkout", "HEAD", "--", *paths)
+            for rel in untracked() - there:
+                (fp.root / rel).unlink(missing_ok=True)
+
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            before = (fp.manifest or {}).get("rebuild") or {}
+            there = untracked()
+            try:
+                said = step(fp)
+            except (ForkError, NetworkError, OSError) as e:
+                undo()
+                said, kept = f"a new analysis of the game couldn't be applied, and the project stays as it was: {e}", False
+            else:
+                if said is None:
+                    return None
+                setup = [fp.run(cmd, log=log)[0] for cmd in fp.setup_commands(version)]
+                after = console.check_rebuild(fp, version, log=log) if checks and all(setup) else {"identical": None}
+                # the config says more about the same bytes: a rebuild that differs where it didn't is its doing
+                kept = all(setup) and (not checks or after.get("identical") or not before.get("identical") and (
+                    fix or after.get("detail") == before.get("detail")))
+                if not kept:
+                    undo()
+                    for cmd in fp.setup_commands(version):
+                        fp.run(cmd, log=log)
+                    said = (f"a new analysis of the game ({said}) was taken back: the game "
+                            f"{'no longer rebuilt byte for byte' if all(setup) else 'no longer built'} with it")
+                else:
+                    if checks:  # what the project shows (check_rom)
+                        manifest = json.loads((fp.root / ".decomp.wtf.json").read_text(encoding="utf-8"))
+                        manifest["rebuild"] = after | {"t": time.time()}
+                        (fp.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+                    if added := paths + sorted(untracked() - there):  # (none: `git commit --` takes what's staged)
+                        self._commit_paths(proj, fp, added, f"Analyse the game again: {said}\n\nBy decompdecomp.")
+        if kept:
+            self.sync(slug, log=log)
+        with self.net.store.tx() as db:
+            self.net._event(db, proj["id"], None, "analysis", said)
+        log(said)
+        return said if kept else None
+
     def check(self, slug: str, log=print) -> dict:
         """After a manual setup (or to refresh): pick the project up once it has an objdiff.json."""
         proj, fp, cfg = self.get(slug)
@@ -566,7 +662,9 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 raise NetworkError(f"objdiff couldn't measure the project: {e}") from None
         units = {u.name: u for u in fp.units()}
-        rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])]
+        data = {n: _data_symbols(u.target) for n, u in units.items()}
+        rows = [(u["name"], f) for u in rep.get("units", []) for f in u.get("functions", [])
+                if f["name"] not in data.get(u["name"], ())]
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1
@@ -1459,10 +1557,17 @@ class ForkEngine:
         units = fp.units() if cfg.get("ready") else []
         scratch = next((u.scratch for u in units if u.scratch), None) or {}
         platform = consoles.name(cfg.get("platform")) or "unknown platform"
-        return (f"{proj['name']}: a fork of {cfg['repo_url']} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
+        console = consoles.get(cfg.get("platform"))
+        per_file = (f"each source file can have its own compiler (try_compiler switches it, \"all\" tries each); "
+                    f"this platform's: {', '.join(c.id for c in console.compilers)}\n"
+                    if console.file_compiler(fp, "") else "")
+        what = ("started from scratch from your copy of the game" if cfg.get("origin") == "scratch"
+                else f"a fork of {cfg['repo_url']}")
+        return (f"{proj['name']}: {what} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
                 f"progress: {m.get('matched_functions', '?')}/{m.get('total_functions', '?')} functions, "
                 f"{float(m.get('matched_code_percent', 0) or 0):.2f}% of code, in {len(units)} source files\n"
                 f"compiler: {scratch.get('compiler', 'set by the project build')} {scratch.get('c_flags', '')}\n"
+                + per_file +
                 "You work in the project's real source tree. claim_function, then compile_and_diff writes your function "
                 "into its source file, builds that file with the project's build system and diffs it with objdiff. "
                 "read_file and search_code show how the codebase is written; edit_file changes headers and file-level "
@@ -1566,6 +1671,57 @@ class ForkEngine:
         self.net._event(db, proj["id"], agent.id if agent else None, "match", r["name"])
         self.net.on_match(proj, r["id"], agent)
 
+    DATA_LISTED = 12  # data symbols a brief describes
+
+    def permuter_header(self, slug: str, function: str) -> str:
+        """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
+        the file's own declarations. It got none, so it refused every DS function ("Syntax error in base.c": `u16`
+        was no type it knew) and only the simple rewrites ran, there and in every fork."""
+        _, fp, _ = self.get(slug)
+        unit = fp.unit(self._fn(slug, function)["unit"])
+        if not unit.source or not (fp.root / unit.source).is_file():
+            return ""
+        seen: set[Path] = set()
+
+        def headers(text: str, folder: Path) -> list[str]:  # what `text` includes, each header after its own
+            out = []
+            for name in _QUOTED_INCLUDE.findall(text):
+                for base in (fp.root / "include", folder, fp.root / "src", fp.root):
+                    h = (base / name).resolve()
+                    if h.is_file():
+                        if h not in seen and len(seen) < MAX_HEADERS and h.is_relative_to(fp.root.resolve()):
+                            seen.add(h)
+                            own = h.read_text(errors="replace", encoding="utf-8")
+                            out += [*headers(own, h.parent), own]
+                        break
+            return out
+        source = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
+        return "\n".join([*headers(source, (fp.root / unit.source).parent), _without_bodies(source)])
+
+    def _data_used(self, proj, refs: list[str]) -> list[str]:
+        """A from-scratch project's brief: the data the function uses, where it is and how big, with how to declare
+        it. Its headers start empty, and on a DS game a model looked for that in config/symbols.txt for minutes."""
+        if not refs:
+            return []
+        marks = ",".join("?" * len(refs))
+        funcs = {r["name"] for r in self.net.store.all(
+            f"SELECT name FROM functions WHERE project_id=? AND name IN ({marks})", proj["id"], *refs)}
+        out = []
+        for name in [r for r in refs if r not in funcs][:self.DATA_LISTED]:
+            try:
+                said = self.read_data(None, proj["slug"], name, 4).split("\n", 1)[0]
+            except NetworkError:
+                said = ""
+            m = re.search(r", (\.?[\w.]+)\+0x[0-9A-Fa-f]+, (\S+) bytes\)", said)
+            out.append(f"- {name}: {m.group(1)}, {m.group(2)} bytes" if m else f"- {name}")
+        if not out:
+            return []
+        return ["", "### Data it uses", *out,
+                "Declare what isn't declared yet once, with edit_file at the top of the source file: `extern` and the "
+                "type its loads and stores use (2 bytes: `extern u16 name;`; bigger ones: an array, or a struct whose "
+                "fields are the offsets the code uses). That's all there is to know about them: nothing in config/ "
+                "says more."]
+
     def brief(self, fn, agent: Agent | None, header: str) -> str:
         proj = self.net.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         _, fp, cfg = self.get(proj["slug"])
@@ -1579,6 +1735,8 @@ class ForkEngine:
         src_text = None
         if unit.source:
             lines.append(f"source file: {unit.source}")
+            if own := consoles.get(cfg.get("platform")).file_compiler(fp, unit.source):
+                lines.append(f"this file's compiler: {own} (try_compiler(\"{fn['name']}\", \"all\") tries the others)")
             p = fp.root / unit.source
             src_text = p.read_text(errors="replace", encoding="utf-8") if p.exists() else None
         else:
@@ -1592,6 +1750,8 @@ class ForkEngine:
             if len(asm) > 500:
                 asm = asm[:500] + [f"... ({len(asm) - 500} more instructions)"]
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
+            if cfg.get("origin") == "scratch":
+                lines += self._data_used(proj, d.refs)
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:
@@ -1881,7 +2041,7 @@ class ForkEngine:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
                 return {"text": f"❌ REJECTED and undone: your change breaks matched function(s) {', '.join(broken[:8])}. "
                                 "Check you replaced the right definition (overloads?) and didn't change shared code.",
-                        "score": None, "matched": False}
+                        "score": None, "matched": False, "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
@@ -1926,6 +2086,83 @@ class ForkEngine:
             return {"text": f"score {score} (0 = identical). {d.literals_note()}{stall}", "score": score, "matched": False}
         return {"text": f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{stall}", "score": score,
                 "matched": False}
+
+    def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
+                     source: str = "") -> str:
+        """A function's C built with another of its console's compilers, where the project lets each source file have
+        its own (Console.file_compiler: a DS game mixes CodeWarrior versions, issue #23). Judged as an attempt that
+        isn't kept: a version it matches with stays the file's, committed, and only when the file's other matched
+        functions still match (the attempt's own rule); otherwise the file keeps its compiler and nothing is
+        recorded. "all": the file's own compiler first (C that matches with it needs no switch), then the others,
+        nearest versions first, until one matches or TRY_ALL_SECONDS pass (on the DS demo, C that matched with its
+        own 2.0sp1p5 moved its file to 2.0/base when the own one was skipped and the oldest went first)."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        fn = self._fn(slug, function)
+        unit = fp.unit(fn["unit"])
+        own = console.file_compiler(fp, unit.source) if unit.source else None
+        if own is None:
+            raise NetworkError("a fork builds with its project's own compilers")
+        if self.net.links.get(slug) is not None:  # a guest's tree follows the host's: its build is the host's to change
+            raise NetworkError("in a room, the host's project decides each file's compiler: try_compiler works there")
+        if flags.strip():
+            raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
+        if fn["status"] == "matched":
+            raise NetworkError(f"{fn['name']} already matches with {own}")
+        known = [c.id for c in console.compilers]
+        if compiler.strip().lower() == "all":
+            wanted = sorted(known, key=lambda c: abs(known.index(c) - known.index(own))) if own in known else known
+        else:
+            wanted = [compiler.strip()]
+        if wanted[0] not in known:
+            raise NetworkError(f"{wanted[0]!r} isn't one of this platform's compilers: {', '.join(known)}")
+        if wanted == [own]:
+            raise NetworkError(f"{unit.source} is built with {own} already")
+        source = source.strip() or self.net._source_of(fn) or ""
+        if not source:
+            raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
+        linked = unit.complete and fp.linkable()
+        tried, kept, changed = [], None, False
+        until = time.monotonic() + TRY_ALL_SECONDS
+        held = self._hold_for_try(slug, function, agent)  # a function nobody holds is held only while it's tried
+        try:
+            with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
+                try:
+                    # what matches with the file's own compiler, measured before it changes: what every try must keep
+                    self._baseline(proj, fp, unit, (fp.root / unit.source).read_text(errors="replace", encoding="utf-8"))
+                    for c in wanted:
+                        if tried and time.monotonic() > until:
+                            break
+                        if c != own:
+                            with self._build_locks[proj["id"]]:  # (a build reads the map)
+                                rel = console.set_file_compiler(fp, unit.source, c)
+                            changed = True
+                        res = self._attempt(agent, slug, function, source, keep=False, quiet=0)
+                        if res["matched"] and c == own:
+                            return f"{c}: {res['text']}\nThat's {unit.source}'s own compiler: nothing to switch."
+                        if res["matched"]:
+                            kept = c
+                            self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "
+                                                        f"it (found by {agent.name} with decompdecomp).")
+                            return f"{c}: {res['text']}\n{unit.source} is built with {c} from now on."
+                        if res.get("broken"):  # the file's other functions need its own compiler
+                            res["text"] = (f"the file's matched {', '.join(res['broken'][:8])} no longer match with it. "
+                                           f"If {fn['name']} needs it, give it a file of its own first (split_file)")
+                        tried.append(f"{c}: {res['text']}" if len(wanted) == 1 else f"{c}: {res['text'].split(chr(10))[0]}")
+                finally:
+                    if changed and kept is None:
+                        with self._build_locks[proj["id"]]:
+                            console.set_file_compiler(fp, unit.source, own)
+                        self._build_unit(proj, fp, unit)  # the file's object is its own compiler's again
+        finally:
+            if held is not None:
+                with self.net.store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (held, agent.id))
+        if len(wanted) == 1:
+            return f"{tried[0]}\n{unit.source} stays with {own}."
+        left = wanted[len(tried):]
+        return (f"No compiler matches {fn['name']}; {unit.source} stays with {own}.\n" + "\n".join(tried)
+                + (f"\nNot tried yet (time ran out): {', '.join(left)}. Try them by name." if left else ""))
 
     # ------------------------------------------------------------------ autopilot
 
@@ -2343,12 +2580,144 @@ class ForkEngine:
             "compiler": {"toolchain": "project", "name": "Project's own build", "flags": [], "installed": True,
                          "proprietary": False, "supported": True},
             "compilers": [],
+            **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
         }
+
+    def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
+        """(the project's own compiler, the parts built with another: one per source file, with its address range),
+        for a project whose files each have a compiler (Console.file_compiler: DS); None: its build decides."""
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, "")
+        if own is None:
+            return None
+        ranges = console.file_ranges(fp)
+        parts = []
+        for source in sorted({u.source for u in fp.units() if u.source}):
+            if (c := console.file_compiler(fp, source)) != own:
+                for start, end in ranges.get(source) or [(0, 0)]:
+                    parts.append({"file": source, "start": start, "end": end, "toolchain": c,
+                                  "name": consoles.compiler_name(c), "flags": []})
+        return own, parts
+
+    def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:
+        """The overview's compiler fields, as a ROM project's: the Settings panel and its dropdown work the same."""
+        found = self._file_parts(fp, cfg)
+        if found is None:
+            return {}
+        own, parts = found
+        return {"compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
+                             "proprietary": False, "supported": True},
+                "compilers": [c.id for c in consoles.get(cfg.get("platform")).compilers], "compiler_ranges": parts}
+
+    def compiler_answer(self, slug: str) -> dict:
+        """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
+        with another, each kept because its matched functions match with it."""
+        _, fp, cfg = self.get(slug)
+        found = self._file_parts(fp, cfg)
+        if found is None:
+            raise NetworkError("this project's own build sets its compilers")
+        own, parts = found
+        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": False, "elsewhere": [],
+                "elsewhere_count": 0, "checking": False, "survey": {}, "checks": [],
+                "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
+                           "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
+                          for p in parts]}
+
+    def set_compiler_ranges(self, slug: str, ranges: list[list[int]], compiler: str | None) -> str:
+        """The Settings panel's "only for these address ranges", where each source file has a compiler: the files
+        whose code is in them get `compiler` (None: the project's own again), each only when its matches hold."""
+        _, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, "")
+        if own is None:
+            raise NetworkError("this project's own build sets its compilers")
+        files = sorted(f for f, spans in console.file_ranges(fp).items()
+                       if any(a < e and s < b for a, b in ranges for s, e in spans))
+        if not files:
+            raise NetworkError("no source file's code is in those ranges")
+        done, stayed = [], []
+        for f in files:
+            try:
+                self.set_file_compiler_by_hand(slug, f, compiler or own)
+                done.append(f)
+            except NetworkError as e:
+                stayed.append(str(e))
+        if not done:
+            raise NetworkError("; ".join(stayed[:4]))
+        said = f"{len(done)} source file{'s' if len(done) != 1 else ''} built with {consoles.compiler_name(compiler or own)}"
+        return said + (f"; {len(stayed)} stay as they were ({stayed[0]})" if stayed else "") + "."
+
+    def set_compiler_everywhere(self, slug: str, compiler: str, log=print) -> dict:
+        """The Settings panel's compiler for the whole game, where each source file has one: every file switches,
+        one at a time and only when its matches hold (a minute or two: it's a job), and then it's the project's
+        own, the files that stayed keeping theirs."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        if console.file_compiler(fp, "") is None:
+            raise NetworkError("this project's own build sets its compilers")
+        if compiler not in {c.id for c in console.compilers}:
+            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        sources = sorted({u.source for u in fp.units() if u.source})
+        stayed = []
+        for n, source in enumerate(sources, 1):
+            try:
+                self.set_file_compiler_by_hand(slug, source, compiler)
+            except NetworkError as e:
+                stayed.append(str(e))
+            if n % 20 == 0 or n == len(sources):
+                log(f"{n} of {len(sources)} source files tried, {len(stayed)} kept their compiler")
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            changed = console.set_own_compiler(fp, compiler, sources)
+        self._commit_paths(proj, fp, changed, f"Build the game with {compiler}\n\nChosen in decompdecomp's project "
+                                              f"settings; {len(stayed)} source files keep the compiler they had.")
+        self.net._update_cfg(slug, lambda c: c.update(compiler=compiler))
+        return {"switched": len(sources) - len(stayed), "stayed": stayed[:20]}
+
+    def set_file_compiler_by_hand(self, slug: str, source: str, compiler: str) -> None:
+        """The user's choice of a source file's compiler (the project's Settings), kept only when every function of
+        the file that matched still matches with it: the rule try_compiler's switches follow. What matches with it
+        now is a match like any other."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, source)
+        units = fp.units_for(source)
+        if own is None or not units:
+            raise NetworkError(f"{source} isn't a source file whose compiler this project lets you choose")
+        if compiler not in {c.id for c in console.compilers}:
+            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler == own:
+            return
+        text = (fp.root / source).read_text(errors="replace", encoding="utf-8")
+        with self._tree(proj).exclusive(), self._units_locked(proj, [u.name for u in units]):
+            before = {u.name: self._baseline(proj, fp, u, text)[0] or {} for u in units}
+            with self._build_locks[proj["id"]]:
+                rel = console.set_file_compiler(fp, source, compiler)
+            after, broken = {}, []
+            for u in units:
+                ok, log = self._build_unit(proj, fp, u)
+                try:
+                    after[u.name] = fp.diff(u, None).unit_scores if ok else {}
+                except (ObjdiffError, ForkError):
+                    after[u.name] = {}
+                broken += [n for n, pct in before[u.name].items()
+                           if (pct or 0) >= 100 and (after[u.name].get(n) or 0) < 100]
+            if broken or not all(after.values()):
+                with self._build_locks[proj["id"]]:
+                    console.set_file_compiler(fp, source, own)
+                for u in units:
+                    self._build_unit(proj, fp, u)
+                why = (f"{', '.join(sorted(broken)[:8])} no longer match with it" if broken
+                       else f"the file doesn't build with it:\n{_tail(log)}")
+                raise NetworkError(f"{source} stays with {own}: {why}")
+            self._commit(proj, fp, rel, f"Build {source} with {compiler}\n\nChosen in decompdecomp's project settings.")
+            for u in units:
+                self._keep_scores(proj, u, text, after[u.name])
+                self._apply_scores(proj, u.name, after[u.name], text=text)
 
     def function_diff(self, slug: str, name: str) -> dict:
         """objdiff's diff of the function as it is in the source tree now."""

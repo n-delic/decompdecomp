@@ -450,6 +450,67 @@ description = "Every CodeWarrior version GameCube and Wii games were built with 
 url = "https://files.decomp.dev/compilers_20251118.zip"
 sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
 
+[mwccarm]
+name = "Metrowerks CodeWarrior for Nintendo DS (mwccarm)"
+kind = "compiler-pack"
+platform = "DS"
+license = "proprietary"
+source = "decompme/compilers release 'compilers' mwccarm.zip (the decomp community's archive)"
+description = "Every CodeWarrior version DS games were built with (1.2, 2.0, DSi 1.1-1.6: 24 of them), compiler and linker. Windows programs, run through wibo on Linux and macOS."
+[[mwccarm.parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccarm.zip"
+sha256 = "dc386e37b2176e960954a733de928337d9b7e7620b9e94228008c31774339ace"
+
+[dsd]
+name = "ds-decomp (dsd)"
+kind = "tool"
+license = "MIT"
+source = "AetiasHax/ds-decomp v0.12.1"
+description = "Nintendo DS toolkit: extracts and rebuilds ROMs, analyses the ARM9 and overlays, delinks them into objects."
+binary_name = "dsd"
+[[dsd.parts]]
+url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-linux-x86_64"
+sha256 = "256edde804dd8e5d7bc4c0e4187f85244ee4cd1f42bb427502e01fda6af43ceb"
+binary = "dsd"
+platforms = ["linux-x86_64"]
+[[dsd.parts]]
+url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-macos-arm64"
+sha256 = "1bbb57fe66a37123a7e9a64459b174956ea69ea103ad3dfd2766f18ca63057c7"
+binary = "dsd"
+platforms = ["macos-arm64"]
+[[dsd.parts]]
+url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-macos-x86_64"
+sha256 = "21adcef119d6e9b6bb853b0e5cc626bc4c086d28d45abc9a91b715c78631a044"
+binary = "dsd"
+platforms = ["macos-x86_64"]
+[[dsd.parts]]
+url = "https://github.com/AetiasHax/ds-decomp/releases/download/v0.12.1/dsd-windows-x86_64.exe"
+sha256 = "5917df26bffc05d4752276a2e0b1edd21bd6e920aabe1992be8a50efc9d10932"
+binary = "dsd.exe"
+platforms = ["windows-x86_64"]
+
+[arm-gnu]
+name = "Arm GNU Toolchain (arm-none-eabi)"
+kind = "tool"
+license = "GPL-3.0"
+source = "Arm GNU Toolchain 14.3.Rel1 (developer.arm.com)"
+description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the DS demo game's start-up code; about 150 MB."
+binary_name = "bin/arm-none-eabi-as"
+[[arm-gnu.parts]]
+url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"
+sha256 = "8f6903f8ceb084d9227b9ef991490413014d991874a1e34074443c2a72b14dbd"
+subdir = "arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi"
+platforms = ["linux-x86_64"]
+[[arm-gnu.parts]]
+url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi.tar.xz"
+sha256 = "30f4d08b219190a37cded6aa796f4549504902c53cfc3c7e044a8490b6eba1f7"
+subdir = "arm-gnu-toolchain-14.3.rel1-darwin-arm64-arm-none-eabi"
+platforms = ["macos-arm64"]
+[[arm-gnu.parts]]
+url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-mingw-w64-x86_64-arm-none-eabi.zip"
+sha256 = "864c0c8815857d68a1bbba2e5e2782255bb922845c71c97636004a3d74f60986"
+platforms = ["windows-x86_64"]  # the Windows zip has bin/, lib/, ... at its top, no folder around them
+
 [msvc]
 name = "Microsoft Visual C++ 6.0, 7.0 and 7.1 (PC)"
 kind = "compiler-pack"

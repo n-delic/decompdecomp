@@ -108,9 +108,23 @@ const CW_PACK = {
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
 const packOf = (p) => CW_PACK[consoleOf(p)?.packs[0]] ? consoleOf(p).packs[0] : "mwcc";
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
+
+/* A DS ROM (consoles/nds/scratch.is_nds): the header's own CRC-16 is right and the ARM9 program sits in main RAM. */
+function isNds(head, dv) {
+  if (head.length < 0x200) return false;
+  let crc = 0xffff;
+  for (let i = 0; i < 0x15e; i++) {
+    crc ^= head[i];
+    for (let b = 0; b < 8; b++) crc = crc & 1 ? (crc >>> 1) ^ 0xa001 : crc >>> 1;
+  }
+  const off = dv.getUint32(0x20, true), entry = dv.getUint32(0x24, true), ram = dv.getUint32(0x28, true), size = dv.getUint32(0x2c, true);
+  return crc === dv.getUint16(0x15e, true) && off >= 0x200 && ram >= 0x02000000 && ram < 0x02400000 && entry >= ram && entry < ram + size;
+}
 
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
@@ -119,6 +133,7 @@ function identifyHead(head, file) {
   const stem = file.name.replace(/\.[^.]*$/, "");
   const base = { title: stem, size: file.size };
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+  if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true) };
   if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "ps2", order: "disc image" };
@@ -147,7 +162,8 @@ function notSupported(head, file) {
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
   const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
   if (text(0, 2) === "MZ") return "That's a 64-bit or non-x86 Windows program (or a DOS one). decompdecomp starts PC games from their 32-bit x86 .exe.";
-  if (text(0, 8) === "PS-X EXE" || ["gba", "nds"].includes(ext)) return "PlayStation 1, Game Boy Advance and DS games aren't supported in this version. For those, continue a public decomp.";
+  if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
+  if (text(0, 8) === "PS-X EXE" || ext === "gba") return "PlayStation 1 and Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
   if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
   if (["nsp", "xci", "nso", "nro", "nca"].includes(ext) || text(0, 4) === "NSO0" || text(0, 4) === "PFS0") return "That's a Nintendo Switch file. Switch games aren't supported yet.";
   if (["sfc", "smc"].includes(ext)) return "That's a Super Nintendo ROM. SNES games were written in assembly, not compiled from C, so there's no C source to match.";
@@ -228,6 +244,10 @@ $("mwAccept").addEventListener("change", updateAnalyse);
 function fillCompilers(select, current, platform) {
   const own = (consoleOf(platform)?.compilers || []).map((c) => c.id);  // the console's compilers
   const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
+  if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
+    select.innerHTML = consoleOf(platform).compilers.map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    return;
+  }
   select.innerHTML = tcs.map((t) => {
     const note = !t.supported ? " (not available on this computer)" : t.installed ? "" : t.license === "proprietary" ? " (install in Compilers & tools)" : " (will be installed)";
     return `<option value="${esc(t.id)}" ${t.id === current ? "selected" : ""} ${t.supported ? "" : "disabled"}>${esc(t.name)} · ${esc(t.use)}${note}</option>`;

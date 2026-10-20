@@ -290,7 +290,8 @@ class CompilerMixin:
         tc, flag_list, check = None, [], None
         if compiler:
             if self.fork_slug(slug):
-                raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only")
+                raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only "
+                                   "(where its files can have their own, try_compiler keeps the one that matches)")
             tc = self._toolchain_named(cfg, compiler)
             flag_list = flags.split() or consoles.of(cfg).default_flags(tc, cfg.get("gp"))
             if not spans and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
@@ -344,6 +345,8 @@ class CompilerMixin:
         it's older than SURVEY_AGAIN_SECONDS, and every applied range gets looked at again once. "Survey again" and
         "Check the applied ranges" were buttons nobody could say when to press, the owner and their author included.
         `check_now`: both at once, whatever their age."""
+        if self.fork_slug(slug):  # a project whose source files each have a compiler (DS): the files are its parts
+            return self.forks.compiler_answer(slug)
         self._rom_only(slug, "the compiler answer")
         proj = self._project(slug)
         cfg = self.cfg(proj)
@@ -410,8 +413,8 @@ class CompilerMixin:
         """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an
         attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on GTA
         San Andreas an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
-        if self.fork_slug(slug):
-            raise NetworkError("a fork builds with its project's own compilers")
+        if self.fork_slug(slug):  # where the project lets each file have its own compiler (DS), the fork engine's
+            return self.forks.try_compiler(agent, slug, function, compiler, flags, source)
         proj = self._project(slug)
         cfg = self.cfg(proj)
         tc = self._toolchain_named(cfg, compiler)

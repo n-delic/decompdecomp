@@ -34,7 +34,8 @@ from ..project import compiler_for
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 _MACHINE = {"EM_PPC": ("ppc", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
-_CACHE_VERSION = 2  # of twins.json: 2 added why code is hand-written assembly
+_CACHE_VERSION = 4  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
+# system instructions
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.
@@ -91,9 +92,12 @@ def object_prints(data: bytes) -> dict[str, Print]:
     processor = arch.get(arch_id)
     reason = processor.asm_reason if not processor.asm_needs_console else None
     by_section: dict[int, list] = defaultdict(list)
+    modes: dict[int, list[tuple[int, bool]]] = defaultdict(list)  # ARM: section -> (address, Thumb?) of $a/$t
     for s in symtab.iter_symbols():
         if s["st_info"]["type"] == "STT_FUNC" and isinstance(s["st_shndx"], int) and s["st_size"] > 0 and s.name:
             by_section[s["st_shndx"]].append(s)
+        elif arch_id == "arm" and s.name.split(".")[0] in ("$a", "$t") and isinstance(s["st_shndx"], int):
+            modes[s["st_shndx"]].append((s["st_value"], s.name.startswith("$t")))
     out: dict[str, Print] = {}
     for shndx, syms in by_section.items():
         sec = elf.get_section(shndx)
@@ -113,12 +117,17 @@ def object_prints(data: bytes) -> dict[str, Print]:
                 rels.append((r["r_offset"], r["r_info_type"], name))
         rels.sort()
         _mask(code, [(o, t) for o, t, _ in rels], arch_id, order)
+        section_modes = sorted(modes[shndx])
         for s in syms:
             lo = s["st_value"] & ~1 if arch_id == "arm" else s["st_value"]  # (bit 0: a Thumb function)
             mine = [(o - lo, t, n) for o, t, n in rels if lo <= o < lo + s["st_size"]]
+            facts = {}
+            if arch_id == "arm":  # its mode: bit 0, else the mapping symbol it starts under (dsd's objects)
+                at = [t for a, t in section_modes if a <= lo]
+                facts["thumb"] = True if s["st_value"] & 1 else (at[-1] if at else None)
             out[s.name] = Print(_key(bytes(code[lo:lo + s["st_size"]]), [(o, t) for o, t, _ in mine]),
                                 [n for _, _, n in mine], s["st_size"],
-                                asm=(reason(raw[lo:lo + s["st_size"]], order == "big") or "") if reason else "")
+                                asm=(reason(raw[lo:lo + s["st_size"]], order == "big", **facts) or "") if reason else "")
     return out
 
 

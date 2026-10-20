@@ -72,6 +72,7 @@
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
+    <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
   </fieldset>
   <output class="answer js-only" id="answer" for="platform" aria-live="polite" hidden></output>
 
@@ -124,6 +125,16 @@
         <li><small>Built by</small><b>Visual C++</b><span>6.0, 7.0 or 7.1; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="nds" data-file="game.nds">
+      <h3><span class="pl-name">Nintendo DS</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>ROM</b><span>.nds</span></li>
+        <li><small>Split by</small><b>ds-decomp</b><span>the ARM9 program, its ITCM and DTCM, every overlay</span></li>
+        <li><small>Built by</small><b>CodeWarrior for DS</b><span>1.2 to DSi 1.6, each source file with its own version</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
+        <li><small>You get</small><b>A ds-decomp project</b><span>that rebuilds your ROM and checks it, byte for byte</span></li>
       </ol>
     </article>
   </div>

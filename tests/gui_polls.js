@@ -134,6 +134,17 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.ov = before;
       return { guest, host, alone };
     })(),
+    // tests/test_ds.py's header, whose checksum (0xB4DE) the server's crc16 computed: the page agrees on what's a DS ROM
+    nds: (() => {
+      const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
+      [..."DEMOQUESTDS\0ADQE"].forEach((c, i) => { h[i] = c.charCodeAt(0); });
+      [0x4000, 0x02000800, 0x02000000, 0x1000].forEach((v, i) => dv.setUint32(0x20 + 4 * i, v, true));
+      dv.setUint16(0x15e, 0xb4de, true);
+      const file = { name: "game.nds", size: 0x4200 };
+      const good = identifyHead(h, file);
+      h[0] ^= 1;
+      return { good: good && [good.platform, good.code, good.title], broken: identifyHead(h, file), said: notSupported(h, file) };
+    })(),
     // the launcher keeps the last effort picked: Claude Code's xhigh isn't one opencode offers
     efforts: (() => {
       LZ.effort = "xhigh";

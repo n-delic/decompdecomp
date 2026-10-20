@@ -342,8 +342,14 @@ async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
   const fork = ov.kind === "fork";
-  $("compilerPanel").hidden = fork;
-  if (!fork) {
+  // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
+  // project's flags its build's and nothing for the ROM engine's survey to check
+  $("compilerPanel").hidden = !(ov.compilers || []).length;
+  for (const id of ["setFlagsRow", "setTcReset", "autoAdjustRow", "compilerHow"]) $(id).hidden = fork;
+  $("setTcWhat").textContent = fork
+    ? "Every source file is built with this compiler, except the parts above. Saving one for the whole game, or for address ranges, keeps it only for the files whose matched functions still match with it."
+    : "Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.";
+  if (!$("compilerPanel").hidden) {
     if (!S.st) await loadState();
     fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform);
     $("setFlags").value = ov.compiler.flags.join(" ");
@@ -384,13 +390,21 @@ $("compilerParts").onclick = async (e) => {
 };
 $("setTc").onchange = () => { $("setFlags").value = ""; };  // one compiler's flags aren't another's (-G8 vs -sdatathreshold): its defaults
 $("setTcSave").onclick = async () => {
+  $("setTcSave").disabled = true;
   try {
     const flags = $("setFlags").value.trim();
-    S.ov = await api("/api/compiler", { method: "POST", body: { slug: S.slug, toolchain: $("setTc").value, flags: flags ? flags.split(/\s+/) : null, ranges: $("setRanges").value.trim() } });
+    const r = await api("/api/compiler", { method: "POST", body: { slug: S.slug, toolchain: $("setTc").value, flags: flags ? flags.split(/\s+/) : null, ranges: $("setRanges").value.trim() } });
+    let said = r.said || "Compiler settings saved.";
+    if (r.job) {  // the whole game, where each source file has a compiler: every file is tried in turn
+      $("setTcLog").hidden = false;
+      const res = await followJob(r.job, $("setTcLog"));
+      said = `${plural(res.switched, "source file")} built with it now${res.stayed.length ? `; ${plural(res.stayed.length, "file")} kept theirs (their matches need it)` : ""}.`;
+      S.ov = await api(`/api/project?slug=${S.slug}`);
+    } else S.ov = r;
     renderStats(S.ov);
     renderProjectSettings();
-    toast("Compiler settings saved.");
-  } catch (e) { toast(esc(e.message), "err"); }
+    toast(esc(said));
+  } catch (e) { toast(esc(e.message), "err"); } finally { $("setTcSave").disabled = false; }
 };
 $("folderBtn").onclick = () => openFolder();
 
@@ -437,7 +451,7 @@ function renderCompilerAnswer(a) {
   setHtml($("compilerParts"), parts.length ? `<ol class="parts">${parts.map((p) => {
     const [word, why] = PART_STATE[p.check] || PART_STATE[""];
     return `<li><code>${hexShort(p.start)}–${hexShort(p.end)}</code><span class="grow">${esc(p.compiler)} <span class="flags mono">${esc(p.flags)}</span></span>
-      <span class="part-state ${esc(p.check || "none")}" title="${esc(p.said || why)}">${word}</span>
+      ${p.file ? `<span class="muted small mono">${esc(p.file)}</span>` : ""}<span class="part-state ${esc(p.check || "none")}" title="${esc(p.said || why)}">${word}</span>
       <button class="ghost small-btn" type="button" data-unrange="${hexShort(p.start)}-${hex8(p.end)}" aria-label="Build ${hexShort(p.start)} to ${hexShort(p.end)} with ${esc(a.compiler)} again" title="Build this part with ${esc(a.compiler)} again">Remove</button></li>`;
   }).join("")}</ol>` : "");
   const sv = a.survey || {};
