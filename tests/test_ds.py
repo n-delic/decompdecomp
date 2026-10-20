@@ -322,3 +322,16 @@ def test_data_in_a_code_section_isnt_a_function(per_file, monkeypatch):
     monkeypatch.setattr(forkengine, "_data_symbols", lambda target: {"lerp"})  # as if lerp were data
     net.forks.sync(slug, log=lambda *_: None)
     assert "lerp" not in {r["name"] for r in net.function_map(slug)}
+
+
+def test_start_up_code_that_sets_the_cpus_mode_is_hand_written():
+    """A DS program's Entry switches the CPU's mode (msr cpsr) and sets up its cache (mcr p15): no compiler emits
+    either. Only in code known to be ARM: Thumb code read as ARM words could look like them."""
+    from decompnet.arch import arm
+
+    words = lambda *ws: b"".join(w.to_bytes(4, "little") for w in ws)  # noqa: E731
+    msr = words(0xE3A00013, 0xE121F000, 0xE12FFF1E) + bytes(16)  # mov r0, #0x13; msr cpsr_c, r0; bx lr
+    mcr = words(0xEE070F9A, 0xE12FFF1E) + bytes(16)  # mcr p15, 0, r0, c7, c10, 4; bx lr
+    assert "msr" in arm.asm_reason(msr, thumb=False) and "p15" in arm.asm_reason(mcr, thumb=False)
+    assert arm.asm_reason(msr, thumb=True) is None and arm.asm_reason(msr) is None  # Thumb, or not known
+    assert arm.asm_reason(words(0xE0800001, 0xE12FFF1E) + bytes(16), thumb=False) is None  # add r0, r0, r1: C

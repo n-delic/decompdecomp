@@ -30,11 +30,23 @@ THUMB_CAPSTONE = {False: (capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)}
 STUB_BYTES = 16
 THUMB_SVC, THUMB_BX_LR = 0xDF00, 0x4770  # svc #n (0xDFnn); bx lr
 ARM_SWI, ARM_BX_LR = 0x0F000000, 0xE12FFF1E  # swi #n (cond 1111 nnnn...: bits 24-27 set); bx lr
+# Instructions no compiler emits, in code known to be ARM (a Thumb function read as ARM words could look like one):
+# the CPU's mode (msr/mrs: a DS program's start-up code switches it) and coprocessor 15, the cache and memory setup
+SYSTEM = ((0x0FB0F000, 0x0320F000, "msr"), (0x0FB0FFF0, 0x0120F000, "msr"), (0x0FBF0FFF, 0x010F0000, "mrs"),
+          (0x0F000F10, 0x0E000F10, "mcr/mrc p15"))  # (mask, value, what)
 
 
-def asm_reason(code: bytes, big_endian: bool = False, **_facts) -> str | None:
-    """Why this ARM or Thumb function can't come from a compiler (a BIOS call stub), or None."""
-    if big_endian or len(code) > STUB_BYTES:
+def asm_reason(code: bytes, big_endian: bool = False, thumb: bool | None = None, **_facts) -> str | None:
+    """Why this ARM or Thumb function can't come from a compiler (a BIOS call stub; in ARM code, the CPU's mode or
+    coprocessor 15), or None. `thumb`: whether it's Thumb code, None when the object doesn't say."""
+    if big_endian:
+        return None
+    if thumb is False:
+        for at in range(0, len(code) - 3, 4):
+            w = int.from_bytes(code[at:at + 4], "little")
+            if w >> 28 != 0xF and (what := next((x for m, v, x in SYSTEM if w & m == v), None)):
+                return f"uses {what}, the CPU's mode or its cache: no compiler emits it, so it's hand-written assembly"
+    if len(code) > STUB_BYTES:
         return None
     halves = [int.from_bytes(code[i:i + 2], "little") for i in range(0, len(code) - 1, 2)]
     if THUMB_BX_LR in halves and any(h & 0xFF00 == THUMB_SVC for h in halves[:halves.index(THUMB_BX_LR)]):
