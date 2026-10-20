@@ -813,6 +813,10 @@ class Manager:
                 break
             if self._room_away(s):
                 continue
+            if (broken := self._build_problem(s.slug)) is not None:
+                self._pause(s, f"the project doesn't build on this computer, so no session starts: {broken}",
+                            "Fix the project's setup (its page says what's wrong), then press Start again.")
+                break
             s.runs += 1
             self._set(s, "working")
             began = time.time()
@@ -873,6 +877,17 @@ class Manager:
         s.proc = None
         self._save(s)
         self._release(s, agent)
+
+    def _build_problem(self, slug: str) -> str | None:
+        """Before each session: why the project can't build here, after its setup ran again (ForkEngine.preflight),
+        or None. Helpers spent their compiles on a build.ninja pointing at another home's python, then quit."""
+        try:
+            if not self.net.fork_slug(slug):
+                return None
+            return self.net.forks.preflight(slug, log=lambda m: log.info("%s", m))
+        except Exception:  # the check itself failing mustn't stop the helpers
+            log.exception("pre-flight of %s failed", slug)
+            return None
 
     def _release(self, s: Session, agent=None) -> None:
         """Free the function a helper holds (in a room, the host holds the real claim). A stop may happen before its

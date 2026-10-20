@@ -380,6 +380,48 @@ class ForkEngine:
         self._indexing: set[int] = set()
         self._ilock = threading.Lock()
         self._linking: dict[str, dict] = {}  # slug -> background link run
+        self._preflight_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+        self._preflighted: set[int] = set()  # projects checked since the app started (overview's check)
+
+    # ------------------------------------------------------------------ pre-flight
+
+    def preflight(self, slug: str, log=lambda *_: None) -> str | None:
+        """Whether the project builds on this computer before helpers spend compiles on it: its setup finished and
+        build.ninja's programs exist (ForkProject.build_problem). When they don't, the setup's configure step runs
+        again (a project folder moved from another home); what's still wrong is kept on the project (its overview
+        shows it) and returned. None: it builds."""
+        proj, fp, cfg = self.get(slug)
+        if not cfg.get("ready"):
+            return None  # not set up yet: Setup says so
+        with self._preflight_locks[proj["id"]]:
+            self._preflighted.add(proj["id"])
+            why = fp.build_problem()
+            if why is not None and (fp.root / "objdiff.json").exists():
+                log(f"{slug}: {why}; running its setup's configure step again")
+                ok, tail = fp.reconfigure(cfg.get("version"), log=log)
+                why = fp.build_problem() or (None if ok else f"its setup failed: {_tail(tail, 4)}")
+            if self.get(slug)[2].get("build_problem") != why:
+                self.net._update_cfg(slug, lambda c: c.__setitem__("build_problem", why))
+        return why
+
+    def _preflight_once(self, slug: str) -> None:
+        """The first look at a project in this run of the app (its page opened): pre-flight it in the background."""
+        try:
+            pid = self.net._project(slug)["id"]
+        except NetworkError:
+            return
+        if pid in self._preflighted:
+            return
+        self._preflighted.add(pid)
+
+        logger = logging.getLogger("decompdecomp")
+
+        def run() -> None:
+            try:
+                self.preflight(slug, log=lambda m: logger.info("%s", m))
+            except Exception:  # the page works without it
+                logger.exception("pre-flight of %s failed", slug)
+        threading.Thread(target=run, daemon=True, name=f"preflight-{slug}").start()
 
     # ------------------------------------------------------------------ locks, builds, baselines
 
@@ -2086,6 +2128,16 @@ class ForkEngine:
                     self._keep_scores(proj, unit, before, scores)
 
             ok, log = self._build_unit(proj, fp, unit)
+            if not ok and (broken := fp.build_problem()) is not None:
+                # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
+                # is set up again in the background (one project spent five compiles on a build.ninja whose python
+                # was in another home, then the sessions quit)
+                path.write_text(before, encoding="utf-8")
+                threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
+                return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
+                                "and nothing was recorded or counted. decompdecomp is setting the project up again; "
+                                "don't compile until it's fixed: end your session here.", "score": None,
+                        "matched": False}
             if not ok:
                 undo()
                 if quiet is None:
@@ -2671,6 +2723,8 @@ class ForkEngine:
 
     def overview(self, slug: str) -> dict:
         proj, fp, cfg = self.get(slug)
+        if cfg.get("ready"):
+            self._preflight_once(slug)
         agg = self.net.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
@@ -2694,6 +2748,8 @@ class ForkEngine:
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
+            # why it doesn't build on this computer (preflight; checked once a run when its page first opens)
+            "build_problem": cfg.get("build_problem") if cfg.get("ready") else None,
         }
 
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
