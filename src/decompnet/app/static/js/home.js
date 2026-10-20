@@ -354,9 +354,10 @@ function renderRestore() {
   $("rsCancel").textContent = restoreCancelling ? "Cancelling…" : busy ? "Cancel opening" : "Cancel";
   for (const id of ["rsSource", "rsGame", "rsOwn"]) $(id).disabled = busy;
   $("dialogBody").querySelectorAll("[data-pick]").forEach((b) => { b.disabled = busy; });
+  showJobError($("rsLog"), restoreError || restoreJob?.error || "");
+  // showJobError clears the log when there is no error. Clear first, then paint the latest poll's lines.
   $("rsLog").textContent = restoreStarting ? "Starting saved project…" : (restoreJob?.log || []).join("\n");
   $("rsLog").hidden = !$("rsLog").textContent;
-  showJobError($("rsLog"), restoreError || restoreJob?.error || "");
 }
 function openRestore() {
   const running = restoreBusy();
