@@ -9,8 +9,10 @@ from decompnet.project import compiler_config
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def compile_unit(source: Path, output: Path) -> None:
-    cfg = compiler_config(ROOT, {"compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+def compile_unit(source: Path, output: Path, flags: list[str] | None = None) -> None:
+    """`flags`: the compiler's own (toolchains.toml) when None."""
+    compiler = {"toolchain": "gcc-2.7.2-kmc"} | ({"flags": flags} if flags is not None else {})
+    cfg = compiler_config(ROOT, {"compiler": compiler})
     cfg.include_dirs = (str(ROOT / "include"),)
     result = compile_source(cfg, "", source.read_text(encoding="utf-8"), trusted=True)
     if not result.ok:
@@ -20,4 +22,4 @@ def compile_unit(source: Path, output: Path) -> None:
 
 
 if __name__ == "__main__":
-    compile_unit(Path(sys.argv[1]), Path(sys.argv[2]))
+    compile_unit(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3:] or None)
