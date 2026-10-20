@@ -132,7 +132,8 @@ def _wrap(cfg: CompilerConfig, work: Path, argv: list[str]) -> list[str]:
 def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd: Path | None = None, **stage):
     """`stage`: in WSL, run on a copy in WSL's own file system (wsl.run's outputs, inputs and stage)."""
     if _sandbox_mode(cfg) == "wsl":
-        return wsl.run(argv, cwd or work, timeout, **stage)
+        check = _CANCEL_CHECK.get()
+        return wsl.run(argv, cwd or work, timeout, **stage, **({"check_cancel": check} if check else {}))
     # in the work folder, never in the app's own: KMC GCC's assembler (binutils 2.6) can't read its input when the
     # current directory is / ("Bad file descriptor"), as it can be for a program its launcher starts
     check = _CANCEL_CHECK.get()
@@ -213,9 +214,18 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     argv = [a.replace("{include}", subst["{include}"]) for a in argv]
     (work / "func.o").unlink(missing_ok=True)
     try:
-        with _SLOTS:
+        # A restore must also be cancellable while other jobs occupy every compiler slot.
+        check = _CANCEL_CHECK.get()
+        while not _SLOTS.acquire(timeout=0.1):
+            if check:
+                check()
+        try:
+            if check:
+                check()
             proc = _exec(cfg, work, argv, cfg.timeout,
                          **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) == "wsl" else {}))
+        finally:
+            _SLOTS.release()
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")
     log = (proc.stdout + proc.stderr).replace(root + "/", "")

@@ -11,6 +11,13 @@ NODE = shutil.which("node")
 GUI_TIMEOUT_SECONDS = 60
 
 
+def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_restore.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 @pytest.fixture(scope="module")
 def gui():
     if NODE is None:

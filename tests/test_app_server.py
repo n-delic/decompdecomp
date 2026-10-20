@@ -415,6 +415,29 @@ def test_a_cancelled_job_stops_at_its_next_checkpoint(tmp_path):
     assert jobs.jobs[jid]["state"] == "cancelled"
 
 
+def test_cancellation_accepted_before_a_job_returns_cannot_report_success():
+    from decompnet.app.support import Jobs
+
+    jobs = Jobs()
+    entered, finish = threading.Event(), threading.Event()
+
+    def work(log):
+        entered.set()
+        assert finish.wait(2)
+        return {"slug": "must-not-open"}
+
+    jid = jobs.start("restore", work)
+    assert entered.wait(1)
+    assert jobs.cancel(jid)
+    finish.set()
+    for _ in range(100):
+        if jobs.jobs[jid]["state"] != "running":
+            break
+        time.sleep(0.01)
+    assert jobs.jobs[jid]["state"] == "cancelled"
+    assert jobs.jobs[jid]["result"] is None
+
+
 def test_the_log_can_be_read_from_the_gui(app):
     client, _, _ = app
     res = client.get("/api/log")

@@ -51,6 +51,8 @@ class ImportMixin:
                      flags: list[str] | None = None, log=print) -> str:
         """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         rom, info = picked.data, picked.info
+        check_cancel = getattr(log, "check_cancel", lambda: None)
+        check_cancel()
         for p in self.store.all("SELECT slug, config FROM projects"):
             if json.loads(p["config"]).get("rom", {}).get("sha1") == info["sha1"]:
                 log(f"already imported as {p['slug']}")
@@ -104,6 +106,7 @@ class ImportMixin:
         for name, addr in res.named.items():
             symbols.add(Symbol(name, addr, 0, "func"), reindex=False)
         for fn in res.functions:
+            check_cancel()
             symbols.add(Symbol(fn.name, fn.vram, fn.size, "func"), reindex=False)
         rom_bytes, segs = rom, res.segments
 
@@ -116,6 +119,7 @@ class ImportMixin:
 
         data_rows = []
         for d in res.data:
+            check_cancel()
             if d.name in symbols.by_name:
                 continue
             symbols.add(Symbol(d.name, d.vram, d.size, d.kind), reindex=False)
@@ -128,6 +132,7 @@ class ImportMixin:
                              (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                               console.arch, int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
             for fn in res.functions:
+                check_cancel()
                 target = match.target_from_split(fn, symbols.resolve, picked.big_endian, res.gp)
                 known = debug.functions.get(fn.vram) if debug is not None else None
                 unit = debug.units.get(fn.vram, fn.segment) if debug is not None else fn.segment  # its source file
@@ -137,6 +142,7 @@ class ImportMixin:
                     (pid, fn.name, fn.size, len(fn.lines), target.code, json.dumps(target.to_json()),
                      self._asm_source(fn), None, unit, fn.vram, fn.rom, json.dumps({"debug": known}) if known else None))
             for s in symbols.by_name.values():
+                check_cancel()
                 preview = next((r[4] for r in data_rows if r[0] == s.name), None)
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
                            (pid, s.name, s.address, s.size, s.kind, preview))

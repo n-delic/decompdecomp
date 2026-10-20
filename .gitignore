@@ -9,6 +9,25 @@ wheels/
 # Virtual environments
 .venv
 
+# Editor and local workspace files
+.vscode/
+.idea/
+.history/
+
+# Temporary files and tool caches
+/tmp/
+/temp/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.coverage
+htmlcov/
+*.tmp
+*.swp
+*.bak
+.DS_Store
+Thumbs.db
+
 # DecompNet
 decompnet.db*
 projects/*/target/*.o

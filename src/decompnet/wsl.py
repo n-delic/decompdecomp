@@ -161,7 +161,7 @@ def prepare_tools(directories: tuple[Path, ...]) -> tuple[str, ...]:
 
 
 def run(argv: list[str], cwd: Path, timeout: float, *, outputs: list[str] | None = None,
-        inputs: list[str] | None = None, stage: str | None = None) -> subprocess.CompletedProcess:
+        inputs: list[str] | None = None, stage: str | None = None, check_cancel=None) -> subprocess.CompletedProcess:
     """Run `argv` (WSL paths) inside WSL in `cwd` (a Windows folder). The command travels as a small script in the
     temp folder, so nothing depends on how wsl.exe splits a Windows command line.
 
@@ -187,11 +187,49 @@ def run(argv: list[str], cwd: Path, timeout: float, *, outputs: list[str] | None
         with os.fdopen(fd, "wb") as f:
             f.write(body.encode())  # LF line ends, whatever the platform
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        res = subprocess.run([exe() or "wsl", "-e", "sh", path(script)], capture_output=True, timeout=timeout,
-                             stdin=subprocess.DEVNULL, creationflags=flags)
+        if check_cancel is None:
+            res = subprocess.run([exe() or "wsl", "-e", "sh", path(script)], capture_output=True, timeout=timeout,
+                                 stdin=subprocess.DEVNULL, creationflags=flags)
+        else:
+            res = _cancellable_script(script, timeout, flags, check_cancel)
     finally:
         os.unlink(script)
     return subprocess.CompletedProcess(res.args, res.returncode, _text(res.stdout), _text(res.stderr))
+
+
+def _cancellable_script(script: str, timeout: float, flags: int, check) -> subprocess.CompletedProcess:
+    """Stop the Linux process group too: killing wsl.exe alone can leave its compiler running."""
+    from .hostenv import stop_process_tree
+
+    marker = Path(script + ".cancel")
+    # The watcher lives outside the command's session, so cancellation kills its children as well.
+    wrapper = (f"setsid sh {shlex.quote(path(script))} &\nchild=$!\n"
+               f"(while kill -0 \"$child\" 2>/dev/null; do\n"
+               f"  if [ -e {shlex.quote(path(marker))} ]; then /bin/kill -KILL -- -\"$child\" 2>/dev/null && exit; fi\n"
+               "  sleep 0.1\ndone) &\nwatcher=$!\n"
+               "wait \"$child\"\nrc=$?\nkill \"$watcher\" 2>/dev/null\nwait \"$watcher\" 2>/dev/null\nexit \"$rc\"\n")
+    check()
+    proc = subprocess.Popen([exe() or "wsl", "-e", "sh", "-c", wrapper], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, creationflags=flags)
+    started = time.monotonic()
+    try:
+        while True:
+            check()
+            try:
+                stdout, stderr = proc.communicate(timeout=0.1)
+                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+            except subprocess.TimeoutExpired:
+                if time.monotonic() - started >= timeout:
+                    raise subprocess.TimeoutExpired(proc.args, timeout)
+    except BaseException:
+        marker.touch()
+        try:
+            proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            stop_process_tree(proc)
+        raise
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 # ------------------------------------------------------------------ 32-bit programs without a 32-bit system

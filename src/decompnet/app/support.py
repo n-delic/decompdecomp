@@ -96,6 +96,7 @@ class Jobs:
     def __init__(self, log_path: Path | None = None):
         self.jobs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
@@ -120,8 +121,11 @@ class Jobs:
 
         def run():
             try:
-                job["result"] = fn(log)
-                job["state"] = "done"
+                result = fn(log)
+                with self._lock:
+                    check_cancel()
+                    job["result"] = result
+                    job["state"] = "done"
                 logger.info("job %s %s done in %.0fs", kind, jid, time.time() - job["t"])
             except BaseException as e:  # noqa: BLE001  a job must end, whatever went wrong
                 if cancel.is_set():
@@ -142,11 +146,12 @@ class Jobs:
         return jid
 
     def cancel(self, jid: str) -> bool:
-        job = self.jobs.get(jid)
-        if not job or job["state"] != "running":
-            return False
-        self.cancel_events[jid].set()
-        return True
+        with self._lock:
+            job = self.jobs.get(jid)
+            if not job or job["state"] != "running":
+                return False
+            self.cancel_events[jid].set()
+            return True
 
 
 class Settings:

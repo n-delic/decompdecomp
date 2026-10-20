@@ -181,13 +181,14 @@ def restore(net, source: str, game: Path, log=print) -> dict:
             raise NetworkError(f"that's not the same game: this save is for {manifest['title']} "
                                f"({manifest['game'].get('file') or 'its original file'}); pick your copy of that one")
         log("importing and splitting your game copy")
-        slug = net.import_rom(data, confirmed=True, name=data.name, log=log)
-        getattr(log, "check_cancel", lambda: None)()
         with compiler.cancellable(getattr(log, "check_cancel", lambda: None)):
+            slug = net.import_rom(data, confirmed=True, name=data.name, log=log)
+            getattr(log, "check_cancel", lambda: None)()
             return _apply(net, slug, folder, manifest, log) | {"slug": slug}
 
 
 def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
+    check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
     pid = proj["id"]
     log("putting back the function splits and names")
@@ -203,16 +204,19 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
     restorer, _ = net.local_agent("restored")
     with net.store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
+            check_cancel()
             header = (folder / "include" / file).read_text(encoding="utf-8") if (folder / "include" / file).exists() else None
             if header is not None and header != net._context(pid, unit)["header"]:
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, restorer.id,
                                                      "restored from a save", time.time(), unit))
         for text in manifest.get("knowledge") or []:
+            check_cancel()
             if not db.execute("SELECT 1 FROM knowledge WHERE project_id=? AND text=?", (pid, text)).fetchone():
                 db.execute("INSERT INTO knowledge(project_id, text, status, created_at, decided_at) VALUES(?,?,?,?,?)",
                            (pid, text, "accepted", time.time(), time.time()))
     for note in manifest.get("notes") or []:
+        check_cancel()
         try:
             net.add_note(net.local_agent(note["by"] or "restored")[0], slug, note["text"], note["function"])
         except NetworkError:
