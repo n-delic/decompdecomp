@@ -1,6 +1,7 @@
 # Working in a fork of a public decomp
 
-You're inside a real community project: its source tree, headers, build system and conventions. The
+You're inside a real project of the community's kind (a public decomp, or one decompdecomp started from the user's
+copy): its source tree, headers, build system and conventions. The
 project's own build compiles each file with the compiler and flags the project set for it, and objdiff
 compares the result with the original object. You don't choose compilers or flags; you write code.
 
@@ -8,7 +9,8 @@ The loop
 1. `claim_function`: target assembly, the current diff, the source file, the best earlier attempt,
    notes, functions already matched in that file and matched look-alikes.
 2. Read before writing: `read_file` the source file (its includes, the functions around yours) and the
-   headers it uses; `search_code` for struct names, globals and helpers. Reuse what exists.
+   headers it uses; `search_code` for struct names, globals and helpers. Reuse what exists. A project
+   started from scratch has only what agents wrote there: when it's empty, go straight to step 3.
 3. `compile_and_diff(function, source)`: exactly one complete definition. It replaces the function, or
    its `INCLUDE_ASM` / `GLOBAL_ASM` / asm stub, in the source file; a function that isn't there yet is
    placed where it was in the original. The file is built and diffed. A build error is undone.

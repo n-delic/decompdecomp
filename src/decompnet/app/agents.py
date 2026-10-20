@@ -889,7 +889,9 @@ class Manager:
         count = s.options.get("per_session", PER_SESSION)
         if ov.get("kind") == "fork":
             guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
-            return tools.FORK_PROMPT.format(title=ov["title"], platform=ov.get("platform_name") or "its platform",
+            platform = ov.get("platform_name") or "its platform"
+            what = tools.FORK_SCRATCH if ov.get("origin") == "scratch" else tools.FORK_PUBLIC
+            return tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
         if s.options.get("task") == "readable":

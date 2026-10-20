@@ -462,3 +462,33 @@ def test_c_code_going_into_a_cpp_file_gets_c_linkage(tmp_path, monkeypatch):
     assert net.forks.c_linkage({"root": str(tmp_path)}, row("fn_1_1", "c"), row("fn_1_BB34", "b"), source) is None  # C++ to C++
     static = source.replace("int fn_1_BB34", "static int fn_1_BB34")
     assert net.forks.c_linkage({"root": str(tmp_path)}, row("fn_1_1EE74", "a"), row("fn_1_BB34", "b"), static) is None
+
+
+def test_arms_pc_bias_isnt_shown_as_an_offset():
+    """objdiff showed "bl func_0203aca8-0x8": the -8 is the pipeline's, not an offset into the function."""
+    from decompnet.forks import objdiff
+
+    def row(text, kind, addend):
+        return {"instruction": {"formatted": text, "relocation": {"type_name": kind, "addend": addend}}}
+    assert objdiff._fmt(row("bl func_0203aca8-0x8", "R_ARM_PC24", "-8")) == "bl func_0203aca8"
+    assert objdiff._fmt(row("bl func_02001000-0x4", "R_ARM_THM_CALL", "-4")) == "bl func_02001000"
+    assert objdiff._fmt(row("bl func_0203aca8-0x10", "R_ARM_PC24", "-16")) == "bl func_0203aca8-0x10"  # a real one
+    assert objdiff._fmt(row("lui at, %hi(x-0x8)", "R_MIPS_HI16", "-8")) == "lui at, %hi(x-0x8)"
+
+
+@needs_tools
+def test_a_from_scratch_brief_says_what_the_data_it_uses_is(fork, monkeypatch):
+    """Its headers start empty: on a DS game a model looked in config/symbols.txt for minutes for what a global
+    was. The brief says where each one is and how big (read_data's answer on that game), and leaves functions out."""
+    net, slug, agent = fork
+    proj = net.project_row(slug)
+
+    def read_data(agent, slug, what, length=64):
+        if what == "data_02225058":
+            return "data_02225058 (_dsd_gap@main_2, .bss+0x107CF8, 2 bytes): uninitialized data (.bss), zeros at boot."
+        raise NetworkError(f"no data symbol `{what}`")
+    monkeypatch.setattr(net.forks, "read_data", read_data)
+    lines = net.forks._data_used(proj, ["add_score", "data_02225058", "g_score"])
+    assert lines[1:4] == ["### Data it uses", "- data_02225058: .bss, 2 bytes", "- g_score"]
+    assert not any("add_score" in line for line in lines) and "extern" in lines[-1]
+    assert net.forks._data_used(proj, ["add_score"]) == []

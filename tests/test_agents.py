@@ -320,6 +320,22 @@ def test_the_prompt_gives_the_compile_budget_the_guide_gives(tmp_path, monkeypat
     assert network.stall_budget_text() in m._prompt(s) and "8 claims" in m._prompt(s)
 
 
+def test_a_project_started_from_scratch_isnt_called_a_public_decomp(tmp_path, monkeypatch):
+    """Told a new DS project was "a public matching-decompilation project", a model spent its first 7 minutes
+    looking for the project's conventions in config/ and build.ninja; on Mario Kart 64 one went to fetch the
+    finished public decomp. Every prompt says code from outside the project is out."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    s = agents.Session("1", "claude", "claude-1", "game", "claude-1", {})
+    for origin, says in (("scratch", "no upstream project"), (None, "a public matching-decompilation project")):
+        monkeypatch.setattr(net, "overview", lambda slug, o=origin: {"kind": "fork", "origin": o, "title": "Game",
+                                                                     "platform": "nds", "platform_name": "Nintendo DS"})
+        assert says in m._prompt(s) and "Never fetch or copy code from outside this project" in m._prompt(s)
+    monkeypatch.setattr(net, "overview", lambda slug: {"kind": "rom", "title": "Game", "platform": "n64",
+                                                      "compiler": {"toolchain": "gcc-2.7.2-kmc"}})
+    assert "Never fetch or copy code from outside this project" in m._prompt(s)
+
+
 def test_stopping_a_helper_frees_its_function_at_once(tmp_path, quiet):
     """A stopped helper's claim used to wait for its thread to notice (an API helper waits on its model meanwhile):
     removed from the list, it showed up as a "connected agent" without a Stop button."""
