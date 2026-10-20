@@ -7,6 +7,7 @@ import socket
 import stat
 import sys
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -215,6 +216,36 @@ def test_a_packaged_install_points_at_the_releases(monkeypatch):
     monkeypatch.setenv("DECOMP_PACKAGE", "appimage")
     ok, why = updates.can_apply()
     assert not ok and "AppImage" in why and f"github.com/{updates.REPO}/releases" in why
+
+
+def test_the_windows_setup_can_update_itself(monkeypatch):
+    from decompnet.app import edition
+
+    monkeypatch.setenv("DECOMP_PACKAGE", "windows")
+    monkeypatch.setattr(edition, "DEV", False)
+    monkeypatch.setattr(updates, "uv", lambda: "uv.exe")
+    ok, why = updates.can_apply()
+    assert ok and not why
+
+
+def test_a_windows_setup_reinstalls_its_bundle_and_runs_setup(monkeypatch, tmp_path):
+    from decompnet.app import edition
+
+    monkeypatch.setenv("DECOMP_PACKAGE", "windows")
+    monkeypatch.setattr(updates.sys, "platform", "win32")
+    monkeypatch.setattr(edition, "DEV", False)
+    monkeypatch.setattr(updates, "uv", lambda: "uv.exe")
+    monkeypatch.setattr(updates, "_stream", lambda cmd, _log, _failure: calls.append(cmd))
+    monkeypatch.setattr(updates, "info_file", lambda: tmp_path / "update.json")
+    calls = []
+    found = {"current": {"channel": "release"}, "latest": {"version": "1.2.3"}, "spec": "new-wheel"}
+
+    updates.install(found, log=lambda _line: None)
+
+    assert calls[0][:5] == ["uv.exe", "pip", "install", "--python", updates.sys.executable]
+    assert calls[0][5:7] == ["--target", str(Path(updates.sys.executable).resolve().parent.parent / "packages")]
+    assert calls[1] == [updates.sys.executable,
+                        str(Path(updates.sys.executable).resolve().parent.parent / "decomp-launch.pyw"), "setup"]
 
 
 def test_an_install_from_main_updates_on_releases_only():

@@ -232,16 +232,19 @@ build the game again on each build.
 
 ## Installation details
 
-The installer installs [uv](https://docs.astral.sh/uv/), the app, the compilers and the m2c draft decompiler. All
-compilers are pinned and have checksums. To start the app, use your apps menu or type `decomp` in a terminal.
+On Linux, the installer installs [uv](https://docs.astral.sh/uv/), the app, the compilers and the m2c draft
+decompiler. On Windows, the release MSI bundles Python and the app. All compilers are pinned and have
+checksums. To start the app, use your apps menu or type `decomp` in a terminal.
 
 **The .deb, the .rpm and the AppImage.** Each [release](https://github.com/n-delic/decompdecomp/releases) also has a
 `.deb` (`sudo apt install ./decompdecomp_*.deb`), an `.rpm` (`sudo dnf install ./decompdecomp-*.rpm`) and an AppImage
 for x86_64 Linux. They contain their own Python and uv. The app's Setup gets the compilers. These copies do not
 update themselves: the app tells you when a new version is available, and you download it from the releases.
 
-**Linux only.** This version runs on Linux. Windows and macOS are not supported in this version. On Windows 11,
-the Linux version may work inside WSL (WSLg shows its window), but nobody tests that.
+**Windows.** The release MSI lets you choose an installation folder and adds decompdecomp to Start and the desktop. The Microsoft
+Edge WebView2 Runtime is required. Linux-only period compilers run through WSL 2; run `wsl --install` in an
+administrator PowerShell, restart if asked, and open Ubuntu once before importing a game that needs one. macOS is
+not supported in this version.
 
 **Its window and the tray.** decompdecomp opens in a window of its own. It uses GTK and WebKitGTK from your
 system, not a browser. The installer and the packages install them; without them, `decomp` tells you the command

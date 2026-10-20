@@ -67,13 +67,17 @@ def install_launcher() -> str:
         icons.mkdir(parents=True, exist_ok=True)
         icon = icons / "decompdecomp.ico"
         icon.write_bytes((Path(__file__).with_name("static") / "favicon.ico").read_bytes())
-        # pythonw uses this installation's environment without leaving a console behind the app.
+        # pythonw uses this installation's environment without leaving a console behind the app. The MSI's bundled
+        # runtime loads the app from its adjacent packages folder through this small launcher script.
+        bundled = os.environ.get("DECOMP_PACKAGE") == "windows"
         target = str(Path(sys.executable).with_name("pythonw.exe"))
         def ps(text: str) -> str:
             return text.replace("'", "''")
+        arguments = (f"'{ps(str(Path(sys.executable).resolve().parent.parent / 'decomp-launch.pyw'))}'"
+                     if bundled else "'-m decompnet.app.cli'")
         script = (f"$ErrorActionPreference='Stop'; $w=New-Object -ComObject WScript.Shell; "
                   f"$s=$w.CreateShortcut('{ps(str(shortcut))}'); "
-                  f"$s.TargetPath='{ps(target)}'; $s.Arguments='-m decompnet.app.cli'; "
+                  f"$s.TargetPath='{ps(target)}'; $s.Arguments={arguments}; "
                   f"$s.WorkingDirectory=(Split-Path '{ps(target)}'); "
                   f"$s.IconLocation='{ps(str(icon))},0'; $s.Description='AI game decompilation'; $s.Save()")
         script += f"; Copy-Item -LiteralPath '{ps(str(shortcut))}' -Destination '{ps(str(programs / shortcut.name))}' -Force"

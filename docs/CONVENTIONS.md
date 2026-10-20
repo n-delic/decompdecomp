@@ -174,8 +174,8 @@ not touch it.
 - A release bumps the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
   `site/public/install.sh`, `uv.lock`. Its commit reads
   `decompdecomp X.Y.Z: <what users get>`. Pre-releases are `X.Y.Z-alpha` (then `-beta`, `-rc`).
-- A release is a `vX.Y.Z` tag. `.github/workflows/release.yml` builds the `.deb`, the `.rpm` and the AppImage and
-  attaches them.
+- A release is a `vX.Y.Z` tag. `.github/workflows/release.yml` builds the `.deb`, the `.rpm`, the AppImage and the
+  Windows MSI and attaches them.
 
 ## 12. Linting
 

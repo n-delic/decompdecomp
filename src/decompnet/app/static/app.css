@@ -324,6 +324,9 @@ a.ghost, a.primary { text-decoration: none; }
 .ap-text .upbar { margin-top: 4px; max-width: 520px; }
 .upbar { height: 6px; border-radius: var(--r-sm); background: var(--open); overflow: hidden; }
 .upbar i { display: block; height: 100%; width: 0; background: var(--match); transition: width .2s; }
+.workbar { height: 6px; border-radius: var(--r-sm); background: var(--open); overflow: hidden; margin: 8px 0; }
+.workbar i { display: block; height: 100%; width: 38%; background: var(--match); animation: workbar 1.25s ease-in-out infinite alternate; }
+@keyframes workbar { from { transform: translateX(-5%); } to { transform: translateX(175%); } }
 
 .panel { border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); min-width: 0; display: flex; flex-direction: column; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }

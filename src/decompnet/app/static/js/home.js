@@ -242,6 +242,7 @@ async function runImport(query, file, title, name = "") {
   $("busyStep").textContent = "starting";
   $("jobLog").textContent = "";
   $("impUp").hidden = !(file instanceof Blob);
+  $("impWork").hidden = file instanceof Blob;
   const t0 = Date.now();
   const tick = setInterval(() => {
     const s = Math.round((Date.now() - t0) / 1000);
@@ -256,6 +257,7 @@ async function runImport(query, file, title, name = "") {
       started = await api(`/api/import?${query}`, { method: "POST", raw: file ?? new ArrayBuffer(0) });
     }
     $("impUp").hidden = true;
+    $("impWork").hidden = false;
     const res = await followJob(started.job, $("jobLog"), (log) => {
       const last = log.filter((l) => l.trim()).pop();
       if (last) $("busyStep").textContent = last.trim().replace(/\s+/g, " ").slice(0, 120);
@@ -264,7 +266,7 @@ async function runImport(query, file, title, name = "") {
     location.hash = `#/p/${res.slug}`;
   } catch (e) {
     importFailed(name || title.replace(/^\w+ |…$/g, ""), e, $("jobLog").textContent);
-  } finally { clearInterval(tick); $("busyTime").textContent = ""; }
+  } finally { clearInterval(tick); $("busyTime").textContent = ""; $("impWork").hidden = true; }
 }
 
 /* A failed import stays on screen with what happened, ready to report: a toast is gone before it's read. */

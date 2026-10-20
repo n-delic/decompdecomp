@@ -674,6 +674,7 @@ function openForkDialog(p) {
     <div id="forkPolicy"><p class="muted small">Reading what the project says about AI and contributions…</p></div>
     <p class="muted small">Next you add <b>your own copy of the game</b>. Its code stays on your computer; your agent's provider sees the functions it works on. Setting up runs the project's own build scripts, as building it yourself would, so fork projects you trust. Matches are committed to a local <code>decomp-wtf</code> branch, and decompdecomp never pushes it anywhere: anything you send upstream is up to you and the project's rules.</p>
     <div class="row"><button class="primary" id="forkGo" type="button" disabled>Fork it</button><button class="ghost" data-close type="button">Cancel</button></div>
+    <div class="workbar" id="forkWork" role="progressbar" aria-label="Importing project" hidden><i></i></div>
     <pre class="joblog" id="forkLog" hidden></pre>`);
   api("/api/fork/policy", { method: "POST", body: { repo: p.repo_url } }).catch((e) => ({ error: e.message, lines: [], files: [], lean: "silent" })).then((pol) => {
     if (!$("forkPolicy")) return;  // (the dialog was closed meanwhile)
@@ -687,12 +688,14 @@ function openForkDialog(p) {
     showJobError($("forkLog"), "");
     try {
       const { job } = await api("/api/fork", { method: "POST", body: { repo: p.repo_url, name: p.name, platform: p.platform, version: p.version } });
+      $("forkWork").hidden = false;
       const r = await followJob(job, $("forkLog"));
+      $("forkWork").hidden = true;
       closeDialog();
       await loadState();
       loadNav();
       location.hash = `#/p/${r.slug}`;
-    } catch (e) { if ($("forkLog")) { showJobError($("forkLog"), e.message); $("forkGo").disabled = !!$("forkOk") && !$("forkOk").checked; } }
+    } catch (e) { if ($("forkLog")) { $("forkWork").hidden = true; showJobError($("forkLog"), e.message); $("forkGo").disabled = !!$("forkOk") && !$("forkOk").checked; } }
   };
 }
 
@@ -725,14 +728,18 @@ async function renderForkSetup() {
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button></div>`;
   const run = async (start) => {
     showJobError($("fsLog"), "");
+    const work = box.querySelector(".workbar");
+    if (work) work.hidden = false;
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
       const { job } = await start();
       await followJob(job, $("fsLog"));
+      if (work) work.hidden = true;
       toast("The project is ready for your agents.", "match");
       loadNav();
       openProject(S.slug);
     } catch (e) {
+      if (work) work.hidden = true;
       showJobError($("fsLog"), e.message);
       box.querySelectorAll("button, input").forEach((b) => { b.disabled = false; });
       if ($("fsOwn")) $("fsGo").disabled = !$("fsOwn").checked;
@@ -747,6 +754,7 @@ async function renderForkSetup() {
         <div class="row"><input type="file" id="fsFile" hidden><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
           <span class="muted small">or</span><input id="fsPath" class="mono grow" placeholder="paste its path on this computer"><button class="ghost" id="fsPathGo" type="button">Use path</button></div>
         <div class="upbar" id="fsUp" hidden><i></i></div>
+        <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
         <pre class="joblog tall" id="fsLog" hidden></pre>
         <p class="muted small">Then decompdecomp runs the project's setup and build, which can download the project's own tools and take a few minutes. Put the game in place yourself? <button class="link-btn" id="fsBuild" type="button">Just build</button></p>
       </div><aside class="fs-side">${facts}</aside>`;
@@ -774,6 +782,7 @@ async function renderForkSetup() {
         ${cmdBox(`cd "${S.ov.folder}"`)}
         ${n.readme ? `<p class="col-title">From the project's README</p><pre class="readme" id="fsReadme"></pre>` : ""}
         <div class="row"><button class="primary" id="fsCheck" type="button">Check again</button></div>
+        <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
         <pre class="joblog tall" id="fsLog" hidden></pre>
       </div><aside class="fs-side">${facts}</aside>`;
     if (n.readme) $("fsReadme").textContent = n.readme;

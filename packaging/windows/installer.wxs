@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="decompdecomp $(var.AppVersion)"
+           Language="1033"
+           Version="$(var.MsiVersion)"
+           Manufacturer="NDelic"
+           UpgradeCode="D76102C5-38C4-4A52-94ED-1A17781A6C0E">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of decompdecomp is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="DecompIcon" SourceFile="$(var.AppSource)\decompdecomp.ico" />
+    <Property Id="ARPPRODUCTICON" Value="DecompIcon" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <UIRef Id="WixUI_InstallDir" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="decompdecomp" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="DecompProgramMenu" Name="decompdecomp" />
+      </Directory>
+      <Directory Id="DesktopFolder" />
+    </Directory>
+
+    <Feature Id="Main" Title="decompdecomp" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+
+    <Component Id="StartMenuShortcut" Directory="DecompProgramMenu" Guid="*">
+      <Condition>SKIP_SHORTCUTS &lt;&gt; "1"</Condition>
+      <Shortcut Id="StartMenuShortcutLink"
+                Name="decompdecomp"
+                Target="[INSTALLFOLDER]python\pythonw.exe"
+                Arguments="&quot;[INSTALLFOLDER]decomp-launch.pyw&quot;"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="DecompIcon" />
+      <RemoveFolder Id="RemoveDecompProgramMenu" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\NDelic\decompdecomp" Name="Installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="DesktopShortcut" Directory="DesktopFolder" Guid="*">
+      <Condition>SKIP_SHORTCUTS &lt;&gt; "1"</Condition>
+      <Shortcut Id="DesktopShortcutLink"
+                Name="decompdecomp"
+                Target="[INSTALLFOLDER]python\pythonw.exe"
+                Arguments="&quot;[INSTALLFOLDER]decomp-launch.pyw&quot;"
+                WorkingDirectory="INSTALLFOLDER"
+                Icon="DecompIcon" />
+      <RegistryValue Root="HKCU" Key="Software\NDelic\decompdecomp" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+  </Product>
+</Wix>

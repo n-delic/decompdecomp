@@ -127,8 +127,8 @@ Where to start on a gap:
 
 ### Windows distribution
 
-A standalone Windows installer and signed packages. The native app can already be installed with uv; the installer
-should check WebView2 and WSL, create its shortcuts, and make upgrades straightforward.
+The Windows release MSI bundles Python and the app, creates Start and desktop shortcuts, and updates
+through the app. Next: sign the installer and check for WebView2 and WSL during setup.
 
 ### How much usage each agent has left
 

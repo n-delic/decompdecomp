@@ -45,9 +45,13 @@ sudo dnf install ./decompdecomp-*.x86_64.rpm       # Fedora
 chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # any other distribution
 ```
 
-On **Windows**, install [uv](https://docs.astral.sh/uv/getting-started/installation/) and the
-[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). Open a new PowerShell
-window, then run:
+On **Windows**, download and open `decompdecomp-<version>-windows-x64.msi` from the
+[releases](https://github.com/n-delic/decompdecomp/releases). The installer lets you choose where it goes and adds
+shortcuts to Start and the desktop. The [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+is required. If it isn't already installed, install it and then open decompdecomp again.
+
+To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new
+PowerShell window and run:
 
 ```powershell
 uv tool install --python 3.12 "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/heads/main.tar.gz"
@@ -84,9 +88,9 @@ When you close the window while agents work, decompdecomp asks you: stop them an
 
 Your projects stay. The new version opens the same `~/Decomp` folder, with every match, name and note in it.
 
-1. **Install the new version** the same way as before: the install command above, or the new `.deb`, `.rpm` or
-   AppImage. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your apps menu shows one. Going
-   the other way, from the install command to a package? Remove the old copy first: `uv tool uninstall decompnet`.
+1. **Install the new version** the same way as before: the install command above or the latest `.deb`, `.rpm`,
+   AppImage or Windows MSI. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your apps menu shows
+   one. Going the other way, from the install command to a package? Remove the old copy first: `uv tool uninstall decompnet`.
 2. **Start it** with `decomp` or from your apps menu. It opens in its own window now, not in your browser.
 3. **Start your agents again.** Helper agents that were working in the old version don't restart by themselves the
    first time. Open each project and start them; from then on they restart by themselves.

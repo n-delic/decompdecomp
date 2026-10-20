@@ -118,10 +118,11 @@ linting). In short:
   `site/public/install.sh`, `uv.lock`. Commit subjects read
   `decompdecomp X.Y.Z: <what users get, in one sentence>`, with a body explaining why. Pre-releases are
   `X.Y.Z-alpha` (`-beta`, `-rc`); `updates.version_key` orders them before X.Y.Z.
-- A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb`, the `.rpm` and the AppImage
-  (`packaging/linux/build.sh`, which also runs locally) and attaches them to the GitHub release; it can be run by hand
-  for a pushed tag (`gh workflow run release -f tag=vX.Y.Z`). Packaged copies set `DECOMP_PACKAGE` and don't update
-  themselves.
+- A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb`, the `.rpm`, the AppImage
+  (`packaging/linux/build.sh`, which also runs locally) and Windows MSI (`packaging/windows/build.ps1`) and attaches
+  them to the GitHub release; it can be run by hand
+  for a pushed tag (`gh workflow run release -f tag=vX.Y.Z`). Linux package copies set `DECOMP_PACKAGE` and don't
+  update themselves; the Windows MSI copy updates its bundled packages in place.
 - What's planned is in ROADMAP.md, with a table of which feature works on which platform: when a feature ships or
   reaches another platform, update the table and move its item to done.
 

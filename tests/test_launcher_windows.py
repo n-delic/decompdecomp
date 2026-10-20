@@ -14,6 +14,7 @@ def test_windows_launcher_creates_a_desktop_shortcut(monkeypatch, tmp_path):
     desktop = tmp_path / "Desktop"
     desktop.mkdir()
     monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.delenv("DECOMP_PACKAGE", raising=False)
     monkeypatch.setattr(launcher, "_windows_folder", lambda folder: {
         0x10: desktop, 0x02: tmp_path / "Programs", 0x1c: tmp_path / "Local"}[folder])
     monkeypatch.setattr(launcher, "_decomp_exe", lambda: r"C:\Apps\decomp.exe")
@@ -33,6 +34,31 @@ def test_windows_launcher_creates_a_desktop_shortcut(monkeypatch, tmp_path):
     assert ran and ran[0][0][0] == "powershell.exe"
     script = base64.b64decode(ran[0][0][-1]).decode("utf-16le")
     assert "pythonw.exe" in script and "-m decompnet.app.cli" in script and "Programs" in script
+
+
+def test_windows_msi_launcher_starts_the_bundled_runtime(monkeypatch, tmp_path):
+    desktop = tmp_path / "Desktop"
+    desktop.mkdir()
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.sys, "executable", r"C:\Apps\python\python.exe")
+    monkeypatch.setattr(launcher, "_windows_folder", lambda folder: {
+        0x10: desktop, 0x02: tmp_path / "Programs", 0x1c: tmp_path / "Local"}[folder])
+    monkeypatch.setattr(launcher, "_shortcut_app_id", lambda _: None)
+    monkeypatch.setattr(edition, "DEV", False)
+    monkeypatch.setenv("DECOMP_PACKAGE", "windows")
+    ran = []
+
+    def run(args, **kwargs):
+        ran.append(args)
+        (desktop / "decompdecomp.lnk").write_bytes(b"shortcut")
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(launcher.subprocess, "run", run)
+    launcher.install_launcher()
+    script = base64.b64decode(ran[0][-1]).decode("utf-16le")
+    assert r"C:\Apps\python\pythonw.exe" in script
+    assert r"C:\Apps\decomp-launch.pyw" in script
+    assert "-m decompnet.app.cli" not in script
 
 
 def test_windows_development_copy_never_installs_shortcuts(monkeypatch):

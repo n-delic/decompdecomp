@@ -155,7 +155,7 @@ def uv() -> str | None:
 
 
 def can_apply() -> tuple[bool, str]:
-    if (package := os.environ.get("DECOMP_PACKAGE")):  # set by the .deb's, the .rpm's and the AppImage's launchers
+    if (package := os.environ.get("DECOMP_PACKAGE")) and package != "windows":
         kind = {"appimage": "an AppImage", "rpm": "an .rpm"}.get(package, "a .deb")
         return False, f"this decompdecomp was installed as {kind}: download the new one from https://github.com/{REPO}/releases"
     if edition.DEV:  # installing a release from a checkout would put a second, installed app beside it
@@ -175,15 +175,27 @@ def install(found: dict, log=print) -> dict:
         + (f" ({cur.get('branch')} @ {found['latest']['commit'][:7]})" if cur["channel"] == "branch" else ""))
     # uv tool install replaces the whole environment, including the running python.exe on Windows. Updating its
     # packages instead keeps that executable and the tool's launcher in place; dependencies change only as needed.
-    cmd = ([uv(), "pip", "install", "--python", sys.executable, "--reinstall-package", "decompnet", found["spec"]]
-           if sys.platform == "win32" else [uv(), "tool", "install", "--force", "--python", "3.12", found["spec"]])
+    if sys.platform == "win32":
+        cmd = [uv(), "pip", "install", "--python", sys.executable]
+        if os.environ.get("DECOMP_PACKAGE") == "windows":
+            packages = Path(sys.executable).resolve().parent.parent / "packages"
+            cmd.extend(["--target", str(packages)])
+        cmd.extend(["--reinstall-package", "decompnet", found["spec"]])
+    else:
+        cmd = [uv(), "tool", "install", "--force", "--python", "3.12", found["spec"]]
     _stream(cmd, log, "installing the update failed")
-    bindir = subprocess.run([uv(), "tool", "dir", "--bin"], capture_output=True, text=True, creationflags=NO_WINDOW).stdout.strip()
-    decomp = Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp") if bindir else None
-    if not decomp or not decomp.exists():
-        raise RuntimeError("the update was installed, but its decomp command isn't there")
+    if os.environ.get("DECOMP_PACKAGE") == "windows":
+        launcher = Path(sys.executable).resolve().parent.parent / "decomp-launch.pyw"
+        decomp = [sys.executable, str(launcher)]
+    else:
+        bindir = subprocess.run([uv(), "tool", "dir", "--bin"], capture_output=True, text=True,
+                                creationflags=NO_WINDOW).stdout.strip()
+        command = Path(bindir) / ("decomp.exe" if sys.platform == "win32" else "decomp") if bindir else None
+        if not command or not command.exists():
+            raise RuntimeError("the update was installed, but its decomp command isn't there")
+        decomp = [str(command)]
     log("getting the tools this version needs")
-    _stream([str(decomp), "setup"], log, "setting up the new version's tools failed")
+    _stream([*decomp, "setup"], log, "setting up the new version's tools failed")
     data = {"channel": cur["channel"], "repo": cur.get("repo") or REPO, "branch": cur.get("branch") or "",
             "commit": found["latest"].get("commit") or "", "version": found["latest"].get("version") or "",
             "t": time.time()}
