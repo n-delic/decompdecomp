@@ -107,8 +107,9 @@ shared once two models agree), `app/drafts.py` + `app/permute.py` (background dr
 [docs/CONVENTIONS.md](docs/CONVENTIONS.md) has them in full (where code goes, names, comments, errors, tests,
 linting). In short:
 
-- Match the surrounding code: plain-English docstrings and comments that say *why*, often citing the game or issue
-  that motivated a rule ("#22: ..."). No new dependencies for a few lines; capstone, pyelftools, httpx are there.
+- Match the surrounding code: plain-English docstrings and comments that say *why*, often citing the issue or the
+  case that motivated a rule ("#22: ..."). Describe a game by its kind, never by its title ("a PS2 game with 3,000
+  functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new dependencies for a few lines; capstone, pyelftools, httpx are there.
 - Heavy external tools run through `limits.capped(...)` (memory cap) with a timeout.
 - Errors shown to the user or agent are `ForkError` / `NetworkError` with a sentence they can act on.
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there

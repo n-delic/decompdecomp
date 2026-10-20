@@ -52,6 +52,8 @@ VERDICTS_KEPT = 4096  # judge verdicts remembered: the same C with the same comp
 ROW_COLUMNS = "id, name, vram, size, n_insns, status"
 # what the judge needs, read only for the few neighbours a check gives a verdict
 JUDGE_COLUMNS = "id, project_id, name, unit, vram, size, n_insns, status, target, relocs, matched_source, best_source"
+# why checks were dismissed when the suggested compiler's flags didn't count (RangeChecks.reopen)
+WRONG_QUIRK = "matches the game with today's compiler too"
 log = logging.getLogger("decompdecomp")
 
 
@@ -163,9 +165,11 @@ class RangeChecks:
         own = compiler_for(cfg, fn["vram"])
         built = (own["toolchain"], tuple(own["flags"]))  # what it's built with now (and matched with, if it is)
         kind = compilermap.kind(label)
-        # the other side of the question: today's compiler, or the game's own where the range already applies
-        other = built if compilermap.kind(built) != kind else (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
-        if compilermap.kind(other) == kind:
+        # the other side of the question: today's compiler, or the game's own where the range already applies. Whole
+        # labels, flags and all: by kind, IDO -O1 or -framepointer was the same as an IDO -O2 game's compiler, and 85
+        # suggestions on an N64 game were dismissed without a compile, functions that match only with them included
+        other = built if built != label else (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
+        if other == label:
             return "neutral"  # the range's compiler is the game's: nothing to tell apart
         fn = self.net.store.one(f"SELECT {JUDGE_COLUMNS} FROM functions WHERE id=?", fn["id"]) or fn
         if cmap is not None and fn["target"] and cmap.never.get(kind) and (
@@ -173,11 +177,11 @@ class RangeChecks:
             return "refuted"
         said = survey.get(str(fn["vram"]))
         if said:
-            return "confirmed" if compilermap.kind((said[0], tuple(said[1]))) == kind else "refuted"
+            return "confirmed" if (said[0], tuple(said[1])) == label else "refuted"
         judge = lambda lab, src: self._judged(proj, fn, lab, src)  # noqa: E731
         if fn["status"] == "matched" and fn["matched_source"]:  # it matches with what it's built with: try the other
             src = fn["matched_source"]
-            if compilermap.kind(built) == kind:
+            if built == label:
                 return "neutral" if judge(other, src) else "confirmed"
             return "neutral" if judge(label, src) else "refuted"
         src = source or self.net._source_of(fn)
@@ -259,11 +263,13 @@ class RangeChecks:
         origin = rows[o]
         if c["origin"] in at:
             v = self._classify(proj, cfg, origin, label, cmap, survey, c.get("origin_source"))
-            if v == "neutral":  # its own C matches with today's compiler too: no evidence at all
+            short = (origin["n_insns"] or 0) < MIN_INSNS  # too short to tell anything: its neighbours decide
+            if v == "neutral" and not short:  # its own C matches with today's compiler too: no evidence at all
                 return self._finish(proj, c, rows, "quirk", origin["vram"], origin["vram"] + origin["size"], evidence,
                                     f"{origin['name']}'s C matches the game with today's compiler too: it says nothing "
                                     "about the compiler")
-            first = Step(origin["vram"], origin["vram"] + origin["size"], "origin" if v != "refuted" else "refuted")
+            first = Step(origin["vram"], origin["vram"] + origin["size"],
+                         "neutral" if v == "neutral" else "origin" if v != "refuted" else "refuted")
         else:
             first = Step(origin["vram"], origin["vram"] + origin["size"], verdict(origin))
 
@@ -424,6 +430,46 @@ class RangeChecks:
         self.net._update_cfg(proj["slug"], add)
         self.recheck(proj["slug"])
         return len(added)
+
+    def reopen(self, slug: str) -> int:
+        """Once: weigh again the checks dismissed as quirks before checks told compilers apart by their flags. Their
+        compiler was the game's toolchain with other flags (IDO -O1 or -framepointer on an IDO -O2 game), which counted
+        as today's compiler: no compile was made, and the function got a note sending agents after C that matches with
+        the project's compiler, which some never can. The note goes, and one check for each compiler and function is
+        weighed again (the same suggestion made again stays dismissed). Returns how many."""
+        proj = self.net._project(slug)
+        cfg = self.net.cfg(proj)
+        game = (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
+        again: list[dict] = []
+
+        def change(cfg):
+            seen = set()
+            for c in cfg.get("range_checks", []):
+                label = (c["toolchain"], tuple(c["flags"]))
+                if c.get("reopened") or c["status"] != "quirk" or WRONG_QUIRK not in c.get("said", "") or \
+                        label == game or compilermap.kind(label) != compilermap.kind(game):
+                    continue
+                c["reopened"] = True
+                if (label, c["origin"]) in seen:
+                    continue
+                seen.add((label, c["origin"]))
+                c.update(status="checking", evidence={}, tasks=[], given_up=[], range=None, said="weighed again")
+                again.append(c)
+                for s in cfg.get("suggestions", []):
+                    if s["id"] == c["suggestion"]:
+                        s["check"] = f"range check #{c['id']}: weighed again (it had been dismissed without a compile)"
+                        s["status"] = "open" if s["status"] == "dismissed" else s["status"]
+        self.net._update_cfg(slug, change)
+        if again:
+            with self.net.store.tx() as db:
+                for c in again:
+                    db.execute("DELETE FROM notes WHERE project_id=? AND text LIKE ? AND function_id IN (SELECT id FROM "
+                               "functions WHERE project_id=? AND vram=?)",
+                               (proj["id"], f"Range check #{c['id']}: %", proj["id"], c["origin"]))
+                self.net._event(db, proj["id"], None, "compiler",
+                                f"{len(again)} compiler range suggestions dismissed without a compile are weighed again")
+            self.recheck(slug)
+        return len(again)
 
     def text(self, proj) -> list[str]:
         """The checks, for compiler_map()."""
