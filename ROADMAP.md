@@ -60,6 +60,9 @@ Where to start on a gap:
   keeps the one it matches with when the file's other matches still hold: a game whose code mixes 1.2 and 2.0
   (1.2's `ldmia {..., lr}; bx lr` epilogue) no longer sticks at 80-95%. Machine drafts are the gap: a ds-decomp
   project keeps no assembly for m2c to read.
+- **The permuter's real rewrites in forks.** decomp-permuter got no header in a fork, so it refused every
+  function ("Syntax error in base.c": `u16` was no type it knew) and only the six simple rewrites ran, in every
+  fork and on DS. It now reads what the function's file includes and declares.
 
 - **Rooms that say what's happening** (1.0.4-alpha). A guest waiting for the host sees "Waiting for the host to let
   you in" over the project, not an empty one and a red "Room offline"; then "Getting the host's work", counting down.

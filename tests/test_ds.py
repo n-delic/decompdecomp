@@ -221,3 +221,26 @@ def test_a_from_scratch_brief_says_what_the_data_it_uses_is(per_file, monkeypatc
     assert lines[1:4] == ["### Data it uses", "- data_02225058: .bss, 2 bytes", "- g_score"]
     assert not any("add_score" in line for line in lines) and "extern" in lines[-1]
     assert net.forks._data_used(proj, ["add_score"]) == []
+
+
+def test_decomp_permuter_reads_a_forks_function_with_its_files_declarations(per_file):
+    """In a fork the permuter gave decomp-permuter no header, so it refused every DS function ("Syntax error in
+    base.c": `u16` was no type it knew) and only the simple rewrites ran. Now it reads what the file includes and
+    declares: add_score uses demo-fork's s32, its Player struct and globals from game.h."""
+    from decompnet import seeds
+    from decompnet.app import permute
+
+    if toolchains.installed(permute.TOOL) is None:
+        pytest.skip("needs decomp-permuter")
+    net, slug, agent, root, state, lerp = per_file
+    source = csource.get((FORK_SRC / "tools" / "reference" / "game.c").read_text(), "add_score").strip()
+    header = seeds.c_only(net.forks.permuter_header(slug, "add_score"))
+    assert "typedef signed int s32;" in header and "void add_score(s32 points);" in header
+    job = {"source": source, "function": "add_score", "family": "gcc", "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        assert gen.batch({**job, "header": ""}) is None  # what it got before
+        variants = gen.batch({**job, "header": header})
+        assert variants and all("add_score(" in v for v in variants)
+    finally:
+        gen.close()

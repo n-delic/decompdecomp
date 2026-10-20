@@ -214,6 +214,27 @@ def _headers_defining(fp: ForkProject, rel: str, include_lines: list[str], names
     return out
 
 
+_QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
+MAX_HEADERS = 64  # headers permuter_header follows from one file
+
+
+def _without_bodies(text: str) -> str:
+    """A C file with each function's body cut to `;` (its definition becomes its prototype): its declarations, as
+    a parser needs them to read one of its functions."""
+    clean, out, i, depth, start = csource._blank(text), [], 0, 0, None
+    for k, c in enumerate(clean):
+        if c == "{":
+            if depth == 0 and clean[:k].rstrip().endswith(")"):  # a body, not a struct's or an initializer's
+                start = k
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out += [text[i:start], ";"]
+                i, start = k + 1, None
+    return "".join(out) + text[i:]
+
+
 def _type_blocks(text: str) -> list[tuple[set[str], str]]:
     """The file-scope type definitions of a C file: (the names they define, their text)."""
     clean = csource._blank(text)
@@ -1575,6 +1596,31 @@ class ForkEngine:
         self.net.on_match(proj, r["id"], agent)
 
     DATA_LISTED = 12  # data symbols a brief describes
+
+    def permuter_header(self, slug: str, function: str) -> str:
+        """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
+        the file's own declarations. It got none, so it refused every DS function ("Syntax error in base.c": `u16`
+        was no type it knew) and only the simple rewrites ran, there and in every fork."""
+        _, fp, _ = self.get(slug)
+        unit = fp.unit(self._fn(slug, function)["unit"])
+        if not unit.source or not (fp.root / unit.source).is_file():
+            return ""
+        seen: set[Path] = set()
+
+        def headers(text: str, folder: Path) -> list[str]:  # what `text` includes, each header after its own
+            out = []
+            for name in _QUOTED_INCLUDE.findall(text):
+                for base in (fp.root / "include", folder, fp.root / "src", fp.root):
+                    h = (base / name).resolve()
+                    if h.is_file():
+                        if h not in seen and len(seen) < MAX_HEADERS and h.is_relative_to(fp.root.resolve()):
+                            seen.add(h)
+                            own = h.read_text(errors="replace", encoding="utf-8")
+                            out += [*headers(own, h.parent), own]
+                        break
+            return out
+        source = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
+        return "\n".join([*headers(source, (fp.root / unit.source).parent), _without_bodies(source)])
 
     def _data_used(self, proj, refs: list[str]) -> list[str]:
         """A from-scratch project's brief: the data the function uses, where it is and how big, with how to declare

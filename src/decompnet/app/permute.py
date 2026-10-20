@@ -243,7 +243,8 @@ class Permuter:
         try:
             if available():
                 # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
-                header = "" if fork else seeds.c_only(self.net._context(proj["id"], fn["unit"])["header"])
+                header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
+                                      self.net._context(proj["id"], fn["unit"])["header"])
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
                 try:
                     gen = Generator()
