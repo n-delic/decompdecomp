@@ -74,20 +74,22 @@ the feature easy to move.
 ## 3. Comments and docstrings
 
 The most distinctive rule of this codebase: comments and docstrings say **why**, in plain English, and often name
-the game or the incident that caused the rule.
+the incident that caused the rule: the issue, or the case described by its kind, never by a game's title.
 
 ```python
 def try_compiler(self, agent, slug, function, compiler, flags="", source=""):
     """A function's C (`source`, else its best attempt) built with another compiler and flags, judged like an
-    attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on GTA
-    San Andreas an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
+    attempt but recorded nowhere: to work out which compiler built a part of the game before suggesting it (on a PS2
+    game an agent tried compilers by suggesting them: 128 of its 149 suggestions were disproved)."""
 ```
 
 - Don't restate the code. `i += 1  # add one` is noise; `# the delay slot runs before the call` is information.
 - A module starts with a docstring that says what it's for and how it fits with the rest. Good examples:
   `compilermap.py`, `classes.py`, `app/twins.py`, `app/rangecheck.py`.
 - Every public function longer than a few lines has a docstring.
-- Cite an issue as `#22:` and a game by name when one caused the rule.
+- Cite an issue as `#22:`, and a game by its kind ("a PS2 game", "a DS game's BIOS stubs"), never by its title: in
+  code, tests, commit messages and PRs. Older comments that name a game stay until they're touched for another
+  reason.
 - A shortcut with a known limit gets a comment `shortcut: <the limit>, <when to upgrade>`.
 - No credit lines for where an idea came from; the commit history is the record.
 
