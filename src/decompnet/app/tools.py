@@ -146,17 +146,52 @@ def _console_guides() -> dict:
     return {path.stem: path for folder in consoles.guide_dirs() for path in sorted(folder.glob("*.md"))}
 
 
-def guide_text(topic: str = "") -> str:
+def guide_text(topic: str = "", platform: str | None = None) -> str:
+    """A guide's text. With `platform` (a project's), the parts its file marks for other platforms are left out
+    (for_platform)."""
     topic = topic.strip().lower()
     own = _console_guides()
     if topic in own:
-        return own[topic].read_text(encoding="utf-8")
+        return for_platform(own[topic].read_text(encoding="utf-8"), platform)
     if topic not in GUIDES:
         # a console's guide is described by its title, the first line of its file
         about = GUIDES | {k: p.read_text(encoding="utf-8").split("\n", 1)[0].lstrip("# ") for k, p in own.items()}
         listing = "\n".join(f"- {k}: {v}" for k, v in about.items())
         return f"Guides (call guide with one of these topics):\n{listing}"
-    return resources.files("decompnet.app").joinpath("guide", f"{topic}.md").read_text(encoding="utf-8")
+    return for_platform(resources.files("decompnet.app").joinpath("guide", f"{topic}.md").read_text(encoding="utf-8"),
+                        platform)
+
+
+# A guide's lines for some platforms only: `<!-- only: ppc mips -->` up to `<!-- end -->`; `<!-- only: !x86 -->` is
+# every platform but those. Words are processor ids (arch/) or console ids. A PC helper's prompt (14 KB) carried
+# GameCube's split_file, func_8001234 names and s32 types; a GameCube one would carry x86's conventions.
+_ONLY = re.compile(r"^<!--\s*only:\s*([^>]*?)\s*-->\s*\n(.*?)^<!--\s*end\s*-->\s*\n", re.M | re.S)
+
+
+def for_platform(text: str, platform: str | None) -> str:
+    """`text` with its `only:` blocks kept for `platform` and dropped for others; None keeps every block (the
+    markers themselves always go)."""
+    con = consoles.get(platform) if platform else None
+    ids = {con.id, con.arch} - {""} if con else set()
+
+    def block(m: re.Match) -> str:
+        if con is None:
+            return m.group(2)
+        words = m.group(1).split()
+        yes = [w for w in words if not w.startswith("!")]
+        no = {w[1:] for w in words if w.startswith("!")}
+        keep = (not yes or bool(ids & set(yes))) and not (ids & no)
+        return m.group(2) if keep else ""
+    return _ONLY.sub(block, text)
+
+
+def up_front(platform: str | None, kind: str, toolchain: str) -> str:
+    """The know-how a helper gets before its first claim, for its project's platform: the loop's guide (a fork's
+    and objdiff's, or ROM projects' workflow) and its console's compiler guide."""
+    guide = consoles.get(platform).up_front_guide(toolchain)
+    topics = ["fork", "objdiff"] if kind == "fork" else ["workflow"]
+    topics += [guide] if guide else []
+    return "\n\n".join(guide_text(t, platform) for t in topics)
 
 
 def _fork(net: RomNetwork, slug: str, what: str) -> str:
@@ -255,7 +290,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
-    "guide": lambda net, agent, slug, topic="": guide_text(topic),
+    "guide": lambda net, agent, slug, topic="": guide_text(topic, net.overview(slug).get("platform")),
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": net.forks.search(_fork(net, slug, "search_code"), pattern, glob),
