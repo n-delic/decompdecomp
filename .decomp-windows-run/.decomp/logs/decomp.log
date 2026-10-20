@@ -1,4 +1,0 @@
-2026-10-20 00:50:10,609 INFO [decompdecomp MainThread] decompdecomp dev 1.0.3-alpha.1 starting (C:\Users\pauso\Documents\GitHub\decompdecomp\.venv\Scripts\python.exe)
-2026-10-20 00:50:13,002 INFO [mcp.server.streamable_http_manager MainThread] StreamableHTTP session manager started
-2026-10-20 00:50:16,054 INFO [decompdecomp window-output] window: [pywebview] Using WinForms / Chromium
-2026-10-20 00:50:18,521 INFO [decompdecomp window-output] window: [pywebview] Error while getting system theme: [WinError 2] El sistema no puede encontrar el archivo especificado
