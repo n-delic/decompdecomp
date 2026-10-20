@@ -28,7 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
-from ..network import Agent, Network, NetworkError, move_on_brief, stale_note
+from ..network import Agent, Network, NetworkError, move_on_brief
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -1828,10 +1828,12 @@ class ForkEngine:
         if why and not unit.complete:
             lines += ["", f"### {unit.source} didn't link yet (file_status shows its data)", why]
         lines += self.net.dependency_brief(fn)
-        notes = self.net.store.all("SELECT n.text, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-                                   "WHERE n.function_id=? ORDER BY n.id DESC LIMIT 6", fn["id"])
+        best = fn["best_score"] if fn["status"] != "matched" else None
+        best_text = (f"{percent_text(max(0.0, 100.0 * (1 - best / (fn['n_insns'] * 100))))} (score {best})"
+                     if best is not None and fn["n_insns"] else "")
+        notes = self.net.notes_for_brief(fn, best_text, show=6, when=False)
         if notes:
-            lines += ["", "### Notes"] + [f"- ({n['name']}) {stale_note(n['text'], fn['status'])}" for n in notes]
+            lines += ["", "### Notes", *notes]
         lines += ["", "Send compile_and_diff the complete function definition (same name and signature as the original), "
                       "with any #include \"...\", prototypes or #pragma lines it needs. Structs, globals and helper "
                       "functions go in with edit_file."]

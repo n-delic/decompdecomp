@@ -192,6 +192,53 @@ def test_notes_that_say_it_matches_are_marked_out_of_date_on_a_function_that_doe
         assert stale_note(text, "open") == text, text
 
 
+def test_briefs_leave_out_infrastructure_notes_show_duplicates_once_and_mark_beaten_ceilings(tmp_path):
+    """Briefs: "didn't build" and "Released because its agent stopped" notes took the few note slots
+    (one brief had the same "didn't build" note twice), and "plain C plateaus here" at 68.3% stayed on top after
+    another agent reached 95.1%."""
+    net, _ = _game(tmp_path, [("f", 100, "open")])
+    a, _ = net.local_agent("a")
+    fid = net.store.one("SELECT id FROM functions WHERE name='f'")["id"]
+    now = time.time()
+    notes = [  # oldest first
+        (now - 500, "plain C plateaus here at 68.3%: register allocation, not reachable"),
+        (now - 400, "u_unit didn't build before this change either, so it was left for now: FAILED: build.ninja"),
+        (now - 390, "u_unit didn't build before this change either, so it was left for now: FAILED: build.ninja"),
+        (now - 300, "Released because its agent stopped (You've hit your session limit); its attempts are kept."),
+        (now - 200, "Failed to authenticate: OAuth session expired"),
+        (now - 100, "the loop counter is a short; try   the do-while form"),
+        (now - 90, "the loop counter is a short; try the do-while form"),
+        (now - 10, "after the 95% try: the call to g still pushes instead of using esi"),
+    ]
+    with net.store.tx() as db:
+        for t, text in notes:
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(1,?,?,?,?)",
+                       (fid, a.id, text, t))
+        db.execute("UPDATE functions SET best_score=490 WHERE id=?", (fid,))  # 95.1% of 100 instructions
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,source,created_at) VALUES(?,?,?,?,?,?)",
+                   (fid, a.id, 490, 1, "x", now - 50))
+    lines = net.notes_for_brief(net.store.one("SELECT * FROM functions WHERE id=?", fid))
+    section = "\n".join(lines)
+    assert "didn't build" not in section and "OAuth" not in section and "agent stopped" not in section
+    assert lines[-1].startswith("- (4 notes about builds that broke or agents that stopped left out")
+    assert sum("do-while" in ln for ln in lines) == 1 and "[noted 2 times]" in section
+    assert "95% try" in lines[0]  # newest first
+    assert lines[-2].startswith("- (a, ") and "(superseded: best is now 490) plain C plateaus" in lines[-2]
+
+
+def test_a_note_newer_than_the_best_or_better_than_it_isnt_superseded():
+    from decompnet.network import brief_notes
+
+    fn = {"status": "open", "best_score": 1000, "n_insns": 100}  # 90%
+    rows = [{"text": "reached 92.5% with the cast", "created_at": 5, "name": "a"},
+            {"text": "plateaus at 85%", "created_at": 50, "name": "b"},  # written after the best: still news
+            {"text": "stuck around 80% (score 2000)", "created_at": 1, "name": "c"}]
+    out = brief_notes(rows, fn, best_at=10, best_text="90.0%", when=False)
+    assert out[0] == "- (a) reached 92.5% with the cast"
+    assert out[1] == "- (b) plateaus at 85%"
+    assert out[2] == "- (c) (superseded: best is now 90.0%) stuck around 80% (score 2000)"
+
+
 def test_the_prompts_count_only_claims_that_were_compiled():
     from decompnet.app import tools
 

@@ -151,6 +151,78 @@ def stale_note(text: str, status: str) -> str:
     return text
 
 
+# Notes about the setup rather than the function: a build that broke, an agent that stopped or couldn't sign in.
+# In one project they took the brief's few note slots (108 "didn't build", 211 "Released because its agent
+# stopped", one brief showing the same "didn't build" note twice) while the function's own findings fell off.
+_INFRA_NOTE = re.compile(
+    r"Released because its agent stopped|didn't build before this change|has to build again|"
+    r"FAILED: build\.ninja|rebuilding 'build\.ninja'|subcommand failed|/bin/sh: \d+: \S+: not found|"
+    r"nothing can compile|OAuth|Failed to authenticate|not logged in|session limit|usage limit|hit your \w* ?limit",
+    re.I)
+# A note saying the function can't get closer: true when it was written, until someone beats it (31 of 296 such
+# notes in one project: "plain C plateaus here" at 68.3% on a function another agent took to 95.1%)
+_CEILING = re.compile(r"plateau|ceiling|not reachable|unreachable|can'?t (?:get|reach|go|be matched|match)|cannot|"
+                      r"impossible|dead[- ]end|capped|stuck at|won'?t match|best possible|no way to|maxed", re.I)
+_PERCENT = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*%")
+_SCORE = re.compile(r"\bscore\s*(?:of\s*|=\s*|:\s*)?(\d+)\b", re.I)
+
+
+def _superseded(text: str, best_score: int | None, best_percent: float | None) -> bool:
+    """Whether an older note describes less than the function's best now: it says it can't get closer, or every
+    score or match percentage it gives is worse than the best."""
+    if _CEILING.search(text):
+        return True
+    pcts = [float(p) for p in _PERCENT.findall(text)]
+    if best_percent is not None and pcts and max(pcts) < best_percent - 0.05:
+        return True
+    scores = [int(s) for s in _SCORE.findall(text)]
+    return best_score is not None and bool(scores) and min(scores) > best_score
+
+
+def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", show: int | None = None,
+                when: bool = True) -> list[str]:
+    """A function's notes as its brief lists them (rows newest first: text, created_at, name). Notes about the
+    setup (_INFRA_NOTE) are left out, with a line saying how many; a note given word for word more than once is
+    shown once; an older note that said it can't get closer, or described less than the best now (`best_text`,
+    reached at `best_at`), is marked superseded and goes after the others. At most `show` (BRIEF_NOTES)."""
+    show = BRIEF_NOTES if show is None else show
+    best_score = fn["best_score"] if fn["status"] != "matched" else None
+    best_percent = None
+    if best_score is not None and fn["n_insns"]:
+        best_percent = max(0.0, 100.0 * (1 - best_score / (fn["n_insns"] * 100)))
+    infra, seen, fresh, stale = 0, {}, [], []
+    for n in rows:
+        text = (n["text"] or "").strip()
+        if _INFRA_NOTE.search(text):
+            infra += 1
+            continue
+        key = " ".join(text.split())
+        if key in seen:
+            seen[key][1] += 1
+            continue
+        item = [n, 1, False]
+        seen[key] = item
+        if (best_at is not None and best_score is not None and (n["created_at"] or 0) < best_at
+                and _superseded(text, best_score, best_percent)):
+            item[2] = True
+            stale.append(item)
+        else:
+            fresh.append(item)
+    lines = []
+    for n, count, old in (fresh + stale)[:show]:
+        text = stale_note((n["text"] or "").strip(), fn["status"])
+        if old:
+            text = f"(superseded: best is now {best_text or fn['best_score']}) {text}"
+        if count > 1:
+            text += f" [noted {count} times]"
+        who = f"{n['name']}, {_ago(n['created_at'])}" if when else f"{n['name']}"
+        lines.append(f"- ({who}) {text}")
+    if infra:
+        lines.append(f"- ({infra} note{'s' * (infra != 1)} about builds that broke or agents that stopped left out: "
+                     "they say nothing about this function)")
+    return lines
+
+
 @dataclass
 class Agent:
     id: int
@@ -603,18 +675,26 @@ class Network:
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
-        notes = self.store.all(
-            "SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-            f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES}", fn["id"])
+        notes = self.notes_for_brief(fn)
         if notes:
-            lines += ["", "### Notes from previous agents on this function"]
-            lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {stale_note(n['text'], fn['status'])}" for n in notes]
+            lines += ["", "### Notes from previous agents on this function", *notes]
         lines += self.dependency_brief(fn)
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":
             lines += ["", self._next_step(proj, ctx)]
         return "\n".join(lines)
+
+    def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
+        """A function's notes for its brief (brief_notes), with when its best score was first reached."""
+        rows = self.store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+                              f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
+        best_at = None
+        if fn["status"] != "matched" and fn["best_score"] is not None:
+            row = self.store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
+                                 fn["id"], fn["best_score"])
+            best_at = row["t"] if row else None
+        return brief_notes(rows, fn, best_at, best_text, show, when)
 
     def _next_step(self, proj, ctx) -> str:
         """The brief's last line for the agent that claimed the function."""
