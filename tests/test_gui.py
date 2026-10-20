@@ -22,6 +22,12 @@ def gui():
     return result
 
 
+def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
+    nds = gui["checks"]["nds"]
+    assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
+    assert nds["broken"] is None and "checksum" in nds["said"]
+
+
 def test_opening_another_project_shows_nothing_from_before(gui):
     """Two games with agents at work: opening the second one flooded it with notifications. The first game's poll,
     slow under load, kept the second one's first poll from running, and its next poll took the last 60 events as

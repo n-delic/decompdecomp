@@ -152,6 +152,7 @@ _MSVC_C = re.compile(r"[_@]([A-Za-z_]\w*?)(?:@\d+)?")  # how MSVC decorates a C 
 # #include "src/Runtime.PPCEABI.H/runtime.c" (its asm helpers, which every module links a copy of)
 _SOURCE_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+\.(?:c|cc|cp|cpp))"', re.M)
 _PRAGMA = re.compile(r"^#\s*pragma\b")
+TRY_ALL_SECONDS = 120  # try_compiler "all" stops trying more versions after this (Codex gives a tool call 180)
 
 
 def _around(source: str, span: tuple[int, int], file_text: str, rel: str) -> tuple[list[str], list[str], list[str]]:
@@ -450,9 +451,9 @@ class ForkEngine:
             self.net._event(db, pid, None, "fork", event)
 
     def create_scratch(self, game: Path, console: consoles.Console, *, compiler: str | None = None, log=print) -> str:
-        """A game of a PROJECT-mode console (GameCube, Wii, PC), from scratch: the console generates the community's
-        kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from Ghidra's
-        analysis), opened like a fork."""
+        """A game of a PROJECT-mode console (GameCube, Wii, PC, DS), from scratch: the console generates the
+        community's kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from
+        Ghidra's analysis; for DS, ds-decomp's), opened like a fork."""
         info = console.game_info(game)
         sha1 = info["sha1"]
         for p in self.net.store.all("SELECT slug, config FROM projects"):
@@ -1459,10 +1460,15 @@ class ForkEngine:
         units = fp.units() if cfg.get("ready") else []
         scratch = next((u.scratch for u in units if u.scratch), None) or {}
         platform = consoles.name(cfg.get("platform")) or "unknown platform"
+        console = consoles.get(cfg.get("platform"))
+        per_file = (f"each source file can have its own compiler (try_compiler switches it, \"all\" tries each); "
+                    f"this platform's: {', '.join(c.id for c in console.compilers)}\n"
+                    if console.file_compiler(fp, "") else "")
         return (f"{proj['name']}: a fork of {cfg['repo_url']} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
                 f"progress: {m.get('matched_functions', '?')}/{m.get('total_functions', '?')} functions, "
                 f"{float(m.get('matched_code_percent', 0) or 0):.2f}% of code, in {len(units)} source files\n"
                 f"compiler: {scratch.get('compiler', 'set by the project build')} {scratch.get('c_flags', '')}\n"
+                + per_file +
                 "You work in the project's real source tree. claim_function, then compile_and_diff writes your function "
                 "into its source file, builds that file with the project's build system and diffs it with objdiff. "
                 "read_file and search_code show how the codebase is written; edit_file changes headers and file-level "
@@ -1579,6 +1585,8 @@ class ForkEngine:
         src_text = None
         if unit.source:
             lines.append(f"source file: {unit.source}")
+            if own := consoles.get(cfg.get("platform")).file_compiler(fp, unit.source):
+                lines.append(f"this file's compiler: {own} (try_compiler(\"{fn['name']}\", \"all\") tries the others)")
             p = fp.root / unit.source
             src_text = p.read_text(errors="replace", encoding="utf-8") if p.exists() else None
         else:
@@ -1881,7 +1889,7 @@ class ForkEngine:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
                 return {"text": f"❌ REJECTED and undone: your change breaks matched function(s) {', '.join(broken[:8])}. "
                                 "Check you replaced the right definition (overloads?) and didn't change shared code.",
-                        "score": None, "matched": False}
+                        "score": None, "matched": False, "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
@@ -1926,6 +1934,75 @@ class ForkEngine:
             return {"text": f"score {score} (0 = identical). {d.literals_note()}{stall}", "score": score, "matched": False}
         return {"text": f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{stall}", "score": score,
                 "matched": False}
+
+    def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
+                     source: str = "") -> str:
+        """A function's C built with another of its console's compilers, where the project lets each source file have
+        its own (Console.file_compiler: a DS game mixes CodeWarrior versions, issue #23). Judged as an attempt that
+        isn't kept: a version it matches with stays the file's, committed, and only when the file's other matched
+        functions still match (the attempt's own rule); otherwise the file keeps its compiler and nothing is
+        recorded. "all": every other compiler, in turn, until one matches or TRY_ALL_SECONDS pass."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        fn = self._fn(slug, function)
+        unit = fp.unit(fn["unit"])
+        own = console.file_compiler(fp, unit.source) if unit.source else None
+        if own is None:
+            raise NetworkError("a fork builds with its project's own compilers")
+        if self.net.links.get(slug) is not None:  # a guest's tree follows the host's: its build is the host's to change
+            raise NetworkError("in a room, the host's project decides each file's compiler: try_compiler works there")
+        if flags.strip():
+            raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
+        if fn["status"] == "matched":
+            raise NetworkError(f"{fn['name']} already matches with {own}")
+        known = [c.id for c in console.compilers]
+        wanted = [c for c in known if c != own] if compiler.strip().lower() == "all" else [compiler.strip()]
+        if wanted[0] not in known:
+            raise NetworkError(f"{wanted[0]!r} isn't one of this platform's compilers: {', '.join(known)}")
+        if wanted == [own]:
+            raise NetworkError(f"{unit.source} is built with {own} already")
+        source = source.strip() or self.net._source_of(fn) or ""
+        if not source:
+            raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
+        linked = unit.complete and fp.linkable()
+        tried, kept, changed = [], None, False
+        until = time.monotonic() + TRY_ALL_SECONDS
+        held = self._hold_for_try(slug, function, agent)  # a function nobody holds is held only while it's tried
+        try:
+            with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
+                try:
+                    # what matches with the file's own compiler, measured before it changes: what every try must keep
+                    self._baseline(proj, fp, unit, (fp.root / unit.source).read_text(errors="replace", encoding="utf-8"))
+                    for c in wanted:
+                        if tried and time.monotonic() > until:
+                            break
+                        with self._build_locks[proj["id"]]:  # (a build reads the map)
+                            rel = console.set_file_compiler(fp, unit.source, c)
+                        changed = True
+                        res = self._attempt(agent, slug, function, source, keep=False, quiet=0)
+                        if res["matched"]:
+                            kept = c
+                            self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "
+                                                        f"it (found by {agent.name} with decompdecomp).")
+                            return f"{c}: {res['text']}\n{unit.source} is built with {c} from now on."
+                        if res.get("broken"):  # the file's other functions need its own compiler
+                            res["text"] = (f"the file's matched {', '.join(res['broken'][:8])} no longer match with it. "
+                                           f"If {fn['name']} needs it, give it a file of its own first (split_file)")
+                        tried.append(f"{c}: {res['text']}" if len(wanted) == 1 else f"{c}: {res['text'].split(chr(10))[0]}")
+                finally:
+                    if changed and kept is None:
+                        with self._build_locks[proj["id"]]:
+                            console.set_file_compiler(fp, unit.source, own)
+                        self._build_unit(proj, fp, unit)  # the file's object is its own compiler's again
+        finally:
+            if held is not None:
+                with self.net.store.tx() as db:
+                    db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (held, agent.id))
+        if len(wanted) == 1:
+            return f"{tried[0]}\n{unit.source} stays with {own}."
+        left = wanted[len(tried):]
+        return (f"No compiler matches {fn['name']}; {unit.source} stays with {own}.\n" + "\n".join(tried)
+                + (f"\nNot tried yet (time ran out): {', '.join(left)}. Try them by name." if left else ""))
 
     # ------------------------------------------------------------------ autopilot
 

@@ -12,33 +12,33 @@ Each feature and the platforms it covers today. A — is a gap: pick one up (the
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS2 | GameCube · Wii | Windows PC | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | — | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | MIPS, PowerPC |
-| Kernel stubs set aside and named | — | ✓ | — | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | the project's build | the project's build | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | — | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | ✓ symbol table, STABS | — | — | — |
-| Twins across your games | ✓ | ✓ | — | — | — |
-| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | — | — | — |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | the project's git | the project's git | the project's git |
-| Rebuildable export | ✓ | ✓ | the project | — | the project |
-| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | N64 | PS2 | GameCube · Wii | Windows PC | DS | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: | :-: |
+| Status | recommended | beta | beta | beta | beta | the project's own |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
+| Judge | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | — | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | — | — | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | — | — | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | — | MIPS, PowerPC |
+| Kernel stubs set aside and named | — | ✓ | — | — | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | — | — | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | — | — | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | — | — | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | — | — | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | ✓ symbol table, STABS | — | — | — | — |
+| Twins across your games | ✓ | ✓ | — | — | — | — |
+| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | — | — | — | — |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
+| Rebuildable export | ✓ | ✓ | the project | — | the project | the project |
+| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
@@ -53,6 +53,13 @@ Where to start on a gap:
   A project-mode console's work is its git repository; polishing there needs objdiff to judge a rewrite.
 
 ## Recently done
+
+- **Nintendo DS games from your own copy again** (beta, #23): a ds-decomp project for the ROM, as in 1.0.2, now with
+  all 24 CodeWarrior for DS versions and a version per source file (`config/<version>/arm9/file_compilers.json`, as
+  DS decomps keep it). `try_compiler` switches a function's file to another version, or tries them `"all"`, and
+  keeps the one it matches with when the file's other matches still hold: a game whose code mixes 1.2 and 2.0
+  (1.2's `ldmia {..., lr}; bx lr` epilogue) no longer sticks at 80-95%. Machine drafts are the gap: a ds-decomp
+  project keeps no assembly for m2c to read.
 
 - **Rooms that say what's happening** (1.0.4-alpha). A guest waiting for the host sees "Waiting for the host to let
   you in" over the project, not an empty one and a red "Room offline"; then "Getting the host's work", counting down.
@@ -88,8 +95,8 @@ Where to start on a gap:
   carries only the declarations the function uses.
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
-- **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1, GBA
-  and DS are public decomps only now; the git history keeps their code.
+- **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1 and
+  GBA are public decomps only now; the git history keeps their code.
 - **Linux packages**: a `.deb`, an `.rpm` and an AppImage with their own Python, built for each release.
 - **Struct layouts from loads and stores** (MIPS: PlayStation 2, N64). Every load and store through a function's
   pointer arguments, the pointers loaded from them and globals, made into types along the call graph: the brief

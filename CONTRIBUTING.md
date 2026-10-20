@@ -83,6 +83,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
+| `consoles/nds/` | Nintendo DS | PROJECT | `scratch.py` a ds-decomp project for the ROM, a CodeWarrior version per source file · `project_template/` · `guides/` |
 
 Each folder's `__init__.py` makes its console: the facts and the parts the app calls. Start there. Its docstring
 lists its files.
@@ -154,6 +155,7 @@ A console works in one of two modes:
    | `create_project(root, game, compiler)`, `game_info(game)` | PROJECT: makes the project; says which game a file is. |
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |
    | `identity(path)`, `check_rebuild(fp, version)`, `read_data(fp, name, length)`, `upload_name(data)` | PROJECT: rooms' game check, the rebuild check, data the objects lack, an upload's file name. |
+   | `file_compiler(fp, source)`, `set_file_compiler(fp, source, compiler)` | PROJECT: a compiler per source file, when the project's build allows it: then `try_compiler` switches it (DS). |
    | `asm_reason(code)` | Why a function can't come from a compiler. The processor's check, with this console's facts. |
    | `up_front_guide(compiler)`, `m2c_target(compiler)` | The guide for a compiler's code; m2c's target for it. |
 

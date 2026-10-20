@@ -1,0 +1,98 @@
+"""Nintendo DS: the ARM946E-S (ARM and Thumb), Metrowerks CodeWarrior for DS, PROJECT mode: a ds-decomp project, the
+kind DS decomps on decomp.dev are.
+
+- scratch.py: a ds-decomp project for the user's ROM (.nds): dsd extracts it, finds the functions of the ARM9
+  program, its ITCM and DTCM parts and its overlays, and delinks them; decompdecomp cuts the code into source files
+  and checks the rebuilt ROM against the user's copy. Each file can have its own CodeWarrior version
+  (file_compiler, set_file_compiler: games mix them, issue #23).
+- project_template/: what that project starts as (tools/configure.py writes its ninja build).
+- guides/ds.md: what agents read about matching DS code.
+
+Its demo game is projects/demo-ds (the Demo Quest game built with CodeWarrior for DS 2.0sp1p5).
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
+
+# the `mwccarm` pack's versions, oldest first
+DS_VERSIONS = ["1.2/base", "1.2/sp2", "1.2/sp2p3", "1.2/sp3", "1.2/sp4", "2.0/base", "2.0/sp1", "2.0/sp1p2",
+               "2.0/sp1p5", "2.0/sp1p6", "2.0/sp1p7", "2.0/sp2", "2.0/sp2p2", "2.0/sp2p3", "2.0/sp2p4", "dsi/1.1",
+               "dsi/1.1p1", "dsi/1.2", "dsi/1.2p1", "dsi/1.2p2", "dsi/1.3", "dsi/1.3p1", "dsi/1.6sp1", "dsi/1.6sp2"]
+
+
+class NintendoDS(Console):
+    id = "nds"  # decomp.dev's id, which public DS decomps keep
+    name = "Nintendo DS"
+    short = "DS"
+    status = BETA  # its demo matches; no real game has been rebuilt byte for byte with this version yet
+    arch = "arm"
+    mode = PROJECT
+    layout = "ds-decomp"
+    compilers = tuple(Compiler(f"DS/{v}", f"CodeWarrior for DS {v}") for v in DS_VERSIONS)
+    packs = (("mwccarm", "CodeWarrior for DS, the compilers of DS games (proprietary)"),)
+    guides = ("arm", "mwcc", "ds")
+    compiler_guide = "ds"
+    compiler_family = "mwcc"
+    m2c = "arm"
+    ram = (0x01FF8000, 0x02800000)  # ITCM, main RAM and DTCM, as the ARM9 sees them
+    demo = "demo-ds"
+    demo_tools = ("mwccarm", "dsd", "arm-gnu", "objdiff-cli", "wibo")
+    own_features = frozenset({REBUILD_CHECK})
+    usual = "DS/2.0/sp1p5"  # what most of its games were built with: the default until the game says otherwise
+
+    def sniff(self, head: bytes, file) -> bool:
+        from .scratch import is_nds
+
+        return is_nds(head)
+
+    def upload_name(self, data: bytes) -> str:
+        return "game.nds"
+
+    def default_compiler(self, info: dict, splat_guess: str) -> str:
+        return self.usual
+
+    def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
+        from . import scratch
+
+        return scratch.create(root, game, compiler=compiler, log=log)
+
+    def game_info(self, game: Path) -> dict:
+        from . import scratch
+
+        return scratch.game_info(game)
+
+    def tool_args(self) -> list[str]:
+        from . import scratch
+
+        return scratch.tool_args()
+
+    def check_rebuild(self, fp, version: str, log=print) -> dict:
+        from . import scratch
+
+        return scratch.check_rom(fp.root, version, log=log)
+
+    def file_compiler(self, fp, source: str) -> str | None:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        # a public DS decomp, or a project 1.0.2 made (its configure.py reads no map): its own build decides
+        if "version" not in manifest or not scratch.compilers_file(fp.root, manifest["version"]).exists():
+            return None
+        own = scratch.file_compilers(fp.root, manifest["version"]).get(source)
+        return f"DS/{own}" if own else manifest.get("compiler", self.usual)
+
+    def set_file_compiler(self, fp, source: str, compiler: str) -> str:
+        from ...forks.project import ForkError
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        if "version" not in manifest:
+            raise ForkError("this project's own build sets its compilers")
+        scratch.set_file_compiler(fp.root, manifest["version"], source, compiler, manifest.get("compiler", self.usual))
+        return scratch.compilers_file(fp.root, manifest["version"]).relative_to(fp.root).as_posix()
+
+
+NDS = NintendoDS()

@@ -482,7 +482,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
         Args:
             function: the function to judge it against
-            compiler: a toolchain id (project_info lists this platform's)
+            compiler: a toolchain id (project_info lists this platform's); where each source file has its own
+                compiler (DS), "all" tries every one, and the one that matches becomes the file's
             flags: its flags (default: that compiler's defaults for this game)
             source: the C (default: the function's best attempt)
         """
