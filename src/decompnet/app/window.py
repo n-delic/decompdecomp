@@ -28,8 +28,6 @@ SYSTEM_PYTHON = "/usr/bin/python3"
 WINDOW_PROGRAM = Path(__file__).with_name("gtkwindow.py")
 WIN_WINDOW_PROGRAM = Path(__file__).with_name("winwindow.py")
 TOKEN_AGENT = "decompdecomp-window/"  # gtkwindow.py puts this, then the secret, in its user agent
-TOKEN_QUERY = "decomp_token"
-TOKEN_COOKIE = "decomp_window"
 CHECK_SECONDS = 20
 CLOSE_SECONDS = 5  # a window told to close that's still there after this long is ended
 IS_WINDOWS = sys.platform == "win32"
@@ -165,7 +163,7 @@ class Window:
                                              stderr=subprocess.STDOUT, text=True, errors="replace",
                                              encoding="utf-8",
                                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0,
-                                             env=dict(os.environ, DECOMP_WINDOW_TOKEN=self.secret))
+                                             env=window_env(self.secret))
             except OSError:
                 log.exception("the window didn't start")
                 return False
@@ -243,6 +241,5 @@ def token_of(user_agent: str) -> str:
 
 
 def request_token(request) -> str:
-    """The window secret from its user agent, or the cookie installed by the native Windows window."""
-    return (token_of(request.headers.get("user-agent", "")) or request.cookies.get(TOKEN_COOKIE) or
-            request.query_params.get(TOKEN_QUERY, ""))
+    """The window secret a request's user agent carries; URLs and cookies must not grant access to the app."""
+    return token_of(request.headers.get("user-agent", ""))

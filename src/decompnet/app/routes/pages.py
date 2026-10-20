@@ -35,10 +35,7 @@ def register(app: App) -> None:
             return JSONResponse({"error": "bad host"}, status_code=403)
         if not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
-        response = HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
-        if request.query_params.get(window.TOKEN_QUERY):
-            response.set_cookie(window.TOKEN_COOKIE, secret, httponly=True, samesite="strict", max_age=86400)
-        return response
+        return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:
