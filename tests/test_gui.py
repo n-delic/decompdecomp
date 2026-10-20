@@ -22,6 +22,12 @@ def gui():
     return result
 
 
+def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
+    nds = gui["checks"]["nds"]
+    assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
+    assert nds["broken"] is None and "checksum" in nds["said"]
+
+
 def test_an_effort_goes_only_to_an_agent_that_offers_it(gui):
     assert gui["checks"]["efforts"] == ["opus#xhigh", "deepseek/v4", "m"]
 

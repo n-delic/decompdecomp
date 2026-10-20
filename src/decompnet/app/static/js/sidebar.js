@@ -144,6 +144,7 @@ function noteHtml(g) {
     knowledge: () => `Agents agree on something every agent should know (${esc(d)})`,
     collab: () => esc(sentence(d)),
     import: () => `Game analysed: ${esc(d)}`,
+    analysis: () => `Game analysed again: ${esc(d)}`,
     files: () => `${who} gave code without a source file one: ${esc(d)}`,
     paused: () => `${who} paused: ${esc(d)}`,
     stopped: () => `${who} stopped: ${esc(d)}`,

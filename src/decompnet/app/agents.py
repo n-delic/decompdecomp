@@ -828,15 +828,18 @@ class Manager:
         self._release(s, agent)
 
     def _release(self, s: Session, agent=None) -> None:
-        """Free the function a helper holds, so others can take it (in a room, the host holds the real claim)."""
-        row = self.net.store.one("SELECT id FROM agents WHERE name=?", s.agent_name) if agent is None else None
-        agent_id = agent.id if agent is not None else row["id"] if row else None
-        if agent_id is None:
-            return
+        """Free the function a helper holds (in a room, the host holds the real claim). A stop may happen before its
+        runner notices, so recover the helper's identity to tell the host too."""
+        if agent is None:
+            row = self.net.store.one("SELECT id, name, owner, trusted FROM agents WHERE name=?", s.agent_name)
+            if row is None:
+                return
+            agent = network.Agent(row["id"], row["name"], row["owner"], bool(row["trusted"]))
+        agent_id = agent.id
         held = self.net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                                   agent_id)
         link = self.net.links.get(s.slug)
-        if held and link is not None and agent is not None:
+        if held and link is not None:
             try:
                 link.call("/collab/release", agent, function=held["name"], notes="")
             except Exception:  # the host lets the claim expire
