@@ -80,6 +80,8 @@ def register(app: App) -> None:
         try:
             net.project_row(slug)
             net.warm_briefs_soon(slug)  # ready before the helpers' first claims
+            if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
+                options["effort"] = given["effort"]
             if kinds.get(kind).uses_endpoints:
                 picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
                 plan = spread_sessions(settings, manager, picked, count, given)

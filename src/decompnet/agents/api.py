@@ -61,6 +61,8 @@ class Api(Agent):
     docs = "https://api-docs.deepseek.com"
     recommended = True  # decompdecomp runs its whole loop, and no other program's update can break it
     uses_endpoints = True
+    takes_effort = True  # OpenAI's reasoning_effort, which OpenAI-compatible servers with reasoning models take
+    efforts = ("minimal", "low", "medium", "high")
 
     def label(self, name: str, options: dict, used: set[str]) -> str:
         """By its endpoint, numbered: "gpu-box #2" says which machine it runs on."""
@@ -103,8 +105,10 @@ class Api(Agent):
                     return True
                 for _attempt in range(API_TRIM_RETRIES):
                     fit(messages, budget, keep=start)
-                    r = client.post(f"{base}/chat/completions", headers=headers,
-                                    json={"model": model, "messages": messages, "tools": schema, "tool_choice": "auto"})
+                    request = {"model": model, "messages": messages, "tools": schema, "tool_choice": "auto"}
+                    if s.options.get("effort"):
+                        request["reasoning_effort"] = s.options["effort"]
+                    r = client.post(f"{base}/chat/completions", headers=headers, json=request)
                     if r.status_code == 200 or not _too_long(r):
                         break
                     budget = int(budget * API_TRIM_FACTOR)  # the server counts differently, or knows better: trim more

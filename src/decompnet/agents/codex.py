@@ -34,6 +34,8 @@ class Codex(Agent):
     signin = "Run `codex login` once in a terminal."
     docs = "https://github.com/openai/codex"
     family = "gpt"
+    takes_effort = True  # Codex's model_reasoning_effort (some models take max too: "Another model…" isn't for that)
+    efforts = ("minimal", "low", "medium", "high", "xhigh")
 
     def config_model(self) -> str | None:
         return codex_config().get("model") or None
@@ -49,6 +51,9 @@ class Codex(Agent):
                       f'default_tools_approval_mode="approve", tool_timeout_sec={TOOL_TIMEOUT}}}',
                 "-c", 'approval_policy="never"',
                 "-c", 'web_search="disabled"']  # the read-only sandbox keeps its shell offline; this, its own search
+        model, _, effort = (model or "").partition("#")
+        if effort in self.efforts:  # (one of its own words only: it goes into a TOML value)
+            cmd += ["-c", f'model_reasoning_effort="{effort}"']
         if model:
             cmd += ["-m", model]
         cmd.append("-")  # the prompt comes from stdin

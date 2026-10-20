@@ -140,6 +140,13 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return [identifyHead(head(0, "PS-X EXE"), file).platform, identifyHead(head(0x9319, "CD001"), file).platform,
               platformName("playstation"), notSupported(head(0, "PS-X EXE"), file)];
     })(),
+    // the launcher keeps the last effort picked: Claude Code's xhigh isn't one opencode offers
+    efforts: (() => {
+      LZ.effort = "xhigh";
+      const claude = { takes_effort: true, efforts: ["low", "medium", "high", "xhigh", "max"] };
+      const opencode = { takes_effort: true, efforts: ["low", "medium", "high", "max"] };
+      return [withEffort(claude, "opus"), withEffort(opencode, "deepseek/v4"), withEffort({ takes_effort: false }, "m")];
+    })(),
     systemThemes: ["", "?system-theme=light", "?system-theme=dark", "?system-theme=invalid"].map((search) => {
       location.search = search;
       return systemTheme();
