@@ -51,6 +51,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parent
 os.environ["DECOMP_PACKAGE"] = "windows"
 os.environ["PATH"] = str(root) + os.pathsep + os.environ.get("PATH", "")
+os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, (str(root / "packages"), os.environ.get("PYTHONPATH", ""))))
 import site
 site.addsitedir(str(root / "packages"))
 from decompnet.app.cli import main
@@ -61,8 +62,9 @@ raise SystemExit(main())
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its launch smoke check.' }
     & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); import decompnet.app.server" $packages
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its server startup import check.' }
-    foreach ($unused in @('Lib/test', 'Lib/idlelib', 'Lib/site-packages', 'Lib/tkinter', 'Lib/turtledemo',
-                           'Lib/ensurepip', 'include', 'libs', 'tcl')) {
+    # picker.py uses Tk's native Windows folder/file dialogs, so keep tkinter and Tcl in the installed runtime.
+    foreach ($unused in @('Lib/test', 'Lib/idlelib', 'Lib/site-packages', 'Lib/turtledemo',
+                           'Lib/ensurepip', 'include', 'libs')) {
         $path = Join-Path $bundlePython $unused
         if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
     }
