@@ -114,7 +114,6 @@ MIN_STRING_CHARS = 3
 PRINTABLE = range(32, 127)
 TOOL_SECONDS = 3600  # Ghidra on a big game, the project's build
 ERROR_TAIL = 1500  # how much of a tool's output an error shows
-JAVA_NEEDED = 21  # what the pinned Ghidra needs
 
 
 def _pe_header(head: bytes) -> int | None:
@@ -476,11 +475,12 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     if not (toolchains.path("msvc") / compiler).is_dir():
         raise ForkError(f"Visual C++ {compiler} isn't in the installed compiler pack")
     if not ghidra.available():
-        if toolchains.java_version() < JAVA_NEEDED:
-            raise ForkError("PC games are analysed with Ghidra, which needs Java 21 or newer: install it from "
-                            "https://adoptium.net, then try again")
-        log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
-        toolchains.ensure("ghidra", log=log)
+        if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
+            log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
+            toolchains.ensure("jdk", log=log)
+        if toolchains.installed("ghidra") is None:
+            log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
+            toolchains.ensure("ghidra", log=log)
     data = game.read_bytes()
     pe = read_pe(data)
     newer = newer_tools(rich_builds(data))

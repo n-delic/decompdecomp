@@ -354,12 +354,40 @@ name = "Ghidra"
 kind = "tool"
 license = "Apache-2.0"
 source = "NationalSecurityAgency/ghidra 12.1.4"
-description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs Java 21+; optional."
+description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs a Java 21+ JDK (the computer's, or the jdk toolchain); optional."
 requires_java = 21
 [[ghidra.parts]]
 url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip"
 sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
 subdir = "ghidra_12.1.4_PUBLIC"
+
+[jdk]
+name = "Java development kit (Eclipse Temurin 21)"
+kind = "tool"
+license = "GPL-2.0-with-classpath-exception"
+source = "adoptium/temurin21-binaries jdk-21.0.12.1+1"
+description = "Runs Ghidra when the computer has no JDK of its own (a Java runtime alone isn't enough for Ghidra)."
+binary_name = "bin/java"
+[[jdk.parts]]
+url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_linux_hotspot_21.0.12.1_1.tar.gz"
+sha256 = "ce79869e1307ed8ee1e2baa86a412b1eb5b75d10a01006d788a6f968bcfaee94"
+subdir = "jdk-21.0.12.1+1"
+platforms = ["linux-x86_64"]
+[[jdk.parts]]
+url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_aarch64_linux_hotspot_21.0.12.1_1.tar.gz"
+sha256 = "23e37e026f12f3e706f18938ff611db3032d075b09d0879a25d06718c773e223"
+subdir = "jdk-21.0.12.1+1"
+platforms = ["linux-aarch64"]
+[[jdk.parts]]
+url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_x64_mac_hotspot_21.0.12.1_1.tar.gz"
+sha256 = "44db0f08196daf19a47f90d13388b0c943b67663cb537f998fe29e836fa842ce"
+subdir = "jdk-21.0.12.1+1/Contents/Home"
+platforms = ["macos-x86_64"]
+[[jdk.parts]]
+url = "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.12.1%2B1/OpenJDK21U-jdk_aarch64_mac_hotspot_21.0.12.1_1.tar.gz"
+sha256 = "3623232f33a9c3baadf304480b2535f9a3cba8a58d42ecbb438ba267315d9998"
+subdir = "jdk-21.0.12.1+1/Contents/Home"
+platforms = ["macos-arm64"]
 
 [binutils-mips]
 name = "GNU binutils for MIPS (decompals)"

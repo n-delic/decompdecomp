@@ -26,7 +26,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from ...arch.mips import JR_RA, SCAN_BLOCK, is_frame, jal_targets, place
+from ...arch.mips import JR_RA, SCAN_BLOCK, code_before, is_frame, jal_targets, place
 from ...rom import split
 
 BLOCK = SCAN_BLOCK
@@ -42,8 +42,10 @@ def _code_like(words: tuple[int, ...]) -> bool:
     return any(w == JR_RA or is_frame(w) for w in words)
 
 
-def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
-    """(rom_start, rom_end, vram) of code segments outside `taken` (rom_start, rom_end, vram of the known ones)."""
+def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int, ...] = ()) -> list[tuple[int, int, int]]:
+    """(rom_start, rom_end, vram) of code segments outside `taken` (rom_start, rom_end, vram of the known ones).
+    `ends`: where the known segments end, their data included (splat's config): code found after one can begin
+    right there."""
     size = len(rom) & ~3
     known_code = [(s, e) for s, e, _ in taken]
     calls: list[int] = []  # every call the known code makes outside itself: some go into the code found here
@@ -73,6 +75,7 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
                     regions.append(cur)
         floor = g_lo
         for lo, hi in regions:
+            floor = max([floor] + [e for e in ends if e < hi])  # (data has no code: one ending in it is before)
             stretches.append((lo, hi, floor))
             seg = place(rom, lo, hi, floor, calls, known_vram, REGIONS)
             if seg:
@@ -113,7 +116,7 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]]) -> list[tuple[i
         returns = [i * 4 for i, w in enumerate(words) if w == JR_RA]
         if not frames or not returns:
             continue
-        start = lo + frames[0]
+        start = code_before(rom, lo + frames[0], floor)
         end = min((lo + returns[-1] + 8 + 0xF) & ~0xF, len(rom))
         accept(start, end, start + mapping)
     return sorted(found)
@@ -239,7 +242,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
         kib = sum(len(d) for _, d in packed) // 1024
         log(f"unpacked {len(packed)} compressed code block{'s' if len(packed) != 1 else ''} ({kib} KiB)")
     taken = split.code_ranges(config)
-    found = find_segments(rom, taken) if taken else []
+    found = find_segments(rom, taken, tuple(s.rom_end for s in split.segments_from_config(config))) if taken else []
     if not found:
         return original
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
