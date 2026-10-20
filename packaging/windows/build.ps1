@@ -131,6 +131,29 @@ raise SystemExit(main())
     if (-not (Test-MsiRow $msiDb "SELECT ``Dialog`` FROM ``Dialog`` WHERE ``Dialog``='InstallDirDlg'")) {
         throw 'The MSI is missing its install-location selection dialog.'
     }
+    if (-not (Test-MsiRow $msiDb "SELECT ``Dialog`` FROM ``Dialog`` WHERE ``Dialog``='DesktopShortcutDlg'")) {
+        throw 'The MSI is missing its desktop-shortcut choice dialog.'
+    }
+    if (-not (Test-MsiRow $msiDb "SELECT ``Control`` FROM ``Control`` WHERE ``Dialog_``='DesktopShortcutDlg' AND ``Control``='DesktopShortcutCheckBox' AND ``Property``='CREATE_DESKTOP_SHORTCUT'")) {
+        throw 'The MSI desktop-shortcut dialog is missing its checkbox.'
+    }
+    if (-not (Test-MsiRow $msiDb "SELECT ``Argument`` FROM ``ControlEvent`` WHERE ``Dialog_``='InstallDirDlg' AND ``Control_``='Next' AND ``Event``='NewDialog' AND ``Argument``='DesktopShortcutDlg'")) {
+        throw 'The MSI install flow does not show the desktop-shortcut choice.'
+    }
+    $desktopConditionView = $msiDb.OpenView("SELECT ``Condition`` FROM ``Component`` WHERE ``Component``='DesktopShortcut'")
+    $desktopConditionView.Execute()
+    $desktopCondition = $desktopConditionView.Fetch().StringData(1)
+    if ($desktopCondition -notlike '*CREATE_DESKTOP_SHORTCUT*') {
+        throw 'The desktop shortcut is not controlled by its installer checkbox.'
+    }
+    $licenseView = $msiDb.OpenView("SELECT ``Text`` FROM ``Control`` WHERE ``Dialog_``='LicenseAgreementDlg' AND ``Control``='LicenseText'")
+    $licenseView.Execute()
+    $embeddedLicense = $licenseView.Fetch()
+    if (-not $embeddedLicense -or
+        $embeddedLicense.StringData(1) -notlike '*GNU AFFERO GENERAL PUBLIC LICENSE*' -or
+        $embeddedLicense.StringData(1) -notlike '*END OF TERMS AND CONDITIONS*') {
+        throw 'The MSI license agreement page does not contain the repository LICENSE.'
+    }
     $propertyView = $msiDb.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductCode'")
     $propertyView.Execute()
     $smokeProductCode = $propertyView.Fetch().StringData(1)

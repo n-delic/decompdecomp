@@ -18,6 +18,10 @@ import webbrowser
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# The MSI keeps dependencies in a sibling `packages` directory and starts this process with `-I`, which ignores
+# PYTHONPATH. In a uv installation this resolves to site-packages; in a source checkout it resolves to `src`.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import webview
 
 ASK_PAGE = 'typeof decompClose === "function" ? String(decompClose()) : "close"'

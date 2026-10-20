@@ -47,8 +47,9 @@ chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # 
 
 On **Windows**, download and open `decompdecomp-<version>-windows-x64.msi` from the
 [releases](https://github.com/n-delic/decompdecomp/releases). The installer lets you choose where it goes and adds
-shortcuts to Start and the desktop. The [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
-is required. If it isn't already installed, install it and then open decompdecomp again.
+a shortcut to Start. It also lets you choose whether to add a desktop shortcut (selected by default). The
+[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. If it isn't
+already installed, install it and then open decompdecomp again.
 
 To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new
 PowerShell window and run:
