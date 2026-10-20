@@ -104,8 +104,10 @@ class FunctionDiff:
     def render(self, context: int = 2, max_rows: int = 60) -> str:
         from ..scoring import render_rows
 
-        return render_rows(self.rows, context, max_rows, legend="markers: |=different instruction i=operand differs "
-                           "<=missing (target only) >=extra (yours only)")
+        return render_rows(self.rows, context, max_rows, legend=LEGEND)
+
+
+LEGEND = "markers: |=different instruction i=operand differs <=missing (target only) >=extra (yours only)"
 
 
 def _sym(obj: dict | None, name: str) -> dict | None:

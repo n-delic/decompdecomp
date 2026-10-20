@@ -24,8 +24,8 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import consoles, similarity, toolchains
-from ..forks import csource, datadiff, drafts, dtksplits, ghidra
+from .. import arch, consoles, similarity, toolchains
+from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
 from ..network import Agent, Network, NetworkError, move_on_brief
@@ -133,6 +133,29 @@ class _TreeLock:
 def _tail(log: str, lines: int = 14) -> str:
     """The end of a build log, where the reason is."""
     return "\n".join(log.strip().splitlines()[-lines:])
+
+
+def with_constant_values(rows: list, console, fp) -> list:
+    """A diff's differing rows with the values of the float constants the target loads by address (x86's
+    `mulss xmm0, [_D_00412340]`: "; target's D_00412340 = 0.0174532924f"), read from the user's copy: the agent
+    sees the literal to write instead of an address. Rows on processors without a reader stay as they are."""
+    reader = arch.get(console.arch).float_operands
+    if reader is None:
+        return rows
+    order = ">" if console.big_endian else "<"
+    out = []
+    for mark, target, yours in rows:
+        if mark != " " and target:
+            said = []
+            for addr, kind in reader(target):
+                raw = console.data_bytes(fp, addr, 4 if kind == "f" else 8)
+                if raw:
+                    value = struct.unpack(order + kind, raw)[0]
+                    said.append(f"D_{addr:08X} = {value:.9g}f" if kind == "f" else f"D_{addr:08X} = {value:.17g}")
+            if said:
+                yours = f"{yours}   ; target's {', '.join(said)}"
+        out.append((mark, target, yours))
+    return out
 
 
 def _floor_pct(pct: float, matched: bool) -> float:
@@ -1790,6 +1813,7 @@ class ForkEngine:
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:
+                d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
@@ -2075,6 +2099,9 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 undo()
                 return {"text": f"❌ objdiff couldn't compare (your change was undone): {e}", "score": None, "matched": False}
+            if quiet is None:
+                d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
+                self.net.keep_diff(agent.id, fn["id"], d.rows, objdiff.LEGEND)
             broken = sorted(n for n in protected if n and (d.unit_scores.get(n) or 0) < 100)
             if broken:
                 undo()

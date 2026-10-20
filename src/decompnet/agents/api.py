@@ -370,6 +370,8 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
         "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
+        "last_diff": ("Every differing row of your last compile_and_diff of a function (its result cuts long diffs). "
+                      "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"))),
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
                              s(function=st("function", True), notes=st("what you tried, what is left", True),

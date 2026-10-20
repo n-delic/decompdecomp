@@ -285,6 +285,8 @@ class Network:
         self.store = Store(db_path)
         self.claim_ttl = claim_ttl
         self._pool = ThreadPoolExecutor(max_workers=8)
+        # (agent id, function id) -> its last compile's diff rows and their legend, for last_diff
+        self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
 
     # ------------------------------------------------------------------ agents
 
@@ -749,6 +751,7 @@ class Network:
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
+        self.keep_diff(agent.id, fn["id"], d.rows)
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
@@ -786,6 +789,24 @@ class Network:
             said += (f"\nThe first {same} of {total} target instructions match; the first difference "
                      f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
         return said
+
+    def keep_diff(self, agent_id: int, function_id: int, rows: list, legend: str = scoring.LEGEND) -> None:
+        """A compile's diff rows, kept for last_diff (memory only: the next compile replaces them)."""
+        self._last_diffs[(agent_id, function_id)] = (list(rows), legend)
+
+    def last_diff(self, agent: Agent, function: str, project: str | None = None, context: int = 2) -> str:
+        """The full diff of this agent's last compile of a function, every differing row: compile_and_diff shows the
+        first 60 rows and cut the rest (27 to 181 rows in one project), and the only way to see them was another
+        compile. Costs no compile."""
+        fn = self._function(function, project)
+        kept = self._last_diffs.get((agent.id, fn["id"]))
+        if kept is None:
+            raise NetworkError(f"no compile of {fn['name']} by you since the app started: compile_and_diff first")
+        rows, legend = kept
+        context = max(0, min(int(context or 0), 10))
+        return (f"Full diff of your last compile of {fn['name']} ({len(rows)} rows; not a new compile):\n"
+                + scoring.render_rows(rows, context, max_rows=len(rows) * (2 * context + 2) + 10, run=len(rows) + 1,
+                                      legend=legend, more_hint=False))
 
     def stall_status(self, function_id: int, agent_id: int) -> dict:
         """Where an agent stands against a function's move-on number: one count for compile_and_diff's results,
