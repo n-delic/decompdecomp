@@ -140,6 +140,16 @@ TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents re
 # what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
 _SIGNED_OUT = re.compile(r"not logged in|run /login|invalid api key|not authenticated|please (?:log|sign) ?in|"
                          r"auth(?:entication)? method", re.I)
+# and when its sign-in stopped working (Claude Code, exit code 1 at once, nothing done: "Failed to authenticate: OAuth
+# session expired and could not be refreshed", its message marked "error": "authentication_failed"). Read as a plain
+# failure, it went by unnoticed in a long session: two helpers retried after 10, 19, 39 and 76 s with no state saying
+# why, until the user happened to sign in again. It may be passing (a refresh that failed once), so it's tried a few
+# more times, then the helper asks for a new sign-in.
+AUTH_FAILED = re.compile(r"failed to authenticate|oauth (?:session|token)[^.\n]{0,40}(?:expired|revoked|invalid)|"
+                         r"authentication_(?:failed|error)|could not be refreshed|\b401\b[^\n]{0,80}unauthori[sz]ed|"
+                         r"token (?:has )?expired", re.I)
+AUTH_RETRIES = 3  # failed sign-ins in a row before the helper pauses and asks for a new one
+AUTH_WAIT = 60  # seconds before the first try again, doubling
 # what a model's provider says when the account has no credit left (DeepSeek: "Insufficient Balance", OpenAI:
 # "insufficient_quota", Anthropic: "credit balance is too low", OpenCode: "quota exceeded"): trying again can't help
 # until it's topped up
@@ -308,6 +318,7 @@ class Session:
     tokens: int = 0
     usage: dict = field(default_factory=_fresh_usage)  # this session's counts (helper_sessions)
     signed_out: bool = False  # the agent CLI isn't signed in: trying again won't help
+    auth_failed: bool = False  # its sign-in failed (an expired session): tried a few times, then a new sign-in
     throttled: bool = False  # the last run ended on the provider's limit of requests at once: not a failure
     limited: bool = False  # the last run ended on the plan's usage limit: wait for it to reset
     limit_until: float | None = None  # when the agent said that limit resets
@@ -504,7 +515,7 @@ class Manager:
     def _launch(self, s: Session) -> None:
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
-        s.signed_out = s.throttled = s.limited = False
+        s.signed_out = s.throttled = s.limited = s.auth_failed = False
         s.started_at = time.time()
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
@@ -803,7 +814,7 @@ class Manager:
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
-        failures = fast = throttles = limits = 0
+        failures = fast = throttles = limits = auths = 0
         while not s.stop.is_set():
             if self._left(s.slug) == 0:
                 self._finish(s, "nothing left to decompile here 🎉")
@@ -836,12 +847,24 @@ class Manager:
                 s.push("error", s.error)
                 ok = False
             self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "ok" if ok else
-                              "limit" if s.limited else "failed")
+                              "limit" if s.limited else "signin" if s.auth_failed else "failed")
             if s.stop.is_set():
                 break
             if s.signed_out:
                 self._pause(s, s.error)
                 break
+            if s.auth_failed:  # not a failure of the helper's: tried again a few times, then a new sign-in
+                s.auth_failed, auths = False, auths + 1
+                if auths >= AUTH_RETRIES:
+                    self._pause(s, f"{kind.name} needs you to sign in again: its sign-in failed {auths} times in a "
+                                   f"row ({s.error})", kind.signin)
+                    break
+                s.restarts += 1
+                self._wait(s, f"{kind.name}'s sign-in failed ({s.error}); trying again, and if it keeps failing "
+                              "this helper will ask you to sign in again", time.time() + AUTH_WAIT * 2 ** (auths - 1),
+                           kind.signin)
+                continue
+            auths = 0
             if s.limited:  # the plan's allowance is used up for now: it resets, so wait as long as it takes
                 limits += 1
                 until = s.limit_until or time.time() + min(LIMIT_WAIT_LONGEST, LIMIT_WAIT_FIRST * 2 ** (limits - 1))
@@ -1049,8 +1072,14 @@ class Manager:
             s.error = f"{k.name} isn't signed in on this computer. {k.signin}"
             s.push("error", s.error)
             return False
+        if (code != 0 or not saw_tool) and AUTH_FAILED.search(everything):
+            s.auth_failed = True
+            said_it = next((t for t in [*errors, *said] if AUTH_FAILED.search(t)), "")
+            s.error = said_it.strip()[:200] or "its sign-in failed"
+            s.push("error", f"{k.name}'s sign-in failed (exit code {code}): {s.error}")
+            return False
         if code != 0:
-            tail = " · ".join(list(errors)[-3:]) or last_error or f"exited with code {code}"
+            tail =" · ".join(list(errors)[-3:]) or last_error or f"exited with code {code}"
             s.error = tail[:300]
             s.push("error", f"exited with code {code}: {tail[:600]}" if tail != f"exited with code {code}" else tail)
             return False

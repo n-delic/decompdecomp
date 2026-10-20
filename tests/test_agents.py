@@ -425,6 +425,34 @@ def test_a_failing_helper_starts_again_then_pauses_with_the_error(tmp_path, monk
     assert net.store.one("SELECT state FROM helpers WHERE id=?", s.id)["state"] == "paused"
 
 
+def test_an_expired_sign_in_is_recognised_retried_then_asks_for_a_new_sign_in(tmp_path, monkeypatch):
+    """Claude Code exited with code 1 at once, "Failed to authenticate: OAuth session expired and could
+    not be refreshed", and the app took it for an ordinary failure (retries after 10, 19, 39, 76 s, outcome
+    "failed", nothing saying why) until the user happened to sign in again. Now it's recognised, tried again a few
+    times, and the helper then pauses asking for a new sign-in, without counting as fast failures."""
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    s = m._record("game", "claude", "claude-1", "claude-1", {})
+    s.stop = Quick()
+    said = "Failed to authenticate: OAuth session expired and could not be refreshed"
+    events = [{"type": "assistant", "error": "authentication_failed", "message": {
+                   "model": "<synthetic>", "content": [{"type": "text", "text": said}]}},
+              {"type": "result", "is_error": True, "result": said, "total_cost_usd": 0}]
+    script = "import json, sys\nsys.stdin.read()\n" + "".join(
+        f"print(json.dumps({e!r}), flush=True)\n" for e in events) + "sys.exit(1)\n"
+    monkeypatch.setattr(m, "_command", lambda s, token, workdir: ([sys.executable, "-c", script], dict(os.environ), ""))
+    m._run(s)
+    assert s.state == "paused" and "needs you to sign in again" in s.why and said in s.why
+    assert s.todo == kinds.get("claude").signin
+    assert s.runs == agents.AUTH_RETRIES  # not FAST_FAILURES_TO_PAUSE: it's the sign-in, not the helper
+    waits = [w for w in s.stop.waits if w]
+    assert len(waits) == agents.AUTH_RETRIES - 1 and waits[0] >= agents.AUTH_WAIT - 1
+    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
+    assert [r["outcome"] for r in rows] == ["signin"] * agents.AUTH_RETRIES
+    assert any("sign-in failed" in f["text"] for f in s.feed)
+
+
 def test_a_usage_limit_waits_until_it_resets_then_carries_on(tmp_path, monkeypatch):
     """A night's run lost most of its helpers to their plans' usage limits. A helper waits until the time the agent
     says the limit resets, then carries on by itself; its last words show meanwhile."""
