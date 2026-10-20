@@ -83,6 +83,7 @@ class FunctionDiff:
     # them, but the game's link resolves names, so they're worth fixing before the code goes upstream
     renamed: list[tuple[str, str]] = field(default_factory=list)
     literals: list = field(default_factory=list)  # literals.Mismatch: constants that differ although the code matches
+    refs: list[str] = field(default_factory=list)  # the symbols the original's relocations name, in order
 
     @property
     def matched(self) -> bool:
@@ -112,9 +113,21 @@ def _sym(obj: dict | None, name: str) -> dict | None:
     return None
 
 
+# the PC bias ARM's branch relocations carry as their addend (the CPU reads pc 8 bytes ahead, 4 in Thumb): objdiff
+# shows it, "bl func_0203aca8-0x8", and on a DS game a model spent a minute working out it was no offset at all
+PC_BIAS = {"R_ARM_PC24": -8, "R_ARM_CALL": -8, "R_ARM_JUMP24": -8, "R_ARM_THM_CALL": -4, "R_ARM_THM_PC22": -4,
+           "R_ARM_THM_JUMP24": -4}
+
+
 def _fmt(row: dict) -> str:
     ins = row.get("instruction")
-    return ins.get("formatted", "") if ins else ""
+    if not ins:
+        return ""
+    text, rel = ins.get("formatted", ""), ins.get("relocation") or {}
+    bias = PC_BIAS.get(rel.get("type_name"))
+    if bias is not None and str(rel.get("addend")) == str(bias):
+        text = text.removesuffix(f"-0x{-bias:x}")
+    return text
 
 
 def _option(value) -> str:
@@ -194,5 +207,6 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
                 insns.append((at, ins["formatted"].split(None, 1)[0]))
             at += int(ins.get("size") or 4)
         wrong = literals.mismatches(target, base, symbol, insns)
+    refs = list(dict.fromkeys(n for lr in lrows if (n := _reloc_name(data.get("left"), lr))))
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
-                        renamed, wrong)
+                        renamed, wrong, refs)

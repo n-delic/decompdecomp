@@ -1464,7 +1464,9 @@ class ForkEngine:
         per_file = (f"each source file can have its own compiler (try_compiler switches it, \"all\" tries each); "
                     f"this platform's: {', '.join(c.id for c in console.compilers)}\n"
                     if console.file_compiler(fp, "") else "")
-        return (f"{proj['name']}: a fork of {cfg['repo_url']} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
+        what = ("started from scratch from your copy of the game" if cfg.get("origin") == "scratch"
+                else f"a fork of {cfg['repo_url']}")
+        return (f"{proj['name']}: {what} ({platform}{', ' + cfg['version'] if cfg.get('version') else ''})\n"
                 f"progress: {m.get('matched_functions', '?')}/{m.get('total_functions', '?')} functions, "
                 f"{float(m.get('matched_code_percent', 0) or 0):.2f}% of code, in {len(units)} source files\n"
                 f"compiler: {scratch.get('compiler', 'set by the project build')} {scratch.get('c_flags', '')}\n"
@@ -1572,6 +1574,32 @@ class ForkEngine:
         self.net._event(db, proj["id"], agent.id if agent else None, "match", r["name"])
         self.net.on_match(proj, r["id"], agent)
 
+    DATA_LISTED = 12  # data symbols a brief describes
+
+    def _data_used(self, proj, refs: list[str]) -> list[str]:
+        """A from-scratch project's brief: the data the function uses, where it is and how big, with how to declare
+        it. Its headers start empty, and on a DS game a model looked for that in config/symbols.txt for minutes."""
+        if not refs:
+            return []
+        marks = ",".join("?" * len(refs))
+        funcs = {r["name"] for r in self.net.store.all(
+            f"SELECT name FROM functions WHERE project_id=? AND name IN ({marks})", proj["id"], *refs)}
+        out = []
+        for name in [r for r in refs if r not in funcs][:self.DATA_LISTED]:
+            try:
+                said = self.read_data(None, proj["slug"], name, 4).split("\n", 1)[0]
+            except NetworkError:
+                said = ""
+            m = re.search(r", (\.?[\w.]+)\+0x[0-9A-Fa-f]+, (\S+) bytes\)", said)
+            out.append(f"- {name}: {m.group(1)}, {m.group(2)} bytes" if m else f"- {name}")
+        if not out:
+            return []
+        return ["", "### Data it uses", *out,
+                "Declare what isn't declared yet once, with edit_file at the top of the source file: `extern` and the "
+                "type its loads and stores use (2 bytes: `extern u16 name;`; bigger ones: an array, or a struct whose "
+                "fields are the offsets the code uses). That's all there is to know about them: nothing in config/ "
+                "says more."]
+
     def brief(self, fn, agent: Agent | None, header: str) -> str:
         proj = self.net.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         _, fp, cfg = self.get(proj["slug"])
@@ -1600,6 +1628,8 @@ class ForkEngine:
             if len(asm) > 500:
                 asm = asm[:500] + [f"... ({len(asm) - 500} more instructions)"]
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
+            if cfg.get("origin") == "scratch":
+                lines += self._data_used(proj, d.refs)
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:
