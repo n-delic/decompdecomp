@@ -45,11 +45,11 @@ sudo dnf install ./decompdecomp-*.x86_64.rpm       # Fedora
 chmod +x decompdecomp-*-x86_64.AppImage && ./decompdecomp-*-x86_64.AppImage   # any other distribution
 ```
 
-On **Windows**, download and open `decompdecomp-<version>-windows-x64.msi` from the
-[releases](https://github.com/n-delic/decompdecomp/releases). The installer lets you choose where it goes and adds
-a shortcut to Start. It also lets you choose whether to add a desktop shortcut (selected by default). The
-[Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) is required. If it isn't
-already installed, install it and then open decompdecomp again.
+On **Windows**, download and open `decompdecomp-<version>-windows-x64-setup.exe` from the
+[releases](https://github.com/n-delic/decompdecomp/releases). Setup installs the Microsoft Edge WebView2 Runtime and
+.NET Framework 4.8 when they are missing, then opens the app installer. It may ask for administrator permission and
+needs an internet connection to download missing Microsoft components. The app installer lets you choose where
+decompdecomp goes and whether to add a desktop shortcut (selected by default); it always adds a shortcut to Start.
 
 To install from source with [uv](https://docs.astral.sh/uv/getting-started/installation/) instead, open a new
 PowerShell window and run:
@@ -90,7 +90,7 @@ When you close the window while agents work, decompdecomp asks you: stop them an
 Your projects stay. The new version opens the same `~/Decomp` folder, with every match, name and note in it.
 
 1. **Install the new version** the same way as before: the install command above or the latest `.deb`, `.rpm`,
-   AppImage or Windows MSI. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your apps menu shows
+   AppImage or Windows setup bundle. The installer removes an older `.deb` or `.rpm` of decompdecomp, so your apps menu shows
    one. Going the other way, from the install command to a package? Remove the old copy first: `uv tool uninstall decompnet`.
 2. **Start it** with `decomp` or from your apps menu. It opens in its own window now, not in your browser.
 3. **Start your agents again.** Helper agents that were working in the old version don't restart by themselves the
@@ -105,8 +105,8 @@ What changed on the way:
 - **The Source tab is now the Export button** in the project's header.
 - **Windows projects and compilers.** The app server and window run natively on Windows. Linux-only period compilers
   run through WSL 2, using temporary Linux-side build stages so old 32-bit tools work. Run `decomp shortcut` once to
-  put native shortcuts on the Windows desktop and in Start. The Microsoft Edge WebView2 Runtime is required; pywebview is
-  installed with the app.
+  put native shortcuts on the Windows desktop and in Start. Setup installs WebView2 and .NET Framework 4.8 when missing;
+  pywebview is installed with the app.
 
 ## Moving to another computer
 

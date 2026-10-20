@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Bundle Name="decompdecomp $(var.AppVersion)"
+          Version="$(var.MsiVersion)"
+          Manufacturer="NDelic"
+          UpgradeCode="C9B6CC70-26ED-4BED-AC8E-AE30A6A8140E"
+          Compressed="yes">
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.RtfLicense">
+      <bal:WixStandardBootstrapperApplication LicenseFile="$(var.LicenseRtf)" />
+    </BootstrapperApplicationRef>
+
+    <util:RegistrySearch Root="HKLM"
+                         Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full"
+                         Value="Release"
+                         Variable="NetFxRelease"
+                         Result="value"
+                         Win64="yes" />
+    <util:RegistrySearch Root="HKLM"
+                         Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                         Value="pv"
+                         Variable="WebView2Machine"
+                         Result="value"
+                         Win64="no" />
+    <util:RegistrySearch Root="HKCU"
+                         Key="Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                         Value="pv"
+                         Variable="WebView2User"
+                         Result="value"
+                         Win64="yes" />
+
+    <Chain>
+      <ExePackage Id="NetFx48"
+                  SourceFile="$(var.NetFxInstaller)"
+                  InstallCommand="/q /norestart"
+                  PerMachine="yes"
+                  Permanent="yes"
+                  Vital="yes"
+                  DetectCondition="NetFxRelease &gt;= 528040">
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+        <ExitCode Value="1641" Behavior="scheduleReboot" />
+      </ExePackage>
+      <ExePackage Id="WebView2Runtime"
+                  SourceFile="$(var.WebView2Installer)"
+                  InstallCommand="/silent /install"
+                  PerMachine="yes"
+                  Permanent="yes"
+                  Vital="yes"
+                  DetectCondition="(WebView2Machine AND WebView2Machine &lt;&gt; &quot;0.0.0.0&quot;) OR (WebView2User AND WebView2User &lt;&gt; &quot;0.0.0.0&quot;)" />
+      <MsiPackage Id="decompdecomp"
+                  SourceFile="$(var.AppMsi)"
+                  Compressed="yes"
+                  DisplayInternalUI="yes"
+                  Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

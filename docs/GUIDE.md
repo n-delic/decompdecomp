@@ -241,8 +241,9 @@ checksums. To start the app, use your apps menu or type `decomp` in a terminal.
 for x86_64 Linux. They contain their own Python and uv. The app's Setup gets the compilers. These copies do not
 update themselves: the app tells you when a new version is available, and you download it from the releases.
 
-**Windows.** The release MSI lets you choose an installation folder and adds decompdecomp to Start and the desktop. The Microsoft
-Edge WebView2 Runtime is required. Linux-only period compilers run through WSL 2; run `wsl --install` in an
+**Windows.** The release setup bundle installs missing WebView2 and .NET Framework 4.8 runtimes, then opens the app
+installer, which lets you choose an installation folder and whether to add a desktop shortcut. Linux-only period
+compilers run through WSL 2; run `wsl --install` in an
 administrator PowerShell, restart if asked, and open Ubuntu once before importing a game that needs one. macOS is
 not supported in this version.
 

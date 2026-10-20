@@ -67,7 +67,9 @@ def missing() -> str | None:
         if importlib.util.find_spec("webview") is None:
             return ("decompdecomp's Windows window needs pywebview and the Microsoft Edge WebView2 Runtime. "
                     "Install the app's dependencies again, then start decompdecomp.")
-        probe = ('import os, clr; from webview.util import interop_dll_path; '
+        packages = repr(str(Path(__file__).resolve().parents[2]))
+        probe = (f'import site; site.addsitedir({packages}); '
+                 'import os, clr; from webview.util import interop_dll_path; '
                  'os.environ["PATH"] += os.pathsep + interop_dll_path("win-x64"); '
                  'clr.AddReference(interop_dll_path("Microsoft.Web.WebView2.Core.dll")); '
                  'from Microsoft.Web.WebView2.Core import CoreWebView2Environment; '

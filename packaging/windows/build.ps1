@@ -1,5 +1,8 @@
-# Build the standalone Windows MSI used by the release workflow. WiX 3 is used because it does not require accepting
-# the WiX 7 Open Source Maintenance Fee agreement.
+# Build the Windows setup bundle used by the release workflow. It installs missing Microsoft runtimes before running
+# the app's MSI. WiX 3 is used because it does not require accepting the WiX 7 Open Source Maintenance Fee agreement.
+[CmdletBinding()]
+param([switch]$SkipInstallSmoke)
+
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $version = (Select-String '^version = "(.*)"' (Join-Path $repoRoot 'pyproject.toml')).Matches.Groups[1].Value
@@ -48,14 +51,16 @@ from pathlib import Path
 root = Path(__file__).resolve().parent
 os.environ["DECOMP_PACKAGE"] = "windows"
 os.environ["PATH"] = str(root) + os.pathsep + os.environ.get("PATH", "")
-import sys
-sys.path.insert(0, str(root / "packages"))
+import site
+site.addsitedir(str(root / "packages"))
 from decompnet.app.cli import main
 
 raise SystemExit(main())
 '@ | Set-Content -LiteralPath (Join-Path $app 'decomp-launch.pyw') -Encoding utf8
     & (Join-Path $bundlePython 'python.exe') (Join-Path $app 'decomp-launch.pyw') --help | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its launch smoke check.' }
+    & (Join-Path $bundlePython 'python.exe') -c "import site,sys; site.addsitedir(sys.argv[1]); import decompnet.app.server" $packages
+    if ($LASTEXITCODE -ne 0) { throw 'The bundled app failed its server startup import check.' }
     foreach ($unused in @('Lib/test', 'Lib/idlelib', 'Lib/site-packages', 'Lib/tkinter', 'Lib/turtledemo',
                            'Lib/ensurepip', 'include', 'libs', 'tcl')) {
         $path = Join-Path $bundlePython $unused
@@ -81,8 +86,11 @@ raise SystemExit(main())
     }
     $msiVersion = ($version -split '-')[0]
     $installer = Join-Path $dist "decompdecomp-$version-windows-x64.msi"
+    $setup = Join-Path $dist "decompdecomp-$version-windows-x64-setup.exe"
     $harvest = Join-Path $work 'app-files.wxs'
     $objects = Join-Path $work 'wix-objects'
+    $bundleObjects = Join-Path $work 'bundle-objects'
+    $prereqs = Join-Path $work 'prerequisites'
     $licenseRtf = Join-Path $work 'LICENSE.rtf'
     $licenseText = Get-Content -LiteralPath (Join-Path $repoRoot 'LICENSE') -Raw -Encoding UTF8
     $rtf = [System.Text.StringBuilder]::new()
@@ -104,6 +112,21 @@ raise SystemExit(main())
     }
     [void]$rtf.Append('}')
     [IO.File]::WriteAllText($licenseRtf, $rtf.ToString(), [Text.Encoding]::ASCII)
+
+    New-Item -ItemType Directory -Force $prereqs, $bundleObjects | Out-Null
+    $netFxInstaller = Join-Path $prereqs 'NDP48-Web.exe'
+    $webView2Installer = Join-Path $prereqs 'MicrosoftEdgeWebView2Setup.exe'
+    curl.exe -L --fail --silent --show-error 'https://go.microsoft.com/fwlink/?LinkId=2085155' -o $netFxInstaller
+    if ($LASTEXITCODE -ne 0) { throw "Could not download Microsoft's .NET Framework 4.8 installer (curl exit code $LASTEXITCODE)" }
+    curl.exe -L --fail --silent --show-error 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -o $webView2Installer
+    if ($LASTEXITCODE -ne 0) { throw "Could not download Microsoft's WebView2 installer (curl exit code $LASTEXITCODE)" }
+    foreach ($prerequisite in @($netFxInstaller, $webView2Installer)) {
+        $signature = Get-AuthenticodeSignature -LiteralPath $prerequisite
+        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notlike '*Microsoft*') {
+            throw "The downloaded prerequisite is not signed by Microsoft: $prerequisite ($($signature.Status))"
+        }
+    }
+
     New-Item -ItemType Directory -Force $objects | Out-Null
     & (Join-Path $wixBin 'heat.exe') dir $app -cg AppFiles -dr INSTALLFOLDER -gg -sfrag -sreg -srd -var var.AppSource -out $harvest
     if ($LASTEXITCODE -ne 0) { throw "WiX Heat failed with exit code $LASTEXITCODE" }
@@ -115,6 +138,19 @@ raise SystemExit(main())
     if (-not $env:CI) { $lightArgs += '-sval' }  # the restricted local sandbox cannot reach the Windows Installer service for ICE validation
     & (Join-Path $wixBin 'light.exe') @lightArgs -ext WixUIExtension $wixObjects
     if ($LASTEXITCODE -ne 0) { throw "WiX Light failed with exit code $LASTEXITCODE" }
+
+    $bundleObject = Join-Path $bundleObjects 'bundle.wixobj'
+    & (Join-Path $wixBin 'candle.exe') -arch x64 -ext WixBalExtension -ext WixUtilExtension `
+        "-dAppVersion=$version" "-dMsiVersion=$msiVersion" "-dAppMsi=$installer" `
+        "-dLicenseRtf=$licenseRtf" "-dNetFxInstaller=$netFxInstaller" "-dWebView2Installer=$webView2Installer" `
+        -out $bundleObject (Join-Path $PSScriptRoot 'bundle.wxs')
+    if ($LASTEXITCODE -ne 0) { throw "WiX Candle failed to compile the Windows setup bundle (exit code $LASTEXITCODE)" }
+    & (Join-Path $wixBin 'light.exe') -ext WixBalExtension -ext WixUtilExtension -out $setup $bundleObject
+    if ($LASTEXITCODE -ne 0) { throw "WiX Light failed to link the Windows setup bundle (exit code $LASTEXITCODE)" }
+    if ((Get-AuthenticodeSignature -LiteralPath $netFxInstaller).Status -ne 'Valid' -or
+        (Get-AuthenticodeSignature -LiteralPath $webView2Installer).Status -ne 'Valid') {
+        throw 'A Microsoft prerequisite signature became invalid while building the setup bundle.'
+    }
 
     $msiApi = New-Object -ComObject WindowsInstaller.Installer
     $msiDb = $msiApi.OpenDatabase($installer, 0)
@@ -156,41 +192,43 @@ raise SystemExit(main())
     }
     $propertyView = $msiDb.OpenView("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='ProductCode'")
     $propertyView.Execute()
-    $smokeProductCode = $propertyView.Fetch().StringData(1)
+    if (-not $SkipInstallSmoke) {
+        $smokeProductCode = $propertyView.Fetch().StringData(1)
 
-    $smokeInstall = Join-Path $work 'installed'
-    $installAttempted = $false
-    $uninstalled = $false
-    try {
-        $installAttempted = $true
-        $installRun = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', $installer, '/qn', '/norestart',
-            'SKIP_SHORTCUTS=1', "INSTALLFOLDER=$smokeInstall") `
-            -Wait -PassThru
-        if ($installRun.ExitCode -ne 0) { throw "The MSI failed its silent install check (exit code $($installRun.ExitCode))." }
-        $smokePython = Join-Path $smokeInstall 'python/python.exe'
-        if (-not (Test-Path -LiteralPath $smokePython)) {
-            throw 'The MSI did not put the app in the requested folder.'
+        $smokeInstall = Join-Path $work 'installed'
+        $installAttempted = $false
+        $uninstalled = $false
+        try {
+            $installAttempted = $true
+            $installRun = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/i', $installer, '/qn', '/norestart',
+                'SKIP_SHORTCUTS=1', "INSTALLFOLDER=$smokeInstall") `
+                -Wait -PassThru
+            if ($installRun.ExitCode -ne 0) { throw "The MSI failed its silent install check (exit code $($installRun.ExitCode))." }
+            $smokePython = Join-Path $smokeInstall 'python/python.exe'
+            if (-not (Test-Path -LiteralPath $smokePython)) {
+                throw 'The MSI did not put the app in the requested folder.'
+            }
+            & $smokePython (Join-Path $smokeInstall 'decomp-launch.pyw') --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'The installed app failed its relocated-runtime launch smoke check.' }
+            $smokePythonw = Join-Path $smokeInstall 'python/pythonw.exe'
+            $launchScript = Join-Path $smokeInstall 'decomp-launch.pyw'
+            $launchRun = Start-Process -FilePath $smokePythonw -ArgumentList @("`"$launchScript`"", '--help') `
+                -Wait -PassThru -WindowStyle Hidden
+            if ($launchRun.ExitCode -ne 0) { throw 'The installed pythonw launcher failed its smoke check.' }
+            $uninstallRun = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $smokeProductCode, '/qn', '/norestart') `
+                -Wait -PassThru
+            if ($uninstallRun.ExitCode -ne 0) { throw 'The MSI failed its uninstall smoke check.' }
+            $uninstalled = $true
         }
-        & $smokePython (Join-Path $smokeInstall 'decomp-launch.pyw') --help | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw 'The installed app failed its relocated-runtime launch smoke check.' }
-        $smokePythonw = Join-Path $smokeInstall 'python/pythonw.exe'
-        $launchScript = Join-Path $smokeInstall 'decomp-launch.pyw'
-        $launchRun = Start-Process -FilePath $smokePythonw -ArgumentList @("`"$launchScript`"", '--help') `
-            -Wait -PassThru -WindowStyle Hidden
-        if ($launchRun.ExitCode -ne 0) { throw 'The installed pythonw launcher failed its smoke check.' }
-        $uninstallRun = Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $smokeProductCode, '/qn', '/norestart') `
-            -Wait -PassThru
-        if ($uninstallRun.ExitCode -ne 0) { throw 'The MSI failed its uninstall smoke check.' }
-        $uninstalled = $true
-    }
-    finally {
-        if ($installAttempted -and -not $uninstalled) {
-            Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $smokeProductCode, '/qn', '/norestart') `
-                -Wait -PassThru | Out-Null
+        finally {
+            if ($installAttempted -and -not $uninstalled) {
+                Start-Process -FilePath 'msiexec.exe' -ArgumentList @('/x', $smokeProductCode, '/qn', '/norestart') `
+                    -Wait -PassThru | Out-Null
+            }
         }
     }
     Remove-Item -LiteralPath (Join-Path $dist "decompdecomp-$version-windows-x64.wixpdb") -Force -ErrorAction SilentlyContinue
-    Get-ChildItem -LiteralPath $dist -Filter '*-windows-x64-setup.exe' | Remove-Item -Force
+    Remove-Item -LiteralPath (Join-Path $dist "decompdecomp-$version-windows-x64-setup.wixpdb") -Force -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

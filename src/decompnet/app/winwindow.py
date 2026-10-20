@@ -12,6 +12,7 @@ import argparse
 import logging
 import os
 import re
+import site
 import sys
 import threading
 import webbrowser
@@ -19,8 +20,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 # The MSI keeps dependencies in a sibling `packages` directory and starts this process with `-I`, which ignores
-# PYTHONPATH. In a uv installation this resolves to site-packages; in a source checkout it resolves to `src`.
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+# PYTHONPATH. addsitedir also runs pywin32's .pth bootstrap. In a uv installation this resolves to site-packages;
+# in a source checkout it resolves to `src`.
+site.addsitedir(str(Path(__file__).resolve().parents[2]))
 
 import webview
 

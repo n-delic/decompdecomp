@@ -6,9 +6,12 @@ stdout carries only ready/open/quit; the server performs those actions on its ow
 
 from __future__ import annotations
 
+import site
 import sys
 import threading
 from pathlib import Path
+
+site.addsitedir(str(Path(__file__).resolve().parents[2]))
 
 
 def create_icon(title, on_open, on_quit, icon_path=None):

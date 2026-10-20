@@ -1,4 +1,4 @@
-# A tag v* (e.g. v1.0.0-alpha) builds the Linux packages and Windows MSI and attaches them to the tag's GitHub
+# A tag v* (e.g. v1.0.0-alpha) builds the Linux packages and Windows setup bundle and attaches them to the tag's GitHub
 # release, creating the release when there isn't one yet, as the latest (alphas too: the version says what it is,
 # and GitHub shows "Latest" and serves releases/latest only for a release that isn't a pre-release). It can also be
 # run by hand for a tag that's already pushed: gh workflow run release -f tag=v1.0.0-alpha
@@ -57,7 +57,7 @@ jobs:
         run: |
           $version = (Select-String '^version = "(.*)"' pyproject.toml).Matches.Groups[1].Value
           if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match project version $version" }
-      - name: Build the Windows MSI
+      - name: Build the Windows setup bundle
         shell: pwsh
         run: packaging/windows/build.ps1
       - name: Attach it to the release
@@ -65,8 +65,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $installer = (Get-ChildItem dist -Filter '*-windows-x64.msi' | Select-Object -First 1).FullName
-          if (-not $installer) { throw 'Windows MSI was not created.' }
+          $installer = (Get-ChildItem dist -Filter '*-windows-x64-setup.exe' | Select-Object -First 1).FullName
+          if (-not $installer) { throw 'Windows setup bundle was not created.' }
           gh release view $env:TAG 2>$null | Out-Null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG $installer --clobber

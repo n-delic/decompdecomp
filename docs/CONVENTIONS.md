@@ -175,7 +175,7 @@ not touch it.
   `site/public/install.sh`, `uv.lock`. Its commit reads
   `decompdecomp X.Y.Z: <what users get>`. Pre-releases are `X.Y.Z-alpha` (then `-beta`, `-rc`).
 - A release is a `vX.Y.Z` tag. `.github/workflows/release.yml` builds the `.deb`, the `.rpm`, the AppImage and the
-  Windows MSI and attaches them.
+  Windows setup bundle (with its app MSI inside) and attaches them.
 
 ## 12. Linting
 
