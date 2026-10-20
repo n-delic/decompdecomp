@@ -140,6 +140,16 @@ Where to start on a gap:
 
 ## Next
 
+### Better splits reach existing ROM projects
+
+A ROM project (N64, PS2) is split once, when it's made: a better split (code splat misses, function ends, compiler
+ranges) only reaches games added after it. DS projects get theirs at start (`NDS.ANALYSIS`,
+`ForkEngine.reanalyse`): versioned, kept only when the rebuild is unchanged, and the project's activity says so.
+ROM mode needs the same, with more to carry: a split version in each project, and on start a new split whose
+functions take over the old ones' work (matches, attempts, notes, claims) by address, kept only when every matched
+function still matches and the export still rebuilds the game byte for byte. Functions the new split cuts or joins
+go back to the queue with their old attempts as notes. Each improvement to the split bumps the version.
+
 ### How much usage each agent has left
 
 A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
