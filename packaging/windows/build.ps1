@@ -9,11 +9,14 @@ $version = (Select-String '^version = "(.*)"' (Join-Path $repoRoot 'pyproject.to
 $work = Join-Path ([IO.Path]::GetTempPath()) ("decompdecomp-build-" + [guid]::NewGuid())
 $app = Join-Path $work 'app'
 $wheelDir = Join-Path $work 'wheel'
+$runtimeRequirements = Join-Path $work 'runtime-requirements.txt'
 $dist = Join-Path $repoRoot 'dist'
 New-Item -ItemType Directory -Force $app, $wheelDir, $dist | Out-Null
 try {
     Push-Location $repoRoot
     try {
+        uv export --locked --no-dev --no-emit-project --format requirements.txt --output-file $runtimeRequirements | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not export the locked runtime dependencies (exit code $LASTEXITCODE)" }
         uv build --wheel --out-dir $wheelDir | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "uv build failed with exit code $LASTEXITCODE" }
     }
@@ -39,7 +42,9 @@ try {
     if (-not $wheel) { throw 'uv did not produce a decompdecomp wheel.' }
     $packages = Join-Path $app 'packages'
     New-Item -ItemType Directory -Force $packages | Out-Null
-    uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages $wheel
+    uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --requirements $runtimeRequirements
+    if ($LASTEXITCODE -ne 0) { throw "uv pip install of locked runtime dependencies failed with exit code $LASTEXITCODE" }
+    uv pip install --python (Join-Path $bundlePython 'python.exe') --target $packages --no-deps $wheel
     if ($LASTEXITCODE -ne 0) { throw "uv pip install failed with exit code $LASTEXITCODE" }
     Copy-Item -LiteralPath (Get-Command uv).Source -Destination (Join-Path $app 'uv.exe') -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'src/decompnet/app/static/favicon.ico') -Destination (Join-Path $app 'decompdecomp.ico') -Force

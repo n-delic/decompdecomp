@@ -20,13 +20,17 @@ mkdir -p "$OUT"
 
 # 1. decompdecomp, installed into a Python of its own
 (cd "$ROOT" && uv build --wheel --out-dir "$WORK/wheel" >/dev/null)
+(cd "$ROOT" && uv export --locked --no-dev --no-emit-project --format requirements.txt \
+  --output-file "$WORK/runtime-requirements.txt" >/dev/null)
 uv python install 3.12 >/dev/null
 PY=$(uv python find --managed-python 3.12)
 APP="$WORK/opt/decompdecomp"
 mkdir -p "$APP/bin"
 cp -a "$(dirname "$(dirname "$(readlink -f "$PY")")")" "$APP/python"
 rm -rf "$APP/python/lib/python3.12/EXTERNALLY-MANAGED" "$APP/python/lib/python3.12/test" "$APP/python/lib/python3.12/idlelib"
-uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages "$WORK"/wheel/*.whl
+uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages \
+  --requirements "$WORK/runtime-requirements.txt"
+uv pip install --quiet --python "$APP/python/bin/python3.12" --break-system-packages --no-deps "$WORK"/wheel/*.whl
 rm -f "$APP/python/bin/decomp"  # its shebang names this build's folder: the launchers below run the module instead
 cp "$(command -v uv)" "$APP/bin/uv"
 find "$APP/python" -name __pycache__ -prune -exec rm -rf {} +

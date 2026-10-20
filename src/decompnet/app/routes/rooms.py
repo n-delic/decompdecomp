@@ -50,7 +50,10 @@ def register(app: App) -> None:
             with socket.socket() as sock:
                 sock.bind(("127.0.0.1", 0))
                 port = sock.getsockname()[1]
-        server = uvicorn.Server(uvicorn.Config(collab.host_app(net, net.rooms), host=host, port=port, log_level="warning"))
+        # The Windows app runs under pythonw, where stdout is None; Uvicorn's default formatter calls stdout.isatty().
+        # The app's file logger already records room-server errors, so this server needs no terminal logging.
+        server = uvicorn.Server(uvicorn.Config(collab.host_app(net, net.rooms), host=host, port=port, log_level="warning",
+                                               log_config=None, access_log=False))
         threading.Thread(target=server.run, daemon=True, name=f"collab-{port}").start()
         for _ in range(100):
             if server.started:
