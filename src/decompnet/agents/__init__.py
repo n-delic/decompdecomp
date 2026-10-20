@@ -58,7 +58,8 @@ class Agent:
     tool_meta: dict = {}  # what it reads on the definition of each of decompdecomp's MCP tools (tools.ALWAYS_LOAD)
     recommended = False  # the launcher lists it first, and starts on it until the user picks another
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
-    takes_effort = False  # the launcher offers a reasoning effort, sent with the model's name ("provider/model#high")
+    takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
+    # for an agent whose model is an endpoint's, as the helper's `effort` option
     efforts: tuple[str, ...] = ("low", "medium", "high", "max")  # the efforts it offers, when it takes one
 
     def __repr__(self) -> str:
