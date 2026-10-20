@@ -1941,7 +1941,9 @@ class ForkEngine:
         its own (Console.file_compiler: a DS game mixes CodeWarrior versions, issue #23). Judged as an attempt that
         isn't kept: a version it matches with stays the file's, committed, and only when the file's other matched
         functions still match (the attempt's own rule); otherwise the file keeps its compiler and nothing is
-        recorded. "all": every other compiler, in turn, until one matches or TRY_ALL_SECONDS pass."""
+        recorded. "all": the file's own compiler first (C that matches with it needs no switch), then the others,
+        nearest versions first, until one matches or TRY_ALL_SECONDS pass (on the DS demo, C that matched with its
+        own 2.0sp1p5 moved its file to 2.0/base when the own one was skipped and the oldest went first)."""
         proj, fp, cfg = self.get(slug)
         console = consoles.get(cfg.get("platform"))
         fn = self._fn(slug, function)
@@ -1956,7 +1958,10 @@ class ForkEngine:
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
         known = [c.id for c in console.compilers]
-        wanted = [c for c in known if c != own] if compiler.strip().lower() == "all" else [compiler.strip()]
+        if compiler.strip().lower() == "all":
+            wanted = sorted(known, key=lambda c: abs(known.index(c) - known.index(own))) if own in known else known
+        else:
+            wanted = [compiler.strip()]
         if wanted[0] not in known:
             raise NetworkError(f"{wanted[0]!r} isn't one of this platform's compilers: {', '.join(known)}")
         if wanted == [own]:
@@ -1976,10 +1981,13 @@ class ForkEngine:
                     for c in wanted:
                         if tried and time.monotonic() > until:
                             break
-                        with self._build_locks[proj["id"]]:  # (a build reads the map)
-                            rel = console.set_file_compiler(fp, unit.source, c)
-                        changed = True
+                        if c != own:
+                            with self._build_locks[proj["id"]]:  # (a build reads the map)
+                                rel = console.set_file_compiler(fp, unit.source, c)
+                            changed = True
                         res = self._attempt(agent, slug, function, source, keep=False, quiet=0)
+                        if res["matched"] and c == own:
+                            return f"{c}: {res['text']}\nThat's {unit.source}'s own compiler: nothing to switch."
                         if res["matched"]:
                             kept = c
                             self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "

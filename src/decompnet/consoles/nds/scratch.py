@@ -116,7 +116,7 @@ typedef int BOOL;
 
 
 def _run(cmd: list[str], cwd: Path, what: str) -> None:
-    from ..limits import capped
+    from ...limits import capped
 
     res = subprocess.run(capped(cmd), cwd=cwd, capture_output=True, text=True, timeout=3600,
                          encoding="utf-8", errors="replace")

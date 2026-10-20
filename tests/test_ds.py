@@ -145,6 +145,8 @@ def test_a_compiler_that_doesnt_match_leaves_the_file_as_it_was(per_file):
     with pytest.raises(NetworkError, match="flags"):
         net.try_compiler(agent, slug, "lerp", BAD, flags="-O1", source=lerp)
     assert "each source file can have its own compiler" in net.forks.info(slug)
+    said = net.try_compiler(agent, slug, "lerp", "all", source=lerp)  # its file's own compiler goes first
+    assert "nothing to switch" in said and state["sets"] == [BAD, GOOD], said
 
 
 def test_the_compiler_a_function_matches_with_becomes_its_files(per_file):
