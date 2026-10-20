@@ -87,6 +87,47 @@ def jal_targets(words: tuple[int, ...], region: int) -> list[int]:
     return [jump_target(w, region) for w in words if w >> OPCODE_SHIFT == JAL]
 
 
+BACK_FUNCTIONS = 64  # how many functions code_before walks back over at most
+
+
+def code_before(rom: bytes, start: int, floor: int) -> int:
+    """Where code that begins with a stack frame at `start` (big-endian) really begins: a function's first
+    instructions can come before its frame (loads the compiler moved up), and functions that make no frame (leaves)
+    can come before it. Walks back to the previous return (jr ra and its delay slot), padding after it skipped, while
+    every word on the way is an instruction, and on over the functions before, down to `floor` at most (where the
+    code before it ends). On an N64 game a segment found at its first frame had lost two leaf functions and the
+    first two instructions of a third, which could never match."""
+    import rabbitizer
+
+    def valid(at: int) -> bool:
+        return rabbitizer.Instruction(int.from_bytes(rom[at:at + 4], "big")).isValid()
+
+    def word(at: int) -> int:
+        return int.from_bytes(rom[at:at + 4], "big")
+
+    pos = start
+    for _ in range(BACK_FUNCTIONS):
+        at = pos - 8 if pos - 8 >= floor and word(pos - 8) == JR_RA else pos  # (after a return: the function before)
+        boundary = None
+        while at - 4 >= floor and at - 4 >= pos - 2 * SCAN_BLOCK:
+            at -= 4
+            if at - 4 >= floor and word(at - 4) == JR_RA:  # `at` is a delay slot: the function before ends there
+                boundary = at + 4
+                break
+            if not valid(at):
+                break
+        else:
+            boundary = at if at == floor else None  # every word an instruction, down to the code before it
+        if boundary is None:
+            return pos
+        while boundary < pos and word(boundary) == 0:  # padding between functions
+            boundary += 4
+        if boundary >= pos:
+            return pos
+        pos = boundary
+    return pos
+
+
 def place(rom: bytes, lo: int, hi: int, floor: int, calls: list[int], known: list[tuple[int, int]],
           regions) -> tuple[int, int, int, int] | None:
     """Where one stretch of big-endian code (`rom[lo:hi]`) is loaded: (start, end, vram, calls that landed on a
@@ -121,7 +162,8 @@ def place(rom: bytes, lo: int, hi: int, floor: int, calls: list[int], known: lis
     called = [t - base for t in own | set(calls) if back <= t - base < hi - lo
               and not any(a <= t < b for a, b in known)]  # a call into known code says nothing about this one
     first = min([frames[0], *called])
-    start = lo + first
+    start = code_before(rom, lo + first, max(floor, 0))
+    first = start - lo
     end = lo + returns[-1] + 8  # the last return and its delay slot
     end = min((end + 0xF) & ~0xF, len(rom))
     return (start, end, base + first, hits)
