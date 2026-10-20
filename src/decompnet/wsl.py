@@ -35,7 +35,14 @@ _prepared_tools: set[str] = set()
 @functools.cache
 def _cache_directory() -> str:
     code, home = _run(["-e", "printenv", "HOME"], 30)
+    home = home.strip()
     if code or not home.startswith("/") or "\n" in home:
+        # Some WSL distributions don't export HOME to commands started with `wsl -e`. The default user's passwd
+        # entry still gives us a persistent place for the compiler cache.
+        code, entry = _run(["-e", "sh", "-c", 'getent passwd "$(id -u)"'], 30)
+        fields = entry.strip().split(":") if not code else []
+        home = fields[5] if len(fields) > 5 else ""
+    if not home.startswith("/") or "\n" in home:
         raise OSError("WSL couldn't find its home directory for the compiler cache")
     # WSL may stop between compiles. /tmp can be cleared at its next start while this Windows process lives on.
     return home.rstrip("/") + "/.cache/decompnet/toolchains"
