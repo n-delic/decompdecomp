@@ -679,3 +679,29 @@ def test_a_switch_running_on_into_the_next_source_file_takes_its_function_along(
     text = (folder / "delinks.txt").read_text()
     assert f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x}" in text
     assert f"src/b.c:\n    .text start:{BASE + 0x1C:#010x} end:{BASE + 0x20:#010x}" in text
+
+
+def test_two_pieces_with_bytes_no_symbol_claims_between_them_are_joined_with_those_bytes(tmp_path, monkeypatch):
+    """On a DS game a function's two pieces had 68 bytes between them that ds-decomp's analysis gave no symbol: they
+    were never joined, as they weren't next to each other. Bytes no symbol claims go with the join; any symbol
+    between them stops it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xE1A04000,  # f: push {r4, lr}; mov r4, r0 (runs on)
+             0xE1A00004,  # no symbol: mov r0, r4
+             0xE8BD8010]  # g: pop {r4, pc}
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    lines = [f"f kind:function(arm,size=0x8) addr:{BASE:#010x}", f"g kind:function(arm,size=0x4) addr:{BASE + 0xC:#010x}"]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x10:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x10:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x10)], symbol_lines=lines, symbols={BASE, BASE + 0xC})
+    m.functions = {BASE: (8, False), BASE + 0xC: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {"f": ["g"]}
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x10) addr:{BASE:#010x}"
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    m.symbols.add(BASE + 8)  # a symbol between them: not joined
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {}

@@ -657,10 +657,13 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
                     continue
                 lo, hi = min(at, into), max(at, into)
                 one_file = any(a <= lo and hi < b for a, b in ranges)
-                if (funcs[lo][1] + lo != hi or funcs[into][2] != thumb or funcs[into][0] in keep or not one_file):
+                # next to each other, or with bytes between them no symbol claims (ds-decomp's analysis left them
+                # out: on a DS game 68 bytes of one function lay between its two pieces), which go with them
+                gap = not any(lo + funcs[lo][1] <= s < hi for s in m.symbols)
+                if (not gap or funcs[into][2] != thumb or funcs[into][0] in keep or not one_file):
                     continue
-                took = funcs.pop(hi)  # the lower one grows over the other, which becomes a label
-                funcs[lo][1] += took[1]
+                took = funcs.pop(hi)  # the lower one grows over the other and what's between, which becomes a label
+                funcs[lo][1] = hi + took[1] - lo
                 joined[funcs[lo][0]] = [*joined.get(funcs[lo][0], []), took[0], *joined.pop(took[0], [])]
                 labels.add(hi)
                 changed = True

@@ -51,9 +51,9 @@ class NintendoDS(Console):
     # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
     # functions dsd cut off joined to their functions (recover.merge_pieces), 6 with the pieces only the caller's
     # registers tell (arm.piece: code using r4-r11 before saving them), 7 a switch's cases in the next source file
-    # moved to its own (recover.move_boundaries). A project with less gets the rest when
+    # moved to its own (recover.move_boundaries), 8 pieces joined with the bytes no symbol claims between them. A project with less gets the rest when
     # the app starts, or when it's checked again
-    ANALYSIS = 7
+    ANALYSIS = 8
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
