@@ -104,7 +104,8 @@ Write C people would write. Be brief in your messages: work, don't narrate.
 READABLE_ROM = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear.\n"
                 "   Describe structs, enums and constants in the shared header (get_context shows it) with\n"
                 "   edit_context, and use those names.")
-READABLE_FORK = ("keep the function's name (other files call it by it). Describe structs, enums and constants in\n"
+READABLE_FORK = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear\n"
+                 "   (the project's config and every file change together). Describe structs, enums and constants in\n"
                  "   the project's headers with edit_file (read_file and search_code show where), and use those names.")
 
 # FORK_PROMPT's {what}: a public decomp, or a project decompdecomp started from the user's copy. Told it was "a
@@ -327,7 +328,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
+ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
             "compiler_map", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
@@ -453,8 +454,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def rename_symbol(ctx: Context, old: str, new: str, message: str = "") -> str:
-        """Give a function or data address a real name (e.g. func_80001234 -> player_update). Updates the
-        assembly everyone sees, matched sources and the header; never breaks a match."""
+        """Give a function or data address a real name (e.g. func_80001234 -> player_update). Everything that
+        uses the name changes with it (ROM: the assembly, matched sources, the header; a project: the game's
+        symbols in its config and every source and header file); never breaks a match."""
         return await run(ctx, "rename_symbol", old=old, new=new, message=message)
 
     @mcp.tool(meta=ALWAYS_LOAD)

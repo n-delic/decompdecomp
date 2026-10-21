@@ -61,6 +61,10 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Names in project mode.** rename_symbol renames a function or a global in a project too: in the game's symbols
+  (DS: ds-decomp's symbols.txt; GameCube, Wii: dtk's) and in every source and header file, kept only when the game
+  still rebuilds byte for byte and every match holds. Polishing's names were local only before (func_0205d0f4,
+  data_0222f194 stayed). Windows PC's names come from addresses (`names.py`): it says it can't rename yet.
 - **Polishing on every console.** Helpers that make matched code readable (real names, types, a comment) worked on
   ROM projects only: a DS game at 57% had nothing to choose. In project mode a rewrite goes through the project's own
   file and is judged like any compile of a matched function: committed when it and the file's other matches still

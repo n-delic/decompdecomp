@@ -67,8 +67,8 @@ class Readability:
                 self.net._event(db, proj["id"], agent.id, "claim", fn["name"])
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
-        names = ("- keep the function's own name (other files call it by it); read_file and search_code show what it "
-                 "calls and what calls it;\n"
+        names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
+                 "(read_file and search_code show what it calls and what calls it);\n"
                  "- describe structs, enums and constants in the project's headers (edit_file) and use their names here;\n"
                  if fork else
                  "- rename_symbol the function, and the globals and functions it uses, once their purpose is clear;\n"

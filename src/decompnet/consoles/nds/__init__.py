@@ -147,6 +147,25 @@ class NintendoDS(Console):
 
     splits_sources = True
 
+    def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:
+        """ds-decomp's symbols.txt: the line `old kind:...` becomes `new kind:...` (the delinked objects take it)."""
+        import re
+
+        from ...forks.project import ForkError
+
+        saved = {}
+        for path in sorted((fp.root / "config" / version).rglob("symbols.txt")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(rf"^{re.escape(new)} kind:", text, re.M):
+                raise ForkError(f"{new} is a symbol of the game already")
+            changed = re.sub(rf"^{re.escape(old)}(?= kind:)", new, text, flags=re.M)
+            if changed != text:
+                saved[path] = text
+                path.write_text(changed, encoding="utf-8")
+        if not saved:
+            raise ForkError(f"{old} isn't one of the game's symbols")
+        return saved
+
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         """The source file's block in its module's delinks.txt ends where function `at` starts, and `new`'s, from
         there to where it ended, follows it (its data stays with the file); `new` gets the file's compiler

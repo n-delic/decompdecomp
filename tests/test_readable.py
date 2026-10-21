@@ -94,7 +94,7 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn: "int func_02001000(int a) { return a * 3; }")
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     brief = net.readability.claim(agent, "p")
-    assert "MAKE READABLE: func_02001000 in src/a" in brief and "edit_file" in brief and "rename_symbol" not in brief
+    assert "MAKE READABLE: func_02001000 in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
     tried = []
 
     def attempt(self, agent, slug, function, source, keep=True, prelude="", quiet=None):
