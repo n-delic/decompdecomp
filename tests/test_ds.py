@@ -336,6 +336,30 @@ def test_start_up_code_that_sets_the_cpus_mode_is_hand_written():
     assert arm.asm_reason(words(0xE0800001, 0xE12FFF1E) + bytes(16), thumb=False) is None  # add r0, r0, r1: C
 
 
+def test_pieces_of_functions_are_set_aside_and_whole_functions_are_not():
+    """On a DS game 159 of 557 open functions were pieces of others (ds-decomp's symbols in the wrong place), each
+    given up on by five to seven agents: a lone epilogue, a register save running on into the next symbol, one
+    instruction from the middle of a function, a lone `bx ip`. No function the game's agents matched reads as one."""
+    from decompnet.arch import arm
+
+    words = lambda *ws: b"".join(w.to_bytes(4, "little") for w in ws)  # noqa: E731
+    halves = lambda *hs: b"".join(h.to_bytes(2, "little") for h in hs)  # noqa: E731
+    assert "the end of" in arm.asm_reason(words(0xE8BD8010), thumb=False)  # pop {r4, pc}
+    assert "the start of" in arm.asm_reason(words(0xE92D000F), thumb=False)  # push {r0-r3}, then the next symbol
+    assert "never returns" in arm.asm_reason(words(0xE58DC004), thumb=False)  # str ip, [sp, #4]
+    assert "veneer" in arm.asm_reason(words(0xE12FFF1C), thumb=False)  # bx ip
+    assert "the end of" in arm.asm_reason(halves(0xBD10), thumb=True)  # Thumb pop {r4, pc}
+    whole = [(words(0xE92D4010, 0xE1A04000, 0xE8BD8010), False),  # push {r4, lr}; mov r4, r0; pop {r4, pc}
+             (words(0xE12FFF1E), False),  # bx lr: an empty function
+             (words(0xE59FC000, 0xE12FFF1C, 0), False),  # ldr ip, [pc]; bx ip; .word: CodeWarrior's tail call
+             (words(0xEA000000), False),  # b elsewhere: a tail call
+             (words(0xE92D4000, 0xEB000000), False),  # push {lr}; bl: a call that may never return
+             (halves(0xB510, 0xBD10), True)]  # Thumb push {r4, lr}; pop {r4, pc}
+    for code, thumb in whole:
+        assert arm.asm_reason(code, thumb=thumb) is None, code.hex()
+    assert arm.asm_reason(words(0xE8BD8010)) is None  # its mode unknown: not judged
+
+
 BASE = 0x02100000
 
 
