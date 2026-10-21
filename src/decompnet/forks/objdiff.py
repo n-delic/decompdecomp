@@ -138,14 +138,16 @@ def expand_set_aside(data: dict, info: dict) -> dict[str, str]:
 def game_measures(rep: dict, aside: set[str]) -> dict:
     """The report's measures counting only the game's own functions: the set-aside ones (library code, middleware)
     are left out of the totals as well as the matches, so `matched_code_percent` is the share of the game done.
-    The report's own figures stay in `all_functions`, `all_code` when anything was left out."""
+    The report's own figures stay in `all_functions`, `all_code` when anything was left out, and
+    `set_aside_functions` says how many functions were. A project covering the whole program passes no `aside`."""
     m = dict(rep.get("measures") or {})
     if not aside:
         return m
-    fns = code = done_fns = done_code = 0
+    fns = code = done_fns = done_code = left = 0
     for unit in rep.get("units", []):
         for f in unit.get("functions", []):
             if f.get("name") in aside:
+                left += 1
                 continue
             size = int(f.get("size") or 0)
             fns, code = fns + 1, code + size
@@ -154,7 +156,7 @@ def game_measures(rep: dict, aside: set[str]) -> dict:
     m["all_functions"], m["all_code"] = m.get("total_functions"), m.get("total_code")
     m.update(total_functions=fns, matched_functions=done_fns, total_code=str(code), matched_code=str(done_code),
              matched_functions_percent=100.0 * done_fns / fns if fns else 0.0,
-             matched_code_percent=100.0 * done_code / code if code else 0.0, set_aside_functions=len(aside))
+             matched_code_percent=100.0 * done_code / code if code else 0.0, set_aside_functions=left)
     return m
 
 

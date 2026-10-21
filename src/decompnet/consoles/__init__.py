@@ -71,6 +71,9 @@ class Console:
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
+    # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
+    # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
+    sets_aside = False
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
@@ -102,14 +105,16 @@ class Console:
         return False
 
     def import_game(self, net, file: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                    name: str = "", log=print) -> str:
-        """Start a project from the user's own copy of the game; returns its slug. The mode's way by default."""
+                    name: str = "", log=print, scope: str | None = None) -> str:
+        """Start a project from the user's own copy of the game; returns its slug. The mode's way by default.
+        `scope`: what the project covers, where the console sets library code aside (`sets_aside`); else ignored."""
         if self.mode == ROM:
             return net.import_split(self, self.read_game(file, name), toolchain=toolchain, flags=flags, log=log)
         if self.mode == PROJECT:
             path = Path(file) if isinstance(file, (str, Path)) else net.saved_file(file, name or self.upload_name(file))
             known = toolchain if toolchain in {c.id for c in self.compilers} else None  # (a ROM console's id: not ours)
-            return net.forks.create_scratch(path, self, compiler=known, log=log)
+            return net.forks.create_scratch(path, self, compiler=known, log=log,
+                                            scope=scope if self.sets_aside else None)
         raise RomError(f"{self.name or 'these'} games can't be started from scratch in this version: continue a public "
                        "decomp of the game instead")
 
@@ -158,7 +163,9 @@ class Console:
     # PROJECT mode
 
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
-        """Write the community's kind of project for the game into `root`: {"platform", "id", "title", "compiler"}."""
+        """Write the community's kind of project for the game into `root`: {"platform", "id", "title", "compiler"}.
+        A console that `sets_aside` takes `scope=` too: "program" brings in all the code it sets aside, functions and
+        source files, where "game" may leave some out (the manifest's `set_aside_unimported` says what)."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
     def game_info(self, game: Path) -> dict:
@@ -227,7 +234,8 @@ class Console:
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
-                "default_compiler": self.default_compiler({}, "") if self.mode else ""}
+                "default_compiler": self.default_compiler({}, "") if self.mode else "",
+                "sets_aside": self.mode == PROJECT and self.sets_aside}
 
 
 def _registry() -> list[Console]:

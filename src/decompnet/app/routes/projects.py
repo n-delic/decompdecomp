@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ... import hostenv, toolchains
+from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import saves
 from ..engine import parse_ranges
@@ -121,6 +122,20 @@ def register(app: App) -> None:
     def p_priority(slug, request, data):
         return {"priority": net.set_priority(slug, str(data.get("name", "")), bool(data.get("on", True)))}
 
+    def p_scope(slug, request, data):
+        """What the project covers ({scope: "game" | "program"}): kept in its manifest, then the project is measured
+        again (a job: a big project takes a while), so its set-aside functions open to agents and count, or stop."""
+        scope = str(data.get("scope", ""))
+        if scope not in SCOPES:
+            raise ValueError(f"a project covers the game's own code or the whole program, not {scope!r}")
+        if not net.fork_slug(slug):
+            raise ValueError("only projects started from scratch or forked have code set aside to choose for")
+
+        def work(log):
+            net.forks.set_scope(slug, scope, log=log)
+            return net.overview(slug)
+        return {"job": jobs.start("scope", work)}
+
     def p_note(slug, request, data):
         """A note from you on a function (or the whole project): agents read notes when they claim it."""
         agent, _ = net.local_agent("you")
@@ -171,7 +186,7 @@ def register(app: App) -> None:
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
-        "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),
+        "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),

@@ -363,7 +363,44 @@ async function renderProjectSettings() {
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
     ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
   $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
+  renderScope(ov);
 }
+
+/* What the project covers (forks/project.py SCOPES): the game's own code, with the library and middleware code its
+   import recognised left out of agents' work and progress, or the whole program. Shown where there's such code. */
+function renderScope(ov) {
+  const aside = ov.set_aside, panel = $("scopePanel");
+  panel.hidden = !(ov.kind === "fork" && ov.scope && (aside || ov.unimported || ov.scope === "program"));
+  if (panel.hidden) return;
+  const game = ov.scope !== "program", n = aside ? aside.functions : 0;
+  $("scopeSeg").querySelectorAll("[data-scope]").forEach((b) => {
+    const on = b.dataset.scope === ov.scope;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  });
+  const lines = [game
+    ? `${plural(n, "function")} of library and middleware code ${n === 1 ? "is" : "are"} left out: agents don't work on ${n === 1 ? "it" : "them"} and progress doesn't count ${n === 1 ? "it" : "them"}. Choosing the whole program opens ${n === 1 ? "it" : "them"} to agents and counts ${n === 1 ? "it" : "them"}.`
+    : `Every function is open to agents and counted${n ? `, the ${plural(n, "function")} of library and middleware code included` : ""}. Choosing the game's own code leaves ${n === 1 ? "it" : "them"} out again.`];
+  if (aside?.without_source) lines.push(`${plural(aside.without_source, "of these function")} ${aside.without_source === 1 ? "has" : "have"} no source file in this project, so agents can't work on ${aside.without_source === 1 ? "it" : "them"} either way: the whole program only counts ${aside.without_source === 1 ? "it" : "them"}.`);
+  if (ov.unimported) lines.push(`This project's import left out ${ov.unimported} altogether: switching doesn't bring that in. To decompile it too, import the game again and choose “The whole program”.`);
+  lines.push("Hand-written assembly stays assembly either way.");
+  $("scopeWhat").textContent = lines.join(" ");
+}
+$("scopeSeg").onclick = async (e) => {
+  const b = e.target.closest("button[data-scope]");
+  if (!b || !S.ov || b.dataset.scope === S.ov.scope) return;
+  const buttons = $("scopeSeg").querySelectorAll("button");
+  buttons.forEach((x) => { x.disabled = true; });
+  try {
+    const { job } = await api("/api/scope", { method: "POST", body: { slug: S.slug, scope: b.dataset.scope } });
+    $("scopeLog").hidden = false;
+    S.ov = await followJob(job, $("scopeLog"));
+    $("scopeLog").hidden = true;
+    renderStats(S.ov);
+    renderProjectSettings();
+    toast(b.dataset.scope === "program" ? "This project covers the whole program now." : "This project covers the game's own code now.");
+  } catch (err) { toast(esc(err.message), "err"); } finally { buttons.forEach((x) => { x.disabled = false; }); }
+};
 $("setTcReset").onclick = () => { $("setFlags").value = ""; };
 $("autoAdjust").onchange = async () => {
   const on = $("autoAdjust").checked;
