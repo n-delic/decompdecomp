@@ -28,6 +28,7 @@ from .. import arch, consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
+from ..hostenv import NO_WINDOW
 from ..network import Agent, Network, NetworkError, move_on_brief
 from ..scoring import percent_text
 from ..textedit import replace_once
@@ -216,9 +217,12 @@ def _around(source: str, span: tuple[int, int], file_text: str, rel: str) -> tup
             other.append(ln)
     if other:
         listing = "\n".join(other[:6]) + ("\n..." if len(other) > 6 else "")
-        raise NetworkError(f"send the function definition, plus any #include \"...\", prototypes, extern declarations "
-                           f"or #pragma lines it needs (those are placed for you). These lines aren't any of that and "
-                           f"aren't in {rel}:\n{listing}\nPut structs, globals and helper functions in with edit_file first")
+        raise NetworkError(f"compile_and_diff takes one function definition, plus any #include \"...\", one-line "
+                           f"prototypes, extern declarations or #pragma lines it needs (those are placed for you). These "
+                           f"lines aren't any of that and aren't in {rel}:\n{listing}\nHelper functions, structs and "
+                           f"the prototypes you want shared go in through edit_file (a header, or the top of {rel}), not "
+                           "inside compile_and_diff's source: edit_file them first, then compile_and_diff the function "
+                           "alone. Nothing was compiled.")
     return includes, before, after
 
 
@@ -531,7 +535,8 @@ class ForkEngine:
         log(f"cloning {url}")
         res = subprocess.run(["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, str(dest)],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                             creationflags=NO_WINDOW)
         if res.returncode != 0:
             from ..forks import policy
             shutil.rmtree(dest, ignore_errors=True)

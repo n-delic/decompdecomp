@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW
+from decompnet.hostenv import NO_WINDOW, console_python
 
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
@@ -92,13 +92,21 @@ _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbo
                     r"Section '\.note\.split' is unknown)")
 
 
+def _tool_dirs() -> list[Path]:
+    """Where decompdecomp's own build tools (the ninja Python package's ninja) are: beside its Python, or, in the
+    Windows setup's bundle (packages installed with --target), in the `bin` folder beside those packages, which the
+    bundle's launcher didn't put on PATH."""
+    bundled = Path(__file__).resolve().parents[2] / "bin"
+    return [Path(sys.executable).parent, *([bundled] if bundled.is_dir() else [])]
+
+
 def _tool(name: str) -> str | None:
     """A build tool from PATH or from decompdecomp's own environment (the ninja Python package)."""
     found = shutil.which(name)
     if found:
         return found
-    local = Path(sys.executable).parent / (f"{name}.exe" if os.name == "nt" else name)
-    return str(local) if local.exists() else None
+    exe = f"{name}.exe" if os.name == "nt" else name
+    return next((str(d / exe) for d in _tool_dirs() if (d / exe).exists()), None)
 
 
 class ForkProject:
@@ -290,11 +298,11 @@ class ForkProject:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`."""
         env = dict(os.environ)
-        env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+        env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
         executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
-        cmd = [executable, *cmd[1:]]
+        cmd = [console_python(executable), *cmd[1:]]  # not pythonw.exe: its tools' compilers would flash consoles
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,

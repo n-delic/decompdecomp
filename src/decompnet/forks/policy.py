@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import tempfile
 
+from ..hostenv import NO_WINDOW
+
 # files a project states its rules in, at the top, in .github/ or docs/
 _POLICY_FILE = re.compile(r"^(?:\.github/|docs/)?(?:readme|contributing|contribute|code_of_conduct|agents|claude|"
                           r"gemini|ai|ai[-_]?policy|policy|guidelines)(?:\.(?:md|markdown|txt|rst))?$", re.I)
@@ -46,7 +48,7 @@ def git_trouble(output: str) -> str:
 def _git(*args: str, cwd: str | None = None, timeout: int = 90) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-c", "safe.directory=*", *args], cwd=cwd, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL,
-                          env={"GIT_TERMINAL_PROMPT": "0", "PATH": os.environ.get("PATH", "")})
+                          env={"GIT_TERMINAL_PROMPT": "0", "PATH": os.environ.get("PATH", "")}, creationflags=NO_WINDOW)
 
 
 def lines_about_ai(text: str, limit: int = 8) -> list[str]:
