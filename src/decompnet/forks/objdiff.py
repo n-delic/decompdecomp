@@ -174,6 +174,11 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
             args += ["-2", str(base)]
     data = json.loads(_run([*args, *([symbol] if symbol else [])], cwd=cwd, timeout=120))
     left, right = _sym(data.get("left"), symbol), _sym(data.get("right"), symbol)
+    if right is not None and "size" not in right and not right.get("instructions"):
+        # only declared in the build (an extern it calls): not built. Read as built, its no rows against the
+        # target's were "100% match", and on a DS game agents were handed such a function again and again, each
+        # told it was already done
+        right = None
     if left is None and symbol is not None:
         raise ObjdiffError(f"{symbol} isn't in the target object")
     left = left or {}

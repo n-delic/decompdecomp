@@ -216,3 +216,18 @@ def test_lines_the_file_already_has_may_come_along(fork):
     with pytest.raises(Exception) as e:
         net.compile_and_diff(agent, "read_gain", "struct Gain { float v; };\n" + GAIN, slug)
     assert "struct Gain" in str(e.value) and "edit_file" in str(e.value)
+
+
+def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkeypatch):
+    """objdiff lists an extern the source calls on the build's side, with no size and no code: read as built, that
+    was a "100% match", and a DS game's agents were told so of a function no file defined, again and again."""
+    import json
+
+    from decompnet.forks import objdiff
+
+    rows = [{"instruction": {"formatted": "mov r0, #0", "size": 4}}] * 3
+    answer = {"left": {"symbols": [{"name": "f", "size": "12", "kind": "SYMBOL_FUNCTION", "instructions": rows}]},
+              "right": {"symbols": [{"name": "f", "flags": {"global": True}}]}}
+    monkeypatch.setattr(objdiff, "_run", lambda args, cwd, timeout: json.dumps(answer))
+    d = objdiff.diff(tmp_path / "t.o", tmp_path / "b.o", "f", tmp_path)
+    assert d.match_percent is None and not d.matched
