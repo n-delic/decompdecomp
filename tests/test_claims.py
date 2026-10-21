@@ -260,3 +260,14 @@ def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
     assert net.store.one("SELECT status FROM functions WHERE name='flagged'")["status"] == "open"
     net.reopen("piece", "game")
     assert net.not_c_from_notes("game") == 0  # given back: its old notes don't set it aside again
+
+
+def test_a_function_gone_from_the_build_is_neither_on_the_map_nor_in_the_totals(tmp_path):
+    """A piece joined to its function keeps its row (status nosource) for its attempts and notes: it showed on the map
+    as a function still to do, and its bytes counted twice, in it and in the function it's part of."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) SELECT project_id, 'joined', 4, 1, "
+                   "'nosource', 'a' FROM functions")
+    assert [r["name"] for r in net.function_map("game")] == ["piece"]
+    assert net.summary("game")["functions"] == 1 and net.summary("game")["bytes"] == 4

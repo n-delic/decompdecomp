@@ -2572,7 +2572,7 @@ class ForkEngine:
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
             "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            "FROM functions WHERE project_id=?", proj["id"])
+            "FROM functions WHERE project_id=? AND status != 'nosource'", proj["id"])
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
