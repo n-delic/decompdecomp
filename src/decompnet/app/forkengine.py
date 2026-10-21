@@ -2704,6 +2704,7 @@ class ForkEngine:
             why = why or "the game no longer rebuilt byte for byte with it"
             self.net._update_cfg(slug, lambda c: c.setdefault("joins_refused", {}).update({key: why}))
             return f"{len(said)} agents agreed, but joining {first['name']} and {last['name']} was refused: {why}."
+        self.net.joined(first["name"], slug)  # (what set it aside was about a piece of it)
         try:
             self.net.add_note(self.net.local_agent("decompdecomp")[0], slug,
                               f"Agents ({', '.join(sorted(said))}) found this was cut by the analysis, and decompdecomp "

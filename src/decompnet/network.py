@@ -802,6 +802,23 @@ class Network:
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
             self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
 
+    def joined(self, function: str, project: str | None = None) -> None:
+        """Pieces were joined to `function`: what set it aside (its shape, agents' verdicts) was about a piece of it,
+        so it's open again, and the shape rules and notes written after the join (not_c_from_notes) decide anew. On a
+        DS game an 8-byte piece agents agreed no C makes took seven more pieces, became a 276-byte function, and
+        stayed set aside. Library code stays where the project put it (#52's set_aside)."""
+        try:
+            fn = self._function(function, project)
+        except NetworkError:
+            return
+        meta = json.loads(fn["meta"] or "{}")
+        if fn["status"] != "asm" or meta.get("set_aside"):
+            return
+        meta = {k: v for k, v in meta.items() if k not in ("asm_code", "asm_twin", "not_c")}
+        with self.store.tx() as db:
+            db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'", (json.dumps(meta), fn["id"]))
+            self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (pieces were joined to it)")
+
     def reopen(self, function: str, project: str | None = None) -> None:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'
         verdicts on it are forgotten, and no check sets it aside again."""
