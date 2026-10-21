@@ -71,3 +71,41 @@ def test_polish_takes_starred_then_big_functions_and_leaves_stubs(matched):
     other, _ = net.local_agent("claude-opus-5.5-2")
     assert "clamp_s32" in net.readability.claim(other, slug)
     assert stub["name"] not in net.readability.claim(agent, slug)
+
+
+def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, monkeypatch):
+    """A DS game at 57% had no Polish to choose: polishing was ROM projects' only. In project mode the matching C is
+    the project's own file, and a rewrite is judged as any compile of a matched function is there: committed when it
+    still matches, the file put back as it was when not."""
+    import json
+
+    from decompnet.app import tools
+    from decompnet.app.engine import RomNetwork
+    from decompnet.app.forkengine import ForkEngine
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "nds", "ready": True}, "x")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_source) "
+                   "VALUES(1,'func_02001000',64,16,'matched','src/a','int func_02001000(int a) { return a * 3; }')")
+    monkeypatch.setattr(ForkEngine, "_current_source", lambda self, fp, fn: "int func_02001000(int a) { return a * 3; }")
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    brief = net.readability.claim(agent, "p")
+    assert "MAKE READABLE: func_02001000 in src/a" in brief and "edit_file" in brief and "rename_symbol" not in brief
+    tried = []
+
+    def attempt(self, agent, slug, function, source, keep=True, prelude="", quiet=None):
+        tried.append(source)
+        ok = "triple" in source
+        return {"text": "✅ still matches" if ok else "❌ the matching one was kept", "matched": ok, "score": 0}
+    monkeypatch.setattr(ForkEngine, "attempt", attempt)
+    assert "❌" in net.readability.submit(agent, "p", "func_02001000", "int func_02001000(int x) { return x + x + x; }")
+    assert net.store.one("SELECT readable FROM functions")["readable"] == 0
+    said = net.readability.submit(agent, "p", "func_02001000", "/* triple it */\nint func_02001000(int n) { return n * 3; }")
+    assert "readable now" in said and net.store.one("SELECT readable FROM functions")["readable"] == 1
+    assert len(tried) == 2
+    assert "claim_readable" in tools.tool_names(fork=True) and "make_readable" in tools.tool_names(fork=True)
+    assert "edit_file" in tools.READABLE_PROMPT.format(title="T", count=1, names=tools.READABLE_FORK)

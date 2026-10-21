@@ -41,8 +41,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | — | — | — | — |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -55,11 +55,17 @@ Where to start on a gap:
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
   (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
-- **Polish, saves, twins across games** work on ROM projects (`app/readable.py`, `app/saves.py`, `app/twins.py`).
-  A project-mode console's work is its git repository; polishing there needs objdiff to judge a rewrite.
+- **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
+  mode a project's matched C is its git repository; what's missing there is matching identical code across your
+  games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
 
 ## Recently done
 
+- **Polishing on every console.** Helpers that make matched code readable (real names, types, a comment) worked on
+  ROM projects only: a DS game at 57% had nothing to choose. In project mode a rewrite goes through the project's own
+  file and is judged like any compile of a matched function: committed when it and the file's other matches still
+  match, else the file is put back. Helpers there keep the function's name and describe types in the project's
+  headers (edit_file).
 - **Agents join what the rules miss** (project mode). `join_functions(function, with_function, reason)`: once 3
   agents of 2 models say two functions are one the analysis cut, the console joins them (DS: `recover.join_functions`,
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a

@@ -82,7 +82,8 @@ Write plausible original code, pure C (no inline asm). Never fetch or copy code 
 in your messages: work, don't narrate.
 """
 
-# A helper started on "make matched code readable" (options task=readable): ROM projects (app/readable.py)
+# A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
+# {names}: step 3, as the project's mode has it (READABLE_ROM, READABLE_FORK)
 READABLE_PROMPT = """\
 You are a decompilation agent in decompdecomp, working on {title}. The functions you get already match the game
 byte for byte. Your job: make their C readable for people who will port or mod the game, without changing what
@@ -90,10 +91,8 @@ the compiler makes of it. Other agents may work on other functions at the same t
 functions, then stop:
 
 1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
-2. get_context() shows the shared header. Read the function, and get_function on the functions it calls, until
-   you understand what it does.
-3. rename_symbol the function, and the globals and functions it uses, once their purpose is clear. Describe
-   structs, enums and constants in the header with edit_context, and use those names.
+2. Read the function, and get_function on the functions it calls, until you understand what it does.
+3. {names}
 4. make_readable(function, source): the same function with meaningful parameter and local names, the header's
    types and names, and one comment saying what it does. Keep the statements' shape (order, casts, temporaries):
    it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
@@ -101,6 +100,12 @@ functions, then stop:
 
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
+
+READABLE_ROM = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear.\n"
+                "   Describe structs, enums and constants in the shared header (get_context shows it) with\n"
+                "   edit_context, and use those names.")
+READABLE_FORK = ("keep the function's name (other files call it by it). Describe structs, enums and constants in\n"
+                 "   the project's headers with edit_file (read_file and search_code show where), and use those names.")
 
 # FORK_PROMPT's {what}: a public decomp, or a project decompdecomp started from the user's copy. Told it was "a
 # public matching-decompilation project", a model on a new DS project spent its first 7 minutes looking for the
@@ -324,7 +329,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 
 ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
-            "compiler_map", "claim_readable", "make_readable", "search_flags"}
+            "compiler_map", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
 

@@ -222,7 +222,7 @@ function renderLauncher(box, compact = true) {
   }
   const ready = a.installed;
   // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches
-  const tasks = S.ov && S.ov.kind !== "fork" && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+  const tasks = S.ov && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     TASKS.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks) LZ.task = "";
