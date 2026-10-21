@@ -112,7 +112,8 @@ def register(app: App) -> None:
 
     def p_recheck(slug, request, data):
         """Check again: the project looked at with what this version knows (Core.recheck), in the background."""
-        return {"job": jobs.start("recheck", lambda log: {"said": net.recheck(slug, log=log)})}
+        return {"job": jobs.start("recheck", lambda log: {
+            "said": net.recheck(slug, log=log) or "nothing to do on this computer, as the room's host checks the game"})}
 
     def p_reopen(slug, request, data):
         """You give a set-aside function back to the agents."""
