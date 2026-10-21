@@ -112,10 +112,16 @@ class Core(Network):
             return None
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
+        last = self.store.one("SELECT COALESCE(MAX(id), 0) AS id FROM events WHERE project_id=?", row["id"])["id"]
         self.console(row).on_start(self, slug, log=log)
+        # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
+        done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
+                                                     "kind='analysis' ORDER BY id", row["id"], last)]
         n = self.not_c_from_notes(slug) + self.twins.set_aside_asm(self.project_row(slug))
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
-        said = f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them" if n else "nothing new"
+        if n:
+            done.append(f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them")
+        said = "; ".join(done) or "nothing new"
         with self.store.tx() as db:
             self._event(db, row["id"], None, "analysis", f"decompdecomp {__version__}: {said}")
         return said

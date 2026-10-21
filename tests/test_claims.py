@@ -221,14 +221,20 @@ def test_check_again_looks_at_a_project_with_what_this_version_knows(tmp_path, m
     net = _one_function_game(tmp_path)
     console = type(net.console(net.project_row("game")))
     ran = []
-    monkeypatch.setattr(console, "on_start", lambda self, net, slug, log=print: ran.append(slug))
+    def on_start(self, net, slug, log=print):
+        ran.append(slug)
+        if len(ran) == 2:  # the console's own work, said in the feed, is in the answer too
+            with net.store.tx() as db:
+                net._event(db, 1, None, "analysis", "8 pieces of functions joined")
+    monkeypatch.setattr(console, "on_start", on_start)
     monkeypatch.setattr(console, "asm_reason", lambda self, code: "a piece cut out of another function")
     assert net.recheck("game") == "1 more function set aside, as no C makes them" and ran == ["game"]
     assert net.cfg(net.project_row("game"))["checked"] == __version__
     assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "asm"
     assert "set aside" in net.store.one("SELECT detail FROM events WHERE kind='analysis'")["detail"]
     assert net.recheck("game", only_if_updated=True) is None and ran == ["game"]  # this version did it already
-    assert net.recheck("game") == "nothing new" and ran == ["game", "game"]  # the button: always
+    assert net.recheck("game") == "8 pieces of functions joined" and ran == ["game", "game"]  # the button: always
+    assert net.recheck("game") == "nothing new"
 
 
 def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
