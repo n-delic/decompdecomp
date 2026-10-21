@@ -146,6 +146,8 @@ def test_reimport_runs_as_a_background_project_job(app, tmp_path, monkeypatch):
     assert blocked.status_code == 400
     assert "leave the shared room" in blocked.json()["error"]
     net.rooms.pop("reimport-game")
+    with net.store.tx() as db:
+        db.execute("DELETE FROM projects WHERE slug='reimport-game'")
 
 
 @needs_demo
