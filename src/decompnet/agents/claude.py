@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from . import SAID_CHARS, Agent, args_brief, number, read_json, tool_name, usage_item
@@ -16,8 +17,14 @@ CLAUDE_VERSIONS = ["claude-fable-5-1", "claude-fable-5", "claude-opus-5-5", "cla
                    "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-5-5", "claude-sonnet-5", "claude-sonnet-4-6",
                    "claude-haiku-5-5", "claude-haiku-4-5"]
 PINNED_NOTE = "this version only"
-# what a session may not do: decompdecomp's tools are all it needs, and it works on the user's computer
-DISALLOWED = "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"
+# what a session may not do: decompdecomp's tools are all it needs, and it works on the user's computer. Read, Grep
+# and Glob too: a session starts in its own folder, not the project's, so they found nothing there (read_file and
+# search_code read the project); on one night 340 such calls failed.
+DISALLOWED = "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch,Read,Grep,Glob"
+# Its prompt cache: headless Claude Code writes it for an hour, at twice the input price against the five-minute
+# cache's 1.25. A session's turns come seconds apart (one night: none more than three minutes apart), so five minutes
+# is enough. The user's own setting of it wins.
+CACHE_TTL_ENV, CACHE_TTL = "CLAUDE_CODE_PROMPT_CACHE_TTL", "5m"
 LOADS_TOOLS = "ToolSearch"  # Claude Code loading tools it was told about: not worth a line in the feed
 
 
@@ -56,7 +63,8 @@ class ClaudeCode(Agent):
         cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--mcp-config", str(cfg),
                "--strict-mcp-config", "--allowedTools", "mcp__decomp", "--disallowedTools", DISALLOWED]
         model, _, effort = (model or "").partition("#")
-        return cmd + (["--model", model] if model else []) + (["--effort", effort] if effort else []), {}
+        env = {} if CACHE_TTL_ENV in os.environ else {CACHE_TTL_ENV: CACHE_TTL}
+        return cmd + (["--model", model] if model else []) + (["--effort", effort] if effort else []), env
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")

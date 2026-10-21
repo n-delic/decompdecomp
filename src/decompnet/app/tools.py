@@ -313,7 +313,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": net.forks.search(_fork(net, slug, "search_code"), pattern, glob),
-    "edit_file": lambda net, agent, slug, path, old, new, message:
+    "edit_file": lambda net, agent, slug, path, old, new, message="":
         net.forks.edit_file(agent, _fork(net, slug, "edit_file"), path, old, new, message),
     "file_status": lambda net, agent, slug, path: net.forks.file_status(_fork(net, slug, "file_status"), path),
     "split_file": lambda net, agent, slug, path, at, new_name="", data="":
@@ -592,9 +592,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "guide", topic=topic)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def read_file(ctx: Context, path: str, start: int = 1, count: int = 200) -> str:
+    async def read_file(ctx: Context, path: str = "", start: int = 1, count: int = 200, file_path: str = "",
+                        offset: int = 0, limit: int = 0) -> str:
         """Forks only: read a file of the project (path relative to its root), with line numbers."""
-        return await run(ctx, "read_file", path=path, start=start, count=count)
+        # file_path/offset/limit: the names of Claude Code's own Read tool, which agents passed here hundreds of
+        # times a night, each a refused call
+        if not (path := path or file_path):
+            raise ValueError("read_file needs path: the file, relative to the project's root")
+        return await run(ctx, "read_file", path=path, start=offset or start, count=limit or count)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def search_code(ctx: Context, pattern: str, glob: str = "") -> str:
@@ -603,10 +608,11 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "search_code", pattern=pattern, glob=glob)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def edit_file(ctx: Context, path: str, old: str, new: str, message: str) -> str:
+    async def edit_file(ctx: Context, path: str, old: str, new: str, message: str = "") -> str:
         """Forks only: change a C/C++ source or header file. Replace `old` (exactly once) with `new`, or
         append `new` when old is "". The project is rebuilt and measured; the edit is undone if any matched
-        function stops matching. Use it for structs, prototypes, globals and helpers."""
+        function stops matching. Use it for structs, prototypes, globals and helpers. `message`: what the
+        change is, for its commit."""
         return await run(ctx, "edit_file", path=path, old=old, new=new, message=message)
 
     @mcp.tool(meta=ALWAYS_LOAD)
