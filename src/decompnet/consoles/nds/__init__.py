@@ -50,9 +50,10 @@ class NintendoDS(Console):
     # misses (recover.py), 3 its build tools brought up to date too (scratch.write_tools: dead stripping dropped
     # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
     # functions dsd cut off joined to their functions (recover.merge_pieces), 6 with the pieces only the caller's
-    # registers tell (arm.piece: code using r4-r11 before saving them). A project with less gets the rest when
+    # registers tell (arm.piece: code using r4-r11 before saving them), 7 a switch's cases in the next source file
+    # moved to its own (recover.move_boundaries). A project with less gets the rest when
     # the app starts, or when it's checked again
-    ANALYSIS = 6
+    ANALYSIS = 7
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -116,14 +117,24 @@ class NintendoDS(Console):
             n = sum(len(v) for v in joined.values())
             return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
                     if n else None)
-        if manifest.get("analysis", 1) < 4:  # (a project at 4 or more has these already)
+        def boundaries(fp):  # its own step: a rebuild it breaks takes back only these
+            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                        "status='matched'", net.project_row(slug)["id"])}
+            moved = recover.move_boundaries(fp.root, manifest["version"], keep=matched, log=log)
+            return (f"{len(moved)} functions a switch runs on into ({', '.join(moved[:3])}{'…' if len(moved) > 3 else ''})"
+                    " moved to the source file of the function they're part of" if moved else None)
+        level = manifest.get("analysis", 1)
+        if level < 4:  # (a project at 4 or more has these already)
             net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
             net.forks.reanalyse(slug, functions, log=log)
-        if net.forks.reanalyse(slug, pieces, log=log) or manifest.get("analysis", 1) == 5:
-            # its notes from before say "fragment, skip": agents read the newest note first (and a project joined
-            # before these notes were written gets them now, once)
+        net.forks.reanalyse(slug, boundaries, log=log)
+        net.forks.reanalyse(slug, pieces, log=log)
+        # its notes from before say "fragment, skip": agents read the newest note first (and a project joined before
+        # these notes were written gets them now, once)
+        if joined or level < 6:
             agent, _ = net.local_agent("decompdecomp")
-            for name, took in (recover.joined_pieces(fp.root, manifest["version"]) | joined).items():
+            earlier = recover.joined_pieces(fp.root, manifest["version"]) if level < 6 else {}
+            for name, took in (earlier | joined).items():
                 try:
                     net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
                                               "function now, not a fragment, whatever older notes say. Worth a try.",

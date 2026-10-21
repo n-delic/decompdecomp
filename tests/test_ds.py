@@ -617,6 +617,7 @@ def test_a_function_pieces_were_joined_to_says_so_in_a_note(tmp_path, monkeypatc
     monkeypatch.setattr(net, "fork_slug", lambda slug: slug)
     monkeypatch.setattr(net.forks, "get", lambda slug: (None, fp, None))
     monkeypatch.setattr(net.forks, "reanalyse", lambda slug, step, **kw: step(fp))
+    monkeypatch.setattr(recover, "move_boundaries", lambda *a, **kw: [])
     monkeypatch.setattr(recover, "merge_pieces", lambda *a, **kw: {"f": ["g", "h"]})
     monkeypatch.setattr(recover, "joined_pieces", lambda *a: {"e": ["e2"]})  # joined by the version before
     monkeypatch.setattr(scratch, "dsd_path", lambda: "dsd")
@@ -646,3 +647,35 @@ def test_a_function_branching_into_the_middle_of_the_next_one_takes_it(tmp_path,
     monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
     assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {"f": ["g"]}
     assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x1c) addr:{BASE:#010x}"
+
+
+def test_a_switch_running_on_into_the_next_source_file_takes_its_function_along(tmp_path, monkeypatch):
+    """A DS game's 3 KB function was cut at a source file's end: its switch's cases were in the next file's first
+    symbol, out of agents' reach. That function moves to the file before (the next file keeps the rest), unless C in
+    its file defines it or it's matched."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xEA000002, 0xE8BD8010,  # f: push {r4, lr}; b g+8; pop {r4, pc} (the end of a.c)
+             0xE52DE004, 0xE3A00001, 0xE3A00002, 0xE49DF004,  # g: the first function of b.c, f's cases
+             0xE12FFF1E]  # h: bx lr, b.c's next function
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True)
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x10) addr:{BASE + 0xC:#010x}",
+             f"h kind:function(arm,size=0x4) addr:{BASE + 0x1C:#010x}"]
+    delinks = (f"    .text start:{BASE:#010x} end:{BASE + 0x20:#010x} kind:code\n\n"
+               f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0xC:#010x}\n\n"
+               f"src/b.c:\n    .text start:{BASE + 0xC:#010x} end:{BASE + 0x20:#010x}\n")
+    (folder / "delinks.txt").write_text(delinks)
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x20)], symbol_lines=lines)
+    m.functions = {BASE: (0xC, False), BASE + 0xC: (0x10, False), BASE + 0x1C: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "b.c").write_text("void g(void) {\n}\n")
+    assert recover.move_boundaries(tmp_path, "v1", log=lambda *_: None) == []  # agents' C for g is in b.c
+    (tmp_path / "src" / "b.c").write_text("extern void g(void);\n")
+    assert recover.move_boundaries(tmp_path, "v1", keep={"g"}, log=lambda *_: None) == []  # matched
+    assert recover.move_boundaries(tmp_path, "v1", log=lambda *_: None) == ["g"]
+    text = (folder / "delinks.txt").read_text()
+    assert f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x}" in text
+    assert f"src/b.c:\n    .text start:{BASE + 0x1C:#010x} end:{BASE + 0x20:#010x}" in text

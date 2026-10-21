@@ -564,6 +564,50 @@ def joined_pieces(root: Path, version: str) -> dict[str, list[str]]:
     return out
 
 
+def move_boundaries(root: Path, version: str, keep: set[str] = frozenset(), log=print) -> list[str]:
+    """Where a source file's last function branches into the middle of the next file's first one (arm.jumps: a switch
+    whose cases ds-decomp put in the next file), that function moves to the file before, so merge_pieces can join
+    it: on a DS game agents saw 592 bytes of a 3 KB function, its cases out of reach in the next file. Only when the
+    function moving isn't matched (`keep`), no C in its file defines it, and its file keeps some code; the files'
+    names stay. Returns the functions moved."""
+    from ...arch import arm
+
+    moved = []
+    for m in load_modules(root / "config" / version / "arm9", root / "extract" / version):
+        path = m.folder / "delinks.txt"
+        head, _, files = path.read_text(encoding="utf-8").partition("\n\n")
+        blocks = files.split("\n\n")
+        spans = [(k, re.search(r"^(\S.*):$", b, re.M), re.search(r"^\s+\.text start:(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)", b, re.M))
+                 for k, b in enumerate(blocks)]
+        spans = [(k, f.group(1), int(t.group(1), 16), int(t.group(2), 16)) for k, f, t in spans if f and t]
+        names = {int(s.group(4), 16): s.group(1) for ln in m.symbol_lines
+                 if (s := SYMBOL.match(ln)) and s.group(2) == "function"}
+        changed = False
+        for (ka, _, a_lo, a_hi), (kb, b_file, b_lo, b_hi) in zip(spans, spans[1:]):
+            last = max((a for a in m.functions if a_lo <= a < a_hi), default=None)
+            if last is None or a_hi != b_lo or b_lo not in m.functions or names.get(b_lo) in keep:
+                continue
+            size, thumb = m.functions[last]
+            g_size = m.functions[b_lo][0]
+            code = m.code[last - m.base:last - m.base + size]
+            if not any(b_lo < t < b_lo + g_size for t in arm.jumps(code, thumb, last)) or b_lo + g_size >= b_hi:
+                continue
+            source = root / b_file
+            text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
+            if re.search(rf"\b{re.escape(names.get(b_lo, '?'))}\s*\([^;{{]*\)\s*\{{", text):
+                continue  # agents' C for it is in that file
+            new = b_lo + g_size
+            blocks[ka] = re.sub(rf"(\.text start:\S+ end:){a_hi:#010x}", rf"\g<1>{new:#010x}", blocks[ka], count=1)
+            blocks[kb] = re.sub(rf"(\.text start:){b_lo:#010x}", rf"\g<1>{new:#010x}", blocks[kb], count=1)
+            moved.append(names.get(b_lo, f"{b_lo:#x}"))
+            changed = True
+        if changed:
+            path.write_text(head + "\n\n" + "\n\n".join(blocks), encoding="utf-8")
+    if moved:
+        log(f"{len(moved)} functions moved to the source file before theirs, as its last function branches into them")
+    return moved
+
+
 def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(),
                  log=print) -> dict[str, list[str]]:
     """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running
