@@ -376,3 +376,24 @@ def test_nothing_to_claim_says_who_holds_what_and_what_you_set_aside(tmp_path):
         db.execute("UPDATE functions SET status='matched'")
         db.execute("DELETE FROM claims")
     assert "every function matches" in net.claim(a, "game")
+
+
+def test_you_set_a_function_aside_at_once_and_give_it_back(tmp_path):
+    """The user knows a function is hand-written: they set it aside without waiting for agents of two models, its
+    claim goes, and Give it back to the agents undoes it. A matched function can't be: only the judge says matched."""
+    net = _one_function_game(tmp_path)
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "piece")
+    net.set_aside_by_you("piece", "game", "the SDK's CpuFill32")
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "asm" and "you set it aside: the SDK's CpuFill32" in json.loads(row["meta"])["asm_code"]
+    assert not net.store.all("SELECT * FROM claims") and net.function_map("game")[0]["not_c"]
+    net.reopen("piece", "game")
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "open"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched'")
+    try:
+        net.set_aside_by_you("piece", "game")
+        raise AssertionError("a matched function set aside")
+    except network.NetworkError as e:
+        assert "isn't open" in str(e)

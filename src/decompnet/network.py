@@ -547,6 +547,22 @@ class Network:
                 n += 1
         return n
 
+    def set_aside_by_you(self, function: str, project: str | None = None, why: str = "") -> None:
+        """The user sets a function aside: no C makes it (hand-written assembly, a piece of another function). Their
+        word needs no agents agreeing (theirs is the project); "Give it back to the agents" undoes it. Never
+        "matched": only the judge says that."""
+        fn = self._function(function, project)
+        if fn["status"] != "open":
+            raise NetworkError(f"{fn['name']} isn't open (it's {fn['status']}): only an open function can be set aside")
+        why = why.strip() or "no C makes it"
+        meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k != "reopened"}
+        meta["not_c"] = {**meta.get("not_c", {}), "you": {"model": "you", "why": why[:NOTE_CHARS], "t": time.time()}}
+        meta["asm_code"] = f"you set it aside: {why}"
+        with self.store.tx() as db:
+            db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
+            db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
+            self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
+
     def reopen(self, function: str, project: str | None = None) -> None:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'
         verdicts on it are forgotten, and no check sets it aside again."""

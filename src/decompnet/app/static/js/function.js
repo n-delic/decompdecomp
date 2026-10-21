@@ -65,6 +65,17 @@ async function refreshFn(first) {
       : `${hex8(d.vram)} · ROM 0x${d.rom_offset.toString(16).toUpperCase()} · ${d.insns} instructions`;
     $("fnName").textContent = d.name;
     fnBadge(d);
+    $("fnSetAside").hidden = d.status !== "open";
+    $("fnSetAside").onclick = async () => {
+      const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
+      if (why === null) return;
+      try {
+        await api("/api/setaside", { method: "POST", body: { slug: S.slug, name: d.name, why } });
+        toast(`<code>${esc(d.name)}</code> is set aside: agents aren't handed it.`);
+        await refreshFn(false);
+        await refreshMap(true);
+      } catch (e) { toast(esc(e.message), "err"); }
+    };
     $("fnAside").hidden = !d.set_aside;
     $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
     $("fnReopen").onclick = async () => {
