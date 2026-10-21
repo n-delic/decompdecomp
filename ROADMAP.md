@@ -60,7 +60,8 @@ Where to start on a gap:
 - **What no C makes is out of agents' way, and progress counts the rest.** On a DS game 159 of 557 open functions
   were pieces of others (ds-decomp's symbols in the middle of functions: a lone epilogue, a register save running on
   into the next symbol, a lone `bx ip`), each given up on by five to seven agents in turn. ARM code that pops pc
-  without having pushed, jumps through a register its caller set or never returns is set aside (`arm.piece`), and a
+  without having pushed, jumps through a register its caller set, uses r4-r11 before saving them or never returns
+  is set aside (`arm.piece`), and a
   DS project joins such pieces to the function they belong to (`recover.merge_pieces`, checked by dsd): on that game
   119 joined, 4 functions matched at once with the C agents had written, no match lost, the ROM still identical.
   What shapes can't tell, agents can: `release_function(..., not_c=true)` with the reason, and once 3 agents of 2

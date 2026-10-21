@@ -551,8 +551,9 @@ def _file_ranges(m: Module) -> list[tuple[int, int]]:
 
 def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(), log=print) -> int:
     """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running
-    on into the next symbol, code that never returns) to the function they belong to: an epilogue to the function
-    before it, the others to the function after, which they run on into. Only within one source file, in one mode,
+    on into the next symbol, code that never returns, code using registers the code before it set) to the function
+    they belong to: an epilogue and code continuing what came before to the function before it, the others to the
+    function after, which they run on into. Only within one source file, in one mode,
     and never a function of `keep` (matched ones: their C would no longer be the whole function). The symbol a piece
     had stays, as a label: calls and pointers to it still have their target. On a DS game 128 of 557 open functions
     were such pieces, each given up on by five to seven agents, and the functions they belong to could never match
@@ -581,7 +582,8 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
                 why = verdicts[at, size]
                 if not why or why.startswith("jumps through") or name in keep:
                     continue
-                into = order[k - 1] if "the end of" in why and k else order[k + 1] if k + 1 < len(order) else None
+                back = "the end of" in why or "the rest of" in why  # it continues the code before it
+                into = order[k - 1] if back and k else order[k + 1] if not back and k + 1 < len(order) else None
                 if into is None:
                     continue
                 lo, hi = min(at, into), max(at, into)

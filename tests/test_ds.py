@@ -348,13 +348,18 @@ def test_pieces_of_functions_are_set_aside_and_whole_functions_are_not():
     assert "the start of" in arm.asm_reason(words(0xE92D000F), thumb=False)  # push {r0-r3}, then the next symbol
     assert "never returns" in arm.asm_reason(words(0xE58DC004), thumb=False)  # str ip, [sp, #4]
     assert "veneer" in arm.asm_reason(words(0xE12FFF1C), thumb=False)  # bx ip
+    # the caller's registers: read before set (past a switch's first branch), or set without saving them first
+    assert "reads r4" in arm.asm_reason(words(0xE3530007, 0x0A000000, 0xEA000000, 0xE5940000, 0xE12FFF1E), thumb=False)
+    assert "sets r5" in arm.asm_reason(words(0xE3A05001, 0xE12FFF1E), thumb=False)  # mov r5, #1; bx lr
     assert "the end of" in arm.asm_reason(halves(0xBD10), thumb=True)  # Thumb pop {r4, pc}
     whole = [(words(0xE92D4010, 0xE1A04000, 0xE8BD8010), False),  # push {r4, lr}; mov r4, r0; pop {r4, pc}
              (words(0xE12FFF1E), False),  # bx lr: an empty function
              (words(0xE59FC000, 0xE12FFF1C, 0), False),  # ldr ip, [pc]; bx ip; .word: CodeWarrior's tail call
              (words(0xEA000000), False),  # b elsewhere: a tail call
              (words(0xE92D4000, 0xEB000000), False),  # push {lr}; bl: a call that may never return
-             (halves(0xB510, 0xBD10), True)]  # Thumb push {r4, lr}; pop {r4, pc}
+             (halves(0xB510, 0xBD10), True),  # Thumb push {r4, lr}; pop {r4, pc}
+             (words(0xE92D4010, 0xE5940000, 0xE8BD8010), False),  # push {r4, lr}; ldr r0, [r4]; pop {r4, pc}
+             (words(0xE59F0000, 0xE12FFF1E, 0xE5940000), False)]  # ldr r0, [pc]; bx lr; a pool word reading as ldr [r4]
     for code, thumb in whole:
         assert arm.asm_reason(code, thumb=thumb) is None, code.hex()
     assert arm.asm_reason(words(0xE8BD8010)) is None  # its mode unknown: not judged

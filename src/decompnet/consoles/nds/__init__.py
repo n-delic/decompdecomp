@@ -48,9 +48,10 @@ class NintendoDS(Console):
     # what a project's config holds, in its manifest's "analysis": 1 dsd's own analysis, 2 with the functions it
     # misses (recover.py), 3 its build tools brought up to date too (scratch.write_tools: dead stripping dropped
     # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
-    # functions dsd cut off joined to their functions (recover.merge_pieces). A project with less gets the rest when
+    # functions dsd cut off joined to their functions (recover.merge_pieces), 6 with the pieces only the caller's
+    # registers tell (arm.piece: code using r4-r11 before saving them). A project with less gets the rest when
     # the app starts, or when it's checked again
-    ANALYSIS = 5
+    ANALYSIS = 6
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -110,7 +111,7 @@ class NintendoDS(Console):
             n = recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched, log=log)
             return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
                     if n else None)
-        if manifest.get("analysis", 1) < 4:  # (a project at 4 has these already)
+        if manifest.get("analysis", 1) < 4:  # (a project at 4 or more has these already)
             net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
             net.forks.reanalyse(slug, functions, log=log)
         net.forks.reanalyse(slug, pieces, log=log)
