@@ -15,7 +15,7 @@ function cssColor(name) {
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
 function readColors() {
-  colors = { open: cssColor("--open"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
+  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
              notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
 }
 
