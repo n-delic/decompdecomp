@@ -273,9 +273,8 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
 def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):
     """A best attempt with a helper the source file hasn't: every variant the permuter sent was refused, each with a
     traceback in the user's log. The refusal is an answer, not a crash."""
-    from decompnet.network import NetworkError
-
     from decompnet.app.engine import RomNetwork
+    from decompnet.network import NetworkError
 
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     with net.store.tx() as db:
