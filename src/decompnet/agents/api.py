@@ -435,7 +435,8 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                            s(function=st("function", True), with_function=st("the other part", True),
                              reason=st("what in the code shows it", True))),
         "split_file": ("Divide a source file at a function: it and the rest of the file's code (and data from the given "
-                       "offsets) go to a new file. Kept only if the game still builds identically.",
+                       "offsets) go to a new file, with the file's compiler (DS: then try_compiler can give the new "
+                       "file its own). Kept only if the game still builds identically.",
                        s(path=st("file", True), at=st("function name or .text offset", True),
                          new_name=st("new file path (optional)"), data=st("e.g. .rodata:0x88 .data:0x28 (optional)"))),
     }

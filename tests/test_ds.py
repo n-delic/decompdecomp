@@ -783,3 +783,38 @@ def test_a_join_needs_agents_of_two_models_and_a_refused_one_isnt_tried_again(tm
         db.execute("UPDATE functions SET status='matched' WHERE name='g'")
     with pytest.raises(NetworkError, match="matched"):
         say("claude-opus-5-5-2")
+
+
+def test_a_ds_source_file_is_split_in_its_delinks_with_its_compiler(tmp_path):
+    """split_file on DS: agents wanted a function built by another CodeWarrior version in a file of its own, to give
+    it its own compiler (try_compiler), and split_file was GameCube/Wii's only. The file's block in delinks.txt ends
+    at the function, the new file's follows, and the new file has the old one's compiler."""
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True)
+    (folder / "symbols.txt").write_text(f"f kind:function(arm,size=0x8) addr:{BASE:#010x}\n"
+                                        f"g kind:function(arm,size=0x8) addr:{BASE + 8:#010x}\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x20:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x10:#010x}\n\n"
+                                        f"src/b.c:\n    .text start:{BASE + 0x10:#010x} end:{BASE + 0x20:#010x}\n")
+    (folder / "file_compilers.json").write_text(json.dumps({"src/a.c": "1.2/sp4"}))
+    fp = type("FP", (), {"root": tmp_path})()
+    saved = consoles.get("nds").split_source(fp, "v1", "src/a.c", "g", "src/a_g.c")
+    assert set(saved) == {folder / "delinks.txt", folder / "file_compilers.json"}
+    assert (f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 8:#010x}\n\n"
+            f"src/a_g.c:\n    .text start:{BASE + 8:#010x} end:{BASE + 0x10:#010x}\n\n"
+            f"src/b.c:") in (folder / "delinks.txt").read_text()
+    assert json.loads((folder / "file_compilers.json").read_text())["src/a_g.c"] == "1.2/sp4"
+
+
+def test_a_split_takes_every_declaration_with_the_functions_it_moves(tmp_path):
+    """The moved C used data declared just before it, far below the file's top: the new file failed to compile. It
+    gets every declaration of the old file, wherever it stands, and the old file keeps its own."""
+    from decompnet.app.forkengine import ForkEngine
+
+    text = ('#include "common.h"\n\nvoid f(void) {\n}\n\nextern int data_x;\n\n'
+            'int g(void) {\n    return data_x;\n}\n')
+    rows = [{"name": n, "meta": json.dumps({"symbol": n}), "status": "open"} for n in ("f", "g")]
+    eng = ForkEngine.__new__(ForkEngine)
+    new, old, moved = eng._divide(text, rows, {"g"})
+    assert moved == 1 and "extern int data_x;" in new and "int g(void)" in new and "void f(void)" not in new
+    assert "void f(void)" in old and "int g(void)" not in old and "extern int data_x;" in old

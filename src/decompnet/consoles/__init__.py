@@ -186,6 +186,14 @@ class Console:
         its own: then try_compiler can switch it. None: the project's build decides alone."""
         return None
 
+    splits_sources = False  # split_source divides a source file in its config (else forkengine's dtk-template way)
+
+    def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
+        """Divide `source` (relative to the project) at function `at` (its symbol) in the project's config: its code
+        from there on becomes `new`'s, which builds with the compiler `source` has. Returns each config file changed,
+        with what it held before (to take it back)."""
+        raise RomError(f"{self.name} projects divide their source files in their own way")
+
     def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
         """Make one function of `first` to `last` in the project's config (agents agreed the analysis cut it:
         ForkEngine.propose_join, which checks the rebuild); returns what changed, as a sentence. Not for matched

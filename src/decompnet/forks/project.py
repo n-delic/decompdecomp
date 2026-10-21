@@ -330,7 +330,10 @@ class ForkProject:
         if killed_for_memory(code):
             out.append("stopped: it used more memory than decompdecomp allows a single tool, so it was stopped "
                        "before it could slow down or freeze your computer")
-        return code == 0, "\n".join(out[-60:])
+        # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
+        # a compiler's error and pushed it out of the tail agents and the user read
+        said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
+        return code == 0, "\n".join(said[-60:])
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc

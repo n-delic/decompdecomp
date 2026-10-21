@@ -554,7 +554,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def split_file(ctx: Context, path: str, at: str, new_name: str = "", data: str = "") -> str:
-        """Forks only (GameCube/Wii): divide a source file in two where the game's original files divided: the
+        """Forks (GameCube, Wii, DS): divide a source file in two where the game's original files divided (DS: or
+        to give a function built by another compiler version a file, and compiler, of its own: split at it and at the
+        one after it, then try_compiler): the
         function `at` (name or .text offset) and every one after it in the file go to a new file `new_name`
         (default: text_<offset> next to it), with their C. `data` moves the end of each data section too
         (".rodata:0x88 .data:0x28": where the new file's part starts; file_status shows the ranges). Kept only if

@@ -145,6 +145,47 @@ class NintendoDS(Console):
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")
 
+    splits_sources = True
+
+    def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
+        """The source file's block in its module's delinks.txt ends where function `at` starts, and `new`'s, from
+        there to where it ended, follows it (its data stays with the file); `new` gets the file's compiler
+        (file_compilers.json)."""
+        import re
+
+        from ...forks.project import ForkError
+        from . import recover, scratch
+
+        where = [int(s.group(4), 16) for p in (fp.root / "config" / version).rglob("symbols.txt")
+                 for ln in p.read_text(encoding="utf-8").splitlines()
+                 if (s := recover.SYMBOL.match(ln)) and s.group(1) == at and s.group(2) == "function"]
+        if len(where) != 1:
+            raise ForkError(f"{at} isn't one function of the game's config")
+        at_addr = where[0]
+        saved = {}
+        for path in sorted((fp.root / "config" / version).rglob("delinks.txt")):
+            text = path.read_text(encoding="utf-8")
+            m = re.search(rf"^{re.escape(source)}:\n((?:[ \t]+\S.*\n?)*)", text, re.M)
+            if not m:
+                continue
+            t = re.search(r"^(\s+\.text start:)(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)", m.group(1), re.M)
+            if not t or not int(t.group(2), 16) < at_addr < int(t.group(3), 16):
+                raise ForkError(f"{at} isn't in {source}'s code after its start")
+            block = m.group(0).rstrip("\n").replace(t.group(0), f"{t.group(1)}{t.group(2)} end:{at_addr:#010x}", 1)
+            new_block = f"{new}:\n    .text start:{at_addr:#010x} end:{t.group(3)}"
+            saved[path] = text
+            path.write_text(text[:m.start()] + block + "\n\n" + new_block + "\n" + text[m.end():], encoding="utf-8")
+            break
+        else:
+            raise ForkError(f"{source} isn't one of the project's source files")
+        compilers = scratch.compilers_file(fp.root, version)
+        if compilers.exists():
+            saved[compilers] = compilers.read_text(encoding="utf-8")
+            own = json.loads(saved[compilers])
+            if source in own:
+                compilers.write_text(json.dumps({**own, new: own[source]}, indent=2) + "\n", encoding="utf-8")
+        return saved
+
     def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
         from . import recover, scratch
 
