@@ -22,11 +22,13 @@ Structure
 
 Matching tips
 - Get the class layout from offsets used across many methods (`search_code` the class name first:
-  it's probably already declared). In ROM projects (MIPS), decompdecomp has done this already:
-  `get_class(function)` shows the class of a virtual function, constructor or destructor, with every
+  it's probably already declared).
+<!-- only: mips -->
+  In ROM projects (MIPS), decompdecomp has done this already: `get_class(function)` shows the class of a virtual function, constructor or destructor, with every
   field its functions touch (offset, type, which functions) and its virtual functions by slot, and
   `get_function` says which fields of `this` the function uses. Field types are what the loads and
   stores say (lwc1: float, lh: s16, a word used as an address: a pointer); the names are yours to give.
+<!-- end -->
 - Member initialisation order in constructors follows declaration order in the class, not the
   initialiser list order.
 - Inlined base-class constructors show up as stores of the base vtable before the derived one.

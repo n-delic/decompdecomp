@@ -29,13 +29,14 @@ HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the
 
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                   confirmed: bool = False, name: str = "", log=print) -> str:
+                   confirmed: bool = False, name: str = "", log=print, scope: str | None = None) -> str:
         """Import a game the user owns (ROM bytes, or a file such as a disc image): split it, store every function
-        as a target. Returns the slug."""
+        as a target. Returns the slug. `scope`: what the project covers, where its console sets library code aside
+        ("game", the default, or "program": forks/project.py SCOPES)."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
         console = consoles.identify(data)
-        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log)
+        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope)
 
     def saved_file(self, data: bytes | Path, name: str) -> Path:
         """A game sent as bytes, saved to a file first (PROJECT mode's tools read files); a file stays where it is."""

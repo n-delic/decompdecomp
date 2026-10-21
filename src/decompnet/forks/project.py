@@ -35,6 +35,14 @@ from ..network import NetworkError
 from . import objdiff
 
 STATE = ".decomp-wtf"
+# What a project covers (its manifest's `scope`): the game's own code, with the code its set-aside list names (library
+# code, middleware, an SDK, the C runtime) kept from agents and out of progress; or the whole program, every function
+# open and counted. A manifest without one covers the game's own code, as every project did before there was a choice.
+# The scope decides only that: an import analyses the same code whatever it is. Code an older import left out
+# altogether (no functions, no source files) a console can bring in later without a new import (Console.unanalysed);
+# such a manifest may still say what as `set_aside_unimported`, which nothing reads any more.
+GAME, PROGRAM = "game", "program"
+SCOPES = (GAME, PROGRAM)
 _CONFIG_CACHE: dict[str, tuple] = {}  # objdiff.json path -> (stat key, parsed, units by name)
 _CONFIG_LOCK = threading.Lock()
 # Agents may only edit source and header files, never the project's build setup, targets or verification.
@@ -120,6 +128,22 @@ class ForkProject:
     def manifest(self) -> dict | None:
         p = self.root / ".decomp.wtf.json"
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+    def update_manifest(self, **keys) -> dict:
+        """Change keys of `.decomp.wtf.json` (a None removes one), keeping the rest; returns the new manifest."""
+        manifest = self.manifest or {}
+        for k, v in keys.items():
+            if v is None:
+                manifest.pop(k, None)
+            else:
+                manifest[k] = v
+        (self.root / ".decomp.wtf.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest
+
+    @property
+    def scope(self) -> str:
+        """What the project covers (SCOPES): PROGRAM only when its manifest says so."""
+        return PROGRAM if (self.manifest or {}).get("scope") == PROGRAM else GAME
 
     def kind(self) -> str:
         """What kind of build the project has: decompdecomp's own manifest, dtk-template, a configure.py, splat

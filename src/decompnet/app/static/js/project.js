@@ -357,7 +357,7 @@ function renderOverview() {
   $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("open", "s-open");
   setWidths($("fnStack"));
   const togo = cFunctions(S.ov) - S.ov.matched;
-  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}`;
+  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
   const st = S.stats;
   if (st) {
     const ph = st.matches_per_hour, max = Math.max(1, ...ph);

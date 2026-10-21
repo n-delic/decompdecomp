@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
-from ...network import set_aside
+from ...network import GAME_CODE, IN_BUILD, set_aside
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
@@ -79,7 +79,7 @@ class GuiMixin:
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
             "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            "FROM functions WHERE project_id=? AND status != 'nosource'", proj["id"])
+            f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         tc = toolchains.get(cfg["compiler"]["toolchain"])
         console = self.console(proj)
         return {
@@ -110,9 +110,8 @@ class GuiMixin:
         agg = self.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes FROM functions WHERE project_id=? "
-            "AND status != 'nosource'",
-            proj["id"])
+            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes FROM functions "
+            f"WHERE project_id=? AND {IN_BUILD} AND {GAME_CODE}", proj["id"])
         console = self.console(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
@@ -141,14 +140,14 @@ class GuiMixin:
         return None
 
     def function_map(self, slug: str) -> list[dict]:
-        """Every function of the project for the map and the list; not one gone from the build (status nosource: a piece
-        joined to its function, kept for its attempts and notes), which the totals leave out too."""
+        """Every function of the project for the map and the list; not one gone from the build (network.IN_BUILD: a
+        piece joined to its function, kept for its attempts and notes), which the totals leave out too."""
         proj = self._project(slug)
         rows = self.store.all(
             "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
-            "WHERE f.project_id=? AND f.status != 'nosource' ORDER BY f.vram, f.unit, f.id", proj["id"])
+            f"WHERE f.project_id=? AND {IN_BUILD.replace('meta', 'f.meta')} ORDER BY f.vram, f.unit, f.id", proj["id"])
         link = self.links.get(slug)
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])

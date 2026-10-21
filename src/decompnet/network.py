@@ -13,6 +13,7 @@ import json
 import re
 import secrets
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,7 +42,18 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
+# The functions progress counts (an SQL condition on `functions`): not ones the project sets aside as library code,
+# middleware or the C runtime (config/<version>/set_aside.json, objdiff.game_measures), which aren't the game's own
+GAME_CODE = "json_extract(meta, '$.set_aside') IS NULL"
+# The functions still in the game's build: not one a measure found gone (a piece joined to its function, kept for its
+# attempts and notes; ForkEngine.sync marks it), which the map and every count leave out
+IN_BUILD = "json_extract(meta, '$.gone') IS NULL"
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
+REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
+# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a name, the
+# compiler, the project's files changed
+GENERATION_EVENTS = frozenset({"context", "rename", "compiler", "split", "files", "sync", "link", "import", "fork",
+                               "collab"})
 NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
 NOTES_FOUND = 20  # search_notes' answer at most
 # The agent that released a function doesn't get it back automatically for this long, or until its run ends (the
@@ -110,6 +122,16 @@ _REGION = (f"(SELECT vram / {REGION_BYTES} AS region, SUM(status = 'matched') AS
            f"AND status != 'asm' AND vram IS NOT NULL GROUP BY region)")
 _SHARE = f"((COALESCE(r.won, 0) + {REGION_PRIOR} * :overall) / (COALESCE(r.tried, 0) + {REGION_PRIOR}))"
 _FAILING = f"(COALESCE(r.tried, 0) >= {FAILING_TRIED} AND {_SHARE} < {FAILING_SHARE})"
+# Prerequisites (release_function's `needs`, the waits table): a function an agent found needs another one first
+# (a callee whose convention or body it depends on, a helper the original inlines) waits, claimed after everything
+# else, until that one matches; the one it waits for is claimed first meanwhile; once it matches, the waiting one
+# comes first, once (its row goes when it's claimed).
+# (two functions waiting for each other don't wait: each one's convention came from the other, a caller and its
+# callee in one file, and they match together in one batch compile, so the queue mustn't hold both back for good)
+WAITING = ("SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status != 'matched' "
+           "AND NOT EXISTS (SELECT 1 FROM waits w2 WHERE w2.function_id=w.needs_id AND w2.needs_id=w.function_id)")
+READY = "SELECT w.function_id FROM waits w JOIN functions n ON n.id=w.needs_id WHERE n.status = 'matched'"
+WANTED = "SELECT w.needs_id FROM waits w JOIN functions b ON b.id=w.function_id WHERE b.status = 'open'"
 STRATEGIES = {
     # (a failing part waits even for its twins: they'd fail the same way)
     "easiest": f"{_FAILING}, " + _TWINS + f"f.abandons > 0, (f.n_insns + {SIZE_STEP - 1}) / {SIZE_STEP} ASC, "
@@ -129,6 +151,110 @@ STRATEGIES = {
 
 class NetworkError(Exception):
     """An error meant to be shown to the agent as-is."""
+
+
+
+def _no_better(scores: list[int | None]) -> int:
+    """How many of the last compiles in a row (oldest first in `scores`) didn't beat the best before them."""
+    best, since = None, 0
+    for s in scores:
+        if s is not None and (best is None or s < best):
+            best, since = s, 0
+        else:
+            since += 1
+    return since
+
+
+# A note that says the function matches (written while a function that later stopped matching counted as matched,
+# its best score 0): agents read it over the brief's real score and stopped
+_SAYS_MATCHED = re.compile(r"already\s+(?:at\s+)?100\s*%|already\s+match(?:es|ed)\b|\b(?:is|was|now)\s+(?:100\s*%|"
+                           r"matched\b|a\s+match\b)|100(?:\.0+)?\s*%\s*(?:match|identical)|\bscore\s+0(?![\d.])|✅\s*MATCH|"
+                           r"byte[- ]identical", re.I)
+_NEGATED = re.compile(r"\b(?:not|n't|never|no|without)\b[^.;]{0,24}$", re.I)
+
+
+def stale_note(text: str, status: str) -> str:
+    """A note as a brief shows it: one saying the function matches, on a function that doesn't, is marked out of
+    date (the note itself stays as it was), so the brief's score is the number agents go by."""
+    if status == "matched":
+        return text
+    for m in _SAYS_MATCHED.finditer(text):
+        if not _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
+            return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the "
+                    "score above] " + text)
+    return text
+
+
+# Notes about the setup rather than the function: a build that broke, an agent that stopped or couldn't sign in.
+# In one project they took the brief's few note slots (108 "didn't build", 211 "Released because its agent
+# stopped", one brief showing the same "didn't build" note twice) while the function's own findings fell off.
+_INFRA_NOTE = re.compile(
+    r"Released because its agent stopped|didn't build before this change|has to build again|"
+    r"FAILED: build\.ninja|rebuilding 'build\.ninja'|subcommand failed|/bin/sh: \d+: \S+: not found|"
+    r"nothing can compile|OAuth|Failed to authenticate|not logged in|session limit|usage limit|hit your \w* ?limit",
+    re.I)
+# A note saying the function can't get closer: true when it was written, until someone beats it (31 of 296 such
+# notes in one project: "plain C plateaus here" at 68.3% on a function another agent took to 95.1%)
+_CEILING = re.compile(r"plateau|ceiling|not reachable|unreachable|can'?t (?:get|reach|go|be matched|match)|cannot|"
+                      r"impossible|dead[- ]end|capped|stuck at|won'?t match|best possible|no way to|maxed", re.I)
+_PERCENT = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d+)?)\s*%")
+_SCORE = re.compile(r"\bscore\s*(?:of\s*|=\s*|:\s*)?(\d+)\b", re.I)
+
+
+def _superseded(text: str, best_score: int | None, best_percent: float | None) -> bool:
+    """Whether an older note describes less than the function's best now: it says it can't get closer, or every
+    score or match percentage it gives is worse than the best."""
+    if _CEILING.search(text):
+        return True
+    pcts = [float(p) for p in _PERCENT.findall(text)]
+    if best_percent is not None and pcts and max(pcts) < best_percent - 0.05:
+        return True
+    scores = [int(s) for s in _SCORE.findall(text)]
+    return best_score is not None and bool(scores) and min(scores) > best_score
+
+
+def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", show: int | None = None,
+                when: bool = True) -> list[str]:
+    """A function's notes as its brief lists them (rows newest first: text, created_at, name). Notes about the
+    setup (_INFRA_NOTE) are left out, with a line saying how many; a note given word for word more than once is
+    shown once; an older note that said it can't get closer, or described less than the best now (`best_text`,
+    reached at `best_at`), is marked superseded and goes after the others. At most `show` (BRIEF_NOTES)."""
+    show = BRIEF_NOTES if show is None else show
+    best_score = fn["best_score"] if fn["status"] != "matched" else None
+    best_percent = None
+    if best_score is not None and fn["n_insns"]:
+        best_percent = max(0.0, 100.0 * (1 - best_score / (fn["n_insns"] * 100)))
+    infra, seen, fresh, stale = 0, {}, [], []
+    for n in rows:
+        text = (n["text"] or "").strip()
+        if _INFRA_NOTE.search(text):
+            infra += 1
+            continue
+        key = " ".join(text.split())
+        if key in seen:
+            seen[key][1] += 1
+            continue
+        item = [n, 1, False]
+        seen[key] = item
+        if (best_at is not None and best_score is not None and (n["created_at"] or 0) < best_at
+                and _superseded(text, best_score, best_percent)):
+            item[2] = True
+            stale.append(item)
+        else:
+            fresh.append(item)
+    lines = []
+    for n, count, old in (fresh + stale)[:show]:
+        text = stale_note((n["text"] or "").strip(), fn["status"])
+        if old:
+            text = f"(superseded: best is now {best_text or fn['best_score']}) {text}"
+        if count > 1:
+            text += f" [noted {count} times]"
+        who = f"{n['name']}, {_ago(n['created_at'])}" if when else f"{n['name']}"
+        lines.append(f"- ({who}) {text}")
+    if infra:
+        lines.append(f"- ({infra} note{'s' * (infra != 1)} about builds that broke or agents that stopped left out: "
+                     "they say nothing about this function)")
+    return lines
 
 
 @dataclass
@@ -176,9 +302,35 @@ def stall_budget(n_insns: int) -> int:
 
 
 def stall_budget_text() -> str:
-    """The budget in words: the prompt and the workflow guide say exactly this."""
-    return (f"no better score after {STALL_BUDGET[0][1]} compiles in a row for small functions, up to "
-            f"{STALL_BUDGET_BIGGEST} for the biggest")
+    """The budget in words: the prompt and the guides say exactly this. Each function has one number (its brief
+    names it, every compile_and_diff result shows where you stand against it, release_function goes by it): the
+    prompt used to say "3 compiles ... up to 10", and agents guessed which applied."""
+    return ("no better score in N compiles in a row, where N is the function's own number: its brief names it, and "
+            "every compile_and_diff result shows where you stand, as in \"no better in 2/6 compiles (move on at 6)\"")
+
+
+def move_on_brief(fn) -> str:
+    """The brief's line naming the function's own move-on number (the one compile_and_diff counts against)."""
+    after = stall_budget(fn["n_insns"] or 0)
+    return (f"move on after {after} compiles in a row without a better score (this function's number, by its size; "
+            f"each compile_and_diff result shows the count)")
+
+
+def normalized_source(source: str) -> str:
+    """Source as repeat compiles compare it: each line without its indentation and trailing spaces, no trailing
+    blank lines. Line breaks stay, so __LINE__ and the line numbers a compiler embeds can't differ, and a line
+    continuing the one before it (a backslash at its end: a string or macro going on) is kept as it is."""
+    out, cont = [], False
+    for line in source.splitlines():
+        out.append(line if cont else line.strip())
+        cont = line.rstrip().endswith("\\")
+    return "\n".join(out).rstrip("\n")
+
+
+def stall_line(since: int, after: int) -> str:
+    """Where an agent stands against a function's move-on number, as every compile result and the release push-back
+    word it (one wording, so the two can't seem to disagree)."""
+    return f"no better in {since}/{after} compiles (move on at {after})"
 
 
 def _ago(ts: float | None) -> str:
@@ -193,6 +345,10 @@ class Network:
         self.store = Store(db_path)
         self.claim_ttl = claim_ttl
         self._pool = ThreadPoolExecutor(max_workers=8)
+        # (agent id, function id) -> its last compile's diff rows and their legend, for last_diff
+        self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
+        self._generation: dict[int, int] = {}  # project id -> changes compiles depend on (bump_generation)
+        self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
 
     # ------------------------------------------------------------------ agents
 
@@ -289,6 +445,62 @@ class Network:
     def _event(self, db, project_id, agent_id, kind, detail) -> None:
         db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
                    (project_id, agent_id, kind, detail, time.time()))
+        if kind in GENERATION_EVENTS and project_id is not None:
+            self.bump_generation(project_id)
+
+    # ------------------------------------------------------- repeat compiles
+
+    def bump_generation(self, project_id: int) -> None:
+        """Something every compile of the project can depend on changed (a header, a name, the compiler, a file
+        split, an edit_file): earlier compile results no longer stand for a repeat of the same source."""
+        self._generation[project_id] = self._generation.get(project_id, 0) + 1
+
+    def compile_key(self, fn, *state: str) -> str:
+        """What a compile's result depends on besides the source: the function, the project's generation and `state`
+        (the header, the file around the function...). Sources are compared without per-line indentation and
+        trailing spaces (line numbers stay, for __LINE__)."""
+        h = hashlib.sha1(f"{fn['id']}\0{self._generation.get(fn['project_id'], 0)}".encode())
+        for part in state:
+            h.update(b"\0" + normalized_source(part).encode("utf-8", "replace"))
+        return h.hexdigest()
+
+    def repeat_of(self, key: str, agent: Agent, fn) -> dict | None:
+        """An earlier compile of the same source in the same state: its result again, marked as a repeat, without
+        building anything or counting toward the move-on number (in one project, 3,639 of 9,611 compiles were
+        byte-identical to an earlier one of the same function)."""
+        hit = self._compiled.get(key)
+        if hit is None:
+            return None
+        self._compiled.move_to_end(key)
+        who = "your" if hit["agent_id"] == agent.id else f"{self._agent_name(hit['agent_id'])}'s"
+        head = (f"🔁 REPEAT: this source is the same (indentation aside) as {who} compile #{hit['n']} of {fn['name']} "
+                f"({_ago(hit['at'])}), and nothing it depends on changed since, so it wasn't built again and doesn't "
+                "count toward the move-on number. That compile's result:\n")
+        return {"text": head + hit["text"] + self.stall_note(fn["id"], agent.id), "score": hit["score"],
+                "matched": False, "repeat": True}
+
+    def remember_compile(self, key: str, agent: Agent, fn, text: str, score: int | None) -> None:
+        """A compile's result (without its move-on line), for repeat_of."""
+        n = self.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND agent_id=?", fn["id"],
+                           agent.id)["n"]
+        self._compiled[key] = {"text": text, "score": score, "agent_id": agent.id, "n": n, "at": time.time()}
+        while len(self._compiled) > REPEATS_KEPT:
+            self._compiled.popitem(last=False)
+
+    def same_score_note(self, fn_id: int, agent_id: int, score: int | None, source: str) -> str:
+        """When a new variant only reproduces a score an earlier, different source of this claim had: which compile
+        it equals (in one project, 21 of 56 compiles in two long sessions did, 1001 seven times on one function)."""
+        st = self.stall_status(fn_id, agent_id)
+        if score is None or st["claimed_at"] is None:
+            return ""
+        rows = self.store.all("SELECT score, source FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+                              "ORDER BY id", fn_id, agent_id, st["claimed_at"])
+        mine = normalized_source(source)
+        for k, r in enumerate(rows[:-1], 1):  # (the last row is this compile)
+            if r["score"] == score and normalized_source(r["source"] or "") != mine:
+                return (f"\nSame score as your compile #{k} of this claim ({score}) with a different source: this "
+                        "change made no difference the judge sees. Try a different kind of change.")
+        return ""
 
     def _agent_name(self, agent_id) -> str:
         row = self.store.one("SELECT name FROM agents WHERE id=?", agent_id) if agent_id else None
@@ -334,10 +546,27 @@ class Network:
 
     def claim(self, agent: Agent, project: str | None = None, function: str | None = None,
               strategy: str = "easiest") -> str:
+        still = self.still_holding(agent, function)
         fn = self.claim_row(agent, project, function, strategy)
         if fn is None:
             return self.nothing_to_claim(agent, self._project(project))
-        return self._brief(fn, agent, header="CLAIMED")
+        return still + self._brief(fn, agent, header="CLAIMED")
+
+    def still_holding(self, agent: Agent, function: str | None) -> str:
+        """What to say first when claim_function (no function named) gives an agent the one it already holds: after
+        a pushed-back release it still does, and an agent read the same brief coming back as the queue handing it
+        back the function it had just released."""
+        if function:
+            return ""
+        held = self.store.one("SELECT f.name, c.claimed_at FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "WHERE c.agent_id=?", agent.id)
+        if held is None or not self.store.one(
+                "SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND created_at >= ?",
+                agent.id, held["name"], held["claimed_at"] or 0):
+            return ""  # an ordinary renewal of the claim
+        return (f"You still hold {held['name']}: it wasn't released (release_function was pushed back), so this is "
+                "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
+                "compiled it, when you ask again.\n\n")
 
     def _own_release_cutoff(self, db, agent_id: int, now: float) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and
@@ -392,7 +621,10 @@ class Network:
                               (agent.id,)).fetchone()
             if held is not None:
                 if function and held["id"] != self._function(function, proj["slug"] if proj else None)["id"]:
-                    raise NetworkError(f"you already hold {held['name']}; match it or release_function it first")
+                    want = self._function(function, proj["slug"] if proj else None)["name"]
+                    raise NetworkError(f"you already hold {held['name']}; match it or release_function it first (if "
+                                       f"{held['name']} needs {want} done first, release_function with "
+                                       f"needs=\"{want}\": that records it and hands you {want})")
                 fn = held
                 db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
             elif function:
@@ -416,21 +648,25 @@ class Network:
                                    "AS tried FROM functions WHERE project_id=? AND status != 'asm'", (proj["id"],)).fetchone()
                 overall = (tried["won"] or 0) / tried["tried"] if tried["tried"] else 0.5
                 # not what this agent released lately (see SELF_RELEASE_WINDOW); what it released before that last
+                # functions waiting for another to match come last (WAITING); the ones they wait for, and those whose
+                # wait is over, first (after what the release rules put back, before model routing's escalations)
                 query = (
                     f"""SELECT f.* FROM functions f LEFT JOIN {_REGION} r ON r.region = f.vram / {REGION_BYTES}
                         WHERE f.project_id=:pid AND f.status='open' AND (:weak = 0 OR f.abandons < :escalate)
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                            AND kind='release' AND created_at > :mine)
-                        ORDER BY f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                        ORDER BY f.id IN ({WAITING}),
+                                 f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
                                             AND kind='release'),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
                                             AND agent_id IN (SELECT value FROM json_each(:kin)) AND created_at >
                                             COALESCE((SELECT MAX(created_at) FROM events WHERE project_id=:pid
                                                       AND kind IN ('context', 'compiler')), 0)),
                                  f.name IN (SELECT detail FROM events WHERE project_id=:pid AND kind='release'
-                                            AND created_at > :cooled), :strong AND f.abandons >= :escalate DESC,
-                                 {STRATEGIES[strategy]} LIMIT 1""")
+                                            AND created_at > :cooled),
+                                 f.id IN ({READY}) DESC, f.id IN ({WANTED}) DESC,
+                                 :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
                 args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
                         "overall": overall, "escalate": ESCALATE_AFTER, "weak": route == "weak", "strong": route == "strong",
                         "mine": self._own_release_cutoff(db, agent.id, now)}
@@ -441,6 +677,9 @@ class Network:
                     return None
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+            # a wait that's over has had its turn at the front once it's claimed
+            db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
+                       "WHERE status='matched')", (fn["id"],))
         return fn
 
     def _route(self, db, project_id: int, agent: Agent, now: float) -> str | None:
@@ -624,6 +863,8 @@ class Network:
             who = "you" if agent and claim["agent_id"] == agent.id else self._agent_name(claim["agent_id"])
             lines.append(f"claimed by {who}, lease expires in {int(claim['expires_at'] - time.time()) // 60} min "
                          f"(each compile_and_diff renews it)")
+        if fn["status"] != "matched":
+            lines.append(move_on_brief(fn))
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
@@ -637,17 +878,26 @@ class Network:
             elif fn["seed"]:
                 lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
                               "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
-        notes = self.store.all(
-            "SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-            f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES}", fn["id"])
+        notes = self.notes_for_brief(fn)
         if notes:
-            lines += ["", "### Notes from previous agents on this function"]
-            lines += [f"- ({n['name']}, {_ago(n['created_at'])}) {n['text']}" for n in notes]
+            lines += ["", "### Notes from previous agents on this function", *notes]
+        lines += self.dependency_brief(fn)
         if fn["unit"] and fn["unit"] in self._unit_contexts(proj["id"]):
             lines.insert(2, f"source unit {fn['unit']}: call get_context with function=\"{fn['name']}\" for its header")
         if header == "CLAIMED":
             lines += ["", self._next_step(proj, ctx)]
         return "\n".join(lines)
+
+    def notes_for_brief(self, fn, best_text: str = "", show: int | None = None, when: bool = True) -> list[str]:
+        """A function's notes for its brief (brief_notes), with when its best score was first reached."""
+        rows = self.store.all("SELECT n.text, n.created_at, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
+                              f"WHERE n.function_id=? ORDER BY n.id DESC LIMIT {BRIEF_NOTES * 8}", fn["id"])
+        best_at = None
+        if fn["status"] != "matched" and fn["best_score"] is not None:
+            row = self.store.one("SELECT MIN(created_at) AS t FROM attempts WHERE function_id=? AND score=?",
+                                 fn["id"], fn["best_score"])
+            best_at = row["t"] if row else None
+        return brief_notes(rows, fn, best_at, best_text, show, when)
 
     def _next_step(self, proj, ctx) -> str:
         """The brief's last line for the agent that claimed the function."""
@@ -684,17 +934,24 @@ class Network:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
 
         ctx = self._context(proj["id"], fn["unit"])
+        key = self.compile_key(fn, ctx["header"], str(ctx["version"]), proj["config"] or "", source)
+        if not scratch and (again := self.repeat_of(key, agent, fn)) is not None:
+            return again
         result = self._compile(proj, ctx["header"], source, fn)
 
         if not result.ok:
             self._record(fn, agent, None, source, ctx["version"])
-            return {"text": f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}", "score": None, "matched": False}
+            text = f"❌ COMPILE ERROR (context v{ctx['version']})\n{result.log.strip()}"
+            self.remember_compile(key, agent, fn, text, None)
+            return {"text": text, "score": None, "matched": False}
 
         cand, verdict, problems = self._evaluate(fn, proj, result.obj)
         if cand is None:
             self._record(fn, agent, None, source, ctx["version"])
-            return {"text": f"❌ Compiled, but the object has no function named `{fn['name']}`. "
-                            f"Define it with exactly that name (non-static).", "score": None, "matched": False}
+            text = (f"❌ Compiled, but the object has no function named `{fn['name']}`. "
+                    f"Define it with exactly that name (non-static).")
+            self.remember_compile(key, agent, fn, text, None)
+            return {"text": text, "score": None, "matched": False}
         d = scoring.diff(self._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
@@ -702,12 +959,14 @@ class Network:
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now)
+        self.keep_diff(agent.id, fn["id"], d.rows)
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
         elif d.bytes_match:
             return {"text": f"✅ MATCH! {fn['name']} is byte-identical to the target ({fn['n_insns']} instructions). "
-                            f"Credited to {agent.name}; your claim is released. Call claim_function for the next one.",
+                            f"Credited to {agent.name}; your claim is released. Call claim_function for the next one."
+                            f"{self.dependents_note(fn['id'])}",
                     "score": 0, "matched": True}
         else:
             best = self.store.one("SELECT best_score FROM functions WHERE id=?", fn["id"])["best_score"]
@@ -721,7 +980,11 @@ class Network:
         warn = f"\ncompiler output:\n{result.log.strip()}" if result.log.strip() else ""
         if problems:
             warn += "\nwhen linking your code at the function's address:\n" + "\n".join(f"- {p}" for p in problems)
-        return {"text": f"{head}\n{d.render()}{warn}{self.stall_note(fn['id'], agent.id)}", "score": d.score, "matched": False}
+        text = f"{head}\n{d.render()}{warn}"
+        if not scratch:
+            self.remember_compile(key, agent, fn, text, d.score)
+            text += self.same_score_note(fn["id"], agent.id, d.score, source)
+        return {"text": text + self.stall_note(fn["id"], agent.id), "score": d.score, "matched": False}
 
     @staticmethod
     def _what_changed(d: scoring.DiffResult, last: int | None) -> str:
@@ -739,27 +1002,112 @@ class Network:
                      f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
         return said
 
-    def stall_note(self, function_id: int, agent_id: int, after: int | None = None) -> str:
-        """A nudge once an agent's last `after` compiles of a function didn't beat its best: functions that match
-        mostly do in the first few tries, and the agent's time is better spent on the next one. Big functions get
-        longer (a quarter of Mario Party 6's agent matches over 64 instructions took more than 4 compiles, and
-        those functions hold most of the code left): STALL_BUDGET."""
-        if after is None:
-            row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
-            after = stall_budget((row["n_insns"] if row else 0) or 0)
-        rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT {STALL_LOOKBACK}",
-                              function_id, agent_id)
-        best, since = None, 0
-        for r in reversed(rows):
-            if r["score"] is not None and (best is None or r["score"] < best):
-                best, since = r["score"], 0
-            else:
-                since += 1
-        if since < after:
+    def keep_diff(self, agent_id: int, function_id: int, rows: list, legend: str = scoring.LEGEND) -> None:
+        """A compile's diff rows, kept for last_diff (memory only: the next compile replaces them)."""
+        self._last_diffs[(agent_id, function_id)] = (list(rows), legend)
+
+    def last_diff(self, agent: Agent, function: str, project: str | None = None, context: int = 2) -> str:
+        """The full diff of this agent's last compile of a function, every differing row: compile_and_diff shows the
+        first 60 rows and cut the rest (27 to 181 rows in one project), and the only way to see them was another
+        compile. Costs no compile."""
+        fn = self._function(function, project)
+        kept = self._last_diffs.get((agent.id, fn["id"]))
+        if kept is None:
+            raise NetworkError(f"no compile of {fn['name']} by you since the app started: compile_and_diff first")
+        rows, legend = kept
+        context = max(0, min(int(context or 0), 10))
+        return (f"Full diff of your last compile of {fn['name']} ({len(rows)} rows; not a new compile):\n"
+                + scoring.render_rows(rows, context, max_rows=len(rows) * (2 * context + 2) + 10, run=len(rows) + 1,
+                                      legend=legend, more_hint=False))
+
+    def stall_status(self, function_id: int, agent_id: int) -> dict:
+        """Where an agent stands against a function's move-on number: one count for compile_and_diff's results,
+        the brief and release_function. The compiles of its current claim (with no claim, its last
+        STALL_LOOKBACK). Compile results once counted the agent's last compiles across claims while release_function
+        counted the claim's and said "no better in 8 compiles in a row" whatever the count was: in one project a
+        release was refused with the last 4 of 7 no better, then let through after exactly one more compile, so
+        agents spent a compile to get past the check (446 push-backs, 36 of them improved after it)."""
+        row = self.store.one("SELECT n_insns FROM functions WHERE id=?", function_id)
+        after = stall_budget((row["n_insns"] if row else 0) or 0)
+        claim = self.store.one("SELECT claimed_at FROM claims WHERE function_id=? AND agent_id=?", function_id, agent_id)
+        if claim is not None:
+            start = claim["claimed_at"] or 0
+            rows = self.store.all("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND created_at >= ? "
+                                  "ORDER BY id", function_id, agent_id, start)
+            scores = [r["score"] for r in rows]
+        else:
+            start = None
+            rows = self.store.all(f"SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC "
+                                  f"LIMIT {STALL_LOOKBACK}", function_id, agent_id)
+            scores = [r["score"] for r in reversed(rows)]
+        return {"claimed_at": start, "compiles": len(scores), "no_better": _no_better(scores), "after": after,
+                "best": min((s for s in scores if s is not None), default=None)}
+
+    def stall_note(self, function_id: int, agent_id: int) -> str:
+        """Every compile result's last line: where the agent stands against the function's move-on number and, once
+        it's reached, the nudge to release: functions that match mostly do in the first few tries, and the agent's
+        time is better spent on the next one. Big functions get longer (a quarter of Mario Party 6's agent matches
+        over 64 instructions took more than 4 compiles, and those functions hold most of the code left):
+        STALL_BUDGET. release_function lets a release through exactly when this says to move on."""
+        st = self.stall_status(function_id, agent_id)
+        if not st["compiles"]:
             return ""
-        return (f"\n\n⏭ No better in your last {since} compiles. release_function with notes (what you tried, what's "
-                "left) and claim the next one: functions that match mostly do in the first few tries, and this one "
-                "keeps your best attempt for whoever comes next.")
+        since, after = st["no_better"], st["after"]
+        if since < after:
+            return f"\n\nMove-on count: {stall_line(since, after)}."
+        return (f"\n\n⏭ Move on: {stall_line(since, after)}. release_function with notes (what you tried, what's "
+                "left) goes through now; then claim the next one: functions that match mostly do in the first few "
+                "tries, and this one keeps your best attempt for whoever comes next.")
+
+    def claim_progress(self, agent: Agent, fn) -> dict | None:
+        """This agent's claim on `fn` as release_function judges it: stall_status, the same count compile_and_diff
+        shows. None: no claim."""
+        st = self.stall_status(fn["id"], agent.id)
+        return None if st["claimed_at"] is None else st
+
+    # ---------------------------------------------------------- prerequisites
+
+    def wait_for(self, agent: Agent, fn, needs) -> None:
+        """Record that `fn` needs `needs` done first (see WAITING)."""
+        with self.store.tx() as db:
+            db.execute("INSERT OR REPLACE INTO waits(function_id, needs_id, agent_id, created_at) VALUES(?,?,?,?)",
+                       (fn["id"], needs["id"], agent.id, time.time()))
+            self._event(db, fn["project_id"], agent.id, "waits", f"{fn['name']} -> {needs['name']}")
+
+    def dependency_brief(self, fn) -> list[str]:
+        """For a brief: what this function waits for, and what waits for it."""
+        out = []
+        row = self.store.one("SELECT n.name, n.status, a.name AS agent FROM waits w JOIN functions n ON n.id=w.needs_id "
+                             "LEFT JOIN agents a ON a.id=w.agent_id WHERE w.function_id=?", fn["id"])
+        if row is not None and fn["status"] != "matched":
+            if row["status"] == "matched":
+                out += ["", f"### {row['name']} matches now: {row['agent'] or 'an agent'} found this function needs it "
+                            f"first (a callee or an inlined helper): read its code (get_function) and use it here."]
+            elif self.store.one("SELECT 1 FROM waits WHERE function_id=(SELECT id FROM functions WHERE name=? AND "
+                                "project_id=?) AND needs_id=?", row["name"], fn["project_id"], fn["id"]):
+                out += ["", f"### Needs {row['name']}, which needs this one: they depend on each other (a caller and its "
+                            "callee, each one's convention coming from the other), so work on them together: "
+                            f"compile_and_diff(function=\"{fn['name']}, {row['name']}\", source=both definitions)."]
+            else:
+                out += ["", f"### Waits for {row['name']}: {row['agent'] or 'an agent'} found this function needs it "
+                            f"first (a callee or an inlined helper), so it's claimed after everything else until "
+                            f"{row['name']} matches. Work on it if you can; else release_function with "
+                            f"needs=\"{row['name']}\"."]
+        waiting = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+                                 "AND b.status='open' ORDER BY b.name LIMIT 8", fn["id"])
+        if waiting and fn["status"] != "matched":
+            out += ["", f"### Waited for by {', '.join(r['name'] for r in waiting)}: they need this one first, so "
+                        "matching it unblocks them."]
+        return out
+
+    def dependents_note(self, function_id: int) -> str:
+        """For a match: the functions that were waiting for it."""
+        rows = self.store.all("SELECT b.name FROM waits w JOIN functions b ON b.id=w.function_id WHERE w.needs_id=? "
+                              "AND b.status='open' ORDER BY b.name LIMIT 6", function_id)
+        if not rows:
+            return ""
+        return (f"\nWaiting for this one: {', '.join(r['name'] for r in rows)}. They come first in the queue now; "
+                f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent"):
