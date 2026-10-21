@@ -542,6 +542,81 @@ def check_with_dsd(root: Path, version: str, dsd: str, modules: list[Module], lo
     return MAX_REFUSALS
 
 
+def _file_ranges(m: Module) -> list[tuple[int, int]]:
+    """The .text range of each of the module's source files (delinks.txt, after its header)."""
+    files = (m.folder / "delinks.txt").read_text(encoding="utf-8").split("\n\n", 1)[1:]
+    return [(int(a, 16), int(b, 16)) for a, b in re.findall(r"^\s+\.text start:(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)",
+                                                             files[0] if files else "", re.M)]
+
+
+def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(), log=print) -> int:
+    """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running
+    on into the next symbol, code that never returns) to the function they belong to: an epilogue to the function
+    before it, the others to the function after, which they run on into. Only within one source file, in one mode,
+    and never a function of `keep` (matched ones: their C would no longer be the whole function). The symbol a piece
+    had stays, as a label: calls and pointers to it still have their target. On a DS game 128 of 557 open functions
+    were such pieces, each given up on by five to seven agents, and the functions they belong to could never match
+    without them. With `dsd`, dsd delinks the game with them, and puts them all back as they were when it refuses
+    one. Returns how many pieces were joined."""
+    from ...arch import arm
+    from ...limits import capped
+
+    joined, before = 0, {}
+    for m in load_modules(root / "config" / version / "arm9", root / "extract" / version):
+        ranges = _file_ranges(m)
+        lines = {int(s.group(4), 16): (i, s.group(1)) for i, ln in enumerate(m.symbol_lines)
+                 if (s := SYMBOL.match(ln)) and s.group(2) == "function"}
+        funcs = {a: [lines[a][1], size, thumb] for a, (size, thumb) in m.functions.items() if a in lines}
+        labels: set[int] = set()
+        verdicts: dict[tuple[int, int], str | None] = {}  # (address, size) -> arm.piece's: read once
+        changed = True
+        while changed:
+            changed = False
+            order = sorted(funcs)
+            for k, at in enumerate(order):
+                name, size, thumb = funcs[at]
+                if (at, size) not in verdicts:
+                    code = m.code[at - m.base:at - m.base + size] if 0 <= at - m.base < len(m.code) else b""
+                    verdicts[at, size] = arm.piece(code, thumb) if code else None
+                why = verdicts[at, size]
+                if not why or why.startswith("jumps through") or name in keep:
+                    continue
+                into = order[k - 1] if "the end of" in why and k else order[k + 1] if k + 1 < len(order) else None
+                if into is None:
+                    continue
+                lo, hi = min(at, into), max(at, into)
+                one_file = any(a <= lo and hi < b for a, b in ranges)
+                if (funcs[lo][1] + lo != hi or funcs[into][2] != thumb or funcs[into][0] in keep or not one_file):
+                    continue
+                funcs[lo][1] += funcs.pop(hi)[1]  # the lower one grows over the other, which becomes a label
+                labels.add(hi)
+                joined += 1
+                changed = True
+                break
+        if not labels:
+            continue
+        out = list(m.symbol_lines)
+        for at, (i, name) in lines.items():
+            if at in labels:
+                out[i] = f"{name} kind:label({'thumb' if m.functions[at][1] else 'arm'}) addr:{at:#010x}"
+            elif at in funcs and funcs[at][1] != m.functions[at][0]:
+                out[i] = re.sub(r"size=0x[0-9a-fA-F]+", f"size={funcs[at][1]:#x}", out[i], count=1)
+        before[m.folder / "symbols.txt"] = (m.folder / "symbols.txt").read_text(encoding="utf-8")
+        (m.folder / "symbols.txt").write_text("\n".join(out) + "\n", encoding="utf-8")
+        log(f"{m.name}: {len(labels)} pieces of functions joined to the function they belong to")
+    if dsd and before:
+        command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
+        config = root / "config" / version / "arm9" / "config.yaml"
+        res = subprocess.run(capped([*command, "delink", "--config-path", str(config)]), cwd=root, capture_output=True,
+                             text=True, timeout=3600, encoding="utf-8", errors="replace")
+        if res.returncode != 0:
+            for path, text in before.items():
+                path.write_text(text, encoding="utf-8")
+            log(f"dsd didn't take the joined functions, so they stay apart: {(res.stdout + res.stderr).strip()[-300:]}")
+            return 0
+    return joined
+
+
 def recover(root: Path, version: str, dsd: str | None = None, log=print) -> dict:
     """Find and write the functions dsd's analysis missed in a project's config, and (with `dsd`) delink the game with
     them. Returns what it found."""

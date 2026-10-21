@@ -47,9 +47,10 @@ class NintendoDS(Console):
     usual = "DS/2.0/sp1p5"  # what most of its games were built with: the default until the game says otherwise
     # what a project's config holds, in its manifest's "analysis": 1 dsd's own analysis, 2 with the functions it
     # misses (recover.py), 3 its build tools brought up to date too (scratch.write_tools: dead stripping dropped
-    # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text). A project with less
-    # gets the rest when the app starts
-    ANALYSIS = 4
+    # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
+    # functions dsd cut off joined to their functions (recover.merge_pieces). A project with less gets the rest when
+    # the app starts, or when it's checked again
+    ANALYSIS = 5
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -78,9 +79,10 @@ class NintendoDS(Console):
         return scratch.tool_args()
 
     def on_start(self, net, slug: str, log=print) -> None:
-        """A project made by an older decompdecomp gets, once, its build tools' fixes (scratch.write_tools) and the
-        functions dsd's analysis missed (recover.py: in .text's gaps and past its end), through forkengine.reanalyse:
-        checked by the rebuild, taken back if that breaks."""
+        """A project made by an older decompdecomp gets, once, its build tools' fixes (scratch.write_tools), the
+        functions dsd's analysis missed (recover.py: in .text's gaps and past its end) and the pieces of functions it
+        cut off joined to them (recover.merge_pieces), through forkengine.reanalyse: checked by the rebuild, taken back
+        if that breaks."""
         from . import recover, scratch
 
         if not net.fork_slug(slug):
@@ -102,8 +104,16 @@ class NintendoDS(Console):
             if files:
                 said.append(f"{len(files)} new source files hold the code dsd took for data past the end of .text")
             return "; ".join(said) or None
-        net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
-        net.forks.reanalyse(slug, functions, log=log)
+        def pieces(fp):  # not into or out of a matched function: its C would no longer be the whole function
+            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                        "status='matched'", net.project_row(slug)["id"])}
+            n = recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched, log=log)
+            return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
+                    if n else None)
+        if manifest.get("analysis", 1) < 4:  # (a project at 4 has these already)
+            net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
+            net.forks.reanalyse(slug, functions, log=log)
+        net.forks.reanalyse(slug, pieces, log=log)
         now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")

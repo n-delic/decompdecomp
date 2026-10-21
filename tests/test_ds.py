@@ -387,6 +387,37 @@ def _module(tmp_path):
     return m
 
 
+
+def test_pieces_of_functions_are_joined_to_the_function_they_belong_to(tmp_path, monkeypatch):
+    """dsd put symbols in the middle of functions: on a DS game 119 pieces were joined to their functions this way,
+    4 of those functions matched at once with the C agents had written, none lost its match, and the ROM still
+    rebuilt byte for byte. A piece that runs on goes with the code after it, an epilogue with the code before; a
+    matched function is left as it is, and a piece's symbol stays as a label for what points to it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xE1A04000,  # f: push {r4, lr}; mov r4, r0 (runs on)
+             0xE1A00004,  # g: mov r0, r4 (runs on)
+             0xE8BD8010,  # h: pop {r4, pc} (an epilogue alone)
+             0xE92D000F,  # v: push {r0-r3}, running on into a matched function
+             0xE12FFF1E]  # w: bx lr (matched)
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    names = {BASE: ("f", 8), BASE + 8: ("g", 4), BASE + 0xC: ("h", 4), BASE + 0x10: ("v", 4), BASE + 0x14: ("w", 4)}
+    lines = [f"{n} kind:function(arm,size={s:#x}) addr:{a:#010x}" for a, (n, s) in names.items()]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x18:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x18:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x18)], symbol_lines=lines)
+    m.functions = {a: (s, False) for a, (_, s) in names.items()}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", keep={"w"}, log=lambda *_: None) == 2
+    assert (folder / "symbols.txt").read_text().splitlines() == [
+        f"f kind:function(arm,size=0x10) addr:{BASE:#010x}",
+        f"g kind:label(arm) addr:{BASE + 8:#010x}",
+        f"h kind:label(arm) addr:{BASE + 0xC:#010x}",
+        lines[3], lines[4]]
+
 def test_the_functions_dsd_misses_are_found_with_their_calls(tmp_path):
     """dsd parses a module's functions one after another until a pointer to data stops it, then follows calls: a
     function only a pointer reaches, and what it calls, stayed in no function (more than half of a DS game's code)."""

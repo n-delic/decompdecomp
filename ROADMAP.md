@@ -23,7 +23,10 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs | MIPS, PowerPC, ARM's BIOS stubs |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Pieces of functions joined to their function | — | — | — | — | — | ✓ (`recover.merge_pieces`) | — |
+| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
@@ -54,6 +57,16 @@ Where to start on a gap:
 
 ## Recently done
 
+- **What no C makes is out of agents' way, and progress counts the rest.** On a DS game 159 of 557 open functions
+  were pieces of others (ds-decomp's symbols in the middle of functions: a lone epilogue, a register save running on
+  into the next symbol, a lone `bx ip`), each given up on by five to seven agents in turn. ARM code that pops pc
+  without having pushed, jumps through a register its caller set or never returns is set aside (`arm.piece`), and a
+  DS project joins such pieces to the function they belong to (`recover.merge_pieces`, checked by dsd): on that game
+  119 joined, 4 functions matched at once with the C agents had written, no match lost, the ROM still identical.
+  What shapes can't tell, agents can: `release_function(..., not_c=true)` with the reason, and once 3 agents of 2
+  models agree the function is set aside, red in the map, until the user gives it back. Percentages and counts leave
+  set-aside code out. **Check again** (About this project) looks at a project with what the running version knows;
+  it also runs before helpers start, once after each update.
 - **PlayStation (PS1) games from your own copy** (beta): a disc image (BIN, ISO or CHD; SYSTEM.CNF says which
   program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.6.3,
   2.7.2 or 2.8.1, then maspsx, which does what Sony's assembler ASPSX did, then GNU as; the import tries the three on
