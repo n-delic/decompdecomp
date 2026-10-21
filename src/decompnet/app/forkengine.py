@@ -2841,7 +2841,10 @@ class ForkEngine:
                         return "\n".join(hits + ["... (more matches; narrow the pattern)"])
         return "\n".join(hits) or "no matches"
 
-    def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str) -> str:
+    def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str = "") -> str:
+        # without a message the commit says what changed where: agents left it out hundreds of times a night, and
+        # each refusal cost a turn
+        message = message.strip() or f"Edit {Path(path).as_posix()}"
         if (link := self.net.links.get(slug)) is not None:  # the host makes and checks it; this copy follows
             text = link.call("/collab/edit", agent, path=path, old=old, new=new, message=message)
             if text.startswith(("✅", "⚠️")):
@@ -2849,8 +2852,6 @@ class ForkEngine:
             return text
         proj, fp, cfg = self.get(slug)
         p = fp.safe_path(path, write=True)
-        if not message.strip():
-            raise NetworkError("give a short message explaining the change")
         self.net.bump_generation(proj["id"])  # (a header or shared file: compiles may come out differently now)
         if _CHEAT.search(_strip_comments(new)):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed")
@@ -2921,7 +2922,10 @@ class ForkEngine:
                                        via=f"unit diff after an edit of {rel}")
             self._commit(proj, fp, rel, f"{message.strip()}\n\nEdited by {agent.name} with decompdecomp.")
             with self.net.store.tx() as db:
-                self.net._event(db, proj["id"], agent.id, "context", f"{rel}: {message.strip()[:120]}")
+                # "source", not "context": one unit's file changed, not what every function compiles against, so what
+                # a model family gave up on stays at the back of its queue (claim_row). As "context", the thousands of
+                # unit edits of a night's work put it back in front every few seconds.
+                self.net._event(db, proj["id"], agent.id, "source", f"{rel}: {message.strip()[:120]}")
         if any(v is None for v in after.values()):
             return f"⚠️ {rel} updated, but it still doesn't compile (it didn't before your edit either): fix it so its functions can be measured."
         done = "".join(self._file_done(proj["slug"], proj, fp, u, after[u.name] or {}, agent) for u in units[:1])

@@ -50,10 +50,10 @@ GAME_CODE = "json_extract(meta, '$.set_aside') IS NULL"
 IN_BUILD = "json_extract(meta, '$.gone') IS NULL"
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
 REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
-# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a name, the
-# compiler, the project's files changed
-GENERATION_EVENTS = frozenset({"context", "rename", "compiler", "split", "files", "sync", "link", "import", "fork",
-                               "collab"})
+# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a source file, a
+# name, the compiler, the project's files changed
+GENERATION_EVENTS = frozenset({"context", "source", "rename", "compiler", "split", "files", "sync", "link", "import",
+                               "fork", "collab"})
 NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
 NOTES_FOUND = 20  # search_notes' answer at most
 # The agent that released a function doesn't get it back automatically for this long, or until its run ends (the
@@ -103,8 +103,12 @@ TWIN_MAX_ABANDONS = 2  # agents gave it back this often: it's hard, twins or not
 # value per instruction: the copies a match brings, over the size; SQL divides integers, so it's scaled up, and a few
 # instructions are added so a two-instruction twin doesn't beat a real function with many copies
 TWIN_VALUE_SCALE, TWIN_SIZE_FLOOR = 64, 16
-_TWINS = (f"(f.boost > 0 AND f.n_insns <= {TWIN_MAX_INSNS} AND f.abandons < {TWIN_MAX_ABANDONS}) DESC, "
-          f"CASE WHEN f.boost > 0 THEN (f.boost + 1) * {TWIN_VALUE_SCALE} / (f.n_insns + {TWIN_SIZE_FLOOR}) ELSE 0 "
+# The value orders only the twins that come first: one given up on waits by size like any other function. Counted for
+# every twin, it put twins given up on ahead of every untried function: overnight on a game, eight agents passed 41
+# two-instruction twins no C compiles to around, each one back after every RELEASE_COOLDOWN (1,025 turns, no match).
+_TWIN_FIRST = f"(f.boost > 0 AND f.n_insns <= {TWIN_MAX_INSNS} AND f.abandons < {TWIN_MAX_ABANDONS})"
+_TWINS = (f"{_TWIN_FIRST} DESC, "
+          f"CASE WHEN {_TWIN_FIRST} THEN (f.boost + 1) * {TWIN_VALUE_SCALE} / (f.n_insns + {TWIN_SIZE_FLOOR}) ELSE 0 "
           f"END DESC, f.boost < 0, ")
 # Where in the game a function is says much about its chances: on GTA San Andreas small functions matched 19-28% of
 # the time in most of the game and 87% in one part of it; on Mario Kart 64 one part 19%, the rest 71-85% (October
