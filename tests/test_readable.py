@@ -44,6 +44,9 @@ def test_a_readable_rewrite_that_still_matches_is_kept(matched):
     fn = net._function("clamp_s32", slug)
     assert fn["status"] == "matched" and "Keeps value between" in fn["matched_source"] and fn["readable"] == 1
     assert net.overview(slug)["readable"] == 1
+    # its own kinds, so the feed says polishing (not a computer's colour) and routing counts decompiling claims only
+    kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE detail='clamp_s32' ORDER BY id")]
+    assert kinds[-2:] == ["polish", "readable"]
 
 
 def test_the_same_c_again_is_no_rewrite(matched):

@@ -64,7 +64,7 @@ class Readability:
                 if fn is None:
                     return "Every matched function is readable already (or too big for now). 🎉"
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
-                self.net._event(db, proj["id"], agent.id, "claim", fn["name"])
+                self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
         names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "

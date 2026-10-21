@@ -410,6 +410,8 @@ function eventHtml(ev) {
   const d = ev.detail || "";
   switch (ev.kind) {
     case "claim": return `${who} started ${fnLink(d)}`;
+    case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
+    case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
     case "match": return `<span class="ok">✓</span> ${who} matched ${fnLink(d)}`;
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
@@ -433,8 +435,12 @@ function eventHtml(ev) {
 }
 /* One line per agent and function, updated in place: "claude-1 · lerp · 4 compiles · best 87%" until it's matched. */
 const groups = new Map();
+// polishing said in words: a row's colour is its computer's when decompiling together (rowTint)
+const POLISH_TAG = `<span class="task-tag" title="polishing: real names, types and a comment for a matched function">polishing</span>`;
 function groupHtml(g) {
   const who = whoHtml(g.agent);
+  if (g.polished) return `<span class="ok">✎</span> ${who} polished ${fnLink(g.fn)}: still matches ${POLISH_TAG}`;
+  if (g.polish) return `${who} polishing ${fnLink(g.fn)} ${POLISH_TAG}`;
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
   if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;
@@ -464,7 +470,7 @@ function touchGroup(agent, fn, t, change, first) {
     if (g.li !== $("activity").firstElementChild) $("activity").prepend(g.li);
     if (!first) { g.li.classList.remove("fresh"); void g.li.offsetWidth; g.li.classList.add("fresh"); }
   } else g.li = addLine(t, groupHtml(g), first, agent);
-  if (g.matched || g.released) groups.delete(key);
+  if (g.matched || g.released || g.polished) groups.delete(key);
 }
 /* A match ends every other agent's line about that function too: they stopped "working on" it. */
 function matchedBy(agent, fn) {
@@ -507,6 +513,8 @@ function addActivity(events, attempts, first) {
       }, first);
     } else if (it.ev.kind === "claim") touchGroup(it.ev.agent, it.ev.detail, it.t, () => {}, first);
     else if (it.ev.kind === "match") { matchedBy(it.ev.agent, it.ev.detail); touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first); }
+    else if (it.ev.kind === "polish") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.polish = true; }, first);
+    else if (it.ev.kind === "readable") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.polish = g.polished = true; }, first);
     else if (it.ev.kind === "release") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.released = true; }, first);
     else addLine(it.t, eventHtml(it.ev), first, it.ev.agent);
   }
