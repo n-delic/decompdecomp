@@ -52,9 +52,14 @@ SH = "cmd /c " if sys.platform == "win32" else ""
 LICENSE = Path(args.compilers).resolve() / "license.dat"
 if sys.platform == "win32" and LICENSE.exists():
     WRAP = f'cmd /c set "LM_LICENSE_FILE={LICENSE}" && '
-DSD_COMMAND = [sys.executable, args.dsd] if Path(args.dsd).suffix.lower() == ".py" else [args.dsd]
+# the Python the build's steps run with: on Windows python.exe, not the console-less pythonw.exe (under it, every
+# compiler a step starts opens a console window of its own)
+_W = Path(sys.executable)
+PYTHON = str(_W.with_name("python.exe")) if _W.name.lower() == "pythonw.exe" and _W.with_name("python.exe").is_file() \
+    else sys.executable
+DSD_COMMAND = [PYTHON, args.dsd] if Path(args.dsd).suffix.lower() == ".py" else [args.dsd]
 DSD = subprocess.list2cmdline(DSD_COMMAND)
-PY = f'"{sys.executable}"'
+PY = f'"{PYTHON}"'
 
 
 def q(argv: list[str]) -> str:
