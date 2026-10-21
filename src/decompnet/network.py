@@ -54,12 +54,14 @@ NOT_C_AGENTS, NOT_C_MODELS = 3, 2
 # no C at all makes the code. Not a note about compiler flags: "flag-blocked" code may match with other flags.
 # On every project of a user (October 2026) no function later matched had three agents' notes saying so.
 NOT_C_NOTE = re.compile(
-    r"\b(no|any)\s+(standalone\s+|plain\s+|valid\s+)?C\b[^.;:]{0,40}?\b(can|could|will|would)\s*(not|n't)?\s*"
+    r"\bany\s+(standalone\s+|plain\s+|valid\s+)?C\b[^.;:]{0,40}?\b(can|could|will|would)\s*(not|n't)\s*"
     r"(produce|emit|express|generate|make|reproduce|compile to|match)"
-    r"|not\s+(expressible|producible|writable|writeable|reproducible|representable)\s+(in|as|from|with)\s+"
-    r"(plain\s+|standalone\s+)?C\b"
+    r"|\bno\s+(standalone\s+|plain\s+|valid\s+)?C\b[^.;:]{0,40}?\b((can|could|will|would)\s+)?"
+    r"(produces?|emits?|express(es)?|generates?|makes?|reproduces?|compiles? to|match(es)?)\b"
+    r"|not\s+(expressible|producible|writable|writeable|reproducible|representable|reachable)\s+(in|as|from|with)\s+"
+    r"(plain\s+|standalone\s+)?C\b|not\s+C-(expressible|producible|writable|reproducible)"
     r"|cannot\s+be\s+(written|expressed|produced|reproduced|represented)\s+(in|as|from)\s+(plain\s+|standalone\s+)?C\b"
-    r"|hand-?written\s+(asm|assembly)|(not|isn't)\s+a\s+(real|standalone|callable)\s+function"
+    r"|hand-?written\s+(\w+\s+){0,2}(asm|assembly)|(not|isn't)\s+a\s+(real|standalone|callable)\s+function"
     r"|unmatchable\s+(standalone|in\s+C|from\s+C|as\s+C)", re.I)
 # (a CPU's condition flags are no compiler's: "reuses the flags of the cmp" is why some code is hand-written)
 FLAG_NOTE = re.compile(r"flag-blocked|\b(compiler|compiler's|project|project's|build|game's|its own|other|different|"

@@ -271,3 +271,18 @@ def test_a_function_gone_from_the_build_is_neither_on_the_map_nor_in_the_totals(
                    "'nosource', 'a' FROM functions")
     assert [r["name"] for r in net.function_map("game")] == ["piece"]
     assert net.summary("game")["functions"] == 1 and net.summary("game")["bytes"] == 4
+
+
+def test_the_ways_agents_say_no_c_makes_a_function():
+    """Wordings from a user's projects that mean no C makes the code, and ones that don't: a hedge, a function that's
+    only hard, or code that may match with other compiler flags."""
+    from decompnet.network import FLAG_NOTE, NOT_C_NOTE
+
+    says = ["Agrees with earlier notes: hand-written SDK asm (ldmia/stmia r2-r9).", "Not C-expressible per prior notes.",
+            "No plain C reproduces the branch-pair + post-index form.", "Not reachable with C under mwcc.",
+            "Unmatchable in C per notes. Skip.", "No C can produce it: the loop reuses the flags of the entry cmp."]
+    not_said = ["Probably the SDK's MTX_Copy43.", "Hard: 3 agents failed, try a do-while.", "Released, no C attempt.",
+                "Any C version of it emits a call."]
+    flags = "Flag-blocked: no C can produce it with the project's flags."
+    assert all(NOT_C_NOTE.search(s) and not FLAG_NOTE.search(s) for s in says)
+    assert not any(NOT_C_NOTE.search(s) for s in not_said) and FLAG_NOTE.search(flags)
