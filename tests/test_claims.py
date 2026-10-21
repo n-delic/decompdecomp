@@ -266,6 +266,14 @@ def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
     assert net.store.one("SELECT status FROM functions WHERE name='flagged'")["status"] == "open"
     net.reopen("piece", "game")
     assert net.not_c_from_notes("game") == 0  # given back: its old notes don't set it aside again
+    # notes from before pieces were joined to it were about a piece: they don't count after the join
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open', meta='{}' WHERE name='piece'")
+        db.execute("UPDATE notes SET created_at=1")
+    note("decompdecomp", "piece", "decompdecomp joined piece2 to this function: it's the whole function now")
+    with net.store.tx() as db:
+        db.execute("UPDATE notes SET created_at=2 WHERE agent_id=(SELECT id FROM agents WHERE name='decompdecomp')")
+    assert net.not_c_from_notes("game") == 0
 
 
 def test_a_function_gone_from_the_build_is_neither_on_the_map_nor_in_the_totals(tmp_path):

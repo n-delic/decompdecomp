@@ -564,6 +564,29 @@ def joined_pieces(root: Path, version: str) -> dict[str, list[str]]:
     return out
 
 
+def _source_files(m: Module) -> tuple[Path, str, list[str], list[tuple[int, str, int, int]]]:
+    """A module's delinks.txt: its path, its header, each source file's block, and (block, file, .text start, end)."""
+    path = m.folder / "delinks.txt"
+    head, _, files = path.read_text(encoding="utf-8").partition("\n\n")
+    blocks = files.split("\n\n")
+    spans = [(k, re.search(r"^(\S.*):$", b, re.M), re.search(r"^\s+\.text start:(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)", b, re.M))
+             for k, b in enumerate(blocks)]
+    return path, head, blocks, [(k, f.group(1), int(t.group(1), 16), int(t.group(2), 16)) for k, f, t in spans if f and t]
+
+
+def _defines(root: Path, source: str, name: str) -> bool:
+    """Whether the C in `source` (relative to the project) defines function `name`."""
+    p = root / source
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    return bool(re.search(rf"\b{re.escape(name)}\s*\([^;{{]*\)\s*\{{", text))
+
+
+def _move_boundary(blocks: list[str], ka: int, kb: int, old: int, new: int) -> None:
+    """The .text boundary between source files ka and kb (one after the other) moves from `old` to `new`."""
+    blocks[ka] = re.sub(rf"(\.text start:\S+ end:){old:#010x}", rf"\g<1>{new:#010x}", blocks[ka], count=1)
+    blocks[kb] = re.sub(rf"(\.text start:){old:#010x}", rf"\g<1>{new:#010x}", blocks[kb], count=1)
+
+
 def move_boundaries(root: Path, version: str, keep: set[str] = frozenset(), log=print) -> list[str]:
     """Where a source file's last function branches into the middle of the next file's first one (arm.jumps: a switch
     whose cases ds-decomp put in the next file), that function moves to the file before, so merge_pieces can join
@@ -574,12 +597,7 @@ def move_boundaries(root: Path, version: str, keep: set[str] = frozenset(), log=
 
     moved = []
     for m in load_modules(root / "config" / version / "arm9", root / "extract" / version):
-        path = m.folder / "delinks.txt"
-        head, _, files = path.read_text(encoding="utf-8").partition("\n\n")
-        blocks = files.split("\n\n")
-        spans = [(k, re.search(r"^(\S.*):$", b, re.M), re.search(r"^\s+\.text start:(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)", b, re.M))
-                 for k, b in enumerate(blocks)]
-        spans = [(k, f.group(1), int(t.group(1), 16), int(t.group(2), 16)) for k, f, t in spans if f and t]
+        path, head, blocks, spans = _source_files(m)
         names = {int(s.group(4), 16): s.group(1) for ln in m.symbol_lines
                  if (s := SYMBOL.match(ln)) and s.group(2) == "function"}
         changed = False
@@ -592,13 +610,9 @@ def move_boundaries(root: Path, version: str, keep: set[str] = frozenset(), log=
             code = m.code[last - m.base:last - m.base + size]
             if not any(b_lo < t < b_lo + g_size for t in arm.jumps(code, thumb, last)) or b_lo + g_size >= b_hi:
                 continue
-            source = root / b_file
-            text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
-            if re.search(rf"\b{re.escape(names.get(b_lo, '?'))}\s*\([^;{{]*\)\s*\{{", text):
+            if _defines(root, b_file, names.get(b_lo, "?")):
                 continue  # agents' C for it is in that file
-            new = b_lo + g_size
-            blocks[ka] = re.sub(rf"(\.text start:\S+ end:){a_hi:#010x}", rf"\g<1>{new:#010x}", blocks[ka], count=1)
-            blocks[kb] = re.sub(rf"(\.text start:){b_lo:#010x}", rf"\g<1>{new:#010x}", blocks[kb], count=1)
+            _move_boundary(blocks, ka, kb, a_hi, b_lo + g_size)
             moved.append(names.get(b_lo, f"{b_lo:#x}"))
             changed = True
         if changed:
@@ -606,6 +620,76 @@ def move_boundaries(root: Path, version: str, keep: set[str] = frozenset(), log=
     if moved:
         log(f"{len(moved)} functions moved to the source file before theirs, as its last function branches into them")
     return moved
+
+
+def join_functions(root: Path, version: str, first: str, last: str, keep: set[str] = frozenset(),
+                   dsd: str | None = None) -> str:
+    """Make one function of `first`, `last` and every symbol between them: what agents agreed the analysis cut. The
+    first grows over the rest, which become labels; bytes no symbol claims between them go with it. Across two
+    source files one after the other, the later file's part moves to the earlier one (when its C doesn't define
+    what moves, and that file keeps some code). Never a matched function (`keep`), data, or code of another mode.
+    With `dsd`, dsd delinks the game with it, or it's taken back. Returns what changed, as a sentence."""
+    from ...forks.project import ForkError
+
+    for m in load_modules(root / "config" / version / "arm9", root / "extract" / version):
+        named = {s.group(1): (i, int(s.group(4), 16), s.group(2)) for i, ln in enumerate(m.symbol_lines)
+                 if (s := SYMBOL.match(ln))}
+        if first not in named and last not in named:
+            continue
+        if first not in named or last not in named:
+            raise ForkError(f"{first} and {last} aren't in the same part of the game (module)")
+        (i_a, a, kind_a), (i_b, b, kind_b) = sorted((named[first], named[last]), key=lambda x: x[1])
+        if kind_a != "function" or kind_b != "function" or a == b:
+            raise ForkError(f"{first} and {last} must be two functions")
+        inside = [(n, at, k) for n, (_, at, k) in named.items() if a <= at <= b]
+        if bad := [n for n, at, k in inside if k == "function" and n in keep]:
+            raise ForkError(f"{bad[0]} is matched: joining would change it, so the join is refused")
+        if data := [n for n, at, k in inside if k not in ("function", "label")]:
+            raise ForkError(f"{data[0]} between them is data, not code: they aren't one function")
+        if len({m.functions[at][1] for _, at, k in inside if k == "function"}) > 1:
+            raise ForkError("they're not the same mode (ARM and Thumb): they aren't one function")
+        end = b + m.functions[b][0]
+        path, head, blocks, spans = _source_files(m)
+        home = [(k, f, lo, hi) for k, f, lo, hi in spans if lo <= a < hi]
+        there = [(k, f, lo, hi) for k, f, lo, hi in spans if lo < end <= hi]
+        if not home or not there:
+            raise ForkError("they aren't in the game's source files")
+        (ka, _, _, a_hi), (kb, b_file, b_lo, b_hi) = home[0], there[0]
+        if ka != kb:
+            if a_hi != b_lo or end >= b_hi:
+                raise ForkError("they're in source files that aren't one after the other, or the later file would be "
+                                "left empty")
+            if moved := [n for n, at, k in inside if k == "function" and at >= b_lo and _defines(root, b_file, n)]:
+                raise ForkError(f"{b_file} has C for {moved[0]}: move it to the file before first")
+            before = path.read_text(encoding="utf-8")
+            _move_boundary(blocks, ka, kb, a_hi, end)
+            path.write_text(head + "\n\n" + "\n\n".join(blocks), encoding="utf-8")
+        else:
+            before = None
+        lines = list(m.symbol_lines)
+        for n, at, k in inside:
+            if k == "function" and at != a:
+                lines[named[n][0]] = f"{n} kind:label({'thumb' if m.functions[at][1] else 'arm'}) addr:{at:#010x}"
+        lines[i_a] = re.sub(r"size=0x[0-9a-fA-F]+", f"size={end - a:#x}", lines[i_a], count=1)
+        symbols = m.folder / "symbols.txt"
+        old_symbols = symbols.read_text(encoding="utf-8")
+        symbols.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if dsd:
+            command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
+            from ...limits import capped
+
+            res = subprocess.run(capped([*command, "delink", "--config-path", str(root / "config" / version / "arm9" /
+                                                                                      "config.yaml")]),
+                                 cwd=root, capture_output=True, text=True, timeout=3600, encoding="utf-8", errors="replace")
+            if res.returncode != 0:
+                symbols.write_text(old_symbols, encoding="utf-8")
+                if before is not None:
+                    path.write_text(before, encoding="utf-8")
+                raise ForkError(f"dsd refused the joined function: {(res.stdout + res.stderr).strip()[-300:]}")
+        took = [n for n, at, k in sorted(inside, key=lambda x: x[1]) if k == "function" and at != a]
+        name = next(n for n, at, _ in inside if at == a)
+        return f"{', '.join(took)} joined to {name}{' (moved from ' + b_file + ')' if ka != kb else ''}"
+    raise ForkError(f"{first} isn't one of the game's functions")
 
 
 def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(),

@@ -145,6 +145,12 @@ class NintendoDS(Console):
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")
 
+    def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
+        from . import recover, scratch
+
+        return recover.join_functions(fp.root, (fp.manifest or {})["version"], first, last, keep=keep,
+                                      dsd=scratch.dsd_path())
+
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch
 

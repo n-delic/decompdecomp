@@ -705,3 +705,81 @@ def test_two_pieces_with_bytes_no_symbol_claims_between_them_are_joined_with_tho
     (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
     m.symbols.add(BASE + 8)  # a symbol between them: not joined
     assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {}
+
+
+def _two_files(tmp_path, monkeypatch, words, lines, files):
+    """A main program of `words` at BASE with symbols.txt `lines` and source files `files` [(path, start, end)]."""
+    from decompnet.consoles.nds import recover
+
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True, exist_ok=True)
+    end = BASE + 4 * len(words)
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{end:#010x} kind:code\n\n" + "\n\n".join(
+        f"{p}:\n    .text start:{a:#010x} end:{b:#010x}\n" for p, a, b in files))
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words), [(BASE, end)],
+                       symbol_lines=lines)
+    for ln in lines:
+        s = recover.SYMBOL.match(ln)
+        m.symbols.add(int(s.group(4), 16))
+        if s.group(2) == "function":
+            m.functions[int(s.group(4), 16)] = (int(re.search(r"size=(0x[0-9a-f]+)", ln).group(1), 16), False)
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    return folder
+
+
+def test_agents_join_two_functions_the_analysis_cut_and_check_again_keeps_it(tmp_path, monkeypatch):
+    """join_functions: what agents agreed the analysis cut becomes one function, the symbols between it labels, across
+    two source files too; never a matched function or data. Check again's own joining only joins, never splits:
+    what the agents joined stays."""
+    from decompnet.consoles.nds import recover
+    from decompnet.forks.project import ForkError
+
+    words = [0xE92D4010, 0xE1A04000, 0xE8BD8010, 0xE3A00001, 0xE12FFF1E, 0xE12FFF1E]  # f (12), g (8), h (4)
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x8) addr:{BASE + 0xC:#010x}",
+             f"h kind:function(arm,size=0x4) addr:{BASE + 0x14:#010x}"]
+    folder = _two_files(tmp_path, monkeypatch, words, lines, [("src/a.c", BASE, BASE + 0xC), ("src/b.c", BASE + 0xC, BASE + 0x18)])
+    with pytest.raises(ForkError, match="matched"):
+        recover.join_functions(tmp_path, "v1", "f", "g", keep={"g"})
+    assert recover.join_functions(tmp_path, "v1", "g", "f") == "g joined to f (moved from src/b.c)"
+    assert (folder / "symbols.txt").read_text().splitlines()[:2] == [
+        f"f kind:function(arm,size=0x14) addr:{BASE:#010x}", f"g kind:label(arm) addr:{BASE + 0xC:#010x}"]
+    text = (folder / "delinks.txt").read_text()
+    assert f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x14:#010x}" in text
+    # Check again afterwards: nothing it does takes the join apart
+    joined = (folder / "symbols.txt").read_text()
+    m2 = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words), [(BASE, BASE + 0x18)],
+                        symbol_lines=joined.splitlines(), symbols={BASE, BASE + 0xC, BASE + 0x14})
+    m2.functions = {BASE: (0x14, False), BASE + 0x14: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m2])
+    recover.move_boundaries(tmp_path, "v1", log=lambda *_: None)
+    recover.merge_pieces(tmp_path, "v1", log=lambda *_: None)
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x14) addr:{BASE:#010x}"
+    assert "kind:label" in (folder / "symbols.txt").read_text().splitlines()[1]
+
+
+def test_a_join_needs_agents_of_two_models_and_a_refused_one_isnt_tried_again(tmp_path, monkeypatch):
+    """Three agents of two models propose the same join: it's tried, checked by the rebuild (reanalyse). One that
+    doesn't hold is remembered, and the next proposal is told so instead of trying again."""
+    from decompnet.app import forkengine
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "nds", "ready": True}, "x")
+    with net.store.tx() as db:
+        for k, name in enumerate(("f", "g")):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) VALUES(1,?,8,2,'open','a',?)",
+                       (name, BASE + 8 * k))
+    tried = []
+    monkeypatch.setattr(forkengine.ForkEngine, "reanalyse", lambda self, slug, step, **kw: tried.append(step) or None)
+    say = lambda who: net.forks.propose_join(net.local_agent(who)[0], "p", "g", "f", "f has no epilogue; g pops it")  # noqa: E731
+    assert "1 of 3 agents" in say("opencode-beam-free-1")
+    assert "1 of 2 models" in say("opencode-beam-free-2") and not tried
+    assert "refused" in say("claude-sonnet-5-5-1") and len(tried) == 1  # tried, and the rebuild took it back
+    assert "was tried, and refused" in say("claude-opus-5-5-1") and len(tried) == 1
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='g'")
+    with pytest.raises(NetworkError, match="matched"):
+        say("claude-opus-5-5-2")

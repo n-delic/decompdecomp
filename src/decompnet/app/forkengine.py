@@ -29,7 +29,8 @@ from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
 from ..hostenv import NO_WINDOW
-from ..network import Agent, Network, NetworkError, set_aside
+from ..network import NOT_C_AGENTS, NOT_C_MODELS, Agent, Network, NetworkError, model_of, set_aside
+from ..rom import RomError
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -765,8 +766,9 @@ class ForkEngine:
                     meta["held"] = self._meta(old)["held"]
                     if sym in held.get(uname, ()):
                         fuzzy = None if fuzzy is None else min(fuzzy, 99.99)
-                if old is not None:
-                    meta.update({k: v for k, v in self._meta(old).items() if k in _KEPT_KEYS})
+                if old is not None:  # its code grew (pieces joined to it): why it was set aside was about a piece
+                    kept = _KEPT_KEYS if old["size"] == size else ("reopened",)
+                    meta.update({k: v for k, v in self._meta(old).items() if k in kept})
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -2341,6 +2343,66 @@ class ForkEngine:
                     if span:
                         return text[:span[0]] + code + "\n" + text[span[0]:]
         return text.rstrip("\n") + "\n\n" + code
+
+    def propose_join(self, agent: Agent, slug: str, function: str, with_function: str, reason: str) -> str:
+        """An agent says two functions are one the analysis cut (a piece, a switch's cases in the next symbol): what
+        the rules (arch/, a console's own) missed. Once NOT_C_AGENTS agents of NOT_C_MODELS models say so of the same
+        two, the console joins them (Console.join_functions), checked as an analysis is (reanalyse: the game rebuilt
+        byte for byte, else taken back), never touching a matched function; a join that doesn't hold is remembered,
+        so it isn't proposed again. What agents joined stays: Check again only ever joins, never splits."""
+        if not reason.strip():
+            raise NetworkError("say why they're one function (what the code shows): the next agents read it")
+        proj, fp, cfg = self.get(slug)
+        if slug in self.net.links:
+            raise NetworkError("in a room, the host's project is the one to join functions in: say it in a note")
+        a, b = self._fn(slug, function), self._fn(slug, with_function)
+        if a["id"] == b["id"]:
+            raise NetworkError("name two different functions")
+        if any(f["status"] == "matched" for f in (a, b)):
+            raise NetworkError(f"{next(f['name'] for f in (a, b) if f['status'] == 'matched')} is matched: a join "
+                               "would change it, so it can't be one")
+        first, last = sorted((a, b), key=lambda f: (f["vram"] or 0, f["id"]))
+        key = f"{first['name']}+{last['name']}"
+        refused = (cfg.get("joins_refused") or {}).get(key)
+        if refused:
+            return f"Joining {first['name']} and {last['name']} was tried, and refused: {refused}. Work on them as they are."
+        with self.net.store.tx() as db:
+            meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (first["id"],)).fetchone()["meta"] or "{}")
+            said = meta.setdefault("joins", {}).setdefault(last["name"], {})
+            said[agent.name] = {"model": model_of(agent.name), "why": reason.strip()[:2000], "t": time.time()}
+            db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(meta), first["id"]))
+            self.net._event(db, proj["id"], agent.id, "join", f"{first['name']} + {last['name']}: {reason.strip()[:200]}")
+        models = {v["model"] for v in said.values()}
+        if len(said) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
+            return (f"Your proposal is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
+                    f"models): {first['name']} and {last['name']} are joined once enough agree and the game still "
+                    "builds byte for byte. Meanwhile, claim another function.")
+        console = consoles.get(cfg.get("platform"))
+        matched = {r["name"] for r in self.net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                         "status='matched'", proj["id"])}
+        why = None
+
+        def step(fp):
+            nonlocal why
+            try:
+                return console.join_functions(fp, self._meta(first).get("symbol") or first["name"],
+                                              self._meta(last).get("symbol") or last["name"], matched)
+            except (RomError, ForkError) as e:
+                why = str(e)
+                raise ForkError(why) from None
+        done = self.reanalyse(slug, step, log=lambda *_: None)
+        if not done:
+            why = why or "the game no longer rebuilt byte for byte with it"
+            self.net._update_cfg(slug, lambda c: c.setdefault("joins_refused", {}).update({key: why}))
+            return f"{len(said)} agents agreed, but joining {first['name']} and {last['name']} was refused: {why}."
+        try:
+            self.net.add_note(self.net.local_agent("decompdecomp")[0], slug,
+                              f"Agents ({', '.join(sorted(said))}) found this was cut by the analysis, and decompdecomp "
+                              f"joined it: {done}. It's the whole function now, whatever older notes say.",
+                              first["name"])
+        except NetworkError:
+            pass
+        return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."
 
     def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False) -> str:
         fn = self._fn(slug, function)

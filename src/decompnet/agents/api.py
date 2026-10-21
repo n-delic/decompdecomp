@@ -429,6 +429,11 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                                                        new=st("replacement", True), message=st("why", True))),
         "file_status": ("How far a source file (or a function's file) is from being linked: functions left, its data "
                         "next to the original's, why the last link failed.", s(path=st("file or function", True))),
+        "join_functions": ("Forks: two functions are one the game's analysis cut (a piece with no prologue using registers "
+                           "the code before set, an epilogue alone, a switch's cases in the next symbol); joined once "
+                           "agents of two models agree and the game still builds byte for byte.",
+                           s(function=st("function", True), with_function=st("the other part", True),
+                             reason=st("what in the code shows it", True))),
         "split_file": ("Divide a source file at a function: it and the rest of the file's code (and data from the given "
                        "offsets) go to a new file. Kept only if the game still builds identically.",
                        s(path=st("file", True), at=st("function name or .text offset", True),

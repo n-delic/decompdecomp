@@ -406,6 +406,11 @@ def test_measuring_again_keeps_what_set_a_function_aside_and_what_gave_it_back(t
     assert rows["stub"][0] == "asm" and rows["stub"][1]["not_c"] and net.function_map("p")[0]["not_c"]
     assert rows["back"][0] == "open" and rows["back"][1]["reopened"]
     assert rows["one"][0] == "open" and rows["one"][1]["not_c"] == {"a-1": {}}
+    # pieces joined to it: its code grew, so what set it aside (about the piece) goes, and agents get it again
+    report["units"][0]["functions"][0]["size"] = "40"
+    net.forks.sync("p", log=lambda *_: None)
+    stub = net.store.one("SELECT status, meta FROM functions WHERE name='stub'")
+    assert stub["status"] == "open" and "asm_code" not in json.loads(stub["meta"]) and "not_c" not in json.loads(stub["meta"])
 
 
 @needs_tools

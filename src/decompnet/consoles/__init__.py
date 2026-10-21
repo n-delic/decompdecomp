@@ -186,6 +186,12 @@ class Console:
         its own: then try_compiler can switch it. None: the project's build decides alone."""
         return None
 
+    def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
+        """Make one function of `first` to `last` in the project's config (agents agreed the analysis cut it:
+        ForkEngine.propose_join, which checks the rebuild); returns what changed, as a sentence. Not for matched
+        functions (`keep`)."""
+        raise RomError(f"{self.name} projects can't join functions yet: the agents' agreement is kept for when they can")
+
     def set_file_compiler(self, fp, source: str, compiler: str) -> str:
         """Make the project build a source file with `compiler` (file_compiler says whether it can); returns the file
         that says so, relative to the project (to commit)."""

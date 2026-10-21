@@ -516,11 +516,17 @@ class Network:
         function the user gave back. Returns how many."""
         pid = self._project(slug)["id"]
         said: dict[int, dict] = collections.defaultdict(dict)
+        # notes from before pieces were joined to a function were about a piece, not about it (decompdecomp's note
+        # on a join says so): they don't count
+        joined = {r["function_id"]: r["t"] for r in self.store.all(
+            "SELECT n.function_id, MAX(n.created_at) AS t FROM notes n JOIN agents a ON a.id=n.agent_id WHERE "
+            "n.project_id=? AND a.name='decompdecomp' AND n.text LIKE '%joined%' GROUP BY n.function_id", pid)}
         for r in self.store.all("SELECT n.function_id, n.text, n.created_at, a.name FROM notes n JOIN agents a "
                                 "ON a.id=n.agent_id JOIN functions f ON f.id=n.function_id WHERE f.project_id=? AND "
                                 "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id",
                                 pid):
-            if r["name"] in ("you", *MACHINE_AGENTS) or not NOT_C_NOTE.search(r["text"]) or FLAG_NOTE.search(r["text"]):
+            if r["name"] in ("you", "decompdecomp", *MACHINE_AGENTS) or r["created_at"] <= joined.get(r["function_id"], float("-inf")) \
+                    or not NOT_C_NOTE.search(r["text"]) or FLAG_NOTE.search(r["text"]):
                 continue
             said[r["function_id"]][r["name"]] = {"model": model_of(r["name"]), "why": r["text"][:NOTE_CHARS],
                                                  "t": r["created_at"], "from": "note"}

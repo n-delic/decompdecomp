@@ -132,7 +132,9 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
 6. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next; sure that
-   no C makes its code at all (a piece of another function, hand-written assembly): not_c=true, saying why. Very large
+   no C makes its code at all (hand-written assembly): not_c=true, saying why. Part of another function
+   the analysis cut (no prologue, registers the code before set, a switch's cases in the next symbol)?
+   join_functions(it, the other part, why), so it becomes one whole function. Very large
    functions: get the structure right first; a near miss is worth the extra compiles.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
@@ -267,12 +269,14 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "file_status": lambda net, agent, slug, path: net.forks.file_status(_fork(net, slug, "file_status"), path),
     "split_file": lambda net, agent, slug, path, at, new_name="", data="":
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
+    "join_functions": lambda net, agent, slug, function, with_function, reason:
+        net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
 ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
             "compiler_map", "claim_readable", "make_readable", "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file"}
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
 
 def tool_names(fork: bool) -> list[str]:
@@ -557,6 +561,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         the game still builds byte for byte and every match still matches. A file links only when its code and
         data are exactly one original file's."""
         return await run(ctx, "split_file", path=path, at=at, new_name=new_name, data=data)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def join_functions(ctx: Context, function: str, with_function: str, reason: str) -> str:
+        """Forks: `function` and `with_function` are one function the game's analysis cut in two (or more: the
+        symbols between them too). A piece with no prologue that uses registers the code before it set, an epilogue
+        alone, a switch whose cases are in the next symbol. Say what in the code shows it. Once agents of two models
+        say so of the same two, they're joined, if the game still builds byte for byte; never a matched function."""
+        return await run(ctx, "join_functions", function=function, with_function=with_function, reason=reason)
 
     @mcp.prompt(title="Decompile", description="Work loop: claim functions and match them byte for byte.")
     def work(count: str = "5") -> str:
