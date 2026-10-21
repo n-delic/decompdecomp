@@ -136,6 +136,17 @@ def register(app: App) -> None:
             return net.overview(slug)
         return {"job": jobs.start("scope", work)}
 
+    def p_unanalysed(slug, request, data):
+        """Bring in the code the project's import left unanalysed (Console.unanalysed), once: a new analysis of that
+        code alone (a job: it runs the console's analysis, Ghidra for some), then the project measured again."""
+        if not net.fork_slug(slug):
+            raise ValueError("only projects started from scratch have code a new analysis can bring in")
+
+        def work(log):
+            net.forks.analyse_unanalysed(slug, log=log)
+            return net.overview(slug)
+        return {"job": jobs.start("analysis", work)}
+
     def p_note(slug, request, data):
         """A note from you on a function (or the whole project): agents read notes when they claim it."""
         agent, _ = net.local_agent("you")
@@ -187,6 +198,7 @@ def register(app: App) -> None:
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
+        "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),

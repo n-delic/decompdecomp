@@ -27,7 +27,7 @@ from pathlib import Path
 from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
-from ..forks.project import EDITABLE, GAME, SCOPES, STATE, ForkError, ForkProject
+from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
 from ..network import GAME_CODE, Agent, Network, NetworkError
 from ..scoring import percent_text
 from ..textedit import replace_once
@@ -603,8 +603,9 @@ class ForkEngine:
     def set_scope(self, slug: str, scope: str, log=print) -> dict:
         """What the project covers (forks/project.py SCOPES): the game's own code, or the whole program. Kept in its
         manifest, so it travels with the project's folder; measuring again then opens its set-aside functions to
-        agents and counts them (or keeps them out again). Hand-written assembly stays assembly either way. Returns
-        the new measures."""
+        agents and counts them (or keeps them out again). Hand-written assembly stays assembly either way. The whole
+        program also brings in what the project's import left unanalysed (Console.unanalysed), once. Returns the new
+        measures."""
         if scope not in SCOPES:
             raise NetworkError(f"a project covers the game's own code ({GAME!r}) or the whole program, not {scope!r}")
         proj, fp, cfg = self.get(slug)
@@ -615,7 +616,25 @@ class ForkEngine:
             with self.net.store.tx() as db:
                 self.net._event(db, proj["id"], None, "scope", "this project covers the whole program now"
                                 if scope != GAME else "this project covers the game's own code now")
+        if scope == PROGRAM and self._unanalysed(fp, cfg) and self.analyse_unanalysed(slug, log=log) is not None:
+            return self.get(slug)[2].get("measures") or {}  # (measured again with what it brought in)
         return self.sync(slug, log=log)
+
+    def _unanalysed(self, fp: ForkProject, cfg: dict) -> str | None:
+        """What the project's import left unanalysed that a new analysis can bring in (Console.unanalysed), or None.
+        A console that can't tell (its program missing, say) has nothing to offer."""
+        try:
+            return consoles.get(cfg.get("platform")).unanalysed(fp) if fp.manifest else None
+        except Exception:  # noqa: BLE001  Settings shows without it rather than failing
+            return None
+
+    def analyse_unanalysed(self, slug: str, log=print) -> str | None:
+        """Bring in what the project's import left unanalysed (Console.analyse_unanalysed: a new analysis of that code
+        alone, through reanalyse, keeping every match, note and name). Returns what changed (None: nothing)."""
+        proj, fp, cfg = self.get(slug)
+        if not self._unanalysed(fp, cfg):
+            return None
+        return consoles.get(cfg.get("platform")).analyse_unanalysed(self.net, slug, log=log)
 
     def reanalyse(self, slug: str, step, paths=("config",), fix=False, log=print) -> str | None:
         """A console's improved analysis of its games, applied to a project made before it (Console.on_start): `step`
@@ -2644,12 +2663,14 @@ class ForkEngine:
     def _scope_facts(self, proj, fp: ForkProject, cfg: dict) -> dict:
         """What the project covers, for its page and Settings: `scope`, `left_out` (functions its progress leaves
         out now), `set_aside` (what its set-aside list names: {functions, without_source}, None: nothing) and
-        `unimported` (set-aside code its import didn't bring in at all, in the importer's words)."""
+        `unanalysed` (code its import left unanalysed that a new analysis can bring in, Console.unanalysed's words).
+        (An older import's manifest may say what it left out as `set_aside_unimported`: the console's own check
+        replaces it, so it's no longer read.)"""
         manifest = fp.manifest or {}
         left = self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND NOT ({GAME_CODE})",
                                   proj["id"])["n"]
         return {"scope": fp.scope if manifest else None, "left_out": left or 0, "set_aside": cfg.get("set_aside"),
-                "unimported": manifest.get("set_aside_unimported") or None}
+                "unanalysed": self._unanalysed(fp, cfg) if cfg.get("origin") == "scratch" else None}
 
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
         """(the project's own compiler, the parts built with another: one per source file, with its address range),

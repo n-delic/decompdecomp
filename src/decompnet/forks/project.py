@@ -38,8 +38,9 @@ STATE = ".decomp-wtf"
 # What a project covers (its manifest's `scope`): the game's own code, with the code its set-aside list names (library
 # code, middleware, an SDK, the C runtime) kept from agents and out of progress; or the whole program, every function
 # open and counted. A manifest without one covers the game's own code, as every project did before there was a choice.
-# An import may leave set-aside code out of the project altogether (no functions, no source files): its manifest's
-# `set_aside_unimported` says what, in a few words, since covering the whole program later can't bring that back.
+# The scope decides only that: an import analyses the same code whatever it is. Code an older import left out
+# altogether (no functions, no source files) a console can bring in later without a new import (Console.unanalysed);
+# such a manifest may still say what as `set_aside_unimported`, which nothing reads any more.
 GAME, PROGRAM = "game", "program"
 SCOPES = (GAME, PROGRAM)
 _CONFIG_CACHE: dict[str, tuple] = {}  # objdiff.json path -> (stat key, parsed, units by name)

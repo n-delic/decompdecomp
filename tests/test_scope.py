@@ -85,7 +85,7 @@ def test_set_aside_code_is_kept_from_agents_for_the_game_and_open_for_the_whole_
     assert (m["total_functions"], m["matched_functions"], m["set_aside_functions"]) == (2, 1, 3)
     ov = net.forks.overview(slug)
     assert (ov["scope"], ov["left_out"], ov["functions"], ov["matched"]) == ("game", 3, 2, 1)
-    assert ov["set_aside"] == {"functions": 3, "without_source": 1} and ov["unimported"] is None
+    assert ov["set_aside"] == {"functions": 3, "without_source": 1} and ov["unanalysed"] is None
 
     # hand-written assembly (here: what a twin says) is the game's own and isn't the scope's to change
     row = net.store.one("SELECT id, meta FROM functions WHERE name='game_b'")
@@ -112,14 +112,59 @@ def test_set_aside_code_is_kept_from_agents_for_the_game_and_open_for_the_whole_
         net.forks.set_scope(slug, "everything", log=lambda *_: None)
 
 
-def test_an_import_that_left_set_aside_code_out_says_so(tmp_path, monkeypatch):
+def _unanalysed(monkeypatch, left: list[str]) -> list[str]:
+    """The project's console says its import left `left[0]` unanalysed (Console.unanalysed) until a new analysis
+    brings it in (analyse_unanalysed); returns the slugs analysed."""
+    console = type(consoles.get("pc"))
+    ran = []
+
+    def analyse(self, net, slug, log=print):
+        ran.append(slug)
+        left.clear()
+        net.forks.sync(slug, log=log)  # (as reanalyse does once it keeps a change)
+        return "the SDK's own sections are analysed now"
+    monkeypatch.setattr(console, "unanalysed", lambda self, fp: left[0] if left else None)
+    monkeypatch.setattr(console, "analyse_unanalysed", analyse)
+    return ran
+
+
+def test_code_an_older_import_left_out_is_offered_and_brought_in_once(tmp_path, monkeypatch):
+    """An older import's manifest may still say what it left out (`set_aside_unimported`): nothing reads it. Settings
+    offers what the console says a new analysis can bring in, and choosing the whole program brings it in too."""
     net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
     root = tmp_path / "ws" / "p"
     root.mkdir(parents=True)
-    slug = _project(net, root, monkeypatch, {"scope": "program", "set_aside_unimported": "the SDK's own sections"})
+    slug = _project(net, root, monkeypatch, {"set_aside_unimported": "the SDK's own sections"})
     net.forks.sync(slug, log=lambda *_: None)
     ov = net.forks.overview(slug)
-    assert (ov["scope"], ov["left_out"], ov["unimported"]) == ("program", 0, "the SDK's own sections")
+    assert "unimported" not in ov and ov["unanalysed"] is None
+
+    ran = _unanalysed(monkeypatch, ["the SDK's own sections"])
+    assert net.forks.overview(slug)["unanalysed"] == "the SDK's own sections"
+    net.forks.set_scope(slug, "game", log=lambda *_: None)  # the game's own code: offered, not run
+    assert ran == [] and net.forks.overview(slug)["unanalysed"] == "the SDK's own sections"
+    m = net.forks.set_scope(slug, "program", log=lambda *_: None)
+    assert ran == [slug] and m == REPORT["measures"] and _statuses(net)["lib_b"] == "open"
+    ov = net.forks.overview(slug)
+    assert (ov["scope"], ov["unanalysed"]) == ("program", None)
+    assert net.forks.analyse_unanalysed(slug, log=lambda *_: None) is None and ran == [slug]  # nothing left: once
+    net.forks.set_scope(slug, "game", log=lambda *_: None)
+    net.forks.set_scope(slug, "program", log=lambda *_: None)
+    assert ran == [slug]
+
+
+def test_a_console_that_fails_to_say_what_is_unanalysed_offers_nothing(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+
+    def broken(self, fp):
+        raise OSError("the program isn't there")
+    monkeypatch.setattr(type(consoles.get("pc")), "unanalysed", broken)
+    net.forks.sync(slug, log=lambda *_: None)
+    assert net.forks.overview(slug)["unanalysed"] is None
+    assert net.forks.analyse_unanalysed(slug, log=lambda *_: None) is None
 
 
 class _Recognising(consoles.Console):
@@ -213,3 +258,17 @@ def test_the_settings_route_changes_the_scope_and_measures_again(client, monkeyp
     assert c.post("/api/scope", json={"slug": slug, "scope": "most"}).status_code == 400
     j = _job(c, c.post("/api/scope", json={"slug": slug, "scope": "game"}).json()["job"])
     assert j["result"]["left_out"] == 3 and _statuses(net)["lib_b"] == "asm"
+
+
+def test_the_settings_route_analyses_what_the_import_left_out(client, monkeypatch):
+    c, net, home = client
+    root = home / "p"
+    root.mkdir()
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    ran = _unanalysed(monkeypatch, ["the SDK's own sections"])
+    assert c.get(f"/api/project?slug={slug}").json()["unanalysed"] == "the SDK's own sections"
+    j = _job(c, c.post("/api/unanalysed", json={"slug": slug}).json()["job"])
+    assert j["state"] == "done", j
+    assert ran == [slug] and j["result"]["unanalysed"] is None and j["result"]["scope"] == "game"
+    assert _statuses(net)["lib_b"] == "asm"  # brought in, and set aside: the project covers the game's own code

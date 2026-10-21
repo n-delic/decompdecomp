@@ -370,8 +370,11 @@ async function renderProjectSettings() {
    import recognised left out of agents' work and progress, or the whole program. Shown where there's such code. */
 function renderScope(ov) {
   const aside = ov.set_aside, panel = $("scopePanel");
-  panel.hidden = !(ov.kind === "fork" && ov.scope && (aside || ov.unimported || ov.scope === "program"));
+  panel.hidden = !(ov.kind === "fork" && ov.scope && (aside || ov.unanalysed || ov.scope === "program"));
   if (panel.hidden) return;
+  // code the project's import left unanalysed (an older import's): a new analysis brings it in, once
+  $("unanalysedRow").hidden = !ov.unanalysed;
+  if (ov.unanalysed) $("unanalysedGo").textContent = `Analyse ${ov.unanalysed}`;
   const game = ov.scope !== "program", n = aside ? aside.functions : 0;
   $("scopeSeg").querySelectorAll("[data-scope]").forEach((b) => {
     const on = b.dataset.scope === ov.scope;
@@ -382,7 +385,7 @@ function renderScope(ov) {
     ? `${plural(n, "function")} of library and middleware code ${n === 1 ? "is" : "are"} left out: agents don't work on ${n === 1 ? "it" : "them"} and progress doesn't count ${n === 1 ? "it" : "them"}. Choosing the whole program opens ${n === 1 ? "it" : "them"} to agents and counts ${n === 1 ? "it" : "them"}.`
     : `Every function is open to agents and counted${n ? `, the ${plural(n, "function")} of library and middleware code included` : ""}. Choosing the game's own code leaves ${n === 1 ? "it" : "them"} out again.`];
   if (aside?.without_source) lines.push(`${plural(aside.without_source, "of these function")} ${aside.without_source === 1 ? "has" : "have"} no source file in this project, so agents can't work on ${aside.without_source === 1 ? "it" : "them"} either way: the whole program only counts ${aside.without_source === 1 ? "it" : "them"}.`);
-  if (ov.unimported) lines.push(`This project's import left out ${ov.unimported} altogether: switching doesn't bring that in. To decompile it too, import the game again and choose “The whole program”.`);
+  if (ov.unanalysed) lines.push(`This project's import didn't analyse ${ov.unanalysed}. Analysing that code now gives its functions source files of their own (${game ? "left out like the rest of the library code" : "open to agents and counted"}) and keeps every match, note and name; choosing the whole program analyses it too.`);
   lines.push("Hand-written assembly stays assembly either way.");
   $("scopeWhat").textContent = lines.join(" ");
 }
@@ -400,6 +403,20 @@ $("scopeSeg").onclick = async (e) => {
     renderProjectSettings();
     toast(b.dataset.scope === "program" ? "This project covers the whole program now." : "This project covers the game's own code now.");
   } catch (err) { toast(esc(err.message), "err"); } finally { buttons.forEach((x) => { x.disabled = false; }); }
+};
+$("unanalysedGo").onclick = async () => {
+  const b = $("unanalysedGo");
+  if (!S.ov || !S.ov.unanalysed) return;
+  b.disabled = true;
+  try {
+    const { job } = await api("/api/unanalysed", { method: "POST", body: { slug: S.slug } });
+    $("scopeLog").hidden = false;
+    S.ov = await followJob(job, $("scopeLog"));
+    $("scopeLog").hidden = true;
+    renderStats(S.ov);
+    renderProjectSettings();
+    toast(S.ov.unanalysed ? "The new analysis didn't bring that code in: the project's feed says why." : "Analysed: its functions are in the project now.", S.ov.unanalysed ? "err" : undefined);
+  } catch (err) { toast(esc(err.message), "err"); } finally { b.disabled = false; }
 };
 $("setTcReset").onclick = () => { $("setFlags").value = ""; };
 $("autoAdjust").onchange = async () => {

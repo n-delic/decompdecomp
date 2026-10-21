@@ -160,12 +160,24 @@ class Console:
     def on_start(self, net, slug: str, log=print) -> None:
         """Work each of its projects gets when the app starts (what projects imported by older versions lack)."""
 
+    def unanalysed(self, fp) -> str | None:
+        """Code of the program that the project's import left unanalysed and a new analysis can bring in without
+        importing again (what an older import of this console left out), in a few words for the project's Settings
+        ("the library sections XMV, D3D (2 sections)"); None: nothing. Called when Settings shows: keep it quick."""
+        return None
+
+    def analyse_unanalysed(self, net, slug: str, log=print) -> str | None:
+        """Bring in what `unanalysed` names: its functions with source files of their own, set aside or not as the
+        project's scope says, every existing match, note and name kept (forkengine.reanalyse). Returns what changed,
+        as a sentence; None: nothing did."""
+        return None
+
     # PROJECT mode
 
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
         """Write the community's kind of project for the game into `root`: {"platform", "id", "title", "compiler"}.
-        A console that `sets_aside` takes `scope=` too: "program" brings in all the code it sets aside, functions and
-        source files, where "game" may leave some out (the manifest's `set_aside_unimported` says what)."""
+        A console that `sets_aside` takes `scope=` too, though an import should analyse the same code whatever it is:
+        the scope only decides, when the project is measured, whether what it sets aside is worked on and counted."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
     def game_info(self, game: Path) -> dict:
