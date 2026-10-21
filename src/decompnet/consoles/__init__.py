@@ -71,6 +71,9 @@ class Console:
     demo = ""  # its homemade demo game: a folder in projects/ whose build.py makes it (tests/test_consoles.py)
     demo_tools: tuple[str, ...] = ()  # what building and importing the demo needs: toolchains, or programs on PATH
     own_features: frozenset[str] = frozenset()  # EXPORT, REBUILD_CHECK
+    # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
+    # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
+    sets_aside = False
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
@@ -102,14 +105,16 @@ class Console:
         return False
 
     def import_game(self, net, file: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                    name: str = "", log=print) -> str:
-        """Start a project from the user's own copy of the game; returns its slug. The mode's way by default."""
+                    name: str = "", log=print, scope: str | None = None) -> str:
+        """Start a project from the user's own copy of the game; returns its slug. The mode's way by default.
+        `scope`: what the project covers, where the console sets library code aside (`sets_aside`); else ignored."""
         if self.mode == ROM:
             return net.import_split(self, self.read_game(file, name), toolchain=toolchain, flags=flags, log=log)
         if self.mode == PROJECT:
             path = Path(file) if isinstance(file, (str, Path)) else net.saved_file(file, name or self.upload_name(file))
             known = toolchain if toolchain in {c.id for c in self.compilers} else None  # (a ROM console's id: not ours)
-            return net.forks.create_scratch(path, self, compiler=known, log=log)
+            return net.forks.create_scratch(path, self, compiler=known, log=log,
+                                            scope=scope if self.sets_aside else None)
         raise RomError(f"{self.name or 'these'} games can't be started from scratch in this version: continue a public "
                        "decomp of the game instead")
 
@@ -155,10 +160,24 @@ class Console:
     def on_start(self, net, slug: str, log=print) -> None:
         """Work each of its projects gets when the app starts (what projects imported by older versions lack)."""
 
+    def unanalysed(self, fp) -> str | None:
+        """Code of the program that the project's import left unanalysed and a new analysis can bring in without
+        importing again (what an older import of this console left out), in a few words for the project's Settings
+        ("the library sections XMV, D3D (2 sections)"); None: nothing. Called when Settings shows: keep it quick."""
+        return None
+
+    def analyse_unanalysed(self, net, slug: str, log=print) -> str | None:
+        """Bring in what `unanalysed` names: its functions with source files of their own, set aside or not as the
+        project's scope says, every existing match, note and name kept (forkengine.reanalyse). Returns what changed,
+        as a sentence; None: nothing did."""
+        return None
+
     # PROJECT mode
 
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
-        """Write the community's kind of project for the game into `root`: {"platform", "id", "title", "compiler"}."""
+        """Write the community's kind of project for the game into `root`: {"platform", "id", "title", "compiler"}.
+        A console that `sets_aside` takes `scope=` too, though an import should analyse the same code whatever it is:
+        the scope only decides, when the project is measured, whether what it sets aside is worked on and counted."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
     def game_info(self, game: Path) -> dict:
@@ -201,6 +220,11 @@ class Console:
         changed (relative to the project, to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
 
+    def data_bytes(self, fp, addr: int, length: int) -> bytes | None:
+        """The raw bytes at an address of the user's copy (for diffs to show the constants an instruction loads), or
+        None where the project can't tell."""
+        return None
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:
@@ -227,7 +251,8 @@ class Console:
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
-                "default_compiler": self.default_compiler({}, "") if self.mode else ""}
+                "default_compiler": self.default_compiler({}, "") if self.mode else "",
+                "sets_aside": self.mode == PROJECT and self.sets_aside}
 
 
 def _registry() -> list[Console]:

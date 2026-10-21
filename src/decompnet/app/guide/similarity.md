@@ -18,5 +18,6 @@ Revolution SDKs, NitroSDK on DS, PSY-Q on PS1, sead/nn on Switch, RenderWare, Ha
 functions are usually matched already in other public decomps.
 
 Scheduling that works: easiest functions first, then functions similar to ones already matched.
-Don't grind on one function. compile_and_diff tells you when to move on: after 3 compiles in a row
-without a better score for small functions, up to 10 for the biggest. Then release it with notes.
+Don't grind on one function. compile_and_diff tells you when to move on: the function's brief names
+its number, and every result shows the count ("no better in 2/6 compiles (move on at 6)"). Then
+release it with notes.

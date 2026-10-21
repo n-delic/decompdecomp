@@ -146,3 +146,79 @@ def test_functions_given_up_on_go_to_the_strongest_model_at_work(tmp_path):
         db.execute("UPDATE functions SET status='matched' WHERE name IN ('fresh', 'tried')")
     other, _ = net.local_agent("opencode-beam-free-2")  # the same weak model: only "hard" is left, so it gets it
     assert net.claim_row(other, "game", None, "easiest")["name"] == "hard"
+
+
+def _game(tmp_path, functions):
+    """A ROM-kind project with these (name, n_insns, status) functions."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "ppc", 1, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        for name, n, status in functions:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, status, "a"))
+    return net, pid
+
+
+def _held(net, agent):
+    row = net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?", agent.id)
+    return row and row["name"]
+
+
+def test_helpers_reused_by_name_claim_again_after_the_app_restarts(tmp_path):
+    """On a demo fork four Haiku helpers found nothing to claim among ten open functions, while a new Opus helper claimed
+    at once. Their names (reused across runs) had released those functions in earlier runs, and the rest were still
+    held by helpers that died when the app was updated."""
+    import time
+
+    net, pid = _game(tmp_path, [("done", 4, "matched"), ("f1", 4, "open"), ("f2", 6, "open"), ("f3", 8, "open")])
+    haiku1, _ = net.local_agent("claude-haiku-1")
+    haiku2, _ = net.local_agent("claude-haiku-2")
+    chat = net.authenticate(net.register_agent("elsewhere", "you", origin="cli"))  # an agent over MCP, on its own
+    for name in ("f1", "f2"):  # given up on by haiku-1 in an earlier run
+        assert net.claim_row(haiku1, "game", name)["name"] == name
+        net.release(haiku1, name, "too hard for me", "game")
+    with net.store.tx() as db:
+        db.execute("UPDATE events SET created_at=created_at-3600 WHERE kind='release'")
+    assert net.claim_row(haiku2, "game", "f3")["name"] == "f3"  # then the app stopped with haiku-2 on f3
+    assert net.claim_row(chat, "game", "f2")["name"] == "f2"  # the user's own agent, which runs on its own
+
+    assert net.release_local_claims("the app restarted") == ["f3"]  # the app starting again
+    assert _held(net, haiku2) is None and _held(net, chat) == "f2"  # an agent elsewhere keeps its lease
+    note = net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE name='f3')")
+    assert "its agent stopped (the app restarted)" in note["text"]
+    assert net.store.one("SELECT abandons FROM functions WHERE name='f3'")["abandons"] == 0  # nobody gave up on it
+
+    assert net.claim_row(haiku1, "game", None)["name"] == "f3"  # the function it hasn't tried first
+    net.release(haiku1, "f3", "", "game")
+    # what it released in an earlier run comes after all, rather than nothing
+    assert net.claim_row(haiku1, "game", None)["name"] == "f1"
+    assert time.time() - net.store.one("SELECT MAX(created_at) AS t FROM events WHERE kind='freed'")["t"] < 60
+
+
+def test_an_agent_doesnt_get_back_what_it_just_released_until_its_run_ends(tmp_path):
+    net, _ = _game(tmp_path, [("x", 4, "open")])
+    a, _ = net.local_agent("a")
+    assert net.claim_row(a, "game", None)["name"] == "x"
+    net.release(a, "x", "", "game")
+    assert net.claim_row(a, "game", None) is None
+    net.release_stopped([a.id], "it was stopped")  # its helper stopped: the next run starts afresh
+    assert net.claim_row(a, "game", None)["name"] == "x"
+
+
+def test_nothing_to_claim_says_who_holds_what_and_what_you_set_aside(tmp_path):
+    net, _ = _game(tmp_path, [("mine", 4, "open"), ("theirs", 6, "open"), ("done", 8, "matched")])
+    a, _ = net.local_agent("a")
+    b, _ = net.local_agent("b")
+    net.claim_row(a, "game", "mine")
+    net.release(a, "mine", "", "game")
+    net.claim_row(b, "game", "theirs")
+    said = net.claim(a, "game")
+    assert "2 functions are open" in said, said
+    assert "theirs (b, 29 min left)" in said, said
+    assert "1 you released yourself" in said and 'function="mine"' in said, said
+    assert net.claim_row(a, "game", "mine")["name"] == "mine"  # by name: at once
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched'")
+        db.execute("DELETE FROM claims")
+    assert "every function matches" in net.claim(a, "game")

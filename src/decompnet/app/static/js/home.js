@@ -219,6 +219,8 @@ function setupCompilers(info) {
   const p = info.platform, select = $("compilerPick"), note = $("compilerNote");
   const con = consoleOf(p) || { mode: "", compilers: [], packs: [], default_compiler: "" };
   $("compilerRow").hidden = false; note.hidden = true; $("mwConsent").hidden = true; $("mwAccept").checked = false;
+  // where the import recognises library code: the project covers the game's own code, or the whole program
+  $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
   if (con.mode === "rom") {
     if (info.order.endsWith("disc image")) {
       $("compilerRow").hidden = true; note.hidden = false;
@@ -334,20 +336,27 @@ $("analyse").onclick = async () => {
     try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info.platform)].title, e, $("jobLog").textContent); return; }
   }
   const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}`, body, title, picked.name);
+  const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => {
   e.stopPropagation();
+  // the game isn't known yet: the scope question shows when any platform's import recognises library code
+  const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
   const body = dialog("Use a file on this computer", `<p class="muted">For big disc images: decompdecomp reads the file where it is instead of copying it through the browser.</p>
     <label class="field"><span>Path to the game file</span><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"></label>
+    ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
+      <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
+      <option value="program">The whole program: every function is decompiled and counted</option></select></label>` : ""}
     <label class="check"><input type="checkbox" id="ppOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
     <div class="row"><button class="primary" id="ppGo" type="button" disabled>Start decompiling</button><button class="ghost" data-close type="button">Cancel</button></div>`);
   body.querySelector("#ppOwn").onchange = () => { $("ppGo").disabled = !$("ppOwn").checked; };
   body.querySelector("#ppGo").onclick = () => {
     const path = $("ppPath").value.trim();
     if (!path) return;
+    const scope = asks ? $("ppScope").value : "";
     closeDialog();
-    runImport(`confirmed=1&path=${encodeURIComponent(path)}`, undefined, "Analysing your game…");
+    runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`, undefined, "Analysing your game…");
   };
 };
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");

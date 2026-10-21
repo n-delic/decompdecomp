@@ -95,6 +95,12 @@ Where to start on a gap:
   (OpenAI's `reasoning_effort`, Minimal to High, for servers whose models reason). A model at another effort is a
   helper of its own (`claude-opus-xhigh-1`), so its matches and spend are counted apart.
 
+- **Agents try before they release, and say what a function waits for.** On a large x86 game agents released
+  functions seconds after claiming them, untried (12,565 releases, median 5 s). release_function now answers a
+  release before compile_and_diff's move-on rule once with what to do; a release without a compile doesn't count
+  against the session; `needs=<function>` records a prerequisite: the function waits (claimed last), the one it
+  needs goes first and is handed over, and the match brings the waiting one back first. Notes saying "already
+  matched" on a function that doesn't match are marked out of date.
 - **Rooms that say what's happening** (1.0.4-alpha). A guest waiting for the host sees "Waiting for the host to let
   you in" over the project, not an empty one and a red "Room offline"; then "Getting the host's work", counting down.
   A new guest starts at the room's newest event instead of replaying its history into the feed and notifications,

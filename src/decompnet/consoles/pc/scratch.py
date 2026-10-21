@@ -426,6 +426,31 @@ typedef int BOOL;
 """
 
 
+_PROGRAMS: dict[tuple[str, int], object] = {}  # (path, mtime) -> its parsed program, for data_bytes
+
+
+def _program(root: Path, manifest: dict):
+    """The user's copy, parsed once per change of the file (a diff reads several constants from it)."""
+    path = root / manifest["game"]["path"]
+    key = (str(path), path.stat().st_mtime_ns)
+    if key not in _PROGRAMS:
+        _PROGRAMS.clear()
+        _PROGRAMS[key] = read_pe(path.read_bytes())
+    return _PROGRAMS[key]
+
+
+def data_bytes(root: Path, manifest: dict, addr: int, length: int) -> bytes | None:
+    """The bytes at an address of the user's copy, or None (not in it, uninitialized, no copy)."""
+    try:
+        pe = _program(root, manifest)
+    except Exception:  # no copy, or one that doesn't parse: the diff goes without values
+        return None
+    if pe.section_at(addr) is None:
+        return None
+    data = pe.read(addr, length)
+    return data if data and len(data) == length else None
+
+
 def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_BYTES) -> str:
     """What read_data shows on a PC project: the bytes at a D_<address> (or any address) in the user's copy, the
     addresses its words point to, and a string or floats when it reads as one."""

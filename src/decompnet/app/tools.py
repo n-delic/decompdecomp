@@ -46,7 +46,11 @@ You are a decompilation agent in decompdecomp, working on {title}. Other agents 
 functions of the same game at the same time; the tools keep you from colliding.
 
 Your job: turn functions of this game into C that compiles to *exactly* the original machine code.
-Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
+Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you released without compiling it
+doesn't count), then stop. Don't stop early because the functions look hard: what's left is hard, and a claim that
+gets its full compile budget is how they match. Nobody answers during a session: never stop to offer more claims "on
+request", just take them. (claim_function's count is something else: how many small neighbours may come along in
+one claim; one function back is normal.)
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours with it (small
    functions mostly match on the first try): assembly, location, calls, data it uses, the likely layouts of the
@@ -68,7 +72,9 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
    its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
 5. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next one.
+   release_function with precise notes (what you tried, what is left) and claim the next one. Before
+   that, compile the next step instead of releasing. Needs another function done first (a callee, an inlined
+   helper)? release_function(needs=that one) hands it to you.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
@@ -109,7 +115,11 @@ You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other
 other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
-machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {count} claims (a batch is one), then stop:
+machine code, judged by objdiff. Use only the decomp tools. Do {count} claims you compiled (a batch is one; one you
+released without compiling it doesn't count), then stop. Don't stop early because the functions look hard: what's
+left is hard, and a claim that gets its full compile budget is how they match. Nobody answers during a session: never
+stop to offer more claims "on request", just take them. (claim_function's count is something else: how many small
+neighbours may come along in one claim; one function back is normal.)
 
 1. claim_function(count=4) gives you the next function, and when it's small, its neighbours in the same
    file (small functions mostly match on the first try): target assembly, the current diff, its source
@@ -122,16 +132,19 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    or #pragma lines it needs); several at once: function="a, b, c" with all definitions in source. Each
    goes into the source file in place of the old one, the file is built with the project's compiler and
    diffed. Fix structure first (control flow, calls), then types and expressions, registers last.
-4. 100% = matched, committed to git. Structs, prototypes, globals or helpers you need go in with
-   edit_file (a header or the top of the source file); an edit that breaks any match is undone. Found a
+4. 100% = matched, committed to git. Helper functions, structs, shared prototypes and globals you need go
+   in with edit_file (a header or the top of the source file), never inside compile_and_diff's source
+   (it refuses them); an edit that breaks any match is undone. Found a
    project convention every agent should know? share_knowledge(text): it reaches them once a model other
    than yours agrees.
 5. The goal is linked files: the game built from the C, byte for byte. When a match finishes a file's
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
 6. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next. Very large
-   functions: get the structure right first; a near miss is worth the extra compiles.
+   release_function with precise notes (what you tried, what is left) and claim the next. Before that,
+   compile the next step instead of releasing. Very large functions: get the structure right first; a near miss
+   is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
+   helper): release_function(needs=that one) hands it to you.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
@@ -146,17 +159,52 @@ def _console_guides() -> dict:
     return {path.stem: path for folder in consoles.guide_dirs() for path in sorted(folder.glob("*.md"))}
 
 
-def guide_text(topic: str = "") -> str:
+def guide_text(topic: str = "", platform: str | None = None) -> str:
+    """A guide's text. With `platform` (a project's), the parts its file marks for other platforms are left out
+    (for_platform)."""
     topic = topic.strip().lower()
     own = _console_guides()
     if topic in own:
-        return own[topic].read_text(encoding="utf-8")
+        return for_platform(own[topic].read_text(encoding="utf-8"), platform)
     if topic not in GUIDES:
         # a console's guide is described by its title, the first line of its file
         about = GUIDES | {k: p.read_text(encoding="utf-8").split("\n", 1)[0].lstrip("# ") for k, p in own.items()}
         listing = "\n".join(f"- {k}: {v}" for k, v in about.items())
         return f"Guides (call guide with one of these topics):\n{listing}"
-    return resources.files("decompnet.app").joinpath("guide", f"{topic}.md").read_text(encoding="utf-8")
+    return for_platform(resources.files("decompnet.app").joinpath("guide", f"{topic}.md").read_text(encoding="utf-8"),
+                        platform)
+
+
+# A guide's lines for some platforms only: `<!-- only: ppc mips -->` up to `<!-- end -->`; `<!-- only: !x86 -->` is
+# every platform but those. Words are processor ids (arch/) or console ids. A PC helper's prompt (14 KB) carried
+# GameCube's split_file, func_8001234 names and s32 types; a GameCube one would carry x86's conventions.
+_ONLY = re.compile(r"^<!--\s*only:\s*([^>]*?)\s*-->\s*\n(.*?)^<!--\s*end\s*-->\s*\n", re.M | re.S)
+
+
+def for_platform(text: str, platform: str | None) -> str:
+    """`text` with its `only:` blocks kept for `platform` and dropped for others; None keeps every block (the
+    markers themselves always go)."""
+    con = consoles.get(platform) if platform else None
+    ids = {con.id, con.arch} - {""} if con else set()
+
+    def block(m: re.Match) -> str:
+        if con is None:
+            return m.group(2)
+        words = m.group(1).split()
+        yes = [w for w in words if not w.startswith("!")]
+        no = {w[1:] for w in words if w.startswith("!")}
+        keep = (not yes or bool(ids & set(yes))) and not (ids & no)
+        return m.group(2) if keep else ""
+    return _ONLY.sub(block, text)
+
+
+def up_front(platform: str | None, kind: str, toolchain: str) -> str:
+    """The know-how a helper gets before its first claim, for its project's platform: the loop's guide (a fork's
+    and objdiff's, or ROM projects' workflow) and its console's compiler guide."""
+    guide = consoles.get(platform).up_front_guide(toolchain)
+    topics = ["fork", "objdiff"] if kind == "fork" else ["workflow"]
+    topics += [guide] if guide else []
+    return "\n\n".join(guide_text(t, platform) for t in topics)
 
 
 def _fork(net: RomNetwork, slug: str, what: str) -> str:
@@ -224,7 +272,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
         _claim(net, agent, slug, function, strategy, count),
     "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
     "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
-    "release_function": lambda net, agent, slug, function, notes: net.release(agent, function, notes, slug),
+    "last_diff": lambda net, agent, slug, function, context=2: net.last_diff(agent, function, slug, context),
+    "release_function": lambda net, agent, slug, function, notes, needs="":
+        net.release_function(agent, function, notes, slug, needs or ""),
     "get_context": lambda net, agent, slug, function="": net.get_context(slug, function or None),
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -255,7 +305,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.try_compiler(agent, slug, function, compiler, flags, source),
     "search_notes": lambda net, agent, slug, query: net.search_notes(slug, query),
     "find_similar": lambda net, agent, slug, function, limit=5: net.find_similar(slug, function, limit),
-    "guide": lambda net, agent, slug, topic="": guide_text(topic),
+    "guide": lambda net, agent, slug, topic="": guide_text(topic, net.overview(slug).get("platform")),
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": net.forks.search(_fork(net, slug, "search_code"), pattern, glob),
@@ -357,10 +407,25 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "compile_and_diff", function=function, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def release_function(ctx: Context, function: str, notes: str) -> str:
-        """Give up a function you're stuck on. Notes are required: what you tried, what is left. Your best
-        attempt is kept for the next agent."""
-        return await run(ctx, "release_function", function=function, notes=notes)
+    async def last_diff(ctx: Context, function: str, context: int = 2) -> str:
+        """Every differing row of your last compile_and_diff of `function`, where its result was cut ("more rows
+        not shown"). Costs no compile and counts for nothing. `context`: equal rows shown around each difference."""
+        return await run(ctx, "last_diff", function=function, context=context)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def release_function(ctx: Context, function: str, notes: str, needs: str = "") -> str:
+        """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
+        tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
+        the move-on rule), it answers once with what to try instead; call it again to release anyway.
+
+        Args:
+            function: the function you hold
+            notes: what you tried, what is left
+            needs: optional: another function of the game this one needs done first (a callee whose convention or
+                body it depends on, a helper the original inlines). This one then waits, that one goes first in the
+                queue, and you get it when it's free.
+        """
+        return await run(ctx, "release_function", function=function, notes=notes, needs=needs)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_context(ctx: Context, function: str = "") -> str:

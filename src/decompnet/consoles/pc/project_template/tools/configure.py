@@ -42,7 +42,12 @@ def q(argv: list[str]) -> str:
     return subprocess.list2cmdline(argv) if sys.platform == "win32" else shlex.join(argv)
 
 
-PY = q([sys.executable]).replace("$", "$$")
+# the Python the build's steps run with: on Windows python.exe, not the console-less pythonw.exe (under it, every
+# compiler and linker a step starts opens a console window of its own)
+_W = Path(sys.executable)
+PYTHON = str(_W.with_name("python.exe")) if _W.name.lower() == "pythonw.exe" and _W.with_name("python.exe").is_file() \
+    else sys.executable
+PY = q([PYTHON]).replace("$", "$$")
 
 
 def files(top: str, suffixes: tuple[str, ...]) -> list[Path]:
@@ -61,7 +66,7 @@ def main() -> None:
     with open("build.ninja", "w", encoding="utf-8") as f:
         n = ninja_syntax.Writer(f)
         n.rule("delink", f"{PY} tools/delink.py {CONFIG} {BUILD / 'target'}", restat=True)
-        compiler = [sys.executable, "tools/compile.py", "--compiler", str(CL), "--include", str(MSVC / "Include"),
+        compiler = [PYTHON, "tools/compile.py", "--compiler", str(CL), "--include", str(MSVC / "Include"),
                     "--config", str(CONFIG)]
         if args.wibo and sys.platform != "win32":
             compiler += ["--wrapper", args.wibo]

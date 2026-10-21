@@ -188,17 +188,29 @@ def test_big_functions_get_more_compiles_before_the_nudge_to_move_on(net, agents
         for score in (50, 60, 60, 70, 80, 90, 95):
             db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,source,created_at) VALUES(?,?,?,?,?,?)",
                        (fn["id"], alice.id, score, 1, "x", 0))
-    assert "No better in your last 6" in net.stall_note(fn["id"], alice.id)  # a small function: after 4
+    from decompnet.network import stall_budget
+
+    small = stall_budget(net.store.one("SELECT n_insns FROM functions WHERE id=?", fn["id"])["n_insns"])
+    assert small < 6
+    assert f"⏭ Move on: no better in 6/{small} compiles (move on at {small})" in net.stall_note(fn["id"], alice.id)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET n_insns=300 WHERE id=?", (fn["id"],))
-    assert net.stall_note(fn["id"], alice.id) == ""  # a big one: not before 10
+    # a big one: not before 10, and every result still says where it stands
+    assert net.stall_note(fn["id"], alice.id).strip() == "Move-on count: no better in 6/10 compiles (move on at 10)."
 
 
 def test_the_guide_gives_the_compile_budget_compile_and_diff_keeps():
-    """The guide said "stuck after ~20 compiles" while compile_and_diff nudged after 4."""
+    """The guide said "stuck after ~20 compiles" while compile_and_diff nudged after 4; later the prompt said "3 ... up
+    to 10" and agents guessed which number was theirs. The prompt and guides now point at the function's own number,
+    which the brief names."""
     from decompnet import network
     from decompnet.app import tools
 
     said = network.stall_budget_text()
     assert said in " ".join(tools.guide_text("workflow").split())
-    assert f"after {network.stall_budget(10)} compiles" in said and network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST
+    assert "up to 10" not in said and "move on at" in said
+    for topic in ("workflow", "fork", "similarity"):
+        assert "3 compiles in a row" not in " ".join(tools.guide_text(topic).split()), topic
+    assert network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST
+    fn = {"n_insns": 100}
+    assert f"move on after {network.stall_budget(100)} compiles in a row" in network.move_on_brief(fn)

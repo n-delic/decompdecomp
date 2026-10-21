@@ -97,6 +97,12 @@
           <label class="field grow"><span>Compiler</span><select id="compilerPick"></select></label>
         </div>
         <p class="muted small" id="compilerNote" hidden></p>
+        <div class="row" id="scopeRow" hidden>
+          <label class="field grow"><span>What should this project cover?</span><select id="scopePick">
+            <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
+            <option value="program">The whole program: every function is decompiled and counted</option>
+          </select></label>
+        </div>
         <label class="check" id="mwConsent" hidden><input type="checkbox" id="mwAccept"><span id="mwText"></span></label>
         <div class="row">
           <button class="primary" id="analyse" type="button" disabled>Start decompiling</button>
@@ -367,6 +373,15 @@
         </div>
       </section>
       <div class="stack-col">
+        <section class="panel" id="scopePanel" hidden>
+          <header class="panel-head"><h2>What this project covers</h2></header>
+          <div class="pad">
+            <div class="seg" id="scopeSeg" role="radiogroup" aria-label="What this project covers"><button type="button" role="radio" data-scope="game">The game's own code</button><button type="button" role="radio" data-scope="program">The whole program</button></div>
+            <p class="muted small" id="scopeWhat"></p>
+            <div class="row" id="unanalysedRow" hidden><button class="ghost" type="button" id="unanalysedGo"></button></div>
+            <pre class="joblog" id="scopeLog" hidden></pre>
+          </div>
+        </section>
         <section class="panel">
           <header class="panel-head"><h2>About this project</h2></header>
           <div class="pad">

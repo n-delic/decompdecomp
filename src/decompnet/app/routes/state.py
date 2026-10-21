@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, Response
 
 from ... import __version__, consoles, hostenv, toolchains
 from ...agents.api import API_PRESETS
+from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import cleanup, edition, picker, saves, updates
 from ..engine import COMPILERS, TOOLS
@@ -130,6 +131,9 @@ def register(app: App) -> None:
             return bad
         q = request.query_params
         toolchain = q.get("toolchain") or None
+        scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
+        if scope not in (None, *SCOPES):
+            return fail(ValueError(f"a project covers the game's own code or the whole program, not {scope!r}"))
         if q.get("demo") == "1":
             game: bytes | Path | None = static_file("demo/demo-quest-64.z64")
             if game is None:
@@ -164,7 +168,7 @@ def register(app: App) -> None:
 
         def work(log):
             try:
-                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log)
+                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)

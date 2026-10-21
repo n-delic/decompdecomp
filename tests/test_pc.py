@@ -102,6 +102,30 @@ def test_only_32_bit_x86_programs():
     assert not scratch_pe.is_pe(bytes(head))
 
 
+def test_a_function_your_object_only_calls_is_not_in_your_build_not_a_match(monkeypatch):
+    import json
+
+    from decompnet.forks import objdiff
+
+    # an object that calls F but doesn't define it (a unit whose definition went missing): objdiff lists the call's
+    # undefined symbol under the function's name, with no size or code. The function's diff read 100% (its code
+    # against nothing), the full report said not built, and every full measure reopened a function the next
+    # compile "matched" again (63 times in 14 hours in one project)
+    ins = [{"instruction": {"formatted": "mov eax, 1", "size": 5}}, {"instruction": {"formatted": "ret", "size": 1}}]
+    left = {"symbols": [{"name": "?F@@YA_NXZ", "kind": "SYMBOL_FUNCTION", "size": "6", "instructions": ins}]}
+    right = {"symbols": [{"name": "?F@@YA_NXZ", "kind": "SYMBOL_FUNCTION", "flags": {"global": True}},
+                         {"name": "?G@@YAXXZ", "kind": "SYMBOL_FUNCTION", "size": "6", "instructions": ins}]}
+    monkeypatch.setattr(objdiff, "_run", lambda *a, **k: json.dumps({"left": left, "right": right}))
+    d = objdiff.diff(None, None, "?F@@YA_NXZ", cwd=Path("."))
+    assert d.match_percent is None and not d.matched
+    assert d.unit_scores["?F@@YA_NXZ"] is None
+    # defined after its undefined copy: that's the one compared
+    right["symbols"].append({"name": "?F@@YA_NXZ", "kind": "SYMBOL_FUNCTION", "size": "6", "match_percent": 100.0,
+                             "instructions": ins})
+    d = objdiff.diff(None, None, "?F@@YA_NXZ", cwd=Path("."))
+    assert d.match_percent == 100.0 and d.matched
+
+
 def _map() -> dict[str, int]:
     """Symbol -> address of every function and variable, from the linker's map of the demo."""
     return {m.group(1): int(m.group(2), 16)

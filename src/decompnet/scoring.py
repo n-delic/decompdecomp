@@ -186,9 +186,10 @@ LEGEND = ("markers: r=regalloc s=stack-offset i=operand |=different insn <=missi
 
 
 def render_rows(rows: list[tuple[str, str, str]], context: int = 2, max_rows: int = 60, run: int = 6,
-                legend: str = LEGEND) -> str:
+                legend: str = LEGEND, more_hint: bool = True) -> str:
     """A diff's rows as text for an agent: the differing lines with `context` lines around them, at most `max_rows`,
-    long equal stretches folded, and a count of each kind of difference."""
+    long equal stretches folded, and a count of each kind of difference. Where rows are cut, it says last_diff shows
+    them all without another compile (`more_hint`)."""
     counts = Counter(m for m, _, _ in rows if m != " ")
     summary = ", ".join(f"{n} {MARKERS.get(m, m)}" for m, n in counts.most_common())
     width = min(max((len(t) for _, t, _ in rows), default=10) + 2, 44)
@@ -221,7 +222,9 @@ def render_rows(rows: list[tuple[str, str, str]], context: int = 2, max_rows: in
             prev = i
             k += 1
         if len(lines) >= max_rows and k < len(order):
-            lines.append(f"   ... ({len(rows) - prev - 1} more rows not shown: fix these first)")
+            lines.append(f"   ... ({len(rows) - prev - 1} more rows not shown: fix these first"
+                         + ("; last_diff(function) shows every row of this compile without compiling again)"
+                            if more_hint else ")"))
             break
     else:
         if prev != len(rows) - 1:

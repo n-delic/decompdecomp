@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
+from ...network import GAME_CODE
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
@@ -105,8 +106,8 @@ class GuiMixin:
         cfg = self.cfg(proj)
         agg = self.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions WHERE project_id=?",
-            proj["id"])
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions "
+            f"WHERE project_id=? AND {GAME_CODE}", proj["id"])
         console = self.console(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
