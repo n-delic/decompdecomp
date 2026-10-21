@@ -49,6 +49,12 @@ Where to start on a gap:
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects).
 - **Function-end reports** cut MIPS functions (`engine._cut`).
+- **Agents join what the rules miss.** Where `arm.piece` and `recover.merge_pieces` still leave a function cut
+  (a switch running on into the next source file, a piece next to a matched function), agents propose the join
+  (`report_boundary(function, joins_with, reason)` in project mode), it applies once 3 agents of 2 models agree
+  (as "not C" does), and only if dsd takes it, the game still rebuilds byte for byte and no match changes; a refused
+  one is recorded so it isn't proposed again. The joined function goes back to the agents with a note saying why. A
+  join across source files moves a file's boundary, so it gets its own rebuild check, not one shared with others.
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
   (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
