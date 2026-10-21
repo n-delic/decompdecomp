@@ -71,6 +71,18 @@ works on which platform: every — in it is a gap to fill.
 
 ## Consoles
 
+### Every console gets every feature
+
+decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
+in ROM mode (N64, PS1, PS2) and project mode (GameCube, Wii, PC, DS, public decomps) alike. When you add a feature:
+
+1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
+   for each mode, `arch/` for what depends on the processor.
+2. Put only what really differs in `consoles/<id>/`, through a part of the connector (`consoles/__init__.py`) with a
+   default that says plainly when a console can't do it yet.
+3. A console or mode that can't have it yet: say why in the code, add an item to ROADMAP.md, and mark its column
+   with "—" in the table. Don't leave it unsaid.
+
 ### Where a console's code is
 
 Each console has a folder: `src/decompnet/consoles/<id>/`. Everything decompdecomp knows about that console is in
@@ -113,7 +125,8 @@ A console works in one of two modes:
 2. Change the part you need in that folder. A fact about the processor, not the console (how MIPS code is read),
    goes in `arch/<processor>.py`. Something every console of a mode needs goes in `rom/` or `forks/`.
 3. Run its tests: `uv run pytest tests/test_consoles.py -q -k <id>`, and its own file (`tests/test_ps2.py`, ...).
-4. When a feature reaches the console, tick its column in ROADMAP.md's table.
+4. When a feature reaches the console, tick its column in ROADMAP.md's table. A feature you build for one console
+   should reach the others too (see "Every console gets every feature" above).
 
 ### Adding a console
 

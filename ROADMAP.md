@@ -4,6 +4,9 @@ What's planned for decompdecomp, roughly in order, and why. Every item keeps the
 byte-identical after linking (ROM mode) or objdiff 100% (fork mode). Nothing here accepts code that only does the
 same thing.
 
+Every console gets every feature it can: one pipeline, ROM mode and project mode alike. A "—" in the table below is
+a gap to close, each with its item here (CONTRIBUTING.md, "Every console gets every feature").
+
 Want to work on one? Open an issue first, so two people don't build the same thing. CONTRIBUTING.md has the rest.
 
 ## What works where
