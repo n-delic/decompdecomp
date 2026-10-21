@@ -212,7 +212,7 @@ def test_assembly_is_left_out(game):
         db.execute("UPDATE functions SET status='asm' WHERE id=?", (row["id"],))
     try:
         out = tools.call(net, agent, slug, "claim_function", {"function": row["name"]})
-        assert "is hand-written assembly" in out and "## CLAIMED" in out
+        assert "is set aside" in out and "hand-written assembly" in out and "## CLAIMED" in out
         held = net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                              agent.id)["name"]
         assert held != row["name"]
@@ -261,7 +261,7 @@ def test_turns_not_wasted(game):
     fn = net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?", agent.id)["name"]
     for k in range(5):
         out = net.compile_and_diff(agent, fn, f"void {fn}(void) {{ volatile int x = {k}; }}", slug)
-    assert "No better in your last" in out
+    assert "Move on:" in out  # (the move-on nudge, as every compile result says it)
 
 
 def test_the_permuter_finishes_a_near_miss(game, monkeypatch):

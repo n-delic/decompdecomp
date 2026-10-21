@@ -98,7 +98,10 @@ function renderSteering(ov) {
   $("spendLine").textContent = sp && sp.usd ? `· ${money(sp.usd)} spent${n ? ` · ${money(sp.usd / n)}/match` : ""}`
     : sp && sp.tokens ? `· ${(sp.tokens / 1000).toFixed(0)}k tokens` : "";
   $("instrState").textContent = ov.instructions ? "agents get these" : "none yet";
-  $("savePanel").hidden = ov.kind === "fork";  // a project-mode game's work is the files of its own git project
+  // a project-mode game's matched C is its own git project's files: Save now writes its best attempts (#43)
+  $("saveTitle").textContent = ov.kind === "fork" ? "Save the closest attempts" : "Save your progress";
+  $("saveAbout").hidden = ov.kind === "fork";
+  $("saveAboutFork").hidden = ov.kind !== "fork";
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
@@ -218,7 +221,7 @@ async function togglePrio(name, on) {
    function's machine draft through the judge; the permuter works on near misses meanwhile. */
 function renderAutopilot(ov) {
   const box = $("autopilot"), ap = ov.autopilot, tw = ov.twins, pm = ov.permuter;
-  const canRun = (ov.kind !== "fork" || ov.ready) && ov.functions - ov.matched > 0;
+  const canRun = (ov.kind !== "fork" || ov.ready) && cFunctions(ov) - ov.matched > 0;
   box.hidden = !ap && !canRun && !tw && !pm;
   if (box.hidden) return;
   const running = ap && ap.state === "running";
@@ -364,7 +367,61 @@ async function renderProjectSettings() {
     fork && ov.repo_url ? ["Repository", ov.repo_url.replace(/^https?:\/\//, "")] : null,
     ["Functions", `${ov.functions.toLocaleString()} (${bytes(ov.bytes || 0)} of code)`], ["Folder", ov.folder]].filter(Boolean);
   $("projFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v || "—")}</dd></div>`).join("");
+  renderScope(ov);
 }
+
+/* What the project covers (forks/project.py SCOPES): the game's own code, with the library and middleware code its
+   import recognised left out of agents' work and progress, or the whole program. Shown where there's such code. */
+function renderScope(ov) {
+  const aside = ov.set_aside, panel = $("scopePanel");
+  panel.hidden = !(ov.kind === "fork" && ov.scope && (aside || ov.unanalysed || ov.scope === "program"));
+  if (panel.hidden) return;
+  // code the project's import left unanalysed (an older import's): a new analysis brings it in, once
+  $("unanalysedRow").hidden = !ov.unanalysed;
+  if (ov.unanalysed) $("unanalysedGo").textContent = `Analyse ${ov.unanalysed}`;
+  const game = ov.scope !== "program", n = aside ? aside.functions : 0;
+  $("scopeSeg").querySelectorAll("[data-scope]").forEach((b) => {
+    const on = b.dataset.scope === ov.scope;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", String(on));
+  });
+  const lines = [game
+    ? `${plural(n, "function")} of library and middleware code ${n === 1 ? "is" : "are"} left out: agents don't work on ${n === 1 ? "it" : "them"} and progress doesn't count ${n === 1 ? "it" : "them"}. Choosing the whole program opens ${n === 1 ? "it" : "them"} to agents and counts ${n === 1 ? "it" : "them"}.`
+    : `Every function is open to agents and counted${n ? `, the ${plural(n, "function")} of library and middleware code included` : ""}. Choosing the game's own code leaves ${n === 1 ? "it" : "them"} out again.`];
+  if (aside?.without_source) lines.push(`${plural(aside.without_source, "of these function")} ${aside.without_source === 1 ? "has" : "have"} no source file in this project, so agents can't work on ${aside.without_source === 1 ? "it" : "them"} either way: the whole program only counts ${aside.without_source === 1 ? "it" : "them"}.`);
+  if (ov.unanalysed) lines.push(`This project's import didn't analyse ${ov.unanalysed}. Analysing that code now gives its functions source files of their own (${game ? "left out like the rest of the library code" : "open to agents and counted"}) and keeps every match, note and name; choosing the whole program analyses it too.`);
+  lines.push("Hand-written assembly stays assembly either way.");
+  $("scopeWhat").textContent = lines.join(" ");
+}
+$("scopeSeg").onclick = async (e) => {
+  const b = e.target.closest("button[data-scope]");
+  if (!b || !S.ov || b.dataset.scope === S.ov.scope) return;
+  const buttons = $("scopeSeg").querySelectorAll("button");
+  buttons.forEach((x) => { x.disabled = true; });
+  try {
+    const { job } = await api("/api/scope", { method: "POST", body: { slug: S.slug, scope: b.dataset.scope } });
+    $("scopeLog").hidden = false;
+    S.ov = await followJob(job, $("scopeLog"));
+    $("scopeLog").hidden = true;
+    renderStats(S.ov);
+    renderProjectSettings();
+    toast(b.dataset.scope === "program" ? "This project covers the whole program now." : "This project covers the game's own code now.");
+  } catch (err) { toast(esc(err.message), "err"); } finally { buttons.forEach((x) => { x.disabled = false; }); }
+};
+$("unanalysedGo").onclick = async () => {
+  const b = $("unanalysedGo");
+  if (!S.ov || !S.ov.unanalysed) return;
+  b.disabled = true;
+  try {
+    const { job } = await api("/api/unanalysed", { method: "POST", body: { slug: S.slug } });
+    $("scopeLog").hidden = false;
+    S.ov = await followJob(job, $("scopeLog"));
+    $("scopeLog").hidden = true;
+    renderStats(S.ov);
+    renderProjectSettings();
+    toast(S.ov.unanalysed ? "The new analysis didn't bring that code in: the project's feed says why." : "Analysed: its functions are in the project now.", S.ov.unanalysed ? "err" : undefined);
+  } catch (err) { toast(esc(err.message), "err"); } finally { b.disabled = false; }
+};
 $("setTcReset").onclick = () => { $("setFlags").value = ""; };
 $("autoAdjust").onchange = async () => {
   const on = $("autoAdjust").checked;
@@ -439,13 +496,26 @@ $("reimportBtn").onclick = async () => {
 
 /* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
+$("recheckBtn").onclick = async () => {
+  const b = $("recheckBtn");
+  b.disabled = true;
+  b.textContent = "Checking…";
+  try {
+    const { job } = await api("/api/recheck", { method: "POST", body: { slug: S.slug } });
+    const r = await followJob(job, null);
+    toast(`Checked again: ${esc(r.said)}.`, "match");
+    await refreshMap(true);
+  } catch (e) { toast(esc(e.message), "err"); } finally { b.disabled = false; b.textContent = "Check again"; }
+};
+
 $("saveGo").onclick = async () => {
   $("saveGo").disabled = true;
   try {
     const r = await api("/api/save", { method: "POST", body: { slug: S.slug, folder: $("saveFolder").value.trim() || undefined } });
     $("saveState").textContent = `saved ${clock(Date.now() / 1000).slice(0, 5)}`;
     $("saveLog").hidden = false;
-    $("saveLog").textContent = `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
+    $("saveLog").textContent = S.ov.kind === "fork" ? `Saved ${plural(r.best || 0, "closest attempt")} to ${r.folder}/best.`
+      : `Saved to ${r.folder}: ${plural(r.matched || 0, "matched function")}, ${plural(r.best || 0, "best attempt")}.`;
   } catch (e) { toast(esc(e.message), "err"); } finally { $("saveGo").disabled = false; }
 };
 

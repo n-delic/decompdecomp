@@ -97,6 +97,12 @@
           <label class="field grow"><span>Compiler</span><select id="compilerPick"></select></label>
         </div>
         <p class="muted small" id="compilerNote" hidden></p>
+        <div class="row" id="scopeRow" hidden>
+          <label class="field grow"><span>What should this project cover?</span><select id="scopePick">
+            <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
+            <option value="program">The whole program: every function is decompiled and counted</option>
+          </select></label>
+        </div>
         <label class="check" id="mwConsent" hidden><input type="checkbox" id="mwAccept"><span id="mwText"></span></label>
         <div class="row">
           <button class="primary" id="analyse" type="button" disabled>Start decompiling</button>
@@ -210,7 +216,9 @@
         <h2 id="mapTitle">ROM map</h2>
         <div class="map-tools">
           <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" role="radio" aria-checked="true" data-view="progress" class="on">Progress</button><button type="button" role="radio" aria-checked="false" data-view="compiler">Compiler</button></div>
-          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span></div>
+          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="agents of two models agreed no C makes it: set aside. Its page can give it back to the agents"><i class="sw not-c"></i>not C</span></div>
+          <button class="ghost small-btn" id="recheckBtn" type="button" title="Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update." aria-describedby="recheckTip">Check again</button>
+          <span class="sr-only" id="recheckTip">Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update.</span>
         </div>
       </header>
       <p class="muted small map-hint" id="mapHint">every square is a function, in ROM order</p>
@@ -367,6 +375,15 @@
         </div>
       </section>
       <div class="stack-col">
+        <section class="panel" id="scopePanel" hidden>
+          <header class="panel-head"><h2>What this project covers</h2></header>
+          <div class="pad">
+            <div class="seg" id="scopeSeg" role="radiogroup" aria-label="What this project covers"><button type="button" role="radio" data-scope="game">The game's own code</button><button type="button" role="radio" data-scope="program">The whole program</button></div>
+            <p class="muted small" id="scopeWhat"></p>
+            <div class="row" id="unanalysedRow" hidden><button class="ghost" type="button" id="unanalysedGo"></button></div>
+            <pre class="joblog" id="scopeLog" hidden></pre>
+          </div>
+        </section>
         <section class="panel">
           <header class="panel-head"><h2>About this project</h2></header>
           <div class="pad">
@@ -381,9 +398,10 @@
           </div>
         </section>
         <section class="panel" id="savePanel">
-          <header class="panel-head"><h2>Save your progress</h2><span class="muted small" id="saveState"></span></header>
+          <header class="panel-head"><h2 id="saveTitle">Save your progress</h2><span class="muted small" id="saveState"></span></header>
           <div class="pad">
-            <p class="muted small">decompdecomp saves your work on this game by itself every few minutes, as plain files in the project's <code>progress</code> folder: matched C, notes, names, compiler ranges and settings, never the game itself. Copy that folder (or push it to git) and open it on another computer with <b>New project → Open a saved project</b>.</p>
+            <p class="muted small" id="saveAboutFork" hidden>The matched functions are in this project's own source files and git. What's only in decompdecomp is each unmatched function's closest attempt so far (a near miss is often 97–99.9%): Save now writes those as <code>best/&lt;function&gt;.c</code>, each saying how close it is and which source file it belongs in. Handy for a port while matching goes on.</p>
+            <p class="muted small" id="saveAbout">decompdecomp saves your work on this game by itself every few minutes, as plain files in the project's <code>progress</code> folder: matched C, notes, names, compiler ranges and settings, never the game itself. Copy that folder (or push it to git) and open it on another computer with <b>New project → Open a saved project</b>.</p>
             <label class="field"><span>Save now, to this folder (empty: the <code>progress</code> folder)</span><span class="pick-row"><input id="saveFolder" class="mono" placeholder="/home/you/decomp-saves/my-game"><button class="ghost small-btn" type="button" data-pick="folder" data-for="saveFolder" data-title="Where to save this project">Choose…</button></span></label>
             <div class="row"><button class="ghost small-btn" id="saveGo" type="button">Save now</button></div>
             <pre class="joblog" id="saveLog" hidden></pre>
@@ -444,12 +462,14 @@
       <div class="row">
         <span class="badge" id="fnStatus"></span>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
+        <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>
         <button class="ghost icon" data-close type="button" aria-label="Close" title="Close (Esc)">✕</button>
       </div>
     </header>
     <div class="drawer-body">
+      <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
       <div class="fn-tabs">
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>

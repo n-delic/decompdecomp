@@ -22,6 +22,8 @@
   --hl: var(--color-mark-fill); --hl-ink: var(--color-mark-text); --hl-soft: color-mix(in oklch, var(--color-mark-fill) 45%, var(--color-surface-base));
   --work: var(--color-status-warning-text); --work-bg: var(--color-status-warning-surface);
   --miss: var(--color-status-danger-text); --miss-bg: var(--color-status-danger-surface);
+  --not-c: var(--color-status-danger-fill);
+  --todo: var(--ink);  /* a function nobody tried, on the map: the strongest contrast, not a grey like tried */  /* a function agents agreed no C makes: a red square */
   --open: color-mix(in oklch, var(--color-border-subtle) 70%, var(--color-surface-base));
   --tried: color-mix(in oklch, var(--color-border-strong) 55%, var(--color-surface-base));
   /* the compiler map: one colour per compiler, the game's main one grey (GTA San Andreas uses seven) */
@@ -299,7 +301,7 @@ a.ghost, a.primary { text-decoration: none; }
 .progress .line { fill: none; stroke: var(--match); stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .stack { display: flex; height: 8px; border-radius: var(--r-sm); overflow: hidden; background: var(--open); }
 .stack i { display: block; height: 100%; }
-.s-match { background: var(--match); } .s-work { background: var(--hl); } .s-tried { background: var(--tried); } .s-asm { background: var(--faint); opacity: .5; } .s-open { background: var(--open); }
+.s-match { background: var(--match); } .s-work { background: var(--hl); } .s-tried { background: var(--tried); } .s-asm { background: var(--not-c); opacity: .45; } .s-open { background: var(--todo); }
 .bars { width: 100%; height: 28px; display: block; }
 .bars rect { fill: var(--open); }
 .bars rect.on { fill: var(--match); }
@@ -335,9 +337,10 @@ a.ghost, a.primary { text-decoration: none; }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .sw { width: 10px; height: 10px; border-radius: 2.5px; display: inline-block; }
-.sw.open { background: var(--open); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.match { background: var(--match); } .sw.close { background: var(--match-hi); }
+.sw.asm { background: var(--not-c); opacity: .45; } .sw.not-c { background: var(--not-c); } .sw.open { background: var(--todo); } .sw.tried { background: var(--tried); } .sw.work { background: var(--hl); } .sw.match { background: var(--match); } .sw.close { background: var(--match-hi); }
 .map-hint { padding: 12px 16px 0; }
 .map-tools { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .map-hint .small-btn { margin: 6px 8px 0 0; }
 .map-wrap { position: relative; padding: 12px 16px 16px; }
 #map { display: block; width: 100%; cursor: crosshair; }
@@ -395,6 +398,9 @@ a.ghost, a.primary { text-decoration: none; }
 .st.matched { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
 .st.working { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .st.tried { color: var(--ink-2); }
+.st.not-c, .badge.not-c { background: var(--miss-bg); color: var(--miss); border-color: transparent; }
+.not-c { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--not-c); vertical-align: baseline; }
+.set-aside { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--miss-bg); color: var(--ink-2); }
 .list-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; }
 
 /* ------------------------------------------------------------------ agents */

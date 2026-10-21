@@ -336,6 +336,35 @@ def test_start_up_code_that_sets_the_cpus_mode_is_hand_written():
     assert arm.asm_reason(words(0xE0800001, 0xE12FFF1E) + bytes(16), thumb=False) is None  # add r0, r0, r1: C
 
 
+def test_pieces_of_functions_are_set_aside_and_whole_functions_are_not():
+    """On a DS game 159 of 557 open functions were pieces of others (ds-decomp's symbols in the wrong place), each
+    given up on by five to seven agents: a lone epilogue, a register save running on into the next symbol, one
+    instruction from the middle of a function, a lone `bx ip`. No function the game's agents matched reads as one."""
+    from decompnet.arch import arm
+
+    words = lambda *ws: b"".join(w.to_bytes(4, "little") for w in ws)  # noqa: E731
+    halves = lambda *hs: b"".join(h.to_bytes(2, "little") for h in hs)  # noqa: E731
+    assert "the end of" in arm.asm_reason(words(0xE8BD8010), thumb=False)  # pop {r4, pc}
+    assert "the start of" in arm.asm_reason(words(0xE92D000F), thumb=False)  # push {r0-r3}, then the next symbol
+    assert "never returns" in arm.asm_reason(words(0xE58DC004), thumb=False)  # str ip, [sp, #4]
+    assert "veneer" in arm.asm_reason(words(0xE12FFF1C), thumb=False)  # bx ip
+    # the caller's registers: read before set (past a switch's first branch), or set without saving them first
+    assert "reads r4" in arm.asm_reason(words(0xE3530007, 0x0A000000, 0xEA000000, 0xE5940000, 0xE12FFF1E), thumb=False)
+    assert "sets r5" in arm.asm_reason(words(0xE3A05001, 0xE12FFF1E), thumb=False)  # mov r5, #1; bx lr
+    assert "the end of" in arm.asm_reason(halves(0xBD10), thumb=True)  # Thumb pop {r4, pc}
+    whole = [(words(0xE92D4010, 0xE1A04000, 0xE8BD8010), False),  # push {r4, lr}; mov r4, r0; pop {r4, pc}
+             (words(0xE12FFF1E), False),  # bx lr: an empty function
+             (words(0xE59FC000, 0xE12FFF1C, 0), False),  # ldr ip, [pc]; bx ip; .word: CodeWarrior's tail call
+             (words(0xEA000000), False),  # b elsewhere: a tail call
+             (words(0xE92D4000, 0xEB000000), False),  # push {lr}; bl: a call that may never return
+             (halves(0xB510, 0xBD10), True),  # Thumb push {r4, lr}; pop {r4, pc}
+             (words(0xE92D4010, 0xE5940000, 0xE8BD8010), False),  # push {r4, lr}; ldr r0, [r4]; pop {r4, pc}
+             (words(0xE59F0000, 0xE12FFF1E, 0xE5940000), False)]  # ldr r0, [pc]; bx lr; a pool word reading as ldr [r4]
+    for code, thumb in whole:
+        assert arm.asm_reason(code, thumb=thumb) is None, code.hex()
+    assert arm.asm_reason(words(0xE8BD8010)) is None  # its mode unknown: not judged
+
+
 BASE = 0x02100000
 
 
@@ -362,6 +391,37 @@ def _module(tmp_path):
     m.dsds = bytes(m.covered)  # (as load_modules: what dsd found)
     return m
 
+
+
+def test_pieces_of_functions_are_joined_to_the_function_they_belong_to(tmp_path, monkeypatch):
+    """dsd put symbols in the middle of functions: on a DS game 119 pieces were joined to their functions this way,
+    4 of those functions matched at once with the C agents had written, none lost its match, and the ROM still
+    rebuilt byte for byte. A piece that runs on goes with the code after it, an epilogue with the code before; a
+    matched function is left as it is, and a piece's symbol stays as a label for what points to it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xE1A04000,  # f: push {r4, lr}; mov r4, r0 (runs on)
+             0xE1A00004,  # g: mov r0, r4 (runs on)
+             0xE8BD8010,  # h: pop {r4, pc} (an epilogue alone)
+             0xE92D000F,  # v: push {r0-r3}, running on into a matched function
+             0xE12FFF1E]  # w: bx lr (matched)
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    names = {BASE: ("f", 8), BASE + 8: ("g", 4), BASE + 0xC: ("h", 4), BASE + 0x10: ("v", 4), BASE + 0x14: ("w", 4)}
+    lines = [f"{n} kind:function(arm,size={s:#x}) addr:{a:#010x}" for a, (n, s) in names.items()]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x18:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x18:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x18)], symbol_lines=lines)
+    m.functions = {a: (s, False) for a, (_, s) in names.items()}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", keep={"w"}, log=lambda *_: None) == {"f": ["g", "h"]}
+    assert (folder / "symbols.txt").read_text().splitlines() == [
+        f"f kind:function(arm,size=0x10) addr:{BASE:#010x}",
+        f"g kind:label(arm) addr:{BASE + 8:#010x}",
+        f"h kind:label(arm) addr:{BASE + 0xC:#010x}",
+        lines[3], lines[4]]
 
 def test_the_functions_dsd_misses_are_found_with_their_calls(tmp_path):
     """dsd parses a module's functions one after another until a pointer to data stops it, then follows calls: a
@@ -538,3 +598,235 @@ def test_the_rebuilt_rom_carries_the_secure_area_checksum_of_the_copy(tmp_path):
     (tmp_path / "b.nds").write_bytes(built)
     same.main(["--header", str(tmp_path / "b.nds"), str(tmp_path / "o.nds")])
     assert (tmp_path / "b.nds").read_bytes() == bytes(built)
+
+
+def test_a_function_pieces_were_joined_to_says_so_in_a_note(tmp_path, monkeypatch):
+    """Its notes from before the join say "fragment, not matchable standalone, skip": agents read them and skipped a
+    function that's whole now. The newest note says what changed."""
+    from decompnet.consoles.nds import recover, scratch
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("ds", "DS", "", "arm", 0, str(tmp_path), json.dumps({"kind": "fork"}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, "f", 16, 4, "open", "a"))
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, "e", 16, 4, "open", "a"))
+    fp = type("FP", (), {"manifest": {"created": "from scratch", "analysis": 5, "version": "v"}, "root": tmp_path})()
+    monkeypatch.setattr(net, "fork_slug", lambda slug: slug)
+    monkeypatch.setattr(net.forks, "get", lambda slug: (None, fp, None))
+    monkeypatch.setattr(net.forks, "reanalyse", lambda slug, step, **kw: step(fp))
+    monkeypatch.setattr(recover, "move_boundaries", lambda *a, **kw: [])
+    monkeypatch.setattr(recover, "merge_pieces", lambda *a, **kw: {"f": ["g", "h"]})
+    monkeypatch.setattr(recover, "joined_pieces", lambda *a: {"e": ["e2"]})  # joined by the version before
+    monkeypatch.setattr(scratch, "dsd_path", lambda: "dsd")
+    consoles.get("nds").on_start(net, "ds", log=lambda *_: None)
+    note = net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE name='f')")["text"]
+    assert "joined g, h" in note and "whole function now" in note
+    assert "joined e2" in net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE "
+                                        "name='e')")["text"]
+
+
+def test_a_function_branching_into_the_middle_of_the_next_one_takes_it(tmp_path, monkeypatch):
+    """A switch whose cases ds-decomp cut into the symbols after it: compiled code branches only within itself or
+    to another function's start, so a branch into the middle of the next symbol makes that symbol part of it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xEA000002, 0xE8BD8010,  # f: push {r4, lr}; b g+8; pop {r4, pc}
+             0xE52DE004, 0xE3A00001, 0xE3A00002, 0xE49DF004]  # g: push {lr}; mov r0, #1; mov r0, #2; pop {pc}
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x10) addr:{BASE + 0xC:#010x}"]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x1C)], symbol_lines=lines)
+    m.functions = {BASE: (0xC, False), BASE + 0xC: (0x10, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {"f": ["g"]}
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x1c) addr:{BASE:#010x}"
+
+
+def test_a_switch_running_on_into_the_next_source_file_takes_its_function_along(tmp_path, monkeypatch):
+    """A DS game's 3 KB function was cut at a source file's end: its switch's cases were in the next file's first
+    symbol, out of agents' reach. That function moves to the file before (the next file keeps the rest), unless C in
+    its file defines it or it's matched."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xEA000002, 0xE8BD8010,  # f: push {r4, lr}; b g+8; pop {r4, pc} (the end of a.c)
+             0xE52DE004, 0xE3A00001, 0xE3A00002, 0xE49DF004,  # g: the first function of b.c, f's cases
+             0xE12FFF1E]  # h: bx lr, b.c's next function
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True)
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x10) addr:{BASE + 0xC:#010x}",
+             f"h kind:function(arm,size=0x4) addr:{BASE + 0x1C:#010x}"]
+    delinks = (f"    .text start:{BASE:#010x} end:{BASE + 0x20:#010x} kind:code\n\n"
+               f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0xC:#010x}\n\n"
+               f"src/b.c:\n    .text start:{BASE + 0xC:#010x} end:{BASE + 0x20:#010x}\n")
+    (folder / "delinks.txt").write_text(delinks)
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x20)], symbol_lines=lines)
+    m.functions = {BASE: (0xC, False), BASE + 0xC: (0x10, False), BASE + 0x1C: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "b.c").write_text("void g(void) {\n}\n")
+    assert recover.move_boundaries(tmp_path, "v1", log=lambda *_: None) == []  # agents' C for g is in b.c
+    (tmp_path / "src" / "b.c").write_text("extern void g(void);\n")
+    assert recover.move_boundaries(tmp_path, "v1", keep={"g"}, log=lambda *_: None) == []  # matched
+    assert recover.move_boundaries(tmp_path, "v1", log=lambda *_: None) == ["g"]
+    text = (folder / "delinks.txt").read_text()
+    assert f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x}" in text
+    assert f"src/b.c:\n    .text start:{BASE + 0x1C:#010x} end:{BASE + 0x20:#010x}" in text
+
+
+def test_two_pieces_with_bytes_no_symbol_claims_between_them_are_joined_with_those_bytes(tmp_path, monkeypatch):
+    """On a DS game a function's two pieces had 68 bytes between them that ds-decomp's analysis gave no symbol: they
+    were never joined, as they weren't next to each other. Bytes no symbol claims go with the join; any symbol
+    between them stops it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xE1A04000,  # f: push {r4, lr}; mov r4, r0 (runs on)
+             0xE1A00004,  # no symbol: mov r0, r4
+             0xE8BD8010]  # g: pop {r4, pc}
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    lines = [f"f kind:function(arm,size=0x8) addr:{BASE:#010x}", f"g kind:function(arm,size=0x4) addr:{BASE + 0xC:#010x}"]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x10:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x10:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x10)], symbol_lines=lines, symbols={BASE, BASE + 0xC})
+    m.functions = {BASE: (8, False), BASE + 0xC: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {"f": ["g"]}
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x10) addr:{BASE:#010x}"
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    m.symbols.add(BASE + 8)  # a symbol between them: not joined
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {}
+
+
+def _two_files(tmp_path, monkeypatch, words, lines, files):
+    """A main program of `words` at BASE with symbols.txt `lines` and source files `files` [(path, start, end)]."""
+    from decompnet.consoles.nds import recover
+
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True, exist_ok=True)
+    end = BASE + 4 * len(words)
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{end:#010x} kind:code\n\n" + "\n\n".join(
+        f"{p}:\n    .text start:{a:#010x} end:{b:#010x}\n" for p, a, b in files))
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words), [(BASE, end)],
+                       symbol_lines=lines)
+    for ln in lines:
+        s = recover.SYMBOL.match(ln)
+        m.symbols.add(int(s.group(4), 16))
+        if s.group(2) == "function":
+            m.functions[int(s.group(4), 16)] = (int(re.search(r"size=(0x[0-9a-f]+)", ln).group(1), 16), False)
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    return folder
+
+
+def test_agents_join_two_functions_the_analysis_cut_and_check_again_keeps_it(tmp_path, monkeypatch):
+    """join_functions: what agents agreed the analysis cut becomes one function, the symbols between it labels, across
+    two source files too; never a matched function or data. Check again's own joining only joins, never splits:
+    what the agents joined stays."""
+    from decompnet.consoles.nds import recover
+    from decompnet.forks.project import ForkError
+
+    words = [0xE92D4010, 0xE1A04000, 0xE8BD8010, 0xE3A00001, 0xE12FFF1E, 0xE12FFF1E]  # f (12), g (8), h (4)
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x8) addr:{BASE + 0xC:#010x}",
+             f"h kind:function(arm,size=0x4) addr:{BASE + 0x14:#010x}"]
+    folder = _two_files(tmp_path, monkeypatch, words, lines, [("src/a.c", BASE, BASE + 0xC), ("src/b.c", BASE + 0xC, BASE + 0x18)])
+    with pytest.raises(ForkError, match="matched"):
+        recover.join_functions(tmp_path, "v1", "f", "g", keep={"g"})
+    assert recover.join_functions(tmp_path, "v1", "g", "f") == "g joined to f (moved from src/b.c)"
+    assert (folder / "symbols.txt").read_text().splitlines()[:2] == [
+        f"f kind:function(arm,size=0x14) addr:{BASE:#010x}", f"g kind:label(arm) addr:{BASE + 0xC:#010x}"]
+    text = (folder / "delinks.txt").read_text()
+    assert f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x14:#010x}" in text
+    # Check again afterwards: nothing it does takes the join apart
+    joined = (folder / "symbols.txt").read_text()
+    m2 = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words), [(BASE, BASE + 0x18)],
+                        symbol_lines=joined.splitlines(), symbols={BASE, BASE + 0xC, BASE + 0x14})
+    m2.functions = {BASE: (0x14, False), BASE + 0x14: (4, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m2])
+    recover.move_boundaries(tmp_path, "v1", log=lambda *_: None)
+    recover.merge_pieces(tmp_path, "v1", log=lambda *_: None)
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x14) addr:{BASE:#010x}"
+    assert "kind:label" in (folder / "symbols.txt").read_text().splitlines()[1]
+
+
+def test_a_join_needs_agents_of_two_models_and_a_refused_one_isnt_tried_again(tmp_path, monkeypatch):
+    """Three agents of two models propose the same join: it's tried, checked by the rebuild (reanalyse). One that
+    doesn't hold is remembered, and the next proposal is told so instead of trying again."""
+    from decompnet.app import forkengine
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "nds", "ready": True}, "x")
+    with net.store.tx() as db:
+        for k, name in enumerate(("f", "g")):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram) VALUES(1,?,8,2,'open','a',?)",
+                       (name, BASE + 8 * k))
+    tried = []
+    monkeypatch.setattr(forkengine.ForkEngine, "reanalyse", lambda self, slug, step, **kw: tried.append(step) or None)
+    say = lambda who: net.forks.propose_join(net.local_agent(who)[0], "p", "g", "f", "f has no epilogue; g pops it")  # noqa: E731
+    assert "1 of 3 agents" in say("opencode-beam-free-1")
+    assert "1 of 2 models" in say("opencode-beam-free-2") and not tried
+    assert "refused" in say("claude-sonnet-5-5-1") and len(tried) == 1  # tried, and the rebuild took it back
+    assert "was tried, and refused" in say("claude-opus-5-5-1") and len(tried) == 1
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='g'")
+    with pytest.raises(NetworkError, match="matched"):
+        say("claude-opus-5-5-2")
+
+
+def test_a_ds_source_file_is_split_in_its_delinks_with_its_compiler(tmp_path):
+    """split_file on DS: agents wanted a function built by another CodeWarrior version in a file of its own, to give
+    it its own compiler (try_compiler), and split_file was GameCube/Wii's only. The file's block in delinks.txt ends
+    at the function, the new file's follows, and the new file has the old one's compiler."""
+    folder = tmp_path / "config" / "v1" / "arm9"
+    folder.mkdir(parents=True)
+    (folder / "symbols.txt").write_text(f"f kind:function(arm,size=0x8) addr:{BASE:#010x}\n"
+                                        f"g kind:function(arm,size=0x8) addr:{BASE + 8:#010x}\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x20:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x10:#010x}\n\n"
+                                        f"src/b.c:\n    .text start:{BASE + 0x10:#010x} end:{BASE + 0x20:#010x}\n")
+    (folder / "file_compilers.json").write_text(json.dumps({"src/a.c": "1.2/sp4"}))
+    fp = type("FP", (), {"root": tmp_path})()
+    saved = consoles.get("nds").split_source(fp, "v1", "src/a.c", "g", "src/a_g.c")
+    assert set(saved) == {folder / "delinks.txt", folder / "file_compilers.json"}
+    assert (f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 8:#010x}\n\n"
+            f"src/a_g.c:\n    .text start:{BASE + 8:#010x} end:{BASE + 0x10:#010x}\n\n"
+            f"src/b.c:") in (folder / "delinks.txt").read_text()
+    assert json.loads((folder / "file_compilers.json").read_text())["src/a_g.c"] == "1.2/sp4"
+
+
+def test_a_split_takes_every_declaration_with_the_functions_it_moves(tmp_path):
+    """The moved C used data declared just before it, far below the file's top: the new file failed to compile. It
+    gets every declaration of the old file, wherever it stands, and the old file keeps its own."""
+    from decompnet.app.forkengine import ForkEngine
+
+    text = ('#include "common.h"\n\nvoid f(void) {\n}\n\nextern int data_x;\n\n'
+            'int g(void) {\n    return data_x;\n}\n')
+    rows = [{"name": n, "meta": json.dumps({"symbol": n}), "status": "open"} for n in ("f", "g")]
+    eng = ForkEngine.__new__(ForkEngine)
+    new, old, moved = eng._divide(text, rows, {"g"})
+    assert moved == 1 and "extern int data_x;" in new and "int g(void)" in new and "void f(void)" not in new
+    assert "void f(void)" in old and "int g(void)" not in old and "extern int data_x;" in old
+
+
+def test_an_address_outside_a_modules_code_is_no_function_start(tmp_path):
+    """A pointer whose value lies in another module's range (overlays share addresses) was checked against this
+    module's bytes: below its start the offset was negative, passed the length check and indexed out of range, and
+    a user's Check again failed with an IndexError."""
+    from decompnet.consoles.nds import recover
+
+    m = recover.Module("ov000", "overlay(0)", tmp_path, BASE, (0xE12FFF1E).to_bytes(4, "little"), [(BASE, BASE + 4)])
+    assert recover._starts_like_code(m, BASE, False)
+    for addr in (BASE - 0x1000, BASE - 8, BASE + 4, BASE + 0x1000):
+        assert not recover._starts_like_code(m, addr, False) and not recover._starts_like_code(m, addr, True)

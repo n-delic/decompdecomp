@@ -962,12 +962,9 @@ class Manager:
     def prompt(self, s: Session) -> str:
         text = self._prompt(s)
         # the know-how every session reads first, given up front (saves each session its first tool calls)
-        ov = self.net.overview(s.slug)
-        guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])  # matching its compiler
-        topics = ["fork", "objdiff"] if ov.get("kind") == "fork" else ["workflow"]
-        topics += [guide] if guide else []
-        text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + "\n\n".join(
-            tools.guide_text(t) for t in topics)
+        ov = self.net.overview(s.slug)  # (only its platform's parts: tools.for_platform)
+        text += "\nKnow-how you'd otherwise read with guide() (more topics: guide()):\n\n" + tools.up_front(
+            ov.get("platform") or "", ov.get("kind") or "", ov["compiler"]["toolchain"])
         if (known := self.net.knowledge.for_prompt(s.slug)):
             text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):

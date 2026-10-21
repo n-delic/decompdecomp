@@ -148,6 +148,161 @@ def test_functions_given_up_on_go_to_the_strongest_model_at_work(tmp_path):
     assert net.claim_row(other, "game", None, "easiest")["name"] == "hard"
 
 
+def _one_function_game(tmp_path, name="piece"):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "ppc", 1, str(tmp_path),
+                          json.dumps({"kind": "rom", "rom": {}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, name, 4, 1, "open", "a"))
+    return net
+
+
+def test_a_function_agents_of_two_models_agree_no_c_makes_is_set_aside(tmp_path):
+    """On a DS game five to seven agents in turn took each piece of another function, found no C makes it and gave
+    it back with a note that changed nothing. Their verdict counts now: three agents of two models agreeing set it
+    aside (status asm, the reason on its page, red in the map), and the user can give it back."""
+    net = _one_function_game(tmp_path)
+    status = lambda: net.store.one("SELECT status FROM functions WHERE name='piece'")["status"]  # noqa: E731
+
+    def verdict(name):
+        agent, _ = net.local_agent(name)
+        net.claim_row(agent, "game", "piece")
+        return net.release(agent, "piece", "a lone pop {r4, pc}: the tail of the function before", "game", not_c=True)
+
+    assert "1 of 3 agents" in verdict("opencode-beam-free-1")
+    assert "2 of 3 agents" in verdict("opencode-beam-free-2")
+    assert "1 of 2 models" in verdict("opencode-beam-free-3") and status() == "open"  # one model's blind spot
+    assert "set aside now" in verdict("claude-sonnet-5-5-1") and status() == "asm"
+    row = net.function_map("game")[0]
+    page = network.set_aside(net.store.one("SELECT * FROM functions WHERE name='piece'"))  # function_detail's
+    assert row["not_c"] and page["not_c"] and "4 agents" in page["set_aside"]
+    assert net.summary("game")["set_aside"] == 1 and net.summary("game")["set_aside_bytes"] == 4  # out of its %
+    assert any(e["kind"] == "not_c" for e in net.store.all("SELECT kind FROM events"))
+    agent, _ = net.local_agent("claude-sonnet-5-5-2")
+    try:
+        net.claim_row(agent, "game", "piece")
+        raise AssertionError("a set-aside function handed out")
+    except network.NetworkError as e:
+        assert "set aside" in str(e) and "4 agents" in str(e)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open'")
+    net.claim_row(agent, "game", "piece")
+    try:
+        net.release(agent, "piece", "", "game", not_c=True)
+        raise AssertionError("a verdict without a reason")
+    except network.NetworkError as e:
+        assert "why" in str(e)
+
+
+def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):
+    """Reopen: the agents' verdicts are forgotten, and no later check sets it aside again."""
+    from decompnet.app import twins
+
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', target=?, meta=? WHERE name='piece'",
+                   (b"\x10\x80\xbd\xe8", json.dumps({"asm_code": "3 agents found no C makes it", "not_c": {"a-1": {}}})))
+    net.reopen("piece", "game")
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "open" and json.loads(row["meta"]) == {"reopened": True}
+    monkeypatch.setattr(type(net.console(net.project_row("game"))), "asm_reason", lambda self, code: "hand-written")
+    assert twins.Twins(net).set_aside_asm(net.project_row("game")) == 0
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "open"
+
+
+def test_check_again_looks_at_a_project_with_what_this_version_knows(tmp_path, monkeypatch):
+    """Check again (and before helpers start, once after each update): the console's work for older projects runs,
+    code no compiler makes is set aside, and the project's feed says so; a project this version checked already
+    isn't checked again before helpers start."""
+    from decompnet import __version__
+
+    net = _one_function_game(tmp_path)
+    console = type(net.console(net.project_row("game")))
+    ran = []
+    def on_start(self, net, slug, log=print):
+        ran.append(slug)
+        if len(ran) == 2:  # the console's own work, said in the feed, is in the answer too
+            with net.store.tx() as db:
+                net._event(db, 1, None, "analysis", "8 pieces of functions joined")
+    monkeypatch.setattr(console, "on_start", on_start)
+    monkeypatch.setattr(console, "asm_reason", lambda self, code: "a piece cut out of another function")
+    assert net.recheck("game") == "1 more function set aside, as no C makes them" and ran == ["game"]
+    assert net.cfg(net.project_row("game"))["checked"] == __version__
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "asm"
+    assert "set aside" in net.store.one("SELECT detail FROM events WHERE kind='analysis'")["detail"]
+    assert net.recheck("game", only_if_updated=True) is None and ran == ["game"]  # this version did it already
+    assert net.recheck("game") == "8 pieces of functions joined" and ran == ["game", "game"]  # the button: always
+    assert net.recheck("game") == "nothing new"
+
+
+def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
+    """Before release_function took a verdict, agents said so in notes: on a DS game six agents in turn wrote that a
+    runtime helper with `clz` was hand-written assembly. Check again reads them: three agents of two models agreeing
+    set it aside. A note about flags doesn't count ("flag-blocked" code may match with other flags), nor one model
+    alone, nor the notes on a function the user gave back."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) SELECT project_id, 'flagged', 4, 1, "
+                   "'open', 'a' FROM functions")
+    fid = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
+
+    def note(agent_name, function, text):
+        agent, _ = net.local_agent(agent_name)
+        with net.store.tx() as db:
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(1,?,?,?,0)",
+                       (fid[function], agent.id, text))
+
+    note("opencode-beam-free-1", "piece", "Hand-written ARM runtime helper, not expressible in C.")
+    note("opencode-beam-free-2", "piece", "Agree: hand-written asm (inline clz). Skip.")
+    assert net.not_c_from_notes("game") == 0  # one model
+    note("claude-sonnet-5-5-1", "piece", "No C can produce it: the loop reuses the flags of the entry cmp.")  # the CPU's
+    for i, model in enumerate(("opencode-beam-free", "opencode-glm", "claude-sonnet-5-5")):
+        note(f"{model}-{i + 5}", "flagged", "Flag-blocked: no C can produce it with the project's flags.")
+    assert net.not_c_from_notes("game") == 1
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "asm" and "said in their notes" in json.loads(row["meta"])["asm_code"]
+    assert net.store.one("SELECT status FROM functions WHERE name='flagged'")["status"] == "open"
+    net.reopen("piece", "game")
+    assert net.not_c_from_notes("game") == 0  # given back: its old notes don't set it aside again
+    # notes from before pieces were joined to it were about a piece: they don't count after the join
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open', meta='{}' WHERE name='piece'")
+        db.execute("UPDATE notes SET created_at=1")
+    note("decompdecomp", "piece", "decompdecomp joined piece2 to this function: it's the whole function now")
+    with net.store.tx() as db:
+        db.execute("UPDATE notes SET created_at=2 WHERE agent_id=(SELECT id FROM agents WHERE name='decompdecomp')")
+    assert net.not_c_from_notes("game") == 0
+
+
+def test_a_function_gone_from_the_build_is_neither_on_the_map_nor_in_the_totals(tmp_path):
+    """A piece joined to its function keeps its row (gone, status nosource) for its attempts and notes: it showed on
+    the map as a function still to do, and its bytes counted twice, in it and in the function it's part of. A
+    function with no source file yet that is in the build still counts (a whole program's library code)."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,meta) SELECT project_id, 'joined', 4, "
+                   "1, 'nosource', 'a', '{\"gone\": 1}' FROM functions")
+    assert [r["name"] for r in net.function_map("game")] == ["piece"]
+    assert net.summary("game")["functions"] == 1 and net.summary("game")["bytes"] == 4
+
+
+def test_the_ways_agents_say_no_c_makes_a_function():
+    """Wordings from a user's projects that mean no C makes the code, and ones that don't: a hedge, a function that's
+    only hard, or code that may match with other compiler flags."""
+    from decompnet.network import FLAG_NOTE, NOT_C_NOTE
+
+    says = ["Agrees with earlier notes: hand-written SDK asm (ldmia/stmia r2-r9).", "Not C-expressible per prior notes.",
+            "No plain C reproduces the branch-pair + post-index form.", "Not reachable with C under mwcc.",
+            "Unmatchable in C per notes. Skip.", "No C can produce it: the loop reuses the flags of the entry cmp."]
+    not_said = ["Probably the SDK's MTX_Copy43.", "Hard: 3 agents failed, try a do-while.", "Released, no C attempt.",
+                "Any C version of it emits a call."]
+    flags = "Flag-blocked: no C can produce it with the project's flags."
+    assert all(NOT_C_NOTE.search(s) and not FLAG_NOTE.search(s) for s in says)
+    assert not any(NOT_C_NOTE.search(s) for s in not_said) and FLAG_NOTE.search(flags)
+
+
 def _game(tmp_path, functions):
     """A ROM-kind project with these (name, n_insns, status) functions."""
     net = RomNetwork(tmp_path / "app.db", tmp_path)
@@ -222,3 +377,47 @@ def test_nothing_to_claim_says_who_holds_what_and_what_you_set_aside(tmp_path):
         db.execute("UPDATE functions SET status='matched'")
         db.execute("DELETE FROM claims")
     assert "every function matches" in net.claim(a, "game")
+
+
+def test_you_set_a_function_aside_at_once_and_give_it_back(tmp_path):
+    """The user knows a function is hand-written: they set it aside without waiting for agents of two models, its
+    claim goes, and Give it back to the agents undoes it. A matched function can't be: only the judge says matched."""
+    net = _one_function_game(tmp_path)
+    agent, _ = net.local_agent("opencode-beam-free-1")
+    net.claim_row(agent, "game", "piece")
+    net.set_aside_by_you("piece", "game", "the SDK's CpuFill32")
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "asm" and "you set it aside: the SDK's CpuFill32" in json.loads(row["meta"])["asm_code"]
+    assert not net.store.all("SELECT * FROM claims") and net.function_map("game")[0]["not_c"]
+    net.reopen("piece", "game")
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "open"
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched'")
+    try:
+        net.set_aside_by_you("piece", "game")
+        raise AssertionError("a matched function set aside")
+    except network.NetworkError as e:
+        assert "isn't open" in str(e)
+
+
+def test_at_the_end_of_a_game_big_functions_cant_be_passed_around_untried(tmp_path):
+    """Two big functions left (a DS game's printf engine and float formatter, 500 instructions each): agents read
+    "too large, skip" in the notes and gave each back untried, six and seven times, and nobody ever compiled them.
+    A release with no compile is pushed back however often it's asked: the agent holds it until it tries it."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("game", "Game", "", "mips", 1, str(tmp_path),
+                    json.dumps({"kind": "rom", "rom": {}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []}})))
+        for name in ("printf_engine", "float_formatter"):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(1,?,2000,500,"
+                       "'open','a',7)", (name,))
+    for who in ("claude-sonnet-5-5-1", "opencode-beam-free-1"):
+        agent, _ = net.local_agent(who)
+        held = net.claim_row(agent, "game")["name"]
+        for _ in range(3):  # asking again and again
+            said = net.release_function(agent, held, "too large for this session, skipping", "game")
+            assert said.startswith("Not released yet") and "haven't compiled" in said, said
+        assert net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
+                             agent.id)["name"] == held
+    assert net.store.one("SELECT SUM(abandons) AS n FROM functions")["n"] == 14  # no give-up counted

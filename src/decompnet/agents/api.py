@@ -370,8 +370,14 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
         "compile_and_diff": ("Compile C for the function, link it at its address and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
-        "release_function": ("Give up a function with notes for the next agent.",
-                             s(function=st("function", True), notes=st("what you tried, what is left", True))),
+        "last_diff": ("Every differing row of your last compile_and_diff of a function (its result cuts long diffs). "
+                      "Costs no compile.", s(function=st("function", True), context=it("equal rows around each difference"))),
+        "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
+                             "on (before that it answers once with what to try; call again to release anyway).",
+                             s(function=st("function", True), notes=st("what you tried, what is left", True),
+                               not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
+                               needs=st("optional: another function this one needs done first (a callee or inlined "
+                                        "helper): it then goes first and is handed to you"))),
         "get_context": ("The shared header included in every compile.", s()),
         "edit_context": ("Replace `old` (exactly once) with `new` in the shared header, or append when old is empty.",
                          s(old=st("text to replace, or empty", True), new=st("replacement", True),
@@ -427,8 +433,14 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                                                        new=st("replacement", True), message=st("why", True))),
         "file_status": ("How far a source file (or a function's file) is from being linked: functions left, its data "
                         "next to the original's, why the last link failed.", s(path=st("file or function", True))),
+        "join_functions": ("Forks: two functions are one the game's analysis cut (a piece with no prologue using registers "
+                           "the code before set, an epilogue alone, a switch's cases in the next symbol); joined once "
+                           "agents of two models agree and the game still builds byte for byte.",
+                           s(function=st("function", True), with_function=st("the other part", True),
+                             reason=st("what in the code shows it", True))),
         "split_file": ("Divide a source file at a function: it and the rest of the file's code (and data from the given "
-                       "offsets) go to a new file. Kept only if the game still builds identically.",
+                       "offsets) go to a new file, with the file's compiler (DS: then try_compiler can give the new "
+                       "file its own). Kept only if the game still builds identically.",
                        s(path=st("file", True), at=st("function name or .text offset", True),
                          new_name=st("new file path (optional)"), data=st("e.g. .rodata:0x88 .data:0x28 (optional)"))),
     }

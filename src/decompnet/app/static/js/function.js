@@ -33,8 +33,8 @@ function fnBadge(d = S.fnDetail) {
   if (!d) return;
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
-  st.className = "badge " + (d.status === "matched" ? "matched" : working ? "working" : "");
-  st.textContent = d.status === "matched" ? "matched" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
+  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside") : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
 }
 
 function showFnTab(tab) {
@@ -65,6 +65,27 @@ async function refreshFn(first) {
       : `${hex8(d.vram)} · ROM 0x${d.rom_offset.toString(16).toUpperCase()} · ${d.insns} instructions`;
     $("fnName").textContent = d.name;
     fnBadge(d);
+    $("fnSetAside").hidden = d.status !== "open";
+    $("fnSetAside").onclick = async () => {
+      const why = prompt(`Why does no C make ${d.name}? (optional: agents and you read it on its page)`, "hand-written assembly");
+      if (why === null) return;
+      try {
+        await api("/api/setaside", { method: "POST", body: { slug: S.slug, name: d.name, why } });
+        toast(`<code>${esc(d.name)}</code> is set aside: agents aren't handed it.`);
+        await refreshFn(false);
+        await refreshMap(true);
+      } catch (e) { toast(esc(e.message), "err"); }
+    };
+    $("fnAside").hidden = !d.set_aside;
+    $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
+    $("fnReopen").onclick = async () => {
+      try {
+        await api("/api/reopen", { method: "POST", body: { slug: S.slug, name: d.name } });
+        toast(`<code>${esc(d.name)}</code> is open again: agents can take it.`);
+        await refreshFn(false);
+        await refreshMap(true);
+      } catch (e) { toast(esc(e.message), "err"); }
+    };
     const pinned = (S.ov.priority || []).includes(d.name);
     $("fnPin").hidden = S.ov.kind === "fork" || d.status !== "open";
     $("fnPin").classList.toggle("on", pinned);
@@ -317,7 +338,7 @@ function renderList() {
   $("fnRows").innerHTML = rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
-    const status = st === "matched" ? `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>` : st === "asm" ? `<span class="st" title="hand-written assembly: no C compiles to it">assembly</span>` : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
+    const status = st === "matched" ? `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>` : st === "asm" ? (f.not_c ? `<span class="st not-c" title="agents agreed no C makes it: set aside">not C</span>` : `<span class="st" title="no C compiles to it (hand-written assembly, or a piece of another function): set aside">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
     const on = starred(f), open = st !== "matched" && st !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;

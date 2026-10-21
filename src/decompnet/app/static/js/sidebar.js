@@ -30,7 +30,7 @@ function renderNav() {
   const box = $("navProjects");
   if (!S.projects.length) { box.innerHTML = `<p class="nav-empty">None yet: drop in a game.</p>`; return; }
   box.innerHTML = S.projects.map((p) => {
-    const pct = p.bytes ? (100 * p.matched_bytes) / p.bytes : 0;
+    const pct = codePct(p);
     const short = p.platform_short || p.platform_name || "?";
     const state = p.working ? `<span class="dot on" title="${p.working} agent${p.working === 1 ? "" : "s"} working"></span>`
       : p.autopilot === "running" ? `<span class="dot work" title="autopilot running"></span>` : "";
@@ -141,6 +141,7 @@ function noteHtml(g) {
     autopilot: () => `Autopilot: ${esc(d)}`,
     compiler: () => `Compiler: ${esc(d)}`,
     reopen: () => esc(d),
+    not_c: () => esc(d),
     knowledge: () => `Agents agree on something every agent should know (${esc(d)})`,
     collab: () => esc(sentence(d)),
     import: () => `Game analysed: ${esc(d)}`,

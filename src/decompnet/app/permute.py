@@ -226,6 +226,10 @@ class Permuter:
     def _turn(self, agent, proj, fn, st: State) -> None:
         try:
             self._permute(agent, proj, fn, st)
+        except NetworkError as e:  # the project refused its source (a helper the file hasn't): an answer, not a crash
+            log.info("permuter: %s: %s (left to agents)", fn["name"], str(e).splitlines()[0])
+            with self.net.store.tx() as db:  # the same best attempt is refused every time: no more turns on it
+                db.execute("UPDATE functions SET permuted=MAX(permuted, ?) WHERE id=?", (MAX_TURNS, fn["id"]))
         except Exception as e:  # one odd function must not stop the rest
             log.info("permuter: %s: %s", fn["name"], e, exc_info=True)
 

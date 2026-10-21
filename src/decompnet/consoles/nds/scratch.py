@@ -324,6 +324,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     log("finding the functions dsd's analysis missed (functions only pointers reach)")
     recover.recover(root, version, dsd=dsd, log=log)
+    log("joining the pieces of functions dsd's analysis cut off to the functions they belong to")
+    recover.merge_pieces(root, version, dsd=dsd, log=log)
 
     sources = []
     for prefix, module in _modules(root / "config" / version):
@@ -344,7 +346,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "nds", "version": version, "compiler": f"DS/{compiler}",
-        "analysis": 4,  # (consoles/nds: NintendoDS.ANALYSIS)
+        "analysis": 6,  # (NintendoDS.ANALYSIS: what it lacks, moving boundaries, happens at the first start)
         "game": {"what": "your copy of the game (.nds)", "path": "extract/baserom.nds", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,

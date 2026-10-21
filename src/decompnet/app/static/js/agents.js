@@ -420,6 +420,7 @@ function eventHtml(ev) {
     case "stopped": return `${who} stopped: ${esc(d)}`;
     case "autopilot": return `<span class="who">autopilot</span> ${esc(d)}`;
     case "reopen": return esc(d);
+    case "not_c": return `<span class="not-c" aria-hidden="true"></span> ${esc(d)}`;
     case "knowledge": return `${who} and another model agree on something every agent should know (${esc(d)}): What agents learned, below`;
     default: return `${who} ${esc(ev.kind)} ${esc(d)}`;
   }

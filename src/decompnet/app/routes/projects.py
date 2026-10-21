@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ... import consoles, hostenv, toolchains
+from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import saves
 from ..engine import parse_ranges
@@ -133,6 +134,21 @@ def register(app: App) -> None:
             pass  # not yours (any more): nothing to give back
         return {"ok": True}
 
+    def p_recheck(slug, request, data):
+        """Check again: the project looked at with what this version knows (Core.recheck), in the background."""
+        return {"job": jobs.start("recheck", lambda log: {
+            "said": net.recheck(slug, log=log) or "nothing to do on this computer, as the room's host checks the game"})}
+
+    def p_set_aside(slug, request, data):
+        """You set a function aside: no C makes it (Network.set_aside_by_you)."""
+        net.set_aside_by_you(str(data.get("name", "")), slug, str(data.get("why", "")))
+        return {"ok": True}
+
+    def p_reopen(slug, request, data):
+        """You give a set-aside function back to the agents."""
+        net.reopen(str(data.get("name", "")), slug)
+        return {"ok": True}
+
     def p_instructions(slug, request, data):
         net.set_instructions(slug, str(data.get("text", "")))
         return net.overview(slug)
@@ -143,6 +159,31 @@ def register(app: App) -> None:
 
     def p_priority(slug, request, data):
         return {"priority": net.set_priority(slug, str(data.get("name", "")), bool(data.get("on", True)))}
+
+    def p_scope(slug, request, data):
+        """What the project covers ({scope: "game" | "program"}): kept in its manifest, then the project is measured
+        again (a job: a big project takes a while), so its set-aside functions open to agents and count, or stop."""
+        scope = str(data.get("scope", ""))
+        if scope not in SCOPES:
+            raise ValueError(f"a project covers the game's own code or the whole program, not {scope!r}")
+        if not net.fork_slug(slug):
+            raise ValueError("only projects started from scratch or forked have code set aside to choose for")
+
+        def work(log):
+            net.forks.set_scope(slug, scope, log=log)
+            return net.overview(slug)
+        return {"job": jobs.start("scope", work)}
+
+    def p_unanalysed(slug, request, data):
+        """Bring in the code the project's import left unanalysed (Console.unanalysed), once: a new analysis of that
+        code alone (a job: it runs the console's analysis, Ghidra for some), then the project measured again."""
+        if not net.fork_slug(slug):
+            raise ValueError("only projects started from scratch have code a new analysis can bring in")
+
+        def work(log):
+            net.forks.analyse_unanalysed(slug, log=log)
+            return net.overview(slug)
+        return {"job": jobs.start("analysis", work)}
 
     def p_note(slug, request, data):
         """A note from you on a function (or the whole project): agents read notes when they claim it."""
@@ -193,9 +234,11 @@ def register(app: App) -> None:
         "/api/compiler": (p_compiler, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
-        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]),
+        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
+        "/api/recheck": (p_recheck, ["POST"]),
         "/api/autopilot": (p_autopilot, ["POST"]), "/api/instructions": (p_instructions, ["POST"]), "/api/title": (p_title, ["POST"]),
-        "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]),
+        "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
+        "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
         "/api/stats": (lambda s, r, d: net.stats(s), ["GET"]),
         "/api/compilermap": (p_compilermap, ["GET", "POST"]),

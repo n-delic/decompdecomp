@@ -7,7 +7,9 @@ splits, the notes, the instructions, what agents learned, the compiler and its r
 holds its fingerprint (sha1), and a restore asks for the user's own copy and checks it's the same game. Every
 matched function is judged again on the way in: a match counts because it matches, not because a file says so.
 
-Public decomps (forks) aren't saved here: their work is their own git repository.
+A project-mode game (DS, GameCube, Wii, PC; a public decomp) keeps its matched C in its own source files and git;
+what only the database has is each open function's closest attempt, and a save writes those (best/), with a README
+(#43: on a DS game near-misses of 97-99.9% were locked away, wanted for a port while matching goes on).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from .. import compiler, consoles, toolchains
 from ..hostenv import stop_process_tree
 from ..network import NetworkError
 from ..rom.symbols import AUTO_NAME
+from ..scoring import percent_text
 
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
@@ -45,10 +48,10 @@ def default_folder(net, slug: str) -> Path:
 def save(net, slug: str, folder: Path | None = None) -> dict:
     """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved."""
     proj = net._project(slug)
-    if not net.is_rom(proj):
-        raise NetworkError("a public decomp's work is its own git repository: commit and push it there")
-    cfg = net.cfg(proj)
     folder = Path(folder) if folder else default_folder(net, slug)
+    if not net.is_rom(proj):
+        return _save_best(net, proj, folder)
+    cfg = net.cfg(proj)
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
@@ -125,6 +128,34 @@ repository's address) and your own copy of the game. decompdecomp checks it's th
 function again: a match counts because it matches, not because a file says so.
 """, encoding="utf-8")
     return {"folder": str(folder), "matched": matched, "best": len(functions) - matched}
+
+
+def _save_best(net, proj, folder: Path) -> dict:
+    """A project-mode game's save: each open function's closest attempt as best/<function>.c, with how close it is,
+    who wrote it and its source file in a comment at its top. Its matched C is in the project's own files."""
+    names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
+    rows = net.store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
+                         "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
+                         "ORDER BY unit, name", proj["id"])
+    shutil.rmtree(folder / "best", ignore_errors=True)
+    (folder / "best").mkdir(parents=True, exist_ok=True)
+    for r in rows:
+        pct = 100 * (1 - r["best_score"] / max(1, (r["n_insns"] or 1) * 100))
+        source = json.loads(r["meta"] or "{}").get("source") or r["unit"]
+        (folder / "best" / f"{r['name']}.c").write_text(
+            f"/* {r['name']}: the closest attempt so far, {percent_text(pct)} match, by "
+            f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n",
+            encoding="utf-8")
+    (folder / "README.md").write_text(f"""# {proj['name']}: the closest attempts so far
+
+Saved by [decompdecomp](https://github.com/n-delic/decompdecomp). Each file in `best/` is the closest C an agent wrote
+for a function of the game that doesn't match byte for byte yet ({len(rows)} of them): its comment says how close,
+who wrote it and which source file it belongs in. They compile, but they're not the original's code.
+
+The matched functions aren't here: they're in the project's own source files (and its git history), where every
+match was judged byte for byte. No game data is in this folder.
+""", encoding="utf-8")
+    return {"folder": str(folder), "matched": 0, "best": len(rows)}
 
 
 def fetch(source: str, into: Path, log=print) -> Path:

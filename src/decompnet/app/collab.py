@@ -396,7 +396,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     def release(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
-        return {"text": net.release(agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug)}
+        return {"text": net.release(agent, str(d.get("function", "")), str(d.get("notes", "")), room.slug,
+                                     bool(d.get("not_c")))}
 
     def context(room, member, d):
         agent = room.agent_for(member, d.get("agent"))

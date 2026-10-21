@@ -15,8 +15,8 @@ function cssColor(name) {
   return [...swatch.getImageData(0, 0, 1, 1).data.slice(0, 3)];
 }
 function readColors() {
-  colors = { open: cssColor("--open"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
-             cc: CC_COLORS.map(cssColor) };
+  colors = { open: cssColor("--todo"), tried: cssColor("--tried"), work: cssColor("--hl"), match: cssColor("--match"), hi: cssColor("--match-hi"), ink: cssColor("--ink"),
+             notC: cssColor("--not-c"), cc: CC_COLORS.map(cssColor) };
 }
 
 /* The compiler map (MIPS ROM projects): each square in the colour of the compiler its code looks like, the game's
@@ -119,7 +119,8 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [colors.match, 1];
-  if (f.status === "asm") return [colors.tried, 0.35];
+  // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
+  if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
 }

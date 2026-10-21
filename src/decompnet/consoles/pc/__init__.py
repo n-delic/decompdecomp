@@ -70,5 +70,10 @@ class WindowsPC(Console):
 
         return scratch.read_data(fp.root, fp.manifest or {}, name, length)
 
+    def data_bytes(self, fp, addr: int, length: int) -> bytes | None:
+        from . import scratch
+
+        return scratch.data_bytes(fp.root, fp.manifest or {}, addr, length)
+
 
 PC = WindowsPC()

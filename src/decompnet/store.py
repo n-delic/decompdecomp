@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS symbols(
   project_id INTEGER NOT NULL, name TEXT NOT NULL, address INTEGER NOT NULL, size INTEGER NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'data', preview TEXT, PRIMARY KEY(project_id, name));
 CREATE INDEX IF NOT EXISTS idx_symbols_addr ON symbols(project_id, address);
+-- a function an agent found needs another one done first (release_function's `needs`): claimed last until that one
+-- matches, which is claimed first meanwhile; then it comes first once
+CREATE TABLE IF NOT EXISTS waits(
+  function_id INTEGER PRIMARY KEY, needs_id INTEGER NOT NULL, agent_id INTEGER, created_at REAL);
 CREATE TABLE IF NOT EXISTS twin_misses(
   function_id INTEGER NOT NULL, source_hash TEXT NOT NULL, project_id INTEGER, at REAL, why TEXT,
   PRIMARY KEY(function_id, source_hash));

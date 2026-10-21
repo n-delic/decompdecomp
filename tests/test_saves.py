@@ -102,3 +102,30 @@ def test_a_whole_decomp_folder_copied_elsewhere_keeps_its_projects(tmp_path):
     shutil.rmtree(tmp_path / "old")
     moved = RomNetwork(new_home / "decomp.db", new_home)
     assert moved.project_row("game")["root"] == str(new_home / "game")
+
+
+def test_a_project_mode_games_save_writes_its_closest_attempts(tmp_path):
+    """#43: a DS project had no Save, and its near-misses (97-99.9%) were only in the database. Its save writes each
+    open function's closest attempt, saying how close it is and where it belongs; matched C is the project's own."""
+    import json
+
+    from decompnet.app import saves
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "nds", "ready": True}, "x")
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,best_source,best_score,best_agent_id,"
+                   "meta) VALUES(1,'f',40,10,'open','u','int f(void) { return 1; }',30,?,?)",
+                   (agent.id, json.dumps({"source": "src/auto/u.c"})))
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_source) "
+                   "VALUES(1,'g',8,2,'matched','u','void g(void) {}')")
+    said = saves.save(net, "p")
+    assert said["best"] == 1 and said["folder"] == str(root / "progress")
+    best = (root / "progress" / "best" / "f.c").read_text()
+    assert "97.0% match" in best and "claude-sonnet-5-5-1" in best and "src/auto/u.c" in best and "return 1;" in best
+    assert not (root / "progress" / "best" / "g.c").exists() and (root / "progress" / "README.md").exists()

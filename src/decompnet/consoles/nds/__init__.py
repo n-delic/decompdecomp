@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ...network import NetworkError
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 # the `mwccarm` pack's versions, oldest first
@@ -47,9 +48,12 @@ class NintendoDS(Console):
     usual = "DS/2.0/sp1p5"  # what most of its games were built with: the default until the game says otherwise
     # what a project's config holds, in its manifest's "analysis": 1 dsd's own analysis, 2 with the functions it
     # misses (recover.py), 3 its build tools brought up to date too (scratch.write_tools: dead stripping dropped
-    # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text). A project with less
-    # gets the rest when the app starts
-    ANALYSIS = 4
+    # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
+    # functions dsd cut off joined to their functions (recover.merge_pieces), 6 with the pieces only the caller's
+    # registers tell (arm.piece: code using r4-r11 before saving them), 7 a switch's cases in the next source file
+    # moved to its own (recover.move_boundaries), 8 pieces joined with the bytes no symbol claims between them. A project with less gets the rest when
+    # the app starts, or when it's checked again
+    ANALYSIS = 8
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -78,9 +82,10 @@ class NintendoDS(Console):
         return scratch.tool_args()
 
     def on_start(self, net, slug: str, log=print) -> None:
-        """A project made by an older decompdecomp gets, once, its build tools' fixes (scratch.write_tools) and the
-        functions dsd's analysis missed (recover.py: in .text's gaps and past its end), through forkengine.reanalyse:
-        checked by the rebuild, taken back if that breaks."""
+        """A project made by an older decompdecomp gets, once, its build tools' fixes (scratch.write_tools), the
+        functions dsd's analysis missed (recover.py: in .text's gaps and past its end) and the pieces of functions it
+        cut off joined to them (recover.merge_pieces), through forkengine.reanalyse: checked by the rebuild, taken back
+        if that breaks."""
         from . import recover, scratch
 
         if not net.fork_slug(slug):
@@ -102,11 +107,90 @@ class NintendoDS(Console):
             if files:
                 said.append(f"{len(files)} new source files hold the code dsd took for data past the end of .text")
             return "; ".join(said) or None
-        net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
-        net.forks.reanalyse(slug, functions, log=log)
+        joined: dict[str, list[str]] = {}
+
+        def pieces(fp):  # not into or out of a matched function: its C would no longer be the whole function
+            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                        "status='matched'", net.project_row(slug)["id"])}
+            joined.update(recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched,
+                                               log=log))
+            n = sum(len(v) for v in joined.values())
+            return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
+                    if n else None)
+        def boundaries(fp):  # its own step: a rebuild it breaks takes back only these
+            matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                        "status='matched'", net.project_row(slug)["id"])}
+            moved = recover.move_boundaries(fp.root, manifest["version"], keep=matched, log=log)
+            return (f"{len(moved)} functions a switch runs on into ({', '.join(moved[:3])}{'…' if len(moved) > 3 else ''})"
+                    " moved to the source file of the function they're part of" if moved else None)
+        level = manifest.get("analysis", 1)
+        if level < 4:  # (a project at 4 or more has these already)
+            net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
+            net.forks.reanalyse(slug, functions, log=log)
+        net.forks.reanalyse(slug, boundaries, log=log)
+        net.forks.reanalyse(slug, pieces, log=log)
+        # its notes from before say "fragment, skip": agents read the newest note first (and a project joined before
+        # these notes were written gets them now, once)
+        if joined or level < 6:
+            agent, _ = net.local_agent("decompdecomp")
+            earlier = recover.joined_pieces(fp.root, manifest["version"]) if level < 6 else {}
+            for name, took in (earlier | joined).items():
+                try:
+                    net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
+                                              "function now, not a fragment, whatever older notes say. Worth a try.",
+                                 name)
+                except NetworkError:  # gone meanwhile
+                    pass
         now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")
+
+    splits_sources = True
+
+    def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
+        """The source file's block in its module's delinks.txt ends where function `at` starts, and `new`'s, from
+        there to where it ended, follows it (its data stays with the file); `new` gets the file's compiler
+        (file_compilers.json)."""
+        import re
+
+        from ...forks.project import ForkError
+        from . import recover, scratch
+
+        where = [int(s.group(4), 16) for p in (fp.root / "config" / version).rglob("symbols.txt")
+                 for ln in p.read_text(encoding="utf-8").splitlines()
+                 if (s := recover.SYMBOL.match(ln)) and s.group(1) == at and s.group(2) == "function"]
+        if len(where) != 1:
+            raise ForkError(f"{at} isn't one function of the game's config")
+        at_addr = where[0]
+        saved = {}
+        for path in sorted((fp.root / "config" / version).rglob("delinks.txt")):
+            text = path.read_text(encoding="utf-8")
+            m = re.search(rf"^{re.escape(source)}:\n((?:[ \t]+\S.*\n?)*)", text, re.M)
+            if not m:
+                continue
+            t = re.search(r"^(\s+\.text start:)(0x[0-9a-fA-F]+) end:(0x[0-9a-fA-F]+)", m.group(1), re.M)
+            if not t or not int(t.group(2), 16) < at_addr < int(t.group(3), 16):
+                raise ForkError(f"{at} isn't in {source}'s code after its start")
+            block = m.group(0).rstrip("\n").replace(t.group(0), f"{t.group(1)}{t.group(2)} end:{at_addr:#010x}", 1)
+            new_block = f"{new}:\n    .text start:{at_addr:#010x} end:{t.group(3)}"
+            saved[path] = text
+            path.write_text(text[:m.start()] + block + "\n\n" + new_block + "\n" + text[m.end():], encoding="utf-8")
+            break
+        else:
+            raise ForkError(f"{source} isn't one of the project's source files")
+        compilers = scratch.compilers_file(fp.root, version)
+        if compilers.exists():
+            saved[compilers] = compilers.read_text(encoding="utf-8")
+            own = json.loads(saved[compilers])
+            if source in own:
+                compilers.write_text(json.dumps({**own, new: own[source]}, indent=2) + "\n", encoding="utf-8")
+        return saved
+
+    def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:
+        from . import recover, scratch
+
+        return recover.join_functions(fp.root, (fp.manifest or {})["version"], first, last, keep=keep,
+                                      dsd=scratch.dsd_path())
 
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch

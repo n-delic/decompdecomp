@@ -268,3 +268,26 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
     finally:
         gen.close()
+
+
+def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):
+    """A best attempt with a helper the source file hasn't: every variant the permuter sent was refused, each with a
+    traceback in the user's log. The refusal is an answer, not a crash."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.network import NetworkError
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES('g','G','','arm',0,?,'{}')",
+                   (str(tmp_path),))
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(1,'f',8,2,'open','a')")
+    p = permute.Permuter.__new__(permute.Permuter)
+    p.net = net
+    monkeypatch.setattr(p, "_permute", lambda *a: (_ for _ in ()).throw(NetworkError("send the function definition\nmore")),
+                        raising=False)
+    with caplog.at_level("INFO", logger="decompdecomp"):
+        p._turn(None, None, {"name": "f", "id": 1}, None)
+    assert caplog.records[-1].getMessage() == "permuter: f: send the function definition (left to agents)"
+    assert caplog.records[-1].exc_info is None
+    # the same best attempt is refused every time: its other turns go too
+    assert net.store.one("SELECT permuted FROM functions WHERE id=1")["permuted"] == permute.MAX_TURNS
