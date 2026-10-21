@@ -411,14 +411,15 @@ $("folderBtn").onclick = () => openFolder();
 /* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
 $("recheckBtn").onclick = async () => {
-  $("recheckBtn").disabled = true;
-  $("recheckLog").hidden = false;
+  const b = $("recheckBtn");
+  b.disabled = true;
+  b.textContent = "Checking…";
   try {
     const { job } = await api("/api/recheck", { method: "POST", body: { slug: S.slug } });
-    const r = await followJob(job, $("recheckLog"));
-    $("recheckLog").textContent += `${$("recheckLog").textContent ? "\n" : ""}Checked again: ${r.said}.`;
+    const r = await followJob(job, null);
+    toast(`Checked again: ${esc(r.said)}.`, "match");
     await refreshMap(true);
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("recheckBtn").disabled = false; }
+  } catch (e) { toast(esc(e.message), "err"); } finally { b.disabled = false; b.textContent = "Check again"; }
 };
 
 $("saveGo").onclick = async () => {
