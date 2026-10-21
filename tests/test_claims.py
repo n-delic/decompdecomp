@@ -146,3 +146,86 @@ def test_functions_given_up_on_go_to_the_strongest_model_at_work(tmp_path):
         db.execute("UPDATE functions SET status='matched' WHERE name IN ('fresh', 'tried')")
     other, _ = net.local_agent("opencode-beam-free-2")  # the same weak model: only "hard" is left, so it gets it
     assert net.claim_row(other, "game", None, "easiest")["name"] == "hard"
+
+
+def _one_function_game(tmp_path, name="piece"):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "ppc", 1, str(tmp_path),
+                          json.dumps({"kind": "rom", "rom": {}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []}}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, name, 4, 1, "open", "a"))
+    return net
+
+
+def test_a_function_agents_of_two_models_agree_no_c_makes_is_set_aside(tmp_path):
+    """On a DS game five to seven agents in turn took each piece of another function, found no C makes it and gave
+    it back with a note that changed nothing. Their verdict counts now: three agents of two models agreeing set it
+    aside (status asm, the reason on its page, red in the map), and the user can give it back."""
+    net = _one_function_game(tmp_path)
+    status = lambda: net.store.one("SELECT status FROM functions WHERE name='piece'")["status"]  # noqa: E731
+
+    def verdict(name):
+        agent, _ = net.local_agent(name)
+        net.claim_row(agent, "game", "piece")
+        return net.release(agent, "piece", "a lone pop {r4, pc}: the tail of the function before", "game", not_c=True)
+
+    assert "1 of 3 agents" in verdict("opencode-beam-free-1")
+    assert "2 of 3 agents" in verdict("opencode-beam-free-2")
+    assert "1 of 2 models" in verdict("opencode-beam-free-3") and status() == "open"  # one model's blind spot
+    assert "set aside now" in verdict("claude-sonnet-5-5-1") and status() == "asm"
+    row = net.function_map("game")[0]
+    page = network.set_aside(net.store.one("SELECT * FROM functions WHERE name='piece'"))  # function_detail's
+    assert row["not_c"] and page["not_c"] and "4 agents" in page["set_aside"]
+    assert net.summary("game")["set_aside"] == 1 and net.summary("game")["set_aside_bytes"] == 4  # out of its %
+    assert any(e["kind"] == "not_c" for e in net.store.all("SELECT kind FROM events"))
+    agent, _ = net.local_agent("claude-sonnet-5-5-2")
+    try:
+        net.claim_row(agent, "game", "piece")
+        raise AssertionError("a set-aside function handed out")
+    except network.NetworkError as e:
+        assert "set aside" in str(e) and "4 agents" in str(e)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open'")
+    net.claim_row(agent, "game", "piece")
+    try:
+        net.release(agent, "piece", "", "game", not_c=True)
+        raise AssertionError("a verdict without a reason")
+    except network.NetworkError as e:
+        assert "why" in str(e)
+
+
+def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):
+    """Reopen: the agents' verdicts are forgotten, and no later check sets it aside again."""
+    from decompnet.app import twins
+
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', target=?, meta=? WHERE name='piece'",
+                   (b"\x10\x80\xbd\xe8", json.dumps({"asm_code": "3 agents found no C makes it", "not_c": {"a-1": {}}})))
+    net.reopen("piece", "game")
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "open" and json.loads(row["meta"]) == {"reopened": True}
+    monkeypatch.setattr(type(net.console(net.project_row("game"))), "asm_reason", lambda self, code: "hand-written")
+    assert twins.Twins(net).set_aside_asm(net.project_row("game")) == 0
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "open"
+
+
+def test_check_again_looks_at_a_project_with_what_this_version_knows(tmp_path, monkeypatch):
+    """Check again (and before helpers start, once after each update): the console's work for older projects runs,
+    code no compiler makes is set aside, and the project's feed says so; a project this version checked already
+    isn't checked again before helpers start."""
+    from decompnet import __version__
+
+    net = _one_function_game(tmp_path)
+    console = type(net.console(net.project_row("game")))
+    ran = []
+    monkeypatch.setattr(console, "on_start", lambda self, net, slug, log=print: ran.append(slug))
+    monkeypatch.setattr(console, "asm_reason", lambda self, code: "a piece cut out of another function")
+    assert net.recheck("game") == "1 more function set aside, as no C makes them" and ran == ["game"]
+    assert net.cfg(net.project_row("game"))["checked"] == __version__
+    assert net.store.one("SELECT status FROM functions WHERE name='piece'")["status"] == "asm"
+    assert "set aside" in net.store.one("SELECT detail FROM events WHERE kind='analysis'")["detail"]
+    assert net.recheck("game", only_if_updated=True) is None and ran == ["game"]  # this version did it already
+    assert net.recheck("game") == "nothing new" and ran == ["game", "game"]  # the button: always

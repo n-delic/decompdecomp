@@ -44,6 +44,11 @@ const pctOf = (best, insns) => (best == null ? null : Math.max(0, 1 - best / Mat
 /* A match percentage that never reads 100% before the function really matches (99.6% stays 99.6%). */
 const pctText = (p) => (p >= 0.99 ? `${(Math.floor(p * 1000) / 10).toFixed(1)}%` : `${Math.floor(p * 100)}%`);
 const pctNum = (p) => (p < 10 ? p.toFixed(2) : p.toFixed(1));
+/* A project's share matched of the code C can make: what's set aside (assembly, pieces of functions, what agents
+   agreed no C makes) is out of both sides. */
+const codeBytes = (p) => Math.max(0, (p.bytes || 0) - (p.set_aside_bytes || 0));
+const codePct = (p) => (codeBytes(p) ? (100 * (p.matched_bytes || 0)) / codeBytes(p) : 0);
+const cFunctions = (p) => (p.functions || 0) - (p.set_aside || 0);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const plural = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? "" : "s"}`;
 const MINUTE = 60, HOUR = 3600, DAY = 86400;  // seconds

@@ -22,6 +22,7 @@
   --hl: var(--color-mark-fill); --hl-ink: var(--color-mark-text); --hl-soft: color-mix(in oklch, var(--color-mark-fill) 45%, var(--color-surface-base));
   --work: var(--color-status-warning-text); --work-bg: var(--color-status-warning-surface);
   --miss: var(--color-status-danger-text); --miss-bg: var(--color-status-danger-surface);
+  --not-c: var(--color-status-danger-fill);  /* a function agents agreed no C makes: a red square */
   --open: color-mix(in oklch, var(--color-border-subtle) 70%, var(--color-surface-base));
   --tried: color-mix(in oklch, var(--color-border-strong) 55%, var(--color-surface-base));
   /* the compiler map: one colour per compiler, the game's main one grey (GTA San Andreas uses seven) */
@@ -395,6 +396,9 @@ a.ghost, a.primary { text-decoration: none; }
 .st.matched { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
 .st.working { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .st.tried { color: var(--ink-2); }
+.st.not-c, .badge.not-c { background: var(--miss-bg); color: var(--miss); border-color: transparent; }
+.not-c { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--not-c); vertical-align: baseline; }
+.set-aside { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--miss-bg); color: var(--ink-2); }
 .list-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; }
 
 /* ------------------------------------------------------------------ agents */

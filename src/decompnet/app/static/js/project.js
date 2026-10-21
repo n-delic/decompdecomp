@@ -117,7 +117,7 @@ async function poll() {
     let mapDirty = false;
     for (const ev of live.events) {
       S.lastEvent = Math.max(S.lastEvent, ev.id);
-      if (["match", "split", "rename", "compiler", "reopen"].includes(ev.kind)) mapDirty = true;
+      if (["match", "split", "rename", "compiler", "reopen", "not_c", "analysis"].includes(ev.kind)) mapDirty = true;
       if (ev.kind === "match" && !first && ev.created_at >= S.openedAt) S.flash.set(ev.detail, performance.now());
     }
     for (const at of live.attempts) {
@@ -203,11 +203,11 @@ function renderHeader(ov) {
   if (comp) chips.push(`<span class="chip-s" title="${esc(fork ? "" : ov.compiler.flags.join(" "))}">${esc(comp)}</span>`);
   $("phChips").innerHTML = chips.join("");
   $("phTitle").textContent = ov.title;
-  const pct = ov.bytes ? (100 * ov.matched_bytes) / ov.bytes : 0;
+  const pct = codePct(ov);
   $("phPct").textContent = pctNum(pct);
   $("phBar").style.width = pct + "%";
   $("phSub").textContent = fork && !ov.ready ? "set up the project to start"
-    : `${ov.matched.toLocaleString()} / ${ov.functions.toLocaleString()} functions${ov.readable ? ` · ${ov.readable.toLocaleString()} readable` : ""}${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
+    : `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()} functions${ov.readable ? ` · ${ov.readable.toLocaleString()} readable` : ""}${linkedText(ov)} · ${plural(ov.attempts || 0, "compile")}${S.today ? ` · ${S.today} matched today` : ""}`;
   $("phSub").title = ov.readable ? "Readable: matched functions renamed, typed and commented by agents, and still matching byte for byte" : "";
   const w = workingAgents();
   $("phWorking").hidden = !w.n;
@@ -290,14 +290,14 @@ function renderStats(ov) {
   renderHeader(ov);
   // the sidebar's line for this project follows the header now, not 5 s later (they disagreed after each match)
   const mine = (S.projects || []).find((p) => p.slug === ov.slug);
-  if (mine && (mine.matched_bytes !== ov.matched_bytes || mine.bytes !== ov.bytes)) {
-    Object.assign(mine, { matched_bytes: ov.matched_bytes, bytes: ov.bytes });
+  if (mine && (mine.matched_bytes !== ov.matched_bytes || mine.bytes !== ov.bytes || mine.set_aside_bytes !== ov.set_aside_bytes)) {
+    Object.assign(mine, { matched_bytes: ov.matched_bytes, bytes: ov.bytes, set_aside: ov.set_aside, set_aside_bytes: ov.set_aside_bytes });
     renderNav();
   }
-  const pct = ov.bytes ? (100 * ov.matched_bytes) / ov.bytes : 0;
+  const pct = codePct(ov);
   $("pct").textContent = pctNum(pct);
-  $("pctSub").textContent = (ov.bytes ? `${bytes(ov.matched_bytes)} of ${bytes(ov.bytes)}` : "") + linkedText(ov) + (S.today ? ` · ${S.today} matched today` : "");
-  $("fnCount").textContent = `${ov.matched.toLocaleString()} / ${ov.functions.toLocaleString()}`;
+  $("pctSub").textContent = (ov.bytes ? `${bytes(ov.matched_bytes)} of ${bytes(codeBytes(ov))}` : "") + linkedText(ov) + (S.today ? ` · ${S.today} matched today` : "");
+  $("fnCount").textContent = `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()}`;
   renderAutopilot(ov);
   renderSteering(ov);
   if (exportOpen()) renderSource(ov);
@@ -356,8 +356,8 @@ function renderOverview() {
   const seg = (k, cls) => (c[k] ? `<i class="${cls}" data-w="${(100 * c[k]) / total}" title="${c[k]} ${k === "open" ? "to do" : k}"></i>` : "");
   $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("open", "s-open");
   setWidths($("fnStack"));
-  const togo = S.ov.functions - S.ov.matched;
-  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} assembly` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}`;
+  const togo = cFunctions(S.ov) - S.ov.matched;
+  $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}`;
   const st = S.stats;
   if (st) {
     const ph = st.matches_per_hour, max = Math.max(1, ...ph);

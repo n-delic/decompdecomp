@@ -31,7 +31,7 @@ async function showHome() {
   $("recent").hidden = !projects.length;
   $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
   for (const p of projects) {
-    const pct = p.bytes ? (100 * p.matched_bytes) / p.bytes : 0;
+    const pct = codePct(p);
     const a = document.createElement("a");
     a.className = "card";
     a.href = `#/p/${p.slug}`;
@@ -46,7 +46,7 @@ async function showHome() {
       : `${esc(p.rom?.game_code || "")}${p.rom?.region ? " · " + esc(p.rom.region) : ""} · ${esc(p.compiler?.name || "")}`;
     a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
       <div><h4>${esc(p.title)}</h4><p class="meta">${meta}</p></div>
-      <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${(p.functions || 0).toLocaleString()} functions</p>`;
+      <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${cFunctions(p).toLocaleString()} functions</p>`;
     box.append(a);
     requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });
   }

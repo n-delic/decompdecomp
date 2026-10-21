@@ -371,7 +371,9 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True))),
         "release_function": ("Give up a function with notes for the next agent.",
-                             s(function=st("function", True), notes=st("what you tried, what is left", True))),
+                             s(function=st("function", True), notes=st("what you tried, what is left", True),
+                               not_c=bo("true when you're sure no C makes its code (a piece of another function, "
+                                        "hand-written assembly); say why in notes"))),
         "get_context": ("The shared header included in every compile.", s()),
         "edit_context": ("Replace `old` (exactly once) with `new` in the shared header, or append when old is empty.",
                          s(old=st("text to replace, or empty", True), new=st("replacement", True),

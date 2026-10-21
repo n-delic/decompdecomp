@@ -68,7 +68,8 @@ Use only the decomp tools. Repeat for up to {count} claims (a batch is one), the
    its compiler's flags at once, try_compiler(...) other compilers; then suggest(...) what matches to the user. The function runs on past its end into padding, linker
    leftovers or data? report_boundary(...) where it really ends, then work on as it is.
 5. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next one.
+   release_function with precise notes (what you tried, what is left) and claim the next one. Sure that
+   no C makes its code at all (a piece of another function, hand-written assembly): not_c=true, saying why.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief
@@ -130,7 +131,8 @@ machine code, judged by objdiff. Use only the decomp tools. Repeat for up to {co
    functions, you're shown its data next to the original's: fix what differs (order, const, statics,
    values) with edit_file until file_status says it matches; decompdecomp then links the file.
 6. compile_and_diff says when to move on ({budget}): then
-   release_function with precise notes (what you tried, what is left) and claim the next. Very large
+   release_function with precise notes (what you tried, what is left) and claim the next; sure that
+   no C makes its code at all (a piece of another function, hand-written assembly): not_c=true, saying why. Very large
    functions: get the structure right first; a near miss is worth the extra compiles.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
@@ -224,7 +226,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
         _claim(net, agent, slug, function, strategy, count),
     "get_function": lambda net, agent, slug, function: net.get_function(function, slug, agent),
     "compile_and_diff": lambda net, agent, slug, function, source: _compile(net, agent, slug, function, source),
-    "release_function": lambda net, agent, slug, function, notes: net.release(agent, function, notes, slug),
+    "release_function": lambda net, agent, slug, function, notes, not_c=False:
+        net.release(agent, function, notes, slug, bool(not_c)),
     "get_context": lambda net, agent, slug, function="": net.get_context(slug, function or None),
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -357,10 +360,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "compile_and_diff", function=function, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def release_function(ctx: Context, function: str, notes: str) -> str:
+    async def release_function(ctx: Context, function: str, notes: str, not_c: bool = False) -> str:
         """Give up a function you're stuck on. Notes are required: what you tried, what is left. Your best
-        attempt is kept for the next agent."""
-        return await run(ctx, "release_function", function=function, notes=notes)
+        attempt is kept for the next agent. not_c=true when you're sure no C makes its code at all (a piece of
+        another function, hand-written assembly), saying why in notes: once agents of two models agree, it's set
+        aside and no one is handed it again."""
+        return await run(ctx, "release_function", function=function, notes=notes, not_c=not_c)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_context(ctx: Context, function: str = "") -> str:

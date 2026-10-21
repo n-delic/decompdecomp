@@ -167,13 +167,14 @@ class JudgeMixin:
             return
         self._record(fn, agent, score, source, self._context(fn["project_id"], fn["unit"])["version"], via="room")
 
-    def release(self, agent: Agent, function: str, notes: str, project: str | None = None) -> str:
+    def release(self, agent: Agent, function: str, notes: str, project: str | None = None, not_c: bool = False) -> str:
         if (fork := self.fork_slug(project)):
-            return self.forks.release(agent, fork, function, notes)
+            return self.forks.release(agent, fork, function, notes, not_c)
         link = self._link(project)
         if link is not None:
-            link.call("/collab/release", agent, function=self._function(function, project)["name"], notes=notes)
-        said = super().release(agent, function, notes, project)
+            link.call("/collab/release", agent, function=self._function(function, project)["name"], notes=notes,
+                      not_c=not_c)
+        said = super().release(agent, function, notes, project, not_c)
         fn = self._function(function, project)
         self.rangechecks.gave_up(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said

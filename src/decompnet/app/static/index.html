@@ -371,7 +371,8 @@
           <header class="panel-head"><h2>About this project</h2></header>
           <div class="pad">
             <dl class="facts one" id="projFacts"></dl>
-            <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
+            <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button><button class="ghost small-btn" id="recheckBtn" type="button" title="Look at the game again with what this version of decompdecomp knows: functions it missed, pieces of functions, code no C makes. It also happens by itself when helpers start after an update.">Check again</button></div>
+            <pre class="joblog" id="recheckLog" hidden></pre>
           </div>
         </section>
         <section class="panel" id="savePanel">
@@ -444,6 +445,7 @@
       </div>
     </header>
     <div class="drawer-body">
+      <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
       <div class="fn-tabs">
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>

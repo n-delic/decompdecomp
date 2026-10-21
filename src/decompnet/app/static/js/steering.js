@@ -218,7 +218,7 @@ async function togglePrio(name, on) {
    function's machine draft through the judge; the permuter works on near misses meanwhile. */
 function renderAutopilot(ov) {
   const box = $("autopilot"), ap = ov.autopilot, tw = ov.twins, pm = ov.permuter;
-  const canRun = (ov.kind !== "fork" || ov.ready) && ov.functions - ov.matched > 0;
+  const canRun = (ov.kind !== "fork" || ov.ready) && cFunctions(ov) - ov.matched > 0;
   box.hidden = !ap && !canRun && !tw && !pm;
   if (box.hidden) return;
   const running = ap && ap.state === "running";
@@ -410,6 +410,17 @@ $("folderBtn").onclick = () => openFolder();
 
 /* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
+$("recheckBtn").onclick = async () => {
+  $("recheckBtn").disabled = true;
+  $("recheckLog").hidden = false;
+  try {
+    const { job } = await api("/api/recheck", { method: "POST", body: { slug: S.slug } });
+    const r = await followJob(job, $("recheckLog"));
+    $("recheckLog").textContent += `${$("recheckLog").textContent ? "\n" : ""}Checked again: ${r.said}.`;
+    await refreshMap(true);
+  } catch (e) { toast(esc(e.message), "err"); } finally { $("recheckBtn").disabled = false; }
+};
+
 $("saveGo").onclick = async () => {
   $("saveGo").disabled = true;
   try {

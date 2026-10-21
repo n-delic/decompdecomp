@@ -402,6 +402,8 @@ class Twins:
             chunk = found[at:at + SQL_CHUNK]
             for r in self.net.store.all(f"SELECT * FROM functions WHERE id IN ({','.join('?' * len(chunk))}) "
                                         "AND status='open'", *chunk):
+                if '"reopened"' in (r["meta"] or ""):  # the user gave it back to the agents (Network.reopen)
+                    continue
                 self.net.forks.mark_asm(r, reason=prints[r["id"]].asm)
                 n += 1
         return n
@@ -411,7 +413,7 @@ class Twins:
         console = self.net.console(proj)
         marks = []
         for r in self.net.store.all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
-            if (why := console.asm_reason(r["target"] or b"")):
+            if '"reopened"' not in (r["meta"] or "") and (why := console.asm_reason(r["target"] or b"")):
                 marks.append((json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]))
         if marks:
             with self.net.store.tx() as db:
@@ -433,6 +435,7 @@ class Twins:
 
         def work() -> None:
             try:
+                self.net.recheck(slug, log=log.info, only_if_updated=True)  # once after each update: what it knows
                 self.full_pass(slug, job)
             except Exception as e:
                 log.info("twins: %s: %s", slug, e)

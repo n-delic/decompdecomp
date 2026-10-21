@@ -12,10 +12,11 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
+from ...network import set_aside
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
-NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "knowledge", "collab", "import", "files",
+NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "files",
                 "paused", "stopped")
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
 # what the project's page gets on each poll (about once a second): the newest since its last ask, at most
@@ -24,6 +25,7 @@ FUNCTION_NOTES = 10  # the newest notes the function panel shows
 EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
               "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
               f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
+
 
 
 class GuiMixin:
@@ -75,7 +77,8 @@ class GuiMixin:
         cfg = self.cfg(proj)
         agg = self.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
+            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
             "FROM functions WHERE project_id=?", proj["id"])
         tc = toolchains.get(cfg["compiler"]["toolchain"])
         console = self.console(proj)
@@ -89,7 +92,8 @@ class GuiMixin:
                          "supported": tc.supported,
                          "why": None if tc.supported else toolchains.unsupported_cpu()},
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
-            "matched_bytes": agg["matched_bytes"] or 0, "attempts": agg["attempts"] or 0,
+            "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
+            "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": self._context(proj["id"])["version"],
             "folder": proj["root"],
             "export": cfg.get("export"),
@@ -105,7 +109,8 @@ class GuiMixin:
         cfg = self.cfg(proj)
         agg = self.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes FROM functions WHERE project_id=?",
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
+            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes FROM functions WHERE project_id=?",
             proj["id"])
         console = self.console(proj)
         if cfg.get("kind") == "fork":
@@ -117,7 +122,8 @@ class GuiMixin:
                      "compiler": {"name": consoles.compiler_name(cfg["compiler"]["toolchain"])}}
         return {"slug": proj["slug"], "title": proj["name"], **console.project_facts(),
                 "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
-                "matched_bytes": agg["matched_bytes"] or 0,
+                "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
+                "set_aside_bytes": agg["set_aside_bytes"] or 0,
                 "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
                                                 proj["id"])["t"],
                 "room": (self._room_info(slug) or {}).get("role"),
@@ -136,7 +142,7 @@ class GuiMixin:
     def function_map(self, slug: str) -> list[dict]:
         proj = self._project(slug)
         rows = self.store.all(
-            "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, "
+            "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
             "WHERE f.project_id=? ORDER BY f.vram, f.unit, f.id", proj["id"])
@@ -147,7 +153,8 @@ class GuiMixin:
         return [{"name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
-                 "matched_at": r["matched_at"], "matched_by": r["matched_by"]} for r in rows]
+                 "matched_at": r["matched_at"], "matched_by": r["matched_by"],
+                 "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or "")} for r in rows]
 
     def map_columns(self, slug: str) -> list[list]:
         """The compiler map's view of each function for the ROM map, asked for after the map is drawn: the map no
@@ -250,7 +257,7 @@ class GuiMixin:
             fn = self._function(fn["name"], slug)
         return {
             "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
-            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"],
+            "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
             "asm": self._asm_text(fn, proj),
             "source": fn["matched_source"] or fn["best_source"] or (latest["source"] if latest else None) or fn["seed"],
             "source_kind": "matched" if fn["matched_source"] else "best" if fn["best_source"] else

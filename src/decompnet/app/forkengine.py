@@ -28,7 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
-from ..network import Agent, Network, NetworkError
+from ..network import Agent, Network, NetworkError, set_aside
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -1542,6 +1542,8 @@ class ForkEngine:
         """fn's code is a matched assembly function's (runtime helpers each module links its own copy of), or code
         no compiler makes (`reason`: Console.asm_reason, arch/): agents can't write it in C, so it's out of their way."""
         meta = self._meta(fn)
+        if meta.get("reopened"):  # the user gave it back to the agents (Network.reopen)
+            return
         if twin_name:
             meta["asm_twin"] = twin_name
         if reason:
@@ -2247,10 +2249,10 @@ class ForkEngine:
                         return text[:span[0]] + code + "\n" + text[span[0]:]
         return text.rstrip("\n") + "\n\n" + code
 
-    def release(self, agent: Agent, slug: str, function: str, notes: str) -> str:
+    def release(self, agent: Agent, slug: str, function: str, notes: str, not_c: bool = False) -> str:
         fn = self._fn(slug, function)
         if (link := self.net.links.get(slug)) is not None:
-            link.call("/collab/release", agent, function=fn["name"], notes=notes)
+            link.call("/collab/release", agent, function=fn["name"], notes=notes, not_c=not_c)
         latest = self.net.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? ORDER BY id DESC LIMIT 1",
                                     fn["id"], agent.id)
         if (fn["best_source"] and fn["status"] != "matched" and latest and latest["score"] is not None
@@ -2259,7 +2261,7 @@ class ForkEngine:
                 self.attempt(agent, slug, function, fn["best_source"])
             except NetworkError:
                 pass
-        return Network.release(self.net, agent, function, notes, slug)
+        return Network.release(self.net, agent, function, notes, slug, not_c)
 
     def read_file(self, slug: str, path: str, start: int = 1, count: int = 200) -> str:
         _, fp, _ = self.get(slug)
@@ -2565,7 +2567,8 @@ class ForkEngine:
         proj, fp, cfg = self.get(slug)
         agg = self.net.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
+            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
+            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
             "FROM functions WHERE project_id=?", proj["id"])
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
@@ -2582,7 +2585,8 @@ class ForkEngine:
             "compilers": [],
             **(self._compiler_facts(fp, cfg) if cfg.get("ready") else {}),
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
-            "matched_bytes": agg["matched_bytes"] or 0, "attempts": agg["attempts"] or 0,
+            "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
+            "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
@@ -2755,7 +2759,7 @@ class ForkEngine:
         notes = self.net.store.all("SELECT n.text, n.created_at, a.name AS agent FROM notes n LEFT JOIN agents a "
                                    "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC LIMIT 10", fn["id"])
         return {"name": fn["name"], "vram": fn["vram"] or 0, "rom_offset": 0, "size": fn["size"], "insns": fn["n_insns"],
-                "status": fn["status"], "best": fn["best_score"], "asm": asm, "unit": fn["unit"],
+                "status": fn["status"], "best": fn["best_score"], "asm": asm, "unit": fn["unit"], **set_aside(fn),
                 "source": current or fn["best_source"], "source_kind": "matched" if fn["status"] == "matched" else
                 ("latest" if current else "best" if fn["best_source"] else None),
                 "match_percent": pct, "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
