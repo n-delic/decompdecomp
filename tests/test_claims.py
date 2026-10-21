@@ -398,3 +398,26 @@ def test_you_set_a_function_aside_at_once_and_give_it_back(tmp_path):
         raise AssertionError("a matched function set aside")
     except network.NetworkError as e:
         assert "isn't open" in str(e)
+
+
+def test_at_the_end_of_a_game_big_functions_cant_be_passed_around_untried(tmp_path):
+    """Two big functions left (a DS game's printf engine and float formatter, 500 instructions each): agents read
+    "too large, skip" in the notes and gave each back untried, six and seven times, and nobody ever compiled them.
+    A release with no compile is pushed back however often it's asked: the agent holds it until it tries it."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                   ("game", "Game", "", "mips", 1, str(tmp_path),
+                    json.dumps({"kind": "rom", "rom": {}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []}})))
+        for name in ("printf_engine", "float_formatter"):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(1,?,2000,500,"
+                       "'open','a',7)", (name,))
+    for who in ("claude-sonnet-5-5-1", "opencode-beam-free-1"):
+        agent, _ = net.local_agent(who)
+        held = net.claim_row(agent, "game")["name"]
+        for _ in range(3):  # asking again and again
+            said = net.release_function(agent, held, "too large for this session, skipping", "game")
+            assert said.startswith("Not released yet") and "haven't compiled" in said, said
+        assert net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
+                             agent.id)["name"] == held
+    assert net.store.one("SELECT SUM(abandons) AS n FROM functions")["n"] == 14  # no give-up counted
