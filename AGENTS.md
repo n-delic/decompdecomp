@@ -78,7 +78,9 @@ permuter, twins, polishing, saves, Check again. Put the shared part where every 
 `forks/`, `rom/`, `arch/` for the processor), and only what really differs in the console (`consoles/<id>/`, through
 the connector's parts). Where a mode or console can't have it yet, say why in the code and give it a ROADMAP.md item
 and a "—" in its table: a gap is planned work, not the way things are. (Polishing was ROM-only for months, so a DS
-game at 57% had no Polish to choose.)
+game at 57% had no Polish to choose.) A new PROJECT console therefore implements the connector's `rename_symbol`
+(polishing needs it), `split_source`, `join_functions` and, where its build allows, `set_file_compiler`, plus its
+processor's piece rules if its analysis can cut functions: CONTRIBUTING.md, "Adding a console", step 4.
 
 Improving a console, adding a console (copy `consoles/template/`, fill in the connector's parts, add a demo game,
 pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to a console: CONTRIBUTING.md,

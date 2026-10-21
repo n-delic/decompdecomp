@@ -42,6 +42,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -224,6 +225,13 @@ go back to the queue with their old attempts as notes. Each improvement to the s
 A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
+
+### Real names on Windows PC
+
+A PC project's source names functions and data by address (`func_0041B470`, `D_0066DDA4`), and the project's
+`tools/names.py` pairs them with the original's symbols by that address. So `rename_symbol` says it can't rename yet,
+and polished PC code keeps those names. It needs a name per address in `config/<version>/functions.json` that
+names.py reads, kept by `Console.rename_symbol` like dtk's and ds-decomp's `symbols.txt`.
 
 ### Library decomps built locally
 

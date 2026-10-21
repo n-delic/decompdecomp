@@ -173,6 +173,18 @@ A console works in one of two modes:
    | `asm_reason(code)` | Why a function can't come from a compiler. The processor's check, with this console's facts. |
    | `up_front_guide(compiler)`, `m2c_target(compiler)` | The guide for a compiler's code; m2c's target for it. |
 
+   **What every console's agents get.** ROM mode has these in `rom/` and the engine already. A PROJECT console
+   implements them itself, because only it knows where its project keeps names and file boundaries. A part the
+   console can't do yet keeps its default ("can't yet"), and it gets a ROADMAP.md item and a "—" in the table:
+
+   | Part | What needs it |
+   | :-- | :-- |
+   | `rename_symbol(fp, version, old, new)` | Polishing and `rename_symbol`: real names in the project's symbol list (dtk's and ds-decomp's `symbols.txt`). Without it, polished code keeps addresses for names. |
+   | `split_source(fp, version, source, at, new)`, `splits_sources` | `split_file`: a source file divided where a new one starts (a library's code, a second compiler). |
+   | `join_functions(fp, first, last, keep)` | `join_functions`: a function the analysis cut in pieces made whole, once agents agree. |
+   | `file_compiler`, `set_file_compiler` | `try_compiler`, when its build lets each source file have its own compiler. |
+   | its processor's `piece` and `jumps` (`arch/arm.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
+
 5. **Its compilers.** One pinned entry each in `toolchains.toml` (see "Adding a compiler" below).
 6. **Its processor**, if `arch/` hasn't got it: add `arch/<name>.py` (relocation masks, capstone's mode, and
    `asm_reason` if you can tell hand-written code) and its `Arch` in `arch/__init__.py`.
