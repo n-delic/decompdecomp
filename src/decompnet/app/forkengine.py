@@ -28,6 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
+from ..hostenv import NO_WINDOW
 from ..network import Agent, Network, NetworkError
 from ..scoring import percent_text
 from ..textedit import replace_once
@@ -456,7 +457,8 @@ class ForkEngine:
         log(f"cloning {url}")
         res = subprocess.run(["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, str(dest)],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                             creationflags=NO_WINDOW)
         if res.returncode != 0:
             from ..forks import policy
             shutil.rmtree(dest, ignore_errors=True)

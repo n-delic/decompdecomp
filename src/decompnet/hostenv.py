@@ -14,6 +14,17 @@ KERNEL_RELEASE = Path("/proc/sys/kernel/osrelease")  # "...-microsoft-standard-W
 WSL_DISTRO, WSL_USER = "decomp-wtf", "decomp"
 OLD_VERSION_SPEC = "decompnet @ https://github.com/n-delic/decompdecomp/archive/refs/tags/v1.0.2-alpha.tar.gz"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # background tools must not flash consoles on Windows
+
+
+def console_python(exe: str | None = None) -> str:
+    """The Python to run build steps with: on Windows the app runs as pythonw.exe, which has no console, so every
+    console program a build step under it starts (a compiler, a linker) opens a console window of its own. The
+    python.exe beside it shares the build's hidden console instead."""
+    exe = exe or sys.executable
+    path = Path(exe)
+    if path.name.lower() == "pythonw.exe" and (console := path.with_name("python.exe")).is_file():
+        return str(console)
+    return exe
 # (the last line turns off 1.0.2's tray icon: with the system packages this version's window uses, loading it put
 # the system's old websockets ahead of uvicorn's, and 1.0.2 quit at start: GitHub #11)
 WSL_GO_BACK = (f"wsl --terminate {WSL_DISTRO}\n"
