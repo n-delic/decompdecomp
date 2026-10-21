@@ -157,11 +157,13 @@ _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|excee
                         r"credit balance is too low|payment required|out of credits?", re.I)
 # and when it's asked too much at once (HTTP 429): it works again in a while
 THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency limit|\b429\b|overloaded", re.I)
-# and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", Codex: "You've hit your
-# usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota exceeded"): it resets by itself in hours, so a
-# helper waits for it instead of stopping (a night's run lost most of its helpers that way)
-LIMIT = re.compile(r"usage limit|(?<!rate )(?<!rate-)(?<!rate_)limit (?:reached|exceeded)|hit your (?:usage )?limit|quota[ _](?:exceeded|exhausted)|"
-                    r"resource[ _]exhausted|out of (?:usage|messages)", re.I)
+# and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
+# session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
+# exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
+# its helpers that way; Claude Code's "session limit" wording once paused them as five fast failures)
+LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate_)limit (?:reached|exceeded)|"
+                    r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
+                    r"out of (?:usage|messages)", re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
 # "5-hour limit reached ∙ resets 3pm (Europe/Berlin)"; Codex: "try again in 2 hours 13 minutes" or "try again at
 # 8:05 PM"; Gemini: "Please retry in 46.6s"; others an ISO time after "reset" or "until".

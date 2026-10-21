@@ -82,9 +82,11 @@ def test_a_used_up_plan_waits_instead_of_stopping():
     """A night's run lost most of its helpers to their plans' usage limits: those reset, so the helper waits (a short
     rate limit is still a throttle, and a prepaid account out of credit still stops)."""
     for said in ("Claude AI usage limit reached|1792140000", "You've hit your usage limit. Upgrade or try again later",
-                 "RESOURCE_EXHAUSTED: quota exhausted", "provider.quota: quota exceeded"):
+                 "RESOURCE_EXHAUSTED: quota exhausted", "provider.quota: quota exceeded",
+                 "You've hit your session limit · resets 5am (Australia/Sydney)", "You've hit your weekly limit",
+                 "You've hit your 5-hour limit"):
         assert agents.LIMIT.search(said) and not agents.no_credit(said), said
-    for said in ("Rate limit exceeded", "429 Too Many Requests"):
+    for said in ("Rate limit exceeded", "429 Too Many Requests", "You've hit your rate limit"):
         assert not agents.LIMIT.search(said) and agents.THROTTLED.search(said), said
     assert agents.no_credit("Insufficient Balance") and not agents.LIMIT.search("Insufficient Balance")
 
@@ -494,6 +496,10 @@ def test_when_a_usage_limit_resets_is_read_from_what_the_agent_said():
     assert reset("You've hit your usage limit. Try again at 8:05 PM.", now) == (noon + timedelta(hours=7, minutes=5)).timestamp()
     assert reset("resets 10am", now) == (noon + timedelta(hours=21)).timestamp()  # tomorrow
     assert datetime.fromtimestamp(reset("You've hit your limit · resets 3pm (UTC)", now), timezone.utc).hour == 15
+    from zoneinfo import ZoneInfo
+    sydney = datetime.fromtimestamp(reset("You've hit your session limit · resets 5am (Australia/Sydney)", now),
+                                    ZoneInfo("Australia/Sydney"))
+    assert (sydney.hour, sydney.minute) == (5, 0)
     assert reset("quota resets at 2026-10-18T15:30:00Z", now) == datetime.fromisoformat("2026-10-18T15:30:00+00:00").timestamp()
     for vague in ("quota exhausted", "resets 3", f"usage limit reached|{int(now) + 365 * 86400}"):
         assert reset(vague, now) is None, vague
