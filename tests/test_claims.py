@@ -229,3 +229,34 @@ def test_check_again_looks_at_a_project_with_what_this_version_knows(tmp_path, m
     assert "set aside" in net.store.one("SELECT detail FROM events WHERE kind='analysis'")["detail"]
     assert net.recheck("game", only_if_updated=True) is None and ran == ["game"]  # this version did it already
     assert net.recheck("game") == "nothing new" and ran == ["game", "game"]  # the button: always
+
+
+def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
+    """Before release_function took a verdict, agents said so in notes: on a DS game six agents in turn wrote that a
+    runtime helper with `clz` was hand-written assembly. Check again reads them: three agents of two models agreeing
+    set it aside. A note about flags doesn't count ("flag-blocked" code may match with other flags), nor one model
+    alone, nor the notes on a function the user gave back."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) SELECT project_id, 'flagged', 4, 1, "
+                   "'open', 'a' FROM functions")
+    fid = {r["name"]: r["id"] for r in net.store.all("SELECT id, name FROM functions")}
+
+    def note(agent_name, function, text):
+        agent, _ = net.local_agent(agent_name)
+        with net.store.tx() as db:
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(1,?,?,?,0)",
+                       (fid[function], agent.id, text))
+
+    note("opencode-beam-free-1", "piece", "Hand-written ARM runtime helper, not expressible in C.")
+    note("opencode-beam-free-2", "piece", "Agree: hand-written asm (inline clz). Skip.")
+    assert net.not_c_from_notes("game") == 0  # one model
+    note("claude-sonnet-5-5-1", "piece", "No C can produce the inline clz here.")
+    for i, model in enumerate(("opencode-beam-free", "opencode-glm", "claude-sonnet-5-5")):
+        note(f"{model}-{i + 5}", "flagged", "Flag-blocked: no C can produce it with the project's flags.")
+    assert net.not_c_from_notes("game") == 1
+    row = net.store.one("SELECT status, meta FROM functions WHERE name='piece'")
+    assert row["status"] == "asm" and "said in their notes" in json.loads(row["meta"])["asm_code"]
+    assert net.store.one("SELECT status FROM functions WHERE name='flagged'")["status"] == "open"
+    net.reopen("piece", "game")
+    assert net.not_c_from_notes("game") == 0  # given back: its old notes don't set it aside again

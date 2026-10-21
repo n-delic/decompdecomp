@@ -101,9 +101,9 @@ class Core(Network):
     def recheck(self, slug: str, log=print, only_if_updated: bool = False) -> str | None:
         """Look at a project again with what this version of decompdecomp knows: its console's work for projects made
         before (Console.on_start: a DS project's functions found and its pieces of functions merged), the compiler
-        range checks to weigh again, and code no compiler makes set aside. The "Check again" button; and before
-        helpers start, once after each update (only_if_updated), so what a new version finds reaches every project
-        that gets work, not every project at once. Returns what changed, as a sentence; None when nothing was done
+        range checks to weigh again, and code no compiler makes set aside (by its shape, or as agents' notes agree no C
+        makes it). The "Check again" button; and before helpers start, once after each update (only_if_updated), so
+        what a new version finds reaches every project that gets work, not every project at once. Returns what changed, as a sentence; None when nothing was done
         (checked by this version already, or a room member's copy: its host checks)."""
         from ... import __version__
 
@@ -113,7 +113,7 @@ class Core(Network):
         if self.is_rom(row):
             self.rangechecks.reopen(slug)
         self.console(row).on_start(self, slug, log=log)
-        n = self.twins.set_aside_asm(self.project_row(slug))
+        n = self.not_c_from_notes(slug) + self.twins.set_aside_asm(self.project_row(slug))
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         said = f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them" if n else "nothing new"
         with self.store.tx() as db:
