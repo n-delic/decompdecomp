@@ -210,6 +210,16 @@ def test_claude_offers_each_version_as_well_as_the_latest():
     assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
 
 
+def test_every_helper_with_an_effort_offers_medium_to_max(tmp_path):
+    """The launcher offered max for opencode but not xhigh, xhigh for Codex but not max, and neither for the API
+    helper (a local llama.cpp model's template wants xhigh): each one that takes an effort offers all four now."""
+    for kind in kinds.AGENTS:
+        if kind.takes_effort:
+            assert {"medium", "high", "xhigh", "max"} <= set(kind.describe()["efforts"]), kind.id
+    cmd, _ = kinds.get("codex").session_command("codex", tmp_path, URL, "token", "gpt-5.5#max")
+    assert 'model_reasoning_effort="max"' in cmd
+
+
 def test_claude_helpers_think_as_hard_as_the_launcher_says(tmp_path):
     """The launcher sends an effort with the model's name ("opus#xhigh", as for opencode); Claude Code takes it as
     --effort, and an effort-less helper gets none (the model's default)."""
@@ -584,6 +594,28 @@ def test_the_api_helper_folds_each_finished_function_into_a_line(tmp_path, monke
     assert (row["turns"], row["tool_calls"], row["outcome"]) == (4, 4, "ok")
 
 
+@pytest.mark.parametrize("answer, said", [
+    ({"choices": [{"message": {"role": "assistant", "content": "int f(void) { return 0; }"}}]}, "without calling a tool"),
+    ({"error": "Unexpected endpoint or method"}, "often ends in /v1"),
+])
+def test_an_api_helper_that_never_starts_says_why(tmp_path, monkeypatch, answer, said):
+    """A model fine-tuned to write C (in LM Studio) answered in words: the helper started again and again with an
+    empty error. LM Studio's address without /v1 failed with KeyError: 'choices'."""
+    import httpx
+
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    m.prompt = lambda s: "task"
+    s = m._record("game", "api", "api-m-1", "box #1", {"base_url": "http://mock/v1", "model": "m", "context_tokens": 32768})
+    s.stop = Quick()
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, json=answer)), **kw))
+    m._run(s)
+    assert said in s.error and said in s.why
+
+
 def test_the_api_helper_sends_a_thinking_models_reasoning_back(tmp_path, monkeypatch):
     """DeepSeek in thinking mode refuses a request whose tool calls come without the reasoning that made them ("The
     reasoning_content in the thinking mode must be passed back to the API"): two DeepSeek helpers waited out that
@@ -641,7 +673,7 @@ def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):
     cmd, _ = codex.session_command("codex", tmp_path, URL, "token", 'gpt-5#"high"')  # its own words only
     assert not any("model_reasoning_effort" in c for c in cmd)
     api = kinds.get("api")
-    assert api.describe()["takes_effort"] and api.describe()["efforts"] == ["minimal", "low", "medium", "high"]
+    assert api.describe()["takes_effort"] and api.describe()["efforts"] == ["minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 def test_an_api_helper_asks_its_model_for_the_effort_it_was_given(tmp_path, monkeypatch):

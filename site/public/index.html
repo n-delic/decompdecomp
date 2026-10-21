@@ -70,6 +70,7 @@
     <label><input type="radio" name="platform" value="n64" checked><span>Nintendo 64</span></label>
     <label><input type="radio" name="platform" value="gc"><span>GameCube</span></label>
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
+    <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
@@ -105,6 +106,16 @@
         <li><small>Built by</small><b>CodeWarrior</b><span>up to Wii 1.7, C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>in the project's own build; finished files are linked into the game</span></li>
         <li><small>You get</small><b>A dtk-template project</b><span>the shape community decomps use</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="ps1" data-file="game.bin">
+      <h3><span class="pl-name">PlayStation</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>Disc or PS-X EXE</b><span>BIN, ISO or CHD; the game's main program and its overlays</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
+        <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.6.3, 2.7.2 or 2.8.1, through maspsx for Sony's assembler; C</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
+        <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="ps2" data-file="game.iso">

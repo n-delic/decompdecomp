@@ -73,6 +73,20 @@ def test_overlays_are_split_with_the_program(tmp_path, exe):
     assert ".overlays." in res.image  # a working copy of the image with the overlays after the program
 
 
+def test_overlays_inside_an_archive_are_found_and_placed():
+    """A game can keep its areas' code inside one big archive (models, sounds and code of each area, one after
+    another): each stretch of code is placed by its own calls, and the same code a second time is kept once."""
+    from decompnet.consoles.ps2 import disc
+
+    filler = bytes(range(256)) * 512  # 128 KiB of an area's other files: no code
+    code = _overlay(OVERLAY_AT, 80)
+    archive = filler + code + filler + code + filler
+    image = _iso({"SLUS_999.99": b"\x7fELF", "AREAS.DAT": archive})
+    found = overlays.find(disc._Disc(image), "SLUS_999.99", (0x00100000, 0x00150000))
+    assert [(name, at, len(data)) for name, data, at, _ in found] == [(f"areas_{len(filler):x}", OVERLAY_AT, len(code))]
+    assert found[0][1] == code
+
+
 def _iso(files: dict[str, bytes]) -> bytes:
     """The smallest ISO 9660 image the disc reader takes: a volume descriptor, a root directory, the files."""
     def both16(v):

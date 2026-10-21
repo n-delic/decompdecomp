@@ -125,6 +125,22 @@ def test_globals_and_what_they_point_to():
     assert found.type_of((structs.GLOBAL, READ)) is None
 
 
+def test_an_element_of_a_global_array_reached_by_an_index_is_the_arrays_type():
+    """PSY-Q's GCC 2.7.2 walks an array of structs as base + index (`addu s0, s1, v0`), where EE-GCC moves a pointer
+    along: the element handed to a callee is still the global's type. An argument indexed so (p->items[i]) is still
+    the struct its callers hand it."""
+    entities = 0x500000
+    loop = (0x200000, code(i(LUI, 0, V0, 0x50), i(ADDIU, V0, V0, 0), (17 << 21) | (V0 << 16) | (S0 << 11) | ADDU,
+                           jal(READ), move(A0, S0), JR_RA, NOP), [[4, LO16, entities], [12, mips_fields.R_MIPS_26, READ]])
+    found = recover(FUNCTIONS[:1] + [loop])
+    assert found.type_of((structs.GLOBAL, entities)) == found.type_of((structs.ARGUMENT, READ, 0))
+    sll_v0_a1_2 = (A1 << 16) | (V0 << 11) | (2 << 6)
+    indexed = (0x200100, code(i(LB, A0, V1, 0), sll_v0_a1_2, (A0 << 21) | (V0 << 16) | (V0 << 11) | ADDU,
+                              i(LB, V0, V0, 8), JR_RA, NOP), [])
+    found = recover([indexed, _caller(0x200200, 4, callee=0x200100)])
+    assert found.type_of((structs.ARGUMENT, 0x200200, 0)) == found.type_of((structs.ARGUMENT, 0x200100, 0))
+
+
 def test_a_pointer_spilled_to_the_stack_is_still_the_argument():
     spill = (0x200000, code(i(SW, SP, A0, 0x20), jal(0x400000), NOP, i(LW, SP, A0, 0x20), i(LH, A0, V0, 8), JR_RA, NOP),
              [])

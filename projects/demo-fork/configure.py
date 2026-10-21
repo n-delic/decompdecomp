@@ -24,8 +24,10 @@ def main() -> int:
     for unit in UNITS:  # "extract" the targets
         compile_unit(ROOT / "tools" / "reference" / f"{unit}.c", ROOT / "build" / "expected" / f"{unit}.o")
     quote = subprocess.list2cmdline if sys.platform == "win32" else shlex.join
+    # the flags stay in build.ninja's command, where a per-file compiler setting changes them (tests/test_ds.py)
     command = quote([sys.executable, "tools/compile.py"]).replace("$", "$$")
-    ninja = ["rule cc", f"  command = {command} $in $out", "  description = cc $in", ""]
+    flags = quote(tc.flags).replace("$", "$$")
+    ninja = ["rule cc", f"  command = {command} $in $out {flags}", "  description = cc $in", ""]
     for unit in UNITS:
         ninja.append(f"build build/src/{unit}.o: cc src/{unit}.c | include/game.h")
     ninja.append("")

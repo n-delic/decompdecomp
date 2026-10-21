@@ -12,32 +12,32 @@ Each feature and the platforms it covers today. A — is a gap: pick one up (the
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS2 | GameCube · Wii | Windows PC | DS | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | — | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | — | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | — | — | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | — | BIOS call stubs | MIPS, PowerPC, ARM's BIOS stubs |
-| Kernel stubs set aside and named | — | ✓ | — | — | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | — | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | — | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | — | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | — | — | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | — | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | ✓ symbol table, STABS | — | — | — | — |
-| Twins across your games | ✓ | ✓ | — | — | — | — |
-| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | — | — | — | — |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
-| Rebuildable export | ✓ | ✓ | the project | — | the project | the project |
+| Feature | N64 | PS1 | PS2 | GameCube · Wii | Windows PC | DS | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Status | recommended | beta | beta | beta | beta | beta | the project's own |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
+| Judge | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs | MIPS, PowerPC, ARM's BIOS stubs |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
+| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | — | — | — | — |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
+| Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
@@ -54,6 +54,15 @@ Where to start on a gap:
 
 ## Recently done
 
+- **PlayStation (PS1) games from your own copy** (beta): a disc image (BIN, ISO or CHD; SYSTEM.CNF says which
+  program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.6.3,
+  2.7.2 or 2.8.1, then maspsx, which does what Sony's assembler ASPSX did, then GNU as; the import tries the three on
+  the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
+  and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
+  gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
+  loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
+  Overlays inside an archive file (a game's areas, each with its code, one after another) are found too
+  (`overlays.embedded`): on one PS1 game, 77 overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
 - **Nintendo DS games from your own copy again** (beta, #23): a ds-decomp project for the ROM, as in 1.0.2, now with
   all 24 CodeWarrior for DS versions and a version per source file (`config/<version>/arm9/file_compilers.json`, as
   DS decomps keep it). `try_compiler` switches a function's file to another version, or tries them `"all"`, and

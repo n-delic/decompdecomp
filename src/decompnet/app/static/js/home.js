@@ -101,7 +101,7 @@ function parseRom(buf) {
 }
 
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
-const platformName = (p) => (p === "gcwii" ? "GameCube or Wii" : consoleOf(p)?.name || "");
+const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1 or 2" }[p] || consoleOf(p)?.name || "");
 /* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
 const CW_PACK = {
   mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
@@ -136,8 +136,10 @@ function identifyHead(head, file) {
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true) };
-  if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "ps2", order: "disc image" };
-  if (text(0, 8) === "MComprHD") return { ...base, platform: "ps2", order: "CHD disc image" };
+  if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
+  // which PlayStation a disc is for, its SYSTEM.CNF says (the server reads it)
+  if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "playstation", order: "disc image" };
+  if (text(0, 8) === "MComprHD") return { ...base, platform: "playstation", order: "CHD disc image" };
   if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) return { ...base, platform: "ps2", order: "ELF program", entry: dv.getUint32(24, true) };
   if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
@@ -163,7 +165,7 @@ function notSupported(head, file) {
   const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
   if (text(0, 2) === "MZ") return "That's a 64-bit or non-x86 Windows program (or a DOS one). decompdecomp starts PC games from their 32-bit x86 .exe.";
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
-  if (text(0, 8) === "PS-X EXE" || ext === "gba") return "PlayStation 1 and Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
+  if (ext === "gba") return "Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
   if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
   if (["nsp", "xci", "nso", "nro", "nca"].includes(ext) || text(0, 4) === "NSO0" || text(0, 4) === "PFS0") return "That's a Nintendo Switch file. Switch games aren't supported yet.";
   if (["sfc", "smc"].includes(ext)) return "That's a Super Nintendo ROM. SNES games were written in assembly, not compiled from C, so there's no C source to match.";

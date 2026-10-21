@@ -90,13 +90,12 @@ class _Disc:
 
 def from_disc(src) -> tuple[bytes, str]:
     """(program bytes, its file name) from a PlayStation 2 disc image: SYSTEM.CNF names the program
-    (`BOOT2 = cdrom0:\\SLUS_200.00;1`). A PlayStation 1 disc says `BOOT = cdrom:\\...` instead."""
+    (`BOOT2 = cdrom0:\\SLUS_200.00;1`). A PlayStation 1 disc says `BOOT = cdrom:\\...` instead (consoles/ps1/)."""
     disc = _Disc(src)
     cnf = disc.find("SYSTEM.CNF")
     m = re.search(rb"BOOT2\s*=\s*cdrom0?:?\\*([^\s;]+)", cnf or b"", re.I)
     if m is None:
-        raise RomError("this disc isn't a PlayStation 2 game (its SYSTEM.CNF names no BOOT2 program): PlayStation 1 "
-                       "games aren't supported in this version")
+        raise RomError("this disc isn't a PlayStation 2 game: its SYSTEM.CNF names no BOOT2 program")
     boot = m.group(1).decode("ascii", "replace")
     exe = disc.find(boot)
     if exe is None:

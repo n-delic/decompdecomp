@@ -34,8 +34,8 @@ class Codex(Agent):
     signin = "Run `codex login` once in a terminal."
     docs = "https://github.com/openai/codex"
     family = "gpt"
-    takes_effort = True  # Codex's model_reasoning_effort (some models take max too: "Another model…" isn't for that)
-    efforts = ("minimal", "low", "medium", "high", "xhigh")
+    takes_effort = True  # Codex's model_reasoning_effort
+    efforts = ("minimal", "low", "medium", "high", "xhigh", "max")
 
     def config_model(self) -> str | None:
         return codex_config().get("model") or None

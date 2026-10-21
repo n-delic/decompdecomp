@@ -22,16 +22,14 @@ try {
     }
     finally { Pop-Location }
 
+    # first, as packaging/linux/build.sh does: on a fresh runner uv's Python folder doesn't exist until something is
+    # installed in it (v1.0.5-alpha's Windows bundle failed there)
+    uv python install 3.12 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "uv python install failed with exit code $LASTEXITCODE" }
     $pythonDir = (uv python dir --managed-python).Trim()
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $pythonDir)) { throw 'uv could not find its managed Python directory.' }
     $pythonHome = (Get-ChildItem -LiteralPath $pythonDir -Directory -Filter 'cpython-3.12.*-windows-x86_64-none' |
         Sort-Object Name -Descending | Select-Object -First 1).FullName
-    if (-not $pythonHome) {
-        uv python install 3.12 | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "uv python install failed with exit code $LASTEXITCODE" }
-        $pythonHome = (Get-ChildItem -LiteralPath $pythonDir -Directory -Filter 'cpython-3.12.*-windows-x86_64-none' |
-            Sort-Object Name -Descending | Select-Object -First 1).FullName
-    }
     if (-not $pythonHome) { throw 'uv could not find its managed Python 3.12 installation.' }
     $python = Join-Path $pythonHome 'python.exe'
     $bundlePython = Join-Path $app 'python'
@@ -141,7 +139,10 @@ raise SystemExit(main())
         "-dAppSource=$app" "-dLicenseRtf=$licenseRtf" -out "$objects\" (Join-Path $PSScriptRoot 'installer.wxs') $harvest
     if ($LASTEXITCODE -ne 0) { throw "WiX Candle failed with exit code $LASTEXITCODE" }
     $wixObjects = (Get-ChildItem -LiteralPath $objects -Filter '*.wixobj' | ForEach-Object FullName)
-    $lightArgs = @('-out', $installer)
+    # ICE38, ICE64, ICE91: a per-user install's thousands of harvested files would each need a registry key path and
+    # every folder a RemoveFolder entry; Windows Installer installs and removes them fine without (ICE64's cost: empty
+    # folders may stay after an uninstall)
+    $lightArgs = @('-out', $installer, '-sice:ICE38', '-sice:ICE64', '-sice:ICE91')
     if (-not $env:CI) { $lightArgs += '-sval' }  # the restricted local sandbox cannot reach the Windows Installer service for ICE validation
     & (Join-Path $wixBin 'light.exe') @lightArgs -ext WixUIExtension $wixObjects
     if ($LASTEXITCODE -ne 0) { throw "WiX Light failed with exit code $LASTEXITCODE" }

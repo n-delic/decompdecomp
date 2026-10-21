@@ -52,15 +52,15 @@ compilers are only installed after the user accepts that in Setup; don't add cod
 
 ## Consoles, and the two ways a game is decompiled
 
-Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps2/`, `gc_wii/` (GameCube and
-Wii), `pc/` (Windows games), `nds/` (Nintendo DS). Its `__init__.py` makes the console (its facts and parts) and its docstring lists its
-files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
+Each console's code is in its own folder, `src/decompnet/consoles/<id>/`: `n64/`, `ps1/`, `ps2/`, `gc_wii/`
+(GameCube and Wii), `pc/` (Windows games), `nds/` (Nintendo DS). Its `__init__.py` makes the console (its facts and
+parts) and its docstring lists its files. `consoles/__init__.py` is the connector: the `Console` class (every fact and part, one line each) and the
 list of consoles. The rest of the app asks `consoles.get(platform)` (in the engine: `self.console(proj)`) and never
 compares console names: a console-specific `if` outside `consoles/` is a bug. What depends only on the processor
 (relocations, disassembly, hand-written assembly, which readers exist for it) is in `arch/` (`mips.py`, `ppc.py`,
 `x86.py`, `arm.py`). Consoles only public decomps cover are in `consoles/public.py`.
 
-1. **ROM mode** (N64, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
+1. **ROM mode** (N64, PS1, PS2): `src/decompnet/rom/` splits the game (splat/spimdisasm, `split.py`; the console adds the
    code splat misses), and `rom/match.py` *links* each compiled candidate at the function's real address and
    compares bytes. Driven by `app/engine/` (one module per topic, `__init__.py` lists them; `common.py` holds what they share). Exported as a
    rebuildable tree by `rom/export*.py`.
@@ -117,7 +117,8 @@ linting). In short:
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.
 - `uv run ruff check src tests projects` passes (CI runs it). No formatter: don't run `ruff format`.
 - Releases bump the version in four places together: `pyproject.toml`, `src/decompnet/__init__.py`,
-  `site/public/install.sh`, `uv.lock`. Commit subjects read
+  `site/public/install.sh`, `uv.lock`; `packaging/release.sh X.Y.Z "what users get"` does that, commits, tags and
+  pushes (a tag pushed before the bump fails release.yml's version check). Commit subjects read
   `decompdecomp X.Y.Z: <what users get, in one sentence>`, with a body explaining why. Pre-releases are
   `X.Y.Z-alpha` (`-beta`, `-rc`); `updates.version_key` orders them before X.Y.Z.
 - A release is a `vX.Y.Z` tag on main. `.github/workflows/release.yml` builds the `.deb`, the `.rpm`, the AppImage

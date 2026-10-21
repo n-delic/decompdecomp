@@ -111,13 +111,13 @@ decompdecomp helps with these steps:
 | **Safe names** | Matches use addresses. A new name for a function or data cannot break a match. |
 | **Look-alikes** | `find_similar` compares instruction sequences across the full game and finds copied and inlined code. |
 | **Compiler map** | Big games mix compilers. The ROM map's Compiler view shows which compiler built each part of the game: from matches, from habits that rule a compiler out (`-G0` code never reads through `$gp`), and from the judge's survey, which builds agents' C with each compiler the project uses. A part the judge confirms becomes a suggestion. A suggested range applies only after a second, neighbouring function confirms it (a range check); a range that only one function supports, with the game's compiler on both sides, is a quirk. decompdecomp checks the ranges a project already has again by itself. Agents read it with `compiler_map`. MIPS for now. |
-| **Struct layouts** | decompdecomp reads every load and store through a function's pointer arguments and globals, along the call graph. The brief lists the likely fields of each pointer argument, and `guess_struct` writes the struct as C. MIPS (PlayStation 2, N64) for now. |
+| **Struct layouts** | decompdecomp reads every load and store through a function's pointer arguments and globals, along the call graph. The brief lists the likely fields of each pointer argument, and `guess_struct` writes the struct as C. MIPS (N64, PlayStation, PlayStation 2) for now. |
 | **Twins across your games** | Code that one of your games has matched is tried on the identical functions of your other games (libraries, the compiler's runtime). No agent time. |
 | **Shared knowledge** | Agents propose what they learn about a game. A proposal counts when helpers of two different models back it. Then it reaches every agent, after you accept it (or at once, a setting of each game). Run helpers of several models for this. |
-| **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (PlayStation 2, N64) for now. |
+| **C++ classes** | decompdecomp finds a C++ game's classes in its machine code: the vtables its constructors store, the base class of each, and every field its functions touch (offset, type). Agents read them with `get_class`, and `get_function` names the fields of `this` a function uses. MIPS (N64, PlayStation, PlayStation 2) for now. |
 | **Drafts** | m2c for MIPS, PowerPC and ARM. Ghidra (optional) for x86, AArch64 and other architectures. |
 | **Guides** | Agents get guides for each architecture and compiler, and for C++ and objdiff. |
-| **Disc formats** | ROMs, PlayStation 2 discs (ISO, BIN, CHD), GameCube and Wii discs (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ) and program files. |
+| **Disc formats** | ROMs, PlayStation and PlayStation 2 discs (ISO, BIN, CHD), GameCube and Wii discs (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ) and program files. |
 
 ## Agents
 
@@ -182,11 +182,12 @@ the game.
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
+| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.6.3 · 2.7.2 · 2.8.1 (PSY-Q), with maspsx | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
 | **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
-| **PlayStation · GBA · 3DS · PSP · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
+| **GBA · 3DS · PSP · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
 [ROADMAP.md](../ROADMAP.md) has a table of which feature works on which platform.
 
@@ -200,6 +201,8 @@ different build, which is planned.
 
 **Beta:**
 
+- **PlayStation** passes every step on the homemade demo game, built the way PSY-Q games were (GCC, then maspsx
+  for Sony's assembler ASPSX). No real game is tested from start to end yet.
 - **PlayStation 2** is tested on real games (GTA San Andreas, Ridge Racer V), with several compilers per game. No
   real game is rebuilt whole yet.
 - **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game
@@ -214,7 +217,7 @@ of its own project.
 
 | Platform | Tool |
 | :-- | :-- |
-| N64, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
+| N64, PS1, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
 | GameCube, Wii | decomp-toolkit, in a [dtk-template](https://github.com/encounter/dtk-template) project (`consoles/gc_wii/scratch.py`) |
 | Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
@@ -260,7 +263,7 @@ Helper agents continue their work. To change this behavior, go to Settings.
 
 ## Your work
 
-**Saving.** decompdecomp saves the work on each N64 and PlayStation 2 project by itself, every few minutes, as plain
+**Saving.** decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project by itself, every few minutes, as plain
 files in the project's `progress/` folder: matched C, best attempts, headers, names, notes, compiler ranges and
 settings. It never saves the game. **Save now**, in the project's Settings, saves at once, also to another folder.
 `progress/` is the only part of a project to share or keep in git: matched C in `src/`, best attempts in `best/`, the
@@ -308,7 +311,7 @@ uv run pytest              # the tests
 | `src/decompnet/rom/` | ROM mode: reading, splitting with splat, symbols, the matcher (`match.py`) and the export. |
 | `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py` (starting and restarting helpers), `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` and `gtkwindow.py` (its own window), `tray.py` (the tray icon), `edition.py` (development copy or release), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
 | `src/decompnet/agents/` | A module per agent (`claude.py`, `codex.py`, `antigravity.py`, `opencode.py`, `api.py`): how a session starts, how to read what it prints, its models. |
-| `src/decompnet/consoles/` | A folder per console (`n64/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
+| `src/decompnet/consoles/` | A folder per console (`n64/`, `ps1/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |
 | `src/decompnet/classes.py` | C++ classes found in MIPS code: vtables, base classes, fields. |

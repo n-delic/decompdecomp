@@ -92,6 +92,11 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
 
 
+def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):
+    """A PS-X EXE is the PS1's; a disc image could be either PlayStation's until the server reads its SYSTEM.CNF."""
+    assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1 or 2", None]
+
+
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
     """In a room, every agent's name had the same look whoever ran it. Each computer has a colour now, the same on
     the host's screen and every guest's: the host's first, then the members in the order they joined."""

@@ -102,7 +102,7 @@ class Agent:
     uses_endpoints = False  # its model and key come from the API endpoints saved in Agents & models, not a sign-in
     takes_effort = False  # the launcher offers a reasoning effort: with the model's name ("provider/model#high"), or
     # for an agent whose model is an endpoint's, as the helper's `effort` option
-    efforts: tuple[str, ...] = ("low", "medium", "high", "max")  # the efforts it offers, when it takes one
+    efforts: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")  # the efforts it offers, when it takes one
 
     def __repr__(self) -> str:
         return f"<agent {self.id}>"

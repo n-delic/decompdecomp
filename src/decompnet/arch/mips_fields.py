@@ -1,4 +1,4 @@
-"""MIPS (N64, PlayStation 2): what a function does with pointers, for the struct layouts of structs.py.
+"""MIPS (N64, PlayStation, PlayStation 2): what a function does with pointers, for the struct layouts of structs.py.
 
 One pass in address order, like classes.py: branches aren't followed, so what a register holds is known until an
 instruction overwrites it or a call clobbers it. A register holds a pointer (a structs term) plus a constant
@@ -10,7 +10,9 @@ instruction overwrites it or a call clobbers it. A register holds a pointer (a s
 - the pointers in a0-a3 at each call, read after the call's delay slot (where compilers often set a0), what v0
   holds at each return, and pointers stored into fields;
 - the stack: a pointer spilled to the frame and loaded back is still the same pointer;
-- walks: an argument moved along by a constant inside a loop (memset, strcpy, an array's loop) is a walk.
+- walks: an argument moved along by a constant inside a loop (memset, strcpy, an array's loop) is a walk;
+- indexing: a pointer plus a register that isn't one (`addu s0, s1, v0`: an array's base and an index, as PSY-Q's
+  GCC 2.7.2 walks an array of structs where EE-GCC moves a pointer along) points at an element, read as the first.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from collections.abc import Callable
 from ..structs import ARGUMENT, CALL, FIELD, GLOBAL, RETURNED, Facts
 from .mips import (
     ADDIU,
+    ADDU,
     BC1,
     BRANCHES,
     COP1,
@@ -154,6 +157,9 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
                 out.walked.add(term)
         elif op == SPECIAL and funct in MOVES and ZERO in (rs, rt):
             value = regs.get(rt if rs == ZERO else rs)
+        elif op == SPECIAL and funct == ADDU and (rs in regs) != (rt in regs):  # a base and an index
+            term, delta = regs[rs] if rs in regs else regs[rt]
+            value = (term, delta)  # not a walk: p->items[i] indexes a struct the callers share (loops are caught above)
         target = _destination(w)
         if target and target != ZERO:
             regs.pop(target, None)

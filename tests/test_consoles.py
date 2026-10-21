@@ -59,7 +59,7 @@ def test_ids_are_unique_and_public_decomps_have_their_guides():
     ids = [key for c in consoles.CONSOLES for key in (c.id, *c.aliases)]
     assert len(ids) == len(set(ids))
     assert all(_guide_exists(t) for c in consoles.CONSOLES for t in (*c.guides, c.compiler_guide) if t)
-    assert {c.id for c in consoles.CONSOLES if c.status == consoles.PUBLIC} >= {"ps", "gba"}  # forks only
+    assert {c.id for c in consoles.CONSOLES if c.status == consoles.PUBLIC} >= {"gba"}  # forks only
 
 
 def test_the_ids_older_projects_stored_still_open_them(tmp_path):

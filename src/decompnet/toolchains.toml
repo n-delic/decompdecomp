@@ -56,6 +56,63 @@ url = "https://github.com/decompals/mips-binutils-2.6/releases/download/v0.3/bin
 sha256 = "ab21ad5908fb7776a4b0c596cc82f216876e3b5d108c7c7c1f33543b3f3fce4c"
 platforms = ["macos-x86_64", "macos-arm64"]
 
+["gcc-2.6.3-psx"]
+name = "GCC 2.6.3 for PlayStation + maspsx (ASPSX 2.34)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.6.3-psx)"
+description = "GCC 2.6.3 with the PlayStation patches, the compiler of PSY-Q 3.5 and 3.6 (1995-1996); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.6.3-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.6.3-psx.tar.gz"
+sha256 = "01e6e8c4933414ea3f8d8e3bc766a1f5fafd4fc0110e0b75d1f691bd791989b1"
+platforms = ["linux-x86_64"]
+
+["gcc-2.7.2-psx"]
+name = "GCC 2.7.2 for PlayStation + maspsx (ASPSX 2.56)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.7.2-psx)"
+description = "GCC 2.7.2 with the PlayStation patches, the compiler of PSY-Q 4.0 to 4.3 (1996-1998); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.7.2-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.7.2-psx.tar.gz"
+sha256 = "500a459b3485e885a8d302cac23c2a4632f3900e03a09153f6190699fd723571"
+platforms = ["linux-x86_64"]
+
+["gcc-2.8.1-psx"]
+name = "GCC 2.8.1 for PlayStation + maspsx (ASPSX 2.79)"
+platform = "PS1"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompals/old-gcc 0.17 (gcc-2.8.1-psx)"
+description = "GCC 2.8.1 with the PlayStation patches, the compiler of PSY-Q 4.4 and later (1998-2000); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
+requires = ["maspsx", "binutils-mips"]
+cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6; shift 6; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && python3 -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "-I{include}", "{flags}"]
+flags = ["-O2", "-G8"]
+[["gcc-2.8.1-psx".parts]]
+url = "https://github.com/decompals/old-gcc/releases/download/0.17/gcc-2.8.1-psx.tar.gz"
+sha256 = "f6f6e883942d4d3289d048236c672e71ed410e546aaae8ff655952f1567e1be0"
+platforms = ["linux-x86_64"]
+
+[maspsx]
+name = "maspsx"
+kind = "tool"
+license = "MIT"
+source = "mkst/maspsx @ e85ecb3 (2026-10-02)"
+description = "Makes GCC's assembly assemble like Sony's PSY-Q assembler (ASPSX), which matching PlayStation code needs."
+[[maspsx.parts]]
+url = "https://github.com/mkst/maspsx/archive/e85ecb373828aabea96d7e6400974d4f91ce8c74.tar.gz"
+sha256 = "9f8ea9827b785ae41437befa8ebdceb8c00f3b1e8f3a90c506948e2df1079bde"
+subdir = "maspsx-e85ecb373828aabea96d7e6400974d4f91ce8c74"
+platforms = ["linux-x86_64"]
+
 ["ee-gcc-2.96"]
 cplusplus = true
 name = "EE-GCC 2.96"
@@ -424,7 +481,7 @@ name = "GNU binutils for MIPS (decompals)"
 kind = "tool"
 license = "GPL-2.0"
 source = "decompals/binutils-mips-ps2-decompals v0.10"
-description = "A modern MIPS assembler and linker (PS2, N64), as used by PS2 decomps."
+description = "A modern MIPS assembler and linker (PS1, PS2, N64), as used by PS2 decomps and after maspsx."
 binary_name = "mips-ps2-decompals-ld"
 [[binutils-mips.parts]]
 url = "https://github.com/decompals/binutils-mips-ps2-decompals/releases/download/v0.10/binutils-mips-ps2-decompals-linux-x86-64.tar.gz"

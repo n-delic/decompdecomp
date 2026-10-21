@@ -134,6 +134,12 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.ov = before;
       return { guest, host, alone };
     })(),
+    dropped: (() => {
+      const head = (at, text) => { const h = new Uint8Array(0x10000); [...text].forEach((c, i) => (h[at + i] = c.charCodeAt(0))); return h; };
+      const file = { name: "SLUS_000.01", size: 0x10000 };
+      return [identifyHead(head(0, "PS-X EXE"), file).platform, identifyHead(head(0x9319, "CD001"), file).platform,
+              platformName("playstation"), notSupported(head(0, "PS-X EXE"), file)];
+    })(),
     // tests/test_ds.py's header, whose checksum (0xB4DE) the server's crc16 computed: the page agrees on what's a DS ROM
     nds: (() => {
       const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
