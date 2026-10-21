@@ -53,7 +53,7 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parent
 os.environ["DECOMP_PACKAGE"] = "windows"
-os.environ["PATH"] = str(root) + os.pathsep + os.environ.get("PATH", "")
+os.environ["PATH"] = os.pathsep.join((str(root), str(root / "packages" / "bin"), os.environ.get("PATH", "")))  # ninja
 os.environ["PYTHONPATH"] = os.pathsep.join(filter(None, (str(root / "packages"), os.environ.get("PYTHONPATH", ""))))
 import site
 site.addsitedir(str(root / "packages"))
