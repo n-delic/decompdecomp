@@ -74,16 +74,22 @@ function renderSessions(sessions) {
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
   const running = sessions.filter((s) => LIVE.includes(s.state));
   $("stopAll").hidden = running.length < 2;
-  const sorted = [...sessions].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
-  const html = sorted.map((s) => {
+  // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
+  const sorted = [...sessions].sort((a, b) => (a.task === "readable") - (b.task === "readable")
+    || STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
+  const both = sorted.some((s) => s.task === "readable") && sorted.some((s) => s.task !== "readable");
+  const html = sorted.map((s, i) => {
+    const group = s.task === "readable" ? "Polishing" : "Decompiling";
+    const head = both && (i === 0 || (sorted[i - 1].task === "readable") !== (s.task === "readable"))
+      ? `<h3 class="session-group">${group}</h3>` : "";
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = board.get(s.agent);
-    const facts = [esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
+    const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
-    return `<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
+    return `${head}<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
           : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
       <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>

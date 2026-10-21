@@ -339,6 +339,7 @@ class Session:
 
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "label": self.label,
+                "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
                 "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,

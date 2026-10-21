@@ -396,6 +396,8 @@ a.ghost, a.primary { text-decoration: none; }
 .fn-table tr.none td { color: var(--muted); text-align: center; padding: 28px; cursor: default; }
 .st { font: 500 11px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); color: var(--muted); border: 1px solid var(--line); }
 .st.matched { background: var(--match-bg); color: var(--match-ink); border-color: transparent; }
+.session-group { grid-column: 1 / -1; margin: 6px 0 0; font: 600 12px/1 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.st.polished { background: var(--match); color: var(--color-text-on-inverse); }
 .st.working { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .st.tried { color: var(--ink-2); }
 .st.not-c, .badge.not-c { background: var(--miss-bg); color: var(--miss); border-color: transparent; }

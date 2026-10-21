@@ -109,3 +109,26 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     assert len(tried) == 2
     assert "claim_readable" in tools.tool_names(fork=True) and "make_readable" in tools.tool_names(fork=True)
     assert "edit_file" in tools.READABLE_PROMPT.format(title="T", count=1, names=tools.READABLE_FORK)
+
+
+def test_the_function_list_tells_polished_functions_and_helpers_say_they_polish(tmp_path):
+    """Polished functions are matched ones made readable: the Functions tab shows them apart (a Polished filter and
+    status), and a polishing helper's card says what it does, so decompiling and polishing helpers read apart."""
+    import json
+
+    from decompnet.app import agents
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES('g','G','','mips',1,?,?)",
+                   (str(tmp_path), json.dumps({"kind": "rom"})))
+        for name, readable in (("a", 1), ("b", 0)):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,readable) VALUES(1,?,8,2,'matched','u',?)",
+                       (name, readable))
+    assert {r["name"]: r["polished"] for r in net.function_map("g")} == {"a": True, "b": False}
+    s = agents.Session.__new__(agents.Session)
+    s.__dict__.update(id="1", kind="api", label="x", slug="g", agent_name="api-m-1", model="m", state="working",
+                      why="", todo="", until=None, stopped_by=None, last_message="", runs=0, restarts=0, error="",
+                      started_at=0, usd=0, tokens=0, feed=[], options={"task": "readable"})
+    assert s.snapshot()["task"] == "readable"

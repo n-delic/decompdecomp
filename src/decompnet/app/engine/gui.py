@@ -145,6 +145,7 @@ class GuiMixin:
         proj = self._project(slug)
         rows = self.store.all(
             "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
+            "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
             f"WHERE f.project_id=? AND {IN_BUILD.replace('meta', 'f.meta')} ORDER BY f.vram, f.unit, f.id", proj["id"])
@@ -156,7 +157,8 @@ class GuiMixin:
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
-                 "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or "")} for r in rows]
+                 "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or ""),
+                 "polished": r["status"] == "matched" and bool(r["readable"])} for r in rows]
 
     def map_columns(self, slug: str) -> list[list]:
         """The compiler map's view of each function for the ROM map, asked for after the map is drawn: the map no

@@ -300,7 +300,9 @@ $("fnNext").onclick = () => stepFn(1);
 /* ------------------------------------------------------------------ function list */
 const FUNCTION_ROWS = 200, MORE_ROWS = 500;  // rows the list shows at first, and "Show more" adds: a big game has tens of thousands
 const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows: [] };
-const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["first", "★ First"]];
+const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"]];
+// polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
+const polished = (f) => f.status === "matched" && !!f.polished;
 // ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
 const canStar = () => !!(S.ov && S.ov.kind !== "fork");
@@ -319,14 +321,14 @@ function searchFunctions(fns, q, fork) {
 
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
-  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, first: 0 };
-  for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; }
+  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, polished: 0, first: 0 };
+  for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; if (polished(f)) counts.polished++; }
   const star = canStar();
   if (!star && L.filter === "first") L.filter = "all";
   $("fnFilter").innerHTML = FILTERS.filter(([k]) => star || k !== "first").map(([k, label]) => `<button type="button" role="radio" aria-checked="${L.filter === k}" class="${L.filter === k ? "on" : ""}" data-filter="${k}"${k === "first" ? ` title="Agents take starred functions before the others"` : ""}>${label}<span>${counts[k].toLocaleString()}</span></button>`).join("");
   $("starHint").hidden = $("thStar").hidden = !star;
   const q = L.q.trim().toLowerCase();
-  let rows = searchFunctions(S.map.filter((f) => L.filter === "all" || (L.filter === "first" ? starred(f) : fnState(f) === L.filter)),
+  let rows = searchFunctions(S.map.filter((f) => L.filter === "all" || (L.filter === "first" ? starred(f) : L.filter === "polished" ? polished(f) : fnState(f) === L.filter)),
     q, S.ov && S.ov.kind === "fork");
   const key = {
     i: (f) => f.i, name: (f) => f.name.toLowerCase(), insns: (f) => f.insns, attempts: (f) => f.attempts || 0,
@@ -338,7 +340,7 @@ function renderList() {
   $("fnRows").innerHTML = rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
-    const status = st === "matched" ? `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>` : st === "asm" ? (f.not_c ? `<span class="st not-c" title="agents agreed no C makes it: set aside">not C</span>` : `<span class="st" title="no C compiles to it (hand-written assembly, or a piece of another function): set aside">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
+    const status = st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.not_c ? `<span class="st not-c" title="agents agreed no C makes it: set aside">not C</span>` : `<span class="st" title="no C compiles to it (hand-written assembly, or a piece of another function): set aside">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
     const on = starred(f), open = st !== "matched" && st !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
