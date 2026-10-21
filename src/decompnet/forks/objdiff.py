@@ -109,8 +109,14 @@ class FunctionDiff:
 
 
 def _sym(obj: dict | None, name: str) -> dict | None:
-    for s in (obj or {}).get("symbols", []):
-        if s.get("name") == name:
+    """The symbol `name` an object defines. A function the object only refers to (objdiff lists undefined symbols
+    too, with the same name and kind and no size or code) isn't it: an object that calls a function it no longer
+    defines (a unit whose definition went missing, a build step that left a call to it behind) had that
+    function read 100%, its code compared with nothing, while the progress report rightly said it wasn't built, so
+    every full measure reopened it and the next compile "matched" it again."""
+    hits = [s for s in (obj or {}).get("symbols", []) if s.get("name") == name]
+    for s in hits:
+        if s.get("kind") != "SYMBOL_FUNCTION" or int(s.get("size") or 0) > 0 or s.get("instructions"):
             return s
     return None
 
