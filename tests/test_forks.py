@@ -521,3 +521,24 @@ def test_progress_counts_the_games_own_code_with_middleware_set_aside_by_range(t
     assert objdiff.game_measures(rep, set()) == rep["measures"]
     assert objdiff.expand_set_aside({"functions": {"0x11010": "CRT"}}, {"units": {"game": fns}}) == \
         {"_func_00011010": "CRT"}
+
+
+def test_the_progress_the_app_shows_leaves_set_aside_code_out(tmp_path):
+    """The measures left set-aside code out, but the project list and header add up the function rows: one project
+    still showed 3115/21237 (middleware, the CRT and an SDK counted). Measuring marks those rows set_aside."""
+    from decompnet.network import GAME_CODE
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "t.db")
+    with store.tx() as db:
+        for i, (status, size, meta) in enumerate([("matched", 16, {}), ("open", 48, {}),
+                                                  ("matched", 16, {"asm_code": "middleware engine 3.1", "set_aside": True}),
+                                                  ("asm", 16, {"asm_code": "library code (libc.lib)", "set_aside": True}),
+                                                  ("asm", 8, {"asm_code": "hand-written assembly"})]):
+            db.execute("INSERT INTO functions(id,project_id,name,size,status,meta) VALUES(?,7,?,?,?,?)",
+                       (i + 1, f"f{i}", size, status, json.dumps(meta)))
+    row = store.one("SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
+                    f"SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS done FROM functions "
+                    f"WHERE project_id=7 AND {GAME_CODE}")
+    # the game's own three (hand-written assembly is still the game's), not the two set aside
+    assert (row["total"], row["matched"], row["bytes"], row["done"]) == (3, 1, 72, 16)

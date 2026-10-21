@@ -28,7 +28,7 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
-from ..network import Agent, Network, NetworkError
+from ..network import GAME_CODE, Agent, Network, NetworkError
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -732,6 +732,7 @@ class ForkEngine:
                     meta.update({k: v for k, v in self._meta(old).items() if k in _ASM_KEYS})
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
+                    meta["set_aside"] = True  # and progress leaves it out (network.GAME_CODE)
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -2586,7 +2587,7 @@ class ForkEngine:
         agg = self.net.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
-            "FROM functions WHERE project_id=?", proj["id"])
+            f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
