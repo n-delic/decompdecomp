@@ -119,10 +119,11 @@ class NintendoDS(Console):
         if manifest.get("analysis", 1) < 4:  # (a project at 4 or more has these already)
             net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
             net.forks.reanalyse(slug, functions, log=log)
-        if net.forks.reanalyse(slug, pieces, log=log):
-            # its notes from before say "fragment, skip": agents read the newest note first
+        if net.forks.reanalyse(slug, pieces, log=log) or manifest.get("analysis", 1) == 5:
+            # its notes from before say "fragment, skip": agents read the newest note first (and a project joined
+            # before these notes were written gets them now, once)
             agent, _ = net.local_agent("decompdecomp")
-            for name, took in joined.items():
+            for name, took in (recover.joined_pieces(fp.root, manifest["version"]) | joined).items():
                 try:
                     net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
                                               "function now, not a fragment, whatever older notes say. Worth a try.",

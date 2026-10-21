@@ -549,6 +549,21 @@ def _file_ranges(m: Module) -> list[tuple[int, int]]:
                                                              files[0] if files else "", re.M)]
 
 
+def joined_pieces(root: Path, version: str) -> dict[str, list[str]]:
+    """Each function holding pieces joined to it before (merge_pieces left their symbols as labels), with them."""
+    out: dict[str, list[str]] = {}
+    for folder in (root / "config" / version / "arm9").rglob("symbols.txt"):
+        owner = None
+        for line in folder.read_text(encoding="utf-8").splitlines():
+            if not (s := SYMBOL.match(line)):
+                continue
+            if s.group(2) == "function":
+                owner = s.group(1)
+            elif s.group(2) == "label" and s.group(1).startswith("func_") and owner:
+                out.setdefault(owner, []).append(s.group(1))
+    return out
+
+
 def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(),
                  log=print) -> dict[str, list[str]]:
     """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running

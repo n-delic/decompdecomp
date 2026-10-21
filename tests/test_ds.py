@@ -611,12 +611,17 @@ def test_a_function_pieces_were_joined_to_says_so_in_a_note(tmp_path, monkeypatc
                          ("ds", "DS", "", "arm", 0, str(tmp_path), json.dumps({"kind": "fork"}))).lastrowid
         db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
                    (pid, "f", 16, 4, "open", "a"))
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, "e", 16, 4, "open", "a"))
     fp = type("FP", (), {"manifest": {"created": "from scratch", "analysis": 5, "version": "v"}, "root": tmp_path})()
     monkeypatch.setattr(net, "fork_slug", lambda slug: slug)
     monkeypatch.setattr(net.forks, "get", lambda slug: (None, fp, None))
     monkeypatch.setattr(net.forks, "reanalyse", lambda slug, step, **kw: step(fp))
     monkeypatch.setattr(recover, "merge_pieces", lambda *a, **kw: {"f": ["g", "h"]})
+    monkeypatch.setattr(recover, "joined_pieces", lambda *a: {"e": ["e2"]})  # joined by the version before
     monkeypatch.setattr(scratch, "dsd_path", lambda: "dsd")
     consoles.get("nds").on_start(net, "ds", log=lambda *_: None)
     note = net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE name='f')")["text"]
     assert "joined g, h" in note and "whole function now" in note
+    assert "joined e2" in net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE "
+                                        "name='e')")["text"]
