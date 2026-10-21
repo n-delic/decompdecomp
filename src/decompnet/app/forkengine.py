@@ -28,12 +28,21 @@ from .. import consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, STATE, ForkError, ForkProject
+from ..hostenv import NO_WINDOW
 from ..network import Agent, Network, NetworkError
 from ..scoring import percent_text
 from ..textedit import replace_once
 
 _REPO = re.compile(r"^(https://(github\.com|gitlab\.com|codeberg\.org|git\.[\w.-]+)/[\w.-]+/[\w.-]+?)(\.git)?/?$")
 # A match has to come from C/C++: no inline assembly, asm functions, asm includes or embedded binaries.
+def _path_glob(glob: str) -> str:
+    """A shell-style pattern an agent wrote, as pathlib takes it: `**` only as a whole path component
+    ("src/**.cpp" -> "src/**/*.cpp", "src**/x.h" -> "src*/**/x.h"; pathlib raised ValueError on those)."""
+    glob = glob.strip().lstrip("/")
+    glob = re.sub(r"(?<=[^/])\*\*", "*/**", glob)
+    return re.sub(r"\*\*(?=[^/])", "**/*", glob)
+
+
 _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA|\.incbin|#\s*include\s*[\"<][^\">]*\.(s|S|asm|bin|inc\.c)[\">]")
 
 
@@ -349,6 +358,48 @@ class ForkEngine:
         self._indexing: set[int] = set()
         self._ilock = threading.Lock()
         self._linking: dict[str, dict] = {}  # slug -> background link run
+        self._preflight_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+        self._preflighted: set[int] = set()  # projects checked since the app started (overview's check)
+
+    # ------------------------------------------------------------------ pre-flight
+
+    def preflight(self, slug: str, log=lambda *_: None) -> str | None:
+        """Whether the project builds on this computer before helpers spend compiles on it: its setup finished and
+        build.ninja's programs exist (ForkProject.build_problem). When they don't, the setup's configure step runs
+        again (a project folder moved from another home); what's still wrong is kept on the project (its overview
+        shows it) and returned. None: it builds."""
+        proj, fp, cfg = self.get(slug)
+        if not cfg.get("ready"):
+            return None  # not set up yet: Setup says so
+        with self._preflight_locks[proj["id"]]:
+            self._preflighted.add(proj["id"])
+            why = fp.build_problem()
+            if why is not None and (fp.root / "objdiff.json").exists():
+                log(f"{slug}: {why}; running its setup's configure step again")
+                ok, tail = fp.reconfigure(cfg.get("version"), log=log)
+                why = fp.build_problem() or (None if ok else f"its setup failed: {_tail(tail, 4)}")
+            if self.get(slug)[2].get("build_problem") != why:
+                self.net._update_cfg(slug, lambda c: c.__setitem__("build_problem", why))
+        return why
+
+    def _preflight_once(self, slug: str) -> None:
+        """The first look at a project in this run of the app (its page opened): pre-flight it in the background."""
+        try:
+            pid = self.net._project(slug)["id"]
+        except NetworkError:
+            return
+        if pid in self._preflighted:
+            return
+        self._preflighted.add(pid)
+
+        logger = logging.getLogger("decompdecomp")
+
+        def run() -> None:
+            try:
+                self.preflight(slug, log=lambda m: logger.info("%s", m))
+            except Exception:  # the page works without it
+                logger.exception("pre-flight of %s failed", slug)
+        threading.Thread(target=run, daemon=True, name=f"preflight-{slug}").start()
 
     # ------------------------------------------------------------------ locks, builds, baselines
 
@@ -456,7 +507,8 @@ class ForkEngine:
         log(f"cloning {url}")
         res = subprocess.run(["git", "clone", "--depth", "1", "--recurse-submodules", "--shallow-submodules", url, str(dest)],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                             stdin=subprocess.DEVNULL, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+                             creationflags=NO_WINDOW)
         if res.returncode != 0:
             from ..forks import policy
             shutil.rmtree(dest, ignore_errors=True)
@@ -726,10 +778,17 @@ class ForkEngine:
                                "VALUES(?,?,?,?,?,?,?,?,?,?)", (proj["id"], name, size, n, status, score, uname,
                                                               int(vram) if vram else None, json.dumps(meta), ""))
                 else:
-                    if status != "matched" and old["best_source"] and old["best_score"] is not None:
+                    # a better attempt kept elsewhere stays the best; a 0 (identical) of a function that no longer
+                    # matches doesn't: the queue and briefs would say it's done
+                    if status != "matched" and old["best_source"] and old["best_score"] and old["status"] != "matched":
                         score = old["best_score"] if score is None else min(score, old["best_score"])
                     db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
                                (size, n, status, score, json.dumps(meta), old["id"]))
+                    if old["status"] == "matched" and status != "matched":
+                        self._reopened(db, proj, old, "full report" + (", the unit doesn't build" if uname in broken
+                                                                         else ""), fuzzy,
+                                       held=fuzzy is not None and sym in held.get(uname, ())
+                                       and float(f.get("fuzzy_match_percent") or 0) >= 100)
                     if status == "matched" and old["status"] != "matched":
                         if uname not in texts:
                             try:
@@ -1636,11 +1695,25 @@ class ForkEngine:
         with self.net.store.tx() as db:
             db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(meta), fn["id"]))
 
+    def _reopened(self, db, proj, r, via: str, pct: float | None, held: bool = False) -> None:
+        """Record a matched function going back to open, with what measured it and how (`via`: a unit's diff, the
+        full report...), so a function that keeps flipping shows why in the events."""
+        why = ("matches but is held (its constants or references differ)" if held else
+               "isn't in the build's object" if pct is None else f"{pct:.2f}%")
+        self.net._event(db, proj["id"], None, "reopen", f"{r['name']} ({via}: {why})")
+
+    @staticmethod
+    def _missing_note(unit, fn) -> str:
+        """What to tell an agent whose compile built, but whose unit's object has no such function."""
+        return (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
+                "is nothing to compare yet.")
+
     def _apply_scores(self, proj, unit: str, scores: dict[str, float | None], skip: int | None = None,
-                      agent: Agent | None = None, text: str | None = None) -> None:
+                      agent: Agent | None = None, text: str | None = None, via: str = "unit diff") -> None:
         """Bring every function of a unit up to date with a fresh diff (cheaper than a full report). A function
         that matches now is a match like any other, whichever change made it: `agent` (whose edit it was) is
-        credited, and `text` (the unit's source) gives the matching code."""
+        credited, and `text` (the unit's source) gives the matching code. `via` says which measure it was, for the
+        reopen events."""
         rows = self.net.store.all("SELECT id, name, status, n_insns, best_score, best_source, meta FROM functions "
                                   "WHERE project_id=? AND unit=?", proj["id"], unit)
         held = self._held(proj, unit, text)
@@ -1653,8 +1726,12 @@ class ForkEngine:
                 if pct is not None and pct >= 100 and sym not in held:
                     if r["status"] != "matched":
                         self._matched(db, proj, r, agent, text)
-                elif r["status"] == "matched":
-                    db.execute("UPDATE functions SET status='open' WHERE id=?", (r["id"],))
+                elif r["status"] == "matched":  # no longer matches: its best is what it scores now, not 0 (identical)
+                    db.execute("UPDATE functions SET status='open', best_score=? WHERE id=?",
+                               (None if pct is None else scaled(pct, r["n_insns"]), r["id"]))
+                    self._reopened(db, proj, r, via, pct, held=pct is not None and pct >= 100)
+                elif pct is not None and r["best_score"] == 0:  # reopened before this was fixed: still says identical
+                    db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
                 elif pct is not None and not r["best_source"]:
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
 
@@ -1859,7 +1936,7 @@ class ForkEngine:
         fn = self.net.claim_row(agent, slug, function, strategy)
         if fn is None:
             left = (self.get(slug)[2].get("uncovered") or {}).get("functions")
-            return ("Nothing left to claim: every function with a source file matches or someone is on it. 🎉"
+            return (self.net.nothing_to_claim(agent, self.net._project(slug), " with a source file")
                     + (f"\n{left} more functions are in code no source file covers yet. The user can give them files "
                        "(the project's overview in decompdecomp: Give them source files); then there's more to claim."
                        if left else ""))
@@ -1995,7 +2072,7 @@ class ForkEngine:
             scores, builds = self._baseline(proj, fp, unit, before)
             held = self._held(proj, unit.name, before)
             if scores is not None:
-                self._apply_scores(proj, unit.name, scores, text=before)
+                self._apply_scores(proj, unit.name, scores, text=before, via="unit diff before a compile")
                 protected = {n for n, pct in scores.items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = (scores.get(symbol) or 0) >= 100 and symbol not in held
@@ -2021,6 +2098,16 @@ class ForkEngine:
                     self._keep_scores(proj, unit, before, scores)
 
             ok, log = self._build_unit(proj, fp, unit)
+            if not ok and (broken := fp.build_problem()) is not None:
+                # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
+                # is set up again in the background (one project spent five compiles on a build.ninja whose python
+                # was in another home, then the sessions quit)
+                path.write_text(before, encoding="utf-8")
+                threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
+                return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
+                                "and nothing was recorded or counted. decompdecomp is setting the project up again; "
+                                "don't compile until it's fixed: end your session here.", "score": None,
+                        "matched": False}
             if not ok:
                 undo()
                 if quiet is None:
@@ -2072,7 +2159,8 @@ class ForkEngine:
                 return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
             self.net._record(fn, agent, score, code, 0, matched=matched)
-            self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after)
+            self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
+                               via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)
             if matched:
                 self._commit(proj, fp, unit.source, f"Match {meta.get('demangled') or symbol}\n\n"
@@ -2082,6 +2170,8 @@ class ForkEngine:
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
+        if d.match_percent is None:
+            stall = self._missing_note(unit, fn) + stall
         if d.literals:
             return {"text": f"score {score} (0 = identical). {d.literals_note()}{stall}", "score": score, "matched": False}
         return {"text": f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{stall}", "score": score,
@@ -2396,7 +2486,11 @@ class ForkEngine:
             rx = re.compile(re.escape(pattern))
         root = fp.root.resolve()
         if glob:
-            files = sorted(fp.root.glob(glob))
+            glob = _path_glob(glob)
+            try:
+                files = sorted(fp.root.glob(glob))
+            except ValueError as e:
+                raise NetworkError(f"glob {glob!r}: {e} (e.g. src/**/*.cpp, include/*.h)") from None
         else:
             files = sorted(p for ext in ("c", "cc", "cpp", "h", "hpp", "inc") for p in fp.root.rglob(f"*.{ext}"))
         hits = []
@@ -2489,7 +2583,8 @@ class ForkEngine:
             for u in units:
                 if after[u.name] is not None:
                     self._keep_scores(proj, u, updated, after[u.name])
-                    self._apply_scores(proj, u.name, after[u.name], agent=agent, text=updated)
+                    self._apply_scores(proj, u.name, after[u.name], agent=agent, text=updated,
+                                       via=f"unit diff after an edit of {rel}")
             self._commit(proj, fp, rel, f"{message.strip()}\n\nEdited by {agent.name} with decompdecomp.")
             with self.net.store.tx() as db:
                 self.net._event(db, proj["id"], agent.id, "context", f"{rel}: {message.strip()[:120]}")
@@ -2563,6 +2658,8 @@ class ForkEngine:
 
     def overview(self, slug: str) -> dict:
         proj, fp, cfg = self.get(slug)
+        if cfg.get("ready"):
+            self._preflight_once(slug)
         agg = self.net.store.one(
             "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
             "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(attempts) AS attempts "
@@ -2586,6 +2683,8 @@ class ForkEngine:
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
+            # why it doesn't build on this computer (preflight; checked once a run when its page first opens)
+            "build_problem": cfg.get("build_problem") if cfg.get("ready") else None,
         }
 
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:

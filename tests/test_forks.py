@@ -161,6 +161,9 @@ def test_read_and_search(fork):
     with pytest.raises(NetworkError, match="source or text"):
         net.forks.read_file(slug, "baserom.z64")
     assert "../" not in net.forks.search(slug, "x", "../**/*.c")
+    # shell-style globs pathlib refuses ("'**' can only be an entire path component") still search
+    assert "game.h" in net.forks.search(slug, r"MAX_ENTITIES", "**.h")
+    assert isinstance(net.forks.search(slug, r"MAX_ENTITIES", "src**.c"), str)  # no ValueError
 
 
 @needs_tools
@@ -168,6 +171,17 @@ def test_function_detail(fork):
     net, slug, agent = fork
     d = net.function_detail(slug, "clamp_s32")
     assert d["status"] == "matched" and "slt" in d["asm"] and "clamp_s32" in d["source"]
+
+
+def test_search_globs_as_agents_write_them():
+    from pathlib import Path
+
+    from decompnet.app.forkengine import _path_glob
+
+    for given, want in [("src/**.cpp", "src/**/*.cpp"), ("**.h", "**/*.h"), ("src/**/*.c", "src/**/*.c"),
+                        ("/include/*.h", "include/*.h"), ("src**/x.h", "src*/**/x.h")]:
+        assert _path_glob(given) == want
+        list(Path(".").glob(want))  # pathlib takes it (it raised ValueError for the given form)
 
 
 def test_csource_finds_definitions_and_stubs():
@@ -492,3 +506,28 @@ def test_a_from_scratch_brief_says_what_the_data_it_uses_is(fork, monkeypatch):
     assert lines[1:4] == ["### Data it uses", "- data_02225058: .bss, 2 bytes", "- g_score"]
     assert not any("add_score" in line for line in lines) and "extern" in lines[-1]
     assert net.forks._data_used(proj, ["add_score"]) == []
+
+
+def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_done(tmp_path):
+    # A reopened match kept best_score 0 (identical): briefs said "score 0" and agents released it as done.
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "t.db")
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,best_source,unit,meta,asm) "
+                   "VALUES(1,7,'F',40,10,'matched',0,'int F() {}','u','{\"symbol\": \"_F\"}','')")
+        db.execute("INSERT INTO functions(id,project_id,name,size,n_insns,status,best_score,best_source,unit,meta,asm) "
+                   "VALUES(2,7,'G',40,10,'open',0,'int G() {}','u','{\"symbol\": \"_G\"}','')")
+    eng = ForkEngine.__new__(ForkEngine)
+    eng.net = SimpleNamespace(store=store, _event=lambda db, pid, aid, kind, detail: db.execute(
+        "INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,0)", (pid, aid, kind, detail)))
+    eng._apply_scores({"id": 7, "root": str(tmp_path)}, "u", {"_F": 52.7, "_G": 90.0}, via="unit diff before a compile")
+    rows = {r["name"]: r for r in store.all("SELECT name, status, best_score FROM functions")}
+    assert rows["F"]["status"] == "open" and rows["F"]["best_score"] > 0  # reopened now
+    assert rows["G"]["best_score"] > 0  # reopened before the fix: mended at the next measurement
+    # and the reopen is in the events, with what measured it and how much it scored
+    events = [(r["kind"], r["detail"]) for r in store.all("SELECT kind, detail FROM events")]
+    assert events == [("reopen", "F (unit diff before a compile: 52.70%)")]

@@ -17,6 +17,7 @@ from importlib import resources
 from pathlib import Path
 
 from .. import toolchains
+from ..hostenv import NO_WINDOW
 from ..limits import capped
 from .project import ForkError
 
@@ -62,7 +63,7 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
                 "-postScript", script, str(out), "-deleteProject", *([] if analyse else ["-noanalysis"])]
         try:
             res = subprocess.run(capped(argv), capture_output=True, text=True, timeout=timeout, env=_env(),
-                                 encoding="utf-8", errors="replace")
+                                 encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired:
             return []
         except OSError as e:

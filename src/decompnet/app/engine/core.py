@@ -190,10 +190,18 @@ class Core(Network):
         sym = sym.split("(", 1)[0].strip()
         if not sym:
             return []
+        # A C++ function as written (`InitFog`, `CDriver::CalcSpeed`) is found by its demangled name, which starts
+        # with its return type and convention (`bool __cdecl InitFog(...)`, `public: float __thiscall
+        # CDriver::CalcSpeed(float)`): agents sent those and got "no function" back
+        like = sym.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = self.store.all(
             "SELECT * FROM functions WHERE project_id=? AND (name=? OR substr(name,1,?)=? "
-            "OR json_extract(meta,'$.symbol')=? OR substr(json_extract(meta,'$.demangled'),1,?)=?) ORDER BY name",
-            proj["id"], sym, len(sym) + 1, sym + "@", sym, len(sym) + 1, sym + "(")
+            "OR json_extract(meta,'$.symbol')=? OR substr(json_extract(meta,'$.demangled'),1,?)=? "
+            "OR json_extract(meta,'$.demangled') LIKE ? ESCAPE '\\') ORDER BY name",
+            proj["id"], sym, len(sym) + 1, sym + "@", sym, len(sym) + 1, sym + "(", f"% {like}(%")
+        if not rows and "::" not in sym and len(sym) >= 4:  # a method by its own name: Class::sym
+            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
+                                  "LIKE ? ESCAPE '\\' ORDER BY name", proj["id"], f"%::{like}(%")
         if unit:
             rows = ([r for r in rows if r["unit"] == unit] or [r for r in rows if r["unit"].endswith(unit)]
                     or [r for r in rows if r["unit"].startswith(unit)] or [r for r in rows if unit in r["unit"]])
