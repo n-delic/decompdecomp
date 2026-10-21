@@ -51,7 +51,7 @@ MACHINE_AGENTS = ("autopilot", "permuter")  # decompdecomp's own workers: their 
 # the user can give it back (reopen).
 NOT_C_AGENTS, NOT_C_MODELS = 3, 2
 # The same verdict in agents' notes, from before release_function took one (Network.not_c_from_notes): words that say
-# no C at all makes the code. Not a note about flags or compilers: "flag-blocked" code may match with other flags.
+# no C at all makes the code. Not a note about compiler flags: "flag-blocked" code may match with other flags.
 # On every project of a user (October 2026) no function later matched had three agents' notes saying so.
 NOT_C_NOTE = re.compile(
     r"\b(no|any)\s+(standalone\s+|plain\s+|valid\s+)?C\b[^.;:]{0,40}?\b(can|could|will|would)\s*(not|n't)?\s*"
@@ -61,8 +61,10 @@ NOT_C_NOTE = re.compile(
     r"|cannot\s+be\s+(written|expressed|produced|reproduced|represented)\s+(in|as|from)\s+(plain\s+|standalone\s+)?C\b"
     r"|hand-?written\s+(asm|assembly)|(not|isn't)\s+a\s+(real|standalone|callable)\s+function"
     r"|unmatchable\s+(standalone|in\s+C|from\s+C|as\s+C)", re.I)
-FLAG_NOTE = re.compile(r"\bflags?\b|flag-blocked|-O[0-3s]\b|-framepointer|-mips\d|try_compiler|search_flags|"
-                       r"compiler range", re.I)
+# (a CPU's condition flags are no compiler's: "reuses the flags of the cmp" is why some code is hand-written)
+FLAG_NOTE = re.compile(r"flag-blocked|\b(compiler|compiler's|project|project's|build|game's|its own|other|different|"
+                       r"right|wrong|these|those|default)\s+flags\b|flags?\s+(search|blocked)|-O[0-3s]\b|-framepointer|"
+                       r"-mips\d|try_compiler|search_flags|compiler range", re.I)
 # Routing between models (claim_row): on an N64 game free models matched 14-25% of the functions they claimed and
 # spent 17-31 compiles a match, stronger ones 42-77% and 3-6, and every model was handed the functions the others
 # gave up on. A model well behind the strongest one at work leaves functions given up on ESCALATE_AFTER times to it;

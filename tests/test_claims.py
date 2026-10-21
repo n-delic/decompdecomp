@@ -251,7 +251,7 @@ def test_agents_notes_that_agree_no_c_makes_a_function_set_it_aside(tmp_path):
     note("opencode-beam-free-1", "piece", "Hand-written ARM runtime helper, not expressible in C.")
     note("opencode-beam-free-2", "piece", "Agree: hand-written asm (inline clz). Skip.")
     assert net.not_c_from_notes("game") == 0  # one model
-    note("claude-sonnet-5-5-1", "piece", "No C can produce the inline clz here.")
+    note("claude-sonnet-5-5-1", "piece", "No C can produce it: the loop reuses the flags of the entry cmp.")  # the CPU's
     for i, model in enumerate(("opencode-beam-free", "opencode-glm", "claude-sonnet-5-5")):
         note(f"{model}-{i + 5}", "flagged", "Flag-blocked: no C can produce it with the project's flags.")
     assert net.not_c_from_notes("game") == 1
