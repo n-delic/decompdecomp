@@ -818,3 +818,15 @@ def test_a_split_takes_every_declaration_with_the_functions_it_moves(tmp_path):
     new, old, moved = eng._divide(text, rows, {"g"})
     assert moved == 1 and "extern int data_x;" in new and "int g(void)" in new and "void f(void)" not in new
     assert "void f(void)" in old and "int g(void)" not in old and "extern int data_x;" in old
+
+
+def test_an_address_outside_a_modules_code_is_no_function_start(tmp_path):
+    """A pointer whose value lies in another module's range (overlays share addresses) was checked against this
+    module's bytes: below its start the offset was negative, passed the length check and indexed out of range, and
+    a user's Check again failed with an IndexError."""
+    from decompnet.consoles.nds import recover
+
+    m = recover.Module("ov000", "overlay(0)", tmp_path, BASE, (0xE12FFF1E).to_bytes(4, "little"), [(BASE, BASE + 4)])
+    assert recover._starts_like_code(m, BASE, False)
+    for addr in (BASE - 0x1000, BASE - 8, BASE + 4, BASE + 0x1000):
+        assert not recover._starts_like_code(m, addr, False) and not recover._starts_like_code(m, addr, True)

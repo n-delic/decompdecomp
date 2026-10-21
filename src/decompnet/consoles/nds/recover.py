@@ -237,8 +237,10 @@ def _starts_like_code(m: Module, addr: int, thumb: bool) -> bool:
     instruction runs always (condition AL); Thumb's reads only argument registers, sp or pc (data read as Thumb code
     reads others)."""
     at = addr - m.base
+    if not 0 <= at <= len(m.code) - (2 if thumb else 4):
+        return False  # not in this module's code: a pointer into another one (overlays share addresses)
     if not thumb:
-        return addr % 4 == 0 and len(m.code) >= at + 4 and m.code[at + 3] & 0xF0 == 0xE0
+        return addr % 4 == 0 and m.code[at + 3] & 0xF0 == 0xE0
     first = next(_THUMB.disasm(m.code[at:at + 4], addr), None)
     if addr % 2 or first is None or first.bytes == b"\0\0":
         return False
