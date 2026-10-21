@@ -414,6 +414,12 @@ function renderNext(ov) {
     $("nextExport").onclick = () => openExport();
     return;
   }
+  // the project's build can't run on this computer (ForkEngine.preflight): agents don't start until it's fixed
+  if (ov.build_problem) {
+    box.hidden = false;
+    setHtml(box, `<div class="next-text"><b>This project doesn't build on this computer</b><span class="muted small">${esc(ov.build_problem)}. decompdecomp ran its setup again and that didn't fix it, so agents won't start on it.</span></div>`);
+    return;
+  }
   if (ov.kind === "fork" && ov.ready && !ov.functions) {
     box.hidden = false;
     setHtml(box, `<div class="next-text"><b>Not measured yet</b><span class="muted small">objdiff compares every unit of the project with your game: it takes a moment.</span></div><button class="primary" id="nextMeasure" type="button">Measure now</button>`);

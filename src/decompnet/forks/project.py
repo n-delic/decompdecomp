@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW
+from decompnet.hostenv import NO_WINDOW, console_python
 
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
@@ -90,6 +90,9 @@ def _git_env(root: Path) -> dict | None:
 _OBJECT = re.compile(r'\bObject\(\s*(NonMatching|Matching|Equivalent|MatchingFor\([^()]*\))\s*,\s*"([^"]+)"', re.S)
 _SRC_DIR = re.compile(r'^\s*config\.src_dir\s*=\s*Path\(\s*"([^"]+)"\s*\)', re.M)
 _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes build\<version>\ok on Windows
+# build.ninja's top-level variables (`PY = /path/python`) and rules' commands (`  command = /path/tool ...`): the
+# program each runs first (build_problem)
+_NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
 _FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
 # CodeWarrior's linker warns about every FORCEACTIVE symbol and unknown section: harmless, and thousands of lines
@@ -97,13 +100,21 @@ _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbo
                     r"Section '\.note\.split' is unknown)")
 
 
+def _tool_dirs() -> list[Path]:
+    """Where decompdecomp's own build tools (the ninja Python package's ninja) are: beside its Python, or, in the
+    Windows setup's bundle (packages installed with --target), in the `bin` folder beside those packages, which the
+    bundle's launcher didn't put on PATH."""
+    bundled = Path(__file__).resolve().parents[2] / "bin"
+    return [Path(sys.executable).parent, *([bundled] if bundled.is_dir() else [])]
+
+
 def _tool(name: str) -> str | None:
     """A build tool from PATH or from decompdecomp's own environment (the ninja Python package)."""
     found = shutil.which(name)
     if found:
         return found
-    local = Path(sys.executable).parent / (f"{name}.exe" if os.name == "nt" else name)
-    return str(local) if local.exists() else None
+    exe = f"{name}.exe" if os.name == "nt" else name
+    return next((str(d / exe) for d in _tool_dirs() if (d / exe).exists()), None)
 
 
 class ForkProject:
@@ -311,11 +322,11 @@ class ForkProject:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`."""
         env = dict(os.environ)
-        env["PATH"] = os.pathsep.join([str(Path(sys.executable).parent), env.get("PATH", "")])
+        env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
         executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]
-        cmd = [executable, *cmd[1:]]
+        cmd = [console_python(executable), *cmd[1:]]  # not pythonw.exe: its tools' compilers would flash consoles
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
@@ -390,6 +401,46 @@ class ForkProject:
         if not (self.root / "objdiff.json").exists():
             raise ForkError("the project built, but has no objdiff.json, so decompdecomp can't measure matches. "
                             "Some projects generate it with an extra step; check the README.")
+
+    def build_problem(self) -> str | None:
+        """Why the project's build can't run on this computer as it is, or None: no objdiff.json, or a program the
+        generated build.ninja runs by absolute path (its interpreter, a tool) that isn't there. A project folder
+        copied from another home kept /home/olduser/.local/share/uv/tools/decompnet/bin/python in its build.ninja,
+        and every compile failed with "/bin/sh: 1: ...: not found" until its setup ran again."""
+        if not (self.root / "objdiff.json").exists():
+            return "the project has no objdiff.json (its setup didn't finish)"
+        ninja = self.root / "build.ninja"
+        if not ninja.is_file():
+            return None
+        missing: list[str] = []
+        try:
+            with open(ninja, errors="replace", encoding="utf-8") as f:
+                for line in f:
+                    m = _NINJA_PROGRAM.match(line)
+                    if m is None:
+                        continue
+                    first = m.group(2).strip().strip("'\"").split()[0] if m.group(2).strip() else ""
+                    prog = first.strip("'\"")
+                    # (a folder path, /home/...: not an MSVC flag like /O2 or /DNDEBUG)
+                    if re.match(r"^/[^/\s]+/", prog) and prog not in missing and not Path(prog).exists():
+                        missing.append(prog)
+        except OSError as e:
+            return f"build.ninja can't be read: {e}"
+        if missing:
+            return (f"build.ninja runs {', '.join(missing[:3])}, which {'is' if len(missing) == 1 else 'are'} not on "
+                    "this computer (the project was set up elsewhere, or decompdecomp moved)")
+        return None
+
+    def reconfigure(self, version: str | None = None, log=print) -> tuple[bool, str]:
+        """Write the build files again for this computer: the setup's first step (configure.py, with this
+        computer's tool paths), not the whole setup's builds."""
+        try:
+            cmds = self.setup_commands(version)
+        except ForkError as e:
+            return False, str(e)
+        if self.kind() not in ("manifest", "dtk", "configure") or not cmds:
+            return False, "this kind of project's setup can't be run again by itself"
+        return self.run(cmds[0], log=log, timeout=600)
 
     # ------------------------------------------------------------------ objdiff project
 
