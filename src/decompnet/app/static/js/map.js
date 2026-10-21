@@ -119,7 +119,8 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [colors.match, 1];
-  if (f.status === "asm") return f.not_c ? [colors.notC, 1] : [colors.tried, 0.35];
+  // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
+  if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
 }
