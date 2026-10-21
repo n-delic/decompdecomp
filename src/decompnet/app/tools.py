@@ -198,7 +198,7 @@ def _project_info(net: RomNetwork, slug: str) -> str:
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
-    """A claim; one asked for that's matched, hand-written assembly or someone else's is the next free function
+    """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
     instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
     batch of small ones."""
     strategy = strategy or ("finish" if net.fork_slug(slug) else "easiest")
@@ -207,7 +207,7 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
     try:
         return net.claim(agent, slug, function or None, strategy)
     except NetworkError as e:
-        if not function or not re.search(r"already matched|is hand-written assembly|is claimed by", str(e)):
+        if not function or not re.search(r"already matched|is set aside|is claimed by", str(e)):
             raise
         return f"({e}. Here's the next free function instead.)\n\n" + net.claim(agent, slug, None, strategy)
 
