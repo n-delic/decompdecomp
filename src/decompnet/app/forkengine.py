@@ -24,12 +24,12 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import consoles, similarity, toolchains
+from .. import arch, consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
 from ..hostenv import NO_WINDOW
-from ..network import GAME_CODE, Agent, Network, NetworkError
+from ..network import GAME_CODE, Agent, Network, NetworkError, move_on_brief
 from ..scoring import percent_text
 from ..textedit import replace_once
 
@@ -134,6 +134,29 @@ class _TreeLock:
 def _tail(log: str, lines: int = 14) -> str:
     """The end of a build log, where the reason is."""
     return "\n".join(log.strip().splitlines()[-lines:])
+
+
+def with_constant_values(rows: list, console, fp) -> list:
+    """A diff's differing rows with the values of the float constants the target loads by address (x86's
+    `mulss xmm0, [_D_00412340]`: "; target's D_00412340 = 0.0174532924f"), read from the user's copy: the agent
+    sees the literal to write instead of an address. Rows on processors without a reader stay as they are."""
+    reader = arch.get(console.arch).float_operands
+    if reader is None:
+        return rows
+    order = ">" if console.big_endian else "<"
+    out = []
+    for mark, target, yours in rows:
+        if mark != " " and target:
+            said = []
+            for addr, kind in reader(target):
+                raw = console.data_bytes(fp, addr, 4 if kind == "f" else 8)
+                if raw:
+                    value = struct.unpack(order + kind, raw)[0]
+                    said.append(f"D_{addr:08X} = {value:.9g}f" if kind == "f" else f"D_{addr:08X} = {value:.17g}")
+            if said:
+                yours = f"{yours}   ; target's {', '.join(said)}"
+        out.append((mark, target, yours))
+    return out
 
 
 def _floor_pct(pct: float, matched: bool) -> float:
@@ -398,6 +421,8 @@ class ForkEngine:
                 log(f"{slug}: {why}; running its setup's configure step again")
                 ok, tail = fp.reconfigure(cfg.get("version"), log=log)
                 why = fp.build_problem() or (None if ok else f"its setup failed: {_tail(tail, 4)}")
+                if why is None:
+                    self.net.bump_generation(proj["id"])
             if self.get(slug)[2].get("build_problem") != why:
                 self.net._update_cfg(slug, lambda c: c.__setitem__("build_problem", why))
         return why
@@ -1879,6 +1904,8 @@ class ForkEngine:
         meta = self._meta(fn)
         unit = fp.unit(fn["unit"])
         lines = [f"## {header}: {fn['name']}  ({proj['name']})", f"unit {unit.name}, {fn['size']} bytes"]
+        if fn["status"] != "matched":
+            lines.append(move_on_brief(fn))
         if meta.get("demangled"):
             lines.append(f"C++ name: {meta['demangled']}")
         if unit.scratch:
@@ -1906,6 +1933,7 @@ class ForkEngine:
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:
+                d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
@@ -1943,10 +1971,13 @@ class ForkEngine:
         why = (cfg.get("link_failed") or {}).get(unit.source or "")
         if why and not unit.complete:
             lines += ["", f"### {unit.source} didn't link yet (file_status shows its data)", why]
-        notes = self.net.store.all("SELECT n.text, a.name FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-                                   "WHERE n.function_id=? ORDER BY n.id DESC LIMIT 6", fn["id"])
+        lines += self.net.dependency_brief(fn)
+        best = fn["best_score"] if fn["status"] != "matched" else None
+        best_text = (f"{percent_text(max(0.0, 100.0 * (1 - best / (fn['n_insns'] * 100))))} (score {best})"
+                     if best is not None and fn["n_insns"] else "")
+        notes = self.net.notes_for_brief(fn, best_text, show=6, when=False)
         if notes:
-            lines += ["", "### Notes"] + [f"- ({n['name']}) {n['text']}" for n in notes]
+            lines += ["", "### Notes", *notes]
         lines += ["", "Send compile_and_diff the complete function definition (same name and signature as the original), "
                       "with any #include \"...\", prototypes or #pragma lines it needs. Structs, globals and helper "
                       "functions go in with edit_file."]
@@ -2007,7 +2038,10 @@ class ForkEngine:
     def claim(self, agent: Agent, slug: str, function: str | None = None, strategy: str = "easiest") -> str:
         if (link := self.net.links.get(slug)) is not None:
             return self._claim_in_room(link, agent, slug, function, strategy)
+        still = self.net.still_holding(agent, function)
         fn = self.net.claim_row(agent, slug, function, strategy)
+        if fn is not None and still:
+            return still + self.brief(fn, agent, "CLAIMED")
         if fn is None:
             left = (self.get(slug)[2].get("uncovered") or {}).get("functions")
             return (self.net.nothing_to_claim(agent, self.net._project(slug), " with a source file")
@@ -2164,7 +2198,22 @@ class ForkEngine:
             else:
                 after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
             after = _with_includes(after, includes, prelude)
+            # the same file as an earlier compile of this function made, nothing it depends on changed since: that
+            # compile's result, not another build
+            agents_try = keep and quiet is None and not was_matched
+            key = self.net.compile_key(fn, unit.name, after)
+            if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
+                return again
             path.write_text(after, encoding="utf-8")
+
+            def remembered(text: str, score: int | None, kept: bool = True) -> str:
+                """A result as repeat_of gives it back later (agents' tries only), plus the note when this variant
+                only reproduces an earlier score of the claim."""
+                if not agents_try:
+                    return text
+                if kept:
+                    self.net.remember_compile(key, agent, fn, text, score)
+                return text + self.net.same_score_note(fn["id"], agent.id, score, code)
 
             def undo() -> None:
                 path.write_text(before, encoding="utf-8")
@@ -2195,13 +2244,17 @@ class ForkEngine:
             except (ObjdiffError, ForkError) as e:
                 undo()
                 return {"text": f"❌ objdiff couldn't compare (your change was undone): {e}", "score": None, "matched": False}
+            if quiet is None:
+                d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
+                self.net.keep_diff(agent.id, fn["id"], d.rows, objdiff.LEGEND)
             broken = sorted(n for n in protected if n and (d.unit_scores.get(n) or 0) < 100)
             if broken:
                 undo()
                 if quiet is None:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": f"❌ REJECTED and undone: your change breaks matched function(s) {', '.join(broken[:8])}. "
-                                "Check you replaced the right definition (overloads?) and didn't change shared code.",
+                return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
+                                           f"{', '.join(broken[:8])}. Check you replaced the right definition "
+                                           "(overloads?) and didn't change shared code.", None),
                         "score": None, "matched": False, "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
@@ -2219,6 +2272,19 @@ class ForkEngine:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
                 return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
+            best = fn["best_score"]
+            if (not matched and not was_matched and d.match_percent is not None and best is not None
+                    and fn["best_source"] and score > best):
+                # worse than the best so far: the file keeps what it had, so it never ends on a worse variant than
+                # the one the notes and the brief call the best (an agent found its 91.8% try there, not its 92.3%)
+                undo()
+                if quiet is None:
+                    self.net._record(fn, agent, score, code, 0, compiled=True)
+                stall = self.net.stall_note(fn["id"], agent.id)
+                text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
+                                  f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
+                                  f"{d.render()}", score)
+                return {"text": text + stall, "score": score, "matched": False, "percent": pct}
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
@@ -2241,15 +2307,16 @@ class ForkEngine:
                                                     f"Decompiled by {agent.name} with decompdecomp.")
                 return {"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
+                                f"{self.net.dependents_note(fn['id'])}"
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
-        if d.match_percent is None:
-            stall = self._missing_note(unit, fn) + stall
+        missing = self._missing_note(unit, fn) if d.match_percent is None else ""
         if d.literals:
-            return {"text": f"score {score} (0 = identical). {d.literals_note()}{stall}", "score": score, "matched": False}
-        return {"text": f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{stall}", "score": score,
-                "matched": False}
+            text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
+        else:
+            text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{missing}"
+        return {"text": remembered(text, score) + stall, "score": score, "matched": False}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "") -> str:
@@ -2306,6 +2373,7 @@ class ForkEngine:
                             return f"{c}: {res['text']}\nThat's {unit.source}'s own compiler: nothing to switch."
                         if res["matched"]:
                             kept = c
+                            self.net.bump_generation(proj["id"])  # (earlier compiles of the file aren't repeats)
                             self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "
                                                         f"it (found by {agent.name} with decompdecomp).")
                             return f"{c}: {res['text']}\n{unit.source} is built with {c} from now on."
@@ -2424,6 +2492,25 @@ class ForkEngine:
             except NetworkError:
                 pass
         return Network.release(self.net, agent, function, notes, slug)
+
+    def release_exempt(self, slug: str, fn) -> str | None:
+        """Why compiling can't help with this function (release_function lets such a release through at once), or
+        None: its unit has no source file, or its identical twin elsewhere is hand-written assembly."""
+        proj, fp, _ = self.get(slug)
+        if not fp.unit(fn["unit"]).source:
+            return "its unit has no source file"
+        try:
+            twin = self.net.twins.twin_of(proj, fn["id"])
+            if twin is not None and self.is_asm(proj, self.net.store.one("SELECT * FROM functions WHERE id=?", twin)):
+                return "its twin is hand-written assembly"
+        except Exception:  # a heuristic: never in the way of a release
+            return None
+        return None
+
+    def release_hints(self, slug: str, fn) -> list[str]:
+        """For a release pushed back: what this project knows about what to do next with the function (nothing yet
+        in general)."""
+        return []
 
     def read_file(self, slug: str, path: str, start: int = 1, count: int = 200) -> str:
         _, fp, _ = self.get(slug)
@@ -2592,6 +2679,7 @@ class ForkEngine:
         p = fp.safe_path(path, write=True)
         if not message.strip():
             raise NetworkError("give a short message explaining the change")
+        self.net.bump_generation(proj["id"])  # (a header or shared file: compiles may come out differently now)
         if _CHEAT.search(_strip_comments(new)):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed")
         rel = Path(os.path.relpath(p, fp.root)).as_posix()
@@ -2859,6 +2947,7 @@ class ForkEngine:
                 log(f"{n} of {len(sources)} source files tried, {len(stayed)} kept their compiler")
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
             changed = console.set_own_compiler(fp, compiler, sources)
+        self.net.bump_generation(proj["id"])
         self._commit_paths(proj, fp, changed, f"Build the game with {compiler}\n\nChosen in decompdecomp's project "
                                               f"settings; {len(stayed)} source files keep the compiler they had.")
         self.net._update_cfg(slug, lambda c: c.update(compiler=compiler))
@@ -2901,6 +2990,7 @@ class ForkEngine:
                        else f"the file doesn't build with it:\n{_tail(log)}")
                 raise NetworkError(f"{source} stays with {own}: {why}")
             self._commit(proj, fp, rel, f"Build {source} with {compiler}\n\nChosen in decompdecomp's project settings.")
+            self.net.bump_generation(proj["id"])  # (the file's compiler: earlier compiles aren't repeats any more)
             for u in units:
                 self._keep_scores(proj, u, text, after[u.name])
                 self._apply_scores(proj, u.name, after[u.name], text=text)

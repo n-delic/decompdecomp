@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from ... import scoring
-from ...network import Agent, Network, NetworkError
+from ...network import MACHINE_AGENTS, WAITING, Agent, Network, NetworkError, stall_line
 from ...rom import match, split
 from ...rom.symbols import SymbolTable
 from .common import _AUTO_TOKEN, BATCH_INSNS
@@ -95,7 +95,7 @@ class JudgeMixin:
             self._expire_claims(db)
             rows = db.execute(
                 "SELECT f.* FROM functions f WHERE f.project_id=? AND f.status='open' AND f.boost >= 0 AND f.n_insns <= ? "
-                "AND f.abandons = 0 AND f.unit=? AND f.id NOT IN (SELECT function_id FROM claims) "
+                f"AND f.abandons = 0 AND f.unit=? AND f.id NOT IN (SELECT function_id FROM claims) AND f.id NOT IN ({WAITING}) "
                 "ORDER BY ABS(COALESCE(f.vram, 0) - ?), f.id LIMIT ?",
                 (proj["id"], BATCH_INSNS, first["unit"], first["vram"] or 0, n)).fetchall()
             for r in rows:
@@ -177,6 +177,130 @@ class JudgeMixin:
         fn = self._function(function, project)
         self.rangechecks.gave_up(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"]), fn)
         return said
+
+    def release_function(self, agent: Agent, function: str, notes: str, project: str | None = None,
+                         needs: str = "") -> str:
+        """release_function as agents call it (the app's own releases and a room host's go straight to release).
+        On a demo fork and a large x86 game, agents released functions seconds after claiming them, untried,
+        for reasons a compile would have shown were none (12,565 releases, median 5 s after the claim): so a release
+        before compile_and_diff's move-on rule says so is answered once with what to do instead, and goes through
+        when asked again. `needs`: another function this one needs done first (a callee whose convention or body it
+        depends on, an inlined helper): recorded (it waits, that one goes first) and claimed for the agent when free.
+        A release without a compile doesn't count against the session's claims, and says so."""
+        fn = self._function(function, project)
+        need = self._prerequisite(agent, fn, needs, project) if needs.strip() else None
+        progress = self.claim_progress(agent, fn)
+        if need is None and progress is not None and (push := self._push_back(agent, fn, progress, project)):
+            return push
+        said = self.release(agent, function, notes, project)
+        if need is not None:
+            self.wait_for(agent, fn, need)
+            said += (f"\n{fn['name']} now waits for {need['name']}: it's claimed after everything else until "
+                     f"{need['name']} matches, and {need['name']} goes first meanwhile.")
+            said += self._pivot(agent, project, need)
+        if progress is not None and not progress["compiles"]:
+            said += ("\nYou didn't compile it, so this release doesn't count against your session's claims: claim "
+                     "another one.")
+        elif need is None:  # agents stopped after 2 or 3 of 4 claims because what's left looked hard
+            said += ("\nClaim the next function now, until you've done your session's full count of claims: the "
+                     "functions left are the hard ones, and that's no reason to stop early.")
+        return said
+
+    def _pivot(self, agent: Agent, project: str | None, need) -> str:
+        """The function a release said it needs, claimed for the agent when it's free: what to tell it."""
+        fork = self.fork_slug(project)
+        try:
+            if self._link(project) is not None:  # a room's host hands functions out
+                return f" You hold {need['name']} now:\n\n{self.claim(agent, project, need['name'])}"
+            row = self.claim_row(agent, project, need["name"])
+        except NetworkError as e:
+            return f" ({e}: claim another function meanwhile.)"
+        try:
+            brief = self.forks.brief(row, agent, "CLAIMED") if fork else self._brief(row, agent, "CLAIMED")
+        except Exception:  # the claim stands; the brief is one call away
+            brief = f"(claim_function(function=\"{need['name']}\") shows its brief.)"
+        return f" You hold {need['name']} now:\n\n{brief}"
+
+    def _prerequisite(self, agent: Agent, fn, needs: str, project: str | None):
+        """The function a release says this one needs first, checked: another open function of the project."""
+        try:
+            need = self._function(self.resolve_function(agent, project, needs.strip()), project)
+        except NetworkError as e:
+            raise NetworkError(f"needs: {e} (give the function this one needs first, by name or address)") from None
+        if need["id"] == fn["id"]:
+            raise NetworkError("needs: a function can't wait for itself")
+        if need["status"] == "matched":
+            raise NetworkError(f"needs: {need['name']} already matches, so it's there to use (get_function shows its "
+                               "code). If the call to it still differs, its declaration is what to fix, in this "
+                               "claim; nothing was released.")
+        if need["status"] != "open":
+            raise NetworkError(f"needs: {need['name']} is {need['status']} (no agent works on it), so this one would "
+                               "wait forever; nothing was released.")
+        seen, at = {need["id"]}, need["id"]
+        while (row := self.store.one("SELECT needs_id FROM waits WHERE function_id=?", at)) is not None:
+            at = row["needs_id"]
+            if at == fn["id"]:  # waiting for one that (in the end) waits for this one: they'd both wait for good
+                raise NetworkError(
+                    f"needs: {need['name']} already waits for {fn['name']}, so they depend on each other (a caller "
+                    "and its callee, each one's convention coming from the other): work on them together instead. "
+                    f"compile_and_diff(function=\"{fn['name']}, {need['name']}\", source=both definitions) judges both "
+                    "in one build; nothing was released.")
+            if at in seen:
+                break
+            seen.add(at)
+        return need
+
+    def _push_back(self, agent: Agent, fn, progress: dict, project: str | None) -> str | None:
+        """What a release before the move-on rule gets instead; None lets it through. One rule, compile_and_diff's
+        (stall_status: the same count, the same number): a release goes through once the function's move-on count is
+        reached, with no compile more. Before that it's pushed back once per claim, with where the agent stands; asked
+        again, it goes through. A release with no compile at all is always pushed back (agents called
+        release_function twice to get past it untried). It used to let a pushed-back release through after exactly one
+        more compile, which agents then spent on nothing (446 push-backs, 36 improved after it)."""
+        if fn["status"] != "open" or agent.name in MACHINE_AGENTS:
+            return None
+        n, streak, after = progress["compiles"], progress["no_better"], progress["after"]
+        if n and streak >= after:
+            return None  # compile_and_diff said to move on
+        pushed = self.store.one("SELECT 1 FROM events WHERE agent_id=? AND kind='release_pushed' AND detail=? AND "
+                                "created_at >= ?", agent.id, fn["name"], progress["claimed_at"])
+        if n and pushed is not None:
+            return None  # asked again after the push-back, having tried it: it goes through
+        fork = self.fork_slug(project)
+        try:
+            exempt = self.forks.release_exempt(fork, fn) if fork else self._rom_release_exempt(fn)
+            hints = self.forks.release_hints(fork, fn) if fork else []
+        except (NetworkError, OSError, ValueError, KeyError):
+            exempt, hints = None, []
+        if exempt:
+            return None
+        with self.store.tx() as db:
+            self._event(db, fn["project_id"], agent.id, "release_pushed", fn["name"])
+        head = (f"Not released yet: you haven't compiled {fn['name']} since you claimed it." if not n else
+                f"Not released yet: {n} compile{'s' if n != 1 else ''} of {fn['name']} since you claimed it, "
+                f"{stall_line(streak, after)}.")
+        x86 = self.console(self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])).arch == "x86"
+        lines = [head,
+                 "Compile the next step your notes name first, and act on what the diff shows"
+                 + (": a target that reads `this` or a pointer from the stack ([esp+4]) and ends in `ret N` is a "
+                    "function taking it as a stack parameter (__stdcall; __cdecl with a plain `ret`), not a member "
+                    "function; extra or missing pushes or register loads around a call mean the callee's declaration "
+                    "(parameters, convention) differs" if x86 else "")
+                 + "; fix structure and calls first, registers last.",
+                 *hints,
+                 ("Compile it (a release with no compile isn't taken)." if not n else
+                  f"release_function goes through at {after} compiles in a row without a better score, or if you "
+                  "ask again now with notes saying why it can't get closer.")
+                 + " If it needs another function done first, release_function(..., needs=\"<that function>\") "
+                 "records that, puts that one first in the queue and hands it to you."]
+        return "\n".join(lines)
+
+    def _rom_release_exempt(self, fn) -> str | None:
+        """A ROM project's function compiling can't help with: one with a boundary report waiting for the user."""
+        proj = self.store.one("SELECT config FROM projects WHERE id=?", fn["project_id"])
+        if any(r.get("status") == "open" and r.get("function") == fn["name"] for r in self.cfg(proj).get("boundaries", [])):
+            return "a boundary report waits for the user"
+        return None
 
     def add_spend(self, slug: str, usd: float, tokens: int) -> None:
         if usd or tokens:
