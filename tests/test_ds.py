@@ -416,7 +416,7 @@ def test_pieces_of_functions_are_joined_to_the_function_they_belong_to(tmp_path,
                        [(BASE, BASE + 0x18)], symbol_lines=lines)
     m.functions = {a: (s, False) for a, (_, s) in names.items()}
     monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
-    assert recover.merge_pieces(tmp_path, "v1", keep={"w"}, log=lambda *_: None) == 2
+    assert recover.merge_pieces(tmp_path, "v1", keep={"w"}, log=lambda *_: None) == {"f": ["g", "h"]}
     assert (folder / "symbols.txt").read_text().splitlines() == [
         f"f kind:function(arm,size=0x10) addr:{BASE:#010x}",
         f"g kind:label(arm) addr:{BASE + 8:#010x}",
@@ -598,3 +598,25 @@ def test_the_rebuilt_rom_carries_the_secure_area_checksum_of_the_copy(tmp_path):
     (tmp_path / "b.nds").write_bytes(built)
     same.main(["--header", str(tmp_path / "b.nds"), str(tmp_path / "o.nds")])
     assert (tmp_path / "b.nds").read_bytes() == bytes(built)
+
+
+def test_a_function_pieces_were_joined_to_says_so_in_a_note(tmp_path, monkeypatch):
+    """Its notes from before the join say "fragment, not matchable standalone, skip": agents read them and skipped a
+    function that's whole now. The newest note says what changed."""
+    from decompnet.consoles.nds import recover, scratch
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("ds", "DS", "", "arm", 0, str(tmp_path), json.dumps({"kind": "fork"}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                   (pid, "f", 16, 4, "open", "a"))
+    fp = type("FP", (), {"manifest": {"created": "from scratch", "analysis": 5, "version": "v"}, "root": tmp_path})()
+    monkeypatch.setattr(net, "fork_slug", lambda slug: slug)
+    monkeypatch.setattr(net.forks, "get", lambda slug: (None, fp, None))
+    monkeypatch.setattr(net.forks, "reanalyse", lambda slug, step, **kw: step(fp))
+    monkeypatch.setattr(recover, "merge_pieces", lambda *a, **kw: {"f": ["g", "h"]})
+    monkeypatch.setattr(scratch, "dsd_path", lambda: "dsd")
+    consoles.get("nds").on_start(net, "ds", log=lambda *_: None)
+    note = net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE name='f')")["text"]
+    assert "joined g, h" in note and "whole function now" in note

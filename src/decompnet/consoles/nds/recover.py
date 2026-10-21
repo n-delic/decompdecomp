@@ -549,7 +549,8 @@ def _file_ranges(m: Module) -> list[tuple[int, int]]:
                                                              files[0] if files else "", re.M)]
 
 
-def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(), log=print) -> int:
+def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str] = frozenset(),
+                 log=print) -> dict[str, list[str]]:
     """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running
     on into the next symbol, code that never returns, code using registers the code before it set) to the function
     they belong to: an epilogue and code continuing what came before to the function before it, the others to the
@@ -558,11 +559,12 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
     had stays, as a label: calls and pointers to it still have their target. On a DS game 128 of 557 open functions
     were such pieces, each given up on by five to seven agents, and the functions they belong to could never match
     without them. With `dsd`, dsd delinks the game with them, and puts them all back as they were when it refuses
-    one. Returns how many pieces were joined."""
+    one. Returns each function that grew, with the pieces it took (none when dsd refused)."""
     from ...arch import arm
     from ...limits import capped
 
-    joined, before = 0, {}
+    joined: dict[str, list[str]] = {}
+    before = {}
     for m in load_modules(root / "config" / version / "arm9", root / "extract" / version):
         ranges = _file_ranges(m)
         lines = {int(s.group(4), 16): (i, s.group(1)) for i, ln in enumerate(m.symbol_lines)
@@ -590,9 +592,10 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
                 one_file = any(a <= lo and hi < b for a, b in ranges)
                 if (funcs[lo][1] + lo != hi or funcs[into][2] != thumb or funcs[into][0] in keep or not one_file):
                     continue
-                funcs[lo][1] += funcs.pop(hi)[1]  # the lower one grows over the other, which becomes a label
+                took = funcs.pop(hi)  # the lower one grows over the other, which becomes a label
+                funcs[lo][1] += took[1]
+                joined[funcs[lo][0]] = [*joined.get(funcs[lo][0], []), took[0], *joined.pop(took[0], [])]
                 labels.add(hi)
-                joined += 1
                 changed = True
                 break
         if not labels:
@@ -615,7 +618,7 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
             for path, text in before.items():
                 path.write_text(text, encoding="utf-8")
             log(f"dsd didn't take the joined functions, so they stay apart: {(res.stdout + res.stderr).strip()[-300:]}")
-            return 0
+            return {}
     return joined
 
 

@@ -268,3 +268,17 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
     finally:
         gen.close()
+
+
+def test_a_source_the_project_refuses_is_one_line_in_the_log(caplog, monkeypatch):
+    """A best attempt with a helper the source file hasn't: every variant the permuter sent was refused, each with a
+    traceback in the user's log. The refusal is an answer, not a crash."""
+    from decompnet.network import NetworkError
+
+    p = permute.Permuter.__new__(permute.Permuter)
+    monkeypatch.setattr(p, "_permute", lambda *a: (_ for _ in ()).throw(NetworkError("send the function definition\nmore")),
+                        raising=False)
+    with caplog.at_level("INFO", logger="decompdecomp"):
+        p._turn(None, None, {"name": "f"}, None)
+    assert caplog.records[-1].getMessage() == "permuter: f: send the function definition"
+    assert caplog.records[-1].exc_info is None

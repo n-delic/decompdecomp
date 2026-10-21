@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ...network import NetworkError
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 # the `mwccarm` pack's versions, oldest first
@@ -105,16 +106,29 @@ class NintendoDS(Console):
             if files:
                 said.append(f"{len(files)} new source files hold the code dsd took for data past the end of .text")
             return "; ".join(said) or None
+        joined: dict[str, list[str]] = {}
+
         def pieces(fp):  # not into or out of a matched function: its C would no longer be the whole function
             matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                         "status='matched'", net.project_row(slug)["id"])}
-            n = recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched, log=log)
+            joined.update(recover.merge_pieces(fp.root, manifest["version"], dsd=scratch.dsd_path(), keep=matched,
+                                               log=log))
+            n = sum(len(v) for v in joined.values())
             return (f"{n} pieces of functions dsd's analysis cut off are part of the function they belong to again"
                     if n else None)
         if manifest.get("analysis", 1) < 4:  # (a project at 4 or more has these already)
             net.forks.reanalyse(slug, tools, paths=("tools",), fix=True, log=log)  # first: the functions' check needs it
             net.forks.reanalyse(slug, functions, log=log)
-        net.forks.reanalyse(slug, pieces, log=log)
+        if net.forks.reanalyse(slug, pieces, log=log):
+            # its notes from before say "fragment, skip": agents read the newest note first
+            agent, _ = net.local_agent("decompdecomp")
+            for name, took in joined.items():
+                try:
+                    net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
+                                              "function now, not a fragment, whatever older notes say. Worth a try.",
+                                 name)
+                except NetworkError:  # gone meanwhile
+                    pass
         now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
         (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
                                                  encoding="utf-8")
