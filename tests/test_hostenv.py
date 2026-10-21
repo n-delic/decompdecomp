@@ -21,5 +21,16 @@ def test_a_windows_path_typed_in_wsl_is_the_same_folder_under_mnt(monkeypatch, t
 
 def test_elsewhere_a_path_is_taken_as_written(monkeypatch, tmp_path):
     _kernel(monkeypatch, tmp_path, "6.8.0-45-generic")
+    monkeypatch.setattr(hostenv.sys, "platform", "linux")  # the tests run on Windows too
     assert hostenv.local_path(" '/opt/games' ") == Path("/opt/games")
     assert hostenv.local_path(r"C:\Games") == Path(r"C:\Games")
+    assert hostenv.local_path("/mnt/c/Games") == Path("/mnt/c/Games")  # on Linux, a Linux path
+
+
+def test_the_native_windows_version_reads_wsl_and_git_bash_paths_as_windows_ones(monkeypatch):
+    assert hostenv.windows_path("/mnt/c/Users/sam/Games/demo") == r"C:\Users\sam\Games\demo"
+    assert hostenv.windows_path("/d/Program Files/Games/") == r"D:\Program Files\Games"
+    assert hostenv.windows_path("/c") == "C:\\"
+    assert hostenv.windows_path("/home/sam/games") is None and hostenv.windows_path(r"C:\Games") is None
+    monkeypatch.setattr(hostenv.sys, "platform", "win32")
+    assert str(hostenv.local_path('"/mnt/e/Games"')) == r"E:\Games"

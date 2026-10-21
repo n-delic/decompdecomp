@@ -56,11 +56,23 @@ def in_wsl() -> bool:
 
 def local_path(text: str) -> Path:
     """A file path the user gave (in a form, or pasted with quotes around it), as a path. In WSL, a Windows path
-    (C:\\Games, copied from Explorer) is the same folder under /mnt (/mnt/c/Games)."""
+    (C:\\Games, copied from Explorer) is the same folder under /mnt (/mnt/c/Games). In the native Windows version, a
+    path as WSL (/mnt/c/Games) or Git Bash (/c/Games) writes it is the Windows folder (C:\\Games)."""
     text = text.strip().strip('"').strip("'")
     if (m := re.fullmatch(r"([A-Za-z]):(?:[\\/](.*))?", text)) and in_wsl():
         return Path("/mnt", m.group(1).lower(), *[p for p in re.split(r"[\\/]", m.group(2) or "") if p])
+    if sys.platform == "win32" and (windows := windows_path(text)) is not None:
+        return Path(windows)
     return Path(text).expanduser()
+
+
+def windows_path(text: str) -> str | None:
+    """A WSL (/mnt/c/Games) or Git Bash (/c/Games) path as Windows writes it (C:\\Games), or None for any other path.
+    People copy paths from whichever shell they work in."""
+    m = re.fullmatch(r"/(?:mnt/)?([A-Za-z])(?:/(.*))?", text.replace("\\", "/"))
+    if m is None:
+        return None
+    return f"{m.group(1).upper()}:\\" + "\\".join(p for p in (m.group(2) or "").split("/") if p)
 
 
 def shown_path(path: Path | str) -> str:
