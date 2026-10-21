@@ -625,3 +625,24 @@ def test_a_function_pieces_were_joined_to_says_so_in_a_note(tmp_path, monkeypatc
     assert "joined g, h" in note and "whole function now" in note
     assert "joined e2" in net.store.one("SELECT text FROM notes WHERE function_id=(SELECT id FROM functions WHERE "
                                         "name='e')")["text"]
+
+
+def test_a_function_branching_into_the_middle_of_the_next_one_takes_it(tmp_path, monkeypatch):
+    """A switch whose cases ds-decomp cut into the symbols after it: compiled code branches only within itself or
+    to another function's start, so a branch into the middle of the next symbol makes that symbol part of it."""
+    from decompnet.consoles.nds import recover
+
+    words = [0xE92D4010, 0xEA000002, 0xE8BD8010,  # f: push {r4, lr}; b g+8; pop {r4, pc}
+             0xE52DE004, 0xE3A00001, 0xE3A00002, 0xE49DF004]  # g: push {lr}; mov r0, #1; mov r0, #2; pop {pc}
+    folder = tmp_path / "arm9"
+    folder.mkdir()
+    lines = [f"f kind:function(arm,size=0xc) addr:{BASE:#010x}", f"g kind:function(arm,size=0x10) addr:{BASE + 0xC:#010x}"]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    (folder / "delinks.txt").write_text(f"    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x} kind:code\n\n"
+                                        f"src/a.c:\n    .text start:{BASE:#010x} end:{BASE + 0x1C:#010x}\n")
+    m = recover.Module("main", "main", folder, BASE, b"".join(w.to_bytes(4, "little") for w in words),
+                       [(BASE, BASE + 0x1C)], symbol_lines=lines)
+    m.functions = {BASE: (0xC, False), BASE + 0xC: (0x10, False)}
+    monkeypatch.setattr(recover, "load_modules", lambda config, extract: [m])
+    assert recover.merge_pieces(tmp_path, "v1", log=lambda *_: None) == {"f": ["g"]}
+    assert (folder / "symbols.txt").read_text().splitlines()[0] == f"f kind:function(arm,size=0x1c) addr:{BASE:#010x}"

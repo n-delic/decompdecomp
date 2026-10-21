@@ -569,7 +569,8 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
     """Join the pieces of functions dsd's analysis cut off (arch/arm.piece: a lone epilogue, a register save running
     on into the next symbol, code that never returns, code using registers the code before it set) to the function
     they belong to: an epilogue and code continuing what came before to the function before it, the others to the
-    function after, which they run on into. Only within one source file, in one mode,
+    function after, which they run on into; and a function branching into the middle of the symbols after it (a
+    switch whose cases were cut off) takes them, up to where its branches land. Only within one source file, in one mode,
     and never a function of `keep` (matched ones: their C would no longer be the whole function). The symbol a piece
     had stays, as a label: calls and pointers to it still have their target. On a DS game 128 of 557 open functions
     were such pieces, each given up on by five to seven agents, and the functions they belong to could never match
@@ -597,6 +598,13 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
                     code = m.code[at - m.base:at - m.base + size] if 0 <= at - m.base < len(m.code) else b""
                     verdicts[at, size] = arm.piece(code, thumb) if code else None
                 why = verdicts[at, size]
+                if (not why or why.startswith("jumps through")) and name not in keep:
+                    if ("jumps", at, size) not in verdicts:
+                        verdicts["jumps", at, size] = arm.jumps(m.code[at - m.base:at - m.base + size], thumb, at)
+                    # a branch into the middle of a later symbol, in its file: that symbol is part of this function
+                    file_end = next((b for a, b in ranges if a <= at < b), at)
+                    if any(at + size <= t < file_end and t not in funcs for t in verdicts["jumps", at, size]):
+                        why = "branches into the code after it: the start of a function cut short"
                 if not why or why.startswith("jumps through") or name in keep:
                     continue
                 back = "the end of" in why or "the rest of" in why  # it continues the code before it

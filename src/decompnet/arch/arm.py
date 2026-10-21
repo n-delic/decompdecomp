@@ -121,3 +121,27 @@ def piece(code: bytes, thumb: bool) -> str | None:
     if ins[0].mnemonic in ("push", "stmdb", "stmfd") and "lr" not in ins[0].op_str:
         return f"saves registers and runs on into the next function: the start of {_PIECE}"
     return f"never returns: {_PIECE}"
+
+
+def jumps(code: bytes, thumb: bool, at: int) -> list[int]:
+    """Where the code at `at` branches (b and its conditional forms, not calls), its literal pool's words left out. A
+    compiled function branches only within itself or to another's start (a tail call): a branch into the middle of
+    another symbol says that symbol is part of it (on a DS game, a switch whose cases ds-decomp cut into the symbols
+    after it)."""
+    ins = list(_READERS[thumb].disasm(code, at))
+    pool = set()
+    for i in ins:
+        for op in i.operands:
+            if op.type == capstone.arm.ARM_OP_MEM and op.mem.base == capstone.arm.ARM_REG_PC and not op.mem.index:
+                where = ((i.address + 4) & ~3 if thumb else i.address + 8) + op.mem.disp
+                pool |= {where, where + 2}
+    out = []
+    for i in ins:
+        if i.address in pool:
+            continue
+        if i.mnemonic.startswith("ldr") and i.op_str.startswith("pc, [pc, r"):
+            break  # a table of addresses follows
+        if i.mnemonic.startswith(("b", "cb")) and not i.mnemonic.startswith(("bl", "bx", "bic", "bkpt")) and \
+                i.operands and i.operands[-1].type == capstone.arm.ARM_OP_IMM:
+            out.append(i.operands[-1].imm)
+    return out
