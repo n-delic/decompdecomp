@@ -196,6 +196,82 @@ def _splat(args: list[str], cwd: Path, log=print) -> str:
     return out
 
 
+REGINFO_BYTES = 24  # a MIPS .reginfo section: the registers the program uses and its $gp
+ELF32_HEADER, SECTION_HEADER = 0x34, 40  # an ELF32's header and one section header, in bytes
+PT_LOAD, PF_X, PF_W = 1, 1, 2  # a loaded program header, and its executable and writable flags
+SHT_PROGBITS, SHT_STRTAB = 1, 3
+SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR = 1, 2, 4
+
+
+def _readable_for_splat(program: Path) -> bytes | None:
+    """A program splat and objcopy can lay out, for the while they do (the caller puts the user's bytes back): its
+    section headers made from its program headers when it has none (_with_section_headers), and a section falsely
+    marked MIPS_REGINFO hidden (_without_false_reginfo). Returns the program's bytes as they were, or None when
+    nothing needed changing."""
+    data = program.read_bytes()
+    fixed = _with_section_headers(data) or data
+    fixed = _without_false_reginfo(fixed) or fixed
+    if fixed is data:
+        return None
+    program.write_bytes(fixed)
+    return data
+
+
+def _with_section_headers(data: bytes) -> bytes | None:
+    """#44: a PS2 game's program without section headers (none, or a string table index past them) stopped splat's
+    ELF reader ("IndexError: list index out of range"), and objcopy flattens sections, not segments. The program
+    headers say the same: one section per loaded segment with bytes, and a string table for their names. None: it
+    has its section headers, or isn't a 32-bit little-endian ELF."""
+    if len(data) < ELF32_HEADER or data[:4] != b"\x7fELF" or data[4:6] != b"\x01\x01":
+        return None
+    phoff, = struct.unpack_from("<I", data, 28)
+    phentsize, phnum, _, shnum, shstrndx = struct.unpack_from("<HHHHH", data, 42)
+    if shnum and shstrndx < shnum:
+        return None
+    loads = []
+    for i in range(phnum):
+        kind, off, vaddr, _, filesz, _, flags, align = struct.unpack_from("<8I", data, phoff + phentsize * i)
+        if kind == PT_LOAD and filesz:
+            loads.append((off, vaddr, filesz, flags, align))
+    if not loads:
+        return None
+    names = bytearray(b"\0.shstrtab\0")
+    heads = [bytes(SECTION_HEADER)]
+    for k, (off, vaddr, filesz, flags, align) in enumerate(loads):
+        at = len(names)
+        names += (b"main" if k == 0 else b"load%d" % k) + b"\0"
+        sh_flags = SHF_ALLOC | (SHF_WRITE if flags & PF_W else 0) | (SHF_EXECINSTR if flags & PF_X else 0)
+        heads.append(struct.pack("<10I", at, SHT_PROGBITS, sh_flags, vaddr, off, filesz, 0, 0, align or 1, 0))
+    out = bytearray(data)
+    out += bytes(-len(out) % 4)
+    heads.append(struct.pack("<10I", 1, SHT_STRTAB, 0, 0, len(out), len(names), 0, 0, 1, 0))
+    out += names
+    out += bytes(-len(out) % 4)
+    struct.pack_into("<I", out, 32, len(out))  # e_shoff
+    struct.pack_into("<HHH", out, 46, SECTION_HEADER, len(heads), len(heads) - 1)  # e_shentsize, e_shnum, e_shstrndx
+    return bytes(out + b"".join(heads))
+
+
+def _without_false_reginfo(data: bytes) -> bytes | None:
+    """objcopy refuses a whole program ("Unable to recognise the format") over a section marked MIPS_REGINFO that
+    isn't one: a PS2 game's 1 MB `.dnas`, the encrypted DNAS block of its online play, loaded far above its code.
+    Such a section is hidden (no type, not loaded) while splat and objcopy lay the program out; it's data, not code.
+    None: no such section."""
+    import io
+
+    from elftools.elf.elffile import ELFFile
+
+    elf = ELFFile(io.BytesIO(data))
+    odd = [i for i, s in enumerate(elf.iter_sections())
+           if s["sh_type"] == "SHT_MIPS_REGINFO" and s["sh_size"] != REGINFO_BYTES and s["sh_flags"]]
+    if not odd:
+        return None
+    out = bytearray(data)
+    for i in odd:
+        struct.pack_into("<II" if elf.little_endian else ">II", out, elf["e_shoff"] + elf["e_shentsize"] * i + 4, 0, 0)
+    return bytes(out)
+
+
 def _drop_leading_gap(program: Path, image: Path, config: Path) -> None:
     """splat lays a program out from its first section with bytes, but the flat image it has objcopy make (with
     --gap-fill) starts at the lowest loaded section, empty ones too: a PS2 game whose CodeWarrior link left an empty
@@ -382,7 +458,12 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
         toolchains.ensure("binutils-mips", log=lambda *_: None)
         objcopy = toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-objcopy"
         args[1:1] = ["--objcopy", str(objcopy)]
-    out = _splat(args, workdir, log)
+    original = _readable_for_splat(workdir / rom_name) if objcopy else None
+    try:
+        out = _splat(args, workdir, log)
+    finally:
+        if original is not None:  # the user's program, as it was
+            (workdir / rom_name).write_bytes(original)
     configs = sorted(p for p in workdir.glob("*.yaml"))
     if not configs:
         raise RomError("splat did not produce a config for this ROM")

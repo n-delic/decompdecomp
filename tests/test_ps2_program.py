@@ -156,3 +156,88 @@ def test_install_all_brings_every_compiler_then_tests_them(monkeypatch):
     assert tested == [ps2.installable_compilers()] and res["test"] == {"ee-gcc-2.96": 4}
     res = RomNetwork.install_compilers(net, "game", accept_license=True, retest=False, log=lambda *_: None)
     assert res["installed"] == ["mwcps2-2.3.3", "mwcps2-3.0.1"] and len(tested) == 1
+
+
+def test_a_dnas_block_marked_reginfo_does_not_stop_the_split(tmp_path):
+    """An online PS2 game keeps its encrypted DNAS block in a 1 MB section marked MIPS_REGINFO (a type that holds 24
+    bytes): objcopy refused the whole program, and the import stopped at "Failed to run objcopy". The section is
+    hidden while the program is laid out, and the program put back as it was."""
+    import struct
+
+    from elftools.elf.elffile import ELFFile
+
+    from decompnet.rom import split
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs binutils-mips")
+    bin_dir = toolchains.binary("binutils-mips").parent
+    tools = {name: bin_dir / f"mips-ps2-decompals-{name}" for name in ("as", "ld", "objcopy")}
+    (tmp_path / "a.s").write_text(".section main,\"awx\",@progbits\n  jr $ra\n  nop\n"
+                                  ".section dnas,\"awx\",@progbits\n  .fill 64, 1, 0x5a\n")
+    subprocess.run([tools["as"], "-EL", "-march=r5900", "-o", tmp_path / "a.o", tmp_path / "a.s"], check=True)
+    (tmp_path / "a.ld").write_text("SECTIONS { main 0x110000 : { *(main) } dnas 0x1CCEA10 : { *(dnas) } }\n")
+    program = tmp_path / "game.elf"
+    subprocess.run([tools["ld"], "-EL", "-T", tmp_path / "a.ld", "-o", program, tmp_path / "a.o"], check=True)
+    data = bytearray(program.read_bytes())
+    with open(program, "rb") as f:
+        elf = ELFFile(f)
+        index = next(i for i, s in enumerate(elf.iter_sections()) if s.name == "dnas")
+        struct.pack_into("<I", data, elf["e_shoff"] + elf["e_shentsize"] * index + 4, 0x70000006)  # SHT_MIPS_REGINFO
+    program.write_bytes(data)
+    flatten = [tools["objcopy"], "-O", "binary", "--gap-fill=0x00", program, tmp_path / "game.rom"]
+    assert subprocess.run(flatten, capture_output=True).returncode != 0  # what the import ran into
+    original = split._readable_for_splat(program)
+    assert original == bytes(data)
+    subprocess.run(flatten, check=True)
+    assert (tmp_path / "game.rom").read_bytes().startswith(bytes.fromhex("0800e003" "00000000"))
+
+
+@pytest.mark.parametrize("headers", ["none", "index past them"])
+def test_a_program_without_section_headers_is_laid_out_from_its_segments(tmp_path, headers):
+    """#44: a PS2 game's program without usable section headers stopped the import in splat's ELF reader
+    ("IndexError: list index out of range"). Its program headers give splat and objcopy the sections they need, and
+    the user's program is put back as it was."""
+    import struct
+
+    from splat.util.ps2 import ps2elfinfo
+
+    from decompnet.rom import split
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs binutils-mips")
+    bin_dir = toolchains.binary("binutils-mips").parent
+    tools = {name: bin_dir / f"mips-ps2-decompals-{name}" for name in ("as", "ld", "objcopy")}
+    (tmp_path / "a.s").write_text(".section main,\"awx\",@progbits\n  jr $ra\n  nop\n")
+    subprocess.run([tools["as"], "-EL", "-march=r5900", "-o", tmp_path / "a.o", tmp_path / "a.s"], check=True)
+    (tmp_path / "a.ld").write_text("SECTIONS { main 0x100000 : { *(main) } }\n")
+    program = tmp_path / "game.elf"
+    subprocess.run([tools["ld"], "-EL", "-T", tmp_path / "a.ld", "-o", program, tmp_path / "a.o"], check=True)
+    data = bytearray(program.read_bytes())
+    if headers == "none":
+        struct.pack_into("<I", data, 32, 0)
+        struct.pack_into("<HHH", data, 46, 0, 0, 0)
+    else:
+        struct.pack_into("<H", data, 50, 99)  # e_shstrndx
+    program.write_bytes(data)
+    with pytest.raises(IndexError):
+        ps2elfinfo.Ps2Elf.get_info(program, bytes(data))  # what the import ran into
+    assert split._readable_for_splat(program) == bytes(data)
+    assert ps2elfinfo.Ps2Elf.get_info(program, program.read_bytes()) is not None
+    subprocess.run([tools["objcopy"], "-O", "binary", "--gap-fill=0x00", program, tmp_path / "game.rom"], check=True)
+    assert (tmp_path / "game.rom").read_bytes().startswith(bytes.fromhex("0800e003" "00000000"))
+
+
+def test_vu0_instructions_are_exported_as_the_words_they_are():
+    """A real PS2 game's export stopped in the assembler: GNU as takes spimdisasm's spelling of VU0 macro instructions
+    (`vrsqrt Q, $vf0w, $vf1x`) for invalid operands. Coprocessor 2's instructions go out as raw words, the bytes in
+    the line's comment read in the game's byte order; every other line stays as it was."""
+    from decompnet.arch import mips
+
+    text = ("glabel f\n"
+            "    /* 10C88 00110C88 3C0A004B */  vrsqrt      Q, $vf0w, $vf1x\n"
+            "    /* 10C8C 00110C8C 0800E003 */  jr          $ra\n"
+            "    /* 10C90 00110C90 00000000 */   nop\n")
+    out = mips.raw_cop2(text, big_endian=False)
+    assert "/* 10C88 00110C88 3C0A004B */  .word 0x4B000A3C\n" in out
+    assert out.replace(".word 0x4B000A3C", "vrsqrt      Q, $vf0w, $vf1x") == text
+    assert mips.raw_cop2(text.replace("3C0A004B", "4B000A3C"), big_endian=True).count(".word 0x4B000A3C") == 1
