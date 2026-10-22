@@ -260,7 +260,10 @@ def test_rewriting_a_matched_function_must_keep_it_matching(fork):
     res = net.attempt(agent, "clamp_s32", "s32 clamp_s32(s32 v, s32 lo, s32 hi) { return v; }", slug)
     assert not res["matched"] and "already matches" in res["text"]
     assert (root / "src" / "game.c").read_text() == before
-    assert net.store.one("SELECT status FROM functions WHERE name='clamp_s32'")["status"] == "matched"
+    row = net.store.one("SELECT id, status FROM functions WHERE name='clamp_s32'")
+    assert row["status"] == "matched"
+    # the try counts as a compile: a polishing helper's showed none
+    assert net.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND score > 0", row["id"])["n"] == 1
 
 
 def _dtk_project(root: Path, version: str, config: str) -> None:
@@ -585,8 +588,9 @@ def test_progress_counts_the_games_own_code_with_middleware_set_aside_by_range(t
 
 def test_the_progress_the_app_shows_leaves_set_aside_code_out(tmp_path):
     """The measures left set-aside code out, but the project list and header add up the function rows: one project
-    still showed 3115/21237 (middleware, the CRT and an SDK counted). Measuring marks those rows set_aside."""
-    from decompnet.network import GAME_CODE
+    still showed 3115/21237 (middleware, the CRT and an SDK counted). Measuring marks those rows set_aside, and set
+    aside is one count with what no C makes (network.SET_ASIDE), which the pages take off the total."""
+    from decompnet.network import PROGRESS_COLUMNS
     from decompnet.store import Store
 
     store = Store(tmp_path / "t.db")
@@ -597,11 +601,11 @@ def test_the_progress_the_app_shows_leaves_set_aside_code_out(tmp_path):
                                                   ("asm", 8, {"asm_code": "hand-written assembly"})]):
             db.execute("INSERT INTO functions(id,project_id,name,size,status,meta) VALUES(?,7,?,?,?,?)",
                        (i + 1, f"f{i}", size, status, json.dumps(meta)))
-    row = store.one("SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-                    f"SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS done FROM functions "
-                    f"WHERE project_id=7 AND {GAME_CODE}")
-    # the game's own three (hand-written assembly is still the game's), not the two set aside
-    assert (row["total"], row["matched"], row["bytes"], row["done"]) == (3, 1, 72, 16)
+    row = store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=7")
+    # five in all, three set aside (two not the game's own, one no C makes): two shown, one matched (the matched
+    # middleware function doesn't count)
+    assert (row["total"], row["set_aside"], row["matched"]) == (5, 3, 1)
+    assert (row["bytes"] - row["set_aside_bytes"], row["matched_bytes"]) == (64, 16)
 
 
 def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_done(tmp_path):

@@ -82,7 +82,8 @@ Write plausible original code, pure C (no inline asm). Never fetch or copy code 
 in your messages: work, don't narrate.
 """
 
-# A helper started on "make matched code readable" (options task=readable): ROM projects (app/readable.py)
+# A helper started on "make matched code readable" (options task=readable), in any project (app/readable.py);
+# {names}: step 3, as the project's mode has it (READABLE_ROM, READABLE_FORK)
 READABLE_PROMPT = """\
 You are a decompilation agent in decompdecomp, working on {title}. The functions you get already match the game
 byte for byte. Your job: make their C readable for people who will port or mod the game, without changing what
@@ -90,10 +91,8 @@ the compiler makes of it. Other agents may work on other functions at the same t
 functions, then stop:
 
 1. claim_readable() gives you the next matched function that isn't readable yet, with its matching C.
-2. get_context() shows the shared header. Read the function, and get_function on the functions it calls, until
-   you understand what it does.
-3. rename_symbol the function, and the globals and functions it uses, once their purpose is clear. Describe
-   structs, enums and constants in the header with edit_context, and use those names.
+2. Read the function, and get_function on the functions it calls, until you understand what it does.
+3. {names}
 4. make_readable(function, source): the same function with meaningful parameter and local names, the header's
    types and names, and one comment saying what it does. Keep the statements' shape (order, casts, temporaries):
    it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
@@ -101,6 +100,13 @@ functions, then stop:
 
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
+
+READABLE_ROM = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear.\n"
+                "   Describe structs, enums and constants in the shared header (get_context shows it) with\n"
+                "   edit_context, and use those names.")
+READABLE_FORK = ("rename_symbol the function, and the globals and functions it uses, once their purpose is clear\n"
+                 "   (the project's config and every file change together). Describe structs, enums and constants in\n"
+                 "   the project's headers with edit_file (read_file and search_code show where), and use those names.")
 
 # FORK_PROMPT's {what}: a public decomp, or a project decompdecomp started from the user's copy. Told it was "a
 # public matching-decompilation project", a model on a new DS project spent its first 7 minutes looking for the
@@ -313,7 +319,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "read_file": lambda net, agent, slug, path, start=1, count=200:
         net.forks.read_file(_fork(net, slug, "read_file"), path, start, count),
     "search_code": lambda net, agent, slug, pattern, glob="": net.forks.search(_fork(net, slug, "search_code"), pattern, glob),
-    "edit_file": lambda net, agent, slug, path, old, new, message:
+    "edit_file": lambda net, agent, slug, path, old, new, message="":
         net.forks.edit_file(agent, _fork(net, slug, "edit_file"), path, old, new, message),
     "file_status": lambda net, agent, slug, path: net.forks.file_status(_fork(net, slug, "file_status"), path),
     "split_file": lambda net, agent, slug, path, at, new_name="", data="":
@@ -322,9 +328,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "rename_symbol", "split_function", "report_boundary", "get_class",
+ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
-            "compiler_map", "claim_readable", "make_readable", "search_flags"}
+            "compiler_map", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
 
@@ -448,8 +454,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def rename_symbol(ctx: Context, old: str, new: str, message: str = "") -> str:
-        """Give a function or data address a real name (e.g. func_80001234 -> player_update). Updates the
-        assembly everyone sees, matched sources and the header; never breaks a match."""
+        """Give a function or data address a real name (e.g. func_80001234 -> player_update). Everything that
+        uses the name changes with it (ROM: the assembly, matched sources, the header; a project: the game's
+        symbols in its config and every source and header file); never breaks a match."""
         return await run(ctx, "rename_symbol", old=old, new=new, message=message)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -592,9 +599,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "guide", topic=topic)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def read_file(ctx: Context, path: str, start: int = 1, count: int = 200) -> str:
+    async def read_file(ctx: Context, path: str = "", start: int = 1, count: int = 200, file_path: str = "",
+                        offset: int = 0, limit: int = 0) -> str:
         """Forks only: read a file of the project (path relative to its root), with line numbers."""
-        return await run(ctx, "read_file", path=path, start=start, count=count)
+        # file_path/offset/limit: the names of Claude Code's own Read tool, which agents passed here hundreds of
+        # times a night, each a refused call
+        if not (path := path or file_path):
+            raise ValueError("read_file needs path: the file, relative to the project's root")
+        return await run(ctx, "read_file", path=path, start=offset or start, count=limit or count)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def search_code(ctx: Context, pattern: str, glob: str = "") -> str:
@@ -603,10 +615,11 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "search_code", pattern=pattern, glob=glob)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def edit_file(ctx: Context, path: str, old: str, new: str, message: str) -> str:
+    async def edit_file(ctx: Context, path: str, old: str, new: str, message: str = "") -> str:
         """Forks only: change a C/C++ source or header file. Replace `old` (exactly once) with `new`, or
         append `new` when old is "". The project is rebuilt and measured; the edit is undone if any matched
-        function stops matching. Use it for structs, prototypes, globals and helpers."""
+        function stops matching. Use it for structs, prototypes, globals and helpers. `message`: what the
+        change is, for its commit."""
         return await run(ctx, "edit_file", path=path, old=old, new=new, message=message)
 
     @mcp.tool(meta=ALWAYS_LOAD)

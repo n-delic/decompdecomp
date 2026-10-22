@@ -97,6 +97,25 @@ class GameCube(Console):
             pass
         return None
 
+    def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:
+        """dtk's symbols.txt (the game's, and each module's): `old = .section:0x...` becomes `new = ...`."""
+        import re
+
+        from ...forks.project import ForkError
+
+        saved = {}
+        for path in sorted((fp.root / "config" / version).rglob("symbols.txt")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(rf"^{re.escape(new)}\s*=", text, re.M):
+                raise ForkError(f"{new} is a symbol of the game already")
+            changed = re.sub(rf"^{re.escape(old)}(?=\s*=)", new, text, flags=re.M)
+            if changed != text:
+                saved[path] = text
+                path.write_text(changed, encoding="utf-8")
+        if not saved:
+            raise ForkError(f"{old} isn't one of the game's symbols")
+        return saved
+
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch
 

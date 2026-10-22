@@ -178,7 +178,6 @@ def register(app: App) -> None:
             return {"slug": slug}
         return JSONResponse({"job": jobs.start("import", work)})
 
-    MAP_KEYS = ("name", "vram", "size", "insns", "unit", "status", "best", "attempts", "agent", "matched_at", "matched_by")
     COLUMN_KEYS = ("vram", "cc", "ccx")
     GZIP_FROM_BYTES = 4096  # smaller answers aren't worth compressing
 
@@ -204,7 +203,8 @@ def register(app: App) -> None:
             if request.query_params.get("since") == sig:
                 return {"sig": sig, "same": True}
             rows = net.function_map(slug)
-            return {"sig": sig, "keys": MAP_KEYS, "rows": [[r.get(k) for k in MAP_KEYS] for r in rows]}
+            keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
+            return {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
         try:
             data = await call(build)
         except (NetworkError, ValueError) as e:

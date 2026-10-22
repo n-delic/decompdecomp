@@ -30,12 +30,13 @@ import bisect
 import re
 import struct
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import capstone
 from capstone import arm as cs_arm
+
+from ...hostenv import NO_WINDOW, console_python
 
 SECTION = re.compile(r"^\s+(\.\w+)\s+start:(0x[0-9a-fA-F]+)\s+end:(0x[0-9a-fA-F]+)\s+kind:(\w+)", re.M)
 SYMBOL = re.compile(r"^(\S+) kind:(\w+)(?:\(([^)]*)\))? addr:(0x[0-9a-fA-F]+)")
@@ -520,10 +521,10 @@ def check_with_dsd(root: Path, version: str, dsd: str, modules: list[Module], lo
     from ...limits import capped
 
     config = root / "config" / version / "arm9" / "config.yaml"
-    command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
+    command = [console_python(), dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
     for refused in range(MAX_REFUSALS + 1):
         res = subprocess.run(capped([*command, "delink", "--config-path", str(config)]), cwd=root, capture_output=True,
-                             text=True, timeout=3600, encoding="utf-8", errors="replace")
+                             text=True, timeout=3600, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         if res.returncode == 0:
             if refused:
                 log(f"dsd refused {refused} of them (code it calls illegal on their path): left out")
@@ -677,12 +678,13 @@ def join_functions(root: Path, version: str, first: str, last: str, keep: set[st
         old_symbols = symbols.read_text(encoding="utf-8")
         symbols.write_text("\n".join(lines) + "\n", encoding="utf-8")
         if dsd:
-            command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
+            command = [console_python(), dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
             from ...limits import capped
 
             res = subprocess.run(capped([*command, "delink", "--config-path", str(root / "config" / version / "arm9" /
                                                                                       "config.yaml")]),
-                                 cwd=root, capture_output=True, text=True, timeout=3600, encoding="utf-8", errors="replace")
+                                 cwd=root, capture_output=True, text=True, timeout=3600, encoding="utf-8", errors="replace",
+                                 creationflags=NO_WINDOW)
             if res.returncode != 0:
                 symbols.write_text(old_symbols, encoding="utf-8")
                 if before is not None:
@@ -766,10 +768,10 @@ def merge_pieces(root: Path, version: str, dsd: str | None = None, keep: set[str
         (m.folder / "symbols.txt").write_text("\n".join(out) + "\n", encoding="utf-8")
         log(f"{m.name}: {len(labels)} pieces of functions joined to the function they belong to")
     if dsd and before:
-        command = [sys.executable, dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
+        command = [console_python(), dsd] if Path(dsd).suffix.lower() == ".py" else [dsd]
         config = root / "config" / version / "arm9" / "config.yaml"
         res = subprocess.run(capped([*command, "delink", "--config-path", str(config)]), cwd=root, capture_output=True,
-                             text=True, timeout=3600, encoding="utf-8", errors="replace")
+                             text=True, timeout=3600, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         if res.returncode != 0:
             for path, text in before.items():
                 path.write_text(text, encoding="utf-8")

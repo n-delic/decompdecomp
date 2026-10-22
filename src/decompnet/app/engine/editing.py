@@ -126,7 +126,8 @@ class EditMixin:
             "status", "applied" if apply else "dismissed"))
 
     def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "") -> str:
-        self._rom_only(project, "rename_symbol")
+        if (fork := self.fork_slug(project)):  # the project's own config and files (ForkEngine.rename_symbol)
+            return self.forks.rename_symbol(agent, fork, old, new, message)
         proj = self._project(project)
         if not self.is_rom(proj):
             return super().rename_symbol(agent, project, old, new, message)

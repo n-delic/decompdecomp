@@ -10,13 +10,12 @@ from __future__ import annotations
 import re
 import struct
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import rabbitizer
 
-from ..hostenv import stop_process_tree
+from ..hostenv import NO_WINDOW, console_python, stop_process_tree
 from . import Picked, RomError
 
 _INSN = re.compile(r"^\s*/\* ([0-9A-F]+) ([0-9A-F]{8}) ([0-9A-F]{8}) \*/\s+(\S+)\s*(.*?)\s*$")
@@ -174,8 +173,8 @@ def _add_symbols(path: Path, lines: list[str]) -> None:
 
 def _splat(args: list[str], cwd: Path, log=print) -> str:
     check_cancel = getattr(log, "check_cancel", lambda: None)
-    proc = subprocess.Popen([sys.executable, "-m", "splat", *args], cwd=cwd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+    proc = subprocess.Popen([console_python(), "-m", "splat", *args], cwd=cwd, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     try:
         while True:
             check_cancel()

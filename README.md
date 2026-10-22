@@ -62,9 +62,16 @@ decomp
 ```
 
 The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Linux-only period
-compilers run through **WSL 2**: run `wsl --install` in an administrator PowerShell, restart if asked, and open Ubuntu
-once to finish setup before importing a game that needs one. Projects stay in your Windows `Decomp` folder.
+brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
+
+> [!IMPORTANT]
+> **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
+> CodeWarrior for PS2, KMC GCC for N64) exist only for Linux, so decompdecomp runs them inside WSL 2. Without it,
+> every compile of such a game fails. Set it up before you import one: run `wsl --install` in an administrator
+> PowerShell, restart if asked, then open Ubuntu once to finish its setup.
+>
+> GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't need WSL: their compilers run on
+> Windows itself.
 macOS isn't supported in this version.
 
 ## Start
@@ -207,6 +214,13 @@ prove what a function does, not what its author called it.
 **Has a whole game been decompiled with it?** Not yet. Games get far (hundreds or thousands of matched functions),
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.
+
+**What do I end up with?** The source code of a game you own, that builds it again. A DS game started from scratch
+reached 2,400 matched functions (58% of its code) in under two days, about half of them matched by free models, and
+its project built a game that boots in an emulator: matched functions from their C, the rest from the original's code
+until agents get to it. It isn't overnight: the last functions are the big ones, and they take time and tokens. But
+every match stays matched, and each one makes the project more of what a game's source is: something you can read,
+change, port and mod.
 
 ## Help make it better
 

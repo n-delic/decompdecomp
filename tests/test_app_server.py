@@ -99,6 +99,57 @@ def test_only_the_apps_own_window_gets_the_gui(app):
     assert client.post("/api/settings", json={"autopilot": False}, headers={"X-Decomp": "1"}).json()["autopilot"] is False
 
 
+def test_reimport_runs_as_a_background_project_job(app, tmp_path, monkeypatch):
+    client, net, manager = app
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("decompnet.app.routes.projects.consoles.identify", lambda _: SimpleNamespace(id="n64"))
+    root = tmp_path / "reimport-game"
+    root.mkdir()
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES(?,?,?,?,?)",
+                   ("reimport-game", "Game", "mips", str(root),
+                    json.dumps({"kind": "rom", "platform": "n64", "collab": {"open": True}})))
+    game = tmp_path / "game.z64"
+    game.write_bytes(b"own game")
+    stopped = []
+    monkeypatch.setattr(manager, "stop_project", lambda slug: stopped.append(slug))
+    calls = []
+
+    def reimport(slug, path, confirmed, name, log):
+        calls.append((slug, path, confirmed, name))
+        log("reimport finished")
+        return {"slug": slug, "functions": 10, "matched": 4}
+
+    monkeypatch.setattr(net, "reimport_rom", reimport)
+    headers = {"X-Decomp": "1"}
+    assert client.post("/api/reimport", json={"slug": "reimport-game", "path": str(game)},
+                       headers=headers).status_code == 400
+    response = client.post("/api/reimport", json={
+        "slug": "reimport-game", "path": str(game), "confirmed": True,
+    }, headers=headers)
+    assert response.status_code == 200
+    job_id = response.json()["job"]
+    for _ in range(100):
+        result = client.get(f"/api/job?id={job_id}").json()
+        if result["state"] != "running":
+            break
+        time.sleep(0.01)
+    assert result["state"] == "done"
+    assert result["result"] == {"slug": "reimport-game", "functions": 10, "matched": 4}
+    assert calls == [("reimport-game", game, True, "game.z64")]
+    assert stopped == ["reimport-game"]
+    net.rooms["reimport-game"] = object()
+    blocked = client.post("/api/reimport", json={
+        "slug": "reimport-game", "path": str(game), "confirmed": True,
+    }, headers=headers)
+    assert blocked.status_code == 400
+    assert "leave the shared room" in blocked.json()["error"]
+    net.rooms.pop("reimport-game")
+    with net.store.tx() as db:
+        db.execute("DELETE FROM projects WHERE slug='reimport-game'")
+
+
 @needs_demo
 def test_import_demo_and_follow_it_live(app):
     client, net, _ = app
@@ -631,3 +682,24 @@ def test_windows_path_picker_uses_the_apps_python(app, monkeypatch):
     assert response.json() == {"path": "C:\\Users\\you\\save"}
     assert calls[0][0][0] == sys.executable
     assert calls[0][1]["creationflags"] == 0x08000000
+
+
+def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_polished(tmp_path):
+    """The map's route sent a fixed list of fields: polished and not_c never reached the page, so the Functions tab's
+    Polished filter stayed empty while agents polished. Its signature left polishing out too, so no refetch."""
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='func_0'")
+    before = client.get("/api/map?slug=game").json()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET readable=1 WHERE name='func_0'")
+    after = client.get(f"/api/map?slug=game&since={before['sig']}").json()
+    assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
+    rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
+    assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]

@@ -94,6 +94,41 @@ def test_a_released_function_goes_to_another_model_family_first(tmp_path):
     assert net.claim_row(d, "game")["name"] == "f0"  # the header changed: the usual order
 
 
+def test_one_files_edit_doesnt_bring_back_what_the_family_gave_up_on(tmp_path):
+    """An edit of one unit's source file is a "source" event, not "context": overnight on a game thousands of them
+    put every function a model family gave up on back in that family's queue every few seconds."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        for name, n in (("f0", 4), ("f1", 40)):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", ""))
+    a, _ = net.local_agent("claude-haiku-1")
+    assert net.claim_row(a, "game")["name"] == "f0"
+    net.release(a, "f0", "", "game")
+    with net.store.tx() as db:
+        db.execute("UPDATE events SET created_at=1 WHERE kind='release'")
+        net._event(db, pid, None, "source", "src/a.cpp: a struct for f9")
+    b, _ = net.local_agent("claude-haiku-2")
+    assert net.claim_row(b, "game")["name"] == "f1"
+
+
+def test_twins_given_up_on_wait_by_size_like_any_function(tmp_path):
+    """A twin's value per instruction counts only while twins come first (given up on less than twice): counted for
+    every twin, two-instruction twins no C compiles to came before every untried function, back to a new agent each
+    time their release pause ended."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        for name, n, abandons, boost in (("thunk", 2, 8, 14), ("fresh", 40, 0, 0), ("fresh_twin", 30, 0, 2)):
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons,boost) "
+                       "VALUES(?,?,?,?,?,?,?,?)", (pid, name, n * 4, n, "open", "a", abandons, boost))
+    order = [net.claim_row(net.local_agent(f"a{k}")[0], "game", None, "easiest")["name"] for k in range(3)]
+    assert order == ["fresh_twin", "fresh", "thunk"], order
+
+
 def test_the_part_of_the_game_where_matches_happen_comes_first(tmp_path):
     """GTA San Andreas: small functions matched 19-28% of the time in most of the game, 87% in one part; a part where
     agents keep failing (another compiler, mostly) waits until the rest is done."""
@@ -421,3 +456,19 @@ def test_at_the_end_of_a_game_big_functions_cant_be_passed_around_untried(tmp_pa
         assert net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                              agent.id)["name"] == held
     assert net.store.one("SELECT SUM(abandons) AS n FROM functions")["n"] == 14  # no give-up counted
+
+
+def test_a_function_pieces_were_joined_to_is_open_again_but_library_code_stays_aside(tmp_path):
+    """An 8-byte piece agents agreed no C makes took seven more pieces and became a 276-byte function, still set
+    aside: the verdict was about the piece. Joined, it's open again; library code the project set aside stays."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', meta=?",
+                   (json.dumps({"asm_code": "6 agents found no C makes it", "not_c": {"a-1": {}}}),))
+    net.joined("piece", "game")
+    row = net.store.one("SELECT status, meta FROM functions")
+    assert row["status"] == "open" and json.loads(row["meta"]) == {}
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', meta=?", (json.dumps({"asm_code": "libc", "set_aside": True}),))
+    net.joined("piece", "game")
+    assert net.store.one("SELECT status FROM functions")["status"] == "asm"

@@ -42,18 +42,27 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
-# The functions progress counts (an SQL condition on `functions`): not ones the project sets aside as library code,
-# middleware or the C runtime (config/<version>/set_aside.json, objdiff.game_measures), which aren't the game's own
+# The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
+# or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code)
 GAME_CODE = "json_extract(meta, '$.set_aside') IS NULL"
+# Set aside, for either reason (an SQL condition on `functions`): no C makes it (status asm: hand-written assembly, a
+# piece of a function, agents' verdict) or it isn't the game's own (GAME_CODE). Every count takes it off the total
+# and off what matched, so a matched library function doesn't count either.
+SET_ASIDE = f"(status = 'asm' OR NOT ({GAME_CODE}))"
+# The counts a project's page and the project list show (functions, matched, bytes, set aside), as SQL columns
+PROGRESS_COLUMNS = (
+    "COUNT(*) AS total, SUM(status='matched' AND NOT {a}) AS matched, SUM(size) AS bytes, "
+    "SUM(CASE WHEN status='matched' AND NOT {a} THEN size ELSE 0 END) AS matched_bytes, SUM({a}) AS set_aside, "
+    "SUM(CASE WHEN {a} THEN size ELSE 0 END) AS set_aside_bytes").format(a=SET_ASIDE)
 # The functions still in the game's build: not one a measure found gone (a piece joined to its function, kept for its
 # attempts and notes; ForkEngine.sync marks it), which the map and every count leave out
 IN_BUILD = "json_extract(meta, '$.gone') IS NULL"
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
 REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
-# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a name, the
-# compiler, the project's files changed
-GENERATION_EVENTS = frozenset({"context", "rename", "compiler", "split", "files", "sync", "link", "import", "fork",
-                               "collab"})
+# events after which earlier compile results don't stand for a repeat (bump_generation): a header, a source file, a
+# name, the compiler, the project's files changed
+GENERATION_EVENTS = frozenset({"context", "source", "rename", "compiler", "split", "files", "sync", "link", "import",
+                               "fork", "collab"})
 NOTE_CHARS = 4000  # a note longer than this is cut: notes are for findings, not code dumps
 NOTES_FOUND = 20  # search_notes' answer at most
 # The agent that released a function doesn't get it back automatically for this long, or until its run ends (the
@@ -103,8 +112,12 @@ TWIN_MAX_ABANDONS = 2  # agents gave it back this often: it's hard, twins or not
 # value per instruction: the copies a match brings, over the size; SQL divides integers, so it's scaled up, and a few
 # instructions are added so a two-instruction twin doesn't beat a real function with many copies
 TWIN_VALUE_SCALE, TWIN_SIZE_FLOOR = 64, 16
-_TWINS = (f"(f.boost > 0 AND f.n_insns <= {TWIN_MAX_INSNS} AND f.abandons < {TWIN_MAX_ABANDONS}) DESC, "
-          f"CASE WHEN f.boost > 0 THEN (f.boost + 1) * {TWIN_VALUE_SCALE} / (f.n_insns + {TWIN_SIZE_FLOOR}) ELSE 0 "
+# The value orders only the twins that come first: one given up on waits by size like any other function. Counted for
+# every twin, it put twins given up on ahead of every untried function: overnight on a game, eight agents passed 41
+# two-instruction twins no C compiles to around, each one back after every RELEASE_COOLDOWN (1,025 turns, no match).
+_TWIN_FIRST = f"(f.boost > 0 AND f.n_insns <= {TWIN_MAX_INSNS} AND f.abandons < {TWIN_MAX_ABANDONS})"
+_TWINS = (f"{_TWIN_FIRST} DESC, "
+          f"CASE WHEN {_TWIN_FIRST} THEN (f.boost + 1) * {TWIN_VALUE_SCALE} / (f.n_insns + {TWIN_SIZE_FLOOR}) ELSE 0 "
           f"END DESC, f.boost < 0, ")
 # Where in the game a function is says much about its chances: on GTA San Andreas small functions matched 19-28% of
 # the time in most of the game and 87% in one part of it; on Mario Kart 64 one part 19%, the rest 71-85% (October
@@ -173,16 +186,24 @@ _SAYS_MATCHED = re.compile(r"already\s+(?:at\s+)?100\s*%|already\s+match(?:es|ed
 _NEGATED = re.compile(r"\b(?:not|n't|never|no|without)\b[^.;]{0,24}$", re.I)
 
 
+def says_matched(text: str) -> bool:
+    """Whether a note (or a release's reason) says the function matches already."""
+    return any(not _NEGATED.search(text[max(0, m.start() - 40):m.start()]) for m in _SAYS_MATCHED.finditer(text))
+
+
+# A note that says little more than "already matches": on a function that doesn't, the brief leaves it out. Agents
+# released 12 big open functions of a DS game, untried, on such notes ("Already 100% match on claim, no work needed"
+# from a false 100% objdiff gave before #59), each one's note the next agent's reason.
+ONLY_SAYS_MATCHED = 200
+
+
 def stale_note(text: str, status: str) -> str:
     """A note as a brief shows it: one saying the function matches, on a function that doesn't, is marked out of
     date (the note itself stays as it was), so the brief's score is the number agents go by."""
-    if status == "matched":
+    if status == "matched" or not says_matched(text):
         return text
-    for m in _SAYS_MATCHED.finditer(text):
-        if not _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
-            return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the "
-                    "score above] " + text)
-    return text
+    return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the brief's "
+            "current state] " + text)
 
 
 # Notes about the setup rather than the function: a build that broke, an agent that stopped or couldn't sign in.
@@ -224,11 +245,14 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
     best_percent = None
     if best_score is not None and fn["n_insns"]:
         best_percent = max(0.0, 100.0 * (1 - best_score / (fn["n_insns"] * 100)))
-    infra, seen, fresh, stale = 0, {}, [], []
+    infra, wrong, seen, fresh, stale = 0, 0, {}, [], []
     for n in rows:
         text = (n["text"] or "").strip()
         if _INFRA_NOTE.search(text):
             infra += 1
+            continue
+        if fn["status"] != "matched" and len(text) < ONLY_SAYS_MATCHED and says_matched(text):
+            wrong += 1
             continue
         key = " ".join(text.split())
         if key in seen:
@@ -254,6 +278,9 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
     if infra:
         lines.append(f"- ({infra} note{'s' * (infra != 1)} about builds that broke or agents that stopped left out: "
                      "they say nothing about this function)")
+    if wrong:
+        lines.append(f"- ({wrong} note{'s' * (wrong != 1)} saying it already matches left out: it doesn't match, "
+                     "and only a compile shows how close it is)")
     return lines
 
 
@@ -271,11 +298,11 @@ def model_of(name: str) -> str:
 
 
 def set_aside(fn) -> dict:
-    """Why a set-aside function is (status asm), for its page: {"set_aside": the reason, "not_c": whether agents
-    agreed no C makes it}, or nothing."""
-    if fn["status"] != "asm":
-        return {}
+    """Why a set-aside function is (SET_ASIDE: no C makes it, or it isn't the game's own code), for its page:
+    {"set_aside": the reason, "not_c": whether agents agreed no C makes it}, or nothing."""
     meta = json.loads(fn["meta"] or "{}")
+    if fn["status"] != "asm" and not meta.get("set_aside"):
+        return {}
     why = meta.get("asm_code") or (f"the same code as {meta['asm_twin']}, a matched assembly function"
                                    if meta.get("asm_twin") else "hand-written assembly")
     return {"set_aside": why, "not_c": "not_c" in meta}
@@ -632,8 +659,7 @@ class Network:
                 if fn["status"] == "matched":
                     raise NetworkError(f"{fn['name']} is already matched; use get_function to read its source")
                 if fn["status"] == "asm":
-                    raise NetworkError(f"{fn['name']} is set aside, as no C makes it ({set_aside(fn)['set_aside']}): "
-                                       "claim another")
+                    raise NetworkError(f"{fn['name']} is set aside ({set_aside(fn)['set_aside']}): claim another")
                 other = db.execute("SELECT agent_id, expires_at FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
                 if other is not None:
                     raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "
@@ -801,6 +827,23 @@ class Network:
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
             self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
+
+    def joined(self, function: str, project: str | None = None) -> None:
+        """Pieces were joined to `function`: what set it aside (its shape, agents' verdicts) was about a piece of it,
+        so it's open again, and the shape rules and notes written after the join (not_c_from_notes) decide anew. On a
+        DS game an 8-byte piece agents agreed no C makes took seven more pieces, became a 276-byte function, and
+        stayed set aside. Library code stays where the project put it (#52's set_aside)."""
+        try:
+            fn = self._function(function, project)
+        except NetworkError:
+            return
+        meta = json.loads(fn["meta"] or "{}")
+        if fn["status"] != "asm" or meta.get("set_aside"):
+            return
+        meta = {k: v for k, v in meta.items() if k not in ("asm_code", "asm_twin", "not_c")}
+        with self.store.tx() as db:
+            db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'", (json.dumps(meta), fn["id"]))
+            self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (pieces were joined to it)")
 
     def reopen(self, function: str, project: str | None = None) -> None:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'

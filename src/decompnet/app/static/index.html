@@ -42,6 +42,7 @@
     <a class="nav-item" href="#/tools" data-route="tools"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.6 1.6a3.9 3.9 0 0 0-3.9 5.2L1.9 11.6a1.5 1.5 0 0 0 2.1 2.1l4.8-4.8a3.9 3.9 0 0 0 5.2-3.9l-2.2 2.2-2.1-.6-.6-2.1 2.2-2.2c-.3 0-.5-.7-.7-.7Z"/></svg>Compilers &amp; tools</a>
     <a class="nav-item" href="#/settings" data-route="settings"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.9 1h2.2l.4 1.9 1.3.6 1.7-1 1.5 1.5-1 1.7.6 1.3L15 6.9v2.2l-1.9.4-.6 1.3 1 1.7-1.5 1.5-1.7-1-1.3.6L9.1 15H6.9l-.4-1.9-1.3-.6-1.7 1-1.5-1.5 1-1.7-.6-1.3L1 9.1V6.9l1.9-.4.6-1.3-1-1.7 1.5-1.5 1.7 1 1.3-.6L6.9 1ZM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>Settings</a>
     <a class="nav-item" id="reportLink" href="https://github.com/n-delic/decompdecomp/issues/new" target="_blank" rel="noopener" title="Opens a new issue on GitHub in your browser, and copies a report to paste into it"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 1.5h1.5v13H3zM5.5 2.25h7.25L11.1 5.5l1.65 3.25H5.5z"/></svg>Report a problem</a>
+    <a class="nav-branch" id="navBranch" href="#/settings" hidden></a>
     <div class="nav-meta">
       <span class="muted small" id="navVersion"></span>
       <button class="nav-update" id="navUpdate" type="button" hidden title="A new decompdecomp is ready">Update</button>
@@ -216,7 +217,7 @@
         <h2 id="mapTitle">ROM map</h2>
         <div class="map-tools">
           <div class="seg small" id="mapView" role="radiogroup" aria-label="Colour the map by" hidden><button type="button" role="radio" aria-checked="true" data-view="progress" class="on">Progress</button><button type="button" role="radio" aria-checked="false" data-view="compiler">Compiler</button></div>
-          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="agents of two models agreed no C makes it: set aside. Its page can give it back to the agents"><i class="sw not-c"></i>not C</span></div>
+          <div class="legend" id="mapLegend"><span><i class="sw open"></i>to do</span><span><i class="sw tried"></i>tried</span><span title="tried, and close to matching: the closer, the greener"><i class="sw close"></i>close</span><span><i class="sw work"></i>working</span><span><i class="sw match"></i>matched</span><span title="matched, and polished: real names, types and a comment, and it still matches"><i class="sw polished"></i>polished</span><span title="no C makes it, by its code's shape (hand-written assembly, a BIOS call, a piece of another function): agents aren't handed it, and it's out of the percentage"><i class="sw asm"></i>set aside</span><span title="agents of two models agreed no C makes it: set aside. Its page can give it back to the agents"><i class="sw not-c"></i>not C</span></div>
           <button class="ghost small-btn" id="recheckBtn" type="button" title="Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update." aria-describedby="recheckTip">Check again</button>
           <span class="sr-only" id="recheckTip">Look at this game again with what this version of decompdecomp knows: functions it missed, pieces of functions to join, code no C makes to set aside. Nothing agents matched is lost. It also happens by itself when helpers start after an update.</span>
         </div>
@@ -389,6 +390,12 @@
           <div class="pad">
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
+            <div id="reimportGame">
+              <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
+              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>
+              <div class="workbar" id="reimportWork" role="progressbar" aria-label="Reimporting game" hidden><i></i></div>
+              <pre class="joblog" id="reimportLog" hidden></pre>
+            </div>
           </div>
         </section>
         <section class="panel" id="savePanel">

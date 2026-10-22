@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 from .. import compiler, consoles, toolchains
-from ..hostenv import stop_process_tree
+from ..hostenv import NO_WINDOW, stop_process_tree
 from ..network import NetworkError
 from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
@@ -171,7 +171,7 @@ def fetch(source: str, into: Path, log=print) -> Path:
     log(f"cloning {source}")
     started = time.monotonic()
     proc = subprocess.Popen([git, "clone", "--depth", "1", source, str(into)], stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL)
+                            stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
     check_cancel = getattr(log, "check_cancel", lambda: None)
     try:
         while True:

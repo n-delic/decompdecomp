@@ -34,6 +34,7 @@ from ..network import (
     IN_BUILD,
     NOT_C_AGENTS,
     NOT_C_MODELS,
+    PROGRESS_COLUMNS,
     Agent,
     Network,
     NetworkError,
@@ -874,7 +875,7 @@ class ForkEngine:
                                  and not (k == "asm_code" and was.get("set_aside"))})  # (set aside: decided below)
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
-                    meta["set_aside"] = True  # and progress leaves it out (network.GAME_CODE)
+                    meta["set_aside"] = True  # and progress takes it off, as no C code is (network.SET_ASIDE)
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -1498,6 +1499,68 @@ class ForkEngine:
         return (f"✅ {rel} is divided: {new} now holds {fn['name']} and what follows it ({moved} function "
                 "definitions moved with them), with the file's compiler (try_compiler switches the new file's); the "
                 "game still builds as it did and every match still matches.")
+
+    SOURCE_SUFFIXES = (".c", ".h", ".cpp", ".hpp", ".cp", ".cc", ".inc")
+
+    def rename_symbol(self, agent: Agent | None, slug: str, old: str, new: str, message: str = "") -> str:
+        """Give one of the game's symbols (a function, data) a real name: in the console's config, where its name
+        comes from (Console.rename_symbol), and as a whole word in every source and header file. Kept only when the
+        project sets up again, the game still rebuilds as it did and every match still matches; else every file is
+        put back. Polishing in project mode had local names only: functions and globals stayed func_0205d0f4 and
+        data_0222f194. The function's row keeps its history under the new name."""
+        if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"[A-Za-z_]\w*", old) or old == new:
+            raise NetworkError("rename_symbol takes two different C names: old and new")
+        proj, fp, cfg = self.get(slug)
+        if slug in self.net.links:
+            raise NetworkError("in a room, the host's project is the one to rename in: say it in a note")
+        console = consoles.get(cfg.get("platform"))
+        version = (fp.manifest or {}).get("version") or cfg.get("version")
+        word, taken = re.compile(rf"\b{re.escape(old)}\b"), re.compile(rf"\b{re.escape(new)}\b")
+        files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
+                       if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
+        texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
+        if any(taken.search(t) for t in texts.values()):
+            raise NetworkError(f"{new} is used in the project already: pick another name")
+        matched = {self._meta(r).get("symbol") or r["name"] for r in self.net.store.all(
+            "SELECT name, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
+        checks = consoles.REBUILD_CHECK in console.features
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            before = (fp.manifest or {}).get("rebuild") or {}
+            saved: dict[Path, str] = {}
+            try:
+                saved.update(console.rename_symbol(fp, version, old, new))
+                for p, t in texts.items():
+                    if word.search(t):
+                        saved[p] = t
+                        p.write_text(word.sub(new, t), encoding="utf-8")
+                for cmd in fp.setup_commands(version):
+                    ok, out = fp.run(cmd, log=lambda *_: None)
+                    if not ok:
+                        raise ForkError(f"the project didn't build with the new name:\n{_tail(out)}")
+                if checks and before.get("identical") and not console.check_rebuild(fp, version).get("identical"):
+                    raise ForkError("the game no longer rebuilt byte for byte with the new name")
+                rep = fp.report()
+                now = {f["name"] for u in rep.get("units", []) for f in u.get("functions", [])
+                       if (f.get("fuzzy_match_percent") or 0) >= 100}
+                if lost := sorted(n for n in matched if (new if n == old else n) not in now):
+                    raise ForkError(f"these functions would stop matching: {', '.join(lost[:8])}")
+            except (ForkError, RomError, ObjdiffError, OSError, ValueError) as e:
+                for p, t in saved.items():
+                    p.write_text(t, encoding="utf-8")
+                for cmd in fp.setup_commands(version):
+                    fp.run(cmd, log=lambda *_: None)
+                raise NetworkError(f"not renamed, nothing changed: {e}") from None
+            with self.net.store.tx() as db:  # the function keeps its row, its matches and notes, under its new name
+                db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
+                           "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
+                           (new, new, proj["id"], old, old))
+                self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
+            self._commit_paths(proj, fp, [str(p.relative_to(fp.root)) for p in saved],
+                               f"Rename {old} to {new}\n\n{message.strip() or 'Named'} by "
+                               f"{agent.name if agent else 'decompdecomp'} with decompdecomp; the game still builds as it "
+                               "did and every match still matches.")
+        self.sync(slug, log=lambda *_: None, rep=rep)
+        return f"✅ {old} is {new} now, in the game's symbols and in {len(saved)} file(s); every match still matches."
 
     def _commit_paths(self, proj, fp: ForkProject, paths: list[str], message: str) -> None:
         with self._git_locks[proj["id"]]:
@@ -2400,6 +2463,8 @@ class ForkEngine:
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
+                if quiet is None:  # a polishing helper's compiles count too (not as a match)
+                    self.net._record(fn, agent, score, code, 0)
                 if not matched:
                     undo()
                     why = "loads other constants" if d.literals else f"is {percent_text(pct)}"
@@ -2642,6 +2707,7 @@ class ForkEngine:
             why = why or "the game no longer rebuilt byte for byte with it"
             self.net._update_cfg(slug, lambda c: c.setdefault("joins_refused", {}).update({key: why}))
             return f"{len(said)} agents agreed, but joining {first['name']} and {last['name']} was refused: {why}."
+        self.net.joined(first["name"], slug)  # (what set it aside was about a piece of it)
         try:
             self.net.add_note(self.net.local_agent("decompdecomp")[0], slug,
                               f"Agents ({', '.join(sorted(said))}) found this was cut by the analysis, and decompdecomp "
@@ -2841,7 +2907,10 @@ class ForkEngine:
                         return "\n".join(hits + ["... (more matches; narrow the pattern)"])
         return "\n".join(hits) or "no matches"
 
-    def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str) -> str:
+    def edit_file(self, agent: Agent, slug: str, path: str, old: str, new: str, message: str = "") -> str:
+        # without a message the commit says what changed where: agents left it out hundreds of times a night, and
+        # each refusal cost a turn
+        message = message.strip() or f"Edit {Path(path).as_posix()}"
         if (link := self.net.links.get(slug)) is not None:  # the host makes and checks it; this copy follows
             text = link.call("/collab/edit", agent, path=path, old=old, new=new, message=message)
             if text.startswith(("✅", "⚠️")):
@@ -2849,8 +2918,6 @@ class ForkEngine:
             return text
         proj, fp, cfg = self.get(slug)
         p = fp.safe_path(path, write=True)
-        if not message.strip():
-            raise NetworkError("give a short message explaining the change")
         self.net.bump_generation(proj["id"])  # (a header or shared file: compiles may come out differently now)
         if _CHEAT.search(_strip_comments(new)):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed")
@@ -2921,7 +2988,10 @@ class ForkEngine:
                                        via=f"unit diff after an edit of {rel}")
             self._commit(proj, fp, rel, f"{message.strip()}\n\nEdited by {agent.name} with decompdecomp.")
             with self.net.store.tx() as db:
-                self.net._event(db, proj["id"], agent.id, "context", f"{rel}: {message.strip()[:120]}")
+                # "source", not "context": one unit's file changed, not what every function compiles against, so what
+                # a model family gave up on stays at the back of its queue (claim_row). As "context", the thousands of
+                # unit edits of a night's work put it back in front every few seconds.
+                self.net._event(db, proj["id"], agent.id, "source", f"{rel}: {message.strip()[:120]}")
         if any(v is None for v in after.values()):
             return f"⚠️ {rel} updated, but it still doesn't compile (it didn't before your edit either): fix it so its functions can be measured."
         done = "".join(self._file_done(proj["slug"], proj, fp, u, after[u.name] or {}, agent) for u in units[:1])
@@ -2994,11 +3064,8 @@ class ForkEngine:
         proj, fp, cfg = self.get(slug)
         if cfg.get("ready"):
             self._preflight_once(slug)
-        agg = self.net.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            f"FROM functions WHERE project_id=? AND {IN_BUILD} AND {GAME_CODE}", proj["id"])
+        agg = self.net.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
+                                 f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
@@ -3026,14 +3093,17 @@ class ForkEngine:
 
     def _scope_facts(self, proj, fp: ForkProject, cfg: dict) -> dict:
         """What the project covers, for its page and Settings: `scope`, `left_out` (functions its progress leaves
-        out now), `set_aside` (what its set-aside list names: {functions, without_source}, None: nothing) and
-        `unanalysed` (code its import left unanalysed that a new analysis can bring in, Console.unanalysed's words).
+        out now as not the game's own: part of the overview's `set_aside` count), `scope_list` (what its set-aside
+        list names: {functions, without_source}, None: nothing) and `unanalysed` (code its import left unanalysed
+        that a new analysis can bring in, Console.unanalysed's words).
+        (`scope_list`, not `set_aside`: that's the overview's count of every set-aside function, which the pages take
+        off the total; named the same, this dict replaced it and every such project showed "NaN functions".)
         (An older import's manifest may say what it left out as `set_aside_unimported`: the console's own check
         replaces it, so it's no longer read.)"""
         manifest = fp.manifest or {}
         left = self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND NOT ({GAME_CODE})",
                                   proj["id"])["n"]
-        return {"scope": fp.scope if manifest else None, "left_out": left or 0, "set_aside": cfg.get("set_aside"),
+        return {"scope": fp.scope if manifest else None, "left_out": left or 0, "scope_list": cfg.get("set_aside"),
                 "unanalysed": self._unanalysed(fp, cfg) if cfg.get("origin") == "scratch" else None}
 
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:

@@ -339,6 +339,7 @@ class Session:
 
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "label": self.label,
+                "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
                 "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,
@@ -974,6 +975,9 @@ class Manager:
     def _prompt(self, s: Session) -> str:
         ov = self.net.overview(s.slug)
         count = s.options.get("per_session", PER_SESSION)
+        if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
+            return tools.READABLE_PROMPT.format(title=ov["title"], count=count, names=tools.READABLE_FORK
+                                                if ov.get("kind") == "fork" else tools.READABLE_ROM)
         if ov.get("kind") == "fork":
             guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
             platform = ov.get("platform_name") or "its platform"
@@ -981,8 +985,6 @@ class Manager:
             return tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
-        if s.options.get("task") == "readable":
-            return tools.READABLE_PROMPT.format(title=ov["title"], count=count)
         guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)

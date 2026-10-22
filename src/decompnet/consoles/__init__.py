@@ -207,6 +207,12 @@ class Console:
 
     splits_sources = False  # split_source divides a source file in its config (else forkengine's dtk-template way)
 
+    def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:
+        """Give a symbol (a function, data) a new name in the project's config, where the game's names come from
+        (ForkEngine.rename_symbol does the source files and checks the rebuild). Returns each config file changed,
+        with what it held before."""
+        raise RomError(f"{self.name} projects can't rename the game's symbols yet: name things in comments meanwhile")
+
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         """Divide `source` (relative to the project) at function `at` (its symbol) in the project's config: its code
         from there on becomes `new`'s, which builds with the compiler `source` has. Returns each config file changed,

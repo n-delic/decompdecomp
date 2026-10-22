@@ -12,7 +12,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import hostenv, toolchains
+from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
 from .. import saves
@@ -75,6 +75,29 @@ def register(app: App) -> None:
             res = net.export_rom(slug, log=log)
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
+
+    def p_reimport(slug, request, data):
+        if not data.get("confirmed"):
+            raise ValueError("confirm that this is your own legally obtained copy of the game")
+        path = hostenv.local_path(str(data.get("path") or ""))
+        if not path.is_file():
+            raise ValueError("choose a game file to reimport")
+        proj = net.project_row(slug)
+        cfg = json.loads(proj["config"])
+        if cfg.get("kind") != "rom":
+            raise NetworkError("only ROM projects can be reimported")
+        if slug in net.rooms or slug in net.links:
+            raise NetworkError("leave the shared room before reimporting this game")
+        if consoles.identify(path).id != net.console(proj).id:
+            raise NetworkError("choose a game for the same console as this project")
+        if net.surveys.get(slug, {}).get("state") == "running":
+            raise NetworkError("wait for the compiler survey to finish before reimporting this game")
+        manager.stop_project(slug)
+        net.stop_autopilot(slug)
+        net.twins.stop(slug)
+        net.permuter.stop(slug)
+        return {"job": jobs.start(
+            "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log))}
 
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
@@ -209,6 +232,7 @@ def register(app: App) -> None:
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
+        "/api/reimport": (p_reimport, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),

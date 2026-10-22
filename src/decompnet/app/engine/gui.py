@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
-from ...network import GAME_CODE, IN_BUILD, set_aside
+from ...network import IN_BUILD, PROGRESS_COLUMNS, set_aside
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
-NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "files",
+NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "reimport", "files",
                 "paused", "stopped")
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
 # what the project's page gets on each poll (about once a second): the newest since its last ask, at most
@@ -75,11 +75,8 @@ class GuiMixin:
         if (fork := self.fork_slug(slug)):
             return self.forks.overview(fork)
         cfg = self.cfg(proj)
-        agg = self.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
+                             f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         tc = toolchains.get(cfg["compiler"]["toolchain"])
         console = self.console(proj)
         return {
@@ -107,11 +104,7 @@ class GuiMixin:
         agents at work the list took 2.5-3.7 s."""
         proj = self._project(slug)
         cfg = self.cfg(proj)
-        agg = self.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes FROM functions "
-            f"WHERE project_id=? AND {IN_BUILD} AND {GAME_CODE}", proj["id"])
+        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         console = self.console(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
@@ -145,6 +138,7 @@ class GuiMixin:
         proj = self._project(slug)
         rows = self.store.all(
             "SELECT f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
+            "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
             f"WHERE f.project_id=? AND {IN_BUILD.replace('meta', 'f.meta')} ORDER BY f.vram, f.unit, f.id", proj["id"])
@@ -156,7 +150,8 @@ class GuiMixin:
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
-                 "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or "")} for r in rows]
+                 "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or ""),
+                 "polished": r["status"] == "matched" and bool(r["readable"])} for r in rows]
 
     def map_columns(self, slug: str) -> list[list]:
         """The compiler map's view of each function for the ROM map, asked for after the map is drawn: the map no
@@ -188,18 +183,19 @@ class GuiMixin:
                 for r in cfg.get("compiler_ranges", [])]
 
     def map_signature(self, slug: str) -> str:
-        """What the function map shows, summed up: it changes when a function is added, matched, tried or claimed.
-        A few sums over indexed rows, so the GUI can ask "anything new?" every few seconds without fetching tens of
-        thousands of functions (renames and splits come with events, which refetch anyway)."""
+        """What the function map shows, summed up: it changes when a function is added, matched, tried, claimed, polished
+        or set aside. A few sums over indexed rows, so the GUI can ask "anything new?" every few seconds without
+        fetching tens of thousands of functions (renames and splits come with events, which refetch anyway)."""
         proj = self._project(slug)
         f = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, COALESCE(SUM(attempts), 0) AS at, "
                            "COALESCE(SUM(status='matched'), 0) AS m, COALESCE(SUM(best_score), 0) AS bs, "
-                           "COALESCE(MAX(matched_at), 0) AS ma FROM functions WHERE project_id=?", proj["id"])
+                           "COALESCE(MAX(matched_at), 0) AS ma, COALESCE(SUM(readable), 0) AS rd, "
+                           "COALESCE(SUM(status='asm'), 0) AS sa FROM functions WHERE project_id=?", proj["id"])
         c = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(c.function_id * 31 + c.agent_id), 0) AS k FROM claims c "
                            "JOIN functions f ON f.id=c.function_id WHERE f.project_id=?", proj["id"])
         link = self.links.get(slug)
         remote = sorted(str(x.get("vram") or x.get("name")) + x.get("agent", "") for x in (link.claims if link else []))
-        return f"{f['n']}.{f['hi']}.{f['at']}.{f['m']}.{f['bs']}.{f['ma']}.{c['n']}.{c['k']}.{hash(tuple(remote)) & 0xFFFFFF}"
+        return f"{f['n']}.{f['hi']}.{f['at']}.{f['m']}.{f['bs']}.{f['ma']}.{f['rd']}.{f['sa']}.{c['n']}.{c['k']}.{hash(tuple(remote)) & 0xFFFFFF}"
 
     def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest
