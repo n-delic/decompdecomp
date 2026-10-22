@@ -407,7 +407,8 @@ a.ghost, a.primary { text-decoration: none; }
 .st.working { background: var(--hl); color: var(--hl-ink); border-color: transparent; }
 .st.tried { color: var(--ink-2); }
 .st.not-c, .badge.not-c { background: var(--miss-bg); color: var(--miss); border-color: transparent; }
-.not-c { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--not-c); vertical-align: baseline; }
+/* the feed's red square: the empty span alone (the "not C" badges have the class too, squeezed into it) */
+.not-c:empty { display: inline-block; width: 9px; height: 9px; border-radius: 2px; background: var(--not-c); vertical-align: baseline; }
 .set-aside { margin: 0 0 12px; padding: 10px 12px; border-radius: var(--r-sm); background: var(--miss-bg); color: var(--ink-2); }
 .list-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px; }
 
