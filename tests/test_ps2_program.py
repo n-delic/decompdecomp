@@ -18,9 +18,15 @@ def test_object_files_say_which_compiler_built_them(monkeypatch):
     starts = {0x200000: False, 0x2002D0: True, 0x200470: True, 0x2257D0: False, 0x225948: False, 0x225BC0: True}
     monkeypatch.setattr(ps2, "_object_starts", lambda data: (starts, dict.fromkeys(starts, 0x2D0080)))
     monkeypatch.setattr(ps2, "_sections", lambda data: {".mwcats": b"", ".comment": MW_NOTE})
+    asked = []
+    monkeypatch.setattr(ps2, "code_style", lambda data, within=None: asked.append(within) or (100, 0.14, 3.7, 0.0))
     assert ps2.object_compilers(b"") == [(0x200000, 0x2002D0, "MWCPS2-2"), (0x2002D0, 0x2257D0, "EEGCC"),
                                          (0x2257D0, 0x225BC0, "MWCPS2-2"), (0x225BC0, 0x2D0080, "EEGCC")]
+    assert asked[0] == [(0x2002D0, 0x200470), (0x200470, 0x2257D0), (0x225BC0, 0x2D0080)]  # the GCC objects' code
     assert ps2.guess_compiler(b"") == "EEGCC"
+    # SN's GCC saves $ra with sq (93% of a 2001 game's GCC objects): its 2.95.2, not Sony's 2.96
+    monkeypatch.setattr(ps2, "code_style", lambda data, within=None: (100, 0.16, 0.3, 0.93))
+    assert {g for *_, g in ps2.object_compilers(b"")} == {"EEGCC-2.95.2", "MWCPS2-2"}
     monkeypatch.setattr(ps2, "_sections", lambda data: {})
     assert ps2.object_compilers(b"") == []  # no sign of CodeWarrior: unmarked objects are hand-written
     monkeypatch.setattr(ps2, "_sections", lambda data: {".mwcats": b""})

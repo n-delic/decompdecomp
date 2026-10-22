@@ -53,18 +53,20 @@ def _sections(data: bytes) -> dict[str, bytes]:
     return out
 
 
-def code_style(data: bytes) -> tuple[int, float, float, float]:
+def code_style(data: bytes, within: list[tuple[int, int]] | None = None) -> tuple[int, float, float, float]:
     """(returns, share of returns with a nop in the delay slot, `daddu rd, rs, $zero` moves per return, share of
-    $ra saves made with sq) over the program's executable code."""
+    $ra saves made with sq) over the program's executable code, or only its code between the addresses `within`."""
     phoff, = struct.unpack_from("<I", data, PHOFF_AT)
     phentsize, phnum = struct.unpack_from("<HH", data, PHENTSIZE_AT)
     returns = nops = moves = sd = sq = 0
     for i in range(phnum):
-        kind, off, _, _, size, _, flags, _ = struct.unpack_from("<8I", data, phoff + phentsize * i)
+        kind, off, vaddr, _, size, _, flags, _ = struct.unpack_from("<8I", data, phoff + phentsize * i)
         if kind != PT_LOAD or not flags & PF_X:
             continue
         words = struct.unpack_from(f"<{min(size, len(data) - off) // 4}I", data, off)
         for k, w in enumerate(words):
+            if within is not None and not any(a <= vaddr + 4 * k < b for a, b in within):
+                continue
             op, rs, rt = w >> OPCODE_SHIFT, (w >> RS_SHIFT) & REGISTER_BITS, (w >> RT_SHIFT) & REGISTER_BITS
             if w == JR_RA and k + 1 < len(words):
                 returns += 1
@@ -114,12 +116,16 @@ def object_compilers(data: bytes) -> list[tuple[int, int, str]]:
     starts, ends = _object_starts(data)
     if all(starts.values()) or not any(starts.values()):
         return []
-    gcc = next((guess for pattern, guess in _GCC if re.search(pattern, comment)), "EEGCC")
-    mw = "MWCPS2-2" if re.search(rb"MW MIPS C Compiler \(2\.", comment) else "MWCPS2-3"
     order = sorted(starts)
+    spans = [(start, min(order[i + 1], ends[start]) if i + 1 < len(order) else ends[start]) for i, start in enumerate(order)]
+    # which GCC: a version note, else SN's 2.95.2 by its $ra saved with sq in the GCC objects' own code (93% of a
+    # 2001 game's, 0% of a launch game's Sony GCC; CodeWarrior's objects save it with sq too, so they don't count)
+    sq = code_style(data, [s for s in spans if starts[s[0]]])[3]
+    gcc = next((guess for pattern, guess in _GCC if re.search(pattern, comment)),
+               "EEGCC-2.95.2" if sq > SN_SQ_SAVES else "EEGCC")
+    mw = "MWCPS2-2" if re.search(rb"MW MIPS C Compiler \(2\.", comment) else "MWCPS2-3"
     out: list[tuple[int, int, str]] = []
-    for i, start in enumerate(order):
-        end = min(order[i + 1], ends[start]) if i + 1 < len(order) else ends[start]
+    for start, end in spans:
         guess = gcc if starts[start] else mw
         if out and out[-1][2] == guess and out[-1][1] == start:
             out[-1] = (out[-1][0], end, guess)
@@ -134,7 +140,8 @@ def guess_compiler(data: bytes) -> str:
     slot of a return empty (a nop after 94% of them in its demo builds; GCC 9-19%, GTA SA 11%), 2.x moves registers
     without daddu, and SN's EE-GCC 2.95.2 saves $ra with sq. A GCC version note picks among the GCCs; without one,
     EE-GCC 2.96, the PS2 SDK's (the import then tests the compilers on the code). Too little code: the notes alone.
-    A program that kept its symbols and mixes compilers says which built each object file (object_compilers): the
+    The style is only a first guess: a 2001 game's GCC objects (its symbols say so) leave 85% of those delay slots
+    empty, as CodeWarrior does, and the import's test of every installed compiler decides. A program that kept its symbols and mixes compilers says which built each object file (object_compilers): the
     one that built most of the code is the game's."""
     if parts := object_compilers(data):
         built: collections.Counter = collections.Counter()
