@@ -586,7 +586,7 @@ function joinProblem({ link, name, copy, own }) {
   return inviteProblem(link)
     || (!name ? "Pick a name for yourself in the room."
       : !/^[A-Za-z0-9_-]{1,24}$/.test(name) ? "Your name can have letters, digits, - and _ only."
-      : !copy ? "Pick your copy of the game, or give its path."
+      : !copy ? "Choose your copy of the game, or type its path."
       : !own ? "Confirm it's your own copy of the game." : "");
 }
 
@@ -594,25 +594,24 @@ function openJoin() {
   const body = dialog("Join a team's room", `<p class="muted">Paste the invite link (or a public room's address), then pick <b>your own copy</b> of the same game. decompdecomp checks it's identical to the host's; your copy itself is never sent.</p>
     <label class="field"><span>Invite link</span><input id="jLink" class="mono" placeholder="https://….trycloudflare.com/join/…"></label>
     <label class="field"><span>Your name in the room</span><input id="jName" maxlength="24" placeholder="e.g. alex"></label>
-    <label class="field"><span>Your copy of the game</span><input id="jRom" type="file"></label>
-    <label class="field"><span>…or its path on this computer (best for a GameCube or Wii disc: it's read where it is)</span><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"></label>
+    <label class="field"><span>Your copy of the game: its path on this computer (it's read where it is)</span><span class="pick-row"><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="jPath" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="jOwn"><span>This is my own copy of this game, obtained legally. I'll keep what the room makes private.</span></label>
     <p class="muted small">A GameCube, Wii or PC project comes with its whole source tree from the host, and is then built here with your copy and your compilers: the first time takes a few minutes.</p>
     <div class="row"><button class="primary" id="jGo" type="button" disabled>Join</button><span class="muted small" id="jWhy"></span></div><pre class="joblog" id="jLog" hidden></pre>`);
-  const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: $("jRom").files[0] || $("jPath").value.trim(), own: $("jOwn").checked });
+  const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: $("jPath").value.trim(), own: $("jOwn").checked });
   // the sentence waits until something is typed: a fresh dialog shouldn't open on a complaint
   const check = () => { const f = fields(), why = joinProblem(f); $("jGo").disabled = !!why; $("jWhy").textContent = f.link.trim() || f.name ? why : ""; };
   body.querySelectorAll("input").forEach((el) => { el.oninput = check; el.onchange = check; });
   body.querySelector("#jGo").onclick = async () => {
-    const file = $("jRom").files[0], path = $("jPath").value.trim();
+    const path = $("jPath").value.trim();
     if (joinProblem(fields())) return check();
     showJobError($("jLog"), "");
     $("jGo").disabled = true;
     try {
-      let q = `link=${encodeURIComponent($("jLink").value.trim())}&name=${encodeURIComponent($("jName").value)}&confirmed=1`;
-      q += path ? `&path=${encodeURIComponent(path)}` : `&filename=${encodeURIComponent(file.name)}`;
-      // the file streams from disk as it's sent: a disc image is never read into the page whole
-      const { job } = await api(`/api/collab/join?${q}`, { method: "POST", raw: path ? new Blob([]) : file });
+      // by its path, never through the page: a GameCube disc picked as a file turned the window black on Join
+      const q = `link=${encodeURIComponent($("jLink").value.trim())}&name=${encodeURIComponent($("jName").value)}`
+        + `&confirmed=1&path=${encodeURIComponent(path)}`;
+      const { job } = await api(`/api/collab/join?${q}`, { method: "POST", raw: new Blob([]) });
       const res = await followJob(job, $("jLog"));
       closeDialog();
       loadNav();
@@ -757,27 +756,28 @@ async function renderForkSetup() {
         <h2>Add your copy of the game</h2>
         <p class="muted">${esc(n.what)}. ${esc(n.help || "")}</p>
         <label class="check"><input type="checkbox" id="fsOwn"><span>This is my own copy of this game, obtained legally (for example, dumped from my console). The results stay with me for my own use.</span></label>
-        <div class="row"><input type="file" id="fsFile" hidden><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
+        <div class="row"><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
           <span class="muted small">or</span><input id="fsPath" class="mono grow" placeholder="paste its path on this computer"><button class="ghost" id="fsPathGo" type="button">Use path</button></div>
-        <div class="upbar" id="fsUp" hidden><i></i></div>
         <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
         <pre class="joblog tall" id="fsLog" hidden></pre>
         <p class="muted small">Then decompdecomp runs the project's setup and build, which can download the project's own tools and take a few minutes. Put the game in place yourself? <button class="link-btn" id="fsBuild" type="button">Just build</button></p>
       </div><aside class="fs-side">${facts}</aside>`;
     $("fsOwn").onchange = () => { $("fsGo").disabled = !$("fsOwn").checked; };
-    $("fsGo").onclick = () => $("fsFile").click();
-    $("fsFile").onchange = () => {
-      const f = $("fsFile").files[0];
-      if (!f) return;
-      $("fsUp").hidden = false;
-      run(() => uploadFile(`/api/fork/game?slug=${encodeURIComponent(S.slug)}&confirmed=1&name=${encodeURIComponent(f.name)}`, f,
-        (p) => { $("fsUp").firstElementChild.style.width = (p * 100).toFixed(1) + "%"; }));
-    };
-    $("fsPathGo").onclick = () => {
+    const usePath = () => {
       if (!$("fsOwn").checked) return toast("Confirm that this is your own copy of the game first.", "err");
       if (!$("fsPath").value.trim()) return;
       run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug, path: $("fsPath").value.trim(), confirmed: true } }));
     };
+    // the system's chooser (app/picker.py) gives the file's path, and the game is read where it is: sent through
+    // the page, a GameCube or Wii disc can take the window down
+    $("fsGo").onclick = async () => {
+      $("fsGo").disabled = true;
+      try {
+        const { path } = await api("/api/pick", { method: "POST", body: { kind: "file", title: "Your copy of the game" } });
+        if (path) { $("fsPath").value = path; usePath(); }
+      } catch (e) { toast(esc(e.message), "err"); } finally { $("fsGo").disabled = !$("fsOwn").checked; }
+    };
+    $("fsPathGo").onclick = usePath;
     $("fsBuild").onclick = () => run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug } }));
   } else {
     box.innerHTML = `<div class="fs-main">
