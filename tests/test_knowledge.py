@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from decompnet.app import tools
 from decompnet.app.engine import RomNetwork
 from decompnet.network import NetworkError
 
@@ -60,3 +61,43 @@ def test_proposals_waiting_for_a_second_model_are_offered_to_agents(net):
     net.knowledge.share(agent(net, "claude-opus-5.5-1"), "game", "Every menu screen has an Init, Update and Draw function")
     text = net.knowledge.for_prompt("game")
     assert "waiting for a second model" in text and "menu screen" in text
+
+
+def test_add_note_without_a_function_is_an_error_not_knowledge(net):
+    """#25: a helper probing tool names called add_note with only text, and its "test" appeared as a project-wide
+    knowledge proposal. A note is for one function; project-wide knowledge goes through share_knowledge."""
+    who = agent(net, "opencode-gpt-6.1-1")
+    for args in ({"text": "test"}, {"text": "x", "function": "  "}):
+        said = tools.call(net, who, "game", "add_note", args)
+        assert said.startswith("error:") and "share_knowledge" in said, said
+        assert net.knowledge.listing("game")["items"] == []
+
+
+def test_a_blank_function_is_no_function_for_other_tools(net):
+    """#25: a whitespace-only function used to slip through _named to every tool (suggest accepted it as a name);
+    a blank name is no name."""
+    who = agent(net, "opencode-gpt-6.1-1")
+    assert tools._named(net, who, "game", {"function": "  "})["function"] == ""
+    blank = tools.call(net, who, "game", "suggest", {"text": "hello there", "function": "  "})
+    plain = tools.call(net, who, "game", "suggest", {"text": "hello there"})
+    assert blank == plain
+
+
+def test_add_note_on_a_function_still_leaves_a_note(net):
+    who = agent(net, "claude-opus-5.5-1")
+    proj = net.store.one("SELECT id FROM projects WHERE slug='game'")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns) VALUES(?,?,?,?)",
+                   (proj["id"], "abs_s32", 16, 4))
+    said = tools.call(net, who, "game", "add_note", {"text": "clamps to [lo, hi]", "function": "abs_s32"})
+    assert not said.startswith("error:"), said
+    note = net.store.one("SELECT function_id, text FROM notes WHERE project_id=?", proj["id"])
+    assert note["text"] == "clamps to [lo, hi]" and note["function_id"] is not None
+    assert net.knowledge.listing("game")["items"] == []
+
+
+def test_the_api_cannot_call_add_note_without_a_function():
+    from decompnet.agents.api import api_tool_schemas
+
+    add_note = next(t["function"] for t in api_tool_schemas() if t["function"]["name"] == "add_note")
+    assert "function" in add_note["parameters"]["required"]

@@ -276,6 +276,16 @@ def _compile(net: RomNetwork, agent: Agent, slug: str, function: str, source: st
     return net.attempt_many(agent, [net.resolve_function(agent, slug, n) for n in names], source, slug)
 
 
+def _add_note(net: RomNetwork, agent: Agent, slug: str, text: str, function: str = "") -> str:
+    """A note for the next agent on one function. #25: a note without one used to become a project-wide knowledge
+    proposal, which read like agreed knowledge although one model had only guessed it; that's share_knowledge's
+    job when an agent means it."""
+    if not function.strip():
+        raise NetworkError("add_note needs the function the note is for; something every agent on this game should "
+                           "know goes through share_knowledge")
+    return net.add_note(agent, slug, text, function)
+
+
 HANDLERS: dict[str, Callable[..., str]] = {
     "project_info": lambda net, agent, slug: project_info(net, slug),
     "claim_function": lambda net, agent, slug, function="", strategy="", count=1:
@@ -301,9 +311,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "compiler_map": lambda net, agent, slug, survey=False, check_ranges=False:
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
-    # a note on no function is knowledge for every agent: it goes through share_knowledge's agreement
-    "add_note": lambda net, agent, slug, text, function="": (net.add_note(agent, slug, text, function) if function
-                                                             else net.knowledge.share(agent, slug, text)),
+    "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
     "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
         net.search_flags(agent, slug, function, compiler, source),
@@ -343,8 +351,11 @@ def tool_names(fork: bool) -> list[str]:
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
     """Function names as agents write them (a plain symbol that repeats across files, symbol@unit, Class::method)
     turned into the stored name, preferring the function the agent holds."""
-    if args.get("function") and "," not in args["function"]:  # (several are resolved one by one, see _compile)
-        args = {**args, "function": net.resolve_function(agent, slug, args["function"])}
+    function = args.get("function")
+    if isinstance(function, str) and not function.strip():
+        args = {**args, "function": ""}  # a blank name is no name: add_note says so, the other tools get none
+    elif function and "," not in function:  # (several are resolved one by one, see _compile)
+        args = {**args, "function": net.resolve_function(agent, slug, function)}
     return args
 
 
@@ -517,8 +528,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "list_functions", status=status, limit=limit)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def add_note(ctx: Context, text: str, function: str = "") -> str:
-        """Leave a note on a function for the next agent on it (a note on no function is share_knowledge)."""
+    async def add_note(ctx: Context, text: str, function: str) -> str:
+        """Leave a note on a function for the next agent on it. Say which function it's for: something every agent
+        on this game should know goes through share_knowledge."""
         return await run(ctx, "add_note", text=text, function=function)
 
     @mcp.tool(meta=ALWAYS_LOAD)
