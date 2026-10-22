@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import shutil
@@ -48,6 +49,9 @@ EVENTS_PAGE = 500  # events per answer; a guest that's behind asks again at once
 LET_IN_WAIT = 30 * 60  # longest a git project's join waits to be let in: it needs the host's files before anything
 LET_IN_EVERY = 3  # seconds between its looks
 ROOM_QUIET = 15  # seconds without an answer from the host before the guest's screen says it's away
+HEARTBEAT_EVERY = 5  # independent of importing matches or rebuilding a source project
+HEARTBEAT_TIMEOUT = 10
+logger = logging.getLogger("decompdecomp")
 
 
 def _hash(code: str) -> str:
@@ -555,6 +559,7 @@ class Link:
         self.error = ""
         self.refused = False  # the host's last answer to our sync was no (`error` says why)
         self.last_ok = 0.0
+        self.last_contact = 0.0  # a heartbeat can answer while applying the host's work is still busy
         self.behind = 0  # events the host still has for us
         self.received = 0  # events caught up so far (with `behind`, how far "getting the host's work" is)
         self.synced = False  # caught up with the host since the app started
@@ -636,9 +641,10 @@ class Link:
     def status(self) -> dict:
         """What the guest's screen says: waiting to be let in, out of the room, getting the host's work (how far),
         in the room, or the host is away."""
+        last_contact = max(self.last_ok, self.last_contact)
         if self.refused:  # (out: declined, taken out, or the room closed; `error` says which)
             state = "waiting" if self.error == WAITING else "out"
-        elif (self.error and not self.last_ok) or (self.last_ok and time.time() - self.last_ok >= ROOM_QUIET):
+        elif (self.error and not last_contact) or (last_contact and time.time() - last_contact >= ROOM_QUIET):
             state = "offline"  # (never answered yet and no error: just started, getting the host's work)
         else:
             state = "connected" if self.synced else "syncing"
@@ -708,15 +714,50 @@ class Link:
         return bool(data)
 
     def run(self, every: float = 2.0) -> None:
+        def heartbeat():
+            problem = ""
+            while not self._stop.is_set():
+                try:
+                    # whoami authenticates (refreshing the host's last_seen) without sending or applying work.
+                    # Keep its result separate: a live connection must not erase a failed sync or a refusal.
+                    r = self.client.get(f"{self.url}/collab/whoami", params={"room": self.room},
+                                        headers={"authorization": f"Bearer {self.token}", "x-room": self.room},
+                                        timeout=httpx.Timeout(HEARTBEAT_TIMEOUT, connect=5))
+                    if r.status_code != 200:
+                        raise NetworkError(f"host answered {r.status_code}")
+                    self.last_contact = time.time()
+                except Exception as e:
+                    current = type(e).__name__ if isinstance(e, httpx.HTTPError) else str(e)
+                    if current != problem:
+                        logger.warning("room %s heartbeat failed: %s; retrying", self.slug, current)
+                    problem = current
+                else:
+                    if problem:
+                        logger.info("room %s heartbeat recovered", self.slug)
+                    problem = ""
+                self._stop.wait(HEARTBEAT_EVERY)
+
         def loop():
+            problem = ""
             while not self._stop.is_set():
                 try:
                     self.sync()
-                except NetworkError:
-                    pass
+                except NetworkError as e:
+                    current = str(e)
+                    if current != problem:
+                        logger.warning("room %s sync failed: %s; retrying", self.slug, current)
+                    problem = current
                 except Exception as e:  # keep syncing; show the problem in the GUI
                     self.error = f"{type(e).__name__}: {e}"
+                    if self.error != problem:
+                        logger.exception("room %s couldn't apply the host's work; retrying", self.slug)
+                    problem = self.error
+                else:
+                    if problem:
+                        logger.info("room %s sync recovered", self.slug)
+                    problem = ""
                 self._stop.wait(0 if self.behind else every)  # catching up: the next page at once
+        threading.Thread(target=heartbeat, daemon=True, name=f"room-heartbeat-{self.slug}").start()
         threading.Thread(target=loop, daemon=True, name=f"link-{self.slug}").start()
 
     def stop(self) -> None:

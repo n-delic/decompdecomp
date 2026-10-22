@@ -147,6 +147,9 @@ Where to start on a gap:
   has a colour on its agents' names, the same on every screen, and the Agents tab lists what the room's other
   computers' agents are on. A git project's join waits to be let in (with approval on, it failed), and a declined
   or removed guest is told so.
+- **Room presence during slow syncs.** A separate heartbeat keeps members online while importing the host's work
+  or rebuilding a source project. Sync failures and recovery are logged, and syncing continues automatically
+  after a temporary connection failure. Applies to ROM and project rooms on every console.
 - **A standalone app.** Its own window (GTK and WebKitGTK) and a tray icon, so closing the window doesn't stop
   helper agents; **Quit** ends everything the app started. Only helpers the app starts work on projects: the old
   `decomp mcp` bridge is gone, and the first start removes its registrations from your agents. A development copy is
