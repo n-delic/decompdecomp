@@ -14,6 +14,21 @@ from . import SAID_CHARS, Agent, args_brief, error_text, number, read_json, tool
 ZEN = "opencode/"  # OpenCode Zen's models: their names start with it, and opencode's default is one of them
 STANDALONE_FROM = 2  # the major version that runs sessions in a shared service unless told --standalone
 PLACEHOLDER = "Unexpected server error"  # its JSON error when the log line says what failed
+MCP_SERVER = "decompdecomp"  # the app's MCP server, in the config and in the plugin that waits for it
+MCP_WAIT_SECONDS = 10  # how long opencode 2's first prompt waits for that server to connect (#24)
+MCP_SETTLE_MS = 300  # then for the registry's 100 ms debounce to publish its tools
+PLUGIN_DIR = "decompdecomp-wait"  # the plugin's folder in a helper's own folder, next to its opencode.json
+_PLUGIN_SOURCE = Path(__file__).with_name("opencode_wait.js")
+
+
+def _wait_plugin() -> str:
+    """opencode 2's plugin for #24, with the app's server name and timings filled in. It waits before the first prompt
+    until the app's MCP tools are registered, because opencode connects MCP in the background and its first request
+    otherwise carries no tools (upstream #51812, fix #54942). Remove it once opencode waits itself."""
+    source = _PLUGIN_SOURCE.read_text(encoding="utf-8")
+    return (source.replace("__DECOMP_MCP_SERVER__", json.dumps(MCP_SERVER))
+                  .replace("__DECOMP_MCP_DEADLINE_MS__", str(MCP_WAIT_SECONDS * 1000))
+                  .replace("__DECOMP_MCP_SETTLE_MS__", str(MCP_SETTLE_MS)))
 
 
 class Opencode(Agent):
@@ -58,12 +73,18 @@ class Opencode(Agent):
             # JavaScript runner whose fetch() reaches the internet, and which only "deny" removes) can go, with
             # subagents; nothing outside the helper's own folder either
             deny = {"execute", "subagent", "external_directory"}
-            config = {"mcp": {"servers": {"decompdecomp": {"type": "remote", "url": mcp_url, "headers": headers,
-                                                           "codemode": False}}},
+            # #24: opencode 2 connects MCP servers asynchronously, so a helper's first model request could carry no
+            # decompdecomp tools and the model guessed their names for ~18 s. This plugin waits for the server once,
+            # before the first prompt; remove it once opencode waits itself (upstream #51812, fix #54942).
+            (workdir / PLUGIN_DIR).mkdir(parents=True, exist_ok=True)
+            (workdir / PLUGIN_DIR / "index.js").write_text(_wait_plugin(), encoding="utf-8")
+            config = {"mcp": {"servers": {MCP_SERVER: {"type": "remote", "url": mcp_url, "headers": headers,
+                                                       "codemode": False}}},
+                      "plugins": [f"./{PLUGIN_DIR}"],
                       "permissions": [{"action": a, "resource": "*", "effect": "deny" if a in deny else never}
                                       for a in ("edit", "shell", "webfetch", "websearch", *sorted(deny))]}
         else:
-            config = {"mcp": {"decompdecomp": {"type": "remote", "url": mcp_url, "enabled": True, "headers": headers}},
+            config = {"mcp": {MCP_SERVER: {"type": "remote", "url": mcp_url, "enabled": True, "headers": headers}},
                       "permission": {"edit": never, "bash": never, "webfetch": never}}
         (workdir / "opencode.json").write_text(json.dumps({"$schema": "https://opencode.ai/config.json", **config}),
                                                encoding="utf-8")

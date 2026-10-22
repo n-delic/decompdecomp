@@ -13,7 +13,7 @@ import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity
+from decompnet.agents import antigravity, opencode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -157,6 +157,30 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
     assert {"execute", "subagent", "external_directory"} <= {p["action"] for p in config["permissions"]
                                                             if p["effect"] == "deny"}
     assert config["mcp"]["servers"]["decompdecomp"]["codemode"] is False
+
+
+def test_opencode_2_helpers_get_a_plugin_that_waits_for_the_apps_tools(tmp_path, monkeypatch):
+    """#24: opencode 2 starts the first model request before its MCP tools are registered, so the helper's folder gets
+    a plugin that waits for the app's server once; older opencode keeps the config it had."""
+    m = _manager(tmp_path, monkeypatch, "opencode")
+    s = agents.Session("opencode-1", "opencode", "o", "demo", "opencode-1", {"model": "fake/fake"})
+    work = tmp_path / "oc-2"
+    work.mkdir()
+    monkeypatch.setitem(kinds.known_versions, "opencode", (0, "opencode v2.0.32"))
+    for _ in range(2):  # every session start writes the config and the plugin again
+        m._command(s, "tok", work)
+    config = json.loads((work / "opencode.json").read_text())
+    assert list(config["mcp"]["servers"]) == [opencode.MCP_SERVER]
+    assert config["plugins"] == [f"./{opencode.PLUGIN_DIR}"]  # once, however often a session starts
+    plugin = (work / opencode.PLUGIN_DIR / "index.js").read_text()
+    assert f"const SERVER = {json.dumps(opencode.MCP_SERVER)}" in plugin
+    assert f"const DEADLINE_MS = {opencode.MCP_WAIT_SECONDS * 1000}" in plugin
+    old = tmp_path / "oc-old"
+    old.mkdir()
+    monkeypatch.setitem(kinds.known_versions, "opencode", (0, "0.15.4"))
+    m._command(s, "tok", old)
+    assert "plugins" not in json.loads((old / "opencode.json").read_text())
+    assert not (old / opencode.PLUGIN_DIR).exists()
 
 
 def test_codex_helpers_cannot_search_the_web(tmp_path, monkeypatch):
