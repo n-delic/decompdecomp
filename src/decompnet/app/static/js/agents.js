@@ -440,7 +440,7 @@ const POLISH_TAG = `<span class="task-tag" title="polishing: real names, types a
 function groupHtml(g) {
   const who = whoHtml(g.agent);
   if (g.polished) return `<span class="ok">✎</span> ${who} polished ${fnLink(g.fn)}: still matches ${POLISH_TAG}`;
-  if (g.polish) return `${who} polishing ${fnLink(g.fn)} ${POLISH_TAG}`;
+  if (g.polish) return `${who} polishing ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} ${POLISH_TAG}`;
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
   if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;

@@ -2462,6 +2462,8 @@ class ForkEngine:
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
+                if quiet is None:  # a polishing helper's compiles count too (not as a match)
+                    self.net._record(fn, agent, score, code, 0)
                 if not matched:
                     undo()
                     why = "loads other constants" if d.literals else f"is {percent_text(pct)}"

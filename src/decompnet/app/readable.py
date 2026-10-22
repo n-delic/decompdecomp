@@ -101,11 +101,14 @@ class Readability:
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
+            self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
             return f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}"
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
+            self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
             return f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol)."
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
+        self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
             note = "\n".join(f"- {p}" for p in problems)
             return (f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "

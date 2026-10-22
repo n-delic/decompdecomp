@@ -39,6 +39,9 @@ def test_a_readable_rewrite_that_still_matches_is_kept(matched):
     brief = net.readability.claim(agent, slug)
     assert "clamp_s32" in brief and "must still match byte for byte" in brief
     assert net.readability.submit(agent, slug, "clamp_s32", BROKEN).startswith("❌ It no longer matches")
+    tries = net.store.one("SELECT COUNT(*) AS n FROM attempts a JOIN functions f ON f.id=a.function_id "
+                          "WHERE f.name='clamp_s32' AND a.score > 0")["n"]
+    assert tries == 1  # a polishing helper's compiles count, as a decompiling one's
     assert net.overview(slug)["readable"] == 0
     assert net.readability.submit(agent, slug, "clamp_s32", READABLE).startswith("✅ clamp_s32 is readable now")
     fn = net._function("clamp_s32", slug)
