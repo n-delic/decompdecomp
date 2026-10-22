@@ -181,6 +181,16 @@ def test_an_edit_that_breaks_the_build_is_undone(fork):
     assert _status(net, slug, "offset") == "matched"
 
 
+def test_an_edit_without_a_message_goes_in_as_a_source_event(fork):
+    """Agents left edit_file's message out hundreds of times a night, each a refused turn: the commit says what
+    changed where instead. One unit's file is a "source" event, which doesn't bring given-up functions back."""
+    net, slug, agent = fork
+    out = net.forks.edit_file(agent, slug, "src/lit.c", "", "/* a note */")
+    assert out.startswith("✅"), out
+    ev = net.store.one("SELECT kind, detail FROM events WHERE agent_id=? ORDER BY id DESC LIMIT 1", agent.id)
+    assert ev["kind"] == "source" and ev["detail"] == "src/lit.c: Edit src/lit.c", dict(ev)
+
+
 def test_a_match_made_with_edit_file_is_a_match_like_any_other(fork):
     net, slug, agent = fork
     out = net.forks.edit_file(agent, slug, "src/lit.c", "", SCALE, "write scale")

@@ -410,6 +410,7 @@ function eventHtml(ev) {
     case "expired": return `${fnLink(d)} was left unfinished`;
     case "freed": return d ? `${fnLink(d)} is free again: ${who} stopped` : `${who} stopped`;
     case "context": return `${who} updated ${ev.agent ? "shared code" : "context"}: ${esc(d)}`;
+    case "source": return `${who} updated ${esc(d)}`;
     case "rename": return `${who} renamed ${esc(d)}`;
     case "split": return `${who} split ${esc(d)}`;
     case "files": return `${who ? who + " " : ""}gave code without a source file one: ${esc(d)}`;
