@@ -23,6 +23,7 @@ from pathlib import Path
 
 from .. import consoles
 from ..forks.project import ForkProject
+from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 
 MAX_BUNDLE = 512 * 1024 * 1024
@@ -30,7 +31,7 @@ MAX_BUNDLE = 512 * 1024 * 1024
 
 def _git(root: Path, *args: str, check: bool = True, timeout: float = 600) -> str:
     res = subprocess.run(["git", "-c", "safe.directory=*", *args], cwd=root, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace", timeout=timeout)
+                         encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
     if check and res.returncode != 0:
         raise NetworkError(f"git {args[0]} failed: {(res.stderr or res.stdout).strip()[-400:]}")
     return res.stdout.strip()
@@ -86,7 +87,7 @@ def bundle(root: Path, have: str = "") -> bytes:
         return b""
     start, first = "", base(root)  # a public decomp's members have its commits from its own host
     if have and subprocess.run(["git", "-c", "safe.directory=*", "merge-base", "--is-ancestor", have, tip], cwd=root,
-                               capture_output=True).returncode == 0:
+                               capture_output=True, creationflags=NO_WINDOW).returncode == 0:
         start = have
     elif first:
         if first == tip:  # nothing on top of the public decomp yet
@@ -133,7 +134,7 @@ def clone(dest: Path, info: dict, get_bundle, log=print) -> None:
         _git(dest, "remote", "add", "origin", info["repo_url"])
         if info.get("base"):
             got = subprocess.run(["git", "-c", "safe.directory=*", "fetch", "-q", "--depth", "1", "origin", info["base"]],
-                                 cwd=dest, capture_output=True, text=True).returncode == 0
+                                 cwd=dest, capture_output=True, text=True, creationflags=NO_WINDOW).returncode == 0
             if not got:  # a host that doesn't serve commits by id: its history, until the commit is there
                 _git(dest, "fetch", "-q", "origin", timeout=3600)
             have = info["base"]
@@ -161,7 +162,7 @@ def pull(root: Path, data: bytes, ref: str) -> str:
         _git(root, "stash", "push", "-q", "-m", "decompdecomp: work in progress before following the room")
     _git(root, "reset", "-q", "--hard", tip)
     if dirty and subprocess.run(["git", "-c", "safe.directory=*", "stash", "pop", "-q"], cwd=root,
-                                capture_output=True).returncode != 0:
+                                capture_output=True, creationflags=NO_WINDOW).returncode != 0:
         _git(root, "reset", "-q", "--hard", tip)  # the host changed the same lines: the host's version stays
         _git(root, "stash", "drop", "-q", check=False)
     return tip
