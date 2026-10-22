@@ -399,10 +399,11 @@ class ImportMixin:
         best = max(tcs, key=lambda t: (counts[t], t == current))
         log("compiler test: " + ", ".join(f"{consoles.compiler_name(t)} {counts[t]}" for t in tcs))
         if counts[best] >= 3 and counts[best] > counts.get(current, 0):  # 1-2: trivial code any compiler makes
-            cfg["compiler"] = {"toolchain": best, "flags": console.default_flags(best, cfg.get("gp")),
-                               "timeout": 20}
-            with self.store.tx() as db:
-                db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+            try:  # (run again on a project with work: its matched functions must still match)
+                self.set_compiler(slug, best, guard=True)
+            except NetworkError as e:
+                log(f"{consoles.compiler_name(best)} matched more drafts, but stays unused: {e}")
+                return counts
             log(f"{consoles.compiler_name(best)} builds this game's code ({counts[best]} of {len(drafts)} drafts match "
                 f"byte for byte, {counts.get(current, 0)} with {consoles.compiler_name(current)}): using it")
         return counts

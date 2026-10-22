@@ -260,6 +260,12 @@ class Console:
         """m2c's target for drafts of code `compiler` built, without the language; "" when m2c can't read it."""
         return self.m2c
 
+    def installable_compilers(self) -> list[str]:
+        """Its compilers the app installs itself, one toolchain each, that can run here (ROM mode's: "install them
+        all" lets the import's compiler test try every one). A project console's come in its pack (`packs`)."""
+        reg = toolchains.registry()
+        return [c.id for c in self.compilers if c.id in reg and reg[c.id].supported]
+
     def project_facts(self) -> dict:
         """What a project's page and its line in the project list say about its console."""
         return {"platform": self.id, "platform_name": self.name, "platform_short": self.short or self.name,
@@ -271,6 +277,7 @@ class Console:
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
+                "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside}
 

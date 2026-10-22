@@ -132,6 +132,8 @@ def register(app: App) -> None:
         q = request.query_params
         toolchain = q.get("toolchain") or None
         scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
+        # every compiler of the game's console first (the proprietary ones with `accept`), so its test tries them all
+        all_compilers, accept = q.get("all_compilers") == "1", q.get("accept") == "1"
         if scope not in (None, *SCOPES):
             return fail(ValueError(f"a project covers the game's own code or the whole program, not {scope!r}"))
         if q.get("demo") == "1":
@@ -172,6 +174,8 @@ def register(app: App) -> None:
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)
+            if all_compilers:
+                net.install_compilers(slug, accept, retest=toolchain is None, log=log)
             settings.data["last_project"] = slug
             settings.save()
             autopilot(slug)

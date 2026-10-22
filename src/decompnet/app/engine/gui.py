@@ -87,7 +87,9 @@ class GuiMixin:
             "compiler": {"toolchain": tc.id, "name": consoles.compiler_name(tc.id), "flags": cfg["compiler"]["flags"],
                          "installed": toolchains.installed(tc.id) is not None, "proprietary": tc.proprietary,
                          "supported": tc.supported,
-                         "why": None if tc.supported else toolchains.unsupported_cpu()},
+                         "why": None if tc.supported else toolchains.unsupported_cpu(),
+                         "missing": [{"id": t, "name": consoles.compiler_name(t), "proprietary": toolchains.get(t).proprietary}
+                                     for t in console.installable_compilers() if toolchains.installed(t) is None]},
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,

@@ -219,8 +219,17 @@ function setupCompilers(info) {
   const p = info.platform, select = $("compilerPick"), note = $("compilerNote");
   const con = consoleOf(p) || { mode: "", compilers: [], packs: [], default_compiler: "" };
   $("compilerRow").hidden = false; note.hidden = true; $("mwConsent").hidden = true; $("mwAccept").checked = false;
+  $("allCompilers").hidden = true;
   // where the import recognises library code: the project covers the game's own code, or the whole program
   $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  if (con.mode === "rom" || p === "playstation") {
+    // every compiler of its console first, so the import's test tries them all (a guess from the program can miss)
+    const missing = missingCompilers(p), owned = missing.filter((t) => t.license === "proprietary");
+    $("allCompilers").hidden = !missing.length;
+    $("allAccept").checked = !owned.length;  // consent to proprietary software is the user's tick, never ours
+    $("allText").textContent = `Install the ${plural(missing.length, "missing compiler")} first, so the import tests which one built the game`
+      + (owned.length ? `. ${owned.map((t) => t.name).join(" and ")} ${owned.length > 1 ? "are" : "is"} proprietary software, kept by the decomp community: tick this only if you accept that.` : ".");
+  }
   if (con.mode === "rom") {
     if (info.order.endsWith("disc image")) {
       $("compilerRow").hidden = true; note.hidden = false;
@@ -237,6 +246,13 @@ function setupCompilers(info) {
   note.textContent = CW_PACK[pack].note;
   $("mwText").textContent = CW_PACK[pack].text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
+}
+
+/* The compilers of a game's console (both PlayStations' for a disc not read yet) this computer doesn't have. */
+function missingCompilers(p) {
+  const cons = p === "playstation" ? ["ps", "ps2"].map(consoleOf) : [consoleOf(p)];
+  const tcs = S.st?.toolchains || [];
+  return cons.filter(Boolean).flatMap((c) => c.installable || []).map((id) => tcs.find((t) => t.id === id)).filter((t) => t && !t.installed);
 }
 
 function updateAnalyse() {
@@ -337,7 +353,8 @@ $("analyse").onclick = async () => {
   }
   const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}`, body, title, picked.name);
+  const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => {
   e.stopPropagation();

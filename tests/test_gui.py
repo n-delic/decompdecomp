@@ -105,3 +105,9 @@ def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
     assert c["guest"] == [0, 1, 2, None, 0]
     assert c["host"] == [0, 1, 2, 0]  # the same colours on the host's screen
     assert c["alone"] is None  # no room, no colours
+
+
+def test_the_import_offers_every_compiler_of_the_games_console(gui):
+    """The import's compiler test can only try what's installed: a game linked by CodeWarrior was guessed right only
+    because its GCC was there. The import offers the console's missing compilers, both PlayStations' for a disc."""
+    assert gui["checks"]["missing"] == [["ee-gcc-2.96", "mwcps2-3.0.1"], 3, 0]

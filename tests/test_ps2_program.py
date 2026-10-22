@@ -127,3 +127,26 @@ def test_check_again_suggests_what_the_symbols_say_and_overwrites_nothing(tmp_pa
     assert cfg["compiler_ranges"][0]["toolchain"] == "mwcps2-3.0.1" and events == ["analysis"]
     ps2.suggest_object_compilers(net, "game")
     assert len(suggested) == 1  # read once per reading
+
+
+def test_install_all_brings_every_compiler_then_tests_them(monkeypatch):
+    """Every compiler of the console the app installs, a proprietary one only with consent, then the compiler test
+    again with all of them, unless the user picked the compiler."""
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+    from decompnet.app.engine import RomNetwork
+
+    ps2 = consoles.get("ps2")
+    have = {"ee-gcc-2.96"}
+    monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: {} if tid in have else None)
+    monkeypatch.setattr(toolchains, "install", lambda tid, accept_license=False, log=None: have.add(tid))
+    tested = []
+    net = SimpleNamespace(_project=lambda slug: {}, console=lambda proj: ps2, is_rom=lambda proj: True,
+                          test_compilers=lambda slug, tcs, log: tested.append(tcs) or {"ee-gcc-2.96": 4})
+    res = RomNetwork.install_compilers(net, "game", accept_license=False, log=lambda *_: None)
+    assert res["left_out"] == ["mwcps2-2.3.3", "mwcps2-3.0.1"] and "mwcps2-3.0.1" not in have
+    assert set(res["installed"]) == set(ps2.installable_compilers()) - {"ee-gcc-2.96", "mwcps2-2.3.3", "mwcps2-3.0.1"}
+    assert tested == [ps2.installable_compilers()] and res["test"] == {"ee-gcc-2.96": 4}
+    res = RomNetwork.install_compilers(net, "game", accept_license=True, retest=False, log=lambda *_: None)
+    assert res["installed"] == ["mwcps2-2.3.3", "mwcps2-3.0.1"] and len(tested) == 1

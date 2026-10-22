@@ -327,7 +327,9 @@ function renderCompilerNotice(ov) {
     };
     return;
   }
-  if (ov.kind === "fork" || ov.compiler.installed) { n.hidden = true; return; }
+  // the console's other compilers too, until the project has matches: the compiler test tries every one installed
+  const missing = ov.compiler.missing || [];
+  if (ov.kind === "fork" || (ov.compiler.installed && (!missing.length || ov.matched))) { n.hidden = true; return; }
   n.hidden = false;
   if (!ov.compiler.supported) {
     n.className = "notice bad";
@@ -337,6 +339,14 @@ function renderCompilerNotice(ov) {
     return;
   }
   n.className = "notice";
+  if (missing.length) {
+    const owned = missing.filter((c) => c.proprietary).map((c) => c.name);
+    const lead = ov.compiler.installed ? `${plural(missing.length, `${ov.platform_short} compiler`)} ${missing.length > 1 ? "aren't" : "isn't"} installed`
+      : `<b>${esc(ov.compiler.name)}</b> isn't installed yet`;
+    n.innerHTML = `<span>${lead}. Install all of them and decompdecomp tests which one built this game.${owned.length ? ` ${esc(owned.join(", "))} ${owned.length > 1 ? "are" : "is"} proprietary software (recompiled by the decomp community): install only if you accept that.` : ""}</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install all…</button>`;
+    $("tcInstall").onclick = () => installAllCompilers(owned);
+    return;
+  }
   n.innerHTML = ov.compiler.proprietary
     ? `<span><b>${esc(ov.compiler.name)}</b> isn't installed. It's proprietary software (recompiled by the decomp community); install it only if you accept that.</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install…</button>`
     : `<span><b>${esc(ov.compiler.name)}</b> isn't installed yet.</span><span class="grow"></span><button class="primary small-btn" id="tcInstall" type="button">Install now</button>`;
@@ -618,6 +628,21 @@ function openJoin() {
       location.hash = `#/p/${res.slug}`;
     } catch (e) { if ($("jLog")) { showJobError($("jLog"), e.message); check(); } }
   };
+}
+
+/* Every compiler of the project's console, then the compiler test again with all of them (install_compilers). */
+async function installAllCompilers(owned) {
+  if (owned.length && !confirm(`${owned.join(", ")} ${owned.length > 1 ? "are" : "is"} proprietary software, kept by the decomp community. Install only if you accept that. Continue?`)) return;
+  toast("Installing…");
+  try {
+    const { job } = await api("/api/toolchain/all", { method: "POST", body: { slug: S.slug, accept_license: owned.length > 0 } });
+    const res = await followJob(job);
+    const test = Object.entries(res?.test || {}).map(([id, n]) => `${id} ${n}`).join(", ");
+    toast(test ? `Installed. The compiler test: ${esc(test)} drafts matched.` : "Installed.", "match");
+    await loadState();
+    if (S.slug) renderStats(await api(`/api/project?slug=${S.slug}`));
+    if (!$("toolsPage").hidden) renderTools();
+  } catch (e) { toast(esc(e.message), "err"); }
 }
 
 async function installToolchain(id, proprietary) {

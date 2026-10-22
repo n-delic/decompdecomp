@@ -33,6 +33,15 @@ def register(app: App) -> None:
         return JSONResponse({"job": jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, log=log)
                                                                          and {"id": tid}))})
 
+    @mcp.custom_route("/api/toolchain/all", methods=["POST"])
+    async def api_toolchain_all(request: Request) -> Response:
+        """Every compiler of a project's console, then its compiler test again (Engine.install_compilers)."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        slug, accept = str(data.get("slug", "")), bool(data.get("accept_license"))
+        return JSONResponse({"job": jobs.start("toolchain", lambda log: net.install_compilers(slug, accept, log=log))})
+
     @mcp.custom_route("/api/agents/install", methods=["POST"])
     async def api_agent_install(request: Request) -> Response:
         if (bad := guard(request, write=True)):

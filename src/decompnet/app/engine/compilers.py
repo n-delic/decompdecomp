@@ -384,6 +384,29 @@ class CompilerMixin:
                 "checks": [{"id": c["id"], "audit": bool(c.get("audit")), "status": c["status"], "said": c.get("said") or "",
                             "ranges": c["spans"], "compiler": self._short((c["toolchain"], tuple(c["flags"])))} for c in checks]}
 
+    def install_compilers(self, slug: str, accept_license: bool, retest: bool = True, log=print) -> dict:
+        """Every compiler of the project's console the app installs and this computer lacks (a proprietary one only
+        with the user's consent), then, unless the user picked the compiler (`retest`), the compiler test again with
+        all of them: the import's test could only try what was installed, and a guess from the program alone can
+        miss (a game linked by CodeWarrior was GCC's code). Returns what was installed, left out, and the test's
+        counts."""
+        proj = self._project(slug)
+        console = self.console(proj)
+        installed, left_out = [], []
+        for tid in console.installable_compilers():
+            if toolchains.installed(tid) is not None:
+                continue
+            if toolchains.get(tid).proprietary and not accept_license:
+                left_out.append(tid)
+                continue
+            log(f"installing {consoles.compiler_name(tid)}")
+            toolchains.install(tid, accept_license=accept_license, log=log)
+            installed.append(tid)
+        if left_out:
+            log(f"left out, as proprietary: {', '.join(consoles.compiler_name(t) for t in left_out)}")
+        counts = self.test_compilers(slug, console.installable_compilers(), log=log) if retest and self.is_rom(proj) else {}
+        return {"installed": installed, "left_out": left_out, "test": counts}
+
     def set_auto_adjust(self, slug: str, on: bool) -> None:
         self._update_cfg(slug, lambda cfg: cfg.__setitem__("auto_compiler", bool(on)))
 
