@@ -15,7 +15,7 @@ from pathlib import Path
 from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
 from ...rom import Picked, RomError, match, split
-from ...rom.symbols import Symbol, SymbolTable
+from ...rom.symbols import AUTO_NAME, Symbol, SymbolTable
 from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
 
 # what the first header defines already: the game's typedefs of these names are left out (consoles/ps2/cheader.py)
@@ -192,24 +192,43 @@ class ImportMixin:
                         "INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
                         (slug, info["title"], f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                          console.arch, int(picked.big_endian), str(workdir), json.dumps(cfg))).lastrowid
-                    old_functions = {}
+                    old_functions, gone, old_names = {}, {}, {}
                 else:
                     pid = reimport["id"]
-                    old_functions = {row["name"]: row for row in db.execute(
-                        "SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()}
+                    rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
+                    # by address first: a function renamed since (rename_symbol, polishing) has its old name nowhere
+                    # in the new split, and paired by name it lost its matched C
+                    by_vram = {r["vram"]: r for r in rows if r["vram"] is not None}
+                    by_name = {r["name"]: r for r in rows}
+                    old_functions = {}
+                    for fn in res.functions:
+                        old = by_vram.get(fn.vram) or by_name.get(fn.name)
+                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
+                            old_functions[fn.name] = old
+                    paired = {o["id"] for o in old_functions.values()}
+                    gone = {r["name"]: r for r in rows if r["id"] not in paired}
+                    # the names agents gave (functions and data), by address: matched C calls them by those names
+                    old_names = {r["address"]: r["name"] for r in db.execute(
+                        "SELECT name, address FROM symbols WHERE project_id=?", (pid,)) if not AUTO_NAME.match(r["name"])}
                     db.execute("UPDATE projects SET description=?, arch=?, big_endian=?, config=? WHERE id=?",
                                (f"{info['game_code']} · {info['region']} · {len(res.functions)} functions",
                                 console.arch, int(picked.big_endian), json.dumps(cfg), pid))
                     db.execute("DELETE FROM symbols WHERE project_id=?", (pid,))
 
-                new_names = {fn.name for fn in res.functions}
-                for name, old in old_functions.items():
-                    if name not in new_names:
-                        for table in ("claims", "attempts", "twin_misses"):
-                            db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
-                        db.execute("UPDATE notes SET function_id=NULL, text=? || COALESCE(text, '') "
-                                   "WHERE function_id=?", (f"[{name} before reimport] ", old["id"]))
-                        db.execute("DELETE FROM functions WHERE id=?", (old["id"],))
+                lost = []
+                for name, old in gone.items():
+                    for table in ("claims", "attempts", "twin_misses"):
+                        db.execute(f"DELETE FROM {table} WHERE function_id=?", (old["id"],))
+                    db.execute("UPDATE notes SET function_id=NULL, text=? || COALESCE(text, '') "
+                               "WHERE function_id=?", (f"[{name} before reimport] ", old["id"]))
+                    if old["status"] == "matched" and old["matched_source"]:  # its C stays readable, as a note
+                        lost.append(name)
+                        db.execute("INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,NULL,?,?)",
+                                   (pid, f"[{name} before reimport: it matched with this C]\n{old['matched_source']}", now))
+                    db.execute("DELETE FROM functions WHERE id=?", (old["id"],))
+                if lost:
+                    log(f"{len(lost)} matched function(s) aren't in the new split at their address: "
+                        f"{', '.join(lost[:8])}; their C is kept in the project's notes")
 
                 preserved = 0
                 for fn in res.functions:
@@ -244,9 +263,14 @@ class ImportMixin:
                             "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,attempts=0,abandons=0,"
                             "fingerprint=NULL,boost=0,readable=0,permuted=0,seed_key=NULL WHERE id=?",
                             (fn.size, len(fn.lines), target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
+                previews = {r[1]: r[4] for r in data_rows}
+                for addr, name in old_names.items():
+                    s = symbols.by_addr.get(addr)
+                    if s is not None and s.name != name and name not in symbols.by_name:
+                        symbols.rename(s.name, name)
                 for s in symbols.by_name.values():
                     check_cancel()
-                    preview = next((r[4] for r in data_rows if r[0] == s.name), None)
+                    preview = previews.get(s.address)
                     db.execute("INSERT INTO symbols(project_id,name,address,size,kind,preview) VALUES(?,?,?,?,?,?)",
                                (pid, s.name, s.address, s.size, s.kind, preview))
                 if reimport is None:

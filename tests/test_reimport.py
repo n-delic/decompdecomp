@@ -30,8 +30,8 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
         unchanged_id = db.execute(
             "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,matched_source,vram) "
             "VALUES(?,?,?,?,?,?,?,?,?)",
-            (pid, "func_80000000", 4, 1, bytes.fromhex("24020001"), "[]", "matched",
-             "void func_80000000(void) {}", 0x80000000),
+            (pid, "clamp_s32", 4, 1, bytes.fromhex("24020001"), "[]", "matched",
+             "void clamp_s32(void) {}", 0x80000000),  # renamed since import (polishing): paired by its address
         ).lastrowid
         changed_id = db.execute(
             "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,status,matched_source,vram) "
@@ -39,8 +39,11 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
             (pid, "func_80000004", 4, 1, bytes.fromhex("24020001"), "[]", "matched",
              "void func_80000004(void) {}", 0x80000004),
         ).lastrowid
-        removed_id = db.execute("INSERT INTO functions(project_id,name,size,n_insns,vram) VALUES(?,?,?,?,?)",
-                                (pid, "func_80000008", 4, 1, 0x80000008)).lastrowid
+        removed_id = db.execute("INSERT INTO functions(project_id,name,size,n_insns,vram,status,matched_source) "
+                                "VALUES(?,?,?,?,?,?,?)", (pid, "func_80000008", 4, 1, 0x80000008, "matched",
+                                                          "void func_80000008(void) { gone(); }")).lastrowid
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "clamp_s32", 0x80000000, 4, "func"))
         db.execute("INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)",
                    (pid, changed_id, "keep this note", 1))
         db.execute("INSERT INTO notes(project_id,function_id,text,created_at) VALUES(?,?,?,?)",
@@ -106,7 +109,12 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert not (root / "old.yaml").exists()
     unchanged = net.store.one("SELECT status, matched_source FROM functions WHERE id=?", unchanged_id)
     assert unchanged["status"] == "matched"
-    assert unchanged["matched_source"] == "void func_80000000(void) {}"
+    assert unchanged["matched_source"] == "void clamp_s32(void) {}"
+    assert net.store.one("SELECT name FROM functions WHERE id=?", unchanged_id)["name"] == "clamp_s32"
+    assert net.store.one("SELECT address FROM symbols WHERE project_id=? AND name='clamp_s32'", pid)["address"] == 0x80000000
+    assert not net.store.one("SELECT 1 FROM symbols WHERE project_id=? AND name='func_80000000'", pid)
+    kept = net.store.one("SELECT text FROM notes WHERE text LIKE '%it matched with this C%'")["text"]
+    assert "gone();" in kept and any("their C is kept in the project's notes" in m for m in messages)
     changed = net.store.one("SELECT status, matched_source, target FROM functions WHERE id=?", changed_id)
     assert changed["status"] == "open" and changed["matched_source"] is None
     assert changed["target"] == bytes.fromhex("24020002")
