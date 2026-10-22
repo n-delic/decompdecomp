@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from ... import compilermap, consoles, scoring, toolchains
-from ...network import GAME_CODE, IN_BUILD, set_aside
+from ...network import IN_BUILD, PROGRESS_COLUMNS, set_aside
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
@@ -75,11 +75,8 @@ class GuiMixin:
         if (fork := self.fork_slug(slug)):
             return self.forks.overview(fork)
         cfg = self.cfg(proj)
-        agg = self.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
+                             f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         tc = toolchains.get(cfg["compiler"]["toolchain"])
         console = self.console(proj)
         return {
@@ -107,11 +104,7 @@ class GuiMixin:
         agents at work the list took 2.5-3.7 s."""
         proj = self._project(slug)
         cfg = self.cfg(proj)
-        agg = self.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes FROM functions "
-            f"WHERE project_id=? AND {IN_BUILD} AND {GAME_CODE}", proj["id"])
+        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         console = self.console(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),

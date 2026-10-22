@@ -372,7 +372,7 @@ async function renderProjectSettings() {
 /* What the project covers (forks/project.py SCOPES): the game's own code, with the library and middleware code its
    import recognised left out of agents' work and progress, or the whole program. Shown where there's such code. */
 function renderScope(ov) {
-  const aside = ov.set_aside, panel = $("scopePanel");
+  const aside = ov.scope_list, panel = $("scopePanel");
   panel.hidden = !(ov.kind === "fork" && ov.scope && (aside || ov.unanalysed || ov.scope === "program"));
   if (panel.hidden) return;
   // code the project's import left unanalysed (an older import's): a new analysis brings it in, once

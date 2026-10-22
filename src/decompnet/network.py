@@ -42,9 +42,18 @@ MODEL_FAMILIES = {"opus": "claude", "sonnet": "claude", "haiku": "claude", "fabl
 STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
-# The functions progress counts (an SQL condition on `functions`): not ones the project sets aside as library code,
-# middleware or the C runtime (config/<version>/set_aside.json, objdiff.game_measures), which aren't the game's own
+# The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
+# or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code)
 GAME_CODE = "json_extract(meta, '$.set_aside') IS NULL"
+# Set aside, for either reason (an SQL condition on `functions`): no C makes it (status asm: hand-written assembly, a
+# piece of a function, agents' verdict) or it isn't the game's own (GAME_CODE). Every count takes it off the total
+# and off what matched, so a matched library function doesn't count either.
+SET_ASIDE = f"(status = 'asm' OR NOT ({GAME_CODE}))"
+# The counts a project's page and the project list show (functions, matched, bytes, set aside), as SQL columns
+PROGRESS_COLUMNS = (
+    "COUNT(*) AS total, SUM(status='matched' AND NOT {a}) AS matched, SUM(size) AS bytes, "
+    "SUM(CASE WHEN status='matched' AND NOT {a} THEN size ELSE 0 END) AS matched_bytes, SUM({a}) AS set_aside, "
+    "SUM(CASE WHEN {a} THEN size ELSE 0 END) AS set_aside_bytes").format(a=SET_ASIDE)
 # The functions still in the game's build: not one a measure found gone (a piece joined to its function, kept for its
 # attempts and notes; ForkEngine.sync marks it), which the map and every count leave out
 IN_BUILD = "json_extract(meta, '$.gone') IS NULL"
@@ -271,11 +280,11 @@ def model_of(name: str) -> str:
 
 
 def set_aside(fn) -> dict:
-    """Why a set-aside function is (status asm), for its page: {"set_aside": the reason, "not_c": whether agents
-    agreed no C makes it}, or nothing."""
-    if fn["status"] != "asm":
-        return {}
+    """Why a set-aside function is (SET_ASIDE: no C makes it, or it isn't the game's own code), for its page:
+    {"set_aside": the reason, "not_c": whether agents agreed no C makes it}, or nothing."""
     meta = json.loads(fn["meta"] or "{}")
+    if fn["status"] != "asm" and not meta.get("set_aside"):
+        return {}
     why = meta.get("asm_code") or (f"the same code as {meta['asm_twin']}, a matched assembly function"
                                    if meta.get("asm_twin") else "hand-written assembly")
     return {"set_aside": why, "not_c": "not_c" in meta}
@@ -632,8 +641,7 @@ class Network:
                 if fn["status"] == "matched":
                     raise NetworkError(f"{fn['name']} is already matched; use get_function to read its source")
                 if fn["status"] == "asm":
-                    raise NetworkError(f"{fn['name']} is set aside, as no C makes it ({set_aside(fn)['set_aside']}): "
-                                       "claim another")
+                    raise NetworkError(f"{fn['name']} is set aside ({set_aside(fn)['set_aside']}): claim another")
                 other = db.execute("SELECT agent_id, expires_at FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
                 if other is not None:
                     raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "

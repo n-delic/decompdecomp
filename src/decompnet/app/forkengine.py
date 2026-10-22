@@ -34,6 +34,7 @@ from ..network import (
     IN_BUILD,
     NOT_C_AGENTS,
     NOT_C_MODELS,
+    PROGRESS_COLUMNS,
     Agent,
     Network,
     NetworkError,
@@ -874,7 +875,7 @@ class ForkEngine:
                                  and not (k == "asm_code" and was.get("set_aside"))})  # (set aside: decided below)
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
-                    meta["set_aside"] = True  # and progress leaves it out (network.GAME_CODE)
+                    meta["set_aside"] = True  # and progress takes it off, as no C code is (network.SET_ASIDE)
                 status = "matched" if fuzzy is not None and fuzzy >= 100 else "open" if u and u.source else "nosource"
                 if status == "open" and any(meta.get(k) for k in _ASM_KEYS):
                     status = "asm"  # hand-written assembly (here or in its twin elsewhere): not for agents
@@ -2994,11 +2995,8 @@ class ForkEngine:
         proj, fp, cfg = self.get(slug)
         if cfg.get("ready"):
             self._preflight_once(slug)
-        agg = self.net.store.one(
-            "SELECT COUNT(*) AS total, SUM(status='matched') AS matched, SUM(size) AS bytes, "
-            "SUM(CASE WHEN status='matched' THEN size ELSE 0 END) AS matched_bytes, SUM(status='asm') AS set_aside, "
-            "SUM(CASE WHEN status='asm' THEN size ELSE 0 END) AS set_aside_bytes, SUM(attempts) AS attempts "
-            f"FROM functions WHERE project_id=? AND {IN_BUILD} AND {GAME_CODE}", proj["id"])
+        agg = self.net.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
+                                 f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {
@@ -3026,14 +3024,17 @@ class ForkEngine:
 
     def _scope_facts(self, proj, fp: ForkProject, cfg: dict) -> dict:
         """What the project covers, for its page and Settings: `scope`, `left_out` (functions its progress leaves
-        out now), `set_aside` (what its set-aside list names: {functions, without_source}, None: nothing) and
-        `unanalysed` (code its import left unanalysed that a new analysis can bring in, Console.unanalysed's words).
+        out now as not the game's own: part of the overview's `set_aside` count), `scope_list` (what its set-aside
+        list names: {functions, without_source}, None: nothing) and `unanalysed` (code its import left unanalysed
+        that a new analysis can bring in, Console.unanalysed's words).
+        (`scope_list`, not `set_aside`: that's the overview's count of every set-aside function, which the pages take
+        off the total; named the same, this dict replaced it and every such project showed "NaN functions".)
         (An older import's manifest may say what it left out as `set_aside_unimported`: the console's own check
         replaces it, so it's no longer read.)"""
         manifest = fp.manifest or {}
         left = self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND NOT ({GAME_CODE})",
                                   proj["id"])["n"]
-        return {"scope": fp.scope if manifest else None, "left_out": left or 0, "set_aside": cfg.get("set_aside"),
+        return {"scope": fp.scope if manifest else None, "left_out": left or 0, "scope_list": cfg.get("set_aside"),
                 "unanalysed": self._unanalysed(fp, cfg) if cfg.get("origin") == "scratch" else None}
 
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
