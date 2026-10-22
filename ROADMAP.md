@@ -40,6 +40,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | — | — | — | — |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -136,6 +137,10 @@ Where to start on a gap:
 - **One notification centre** (the bell) for every project, and **Report a problem** on every page.
 - **Save and restore** (ROM projects): the work as plain files in `progress/`, every few minutes; **Open a saved
   project** rebuilds it on another computer from your own copy, and judges every function again.
+- **Reimport a ROM project** (Settings): replace the split from a newly selected copy, keeping matched C only where
+  its target is unchanged, plus notes, settings, saves and the names agents gave (functions are paired by address).
+  A matched function the new split doesn't have keeps its C in a note. Project mode can't yet: its project's own
+  analysis makes the functions, and Check again redoes what decompdecomp adds to it.
 - **Polish matched code** (ROM projects): helpers give matched functions real names, types and a comment; a change
   counts only when the function still matches. The project shows matched and readable.
 - **Shared knowledge**: what agents learn about a game reaches every agent once helpers of two different models

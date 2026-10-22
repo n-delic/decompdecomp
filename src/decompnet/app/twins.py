@@ -423,6 +423,10 @@ class Twins:
     def _full_running(self, slug: str) -> bool:
         return (job := self.jobs.get(slug)) is not None and job.state == "running"
 
+    def stop(self, slug: str) -> None:
+        if (job := self.jobs.get(slug)) is not None and job.state == "running":
+            job.stop.set()
+
     def refresh(self, slug: str) -> Job | None:
         """Bring a project's twins up to date in the background (see full_pass). Runs when agents start."""
         if (job := self.jobs.get(slug)) is not None and job.state == "running":

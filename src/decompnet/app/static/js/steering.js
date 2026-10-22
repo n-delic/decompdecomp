@@ -345,6 +345,7 @@ async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
   const fork = ov.kind === "fork";
+  $("reimportGame").hidden = fork;
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
   $("compilerPanel").hidden = !(ov.compilers || []).length;
@@ -464,6 +465,34 @@ $("setTcSave").onclick = async () => {
   } catch (e) { toast(esc(e.message), "err"); } finally { $("setTcSave").disabled = false; }
 };
 $("folderBtn").onclick = () => openFolder();
+$("reimportBtn").onclick = async () => {
+  const button = $("reimportBtn"), log = $("reimportLog"), work = $("reimportWork");
+  try {
+    const { path } = await api("/api/pick", {
+      method: "POST", body: { kind: "file", title: "Choose your own copy of the game to reimport" },
+    });
+    if (!path) return;
+    if (!confirm("Reimport this project from the selected game file?\n\nMatched C is kept only for functions whose target bytes are unchanged. Changed functions reopen. Notes, settings and saved progress are kept. Helpers working on this project will stop.\n\nConfirm that this is your own legally obtained copy of the game.")) return;
+    button.disabled = true;
+    work.hidden = false;
+    showJobError(log, "");
+    const { job } = await api("/api/reimport", {
+      method: "POST", body: { slug: S.slug, path, confirmed: true },
+    });
+    const result = await followJob(job, log);
+    if (result.slug !== S.slug) return;
+    S.ov = await api(`/api/project?slug=${S.slug}`);
+    renderStats(S.ov);
+    renderProjectSettings();
+    await refreshMap(true);
+    toast(`Reimported ${plural(result.functions, "function")}; ${plural(result.matched, "matched function")} still match.`, "match");
+  } catch (e) {
+    showJobError(log, e.message);
+  } finally {
+    button.disabled = false;
+    work.hidden = true;
+  }
+};
 
 /* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
@@ -555,4 +584,3 @@ $("deleteBtn").onclick = () => {
     } catch (e) { toast(esc(e.message), "err"); }
   };
 };
-

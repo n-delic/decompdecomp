@@ -389,6 +389,12 @@
           <div class="pad">
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
+            <div id="reimportGame">
+              <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
+              <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>
+              <div class="workbar" id="reimportWork" role="progressbar" aria-label="Reimporting game" hidden><i></i></div>
+              <pre class="joblog" id="reimportLog" hidden></pre>
+            </div>
           </div>
         </section>
         <section class="panel" id="savePanel">
