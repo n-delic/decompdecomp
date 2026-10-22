@@ -23,6 +23,7 @@ from .. import BETA, EXPORT, ROM, Compiler, Console
 SMALL = 64 << 20  # programs are read whole; disc images are read from disk
 ELF_ENTRY = slice(24, 28)  # e_entry in a 32-bit ELF header
 SMALL_DATA_BYTES = 8  # globals this small sit in $gp-relative small data when a game uses $gp
+OBJECT_READING = 1  # how elf.object_compilers reads a program: a higher one reads every project's program again
 
 
 class PlayStation2(Console):
@@ -148,10 +149,61 @@ class PlayStation2(Console):
                 log(f"{len(spans)} stretches of object files are {by_guess[guess].name}'s, by the "
                     f"program's symbols: they build with it")
             net.test_compilers(slug, [c.id for c in self.compilers], log=log)
+        net._update_cfg(slug, lambda c: c.__setitem__("object_reading", OBJECT_READING))
         name_kernel_calls(net, slug, log=log)
 
     def on_start(self, net, slug: str, log=print) -> None:
         name_kernel_calls(net, slug, log=log)  # projects imported before their kernel calls were named at import
+        self.suggest_object_compilers(net, slug)
+
+    def suggest_object_compilers(self, net, slug: str) -> None:
+        """A project imported before its program's object files were read (elf.object_compilers), or by an older
+        reading: what they say, as the autopilot's suggestions. The project's compiler ranges are its agents' work,
+        voted on and checked against their neighbours, so the symbols don't overwrite them: their ranges go through
+        the same range check as an agent's, and another compiler for the whole game to the user."""
+        from collections import Counter
+
+        from ...project import compiler_for
+        from . import elf
+
+        proj = net.project_row(slug)
+        cfg = net.cfg(proj)
+        program = Path(proj["root"]) / cfg.get("rom", {}).get("program", "")
+        if cfg.get("kind") != "rom" or cfg.get("object_reading", 0) >= OBJECT_READING or net._link(slug) \
+                or not program.is_file():  # (a room's guest: the host reads it; the game's files gone: they may come back)
+            return
+        parts = elf.object_compilers(program.read_bytes())
+        by_guess = {c.guess: c for c in self.compilers}
+        family = {c.id: c.guess.split("-")[0] for c in self.compilers}
+        built: Counter = Counter()
+        for start, end, guess in parts:
+            built[guess] += end - start
+        said = []
+        agent, _ = net.local_agent("autopilot")
+        main = built.most_common(1)[0][0] if parts else None
+        main_agrees = main is None or family.get(cfg["compiler"]["toolchain"]) == main.split("-")[0]
+        if not main_agrees:
+            share = round(100 * built[main] / sum(built.values()))
+            net.suggest(agent, slug, f"The program's symbols say {by_guess[main].name} built {share}% of the game's code "
+                        "(object files with its mark): the project's compiler.", compiler=by_guess[main].id)
+            said.append(f"{by_guess[main].name} for the game, suggested")
+        for guess in sorted({g for *_, g in parts if g != main}):
+            spans = []
+            for start, end, g in parts:
+                inside = net.store.all("SELECT vram FROM functions WHERE project_id=? AND vram>=? AND vram<?",
+                                       proj["id"], start, end)
+                if g == guess and inside and not (main_agrees and all(
+                        family.get(compiler_for(cfg, r["vram"])["toolchain"]) == guess.split("-")[0] for r in inside)):
+                    spans.append((start, end))
+            if spans:
+                net.suggest(agent, slug, f"The program's symbols say {by_guess[guess].name} built these object files.",
+                            compiler=by_guess[guess].id, ranges=", ".join(f"0x{a:X}-0x{b:X}" for a, b in spans))
+                said.append(f"{by_guess[guess].name} for {len(spans)} stretches of object files, range-checked")
+        net._update_cfg(slug, lambda c: c.__setitem__("object_reading", OBJECT_READING))
+        if said:
+            with net.store.tx() as db:
+                net._event(db, proj["id"], None, "analysis", "the program's symbols name its compilers: "
+                           + "; ".join(said))
 
     def asm_reason(self, code: bytes) -> str | None:
         return mips.asm_reason(code, False, eabi=True, cop2="VU0")

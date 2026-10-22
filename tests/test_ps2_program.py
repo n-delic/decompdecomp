@@ -41,7 +41,8 @@ def test_the_import_gives_other_compilers_their_object_files():
                                                          [0x2257D0, 0x225BC0, "MWCPS2-2"]]}
     net = SimpleNamespace(cfg=lambda proj: {"rom": rom}, project_row=lambda slug: {},
                           set_compiler_ranges=lambda slug, spans, tc: calls.append(("ranges", spans, tc)),
-                          test_compilers=lambda slug, tcs, log: calls.append(("test", tcs)))
+                          test_compilers=lambda slug, tcs, log: calls.append(("test", tcs)),
+                          _update_cfg=lambda slug, change: None)
     ps2.after_import(net, "game", chosen=False, log=lambda *_: None)
     assert calls == [("ranges", [[0x200000, 0x2002D0], [0x2257D0, 0x225BC0]], "mwcps2-2.3.3"),
                      ("test", [c.id for c in ps2.compilers])]
@@ -88,3 +89,36 @@ def test_a_tail_call_to_a_function_named_l_is_not_a_label():
     fn = RomFunction("f", 0x200000, 0, "cod", lines, Path("f.s"))
     target = match.target_from_split(fn, {"LoadBTF": 0x200040}.get, big_endian=False)
     assert [(off, addr) for off, _, addr in target.relocs] == [(0, 0x200040), (8, 0x200000)]
+
+
+def test_check_again_suggests_what_the_symbols_say_and_overwrites_nothing(tmp_path, monkeypatch):
+    """A project imported before object files were read: its ranges are its agents' work, so Check again doesn't set
+    ranges. Stretches not built with their compiler yet go through the range check as the autopilot's suggestion,
+    once; stretches already built with it are left alone."""
+    import contextlib
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+    from decompnet.consoles.ps2 import elf as ps2elf
+
+    ps2 = consoles.get("ps2")
+    (tmp_path / "game.elf").write_bytes(b"\x7fELF")
+    monkeypatch.setattr(ps2elf, "object_compilers", lambda data: [
+        (0x200000, 0x200100, "MWCPS2-2"), (0x200100, 0x210000, "EEGCC"), (0x210000, 0x210100, "MWCPS2-2")])
+    cfg = {"kind": "rom", "rom": {"program": "game.elf"}, "compiler": {"toolchain": "ee-gcc-2.95.3", "flags": []},
+           "compiler_ranges": [{"start": 0x200000, "end": 0x200100, "toolchain": "mwcps2-3.0.1", "flags": []}]}
+    suggested, events = [], []
+
+    def update(slug, change):
+        change(cfg)
+    net = SimpleNamespace(
+        project_row=lambda slug: {"id": 1, "root": str(tmp_path)}, cfg=lambda proj: cfg, _link=lambda slug: None,
+        local_agent=lambda name: (name, None), _update_cfg=update,
+        suggest=lambda agent, slug, text, compiler="", ranges="": suggested.append((compiler, ranges)),
+        store=SimpleNamespace(all=lambda sql, pid, a, b: [{"vram": a}], tx=contextlib.nullcontext),
+        _event=lambda db, pid, agent, kind, detail: events.append(kind))
+    ps2.suggest_object_compilers(net, "game")
+    assert suggested == [("mwcps2-2.3.3", "0x210000-0x210100")]  # the first stretch is CodeWarrior's already
+    assert cfg["compiler_ranges"][0]["toolchain"] == "mwcps2-3.0.1" and events == ["analysis"]
+    ps2.suggest_object_compilers(net, "game")
+    assert len(suggested) == 1  # read once per reading
