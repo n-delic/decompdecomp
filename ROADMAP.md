@@ -38,7 +38,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -63,6 +63,17 @@ Where to start on a gap:
   games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **The compiler of each object file, from a PS2 game's symbols.** Games linked by CodeWarrior's linker are often
+  GCC's code with CodeWarrior's C library: the three with symbols had GCC's mark on 91-93% of their object files.
+  The one that built most of the code is the game's, and SN's GCC is told from Sony's by its own code; the others'
+  object files get their ranges at import, and Check again suggests them to older projects through the range check.
+- **Every compiler of the console, then the test of them all** (N64, PS1, PS2). The import offers to install the
+  console's missing compilers, and a project page offers it until the first match; the compiler test then tries
+  every one. A guess from the program alone can miss: one game's GCC code leaves its return delay slots empty as
+  often as CodeWarrior's.
+- **PS2 programs splat couldn't read** (#44): one without section headers, one whose DNAS block is marked as
+  register info, one whose sections have no names, one with an empty section below its code. All import now.
 
 - **A CodeWarrior version per source file on GameCube and Wii** (#26). A project started from scratch builds a
   source file with its own version when its `Object(...)` names one (`mw_version="GC/1.2.5"` in configure.py, which
