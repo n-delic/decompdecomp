@@ -262,14 +262,15 @@ function renderLauncher(box, compact = true) {
   const inst = box.querySelector('[data-act="install"]');
   if (inst) inst.onclick = async () => {
     const log = box.querySelector("[data-log]");
-    showJobError(log, ""); inst.disabled = true;
+    showJobError(log, "");
+    const finish = beginWork(log, "Installing agent", [inst], "Agent installed.");
     try {
       const { job } = await api("/api/agents/install", { method: "POST", body: { kind: a.id } });
       await followJob(job, log);
       toast(`${esc(a.name)} installed. ${esc(a.signin)}`, "match");
       await loadState();
       rerender();
-    } catch (e) { showJobError(log, e.message); inst.disabled = false; }
+    } catch (e) { showJobError(log, e.message); inst.disabled = false; } finally { finish(); }
   };
   const again = box.querySelector('[data-act="detect"]');
   if (again) again.onclick = async () => {

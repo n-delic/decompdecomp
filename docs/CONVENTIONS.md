@@ -103,6 +103,47 @@ def try_compiler(self, agent, slug, function, compiler, flags="", source=""):
 - **Docs** (README, GUIDE, the guides for agents) use simplified English: short sentences, one instruction per
   sentence, the same word for the same thing.
 
+### Progress in dialogs and panels
+
+Any dialog, drawer, window or panel that shows progress text or logs while adding, installing, importing,
+building, updating or otherwise doing work also shows a progress bar. Logs explain what is happening; the bar
+shows that the operation is still running, including stretches when no new log lines arrive.
+
+Use the existing system in `app/static/js/base.js`: `beginWork(log, label, controls, completed)` creates the
+shared `.workbar` from `app/static/app.css`, adds an accessible status message, disables the supplied controls,
+and returns a cleanup function. `followJob(id, log)` follows the server's job and updates its log.
+`showJobError(log, message)` keeps an error visible in the panel. Do not create a separate animation or polling
+loop for a new foreground job. These helpers are already shared; extend them when another flow needs the same
+behaviour.
+
+```javascript
+const log = $("taskLog"), button = $("taskGo");
+const finish = beginWork(log, "Measuring project", [button], "Project measurement finished.");
+showJobError(log, "");
+try {
+  const { job } = await api("/api/fork/check", { method: "POST", body: { slug: S.slug } });
+  await followJob(job, log);
+} catch (error) {
+  showJobError(log, error.message);
+} finally {
+  finish();
+}
+```
+
+- Start the bar before the initial request, not after the server returns a job ID. Starting the operation can
+  itself take time. Keep it visible through the work and any final processing.
+- Always call the cleanup in `finally`: success, failure, cancellation and failure to start all clear the bar
+  and restore the controls. Keep the failure message and useful logs visible so the user can read and retry.
+- Keep references to the panel's own elements while awaiting work; the user may close or replace the dialog.
+- Use the indeterminate `.workbar` when the total is unknown. Do not invent a percentage from elapsed time or
+  the number of log lines. For a measured fraction, use the existing `.upbar` and real completed/total values.
+- Imports and saved-project restoration retain state across renders and have their own cancellation and upload
+  handling. Reuse their existing `.workbar` markup and state-driven visibility when working on those flows;
+  do not add a second bar alongside it. Bars have `role="progressbar"` and an action-specific `aria-label`;
+  an indeterminate bar has no `aria-valuenow`.
+- Cover changes to this lifecycle in `tests/gui_progress.js` (run through `tests/test_gui.py`); saved-project
+  restoration has its own cases in `tests/gui_restore.js`. Check delayed starts and every terminal outcome.
+
 ## 5. Errors and robustness
 
 - Catch the exceptions you expect and can say something about.

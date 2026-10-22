@@ -122,6 +122,10 @@ linting). In short:
   case that motivated a rule ("#22: ..."). Describe a game by its kind, never by its title ("a PS2 game with 3,000
   functions"), in code, tests, commits and PRs alike; older comments that name one stay until touched. No new dependencies for a few lines; capstone, pyelftools, httpx are there.
 - Heavy external tools run through `limits.capped(...)` (memory cap) with a timeout.
+- A window, dialog or panel that shows progress text or logs while doing work also shows a progress bar. Reuse
+  `beginWork`, `followJob` and `showJobError` in `app/static/js/base.js` and the shared `.workbar` styling; start
+  before the request and clean up in `finally`. Existing stateful import/restore flows keep their shared bar.
+  See `docs/CONVENTIONS.md`, "Progress in dialogs and panels", for the pattern and tests.
 - Errors shown to the user or agent are `ForkError` / `NetworkError` with a sentence they can act on.
 - Every behavior change gets a test in `tests/`. Tests that need a real game or a compiler skip when it isn't there
   (CI has none of them); small homemade games/objects live in `projects/demo-*` and are built by their own scripts.

@@ -99,13 +99,47 @@ function toast(html, kind = "") {
 }
 
 const JOB_POLL_MS = 500;
+/* Keep the indicator and controls tied to this panel's elements: a dialog can be closed or replaced while its
+   request is pending. Call the returned cleanup in finally, including when starting the job fails. */
+function beginWork(log, label, controls = [], completed = "Finished.") {
+  let status = log._workStatus;
+  if (!status) {
+    status = document.createElement("p");
+    status.className = "muted small";
+    status.setAttribute("role", "status");
+    log.before(status);
+    log._workStatus = status;
+  }
+  status.textContent = `${label}…`;
+  status.dataset.state = "running";
+  const bar = document.createElement("div");
+  bar.className = "workbar";
+  bar.setAttribute("role", "progressbar");
+  bar.setAttribute("aria-label", label);
+  bar.append(document.createElement("i"));
+  log.before(bar);
+  const disabled = controls.map((control) => control.disabled);
+  controls.forEach((control) => { control.disabled = true; });
+  return () => {
+    bar.remove();
+    if (status.dataset.state === "running") {
+      status.textContent = completed;
+      status.dataset.state = "done";
+    }
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+  };
+}
+
 async function followJob(id, logEl, onUpdate) {
   for (;;) {
     const job = await api(`/api/job?id=${id}`);
     if (logEl) { logEl.textContent = job.log.join("\n"); logEl.scrollTop = logEl.scrollHeight; }
     if (onUpdate) onUpdate(job.log);
     if (job.state === "done") return job.result;
-    if (job.state === "error") { const err = new Error(job.error); err.job = job; throw err; }
+    if (job.state === "error" || job.state === "cancelled") {
+      const err = new Error(job.error || (job.state === "cancelled" ? "Cancelled." : "The job failed. Try again."));
+      err.job = job; throw err;
+    }
     await sleep(JOB_POLL_MS);
   }
 }
@@ -114,6 +148,10 @@ async function followJob(id, logEl, onUpdate) {
    (`message` ""): a toast is gone before it's read. A fork of a repository that doesn't exist sat on "cloning …"
    for good, and a join with a wrong link showed an empty box. */
 function showJobError(logEl, message) {
+  if (message && logEl._workStatus) {
+    logEl._workStatus.textContent = message;
+    logEl._workStatus.dataset.state = "error";
+  }
   let box = logEl.previousElementSibling;
   if (!box || !box.classList.contains("err-msg")) {
     box = document.createElement("p");

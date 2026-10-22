@@ -402,7 +402,9 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                          "the judge's survey of other compilers in the background; check_ranges=true looks at the "
                          "applied ranges again.", s(survey=bo("start the survey"), check_ranges=bo("check applied ranges"))),
         "list_functions": ("List functions by status.", s(status=st("open | matched | all"), limit=it("max rows"))),
-        "add_note": ("Leave a note on a function for the next agent on it.", s(text=st("note", True), function=st("function"))),
+        "add_note": ("Leave a note on a function for the next agent on it. Something every agent on this game should "
+                     "know goes through share_knowledge.",
+                     s(text=st("note", True), function=st("function", True))),
         "search_flags": ("Build the function's C with each flag variant of its compiler, ranked: for C that looks right "
                          "but won't match.", s(function=st("function", True), compiler=st("another compiler"),
                                                 source=st("C (default: the best attempt)"))),

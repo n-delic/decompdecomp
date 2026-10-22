@@ -20,13 +20,14 @@ function renderAgentsPage() {
   $("agList").querySelectorAll("[data-inst]").forEach((b) => {
     b.onclick = async () => {
       const log = $("agList").querySelector(`[data-ilog="${b.dataset.inst}"]`);
-      showJobError(log, ""); b.disabled = true;
+      showJobError(log, "");
+      const finish = beginWork(log, "Installing agent", [b], "Agent installed.");
       try {
         const { job } = await api("/api/agents/install", { method: "POST", body: { kind: b.dataset.inst } });
         await followJob(job, log);
         toast("Installed.", "match");
         showAgentsPage();
-      } catch (e) { showJobError(log, e.message); b.disabled = false; }
+      } catch (e) { showJobError(log, e.message); b.disabled = false; } finally { finish(); }
     };
   });
   const eps = S.st.settings.endpoints || [];
@@ -172,8 +173,10 @@ function offerUpdate() {
     closeAll();
   };
   body.querySelector("#upGo").onclick = async (e) => {
-    e.target.disabled = true;
-    try { await api("/api/update", { method: "POST", body: { apply: true } }); } catch (err) { e.target.disabled = false; return toast(esc(err.message), "err"); }
+    const log = document.createElement("pre");
+    log.className = "joblog"; body.append(log);
+    const finish = beginWork(log, "Starting update", [e.target], "Update started.");
+    try { await api("/api/update", { method: "POST", body: { apply: true } }); } catch (err) { e.target.disabled = false; showJobError(log, err.message); return; } finally { finish(); }
     showUpdating();
   };
 }
@@ -199,29 +202,35 @@ async function showUpdating() {
   const was = { version: S.st ? S.st.version : "", build: S.st ? S.st.build || "" : "" };
   dialog("Updating decompdecomp", `<p id="upStep">Installing the update…</p><pre class="joblog tall" id="upLog"></pre>
     <p class="muted small">This tab reloads by itself once the new version is running.</p>`);
+  const log = $("upLog");
+  const finish = beginWork(log, "Updating decompdecomp", [], "Update installed. Reloading the app.");
   let away = 0;
-  for (;;) {
-    await sleep(1000);
-    let u = null;
-    try { u = await api("/api/update"); away = 0; } catch { away++; }
-    const job = (u && u.job) || {};
-    if (u && $("upLog")) { $("upLog").textContent = (job.log || []).join("\n"); $("upLog").scrollTop = $("upLog").scrollHeight; }
-    if (job.state === "error") {
-      S.updating = false;
-      if ($("upStep")) $("upStep").textContent = `The update didn't go through: ${job.error}`;
-      return;
+  try {
+    for (;;) {
+      await sleep(1000);
+      let u = null;
+      try { u = await api("/api/update"); away = 0; } catch { away++; }
+      const job = (u && u.job) || {};
+      if (u && $("upLog")) { $("upLog").textContent = (job.log || []).join("\n"); $("upLog").scrollTop = $("upLog").scrollHeight; }
+      if (job.state === "error") {
+        S.updating = false;
+        showJobError(log, `The update didn't go through: ${job.error}`);
+        if ($("upStep")) $("upStep").textContent = `The update didn't go through: ${job.error}`;
+        return;
+      }
+      if (job.state === "restarting" && $("upStep")) $("upStep").textContent = "Restarting…";
+      try {
+        const h = await (await fetch("/health", { cache: "no-store" })).json();
+        if (h.version !== was.version || (h.build || "") !== was.build) { finish(); location.reload(); return; }
+      } catch { /* not back yet */ }
+      if (away > 180) {
+        S.updating = false;
+        showJobError(log, "The update could not finish restarting. Start decompdecomp again.");
+        if ($("upStep")) $("upStep").textContent = "decompdecomp didn't come back after the update. Start it again (decompdecomp in your apps, or the decomp command).";
+        return;
+      }
     }
-    if (job.state === "restarting" && $("upStep")) $("upStep").textContent = "Restarting…";
-    try {
-      const h = await (await fetch("/health", { cache: "no-store" })).json();
-      if (h.version !== was.version || (h.build || "") !== was.build) { location.reload(); return; }
-    } catch { /* not back yet */ }
-    if (away > 180) {
-      S.updating = false;
-      if ($("upStep")) $("upStep").textContent = "decompdecomp didn't come back after the update. Start it again (decompdecomp in your apps, or the decomp command).";
-      return;
-    }
-  }
+  } finally { finish(); S.updating = false; }
 }
 $("navUpdate").onclick = () => (updateInfo && updateInfo.available ? offerUpdate() : checkUpdate(true, true));
 

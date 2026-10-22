@@ -2,7 +2,8 @@
 a dtk-template project (decomp-toolkit splits the game) built with Metrowerks CodeWarrior, PROJECT mode.
 
 - scratch.py: a dtk-template project for the user's game, from a disc image (ISO, GCM, RVZ, WIA, WBFS, CISO, GCZ)
-  or a program (DOL): the game's id, its modules (RELs), the first build that must rebuild it byte for byte.
+  or a program (DOL): the game's id, its modules (RELs), the first build that must rebuild it byte for byte. It also
+  reads and writes configure.py for each source file's own CodeWarrior version (issue #26).
 - guides/mwcc.md: what agents read about matching CodeWarrior's code.
 
 dtk projects someone published are forked like any public decomp: forks/ reads their layout (forks/dtksplits.py).
@@ -23,6 +24,12 @@ WII_VERSIONS = ["Wii/0x4201_127", "Wii/1.0RC1", "Wii/1.0a", "Wii/1.0", "Wii/1.1"
                 "Wii/1.7"]
 DETAIL_BYTES = 300  # of a failed rebuild's last line, shown on the project
 SMALL = 64 << 20  # a program (DOL) is smaller than this; a disc image is read in place
+
+
+def _from_scratch(manifest: dict) -> bool:
+    """Whether decompdecomp made the project from the user's own game (a public dtk decomp's cloned here has no
+    manifest, and a console that can't tell lets the project's build decide its compilers)."""
+    return manifest.get("created") == "from scratch" and bool(manifest.get("version"))
 
 
 class GameCube(Console):
@@ -123,6 +130,55 @@ class GameCube(Console):
         diff = scratch.differing_files(fp.root, version, tail) or []
         return {"identical": ok, "detail": "identical" if ok else f"{len(diff)} files differ: {', '.join(diff[:8])}"
                 if diff else (tail.strip().splitlines() or ["the build failed"])[-1][-DETAIL_BYTES:]}
+
+    def file_compiler(self, fp, source: str) -> str | None:
+        """Each source file's own CodeWarrior version: its Object(...) in configure.py names one when it needs another
+        than the project's (issue #26: a GameCube game whose code matched with GC/1.2.5 and GC/1.1 where the project
+        built everything with GC/1.3.2). `source` "": the project's own, for the engine's "does it have per-file
+        compilers" question. None: not a project decompdecomp made from scratch, whose build decides alone."""
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        if not _from_scratch(manifest):
+            return None
+        own = scratch.configured_compiler(fp.root) or manifest.get("compiler") or self.usual
+        return own if not source else scratch.object_compiler(fp.root, fp.src_dir(), source) or own
+
+    def set_file_compiler(self, fp, source: str, compiler: str) -> str:
+        """Write a source file's CodeWarrior version into configure.py's Object(...) for it: try_compiler switches the
+        file with it, and keeps the switch only when its functions match."""
+        from ...forks.project import ForkError
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        if not _from_scratch(manifest):
+            raise ForkError("this project's own build sets its compilers")
+        own = scratch.configured_compiler(fp.root) or manifest.get("compiler") or self.usual
+        scratch.set_file_compiler(fp.root, fp.src_dir(), source, compiler, own)
+        return "configure.py"
+
+    def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
+        """Where each source file's code is, from the program's and its modules' splits.txt (Settings switches the
+        files whose code is in an address range)."""
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        return scratch.file_ranges(fp.root, manifest["version"], fp.src_dir()) if _from_scratch(manifest) else {}
+
+    def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
+        """Make `compiler` the project's own (configure.py's config.linker_version and the manifest) with each of
+        `sources` keeping the version it had: an Object naming its own only where that differs, as Settings' "for the
+        whole game" leaves the files that still match with theirs."""
+        from ...forks.project import ForkError
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        if not _from_scratch(manifest):
+            raise ForkError("this project's own build sets its compilers")
+        own = scratch.configured_compiler(fp.root) or manifest.get("compiler") or self.usual
+        scratch.set_own_compiler(fp.root, fp.src_dir(), compiler, own, sources)
+        fp.update_manifest(compiler=compiler)
+        return ["configure.py", ".decomp.wtf.json"]
 
 
 class Wii(GameCube):

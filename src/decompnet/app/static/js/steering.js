@@ -291,22 +291,31 @@ function renderSource(ov) {
         + (rb ? `<p class="small ${rb.identical ? "ok" : "warn-text"}">${rb.identical ? "✓ The rebuilt game is your copy, byte for byte" + (/padding/.test(rb.detail) ? " (up to the padding at its end: your copy is trimmed)." : ".")
           : `The rebuilt game isn't your copy byte for byte yet: ${esc(rb.detail)}. Decompiling works anyway: every function is compared with your copy's own code.`}</p>` : "")
       : `This project <b>is</b> the source tree${ov.repo_url ? ` (a fork of <a class="link" href="${esc(ov.repo_url)}" target="_blank" rel="noopener">${esc(ov.repo_url.replace(/^https?:\/\//, ""))}</a>)` : ""}. Every match is committed to the <code>decomp-wtf</code> branch, ready to send upstream.`;
-    $("srcState").innerHTML = `<div class="row"><button class="ghost small-btn" id="forkMeasure" type="button">Re-measure with objdiff</button>${rb ? `<button class="ghost small-btn" id="romCheck" type="button">Rebuild the game and compare</button>` : ""}</div>`;
+    if ($("srcState")._working) return;
+    setHtml($("srcState"), `<div class="row"><button class="ghost small-btn" id="forkMeasure" type="button">Re-measure with objdiff</button>${rb ? `<button class="ghost small-btn" id="romCheck" type="button">Rebuild the game and compare</button>` : ""}</div><pre class="joblog" id="sourceCheckLog" hidden></pre>`);
     if (rb) $("romCheck").onclick = async () => {
-      $("romCheck").disabled = true;
+      const panel = $("srcState"), log = $("sourceCheckLog");
+      panel._working = true;
+      showJobError(log, "");
+      const finish = beginWork(log, "Rebuilding and comparing game", [...panel.querySelectorAll("button")], "Game rebuild and comparison finished.");
       toast("Rebuilding the game and comparing it with your copy…");
       try {
         const { job } = await api("/api/fork/rom-check", { method: "POST", body: { slug: S.slug } });
-        const r = await followJob(job);
+        const r = await followJob(job, log);
         toast(r.identical ? "The rebuilt game is your copy, byte for byte." : `Not identical yet: ${esc(r.detail)}`, r.identical ? "match" : "");
         S.ov = await api(`/api/project?slug=${S.slug}`);
-        renderSource(S.ov);
-      } catch (e) { toast(esc(e.message), "err"); if ($("romCheck")) $("romCheck").disabled = false; }
+        panel._working = false;
+        if (panel === $("srcState")) renderSource(S.ov);
+      } catch (e) { showJobError(log, e.message); } finally { finish(); panel._working = false; }
     };
     $("forkMeasure").onclick = async () => {
+      const panel = $("srcState"), log = $("sourceCheckLog");
+      panel._working = true;
+      showJobError(log, "");
+      const finish = beginWork(log, "Measuring project", [...panel.querySelectorAll("button")], "Project measurement finished.");
       toast("Measuring the whole project with objdiff…");
-      try { const { job } = await api("/api/fork/check", { method: "POST", body: { slug: S.slug } }); await followJob(job); toast("Progress updated.", "match"); refreshMap(); }
-      catch (e) { toast(esc(e.message), "err"); }
+      try { const { job } = await api("/api/fork/check", { method: "POST", body: { slug: S.slug } }); await followJob(job, log); toast("Progress updated.", "match"); refreshMap(); }
+      catch (e) { showJobError(log, e.message); } finally { finish(); panel._working = false; }
     };
     return;
   }
@@ -324,7 +333,8 @@ function renderSource(ov) {
   $("srcExport").textContent = ex ? "Export again" : "Export project";
 }
 async function exportNow() {
-  $("srcExport").disabled = true;
+  const log = $("expLog");
+  const finish = beginWork(log, "Exporting project", [$("srcExport")], "Project export finished.");
   showJobError($("expLog"), "");
   $("expResult").innerHTML = "";
   try {
@@ -337,7 +347,7 @@ async function exportNow() {
     wireCopies($("expResult"));
     S.ov = await api(`/api/project?slug=${S.slug}`);
     renderSource(S.ov);
-  } catch (e) { if (exportOpen()) showJobError($("expLog"), e.message); else toast(esc(e.message), "err"); } finally { if ($("srcExport")) $("srcExport").disabled = false; }
+  } catch (e) { showJobError(log, e.message); if (!exportOpen()) toast(esc(e.message), "err"); } finally { finish(); }
 }
 
 /* ------------------------------------------------------------------ project settings */
@@ -448,7 +458,10 @@ $("compilerParts").onclick = async (e) => {
 };
 $("setTc").onchange = () => { $("setFlags").value = ""; };  // one compiler's flags aren't another's (-G8 vs -sdatathreshold): its defaults
 $("setTcSave").onclick = async () => {
+  const wholeProject = S.ov.kind === "fork" && !$("setRanges").value.trim();
+  const finish = wholeProject ? beginWork($("setTcLog"), "Changing project compiler", [$("setTcSave")], "Project compiler change finished.") : () => {};
   $("setTcSave").disabled = true;
+  if (wholeProject) showJobError($("setTcLog"), "");
   try {
     const flags = $("setFlags").value.trim();
     const r = await api("/api/compiler", { method: "POST", body: { slug: S.slug, toolchain: $("setTc").value, flags: flags ? flags.split(/\s+/) : null, ranges: $("setRanges").value.trim() } });
@@ -462,7 +475,7 @@ $("setTcSave").onclick = async () => {
     renderStats(S.ov);
     renderProjectSettings();
     toast(esc(said));
-  } catch (e) { toast(esc(e.message), "err"); } finally { $("setTcSave").disabled = false; }
+  } catch (e) { if (wholeProject) showJobError($("setTcLog"), e.message); else toast(esc(e.message), "err"); } finally { finish(); $("setTcSave").disabled = false; }
 };
 $("folderBtn").onclick = () => openFolder();
 $("reimportBtn").onclick = async () => {
