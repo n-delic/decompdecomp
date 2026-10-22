@@ -14,7 +14,7 @@ from decompnet.app import window
 from decompnet.app.engine import RomNetwork
 from decompnet.app.server import build
 from decompnet.forks.project import ForkProject, Unit
-from decompnet.network import GAME_CODE, NetworkError
+from decompnet.network import NetworkError, set_aside
 
 PORT, SECRET = 6498, "s3cret-for-scope-tests"
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}", "X-Decomp": "1"}
@@ -54,9 +54,10 @@ def _statuses(net: RomNetwork) -> dict[str, str]:
 
 
 def _sums(net: RomNetwork) -> tuple[int, int]:
-    """What the project list and header add up: functions and matched ones (network.GAME_CODE)."""
-    row = net.store.one(f"SELECT COUNT(*) AS n, SUM(status='matched') AS m FROM functions WHERE {GAME_CODE}")
-    return row["n"], row["m"] or 0
+    """What the project list and header show: functions less the set-aside ones (base.js cFunctions), and matched
+    ones (network.PROGRESS_COLUMNS: a set-aside one, for either reason, doesn't count)."""
+    s = net.summary("p")
+    return s["functions"] - s["set_aside"], s["matched"]
 
 
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):
@@ -81,11 +82,13 @@ def test_set_aside_code_is_kept_from_agents_for_the_game_and_open_for_the_whole_
     m = net.forks.sync(slug, log=lambda *_: None)
     assert _statuses(net) == {"game_a": "matched", "game_b": "open", "lib_a": "matched", "lib_b": "asm",
                               "lib_c": "nosource"}
-    assert _sums(net) == (2, 1)  # the game's own two, one matched
+    assert _sums(net) == (2, 1)  # the game's own two, one matched (lib_a's match doesn't count)
     assert (m["total_functions"], m["matched_functions"], m["set_aside_functions"]) == (2, 1, 3)
     ov = net.forks.overview(slug)
-    assert (ov["scope"], ov["left_out"], ov["functions"], ov["matched"]) == ("game", 3, 2, 1)
-    assert ov["set_aside"] == {"functions": 3, "without_source": 1} and ov["unanalysed"] is None
+    # set aside is one count for both reasons, not the game's own code here: the pages take it off the total
+    assert (ov["scope"], ov["left_out"], ov["functions"], ov["set_aside"], ov["matched"]) == ("game", 3, 5, 3, 1)
+    assert ov["scope_list"] == {"functions": 3, "without_source": 1} and ov["unanalysed"] is None
+    assert ov["set_aside_bytes"] == 48 and ov["matched_bytes"] == 16
 
     # hand-written assembly (here: what a twin says) is the game's own and isn't the scope's to change
     row = net.store.one("SELECT id, meta FROM functions WHERE name='game_b'")
@@ -98,16 +101,20 @@ def test_set_aside_code_is_kept_from_agents_for_the_game_and_open_for_the_whole_
     assert _statuses(net) == {"game_a": "matched", "game_b": "asm", "lib_a": "matched", "lib_b": "open",
                               "lib_c": "nosource"}
     assert not any(json.loads(r["meta"]).get("set_aside") for r in net.store.all("SELECT meta FROM functions"))
-    assert _sums(net) == (5, 2)  # every function counts
+    assert _sums(net) == (4, 2)  # every function counts, less game_b: no C makes it
     assert m == REPORT["measures"]  # nothing left out of the measures
     ov = net.forks.overview(slug)
-    assert (ov["scope"], ov["left_out"], ov["functions"]) == ("program", 0, 5)
-    assert ov["set_aside"] == {"functions": 3, "without_source": 1}  # still what the list names, for Settings
+    assert (ov["scope"], ov["left_out"], ov["functions"], ov["set_aside"]) == ("program", 0, 5, 1)
+    assert ov["scope_list"] == {"functions": 3, "without_source": 1}  # still what the list names, for Settings
 
     net.forks.set_scope(slug, "game", log=lambda *_: None)  # and back
     assert _statuses(net) == {"game_a": "matched", "game_b": "asm", "lib_a": "matched", "lib_b": "asm",
                               "lib_c": "nosource"}
-    assert _sums(net) == (2, 1)
+    assert _sums(net) == (1, 1)  # game_b: set aside as not C, the library code as not the game's
+    # a function's page says why for either reason, a matched library function too
+    why = {r["name"]: set_aside(r).get("set_aside") for r in net.store.all("SELECT name, status, meta FROM functions")}
+    assert why == {"game_a": None, "game_b": "hand-written assembly", "lib_a": "library code (an SDK)",
+                   "lib_b": "library code (an SDK)", "lib_c": "the C runtime"}
     with pytest.raises(NetworkError):
         net.forks.set_scope(slug, "everything", log=lambda *_: None)
 
