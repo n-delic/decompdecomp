@@ -381,6 +381,13 @@ const restoreBusy = () => restoreStarting || restoreJob?.state === "running";
 function renderRestore() {
   if (!$("rsGo")) return;
   const busy = restoreBusy();
+  $("rsWork").hidden = !busy || !!restoreError;
+  const message = restoreError || restoreJob?.error;
+  $("rsStatus").textContent = message ? `Opening saved project stopped: ${message}`
+    : restoreCancelling ? "Cancelling saved project opening…" : busy ? "Opening saved project…"
+    : restoreJob?.state === "cancelled" ? "Saved project opening cancelled."
+    : restoreJob?.state === "done" ? "Saved project opened." : "";
+  $("rsStatus").hidden = !$("rsStatus").textContent;
   $("rsGo").disabled = busy || !restoreInput.own;
   $("rsGo").textContent = busy ? "Opening…" : "Open it";
   $("rsCancel").disabled = restoreCancelling;
@@ -399,6 +406,8 @@ function openRestore() {
     <label class="field"><span>Your copy of the game: its path on this computer</span><span class="pick-row"><input id="rsGame" class="mono" placeholder="/home/you/games/my-game.z64"><button class="ghost small-btn" type="button" data-pick="file" data-for="rsGame" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="rsOwn"><span>This is my own copy of this game, obtained legally. The results stay with me for my own use.</span></label>
     <div class="row"><button class="primary" id="rsGo" type="button" disabled>${running ? "Opening…" : "Open it"}</button><button class="ghost" id="rsCancel" type="button">${running ? "Cancel opening" : "Cancel"}</button></div>
+    <p class="muted small" id="rsStatus" role="status" hidden></p>
+    <div class="workbar" id="rsWork" role="progressbar" aria-label="Opening saved project" hidden><i></i></div>
     <pre class="joblog tall" id="rsLog"${running ? "" : " hidden"}></pre>`, "restore");
   $("rsSource").value = restoreInput.source;
   $("rsGame").value = restoreInput.path;
@@ -473,7 +482,7 @@ async function watchRestore(id) {
         if (job.state !== "done") return;
         restoreInput = { source: "", path: "", own: false };
         restoreJob = null; restoreError = "";
-        toast(`${plural(job.result.matched || 0, "matched function")} back${job.result.lost && job.result.lost.length ? `; ${job.result.lost.length} no longer match` : ""}.`, "match");
+        toast(`Saved project opened: ${plural(job.result.matched || 0, "matched function")} back${job.result.lost && job.result.lost.length ? `; ${job.result.lost.length} no longer match` : ""}.`, "match");
         if (S.dialogKind === "restore") closeDialog();
         loadNav(); location.hash = `#/p/${job.result.slug}`;
         return;

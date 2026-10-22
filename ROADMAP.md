@@ -41,6 +41,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | — | — | — | — |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
+| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
@@ -57,6 +58,10 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Visible progress while waiting.** Saved projects, room setup, exports, project checks, compiler changes and
+  installations show a labelled work bar beside their logs. The bar clears on completion or failure; saved-project
+  cancellation clears it too. Each action says when it starts and finishes, or why it stopped. Upload percentages
+  still measure bytes transferred.
 - **Agents join what the rules miss** (project mode). `join_functions(function, with_function, reason)`: once 3
   agents of 2 models say two functions are one the analysis cut, the console joins them (DS: `recover.join_functions`,
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a

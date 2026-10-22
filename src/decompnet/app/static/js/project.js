@@ -309,24 +309,29 @@ function renderStats(ov) {
 
 function renderCompilerNotice(ov) {
   const n = $("compilerNotice");
+  if (n._working) return;
   const unc = ov.kind === "fork" && ov.ready ? ov.uncovered : null;
   if (unc && unc.functions) {
     n.hidden = false;
     n.className = "notice";
-    n.innerHTML = `<span><b>${unc.functions.toLocaleString()} functions</b> are in code no source file covers yet, so agents can't decompile them. decompdecomp can give each stretch of code a file (checked against the game's checksum, committed to git).</span><span class="grow"></span><button class="primary small-btn" id="startFiles" type="button"${S.startingFiles ? " disabled" : ""}>${S.startingFiles ? "Splitting the game…" : "Give them source files"}</button>`;
+    setHtml(n, `<span><b>${unc.functions.toLocaleString()} functions</b> are in code no source file covers yet, so agents can't decompile them. decompdecomp can give each stretch of code a file (checked against the game's checksum, committed to git).</span><span class="grow"></span><button class="primary small-btn" id="startFiles" type="button">Give them source files</button><div class="job-feedback"><pre class="joblog" id="startFilesLog" hidden></pre></div>`);
     $("startFiles").onclick = async () => {
-      S.startingFiles = true;
-      renderCompilerNotice(ov);
+      n._working = true;
+      const log = $("startFilesLog");
+      const button = $("startFiles"), label = button.textContent;
+      button.textContent = "Splitting the game…";
+      showJobError(log, "");
+      const finish = beginWork(log, "Giving code source files", [button], "Source files created.");
       try {
         const { job } = await api("/api/fork/start-files", { method: "POST", body: { slug: S.slug } });
-        const res = await followJob(job);
+        const res = await followJob(job, log);
         toast(`${(res && res.functions || 0).toLocaleString()} more functions can be decompiled now.`, "match");
         await refreshMap();
-      } catch (e) { toast(esc(e.message), "err"); }
-      S.startingFiles = false;
+      } catch (e) { showJobError(log, e.message); } finally { finish(); button.textContent = label; n._working = false; }
     };
     return;
   }
+  n._html = null;
   if (ov.kind === "fork" || ov.compiler.installed) { n.hidden = true; return; }
   n.hidden = false;
   if (!ov.compiler.supported) {
@@ -422,12 +427,14 @@ function renderNext(ov) {
   }
   if (ov.kind === "fork" && ov.ready && !ov.functions) {
     box.hidden = false;
-    setHtml(box, `<div class="next-text"><b>Not measured yet</b><span class="muted small">objdiff compares every unit of the project with your game: it takes a moment.</span></div><button class="primary" id="nextMeasure" type="button">Measure now</button>`);
+    setHtml(box, `<div class="next-text"><b>Not measured yet</b><span class="muted small">objdiff compares every unit of the project with your game: it takes a moment.</span></div><button class="primary" id="nextMeasure" type="button">Measure now</button><div class="job-feedback"><pre class="joblog" id="nextMeasureLog" hidden></pre></div>`);
     $("nextMeasure").onclick = async () => {
-      $("nextMeasure").disabled = true;
+      const log = $("nextMeasureLog");
+      showJobError(log, "");
+      const finish = beginWork(log, "Measuring project", [$("nextMeasure")], "Project measurement finished.");
       toast("Measuring the whole project with objdiff…");
-      try { const { job } = await api("/api/fork/check", { method: "POST", body: { slug: S.slug } }); await followJob(job); toast("Measured.", "match"); await refreshMap(); }
-      catch (e) { toast(esc(e.message), "err"); $("nextMeasure").disabled = false; }
+      try { const { job } = await api("/api/fork/check", { method: "POST", body: { slug: S.slug } }); await followJob(job, log); toast("Measured.", "match"); await refreshMap(); }
+      catch (e) { showJobError(log, e.message); } finally { finish(); }
     };
     return;
   }
@@ -492,6 +499,7 @@ function renderGuest(box, room) {
 }
 
 function renderHost(box, info) {
+  if (box._working) return;
   const intro = `<p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) and their own agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
   const opts = (inf) => `<div class="setup-group"><h3>Who can join</h3>
       <div class="seg" id="visSeg"><button type="button" data-vis="private" class="${inf.settings.visibility !== "public" ? "on" : ""}">Private: invite link</button><button type="button" data-vis="public" class="${inf.settings.visibility === "public" ? "on" : ""}">Public: anyone with the address</button></div>
@@ -514,14 +522,19 @@ function renderHost(box, info) {
       const mode = box.querySelector('[name="mode"]:checked')?.value || "tunnel";
       const visibility = box.querySelector("[data-vis].on")?.dataset.vis || "private";
       showJobError(box.querySelector("#shareLog"), "");
-      box.querySelector("#startShare").disabled = true;
+      const log = box.querySelector("#shareLog");
+      box._working = true;
+      const finish = beginWork(log, "Starting room sharing", [box.querySelector("#startShare")], "Room sharing started.");
       try {
         const { job } = await api("/api/collab/start", { method: "POST", body: { slug: S.slug, mode, visibility,
           approve: box.querySelector("#apprChk").checked, address: box.querySelector("#addrIn")?.value || "",
           port: Number(box.querySelector("#addrPort")?.value) || ROOM_PORT, keep: info.was_sharing } });
-        await followJob(job, box.querySelector("#shareLog"));
-        renderHost(box, await api(`/api/collab?slug=${S.slug}`));
-      } catch (e) { showJobError(box.querySelector("#shareLog"), e.message); box.querySelector("#startShare").disabled = false; }
+        await followJob(job, log);
+        const shared = await api(`/api/collab?slug=${S.slug}`);
+        box._working = false;
+        renderHost(box, shared);
+        toast("Room sharing started.", "match");
+      } catch (e) { showJobError(log, e.message); } finally { finish(); box._working = false; }
     };
     return;
   }
@@ -562,14 +575,15 @@ function openReconnect() {
   const check = () => { const why = inviteProblem($("rLink").value); $("rGo").disabled = !!why; $("rWhy").textContent = $("rLink").value.trim() ? why : ""; };
   body.querySelector("#rLink").oninput = check;
   body.querySelector("#rGo").onclick = async () => {
-    showJobError($("rLog"), "");
-    $("rGo").disabled = true;
+    const log = body.querySelector("#rLog");
+    showJobError(log, "");
+    const finish = beginWork(log, "Reconnecting to room", [...body.querySelectorAll("input"), $("rGo")], "Reconnected to the room.");
     try {
       const { job } = await api("/api/collab/reconnect", { method: "POST", body: { slug: S.slug, link: $("rLink").value.trim() } });
-      await followJob(job, $("rLog"));
-      closeDialog();
+      await followJob(job, log);
+      if ($("rLog") === log) closeDialog();
       toast("Back in the room.", "match");
-    } catch (e) { if ($("rLog")) { showJobError($("rLog"), e.message); check(); } }
+    } catch (e) { showJobError(log, e.message); } finally { finish(); if ($("rLog") === log) check(); }
   };
 }
 
@@ -606,32 +620,36 @@ function openJoin() {
   body.querySelector("#jGo").onclick = async () => {
     const file = $("jRom").files[0], path = $("jPath").value.trim();
     if (joinProblem(fields())) return check();
-    showJobError($("jLog"), "");
-    $("jGo").disabled = true;
+    const log = body.querySelector("#jLog");
+    showJobError(log, "");
+    const finish = beginWork(log, "Joining room", [...body.querySelectorAll("input"), $("jGo")], "Joined the room.");
     try {
       let q = `link=${encodeURIComponent($("jLink").value.trim())}&name=${encodeURIComponent($("jName").value)}&confirmed=1`;
       q += path ? `&path=${encodeURIComponent(path)}` : `&filename=${encodeURIComponent(file.name)}`;
       // the file streams from disk as it's sent: a disc image is never read into the page whole
       const { job } = await api(`/api/collab/join?${q}`, { method: "POST", raw: path ? new Blob([]) : file });
-      const res = await followJob(job, $("jLog"));
-      closeDialog();
+      const res = await followJob(job, log);
+      if ($("jLog") === log) closeDialog();
       loadNav();
       location.hash = `#/p/${res.slug}`;
-    } catch (e) { if ($("jLog")) { showJobError($("jLog"), e.message); check(); } }
+      toast("Joined the room.", "match");
+    } catch (e) { showJobError(log, e.message); } finally { finish(); if ($("jLog") === log) check(); }
   };
 }
 
 async function installToolchain(id, proprietary) {
   if (proprietary && !confirm("This downloads a proprietary compiler, kept by the decomp community. Install it only if you accept that. Continue?")) return;
-  toast("Installing…");
+  const body = dialog("Install compiler or tool", `<pre class="joblog tall" id="toolLog"></pre>`);
+  const log = body.querySelector("#toolLog");
+  const finish = beginWork(log, "Installing compiler or tool", [], "Compiler or tool installed.");
   try {
     const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: proprietary } });
-    await followJob(job);
+    await followJob(job, log);
     toast("Installed.", "match");
     await loadState();
     if (S.slug) renderStats(await api(`/api/project?slug=${S.slug}`));
     if (!$("toolsPage").hidden) renderTools();
-  } catch (e) { toast(esc(e.message), "err"); }
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
 }
 
 /* ------------------------------------------------------------------ public decomps */
