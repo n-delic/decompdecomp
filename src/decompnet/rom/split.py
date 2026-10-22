@@ -196,24 +196,32 @@ def _splat(args: list[str], cwd: Path, log=print) -> str:
     return out
 
 
-def _flatten_without_empty_sections(program: Path, image: Path, objcopy: Path, config: Path) -> None:
+def _drop_leading_gap(program: Path, image: Path, config: Path) -> None:
     """splat lays a program out from its first section with bytes, but the flat image it has objcopy make (with
     --gap-fill) starts at the lowest loaded section, empty ones too: a PS2 game whose CodeWarrior link left an empty
-    section 1 MB below its code had
-    every function read from the zeros before it (2,286 functions of nops, all set aside as not C). Flatten again
-    without the empty sections, and give splat the new image's SHA-1."""
+    section 1 MB below its code had every function read from the zeros before it (2,286 functions of nops, all set
+    aside as not C). Cut the image to start at that first section, once its bytes are seen to be there, and give
+    splat the new SHA-1. By address, not by removing sections: a 5.5 MB game whose sections have no names at all
+    lost its whole code to `objcopy -R ""`."""
     import hashlib
 
     from elftools.elf.constants import SH_FLAGS
     from elftools.elf.elffile import ELFFile
 
     with open(program, "rb") as f:
-        empty = [s.name for s in ELFFile(f).iter_sections() if s["sh_flags"] & SH_FLAGS.SHF_ALLOC and not s["sh_size"]]
-    if not empty:
+        loaded = [(s["sh_addr"], s["sh_offset"], s["sh_size"]) for s in ELFFile(f).iter_sections()
+                  if s["sh_flags"] & SH_FLAGS.SHF_ALLOC and s["sh_type"] != "SHT_NOBITS"]
+    with_bytes = [s for s in loaded if s[2]]
+    if not with_bytes:
         return
-    subprocess.run([str(objcopy), "-O", "binary", "--gap-fill=0x00", *(a for n in empty for a in ("-R", n)),
-                    str(program), str(image)], check=True, capture_output=True, creationflags=NO_WINDOW)
-    sha1 = hashlib.sha1(image.read_bytes()).hexdigest()
+    first = min(with_bytes)
+    gap = first[0] - min(addr for addr, _, _ in loaded)
+    flat = image.read_bytes()
+    head = program.read_bytes()[first[1]:first[1] + min(first[2], 256)]
+    if gap <= 0 or flat[gap:gap + len(head)] != head:  # (not the image this expects: leave it as objcopy made it)
+        return
+    image.write_bytes(flat[gap:])
+    sha1 = hashlib.sha1(flat[gap:]).hexdigest()
     config.write_text(re.sub(r"^sha1: \w+", f"sha1: {sha1}", config.read_text(encoding="utf-8"), count=1, flags=re.M),
                       encoding="utf-8")
 
@@ -381,7 +389,7 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     config = configs[0]
     image = (yaml.safe_load(config.read_text(encoding="utf-8")).get("options") or {}).get("target_path") or rom_name
     if objcopy:
-        _flatten_without_empty_sections(workdir / rom_name, workdir / image, objcopy, config)
+        _drop_leading_gap(workdir / rom_name, workdir / image, config)
     compiler, platform, gp = _patch_config(config)
     console = console or consoles.get(platform)
     big_endian = console.big_endian

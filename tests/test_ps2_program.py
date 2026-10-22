@@ -51,9 +51,11 @@ def test_the_import_gives_other_compilers_their_object_files():
     assert calls == []
 
 
-def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path):
+@pytest.mark.parametrize("empty_at", [0x100000, 0x300000])
+def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path, empty_at):
     """A CodeWarrior-linked PS2 game has an empty section at 0x100000 and its code at 0x200000: objcopy's flat image
-    started at the empty one, splat counted from the code, and every function was read from the zeros between."""
+    started at the empty one, splat counted from the code, and every function was read from the zeros between. Empty
+    sections above the code (a 5.5 MB game has eight, all its sections without names) leave the image as it is."""
     from decompnet.rom import split
 
     if toolchains.installed("binutils-mips") is None:
@@ -62,19 +64,22 @@ def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path):
     tools = {name: bin_dir / f"mips-ps2-decompals-{name}" for name in ("as", "ld", "objcopy")}
     (tmp_path / "a.s").write_text(".section main,\"awx\",@progbits\n  jr $ra\n  nop\n.section indata,\"aw\",@progbits\n")
     subprocess.run([tools["as"], "-EL", "-march=r5900", "-o", tmp_path / "a.o", tmp_path / "a.s"], check=True)
-    (tmp_path / "a.ld").write_text("SECTIONS { indata 0x100000 : { *(indata) . = .; } main 0x200000 : { *(main) } }\n")
+    (tmp_path / "a.ld").write_text(f"SECTIONS {{ main 0x200000 : {{ *(main) }} indata 0x{empty_at:X} : {{ *(indata) . = .; }} }}\n")
     subprocess.run([tools["ld"], "-EL", "-T", tmp_path / "a.ld", "-o", tmp_path / "game.elf", tmp_path / "a.o"],
                    check=True)
-    flat = tmp_path / "with-empty.rom"
+    flat = tmp_path / "game.rom"
     subprocess.run([tools["objcopy"], "-O", "binary", "--gap-fill=0x00", tmp_path / "game.elf", flat], check=True)
-    assert flat.stat().st_size > 0x100000  # what splat's own flattening makes of it
+    made = flat.read_bytes()  # what splat's own flattening makes of it
     config = tmp_path / "game.yaml"
     config.write_text("sha1: 0000\noptions:\n")
-    split._flatten_without_empty_sections(tmp_path / "game.elf", tmp_path / "game.rom",
-                                          tools["objcopy"], config)
-    image = (tmp_path / "game.rom").read_bytes()
-    assert image.startswith(bytes.fromhex("0800e003" "00000000")) and len(image) < 0x1000  # jr $ra; nop at 0
-    assert config.read_text().startswith(f"sha1: {hashlib.sha1(image).hexdigest()}\n")
+    split._drop_leading_gap(tmp_path / "game.elf", flat, config)
+    image = flat.read_bytes()
+    assert image.startswith(bytes.fromhex("0800e003" "00000000"))  # jr $ra; nop at 0
+    if empty_at < 0x200000:
+        assert len(made) > 0x100000 and len(image) < 0x1000
+        assert config.read_text().startswith(f"sha1: {hashlib.sha1(image).hexdigest()}\n")
+    else:
+        assert image == made and config.read_text().startswith("sha1: 0000")
 
 
 def test_a_tail_call_to_a_function_named_l_is_not_a_label():
