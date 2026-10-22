@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ... import consoles, scoring, seeds, toolchains
 from ...network import NetworkError
+from ...project import compiler_for
 from ...rom import Picked, RomError, match, split
 from ...rom.symbols import AUTO_NAME, Symbol, SymbolTable
 from .common import BASE_HEADER, GP_NOTE, data_preview, slugify
@@ -351,7 +352,10 @@ class ImportMixin:
         """Which of `compilers` (the installed ones) builds this game: m2c drafts of small functions from all over
         it, compiled with each and judged like any attempt. The one that matches the most becomes the project's (a
         tie keeps the current one). What a program says about its compiler can mislead: GTA San Andreas keeps one
-        library's "MW MIPS C Compiler" note, and its own code is EE-GCC 2.96's. Returns compiler -> matches."""
+        library's "MW MIPS C Compiler" note, and its own code is EE-GCC 2.96's. Getters of 3-5 instructions count:
+        m2c's drafts of bigger functions are GCC-style and CodeWarrior never matches them, but `return p->x;` is the
+        same C for every compiler, and each fills the return's delay slot its own way. Functions in a range another
+        compiler builds aren't asked. Returns compiler -> matches."""
         from concurrent.futures import ThreadPoolExecutor
 
         from ...compiler import compile_source
@@ -363,8 +367,9 @@ class ImportMixin:
         console = self.console(proj)
         tcs = [t for t in compilers if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
-        rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 6 AND 30 ORDER BY vram",
-                              proj["id"])
+        rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
+                                          "ORDER BY vram", proj["id"])
+                if compiler_for(cfg, r["vram"])["toolchain"] == current]
         rows = rows[::max(1, len(rows) // sample)][:sample]  # spread over the whole game, not one library
         if len(tcs) < 2 or not rows or not seeds.available():
             return {}

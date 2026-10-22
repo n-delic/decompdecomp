@@ -7,17 +7,47 @@ import pytest
 
 from decompnet import toolchains
 
+MW_NOTE = b"MW MIPS C Compiler (2.4.1.01)\0PlayStation2\0"
 
-def test_codewarriors_link_names_the_compiler_whatever_the_style(monkeypatch):
-    """A 2002 game linked by CodeWarrior (.mwcats) left a nop after only 19% of its returns, under the style rule's
-    60%, and was guessed EE-GCC: every compile came out wrong. The linker's section says CodeWarrior on its own."""
+
+def test_object_files_say_which_compiler_built_them(monkeypatch):
+    """A 2002 game linked by CodeWarrior: 170 of its 183 object files carry GCC's gcc2_compiled. mark (its code), 13
+    don't (CodeWarrior's C library, kernel stubs). GCC is the game's compiler and the rest are its ranges."""
     from decompnet.consoles.ps2 import elf as ps2
 
-    monkeypatch.setattr(ps2, "code_style", lambda data: (2245, 0.19, 3.71, 0.0))
-    monkeypatch.setattr(ps2, "_sections", lambda data: {".mwcats": b"", ".comment": b"MW MIPS C Compiler (2.4.1.01)\0"})
-    assert ps2.guess_compiler(b"") == "MWCPS2-3"
-    monkeypatch.setattr(ps2, "_sections", lambda data: {".comment": b"MW MIPS C Compiler (2.4.1.01)\0"})
-    assert ps2.guess_compiler(b"") == "EEGCC"  # a library's note alone still doesn't
+    starts = {0x200000: False, 0x2002D0: True, 0x200470: True, 0x2257D0: False, 0x225948: False, 0x225BC0: True}
+    monkeypatch.setattr(ps2, "_object_starts", lambda data: (starts, dict.fromkeys(starts, 0x2D0080)))
+    monkeypatch.setattr(ps2, "_sections", lambda data: {".mwcats": b"", ".comment": MW_NOTE})
+    assert ps2.object_compilers(b"") == [(0x200000, 0x2002D0, "MWCPS2-2"), (0x2002D0, 0x2257D0, "EEGCC"),
+                                         (0x2257D0, 0x225BC0, "MWCPS2-2"), (0x225BC0, 0x2D0080, "EEGCC")]
+    assert ps2.guess_compiler(b"") == "EEGCC"
+    monkeypatch.setattr(ps2, "_sections", lambda data: {})
+    assert ps2.object_compilers(b"") == []  # no sign of CodeWarrior: unmarked objects are hand-written
+    monkeypatch.setattr(ps2, "_sections", lambda data: {".mwcats": b""})
+    monkeypatch.setattr(ps2, "_object_starts", lambda data: ({0x200000: True}, {0x200000: 0x2D0080}))
+    assert ps2.object_compilers(b"") == []  # one compiler: nothing to split
+
+
+def test_the_import_gives_other_compilers_their_object_files():
+    """Unless the user chose a compiler, each other compiler's object files become its ranges, and every installed
+    compiler is tried on the rest (CodeWarrior too: its getters match)."""
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+
+    ps2 = consoles.get("ps2")
+    calls = []
+    rom = {"compiler_guess": "EEGCC", "compiler_parts": [[0x200000, 0x2002D0, "MWCPS2-2"], [0x2002D0, 0x2257D0, "EEGCC"],
+                                                         [0x2257D0, 0x225BC0, "MWCPS2-2"]]}
+    net = SimpleNamespace(cfg=lambda proj: {"rom": rom}, project_row=lambda slug: {},
+                          set_compiler_ranges=lambda slug, spans, tc: calls.append(("ranges", spans, tc)),
+                          test_compilers=lambda slug, tcs, log: calls.append(("test", tcs)))
+    ps2.after_import(net, "game", chosen=False, log=lambda *_: None)
+    assert calls == [("ranges", [[0x200000, 0x2002D0], [0x2257D0, 0x225BC0]], "mwcps2-2.3.3"),
+                     ("test", [c.id for c in ps2.compilers])]
+    calls.clear()
+    ps2.after_import(net, "game", chosen=True, log=lambda *_: None)
+    assert calls == []
 
 
 def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path):

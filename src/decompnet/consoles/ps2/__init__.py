@@ -134,11 +134,20 @@ class PlayStation2(Console):
         return debuginfo.brief_lines(known)
 
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
-        """What a program says about its compiler can mislead (GTA San Andreas keeps one library's "MW MIPS C
-        Compiler" note; its own code is EE-GCC 2.96's): unless the user picked one, the GCCs are tried on the code.
-        CodeWarrior isn't: the test compiles m2c's drafts, which are GCC-style, and CodeWarrior never matches them."""
-        if not chosen and net.cfg(net.project_row(slug))["rom"]["compiler_guess"].startswith("EEGCC"):
-            net.test_compilers(slug, [c.id for c in self.compilers if c.guess.startswith("EEGCC")], log=log)
+        """Unless the user picked a compiler: the object files another compiler built than most of the game
+        (elf.object_compilers: CodeWarrior's C library in a GCC game) get it as their range, then the installed
+        compilers are tried on the rest. What a program says about its compiler can mislead (GTA San Andreas keeps
+        one library's "MW MIPS C Compiler" note; its own code is EE-GCC 2.96's); the judge doesn't."""
+        if not chosen:
+            cfg = net.cfg(net.project_row(slug))
+            by_guess = {c.guess: c for c in self.compilers}
+            parts = [p for p in cfg["rom"].get("compiler_parts", []) if p[2] != cfg["rom"]["compiler_guess"]]
+            for guess in sorted({p[2] for p in parts}):
+                spans = [[start, end] for start, end, g in parts if g == guess]
+                net.set_compiler_ranges(slug, spans, by_guess[guess].id)
+                log(f"{len(spans)} stretches of object files are {by_guess[guess].name}'s, by the "
+                    f"program's symbols: they build with it")
+            net.test_compilers(slug, [c.id for c in self.compilers], log=log)
         name_kernel_calls(net, slug, log=log)
 
     def on_start(self, net, slug: str, log=print) -> None:
