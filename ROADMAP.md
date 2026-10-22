@@ -32,7 +32,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
@@ -64,6 +64,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **A CodeWarrior version per source file on GameCube and Wii** (#26). A project started from scratch builds a
+  source file with its own version when its `Object(...)` names one (`mw_version="GC/1.2.5"` in configure.py, which
+  dtk-template reads): `try_compiler` switches a function's file, or tries them `"all"`, and Settings switches a
+  file, a range or the whole game, keeping every file whose matches still hold. An agent found a file whose code
+  matched only with GC/1.2.5 and GC/1.1 where the project built everything with GC/1.3.2; a file that mixes versions
+  is split first (`split_file`), then the new file switches. Public decomp forks still build with their project's
+  own compilers.
 - **Visible progress while waiting.** Saved projects, room setup, exports, project checks, compiler changes and
   installations show a labelled work bar beside their logs. The bar clears on completion or failure; saved-project
   cancellation clears it too. Each action says when it starts and finishes, or why it stopped. Upload percentages

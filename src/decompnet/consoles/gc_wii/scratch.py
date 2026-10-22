@@ -13,10 +13,16 @@ Each code region dtk finds gets a source file (src/auto/text_<address>.c; a modu
 agents to write into; decompdecomp's
 fork engine then works on it like on any community project. Tools are decompdecomp's pinned copies (dtk, binutils,
 CodeWarrior via wibo, objdiff, sjiswrap), so the build is offline and checksum-verified.
+
+dtk-template builds each Object(...) in configure.py with its library's mw_version, unless the Object names one:
+these helpers write Object(NonMatching, "game/x.c", mw_version="GC/1.2.5") for a source file that needs a version
+of its own, which try_compiler and Settings switch (issue #26: a file whose functions matched only with GC/1.2.5 in
+a project built with GC/1.3.2).
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -31,6 +37,7 @@ from pathlib import Path
 from decompnet.hostenv import NO_WINDOW
 
 from ... import toolchains
+from ...forks import dtksplits
 from ...forks.project import ForkError, ForkProject
 from ...limits import capped
 from . import GAMECUBE, WII
@@ -348,6 +355,154 @@ def _write_configure(root: Path, game_id: str, compiler: str, sources: list[str]
     start = s.index("config.libs = [")
     end = s.index("# Optional callback to adjust link order")
     p.write_text(s[:start] + _libs_block(compiler, sources, rels) + s[end:], encoding="utf-8")
+
+
+# ------------------------------------------------------------------ each source file's compiler (issue #26)
+
+# dtk-template builds every Object(...) with its library's mw_version ("mw_version": config.linker_version in what
+# _libs_block writes), unless the Object names one: Object(NonMatching, "game/x.c", mw_version="GC/1.2.5") builds
+# that file with another CodeWarrior. One file needing another version than the project's is what an agent found on a
+# GameCube game (issue #26: its code matched 100% with GC/1.2.5 while the project built everything with GC/1.3.2).
+_LINKER_VERSION = re.compile(r'^config\.linker_version\s*=\s*"([^"]*)"', re.M)
+_MW_VERSION = re.compile(r'\bmw_version\s*=\s*(["\'])(.*?)\1')
+_OWN_LINE = re.compile(r'\r?\n[ \t]*mw_version\s*=\s*(["\']).*?\1,?')  # a keyword option with a line to itself
+
+
+def _read(path: Path) -> str:
+    """A project file as it is on disk, its line endings kept too (a project made on Windows has CRLF)."""
+    with open(path, encoding="utf-8", newline="") as f:
+        return f.read()
+
+
+def _write(path: Path, text: str) -> None:
+    """Write a project file in one step: a build reading it meanwhile sees the old text or the new one, never half."""
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+    tmp.replace(path)
+
+
+def configured_compiler(root: Path) -> str | None:
+    """The project's own CodeWarrior version: configure.py's config.linker_version, what each of its libraries builds
+    with (None: configure.py doesn't say)."""
+    try:
+        found = _LINKER_VERSION.search(_read(root / "configure.py"))
+    except OSError:
+        return None
+    return found.group(1) if found else None
+
+
+def _configure(root: Path) -> str:
+    """configure.py's text, for a change that must write it: a project without one is not set up."""
+    try:
+        return _read(root / "configure.py")
+    except OSError:
+        raise ForkError("configure.py isn't there: this project's build setup is missing (set the project up again)") from None
+
+
+def object_name(source_dir: str, source: str) -> str:
+    """A source file as configure.py's Object(...) names it: `source` is relative to the project, as objdiff.json
+    names it, and configure.py's paths start at config.src_dir."""
+    prefix = source_dir.strip("/") + "/"
+    return source[len(prefix):] if source.startswith(prefix) else source
+
+
+def _entry(text: str, name: str) -> tuple[int, int] | None:
+    """Where the Object(...) entry that builds `name` (a path relative to the source directory) starts and ends."""
+    for lib in dtksplits.libs(text):
+        for path, start, end in lib.objects:
+            if path == name:
+                return start, end
+    return None
+
+
+@functools.lru_cache(maxsize=4)
+def _versions(text: str) -> dict[str, str]:
+    """{Object path: the mw_version it names ("" when it names none)} in configure.py's `text`, read once per version
+    of the file: the app asks for each source file's compiler when it measures a project, and a big game's configure.py
+    has thousands of entries. The text is the cache's key, so an edited file is read anew."""
+    out = {}
+    for lib in dtksplits.libs(text):
+        for path, start, end in lib.objects:
+            found = _MW_VERSION.search(text[start:end])
+            out[path] = found.group(2) if found else ""
+    return out
+
+
+def object_compiler(root: Path, source_dir: str, source: str) -> str | None:
+    """The CodeWarrior version a source file's Object(...) names for itself; None: it builds with the project's own
+    (and a file configure.py doesn't list has none either)."""
+    try:
+        text = _read(root / "configure.py")
+    except OSError:
+        return None
+    return _versions(text).get(object_name(source_dir, source)) or None
+
+
+def _with_compiler(entry: str, compiler: str | None) -> str:
+    """An Object(...) entry, on one line or over several, with `compiler` as its mw_version (None: without one).
+    Everything else it names (extra_cflags, its status, its path) stays as it was."""
+    found = _MW_VERSION.search(entry)
+    if compiler is None:
+        if not found:
+            return entry
+        if _OWN_LINE.search(entry):  # the keyword has a line of its own: the line goes with it
+            return _OWN_LINE.sub("", entry, count=1)
+        return re.sub(r',\s*mw_version\s*=\s*(["\']).*?\1', "", entry, count=1)  # mid-line: the comma before it too
+    if found:  # replace it, never add a second
+        return entry[:found.start()] + f'mw_version="{compiler}"' + entry[found.end():]
+    close = entry.rfind(")")
+    end = re.search(r"\r?\n([ \t]*)\)\s*$", entry) if "\n" in entry[:close] else None
+    if end is None:  # the call's last argument is on the line its closing parenthesis is on
+        head = entry[:close].rstrip()
+        return head + (" " if head.endswith(",") else ", ") + f'mw_version="{compiler}"' + entry[close:]
+    first = re.match(r"Object\(\r?\n([ \t]*)", entry)
+    newline = "\r\n" if entry[end.start():].startswith("\r\n") else "\n"
+    head = entry[:end.start()].rstrip()
+    if not head.endswith(","):
+        head += ","
+    indent = first.group(1) if first else end.group(1) + "    "
+    return head + newline + indent + f'mw_version="{compiler}",' + entry[end.start():]
+
+
+def set_file_compiler(root: Path, source_dir: str, source: str, compiler: str, own: str) -> None:
+    """Make configure.py build `source` with `compiler`, in one atomic write; the project's own (`own`) needs no
+    keyword, since every library of a project decompdecomp made builds with config.linker_version."""
+    path = root / "configure.py"
+    text = _configure(root)
+    span = _entry(text, object_name(source_dir, source))
+    if span is None:
+        raise ForkError(f"{source} isn't one of the project's source files: configure.py doesn't build it")
+    entry = _with_compiler(text[span[0]:span[1]], None if compiler == own else compiler)
+    _write(path, text[:span[0]] + entry + text[span[1]:])
+
+
+def set_own_compiler(root: Path, source_dir: str, compiler: str, own: str, sources: list[str]) -> None:
+    """Make `compiler` configure.py's config.linker_version, each of `sources` keeping the version it had: its Object
+    names that version when it differs from the new own, and loses the keyword when it is the new own. A source
+    configure.py doesn't list is left alone."""
+    path = root / "configure.py"
+    text = _configure(root)
+    spans = sorted({span for source in sources if (span := _entry(text, object_name(source_dir, source)))}, reverse=True)
+    for start, end in spans:  # back to front: an edit doesn't move the entries before it
+        entry = text[start:end]
+        found = _MW_VERSION.search(entry)
+        version = found.group(2) if found else own
+        text = text[:start] + _with_compiler(entry, None if version == compiler else version) + text[end:]
+    _write(path, _LINKER_VERSION.sub(f'config.linker_version = "{compiler}"', text, count=1))
+
+
+def file_ranges(root: Path, version: str, source_dir: str) -> dict[str, list[tuple[int, int]]]:
+    """{source file (relative to the project): [(start, end)]} of its .text, from the splits.txt of the program and of
+    every module (Settings switches the files whose code is in an address range). A module's addresses are offsets in
+    the module, as its splits.txt has them."""
+    out: dict[str, list[tuple[int, int]]] = {}
+    prefix = source_dir.strip("/") + "/"
+    for path in sorted((root / "config" / version).rglob("splits.txt")):
+        for f in dtksplits.Splits.parse(_read(path)).files:
+            if ".text" in f.sections:
+                out.setdefault(prefix + f.name, []).append(f.sections[".text"])
+    return out
 
 
 def _build(fp: ForkProject, log) -> tuple[bool, str]:
