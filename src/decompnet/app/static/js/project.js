@@ -117,7 +117,7 @@ async function poll() {
     let mapDirty = false;
     for (const ev of live.events) {
       S.lastEvent = Math.max(S.lastEvent, ev.id);
-      if (["match", "split", "rename", "compiler", "reopen", "not_c", "reimport", "analysis"].includes(ev.kind)) mapDirty = true;
+      if (["match", "split", "rename", "compiler", "reopen", "not_c", "reimport", "analysis", "readable"].includes(ev.kind)) mapDirty = true;
       if (ev.kind === "match" && !first && ev.created_at >= S.openedAt) S.flash.set(ev.detail, performance.now());
     }
     for (const at of live.attempts) {

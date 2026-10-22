@@ -4,6 +4,9 @@ What's planned for decompdecomp, roughly in order, and why. Every item keeps the
 byte-identical after linking (ROM mode) or objdiff 100% (fork mode). Nothing here accepts code that only does the
 same thing.
 
+Every console gets every feature it can: one pipeline, ROM mode and project mode alike. A "—" in the table below is
+a gap to close, each with its item here (CONTRIBUTING.md, "Every console gets every feature").
+
 Want to work on one? Open an issue first, so two people don't build the same thing. CONTRIBUTING.md has the rest.
 
 ## What works where
@@ -38,8 +41,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | — | — | — | — |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git | the project's git | the project's git | the project's git |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | dtk and ds-decomp projects |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -53,11 +57,21 @@ Where to start on a gap:
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
   (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
-- **Polish, saves, twins across games** work on ROM projects (`app/readable.py`, `app/saves.py`, `app/twins.py`).
-  A project-mode console's work is its git repository; polishing there needs objdiff to judge a rewrite.
+- **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
+  mode a project's matched C is its git repository; what's missing there is matching identical code across your
+  games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
 
 ## Recently done
 
+- **Names in project mode.** rename_symbol renames a function or a global in a project too: in the game's symbols
+  (DS: ds-decomp's symbols.txt; GameCube, Wii: dtk's) and in every source and header file, kept only when the game
+  still rebuilds byte for byte and every match holds. Polishing's names were local only before (func_0205d0f4,
+  data_0222f194 stayed). Windows PC's names come from addresses (`names.py`): it says it can't rename yet.
+- **Polishing on every console.** Helpers that make matched code readable (real names, types, a comment) worked on
+  ROM projects only: a DS game at 57% had nothing to choose. In project mode a rewrite goes through the project's own
+  file and is judged like any compile of a matched function: committed when it and the file's other matches still
+  match, else the file is put back. Helpers there keep the function's name and describe types in the project's
+  headers (edit_file).
 - **Agents join what the rules miss** (project mode). `join_functions(function, with_function, reason)`: once 3
   agents of 2 models say two functions are one the analysis cut, the console joins them (DS: `recover.join_functions`,
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a
@@ -216,6 +230,45 @@ go back to the queue with their old attempts as notes. Each improvement to the s
 A window that shows, for each agent you use, what's left of its limits: the 5-hour and weekly limits of Claude Code
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
+
+### Big functions for every model
+
+In a DS game at 58%, functions under 400 instructions were mostly matched, and 25 of the 29 over 400 were open:
+40% of the code left, 10 of them never compiled. Agents of free models released them as "too big to transcribe in
+one go", and they're right about the medium: a big function's Ghidra draft is 10-25 KB of C, more than one
+compile_and_diff a model with a small output limit can send, and its assembly takes most of a small context.
+
+The big ones that matched show the way. A 2,793-instruction switch matched in 2 compiles as 125 lines of C, and a
+1,272-instruction one by a free model, in 2 compiles too: their cases are long runs of the same calls with other
+numbers, and the agent wrote one-letter macros for them (`#define A(x) func_0206d4f8(x, 1)`). Two of the untried big
+functions are in that file, macros defined, and their briefs don't show the match: a matched look-alike's C is shown
+only under 3,000 characters.
+
+1. **Briefs for big functions** (no new tool). Over 400 instructions, the brief says how such functions matched
+   (macros for the runs of calls that repeat, the file's own macros listed), and shows a matched look-alike's C
+   whatever its length, with its macros.
+2. **One case at a time.** A `compile_part(function, part, code)` tool: the function's current C stays in its file,
+   one part (a switch case, from the target's jump table: ARM's `add pc, pc, r0, lsl #2` and the branches after it;
+   or a block between labels) is replaced, the unit is built and judged as always, and the answer is that part's
+   rows of the diff. A first compile sends the skeleton (prologue, the switch, empty cases, epilogue). Each call
+   carries 100-200 instructions' worth, which any model handles. The judge doesn't change: the function matches
+   when objdiff says 100% for all of it.
+3. **Several agents on one function, at once.** With parts, a big function can be held in parts: each agent claims
+   a part, works on it with compile_part, and its change stays when the function's score gets no worse and no
+   other part's rows get worse (the compiler allocates registers over the whole function, so a case can move
+   another's; such a change is refused, saying which part moved). Agents see each other's parts land, through the
+   file, and notes per part. Briefs give each agent its part's assembly only.
+
+Measure each step on that DS game's 25: how many get tried and how far, against the week before. Step 2 is what
+matters most for free models: step 3 adds speed, and contention on one file, so it waits until 2 shows parts can be
+worked on alone.
+
+### Real names on Windows PC
+
+A PC project's source names functions and data by address (`func_0041B470`, `D_0066DDA4`), and the project's
+`tools/names.py` pairs them with the original's symbols by that address. So `rename_symbol` says it can't rename yet,
+and polished PC code keeps those names. It needs a name per address in `config/<version>/functions.json` that
+names.py reads, kept by `Console.rename_symbol` like dtk's and ds-decomp's `symbols.txt`.
 
 ### Library decomps built locally
 

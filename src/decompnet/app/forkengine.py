@@ -1500,6 +1500,68 @@ class ForkEngine:
                 "definitions moved with them), with the file's compiler (try_compiler switches the new file's); the "
                 "game still builds as it did and every match still matches.")
 
+    SOURCE_SUFFIXES = (".c", ".h", ".cpp", ".hpp", ".cp", ".cc", ".inc")
+
+    def rename_symbol(self, agent: Agent | None, slug: str, old: str, new: str, message: str = "") -> str:
+        """Give one of the game's symbols (a function, data) a real name: in the console's config, where its name
+        comes from (Console.rename_symbol), and as a whole word in every source and header file. Kept only when the
+        project sets up again, the game still rebuilds as it did and every match still matches; else every file is
+        put back. Polishing in project mode had local names only: functions and globals stayed func_0205d0f4 and
+        data_0222f194. The function's row keeps its history under the new name."""
+        if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"[A-Za-z_]\w*", old) or old == new:
+            raise NetworkError("rename_symbol takes two different C names: old and new")
+        proj, fp, cfg = self.get(slug)
+        if slug in self.net.links:
+            raise NetworkError("in a room, the host's project is the one to rename in: say it in a note")
+        console = consoles.get(cfg.get("platform"))
+        version = (fp.manifest or {}).get("version") or cfg.get("version")
+        word, taken = re.compile(rf"\b{re.escape(old)}\b"), re.compile(rf"\b{re.escape(new)}\b")
+        files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
+                       if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
+        texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
+        if any(taken.search(t) for t in texts.values()):
+            raise NetworkError(f"{new} is used in the project already: pick another name")
+        matched = {self._meta(r).get("symbol") or r["name"] for r in self.net.store.all(
+            "SELECT name, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
+        checks = consoles.REBUILD_CHECK in console.features
+        with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            before = (fp.manifest or {}).get("rebuild") or {}
+            saved: dict[Path, str] = {}
+            try:
+                saved.update(console.rename_symbol(fp, version, old, new))
+                for p, t in texts.items():
+                    if word.search(t):
+                        saved[p] = t
+                        p.write_text(word.sub(new, t), encoding="utf-8")
+                for cmd in fp.setup_commands(version):
+                    ok, out = fp.run(cmd, log=lambda *_: None)
+                    if not ok:
+                        raise ForkError(f"the project didn't build with the new name:\n{_tail(out)}")
+                if checks and before.get("identical") and not console.check_rebuild(fp, version).get("identical"):
+                    raise ForkError("the game no longer rebuilt byte for byte with the new name")
+                rep = fp.report()
+                now = {f["name"] for u in rep.get("units", []) for f in u.get("functions", [])
+                       if (f.get("fuzzy_match_percent") or 0) >= 100}
+                if lost := sorted(n for n in matched if (new if n == old else n) not in now):
+                    raise ForkError(f"these functions would stop matching: {', '.join(lost[:8])}")
+            except (ForkError, RomError, ObjdiffError, OSError, ValueError) as e:
+                for p, t in saved.items():
+                    p.write_text(t, encoding="utf-8")
+                for cmd in fp.setup_commands(version):
+                    fp.run(cmd, log=lambda *_: None)
+                raise NetworkError(f"not renamed, nothing changed: {e}") from None
+            with self.net.store.tx() as db:  # the function keeps its row, its matches and notes, under its new name
+                db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
+                           "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
+                           (new, new, proj["id"], old, old))
+                self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
+            self._commit_paths(proj, fp, [str(p.relative_to(fp.root)) for p in saved],
+                               f"Rename {old} to {new}\n\n{message.strip() or 'Named'} by "
+                               f"{agent.name if agent else 'decompdecomp'} with decompdecomp; the game still builds as it "
+                               "did and every match still matches.")
+        self.sync(slug, log=lambda *_: None, rep=rep)
+        return f"✅ {old} is {new} now, in the game's symbols and in {len(saved)} file(s); every match still matches."
+
     def _commit_paths(self, proj, fp: ForkProject, paths: list[str], message: str) -> None:
         with self._git_locks[proj["id"]]:
             fp.git("add", "--", *paths)
@@ -2401,6 +2463,8 @@ class ForkEngine:
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
+                if quiet is None:  # a polishing helper's compiles count too (not as a match)
+                    self.net._record(fn, agent, score, code, 0)
                 if not matched:
                     undo()
                     why = "loads other constants" if d.literals else f"is {percent_text(pct)}"
@@ -2643,6 +2707,7 @@ class ForkEngine:
             why = why or "the game no longer rebuilt byte for byte with it"
             self.net._update_cfg(slug, lambda c: c.setdefault("joins_refused", {}).update({key: why}))
             return f"{len(said)} agents agreed, but joining {first['name']} and {last['name']} was refused: {why}."
+        self.net.joined(first["name"], slug)  # (what set it aside was about a piece of it)
         try:
             self.net.add_note(self.net.local_agent("decompdecomp")[0], slug,
                               f"Agents ({', '.join(sorted(said))}) found this was cut by the analysis, and decompdecomp "

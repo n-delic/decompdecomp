@@ -7,14 +7,19 @@ matched functions too: rename what they can tell (rename_symbol), describe struc
 only when the function still matches byte for byte; otherwise it's refused and the matching C stays. The project
 shows two numbers: matched, and readable.
 
-ROM projects only: a public decomp's code lives in its own files, which agents edit there.
+In project mode (GameCube, Wii, PC, DS, public decomps) the matching C is the project's own source file: a rewrite is
+judged as any compile of a matched function is there (ForkEngine.attempt): kept and committed only when it still
+matches and the file's other matched functions do too, else the file is put back as it was. The decomp is never left
+broken by polishing.
 """
 
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from .. import scoring
+from ..forks.project import ForkProject
 from ..network import Agent, NetworkError
 
 CLAIM_SECONDS = 30 * 60
@@ -28,11 +33,11 @@ class Readability:
     def __init__(self, net):
         self.net = net
 
-    def _rom(self, slug: str):
-        proj = self.net._project(slug)
-        if not self.net.is_rom(proj):
-            raise NetworkError("making matched code readable works in ROM projects; in a public decomp, edit its files")
-        return proj
+    def _matching_c(self, proj, fn) -> str:
+        """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
+        if self.net.is_rom(proj):
+            return fn["matched_source"] or ""
+        return self.net.forks._current_source(ForkProject(Path(proj["root"])), fn) or fn["matched_source"] or ""
 
     def counts(self, proj) -> dict:
         row = self.net.store.one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
@@ -41,7 +46,8 @@ class Readability:
 
     def claim(self, agent: Agent, slug: str) -> str:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
-        proj = self._rom(slug)
+        proj = self.net._project(slug)
+        fork = not self.net.is_rom(proj)
         now = time.time()
         with self.net.store.tx() as db:
             self.net._expire_claims(db)
@@ -58,14 +64,19 @@ class Readability:
                 if fn is None:
                     return "Every matched function is readable already (or too big for now). 🎉"
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
-                self.net._event(db, proj["id"], agent.id, "claim", fn["name"])
+                self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
         counts = self.counts(proj)
-        return (f"MAKE READABLE: {fn['name']} at 0x{fn['vram']:08X}, {fn['n_insns']} instructions "
+        where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
+        names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
+                 "(read_file and search_code show what it calls and what calls it);\n"
+                 "- describe structs, enums and constants in the project's headers (edit_file) and use their names here;\n"
+                 if fork else
+                 "- rename_symbol the function, and the globals and functions it uses, once their purpose is clear;\n"
+                 "- describe structs, enums and constants in the shared header (edit_context) and use their names here;\n")
+        return (f"MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
-                f"It matches today with this C:\n```c\n{fn['matched_source'].strip()}\n```\n\n"
-                "Make it readable without changing what the compiler makes of it:\n"
-                "- rename_symbol the function, and the globals and functions it uses, once their purpose is clear;\n"
-                "- describe structs, enums and constants in the shared header (edit_context) and use their names here;\n"
+                f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
+                "Make it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
                 f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
@@ -73,27 +84,39 @@ class Readability:
 
     def submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
         """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte."""
-        proj = self._rom(slug)
+        proj = self.net._project(slug)
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
             raise NetworkError(f"{fn['name']} isn't matched yet: compile_and_diff it first")
         claim = self.net.store.one("SELECT agent_id FROM claims WHERE function_id=?", fn["id"])
         if claim is not None and claim["agent_id"] != agent.id:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
-        if " ".join(source.split()) == " ".join((fn["matched_source"] or "").split()):
+        if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
+        if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
+            res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source)
+            if not res.get("matched"):
+                return res["text"]
+            return self._readable(proj, fn, agent, source)
         ctx = self.net._context(proj["id"], fn["unit"])
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
+            self.net._record(fn, agent, None, source, ctx["version"])  # its compiles count, as a decompiling one's
             return f"❌ COMPILE ERROR: the matching C stays.\n{result.log.strip()}"
         cand, verdict, problems = self.net._evaluate(fn, proj, result.obj)
         if cand is None:
+            self.net._record(fn, agent, None, source, ctx["version"], compiled=True)
             return f"❌ No function named `{fn['name']}` in it: keep its name (rename it with rename_symbol)."
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
+        self.net._record(fn, agent, d.score, source, ctx["version"])  # not as a match: it was one already
         if not (d.bytes_match if verdict is None else verdict):
             note = "\n".join(f"- {p}" for p in problems)
             return (f"❌ It no longer matches (score {d.score}): the matching C stays. Keep the statements' shape and "
                     f"change names, types and comments only.\n{d.render()}" + (f"\n{note}" if note else ""))
+        return self._readable(proj, fn, agent, source)
+
+    def _readable(self, proj, fn, agent: Agent, source: str) -> str:
+        """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
         with self.net.store.tx() as db:
             db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
                        (source, source, fn["id"]))

@@ -663,7 +663,7 @@ class Link:
         for n in st.get("notes") or []:
             net.apply_remote_note(slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"])
         for ev in st.get("events") or []:
-            if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab") and not (ev["agent"] or "").startswith(mine):
+            if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
         self.claims = [c for c in st.get("claims") or [] if not (c["agent"] or "").startswith(mine)]
         self.members = st.get("members") or []
@@ -681,7 +681,8 @@ class Link:
         for n in st.get("notes") or []:
             net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"])
         for ev in st.get("events") or []:
-            if ev["kind"] in ("match", "claim", "release", "context", "source", "split", "collab", "link") \
+            if ev["kind"] in ("match", "claim", "release", "context", "source", "split", "collab", "link", "polish",
+                              "readable") \
                     and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
         self.claims = [c for c in st.get("claims") or [] if not (c["agent"] or "").startswith(mine)]

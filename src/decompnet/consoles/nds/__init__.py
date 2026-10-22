@@ -51,9 +51,10 @@ class NintendoDS(Console):
     # overlays holding only data), 4 the code past the end dsd gave .text (recover.extend_text), 5 the pieces of
     # functions dsd cut off joined to their functions (recover.merge_pieces), 6 with the pieces only the caller's
     # registers tell (arm.piece: code using r4-r11 before saving them), 7 a switch's cases in the next source file
-    # moved to its own (recover.move_boundaries), 8 pieces joined with the bytes no symbol claims between them. A project with less gets the rest when
+    # moved to its own (recover.move_boundaries), 8 pieces joined with the bytes no symbol claims between them, 9 a
+    # function pieces were joined to open again when what set it aside was about a piece (Network.joined). A project with less gets the rest when
     # the app starts, or when it's checked again
-    ANALYSIS = 8
+    ANALYSIS = 9
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_nds
@@ -131,10 +132,12 @@ class NintendoDS(Console):
         net.forks.reanalyse(slug, pieces, log=log)
         # its notes from before say "fragment, skip": agents read the newest note first (and a project joined before
         # these notes were written gets them now, once)
-        if joined or level < 6:
-            agent, _ = net.local_agent("decompdecomp")
-            earlier = recover.joined_pieces(fp.root, manifest["version"]) if level < 6 else {}
-            for name, took in (earlier | joined).items():
+        # and what set them aside was about a piece (Network.joined): once for the functions joined before (9)
+        earlier = recover.joined_pieces(fp.root, manifest["version"]) if level < 9 else {}
+        agent, _ = net.local_agent("decompdecomp")
+        for name, took in (earlier | joined).items():
+            net.joined(name, slug)
+            if name in joined or level < 6:
                 try:
                     net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "
                                               "function now, not a fragment, whatever older notes say. Worth a try.",
@@ -146,6 +149,25 @@ class NintendoDS(Console):
                                                  encoding="utf-8")
 
     splits_sources = True
+
+    def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:
+        """ds-decomp's symbols.txt: the line `old kind:...` becomes `new kind:...` (the delinked objects take it)."""
+        import re
+
+        from ...forks.project import ForkError
+
+        saved = {}
+        for path in sorted((fp.root / "config" / version).rglob("symbols.txt")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(rf"^{re.escape(new)} kind:", text, re.M):
+                raise ForkError(f"{new} is a symbol of the game already")
+            changed = re.sub(rf"^{re.escape(old)}(?= kind:)", new, text, flags=re.M)
+            if changed != text:
+                saved[path] = text
+                path.write_text(changed, encoding="utf-8")
+        if not saved:
+            raise ForkError(f"{old} isn't one of the game's symbols")
+        return saved
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         """The source file's block in its module's delinks.txt ends where function `at` starts, and `new`'s, from

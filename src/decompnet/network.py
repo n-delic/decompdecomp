@@ -186,16 +186,24 @@ _SAYS_MATCHED = re.compile(r"already\s+(?:at\s+)?100\s*%|already\s+match(?:es|ed
 _NEGATED = re.compile(r"\b(?:not|n't|never|no|without)\b[^.;]{0,24}$", re.I)
 
 
+def says_matched(text: str) -> bool:
+    """Whether a note (or a release's reason) says the function matches already."""
+    return any(not _NEGATED.search(text[max(0, m.start() - 40):m.start()]) for m in _SAYS_MATCHED.finditer(text))
+
+
+# A note that says little more than "already matches": on a function that doesn't, the brief leaves it out. Agents
+# released 12 big open functions of a DS game, untried, on such notes ("Already 100% match on claim, no work needed"
+# from a false 100% objdiff gave before #59), each one's note the next agent's reason.
+ONLY_SAYS_MATCHED = 200
+
+
 def stale_note(text: str, status: str) -> str:
     """A note as a brief shows it: one saying the function matches, on a function that doesn't, is marked out of
     date (the note itself stays as it was), so the brief's score is the number agents go by."""
-    if status == "matched":
+    if status == "matched" or not says_matched(text):
         return text
-    for m in _SAYS_MATCHED.finditer(text):
-        if not _NEGATED.search(text[max(0, m.start() - 40):m.start()]):
-            return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the "
-                    "score above] " + text)
-    return text
+    return ("[out of date: written when the function counted as matched; it doesn't match now, so go by the brief's "
+            "current state] " + text)
 
 
 # Notes about the setup rather than the function: a build that broke, an agent that stopped or couldn't sign in.
@@ -237,11 +245,14 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
     best_percent = None
     if best_score is not None and fn["n_insns"]:
         best_percent = max(0.0, 100.0 * (1 - best_score / (fn["n_insns"] * 100)))
-    infra, seen, fresh, stale = 0, {}, [], []
+    infra, wrong, seen, fresh, stale = 0, 0, {}, [], []
     for n in rows:
         text = (n["text"] or "").strip()
         if _INFRA_NOTE.search(text):
             infra += 1
+            continue
+        if fn["status"] != "matched" and len(text) < ONLY_SAYS_MATCHED and says_matched(text):
+            wrong += 1
             continue
         key = " ".join(text.split())
         if key in seen:
@@ -267,6 +278,9 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
     if infra:
         lines.append(f"- ({infra} note{'s' * (infra != 1)} about builds that broke or agents that stopped left out: "
                      "they say nothing about this function)")
+    if wrong:
+        lines.append(f"- ({wrong} note{'s' * (wrong != 1)} saying it already matches left out: it doesn't match, "
+                     "and only a compile shows how close it is)")
     return lines
 
 
@@ -813,6 +827,23 @@ class Network:
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
             self._event(db, fn["project_id"], None, "not_c", f"{fn['name']}: set aside by you ({why[:120]})")
+
+    def joined(self, function: str, project: str | None = None) -> None:
+        """Pieces were joined to `function`: what set it aside (its shape, agents' verdicts) was about a piece of it,
+        so it's open again, and the shape rules and notes written after the join (not_c_from_notes) decide anew. On a
+        DS game an 8-byte piece agents agreed no C makes took seven more pieces, became a 276-byte function, and
+        stayed set aside. Library code stays where the project put it (#52's set_aside)."""
+        try:
+            fn = self._function(function, project)
+        except NetworkError:
+            return
+        meta = json.loads(fn["meta"] or "{}")
+        if fn["status"] != "asm" or meta.get("set_aside"):
+            return
+        meta = {k: v for k, v in meta.items() if k not in ("asm_code", "asm_twin", "not_c")}
+        with self.store.tx() as db:
+            db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'", (json.dumps(meta), fn["id"]))
+            self._event(db, fn["project_id"], None, "reopen", f"{fn['name']}: open again (pieces were joined to it)")
 
     def reopen(self, function: str, project: str | None = None) -> None:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'

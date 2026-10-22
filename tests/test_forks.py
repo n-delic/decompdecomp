@@ -260,7 +260,10 @@ def test_rewriting_a_matched_function_must_keep_it_matching(fork):
     res = net.attempt(agent, "clamp_s32", "s32 clamp_s32(s32 v, s32 lo, s32 hi) { return v; }", slug)
     assert not res["matched"] and "already matches" in res["text"]
     assert (root / "src" / "game.c").read_text() == before
-    assert net.store.one("SELECT status FROM functions WHERE name='clamp_s32'")["status"] == "matched"
+    row = net.store.one("SELECT id, status FROM functions WHERE name='clamp_s32'")
+    assert row["status"] == "matched"
+    # the try counts as a compile: a polishing helper's showed none
+    assert net.store.one("SELECT COUNT(*) AS n FROM attempts WHERE function_id=? AND score > 0", row["id"])["n"] == 1
 
 
 def _dtk_project(root: Path, version: str, config: str) -> None:

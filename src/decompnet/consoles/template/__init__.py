@@ -10,6 +10,11 @@ projects/demo-ps2/build.py, and never any part of a real game).
 The parts below are the connector's (consoles/__init__.py, class Console, says what each one is for). A part this
 console doesn't need can go: the default does nothing, or says the console can't do it. CONTRIBUTING.md has the
 whole checklist.
+
+A PROJECT console fills in, besides, what every console's agents get (ROM mode has them already): rename_symbol
+(polishing gives functions real names through it), split_source, join_functions, file_compiler and
+set_file_compiler, and its processor's piece and jumps rules when its analysis can cut functions. What it can't do
+yet gets a ROADMAP.md item and a "—" in the table.
 """
 
 from __future__ import annotations

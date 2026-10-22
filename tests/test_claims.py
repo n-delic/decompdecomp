@@ -456,3 +456,19 @@ def test_at_the_end_of_a_game_big_functions_cant_be_passed_around_untried(tmp_pa
         assert net.store.one("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id=?",
                              agent.id)["name"] == held
     assert net.store.one("SELECT SUM(abandons) AS n FROM functions")["n"] == 14  # no give-up counted
+
+
+def test_a_function_pieces_were_joined_to_is_open_again_but_library_code_stays_aside(tmp_path):
+    """An 8-byte piece agents agreed no C makes took seven more pieces and became a 276-byte function, still set
+    aside: the verdict was about the piece. Joined, it's open again; library code the project set aside stays."""
+    net = _one_function_game(tmp_path)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', meta=?",
+                   (json.dumps({"asm_code": "6 agents found no C makes it", "not_c": {"a-1": {}}}),))
+    net.joined("piece", "game")
+    row = net.store.one("SELECT status, meta FROM functions")
+    assert row["status"] == "open" and json.loads(row["meta"]) == {}
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='asm', meta=?", (json.dumps({"asm_code": "libc", "set_aside": True}),))
+    net.joined("piece", "game")
+    assert net.store.one("SELECT status FROM functions")["status"] == "asm"

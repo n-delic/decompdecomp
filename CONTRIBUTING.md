@@ -71,6 +71,18 @@ works on which platform: every — in it is a gap to fill.
 
 ## Consoles
 
+### Every console gets every feature
+
+decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
+in ROM mode (N64, PS1, PS2) and project mode (GameCube, Wii, PC, DS, public decomps) alike. When you add a feature:
+
+1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
+   for each mode, `arch/` for what depends on the processor.
+2. Put only what really differs in `consoles/<id>/`, through a part of the connector (`consoles/__init__.py`) with a
+   default that says plainly when a console can't do it yet.
+3. A console or mode that can't have it yet: say why in the code, add an item to ROADMAP.md, and mark its column
+   with "—" in the table. Don't leave it unsaid.
+
 ### Where a console's code is
 
 Each console has a folder: `src/decompnet/consoles/<id>/`. Everything decompdecomp knows about that console is in
@@ -113,7 +125,8 @@ A console works in one of two modes:
 2. Change the part you need in that folder. A fact about the processor, not the console (how MIPS code is read),
    goes in `arch/<processor>.py`. Something every console of a mode needs goes in `rom/` or `forks/`.
 3. Run its tests: `uv run pytest tests/test_consoles.py -q -k <id>`, and its own file (`tests/test_ps2.py`, ...).
-4. When a feature reaches the console, tick its column in ROADMAP.md's table.
+4. When a feature reaches the console, tick its column in ROADMAP.md's table. A feature you build for one console
+   should reach the others too (see "Every console gets every feature" above).
 
 ### Adding a console
 
@@ -159,6 +172,18 @@ A console works in one of two modes:
    | `file_compiler(fp, source)`, `set_file_compiler(fp, source, compiler)` | PROJECT: a compiler per source file, when the project's build allows it: then `try_compiler` switches it (DS). |
    | `asm_reason(code)` | Why a function can't come from a compiler. The processor's check, with this console's facts. |
    | `up_front_guide(compiler)`, `m2c_target(compiler)` | The guide for a compiler's code; m2c's target for it. |
+
+   **What every console's agents get.** ROM mode has these in `rom/` and the engine already. A PROJECT console
+   implements them itself, because only it knows where its project keeps names and file boundaries. A part the
+   console can't do yet keeps its default ("can't yet"), and it gets a ROADMAP.md item and a "—" in the table:
+
+   | Part | What needs it |
+   | :-- | :-- |
+   | `rename_symbol(fp, version, old, new)` | Polishing and `rename_symbol`: real names in the project's symbol list (dtk's and ds-decomp's `symbols.txt`). Without it, polished code keeps addresses for names. |
+   | `split_source(fp, version, source, at, new)`, `splits_sources` | `split_file`: a source file divided where a new one starts (a library's code, a second compiler). |
+   | `join_functions(fp, first, last, keep)` | `join_functions`: a function the analysis cut in pieces made whole, once agents agree. |
+   | `file_compiler`, `set_file_compiler` | `try_compiler`, when its build lets each source file have its own compiler. |
+   | its processor's `piece` and `jumps` (`arch/arm.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
 
 5. **Its compilers.** One pinned entry each in `toolchains.toml` (see "Adding a compiler" below).
 6. **Its processor**, if `arch/` hasn't got it: add `arch/<name>.py` (relocation masks, capstone's mode, and

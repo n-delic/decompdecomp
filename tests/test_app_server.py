@@ -682,3 +682,24 @@ def test_windows_path_picker_uses_the_apps_python(app, monkeypatch):
     assert response.json() == {"path": "C:\\Users\\you\\save"}
     assert calls[0][0][0] == sys.executable
     assert calls[0][1]["creationflags"] == 0x08000000
+
+
+def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_polished(tmp_path):
+    """The map's route sent a fixed list of fields: polished and not_c never reached the page, so the Functions tab's
+    Polished filter stayed empty while agents polished. Its signature left polishing out too, so no refetch."""
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='func_0'")
+    before = client.get("/api/map?slug=game").json()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET readable=1 WHERE name='func_0'")
+    after = client.get(f"/api/map?slug=game&since={before['sig']}").json()
+    assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
+    rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
+    assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]

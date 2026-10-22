@@ -830,3 +830,29 @@ def test_an_address_outside_a_modules_code_is_no_function_start(tmp_path):
     assert recover._starts_like_code(m, BASE, False)
     for addr in (BASE - 0x1000, BASE - 8, BASE + 4, BASE + 0x1000):
         assert not recover._starts_like_code(m, addr, False) and not recover._starts_like_code(m, addr, True)
+
+
+def test_a_symbol_of_the_game_is_renamed_in_its_config(tmp_path):
+    """Polishing in project mode gave locals names only: functions and globals stayed func_0205d0f4, data_0222f194.
+    rename_symbol renames them where the game's names come from: ds-decomp's and dtk's symbols.txt."""
+    from decompnet.forks.project import ForkError
+
+    fp = type("FP", (), {"root": tmp_path})()
+    ds = tmp_path / "config" / "v1" / "arm9"
+    ds.mkdir(parents=True)
+    (ds / "symbols.txt").write_text(f"func_02001000 kind:function(arm,size=0x8) addr:{BASE:#010x}\n"
+                                    f"func_02001000_x kind:function(arm,size=0x8) addr:{BASE + 8:#010x}\n")
+    saved = consoles.get("nds").rename_symbol(fp, "v1", "func_02001000", "MenuTask_Run")
+    assert list(saved) == [ds / "symbols.txt"]
+    assert (ds / "symbols.txt").read_text().splitlines() == [
+        f"MenuTask_Run kind:function(arm,size=0x8) addr:{BASE:#010x}",
+        f"func_02001000_x kind:function(arm,size=0x8) addr:{BASE + 8:#010x}"]  # a whole name only
+    with pytest.raises(ForkError, match="already"):
+        consoles.get("nds").rename_symbol(fp, "v1", "func_02001000_x", "MenuTask_Run")
+    with pytest.raises(ForkError, match="isn't one"):
+        consoles.get("nds").rename_symbol(fp, "v1", "nope", "Other")
+    gc = tmp_path / "config" / "v2"
+    gc.mkdir(parents=True)
+    (gc / "symbols.txt").write_text("fn_80003100 = .text:0x80003100; // type:function size:0x40\n")
+    consoles.get("gc").rename_symbol(fp, "v2", "fn_80003100", "OSInit")
+    assert (gc / "symbols.txt").read_text() == "OSInit = .text:0x80003100; // type:function size:0x40\n"

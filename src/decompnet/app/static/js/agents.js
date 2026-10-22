@@ -74,16 +74,22 @@ function renderSessions(sessions) {
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
   const running = sessions.filter((s) => LIVE.includes(s.state));
   $("stopAll").hidden = running.length < 2;
-  const sorted = [...sessions].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
-  const html = sorted.map((s) => {
+  // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
+  const sorted = [...sessions].sort((a, b) => (a.task === "readable") - (b.task === "readable")
+    || STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
+  const both = sorted.some((s) => s.task === "readable") && sorted.some((s) => s.task !== "readable");
+  const html = sorted.map((s, i) => {
+    const group = s.task === "readable" ? "Polishing" : "Decompiling";
+    const head = both && (i === 0 || (sorted[i - 1].task === "readable") !== (s.task === "readable"))
+      ? `<h3 class="session-group">${group}</h3>` : "";
     const claim = S.claims.find((c) => c.agent === s.agent);
     const dot = s.state === "paused" ? "err" : s.state === "working" ? "on" : s.state === "stopped" ? "" : "work";
     const live = LIVE.includes(s.state), id = esc(s.id), b = board.get(s.agent);
-    const facts = [esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
+    const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.model ? esc(s.model) : "its default model", b && b.matched ? `<b class="ok">${b.matched} matched</b>` : "", b ? plural(b.compiles, "compile") : "",
       s.usd ? money(s.usd) : s.tokens ? `${(s.tokens / 1000).toFixed(0)}k tokens` : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
     const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
-    return `<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
+    return `${head}<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
         ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>`
           : `<button class="ghost" data-again="${id}" type="button">Start again</button><button class="ghost" data-remove="${id}" type="button">Remove</button>`}</div>
       <span class="state ${s.state === "paused" ? "err" : ""}">${helperState(s, claim)}</span>
@@ -222,7 +228,7 @@ function renderLauncher(box, compact = true) {
   }
   const ready = a.installed;
   // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches
-  const tasks = S.ov && S.ov.kind !== "fork" && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+  const tasks = S.ov && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     TASKS.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks) LZ.task = "";
@@ -404,6 +410,8 @@ function eventHtml(ev) {
   const d = ev.detail || "";
   switch (ev.kind) {
     case "claim": return `${who} started ${fnLink(d)}`;
+    case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
+    case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
     case "match": return `<span class="ok">✓</span> ${who} matched ${fnLink(d)}`;
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
@@ -428,8 +436,12 @@ function eventHtml(ev) {
 }
 /* One line per agent and function, updated in place: "claude-1 · lerp · 4 compiles · best 87%" until it's matched. */
 const groups = new Map();
+// polishing said in words: a row's colour is its computer's when decompiling together (rowTint)
+const POLISH_TAG = `<span class="task-tag" title="polishing: real names, types and a comment for a matched function">polishing</span>`;
 function groupHtml(g) {
   const who = whoHtml(g.agent);
+  if (g.polished) return `<span class="ok">✎</span> ${who} polished ${fnLink(g.fn)}: still matches ${POLISH_TAG}`;
+  if (g.polish) return `${who} polishing ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} ${POLISH_TAG}`;
   const p = pctOf(g.best, g.insns);
   if (g.matched) return `<span class="ok">✓</span> ${who} matched ${fnLink(g.fn)}${g.tries ? ` <span class="score">after ${plural(g.tries, "compile")}</span>` : ""}`;
   if (g.overtaken) return `${who} worked on ${fnLink(g.fn)}${g.tries ? ` <span class="score">${plural(g.tries, "compile")}</span>` : ""} · <span class="ok">matched by ${esc(g.overtaken)}</span>`;
@@ -459,7 +471,7 @@ function touchGroup(agent, fn, t, change, first) {
     if (g.li !== $("activity").firstElementChild) $("activity").prepend(g.li);
     if (!first) { g.li.classList.remove("fresh"); void g.li.offsetWidth; g.li.classList.add("fresh"); }
   } else g.li = addLine(t, groupHtml(g), first, agent);
-  if (g.matched || g.released) groups.delete(key);
+  if (g.matched || g.released || g.polished) groups.delete(key);
 }
 /* A match ends every other agent's line about that function too: they stopped "working on" it. */
 function matchedBy(agent, fn) {
@@ -502,6 +514,8 @@ function addActivity(events, attempts, first) {
       }, first);
     } else if (it.ev.kind === "claim") touchGroup(it.ev.agent, it.ev.detail, it.t, () => {}, first);
     else if (it.ev.kind === "match") { matchedBy(it.ev.agent, it.ev.detail); touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.matched = true; }, first); }
+    else if (it.ev.kind === "polish") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.polish = true; }, first);
+    else if (it.ev.kind === "readable") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.polish = g.polished = true; }, first);
     else if (it.ev.kind === "release") touchGroup(it.ev.agent, it.ev.detail, it.t, (g) => { g.released = true; }, first);
     else addLine(it.t, eventHtml(it.ev), first, it.ev.agent);
   }

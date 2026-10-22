@@ -248,3 +248,20 @@ def test_the_prompts_count_only_claims_that_were_compiled():
         assert "Do 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
         assert "Don't stop early" in text and "on request" in text  # agents stopped at 2-3 of 4, or offered more
         assert "needs=" in text
+
+
+def test_a_brief_leaves_out_notes_that_only_say_an_open_function_matches(tmp_path):
+    """A false 100% (before #59) left "Already 100% match on claim, no work needed" on 12 big open functions of a
+    DS game, and each agent took the last one's note as its reason to skip it. Such a note says nothing else, so a
+    brief leaves it out; a longer note keeps its findings, marked out of date."""
+    net, _ = _game(tmp_path, [("f", 1000, "open")])
+    a, _ = net.local_agent("a")
+    fid = net.store.one("SELECT id FROM functions WHERE name='f'")["id"]
+    long = "Already 100% per brief. " + "Helpers decoded: func_0206d4f8(2 args) for bl 0xffffa150; " * 4
+    with net.store.tx() as db:
+        for k, text in enumerate(("Already 100% match on claim, no work needed.", long)):
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(1,?,?,?,?)",
+                       (fid, a.id, text, time.time() + k))
+    section = "\n".join(net.notes_for_brief(net.store.one("SELECT * FROM functions WHERE id=?", fid)))
+    assert "no work needed" not in section and "1 note saying it already matches left out" in section
+    assert "[out of date" in section and "func_0206d4f8" in section
