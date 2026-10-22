@@ -139,8 +139,8 @@ def target_from_split(fn: RomFunction, resolve: Callable[[str], int | None], big
             continue
         if ln.mnemonic in _JUMPS:
             op = ln.operands.strip()
-            if op.startswith(".L") or op.startswith("L"):
-                addr = int(op.lstrip(".L"), 16)
+            if label := re.fullmatch(r"\.?L([0-9A-Fa-f]{8})", op):  # not a function named L... (`j LoadBTF`)
+                addr = int(label[1], 16)
             else:
                 addr = resolve(op)
                 if addr is None:

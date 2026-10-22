@@ -80,13 +80,15 @@ def guess_compiler(data: bytes) -> str:
     "MW MIPS C Compiler" note comes from a library while its own code is EE-GCC 2.96's): CodeWarrior leaves the delay
     slot of a return empty (a nop after 94% of them in its demo builds; GCC 9-19%, GTA SA 11%), 2.x moves registers
     without daddu, and SN's EE-GCC 2.95.2 saves $ra with sq. A GCC version note picks among the GCCs; without one,
-    EE-GCC 2.96, the PS2 SDK's (the import then tests the GCCs on the code). Too little code: the notes alone."""
+    EE-GCC 2.96, the PS2 SDK's (the import then tests the GCCs on the code). Too little code: the notes alone.
+    CodeWarrior's linker leaves a .mwcats section, which a library's note doesn't: a 2002 game linked by it had a nop
+    after only 19% of its returns, and was guessed EE-GCC until .mwcats counted on its own."""
     sections = _sections(data)
     comment = sections.get(".comment", b"")
     gcc = next((guess for pattern, guess in _GCC if re.search(pattern, comment)), None)
     returns, nops, moves, sq = code_style(data)
     if returns >= STYLE_MIN_RETURNS:
-        if nops > CODEWARRIOR_NOPS:
+        if nops > CODEWARRIOR_NOPS or ".mwcats" in sections:
             return "MWCPS2-3" if moves > CODEWARRIOR_3_MOVES else "MWCPS2-2"
         return gcc or ("EEGCC-2.95.2" if sq > SN_SQ_SAVES else "EEGCC")
     if ".mwcats" in sections or b"MW MIPS C Compiler" in comment:
