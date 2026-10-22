@@ -17,12 +17,12 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import yaml
 
 from .. import toolchains
+from ..hostenv import NO_WINDOW, console_python
 from ..limits import capped
 from ..project import compiler_for
 from . import match
@@ -125,8 +125,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         if (work / extra).exists():
             shutil.copyfile(work / extra, out / extra)
     (out / "symbol_addrs.txt").write_text("\n".join(_symbol_lines(net, proj)) + "\n", encoding="utf-8")
-    res = subprocess.run([sys.executable, "-m", "splat", "split", "splat.yaml"], cwd=out, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+    res = subprocess.run([console_python(), "-m", "splat", "split", "splat.yaml"], cwd=out, capture_output=True,
+                         text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ExportError("splat failed:\n" + (res.stdout + res.stderr)[-1500:])
     for generated in (out / "src").glob("*.c"):
@@ -294,8 +294,8 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
 
     # 6. prove it
     log("building the exported project to check it rebuilds the game byte for byte")
-    proc = subprocess.run(capped([sys.executable, "build.py"]), cwd=out, capture_output=True, text=True, timeout=3600,
-                          encoding="utf-8", errors="replace")
+    proc = subprocess.run(capped([console_python(), "build.py"]), cwd=out, capture_output=True, text=True, timeout=3600,
+                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     identical = proc.returncode == 0 and "identical" in proc.stdout
     if not identical:
         log((proc.stdout + proc.stderr)[-3000:])

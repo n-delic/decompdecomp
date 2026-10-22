@@ -28,6 +28,7 @@ from pathlib import Path
 
 from ... import toolchains
 from ...forks.project import ForkError, ForkProject
+from ...hostenv import NO_WINDOW
 
 DS_DEFAULT = "2.0/sp1p5"
 UNIT_BYTES = 0x1000
@@ -124,7 +125,7 @@ def _run(cmd: list[str], cwd: Path, what: str) -> None:
     from ...limits import capped
 
     res = subprocess.run(capped(cmd), cwd=cwd, capture_output=True, text=True, timeout=3600,
-                         encoding="utf-8", errors="replace")
+                         encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     if res.returncode != 0:
         raise ForkError(f"{what} failed:\n{(res.stdout + res.stderr).strip()[-1500:]}")
 
@@ -370,7 +371,7 @@ version name it in `config/{version}/arm9/file_compilers.json` (`{{"src/auto/mai
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['id']} decompilation (decompdecomp, ds-decomp)"]):
-            subprocess.run(cmd, cwd=root, capture_output=True)
+            subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
     return {"platform": "nds", "id": info["id"], "title": info["title"], "compiler": f"DS/{compiler}",
             "sources": len(sources), "sha1": info["sha1"], "rebuild": rebuild}
 
