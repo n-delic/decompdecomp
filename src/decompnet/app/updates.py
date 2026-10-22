@@ -137,6 +137,34 @@ def _check_branch(cur: dict) -> dict:
             "spec": f"decompnet @ https://github.com/{repo}/archive/{sha}.tar.gz"}
 
 
+BRANCH_NAME = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
+
+
+def switch_to(channel: str, branch: str = "") -> dict:
+    """What check() says, for another source than this copy's: releases, or a branch's newest commit. Always
+    "available": a source isn't newer or older, the user chose it (Settings, Get decompdecomp from)."""
+    branch = branch.strip()
+    if channel == "branch" and branch in ("", "main"):
+        channel = "release"  # main is what releases are made from
+    if channel not in ("release", "branch"):
+        raise ValueError("get decompdecomp from releases or a branch")
+    if channel == "branch" and (not BRANCH_NAME.match(branch) or ".." in branch):
+        raise ValueError(f"{branch!r} isn't a branch name")
+    cur = installed()
+    target = {**cur, "channel": channel, "branch": branch if channel == "branch" else "", "commit": "",
+              "version": "0"}  # (nothing installed from there: whatever it has is the one to install)
+    out = {"current": target, "error": None, "checked": time.time(), "can_apply": can_apply()[0],
+           "why_not": can_apply()[1]}
+    try:
+        out.update(_check_branch(target) if channel == "branch" else _check_release(target))
+    except urllib.error.HTTPError as e:
+        raise ValueError(f"there's no branch {branch} on GitHub" if e.code in (404, 422) and channel == "branch"
+                         else f"GitHub didn't answer ({e.code}): try again in a minute") from None
+    except (OSError, KeyError) as e:
+        raise ValueError(f"couldn't reach GitHub: {e}") from None
+    return {**out, "available": True}
+
+
 def check() -> dict:
     """What's installed, what's newest, and whether that's an update (network: GitHub or decompdecomp)."""
     cur = installed()
@@ -249,13 +277,14 @@ class Updater:
             self.last = cur = check()
         return {**cur, "job": {k: (v[-200:] if k == "log" else v) for k, v in self.job.items()}}
 
-    def apply(self) -> None:
-        """Install the update in the background, then restart into it."""
+    def apply(self, channel: str = "", branch: str = "") -> None:
+        """Install the update in the background, then restart into it. `channel` (and `branch`): another source
+        instead, from then on followed by updates (switch_to)."""
         with self._lock:
             if self.job["state"] in ("installing", "restarting"):
                 return
             # never the cached check: on a branch that moved since, it names an older commit than the newest
-            found = self.last = check()
+            found = self.last = switch_to(channel, branch) if channel else check()
             if not found.get("available"):
                 raise ValueError(found.get("error") or "decompdecomp is up to date")
             ok, why = can_apply()

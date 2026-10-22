@@ -193,9 +193,16 @@ function openFolder() {
 /* What a bug report needs, ready to paste into a GitHub issue: decompdecomp's version and build, this computer, what
    the reporter adds, and the end of a log. Used by a failed import's "Copy for a bug report" and by Report a problem. */
 const REPORT_LOG_LINES = 80;
+// where this copy comes from, when it isn't a release: issues reported from a branch cost time when nobody said so
+function installName(st) {
+  const i = st.install || {};
+  return st.dev ? "a development copy" : i.channel === "branch" ? `the ${i.branch} branch @ ${(i.commit || "?").slice(0, 7)}` : "";
+}
+const versionLine = (st) => `decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""}${installName(st) ? `, from ${installName(st)}` : ""}`
+  + ` · ${st.platform || navigator.platform}${st.system ? ` · ${st.system}` : ""}`;
 function bugReport(lines, log = "") {
   const st = S.st || {};
-  return [`decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || navigator.platform}${st.system ? ` · ${st.system}` : ""}`,
+  return [versionLine(st),
     ...lines, "", "Log:", "```", log.split("\n").slice(-REPORT_LOG_LINES).join("\n"), "```"].join("\n");
 }
 /* The clipboard takes a promise of the text (WebKit, the app's window, only lets a click write to it while the click
@@ -209,7 +216,16 @@ async function copyText(text) {
   } catch { return false; }
 }
 
-async function loadState() { S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`; markPlatforms(); agentsFound(); reportLink(); renderBridgesNotice(); return S.st; }
+async function loadState() {
+  S.st = await api("/api/state"); $("navVersion").textContent = `v${S.st.version}`;
+  const i = S.st.install || {}, branch = !S.st.dev && i.channel === "branch";
+  $("navBranch").hidden = !branch;
+  if (branch) {
+    $("navBranch").textContent = `⑂ ${i.branch} @ ${(i.commit || "?").slice(0, 7)}`;
+    $("navBranch").title = `Installed from the ${i.branch} branch, not a release: it can break, and a problem you report should say so (Report a problem does). Settings switches back to releases.`;
+  }
+  markPlatforms(); agentsFound(); reportLink(); renderBridgesNotice(); return S.st;
+}
 /* The app looks for installed agents in the background (it runs each one's CLI: seconds): ask again until it's done,
    then show their models where agents are picked. */
 const DETECT_POLL_MS = 1500;

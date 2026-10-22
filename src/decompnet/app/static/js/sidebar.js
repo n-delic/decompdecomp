@@ -92,7 +92,7 @@ const ISSUES_URL = "https://github.com/n-delic/decompdecomp/issues/new";
 function reportLink() {
   const st = S.st || {};
   const body = ["**What happened?**", "", "", "**What did you expect?**", "", "", "**What were you doing?** (which game's platform, which screen)", "", "",
-    "---", `decompdecomp ${st.version || "?"}${st.build ? ` (${st.build})` : ""} · ${st.platform || ""}${st.system ? ` · ${st.system}` : ""}`,
+    "---", versionLine(st),
     "Paste the copied report here (decompdecomp put it on your clipboard when you clicked Report a problem)."].join("\n");
   $("reportLink").href = `${ISSUES_URL}?body=${encodeURIComponent(body)}`;
 }

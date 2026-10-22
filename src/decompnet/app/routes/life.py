@@ -32,8 +32,9 @@ def register(app: App) -> None:
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         if request.method == "POST":
-            try:
-                await call(updater.apply)
+            data = await body(request)
+            try:  # {"channel", "branch"}: get decompdecomp from there from now on (Settings)
+                await call(lambda: updater.apply(str(data.get("channel") or ""), str(data.get("branch") or "")))
             except ValueError as e:
                 return fail(e)
         refresh = request.query_params.get("refresh") == "1"

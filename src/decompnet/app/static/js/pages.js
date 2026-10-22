@@ -102,7 +102,10 @@ async function showSettingsPage() {
     ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">A development copy: no updates. Update it with <code>git pull</code>.</p></div>` : `
     <div class="field"><span>Updates come from ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>
-    <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>`}
+    <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>
+    <div class="field"><span>Get decompdecomp from a branch</span><div class="row"><input id="srcBranch" class="mono grow" placeholder="its name on GitHub" value="${inst.channel === "branch" ? esc(inst.branch) : ""}">
+      <button class="ghost small-btn" id="srcBranchGo" type="button">Switch to it</button>${inst.channel === "branch" ? `<button class="ghost small-btn" id="srcRelease" type="button">Back to releases</button>` : ""}</div>
+      <p class="muted small">A branch is a change being tested before it's released: it can break. Use one when you're asked to, and say so when you report a problem.</p></div>`}
     <div class="row"><a class="link small" href="https://github.com/n-delic/decompdecomp" target="_blank" rel="noopener">Source code</a></div>`;
   const showUpdate = (u) => {
     if (!$("upText") || !u) return;
@@ -118,6 +121,8 @@ async function showSettingsPage() {
     checkUpdate(false, false).then(showUpdate);
     $("upCheck").onclick = async () => { $("upText").textContent = "Checking…"; showUpdate(await checkUpdate(true, false)); };
     $("checkUpdateSet").onchange = () => save({ check_updates: $("checkUpdateSet").checked }, $("checkUpdateSet").checked ? "decompdecomp looks for updates." : "decompdecomp won't look for updates (Check now still does).");
+    $("srcBranchGo").onclick = () => switchSource("branch", $("srcBranch").value.trim());
+    if ($("srcRelease")) $("srcRelease").onclick = () => switchSource("release", "");
     $("autoUpdateSet").onchange = () => save({ auto_update: $("autoUpdateSet").checked }, $("autoUpdateSet").checked ? "decompdecomp installs updates by itself." : "decompdecomp asks before updating.");
   }
   wireCopies($("setComputer"));
@@ -169,6 +174,22 @@ function offerUpdate() {
   body.querySelector("#upGo").onclick = async (e) => {
     e.target.disabled = true;
     try { await api("/api/update", { method: "POST", body: { apply: true } }); } catch (err) { e.target.disabled = false; return toast(esc(err.message), "err"); }
+    showUpdating();
+  };
+}
+/* Settings: get decompdecomp from a branch, or from releases again (updates.switch_to). It installs and restarts
+   like an update, and updates follow the new source from then on. */
+function switchSource(channel, branch) {
+  if (channel === "branch" && !branch) return toast("Type the branch's name first.", "err");
+  const what = channel === "branch" ? `the <b>${esc(branch)}</b> branch` : "releases";
+  const body = dialog("Switch where decompdecomp comes from", `<p>decompdecomp installs the newest from ${what}, restarts by itself, and
+    takes its updates from there from now on. Helper agents pause for a moment and carry on.</p>
+    ${channel === "branch" ? `<p class="muted small">A branch can break. The sidebar shows its name while you use it, and Report a problem says so.</p>` : ""}
+    <div class="row"><button class="primary" id="srcGo" type="button">Switch</button><button class="ghost" id="srcCancel" type="button">Cancel</button></div>`);
+  body.querySelector("#srcCancel").onclick = closeAll;
+  body.querySelector("#srcGo").onclick = async (e) => {
+    e.target.disabled = true;
+    try { await api("/api/update", { method: "POST", body: { channel, branch } }); } catch (err) { e.target.disabled = false; return toast(esc(err.message), "err"); }
     showUpdating();
   };
 }

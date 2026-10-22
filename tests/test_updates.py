@@ -279,3 +279,35 @@ def test_a_development_copy_never_updates_itself(monkeypatch):
     monkeypatch.setattr(edition, "DEV", True)
     ok, why = updates.can_apply()
     assert not ok and "development copy" in why
+
+
+def test_settings_switch_between_releases_and_a_branch(monkeypatch):
+    """Users pointed at a branch for support reported issues from it without saying so; the switch was the command
+    line only. Settings switches now: a branch's newest commit, or back to releases (whatever their version), and
+    updates follow the new source from then on."""
+    head = "3" * 40
+    monkeypatch.setattr(updates, "_json", lambda url: {"sha": head, "commit": {"message": "Newest", "committer": {}}}
+                        if url.endswith("commits/polish-everywhere") else (_ for _ in ()).throw(
+                            urllib.error.HTTPError(url, 404, "Not Found", {}, None)))
+    monkeypatch.setattr(updates, "_branch_version", lambda repo, sha: "1.0.6a0")
+    found = updates.switch_to("branch", "polish-everywhere")
+    assert found["available"] and found["current"]["branch"] == "polish-everywhere"
+    assert found["spec"] == f"decompnet @ https://github.com/n-delic/decompdecomp/archive/{head}.tar.gz"
+    with pytest.raises(ValueError, match="no branch gone-branch on GitHub"):
+        updates.switch_to("branch", "gone-branch")
+    with pytest.raises(ValueError, match="isn't a branch name"):
+        updates.switch_to("branch", "a b")
+    updates.record("branch", "polish-everywhere", head)
+    monkeypatch.setattr(updates, "_get", lambda url, timeout=15: b'VERSION="0.0.1"\n')  # older than the branch
+    back = updates.switch_to("branch", "main")  # main is what releases are made from
+    assert back["available"] and back["current"]["channel"] == "release" and back["latest"]["version"] == "0.0.1"
+    monkeypatch.setattr(updates, "can_apply", lambda: (True, ""))
+    installed = []
+    monkeypatch.setattr(updates, "install", lambda found, log=print: installed.append(found["current"]["channel"]))
+    monkeypatch.setattr(updates, "restart", lambda port, secret, window: None)
+    updates.Updater(lambda: None, 0, "").apply("release")
+    import threading
+    for t in threading.enumerate():
+        if t.name == "update":
+            t.join(10)
+    assert installed == ["release"]

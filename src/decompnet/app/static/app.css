@@ -146,6 +146,9 @@ a.ghost, a.primary { text-decoration: none; }
 .nav-item.on { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); }
 .nav-item.on svg { fill: var(--match); }
 .nav-foot { border-top: 1px solid var(--line-soft); padding-top: 8px; display: grid; gap: 1px; }
+/* installed from a branch: said where it can't be missed, for the user and for whoever answers their report */
+.nav-branch { margin: 2px 6px; padding: 3px 7px; border-radius: 5px; background: var(--work-bg); color: var(--work); font: 600 11px/1.4 var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
 .nav-meta { display: flex; align-items: center; gap: 2px; padding: 6px 4px 0 9px; }
 .nav-update { margin-left: 6px; font: 600 10.5px/1 var(--mono); padding: 4px 7px; border-radius: var(--r-sm); background: var(--hl); color: var(--hl-ink); }
 .nav-update:hover { filter: brightness(1.08); }
