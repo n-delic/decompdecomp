@@ -142,6 +142,12 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     (out / "include" / "common.h").write_text(header, encoding="utf-8")
     for u in units:
         (out / "include" / f"common_{u}.h").write_text(net._context(proj["id"], u)["header"], encoding="utf-8")
+    from ..arch.mips import raw_cop2  # (splat's consoles are MIPS)
+
+    for path in (out / "asm").glob("**/*.s"):  # what GNU as can't read as spimdisasm writes it, as raw words
+        text = path.read_text(encoding="utf-8")
+        if (raw := raw_cop2(text, console.big_endian)) != text:
+            path.write_text(raw, encoding="utf-8")
     functions = []
     for path in sorted((out / "asm" / "nonmatchings").glob("**/*.s")):
         rom_off, vram = _first_address(path)

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import collections
+import re
 import struct
 
 import capstone
@@ -237,6 +238,20 @@ def _mips_uses(w: int) -> tuple[set[int], set[int]] | None:
     if op in (2, 3):
         return (set(), {31} if op == 3 else set())
     return None
+
+
+# a spimdisasm instruction line: `/* rom vram bytes */  mnemonic operands`, the bytes in the file's order
+_ASM_LINE = re.compile(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]+ ([0-9A-Fa-f]{8}) \*/\s+)\S.*$", re.M)
+
+
+def raw_cop2(text: str, big_endian: bool) -> str:
+    """Coprocessor 2's instructions in spimdisasm's assembly (the PS2's VU0 macro mode, the PS1's GTE) as the words
+    they are: GNU as takes its spelling of them (`vmaddaz.xyzw ACC,$vf6,$vf8z`, `vrsqrt Q,$vf0w,$vf1x`) for invalid
+    operands, and a real PS2 game's export stopped there. They carry no relocation, so the words build the same bytes."""
+    def one(m: re.Match) -> str:
+        word = int.from_bytes(bytes.fromhex(m[2]), "big" if big_endian else "little")
+        return f"{m[1]}.word 0x{word:08X}" if word >> OPCODE_SHIFT == COP2 else m[0]
+    return _ASM_LINE.sub(one, text)
 
 
 def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str = "") -> str | None:
