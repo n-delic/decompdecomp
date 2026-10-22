@@ -208,6 +208,13 @@ prove what a function does, not what its author called it.
 and the export rebuilds the game byte for byte from matched C plus assembly for what isn't matched yet. A game at
 100%, polished, is the goal, and the first one will be announced here.
 
+**What do I end up with?** The source code of a game you own, that builds it again. A DS game started from scratch
+reached 2,400 matched functions (58% of its code) in under two days, about half of them matched by free models, and
+its project built a game that boots in an emulator: matched functions from their C, the rest from the original's code
+until agents get to it. It isn't overnight: the last functions are the big ones, and they take time and tokens. But
+every match stays matched, and each one makes the project more of what a game's source is: something you can read,
+change, port and mod.
+
 ## Help make it better
 
 decompdecomp is built in the open, and it's meant to be easy to work on. Read [CONTRIBUTING.md](CONTRIBUTING.md)

@@ -226,6 +226,38 @@ A window that shows, for each agent you use, what's left of its limits: the 5-ho
 and Codex, and a monthly limit or the credit left on an API key where the provider says it. Helpers already wait for a
 usage limit to reset; this shows it before they hit it, so you can pick which agents to start.
 
+### Big functions for every model
+
+In a DS game at 58%, functions under 400 instructions were mostly matched, and 25 of the 29 over 400 were open:
+40% of the code left, 10 of them never compiled. Agents of free models released them as "too big to transcribe in
+one go", and they're right about the medium: a big function's Ghidra draft is 10-25 KB of C, more than one
+compile_and_diff a model with a small output limit can send, and its assembly takes most of a small context.
+
+The big ones that matched show the way. A 2,793-instruction switch matched in 2 compiles as 125 lines of C, and a
+1,272-instruction one by a free model, in 2 compiles too: their cases are long runs of the same calls with other
+numbers, and the agent wrote one-letter macros for them (`#define A(x) func_0206d4f8(x, 1)`). Two of the untried big
+functions are in that file, macros defined, and their briefs don't show the match: a matched look-alike's C is shown
+only under 3,000 characters.
+
+1. **Briefs for big functions** (no new tool). Over 400 instructions, the brief says how such functions matched
+   (macros for the runs of calls that repeat, the file's own macros listed), and shows a matched look-alike's C
+   whatever its length, with its macros.
+2. **One case at a time.** A `compile_part(function, part, code)` tool: the function's current C stays in its file,
+   one part (a switch case, from the target's jump table: ARM's `add pc, pc, r0, lsl #2` and the branches after it;
+   or a block between labels) is replaced, the unit is built and judged as always, and the answer is that part's
+   rows of the diff. A first compile sends the skeleton (prologue, the switch, empty cases, epilogue). Each call
+   carries 100-200 instructions' worth, which any model handles. The judge doesn't change: the function matches
+   when objdiff says 100% for all of it.
+3. **Several agents on one function, at once.** With parts, a big function can be held in parts: each agent claims
+   a part, works on it with compile_part, and its change stays when the function's score gets no worse and no
+   other part's rows get worse (the compiler allocates registers over the whole function, so a case can move
+   another's; such a change is refused, saying which part moved). Agents see each other's parts land, through the
+   file, and notes per part. Briefs give each agent its part's assembly only.
+
+Measure each step on that DS game's 25: how many get tried and how far, against the week before. Step 2 is what
+matters most for free models: step 3 adds speed, and contention on one file, so it waits until 2 shows parts can be
+worked on alone.
+
 ### Real names on Windows PC
 
 A PC project's source names functions and data by address (`func_0041B470`, `D_0066DDA4`), and the project's
