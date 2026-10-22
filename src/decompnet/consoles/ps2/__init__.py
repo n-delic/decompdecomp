@@ -137,8 +137,8 @@ class PlayStation2(Console):
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Unless the user picked a compiler: the object files another compiler built than most of the game
         (elf.object_compilers: CodeWarrior's C library in a GCC game) get it as their range, then the installed
-        compilers are tried on the rest. What a program says about its compiler can mislead (GTA San Andreas keeps
-        one library's "MW MIPS C Compiler" note; its own code is EE-GCC 2.96's); the judge doesn't."""
+        compilers are tried on the rest. What a program says about its compiler can mislead (a PS2 game with 12,000
+        functions keeps one library's "MW MIPS C Compiler" note; its own code is EE-GCC's); the judge doesn't."""
         if not chosen:
             cfg = net.cfg(net.project_row(slug))
             by_guess = {c.guess: c for c in self.compilers}
