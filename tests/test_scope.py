@@ -95,8 +95,41 @@ def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, 
     assert m._left(slug) == 0  # nothing left to decompile
     assert m._left(slug, "readable") == 2  # game_a and game_b to polish (not lib_a: library code, set aside)
     net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
-    net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub: nothing to explain
+    net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub too: it comes last, not never
+    assert m._left(slug, "readable") == 1
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_b'")
     assert m._left(slug, "readable") == 0
+
+
+def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on(tmp_path, monkeypatch):
+    """A floor of 8 instructions left 15 of a small Xbox game's 33 functions with address names: small ones come last
+    now, not never. And biggest first, one no rewrite kept matching was handed out again and again, to every helper:
+    after POLISH_TRIES tries since it was last readable it's left, and helpers stop once only such functions remain."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=2 WHERE name='game_a'")  # a getter: 8 bytes
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    proj = net._project(slug)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert readable.Readability(net).left(proj) == 2
+    for _ in range(readable.POLISH_TRIES):  # game_b, the bigger, first: given up on each time
+        assert "MAKE READABLE: game_b" in net.readability.claim(agent, slug)
+        net.release(agent, "game_b", "", slug)
+    assert net.readability.left(proj) == 1
+    assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)  # then the small one
+    net.release(agent, "game_a", "", slug)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
+    assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
+    # made readable since (by hand), then its flag reset: it has its tries again
+    with net.store.tx() as db:
+        net._event(db, proj["id"], agent.id, "readable", "game_b")
+    assert net.readability.left(proj) == 1 and "game_b" in net.readability.claim(agent, slug)
 
 
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):

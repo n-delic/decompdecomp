@@ -58,15 +58,16 @@ def test_the_same_c_again_is_no_rewrite(matched):
         net.readability.submit(agent, slug, "clamp_s32", net._function("clamp_s32", slug)["matched_source"])
 
 
-def test_polish_takes_starred_then_big_functions_and_leaves_stubs(matched):
-    """Smallest first, a helper spent its first session on empty functions: there's nothing to explain in them."""
+def test_polish_takes_starred_then_big_functions_and_stubs_last(matched):
+    """Smallest first, a helper spent its first session on empty functions: they come last now. Not never: a floor of
+    8 instructions left 15 of a small Xbox game's 33 functions with address names."""
     from decompnet.app import readable
 
     net, slug, agent = matched
     pid = net._project(slug)["id"]
     rows = net.store.all("SELECT id, name, n_insns FROM functions WHERE project_id=? AND status!='matched' "
                          "ORDER BY n_insns", pid)
-    stub = next(r for r in rows if r["n_insns"] < readable.MIN_INSNS)
+    stub = next(r for r in rows if r["n_insns"] < 8)
     big = next(r for r in reversed(rows) if r["n_insns"] <= readable.MAX_INSNS)
     with net.store.tx() as db:
         for r in (stub, big):
@@ -76,7 +77,10 @@ def test_polish_takes_starred_then_big_functions_and_leaves_stubs(matched):
     net.store.conn.execute("UPDATE functions SET boost=1 WHERE name='clamp_s32' AND project_id=?", (pid,))
     other, _ = net.local_agent("claude-opus-5.5-2")
     assert "clamp_s32" in net.readability.claim(other, slug)
-    assert stub["name"] not in net.readability.claim(agent, slug)
+    assert big["name"] in net.readability.claim(agent, slug)  # the big one before the stub
+    net.release(agent, big["name"], "", slug)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE id=?", (big["id"],))
+    assert stub["name"] in net.readability.claim(agent, slug)  # then the stub
 
 
 def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, monkeypatch):
