@@ -135,6 +135,50 @@ def test_a_pc_symbol_is_renamed_by_its_address_in_functions_json(tmp_path):
         "void Town::T(int); T(); func_004010001();"
 
 
+def test_two_renames_at_once_both_reach_every_file(tmp_path, monkeypatch):
+    """Eight polishing helpers renamed at once: each read the files before taking the project's lock and wrote them
+    back after, undoing the renames made meanwhile in some files and not others, and an Xbox game's harness link lost
+    six functions. Here both start while something else (a build) holds the project."""
+    import threading
+
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import Unit
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    (root / "config" / "v").mkdir(parents=True)
+    (root / "config" / "v" / "functions.json").write_text(json.dumps({"units": {"u": [
+        {"name": "_func_00401000", "addr": 0x401000, "relocs": []},
+        {"name": "_func_00401010", "addr": 0x401010, "relocs": []}]}}, indent=1))
+    (root / "src" / "auto").mkdir(parents=True)
+    source = root / "src" / "auto" / "u.cpp"
+    source.write_text("int func_00401000(int x) { return x; }\nint func_00401010(int x) { return func_00401000(x); }\n")
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "v",
+                                                  "platform": "pc", "ready": True}, "x")
+    report = {"units": [{"name": "u", "functions": [{"name": n, "size": "8", "fuzzy_match_percent": 100.0}
+                                                    for n in ("_func_00401000", "_func_00401010")]}]}
+    monkeypatch.setattr(ForkProject, "report", lambda self: report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [Unit("u", None, None, "src/auto/u.cpp", False, None)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(ForkProject, "git", lambda self, *args: "")
+    net.forks.sync("p", log=lambda *_: None)
+    agent, _ = net.local_agent("claude-1")
+    said = {}
+    first = threading.Thread(target=lambda: said.update(a=net.rename_symbol(agent, "p", "_func_00401000", "Identity")))
+    second = threading.Thread(target=lambda: said.update(b=net.rename_symbol(agent, "p", "_func_00401010", "Pass")))
+    with net.forks._tree(net.project_row("p")).exclusive():  # a build holds the project while both start
+        first.start()
+        second.start()
+        first.join(0.5)  # (they wait for it now; before, each read the files here)
+    first.join(10)
+    second.join(10)
+    assert said["a"].startswith("✅") and said["b"].startswith("✅"), said
+    assert source.read_text() == "int Identity(int x) { return x; }\nint Pass(int x) { return Identity(x); }\n"
+    names = json.loads((root / "config" / "v" / "functions.json").read_text())["names"]
+    assert names == {"func_00401000": "Identity", "func_00401010": "Pass"}
+
+
 def test_only_32_bit_x86_programs():
     assert not scratch_pe.is_pe(b"MZ" + bytes(0x3E))
     head = bytearray(0x200)

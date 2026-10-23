@@ -1523,15 +1523,17 @@ class ForkEngine:
         console = consoles.get(cfg.get("platform"))
         version = (fp.manifest or {}).get("version") or cfg.get("version")
         word, taken = re.compile(console.rename_pattern(old)), re.compile(rf"\b{re.escape(new)}\b")
-        files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
-                       if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
-        texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
-        if any(taken.search(t) for t in texts.values()):
-            raise NetworkError(f"{new} is used in the project already: pick another name")
-        matched = {self._meta(r).get("symbol") or r["name"] for r in self.net.store.all(
-            "SELECT name, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
         checks = consoles.REBUILD_CHECK in console.features
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+            # read under the lock: eight polishing helpers renamed at once, each wrote back files it had read before
+            # the others' renames, and half of an Xbox game's renames were undone in some files and not others
+            files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
+                           if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
+            texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
+            if any(taken.search(t) for t in texts.values()):
+                raise NetworkError(f"{new} is used in the project already: pick another name")
+            matched = {self._meta(r).get("symbol") or r["name"] for r in self.net.store.all(
+                "SELECT name, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
             before = (fp.manifest or {}).get("rebuild") or {}
             saved: dict[Path, str] = {}
             try:
@@ -1926,7 +1928,7 @@ class ForkEngine:
         """Ways the function may be spelled in source: its real name (a PC game's, Console.real_names), full C++
         name, Class::method, then the plain symbol."""
         out = [meta["real"]] if meta.get("real") else []
-        dem =(meta.get("demangled") or "").split("(", 1)[0].strip()
+        dem = (meta.get("demangled") or "").split("(", 1)[0].strip()
         if dem:
             dem = dem.split(" ")[-1] if " " in dem and "operator" not in dem else dem
             out.append(dem)
