@@ -27,6 +27,9 @@ MAX_INSNS = 400  # bigger functions wait: a readable rewrite of 2,000 instructio
 # stubs and one-liners have nothing to explain (their names come with the functions that call them): polishing
 # smallest first spent a session on empty functions in Mario Kart 64
 MIN_INSNS = 8
+# what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
+# own matched code that isn't readable yet, of a size worth explaining
+TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND n_insns BETWEEN {MIN_INSNS} AND {MAX_INSNS}"
 
 
 class Readability:
@@ -45,6 +48,11 @@ class Readability:
                                  f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
 
+    def left(self, proj) -> int:
+        """How many functions polishing can still take, held ones included: a polishing helper stops at none (a game
+        with nothing left to decompile stopped its polishing helpers before they began)."""
+        return self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}", proj["id"])["n"]
+
     def claim(self, agent: Agent, slug: str) -> str:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
         proj = self.net._project(slug)
@@ -60,9 +68,9 @@ class Readability:
             if fn is None:
                 # starred first, then the biggest that fit: that's where the logic people want to read is. The game's
                 # own code: an Xbox game's matched SDK functions, set aside, would have been polished with its 33
-                fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 AND {GAME_CODE} "
-                                "AND n_insns BETWEEN ? AND ? AND id NOT IN (SELECT function_id FROM claims) "
-                                "ORDER BY boost DESC, n_insns DESC LIMIT 1", (proj["id"], MIN_INSNS, MAX_INSNS)).fetchone()
+                fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
+                                "AND id NOT IN (SELECT function_id FROM claims) "
+                                "ORDER BY boost DESC, n_insns DESC LIMIT 1", (proj["id"],)).fetchone()
                 if fn is None:
                     return "Every matched function is readable already (or too big for now). 🎉"
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
