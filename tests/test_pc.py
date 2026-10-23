@@ -303,6 +303,8 @@ def test_agents_match_functions(pc):
     fn = net._function(getter, slug)
     assert fn["status"] == "matched" and json.loads(fn["meta"])["real"] == "settings_get"
     assert net._function("settings_get", slug)["id"] == fn["id"]
+    # a renamed global is read by its new name (a helper that named one could no longer read_data it)
+    assert net.forks.read_data(agent, slug, "g_settings", 24).startswith(f"g_settings = {rename['g_settings']} (")
     again = sub(csource.get(source, "settings_get")).replace(rename["settings_get"], "settings_get")
     res = net.attempt(agent, "settings_get", again.replace(rename["g_settings"], "g_settings"), slug)
     assert res["matched"], res["text"]
