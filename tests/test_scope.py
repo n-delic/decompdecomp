@@ -98,6 +98,9 @@ def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, 
     net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub too: it comes last, not never
     assert m._left(slug, "readable") == 1
     net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_b'")
+    assert m._left(slug, "readable") == 1  # the file to tidy now
+    with net.store.tx() as db:
+        net._event(db, net._project(slug)["id"], None, "tidied", "game")
     assert m._left(slug, "readable") == 0
 
 
@@ -152,6 +155,51 @@ def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tm
     net.release(agent, "game_b", "", slug)
     second = net.readability.claim(agent, slug)
     assert "MAKE READABLE: game_a" in second and "it's a big function" in second
+
+
+def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkeypatch):
+    """Polishing one function at a time left an Xbox game's types as the first guesses were, declared again in three
+    files, among duplicate and unused declarations, and two getters misnamed for want of reading the strings they
+    returned. Once a file's functions are readable, it's handed out to tidy, one helper at a time, until tidy_done."""
+    from decompnet.app import readable, tools
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    proj = net._project(slug)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    other, _ = net.local_agent("claude-sonnet-5-5-2")
+    brief = net.readability.claim(agent, slug)
+    assert "read_data a global before you name it" in brief and "style the names around them" in brief
+    net.release(agent, brief.split()[2], "", slug)
+    brief = net.readability.claim(other, slug)
+    assert "TIDY" not in brief  # a function of the file isn't readable yet
+    net.release(other, brief.split()[2], "", slug)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name IN ('game_a', 'game_b')")
+    assert net.readability.left(proj) == 1  # the file
+    job = net.readability.claim(agent, slug)
+    assert job.startswith("TIDY A FILE: game (src/game.c)") and 'tidy_done("game"' in job
+    assert net.readability.claim(agent, slug) == job  # it holds it
+    assert "Stop here" in net.readability.claim(other, slug)  # one file, one helper
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(other, slug, "game", "everything")
+    with pytest.raises(NetworkError, match="summary"):
+        net.readability.tidy_done(agent, slug, "game", " ")
+    assert net.readability.tidy_done(agent, slug, "game", "Particle in include/particle.h").startswith("✅")
+    assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
+    kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind LIKE 'tid%' ORDER BY id")]
+    assert kinds == ["tidy", "tidied", "tidy_summary"]
+    # a file no helper finishes is left after its tries, as a function is
+    net.store.conn.execute("DELETE FROM events WHERE kind LIKE 'tid%'")
+    for _ in range(readable.POLISH_TRIES):
+        assert net.readability.claim(agent, slug).startswith("TIDY A FILE")
+        net.readability._tidying.clear()  # (its claim ran out)
+    assert net.readability.left(proj) == 0
+    assert "tidy_done" in tools.tool_names(fork=True) and "tidy_done" not in tools.tool_names(fork=False)
 
 
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):

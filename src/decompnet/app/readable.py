@@ -11,16 +11,23 @@ In project mode (GameCube, Wii, PC, DS, public decomps) the matching C is the pr
 judged as any compile of a matched function is there (ForkEngine.attempt): kept and committed only when it still
 matches and the file's other matched functions do too, else the file is put back as it was. The decomp is never left
 broken by polishing.
+
+Then each source file is tidied (project mode): once every function of the game's in it is readable, claim_readable
+hands the file out with a list (the types it shares with other files in one header, fields and classes named, the
+globals it still knows by address named, dead declarations gone, one naming style) and tidy_done says it's done.
+Polishing one function at a time left an Xbox game's types as the first guesses were, declared again in three files,
+with duplicate and unused declarations around them. Its edits go through edit_file, which keeps every match.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 
 from .. import scoring
 from ..forks.project import ForkProject
-from ..network import GAME_CODE, Agent, NetworkError
+from ..network import GAME_CODE, IN_BUILD, Agent, NetworkError
 
 CLAIM_SECONDS = 30 * 60
 # The order polishing takes functions in (starred ones first): SMALL_INSNS to BIG_INSNS biggest first, where the logic
@@ -42,9 +49,42 @@ TODO = (f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ("
         f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES})")
 
 
+TIDY = """\
+TIDY A FILE: {unit} ({source}). Every function of the game's in it is readable now; the file around them isn't
+yet. Make it read like code a person wrote, one edit_file at a time: each edit must build and keep every match, or
+it's undone. Find what else declares the same things with search_code (headers, other source files, a build's own
+driver files) and read_file them.
+1. Types: a struct or class declared in more than one file goes in one header in include/ (create it with an include
+   guard), then each copy is replaced by an #include of it, one file per edit.
+2. Names: fields, classes and parameters named for what the code does with them (the functions' comments say);
+   code that is a class's method written as one, Class::method, where it still matches; a function or global whose
+   name doesn't fit what it does or holds (read_data shows what a global holds) renamed with rename_symbol.
+3. Globals and functions it still knows by address (D_..., func_...): read_data shows what a global holds (a string,
+   a table, a constant); rename_symbol each once you can tell.
+4. Duplicate declarations, ones nothing uses, stray stubs: gone.
+5. One naming style: the one most of the file uses.
+Then tidy_done("{unit}", summary): what you changed, in a sentence or two."""
+
+
 class Readability:
     def __init__(self, net):
         self.net = net
+        self._tidying: dict[tuple[int, str], tuple[int, float]] = {}  # (project, unit) -> (agent, until)
+        self._tidy_lock = threading.Lock()  # (helpers claim at once: one file, one helper)
+
+    def _untidy(self, proj) -> list[str]:
+        """The project's source files (units) to tidy, most functions first: every function of the game's in them
+        readable, none tidied yet, and not given up on (POLISH_TRIES tidy jobs without tidy_done). Project mode only:
+        a ROM project's C is the database's, one function at a time."""
+        if self.net.is_rom(proj):
+            return []
+        rows = self.net.store.all(
+            "SELECT unit, COUNT(*) AS n FROM functions WHERE project_id=? AND unit != '' AND "
+            f"{GAME_CODE} AND {IN_BUILD} GROUP BY unit HAVING SUM(status='matched' AND readable=1) = COUNT(*) "
+            "AND unit NOT IN (SELECT detail FROM events WHERE project_id=? AND kind='tidied') "
+            "AND unit NOT IN (SELECT detail FROM events WHERE project_id=? AND kind='tidy' GROUP BY detail "
+            f"HAVING COUNT(*) >= {POLISH_TRIES}) ORDER BY n DESC, unit", proj["id"], proj["id"], proj["id"])
+        return [r["unit"] for r in rows]
 
     def _matching_c(self, proj, fn) -> str:
         """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
@@ -59,10 +99,43 @@ class Readability:
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
 
     def left(self, proj) -> int:
-        """How many functions polishing can still take, held ones included: a polishing helper stops at none (a game
-        with nothing left to decompile stopped its polishing helpers before they began)."""
+        """How many functions polishing can still take, held ones included, and files to tidy: a polishing helper
+        stops at none (a game with nothing left to decompile stopped its polishing helpers before they began)."""
         return self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
-                                  proj["id"], proj["id"])["n"]
+                                  proj["id"], proj["id"])["n"] + len(self._untidy(proj))
+
+    def _tidy_job(self, agent: Agent, proj) -> str | None:
+        """A file to tidy for this agent (the one it holds, or the next nobody does), or None."""
+        now = time.time()
+        with self._tidy_lock:
+            self._tidying = {k: v for k, v in self._tidying.items() if v[1] > now}
+            mine = next((u for (pid, u), (who, _) in self._tidying.items() if pid == proj["id"] and who == agent.id),
+                        None)
+            if mine is None:
+                held = {u for (pid, u) in self._tidying if pid == proj["id"]}
+                mine = next((u for u in self._untidy(proj) if u not in held), None)
+                if mine is None:
+                    return None
+                with self.net.store.tx() as db:
+                    self.net._event(db, proj["id"], agent.id, "tidy", mine)
+            self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
+        source = next((u.source for u in ForkProject(Path(proj["root"])).units() if u.name == mine), None) or mine
+        return TIDY.format(unit=mine, source=source)
+
+    def tidy_done(self, agent: Agent, slug: str, unit: str, summary: str) -> str:
+        """An agent's tidy of a file, done: recorded with what it changed (its edits were kept by edit_file only while
+        every match held, so the file still matches)."""
+        proj = self.net._project(slug)
+        held = self._tidying.get((proj["id"], unit))
+        if held is None or held[0] != agent.id:
+            raise NetworkError(f"you aren't tidying {unit}: claim_readable gives you a file to tidy")
+        if not summary.strip():
+            raise NetworkError("say what you changed in the summary, in a sentence or two")
+        del self._tidying[(proj["id"], unit)]
+        with self.net.store.tx() as db:
+            self.net._event(db, proj["id"], agent.id, "tidied", unit)
+            self.net._event(db, proj["id"], agent.id, "tidy_summary", f"{unit}: {summary.strip()[:500]}")
+        return f"✅ {unit} is tidy. claim_readable for the next one."
 
     def claim(self, agent: Agent, slug: str) -> str:
         """The next matched function that isn't readable yet, held for this agent, with what it needs to know."""
@@ -82,11 +155,15 @@ class Readability:
                 fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
                                 f"AND id NOT IN (SELECT function_id FROM claims) ORDER BY {ORDER} LIMIT 1",
                                 (proj["id"], proj["id"])).fetchone()
-                if fn is None:
-                    return ("Every matched function is readable already (or was tried "
-                            f"{POLISH_TRIES} times without staying matched). 🎉 Stop here: nothing is left to polish.")
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
-                self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
+                if fn is not None:
+                    db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
+                    self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
+        if fn is None:
+            if fork and (job := self._tidy_job(agent, proj)) is not None:  # every function done: the files next
+                return job
+            return ("Every matched function is readable already (or was tried "
+                    f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
+                    "left to polish.")
         counts = self.counts(proj)
         where = f" at 0x{fn['vram']:08X}" if fn["vram"] is not None else f" in {fn['unit']}"
         names = ("- rename_symbol the function, and the globals and functions it uses, once their purpose is clear "
@@ -95,6 +172,10 @@ class Readability:
                  if fork else
                  "- rename_symbol the function, and the globals and functions it uses, once their purpose is clear;\n"
                  "- describe structs, enums and constants in the shared header (edit_context) and use their names here;\n")
+        # helpers named two getters of class names "static data" without looking at what the globals held, and each
+        # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
+        names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
+                  "is;\n- name things in the style the names around them already use.\n")
         return (f"MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
                 f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
