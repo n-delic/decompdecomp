@@ -185,7 +185,9 @@ def add_to_config(config: Path, workdir: Path, image: str, found: list[tuple[str
 
     data = bytearray((workdir / image).read_bytes())
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
-    segs = [s for s in cfg["segments"] if not isinstance(s, list)]
+    segs = list(cfg["segments"])
+    if segs and isinstance(segs[-1], list) and len(segs[-1]) == 1:
+        segs.pop()  # the image's old end: the overlays go after it (its padding entries stay: split._starts_by_address)
     for name, code, vram, code_at in found:
         data += bytes(-len(data) % 0x10 + 0x10)
         start = len(data)

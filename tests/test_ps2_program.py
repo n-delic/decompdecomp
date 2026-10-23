@@ -91,7 +91,9 @@ def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path, empt
 def test_code_above_the_bss_is_split_where_the_image_keeps_it(tmp_path):
     """A PS2 game keeps its engine at 0x01000000, above its .bss: splat's config placed it by its offset in the file,
     which in objcopy's image (laid out by address) is the .bss's zeros, and 3.5 MB of engine split as three
-    "functions" of nops. Its segment starts where the image keeps it, and the config ends where the image does."""
+    "functions" of nops. Its segment starts where the image keeps it, and the config ends where the image does. What
+    lies between the program's bytes and the engine is padding, and the .bss ends where it really does: either one
+    left to a segment ran its addresses over the next segment's, and splat stopped on the game's own names there."""
     import yaml
 
     from decompnet.rom import split
@@ -118,7 +120,12 @@ def test_code_above_the_bss_is_split_where_the_image_keeps_it(tmp_path):
     assert flat[far_start():far_start() + len(far)] != far  # what the import ran into
     split._starts_by_address(program, image, config)
     assert flat[far_start():far_start() + len(far)] == far
-    assert yaml.safe_load(config.read_text())["segments"][-1] == [len(flat)]
+    segments = yaml.safe_load(config.read_text())["segments"]
+    assert segments[-1] == [len(flat)]
+    main_code = 8  # jr $ra; nop
+    assert [0x000000 + main_code, "pad"] in segments  # the program's 8 bytes, then nothing up to the engine
+    cod = next(s for s in segments if isinstance(s, dict) and s["vram"] == 0x100000)
+    assert 0x100000 + main_code + cod["bss_size"] == 0x101000 + 0x100000  # the .bss ends where it does, gap and all
 
 
 def test_a_tail_call_to_a_function_named_l_is_not_a_label():

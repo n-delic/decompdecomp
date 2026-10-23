@@ -334,13 +334,17 @@ def _starts_by_address(program: Path, image: Path, config: Path) -> None:
         if flat[addr - base:addr - base + len(head)] != head:
             return  # (not an image laid out by address: leave the config as splat wrote it)
     by_offset = {offset - first_offset: addr - base for addr, offset, _ in with_bytes}
-    pieces = _SEGMENT.split(config.read_text(encoding="utf-8"))
+    text = config.read_text(encoding="utf-8")
+    end = _CONFIG_END.search(text)
+    pieces = _SEGMENT.split(text)
     moved = False
+    places = []  # (piece index, start in the file's layout, start in the image's)
     for i, piece in enumerate(pieces):
         start, vram = _SEGMENT_START.search(piece), _SEGMENT_VRAM.search(piece)
-        if start is None or vram is None or int(vram[1], 16) < base:
+        if start is None or vram is None:
             continue
-        shift = int(vram[1], 16) - base - int(start[2], 16)
+        shift = int(vram[1], 16) - base - int(start[2], 16) if int(vram[1], 16) >= base else 0
+        places.append((i, int(start[2], 16), int(start[2], 16) + shift))
         if shift == 0:
             continue
 
@@ -349,9 +353,26 @@ def _starts_by_address(program: Path, image: Path, config: Path) -> None:
             return f"{m[1]}0x{by_offset.get(old, old + shift):06X}"
         pieces[i] = _SUBSEGMENT_START.sub(placed, _SEGMENT_START.sub(lambda m, shift=shift: f"{m[1]}0x{int(m[2], 16) + shift:06X}", piece))
         moved = True
-    if moved:
-        text = _CONFIG_END.sub(lambda m: f"{m[1]}0x{len(flat):X}{m[2]}", "".join(pieces))  # the image's end
-        config.write_text(text, encoding="utf-8")
+    if not moved or end is None:
+        return
+    # A segment is its sections' bytes, then its .bss; what lies between it and the next segment in the image is
+    # padding. Left to the segment, the padding stretched its addresses over the next one's (the engine's first
+    # functions taken for the .bss in front of it) and the zeros after the engine became "functions"; and a
+    # .bss as long as its sections' sizes added up (splat's bss_size) overran the gaps between them into the next.
+    sections = [(s["sh_addr"], s["sh_size"], s["sh_type"] == "SHT_NOBITS") for s in counted]
+    for k, (i, _, new_start) in enumerate(places):
+        vram = int(_SEGMENT_VRAM.search(pieces[i])[1], 16)
+        limit = int(_SEGMENT_VRAM.search(pieces[places[k + 1][0]])[1], 16) if k + 1 < len(places) else 1 << 32
+        inside = [s for s in sections if vram <= s[0] < limit]
+        code_end = max((a + n for a, n, nobits in inside if not nobits), default=vram)
+        bss_end = max((a + n for a, n, nobits in inside if nobits), default=code_end)
+        pieces[i] = re.sub(r"^(    bss_size: )0x[0-9A-Fa-f]+", rf"\g<1>0x{max(0, bss_end - code_end):X}", pieces[i], flags=re.M)
+        content_end = new_start + (code_end - vram)
+        new_next = places[k + 1][2] if k + 1 < len(places) else len(flat)
+        if content_end < new_next:
+            pieces[i] += f"  - [0x{content_end:06X}, pad]\n"
+    text = _CONFIG_END.sub(lambda m: f"{m[1]}0x{len(flat):X}{m[2]}", "".join(pieces))  # the image's end
+    config.write_text(text, encoding="utf-8")
 
 
 def _patch_config(path: Path) -> tuple[str, str, int]:

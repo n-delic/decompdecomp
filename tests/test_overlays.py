@@ -44,6 +44,24 @@ def test_an_overlay_is_placed_at_its_load_address():
     assert overlays.place(data, [(0x003F0000, 0x00420000)]) is None  # over the resident program: no
 
 
+def test_overlays_keep_the_programs_padding(tmp_path):
+    """The overlays go after the program's image; the padding between the program's segments stays (a game whose
+    engine sits above its .bss has some: dropped, its segments ran over each other's addresses)."""
+    import yaml
+
+    segments = [{"name": "cod", "type": "code", "start": 0, "vram": 0x100000, "subsegments": [[0, "asm", "cod"]]},
+                [0x10, "pad"], {"name": "far", "type": "code", "start": 0x20, "vram": 0x400000,
+                                "subsegments": [[0x20, "asm", "far"]]}, [0x30]]
+    config = tmp_path / "game.yaml"
+    config.write_text(yaml.safe_dump({"sha1": "0", "options": {}, "segments": segments}, sort_keys=False))
+    (tmp_path / "game.rom").write_bytes(bytes(0x30))
+    out = overlays.add_to_config(config, tmp_path, "game.rom", [("battle", _overlay(OVERLAY_AT, 4), OVERLAY_AT, 0)],
+                                 log=lambda *_: None)
+    written = yaml.safe_load(config.read_text())["segments"]
+    assert written[:3] == segments[:3] and written[3]["name"] == "ovl_battle"
+    assert written[-1] == [len((tmp_path / out).read_bytes())] and [0x30] not in written  # one end: the new one
+
+
 def test_ps2_elf_overlays_say_where_they_go():
     code = _overlay(0x00400000, 40)
     phoff = 52
