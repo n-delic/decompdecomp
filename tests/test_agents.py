@@ -721,6 +721,36 @@ def test_each_models_cost_per_match_cheapest_first(tmp_path, quiet):
     # a model counted only in tokens isn't the cheapest: it comes after the priced ones
     assert [r["model"] for r in m.costs("game")] == ["deepseek-v4.1-flash", "claude-opus-5.5", "local-qwen", "muse-1.3"]
     assert m.costs("other") == []
+    assert all(r["advice"] == "" for r in m.costs("game"))  # long ago, and no model spinning
+
+
+def test_a_model_spinning_on_a_game_gets_advice_to_weigh_not_an_order(tmp_path, quiet):
+    """An Xbox game in one night: one model's helpers compiled 5,741 times for 10 matches ($138), another's 1,184
+    times for 26 ($199). Nothing told the user the first was spinning."""
+    import time
+
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    now = time.time()
+    with net.store.tx() as db:
+        for model, usd, compiles, matches, at in (("claude-haiku", 138.1, 5741, 10, now - 3600),
+                                                  ("claude-opus", 199.3, 1184, 26, now - 3600),
+                                                  ("claude-haiku", 50.0, 9000, 400, now - 3 * 86400)):  # long ago
+            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, compiles, "
+                       "matches) VALUES(1, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (model, at, usd, compiles, matches))
+    rows = {r["model"]: r for r in m.costs("game")}
+    said = rows["claude-haiku"]["advice"]
+    assert said.startswith("In the last day claude-haiku's helpers here made 5,741 compiles for 10 matches, $13.81 a match")
+    assert "claude-opus's needed about 46 compiles a match, $7.67 a match" in said
+    assert "may be past what claude-haiku does well: claude-opus could get further, for less" in said
+    assert "You might give claude-haiku fewer helpers here." in said
+    assert rows["claude-opus"]["advice"] == ""
+    # one model alone: no comparison, a stronger one in general; a model that does fine alone: nothing
+    alone = agents.spin_advice([{"kind": "claude", "model": "claude-haiku", "usd": 30.0, "compiles": 900, "matches": 0}])
+    assert alone[("claude", "claude-haiku")].endswith("for no matches. What's left of this game may be past what "
+                                                      "claude-haiku does well: a stronger model could get further.")
+    assert agents.spin_advice([{"kind": "api", "model": "m", "usd": 0, "compiles": 900, "matches": 30}]) == {}
+    assert agents.spin_advice([{"kind": "api", "model": "m", "usd": 0, "compiles": 150, "matches": 0}]) == {}  # too few
 
 
 def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):

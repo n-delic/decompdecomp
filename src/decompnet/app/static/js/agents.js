@@ -66,6 +66,10 @@ async function renderCosts(force = false) {
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
   setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
+  // a model spinning here lately (agents.py spin_advice): advice to weigh, above the helpers it's about
+  const advice = rows.filter((r) => r.advice).map((r) => r.advice);
+  $("modelAdvice").hidden = !advice.length;
+  setHtml($("modelAdvice"), advice.map((a) => `<p>${esc(a)}</p>`).join(""));
 }
 
 function renderSessions(sessions) {
