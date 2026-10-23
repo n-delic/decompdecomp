@@ -693,8 +693,9 @@ class Network:
                                             AND created_at > :cooled),
                                  f.id IN ({READY}) DESC, f.id IN ({WANTED}) DESC,
                                  :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
+                escalate = self._escalation(db, proj["id"]) if route else ESCALATE_AFTER
                 args = {"pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
-                        "overall": overall, "escalate": ESCALATE_AFTER, "weak": route == "weak", "strong": route == "strong",
+                        "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
                         "mine": self._own_release_cutoff(db, agent.id, now)}
                 fn = db.execute(query, args).fetchone()
                 if fn is None and route == "weak":  # only what stronger models are for is left: better tried than idle
@@ -707,6 +708,19 @@ class Network:
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
                        "WHERE status='matched')", (fn["id"],))
         return fn
+
+    @staticmethod
+    def _escalation(db, project_id: int) -> int:
+        """How many give-ups make an open function the strongest model's (model routing): ESCALATE_AFTER, until every
+        open function has had that many; then more than the median open function has, so a weak model keeps the
+        less tried half. On an Xbox game whose 1,146 open functions had all been given up on 5 or more times, the
+        weak model fell back to the whole queue: 3,183 claims and $138 for 10 matches in a night, while the strong
+        model matched 27 of its 138."""
+        given_up = sorted(r[0] for r in db.execute("SELECT abandons FROM functions WHERE project_id=? AND "
+                                                   "status='open'", (project_id,)))
+        if not given_up or given_up[0] < ESCALATE_AFTER:
+            return ESCALATE_AFTER
+        return given_up[(len(given_up) - 1) // 2] + 1
 
     def _route(self, db, project_id: int, agent: Agent, now: float) -> str | None:
         """"weak" for a model at work in the project well behind the strongest one at work, "strong" for that one
