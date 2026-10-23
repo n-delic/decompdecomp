@@ -184,12 +184,33 @@ def test_what_a_function_waits_for_is_claimed_first_and_its_match_brings_it_back
 
 def test_notes_that_say_it_matches_are_marked_out_of_date_on_a_function_that_doesnt():
     for text in ("Already 100% - the data check failed earlier", "f is matched; nothing to do", "score 0 now",
-                 "✅ MATCH with the stand-in", "objdiff 100% match"):
+                 "✅ MATCH with the stand-in", "objdiff 100% match",
+                 # what agents wrote while a judge misread a unit's object as score 0
+                 "Matched 100% with plain C (the best attempt source, unchanged), committed.",
+                 "Matches 100% via compile_and_diff (committed again)",
+                 "Compiles to 100% every time with the brief's source. Don't spend compiles on it."):
         assert stale_note(text, "open").startswith("[out of date"), text
         assert stale_note(text, "matched") == text
     for text in ("not 100% match yet: the call to g differs", "68.7%: reads this from the stack, ret 4",
-                 "never matched, tried 4 times", "score 0.5"):
+                 "never matched, tried 4 times", "score 0.5", "Not matched; best stays 97.6% (score 433)",
+                 "It never compiles to 100% with the literal"):
         assert stale_note(text, "open") == text, text
+
+
+def test_longer_notes_that_say_it_matches_go_after_the_findings_on_a_function_that_doesnt():
+    """An Xbox game: notes saying "matches 100%, don't spend compiles on it" (a judge had misread the unit's object)
+    held three of a function's six note slots, above the finding that took it to 92%."""
+    from decompnet.network import brief_notes
+
+    fn = {"status": "open", "best_score": 1668, "n_insns": 222}
+    tail = " The remaining diff the brief shows is stack slots and the order of the three quads' corner sums." * 2
+    rows = [{"text": "Compiles to 100% every time with the brief's source; don't spend compiles on it." + tail,
+             "created_at": 30, "name": "a"},
+            {"text": "Matched 100% with plain C, committed." + tail, "created_at": 20, "name": "b"},
+            {"text": "76.7% -> 92.4%: the origin is a fresh temporary at each call", "created_at": 10, "name": "c"}]
+    out = brief_notes(rows, fn, best_at=10, best_text="92.4%", when=False)
+    assert out[0] == "- (c) 76.7% -> 92.4%: the origin is a fresh temporary at each call"
+    assert all(line.startswith(("- (a) [out of date", "- (b) [out of date")) for line in out[1:])
 
 
 def test_briefs_leave_out_infrastructure_notes_show_duplicates_once_and_mark_beaten_ceilings(tmp_path):

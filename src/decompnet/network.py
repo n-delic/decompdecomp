@@ -182,7 +182,11 @@ def _no_better(scores: list[int | None]) -> int:
 # its best score 0): agents read it over the brief's real score and stopped
 _SAYS_MATCHED = re.compile(r"already\s+(?:at\s+)?100\s*%|already\s+match(?:es|ed)\b|\b(?:is|was|now)\s+(?:100\s*%|"
                            r"matched\b|a\s+match\b)|100(?:\.0+)?\s*%\s*(?:match|identical)|\bscore\s+0(?![\d.])|✅\s*MATCH|"
-                           r"byte[- ]identical", re.I)
+                           r"byte[- ]identical|"
+                           # "Matched 100% with plain C", "Matches 100% via compile_and_diff", "Compiles to 100% every
+                           # time ... don't spend compiles on it": on an Xbox game a judge that misread units' objects
+                           # gave score 0, and these sent later agents away from functions at 83-98%
+                           r"\b(?:match(?:es|ed)?|compiles?\s+to)\s+(?:at\s+)?100\s*%", re.I)
 _NEGATED = re.compile(r"\b(?:not|n't|never|no|without)\b[^.;]{0,24}$", re.I)
 
 
@@ -239,7 +243,9 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
     """A function's notes as its brief lists them (rows newest first: text, created_at, name). Notes about the
     setup (_INFRA_NOTE) are left out, with a line saying how many; a note given word for word more than once is
     shown once; an older note that said it can't get closer, or described less than the best now (`best_text`,
-    reached at `best_at`), is marked superseded and goes after the others. At most `show` (BRIEF_NOTES)."""
+    reached at `best_at`), is marked superseded and goes after the others, and so does a longer one saying a function
+    that doesn't match matches (stale_note): on an Xbox game three of a function's six note slots held such notes
+    while the finding that got it to 92% came after them. At most `show` (BRIEF_NOTES)."""
     show = BRIEF_NOTES if show is None else show
     best_score = fn["best_score"] if fn["status"] != "matched" else None
     best_percent = None
@@ -260,7 +266,9 @@ def brief_notes(rows, fn, best_at: float | None = None, best_text: str = "", sho
             continue
         item = [n, 1, False]
         seen[key] = item
-        if (best_at is not None and best_score is not None and (n["created_at"] or 0) < best_at
+        if fn["status"] != "matched" and says_matched(text):
+            stale.append(item)  # stale_note marks it below
+        elif (best_at is not None and best_score is not None and (n["created_at"] or 0) < best_at
                 and _superseded(text, best_score, best_percent)):
             item[2] = True
             stale.append(item)
