@@ -125,7 +125,12 @@ def _missing(console) -> list[str]:
             return toolchains.installed(tool) is not None or not toolchains.get(tool).supported
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
-    return [t for t in console.demo_tools if not there(t)] + ([] if ZLIB.exists() else ["zlib (projects/zlib-n64/prepare.py)"])
+    missing = [t for t in console.demo_tools if not there(t)]
+    # Only demos built with zlib need its downloaded sources; the PC and PS4
+    # fixtures use the shareable game source alone.
+    if console.demo in {"demo-n64", "demo-rom", "demo-ps1", "demo-ps2", "demo-gc", "demo-ds"} and not ZLIB.exists():
+        missing.append("zlib (projects/zlib-n64/prepare.py)")
+    return missing
 
 
 @pytest.fixture(scope="module", params=DEMOS, ids=[c.id for c in DEMOS])
