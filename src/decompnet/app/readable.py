@@ -37,7 +37,8 @@ class Readability:
         """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
         if self.net.is_rom(proj):
             return fn["matched_source"] or ""
-        return self.net.forks._current_source(ForkProject(Path(proj["root"])), fn) or fn["matched_source"] or ""
+        return (self.net.forks._current_source(ForkProject(Path(proj["root"])), fn, comment=True)
+                or fn["matched_source"] or "")
 
     def counts(self, proj) -> dict:
         row = self.net.store.one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "

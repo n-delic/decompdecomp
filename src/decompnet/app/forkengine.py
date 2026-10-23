@@ -1699,8 +1699,9 @@ class ForkEngine:
                 lines += ["", f"Source of {best['name']} (matched):", "```c", src.strip()[:4000], "```"]
         return "\n".join(lines)
 
-    def _current_source(self, fp: ForkProject, fn) -> str | None:
-        """fn's definition as its file has it now, also when the file gets it by including another source file."""
+    def _current_source(self, fp: ForkProject, fn, comment: bool = False) -> str | None:
+        """fn's definition as its file has it now, also when the file gets it by including another source file.
+        `comment`: with the comment right above it (polishing's brief shows it)."""
         unit = fp.unit(fn["unit"])
         if not unit.source or not (fp.root / unit.source).exists():
             return None
@@ -1717,7 +1718,7 @@ class ForkEngine:
                 continue
             _, span = self._find(text, names)
             if span:
-                return text[span[0]:span[1]]
+                return text[csource.comment_above(text, span[0]) if comment else span[0]:span[1]]
             for inc in _SOURCE_INCLUDE.findall(text):
                 todo += [p for p in (fp.root / inc, fp.root / "src" / inc, path.parent / inc) if p.is_file()][:1]
         return None
@@ -2326,7 +2327,10 @@ class ForkEngine:
         _, span = self._find(source, names)
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
+        # with the comment right above it (what it does, from polishing): the file kept the definition only
+        span = (csource.comment_above(source, span[0]), span[1])
         code = source[span[0]:span[1]]
+        commented = code.lstrip().startswith(("//", "/*"))
         unit = fp.unit(fn["unit"])
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
@@ -2367,6 +2371,8 @@ class ForkEngine:
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
+                if commented:  # a new comment replaces the old one; without one, the file's stays
+                    lo = csource.comment_above(before, lo)
                 if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
                     lo, hi = _pragmas_around(before, lo, hi)
                 after = before[:lo] + pre + code.rstrip("\n") + "\n" + post + before[hi:]

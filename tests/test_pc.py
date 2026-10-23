@@ -185,6 +185,25 @@ def test_agents_match_functions(pc):
                                "a class").startswith("✅")
     res = net.attempt(agent, f"_{abs_name}", f"s32 Num::{abs_name}(s32 v) {{\n    return v < 0 ? -v : v;\n}}\n", slug)
     assert res["matched"], res["text"]
+    # polishing: the comment saying what a function does goes into its file with it (an Xbox game's 18 polished
+    # functions kept their definitions only), a new one replaces it, and a rewrite without one leaves it
+    root = Path(net.project_row(slug)["root"])
+    clamp = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "clamp_s32").replace("clamp_s32", rename["clamp_s32"])
+    code = sub(csource.get(source, "clamp_s32")).strip() + "\n"
+    file = next(p for p in (root / "src").rglob("*.c*") if csource.find(p.read_text(), rename["clamp_s32"]))
+
+    def polish(comment: str) -> str:
+        res = net.readability.submit(agent, slug, clamp, comment + code)
+        assert "readable now" in res, res
+        return file.read_text()
+
+    text = polish("// Keeps v within lo and hi.\n")
+    assert "// Keeps v within lo and hi.\n" + code.splitlines()[0] in text  # right above the definition
+    text = polish("/* Clamps v to [lo, hi],\n   both ends included. */\n")
+    assert "Keeps v within" not in text and text.count("both ends included. */\n" + code.splitlines()[0]) == 1
+    code = code.replace("{", "{ /* the bounds are included */", 1)  # (other C than it has: a rewrite)
+    text = polish("")
+    assert "both ends included. */\n" + code.splitlines()[0] in text  # no comment sent: the file's stays
     other = f"_func_{syms['_entity_points']:08X}"
     wrong = net.attempt(agent, other, sub(csource.get(source, "entity_points")).replace("return 75;", "return 76;"),
                         slug)
