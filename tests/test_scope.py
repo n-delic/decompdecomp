@@ -60,6 +60,23 @@ def _sums(net: RomNetwork) -> tuple[int, int]:
     return s["functions"] - s["set_aside"], s["matched"]
 
 
+def test_polishing_takes_the_games_own_code_and_leaves_set_aside_library_code(tmp_path, monkeypatch):
+    """An Xbox game's matched SDK functions, set aside as library code, would have been polished with its own: polishing
+    takes and counts the game's own code, as progress does."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16, matched_source='int f(void) { return 0; }'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn: None)
+    assert net.readability.counts(net._project(slug)) == {"matched": 1, "readable": 0}  # game_a, not lib_a
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)
+    other, _ = net.local_agent("claude-sonnet-5-5-2")
+    assert "lib_a" not in net.readability.claim(other, slug)
+
+
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):
     fp = ForkProject(tmp_path)
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({"version": "v", "rebuild": {"identical": True}}))

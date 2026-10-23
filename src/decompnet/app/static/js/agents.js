@@ -194,6 +194,9 @@ async function startAgents(a, model, count, btn, extra = {}) {
 const TASKS = [["", "Decompile", "match functions the game has, byte for byte"],
   ["readable", "Polish matched code", "give matched functions real names, types and a comment; they still match"]];
 const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matching: before that, agents decompile
+// of the game's own code (cFunctions, as the header counts): an Xbox game whose 33 functions all matched had no Polish
+// to choose, its 241 set-aside ones (library code, assembly) counted against it
+const polishOffered = (ov) => !!ov && cFunctions(ov) > 0 && ov.matched >= cFunctions(ov) * POLISH_FROM_SHARE;
 function renderLauncher(box, compact = true) {
   if (!box || !S.st) return;
   launcherInit();
@@ -227,8 +230,8 @@ function renderLauncher(box, compact = true) {
       ${effortField(a)}`;
   }
   const ready = a.installed;
-  // a ROM project's helpers can also polish matched C (app/readable.py), once half the game matches
-  const tasks = S.ov && S.ov.functions && S.ov.matched >= S.ov.functions * POLISH_FROM_SHARE ? `<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
+  // helpers can also polish matched C (app/readable.py), once half the game matches
+  const tasks = polishOffered(S.ov) ?`<div class="field"><span>What they do</span><div class="seg" role="radiogroup" aria-label="What they do">${
     TASKS.map(([k, label, what]) => `<button type="button" role="radio" aria-checked="${LZ.task === k}" class="${LZ.task === k ? "on" : ""}" data-task="${k}" title="${what}">${label}</button>`).join("")}</div>
     <span class="muted small">${esc(TASKS.find(([k]) => k === LZ.task)[2])}</span></div>` : "";
   if (!tasks) LZ.task = "";

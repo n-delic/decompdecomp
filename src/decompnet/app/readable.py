@@ -20,7 +20,7 @@ from pathlib import Path
 
 from .. import scoring
 from ..forks.project import ForkProject
-from ..network import Agent, NetworkError
+from ..network import GAME_CODE, Agent, NetworkError
 
 CLAIM_SECONDS = 30 * 60
 MAX_INSNS = 400  # bigger functions wait: a readable rewrite of 2,000 instructions is a project of its own
@@ -40,8 +40,9 @@ class Readability:
         return self.net.forks._current_source(ForkProject(Path(proj["root"])), fn) or fn["matched_source"] or ""
 
     def counts(self, proj) -> dict:
+        """The game's own code only (GAME_CODE): library code set aside is out of progress, so out of polishing too."""
         row = self.net.store.one("SELECT SUM(status='matched') AS matched, SUM(status='matched' AND readable=1) AS readable "
-                                 "FROM functions WHERE project_id=?", proj["id"])
+                                 f"FROM functions WHERE project_id=? AND {GAME_CODE}", proj["id"])
         return {"matched": row["matched"] or 0, "readable": row["readable"] or 0}
 
     def claim(self, agent: Agent, slug: str) -> str:
@@ -57,8 +58,9 @@ class Readability:
             if held is not None and fn is None:
                 raise NetworkError(f"you hold {held['name']}; match it or release_function it first")
             if fn is None:
-                # starred first, then the biggest that fit: that's where the logic people want to read is
-                fn = db.execute("SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 "
+                # starred first, then the biggest that fit: that's where the logic people want to read is. The game's
+                # own code: an Xbox game's matched SDK functions, set aside, would have been polished with its 33
+                fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND status='matched' AND readable=0 AND {GAME_CODE} "
                                 "AND n_insns BETWEEN ? AND ? AND id NOT IN (SELECT function_id FROM claims) "
                                 "ORDER BY boost DESC, n_insns DESC LIMIT 1", (proj["id"], MIN_INSNS, MAX_INSNS)).fetchone()
                 if fn is None:
