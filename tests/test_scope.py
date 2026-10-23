@@ -132,6 +132,28 @@ def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on
     assert net.readability.left(proj) == 1 and "game_b" in net.readability.claim(agent, slug)
 
 
+def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tmp_path, monkeypatch):
+    """A ceiling of 400 instructions left a game's biggest functions unpolished for good ("they wait"): they come after
+    the functions people read most, smallest of them first, and their brief asks for names and comments in place."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute(f"UPDATE functions SET n_insns={readable.BIG_INSNS + 100} WHERE name='game_a'")
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    first = net.readability.claim(agent, slug)
+    assert "MAKE READABLE: game_b" in first and "big function" not in first
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_b'")
+    net.release(agent, "game_b", "", slug)
+    second = net.readability.claim(agent, slug)
+    assert "MAKE READABLE: game_a" in second and "it's a big function" in second
+
+
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):
     fp = ForkProject(tmp_path)
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({"version": "v", "rebuild": {"identical": True}}))

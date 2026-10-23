@@ -23,15 +23,20 @@ from ..forks.project import ForkProject
 from ..network import GAME_CODE, Agent, NetworkError
 
 CLAIM_SECONDS = 30 * 60
-MAX_INSNS = 400  # bigger functions wait: a readable rewrite of 2,000 instructions is a project of its own
-# Small functions come last, biggest first (polishing smallest first spent a session on empty functions in Mario Kart
-# 64), but they come: a floor of 8 instructions left 15 of a small Xbox game's 33 functions with address names,
-# constructors and getters among them, and nothing names a callee from its caller's polish.
+# The order polishing takes functions in (starred ones first): SMALL_INSNS to BIG_INSNS biggest first, where the logic
+# people want to read is; then bigger ones, smallest first (a readable rewrite of 2,000 instructions is a project of
+# its own, and they waited for good behind a ceiling of 400); then small ones, biggest first. Smallest first, polishing
+# spent a session on empty functions in Mario Kart 64; a floor of 8 instructions then left 15 of a small Xbox game's 33
+# functions with address names, constructors and getters among them, and nothing names a callee from its caller's
+# polish. So every size comes, in that order.
+SMALL_INSNS, BIG_INSNS = 8, 400
+ORDER = (f"boost DESC, CASE WHEN n_insns > {BIG_INSNS} THEN 1 WHEN n_insns < {SMALL_INSNS} THEN 2 ELSE 0 END, "
+         f"CASE WHEN n_insns > {BIG_INSNS} THEN n_insns ELSE -n_insns END")
 POLISH_TRIES = 3  # a function taken up this often since it was last made readable, and still not readable, is skipped
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
-# own matched code that isn't readable yet, of a size that fits, and not given up on: one no rewrite keeps matching
-# was handed out again and again, to every helper, being the biggest. (? : the project's id, twice)
-TODO = (f"status='matched' AND readable=0 AND {GAME_CODE} AND n_insns <= {MAX_INSNS} AND name NOT IN ("
+# own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
+# and again, to every helper, being the biggest. (? : the project's id, twice)
+TODO = (f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ("
         "SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='polish' AND p.id > COALESCE((SELECT MAX(r.id) "
         "FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' AND r.detail=p.detail), 0) "
         f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES})")
@@ -72,13 +77,13 @@ class Readability:
             if held is not None and fn is None:
                 raise NetworkError(f"you hold {held['name']}; match it or release_function it first")
             if fn is None:
-                # starred first, then the biggest that fit: that's where the logic people want to read is. The game's
-                # own code: an Xbox game's matched SDK functions, set aside, would have been polished with its 33
+                # in ORDER. The game's own code: an Xbox game's matched SDK functions, set aside, would have been
+                # polished with its 33
                 fn = db.execute(f"SELECT * FROM functions WHERE project_id=? AND {TODO} "
-                                "AND id NOT IN (SELECT function_id FROM claims) "
-                                "ORDER BY boost DESC, n_insns DESC LIMIT 1", (proj["id"], proj["id"])).fetchone()
+                                f"AND id NOT IN (SELECT function_id FROM claims) ORDER BY {ORDER} LIMIT 1",
+                                (proj["id"], proj["id"])).fetchone()
                 if fn is None:
-                    return ("Every matched function is readable already (or too big for now, or tried "
+                    return ("Every matched function is readable already (or was tried "
                             f"{POLISH_TRIES} times without staying matched). 🎉 Stop here: nothing is left to polish.")
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
                 self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
@@ -96,6 +101,8 @@ class Readability:
                 "Make it readable without changing what the compiler makes of it:\n" + names +
                 "- give parameters and locals meaningful names; write one comment saying what the function does;\n"
                 "- keep the statements' shape: the order, the casts and the temporaries that make it match.\n"
+                + ("- it's a big function: rename and comment in place, statement for statement; don't restructure it "
+                   "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
                 f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
                 "it's refused and the matching C stays.")
 

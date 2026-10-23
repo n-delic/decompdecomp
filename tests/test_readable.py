@@ -68,7 +68,7 @@ def test_polish_takes_starred_then_big_functions_and_stubs_last(matched):
     rows = net.store.all("SELECT id, name, n_insns FROM functions WHERE project_id=? AND status!='matched' "
                          "ORDER BY n_insns", pid)
     stub = next(r for r in rows if r["n_insns"] < 8)
-    big = next(r for r in reversed(rows) if r["n_insns"] <= readable.MAX_INSNS)
+    big = next(r for r in reversed(rows) if r["n_insns"] <= readable.BIG_INSNS)
     with net.store.tx() as db:
         for r in (stub, big):
             db.execute("UPDATE functions SET status='matched', matched_source='/* as it matched */' WHERE id=?", (r["id"],))
