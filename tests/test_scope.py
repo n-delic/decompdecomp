@@ -181,8 +181,24 @@ def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkey
     net.release(other, brief.split()[2], "", slug)
     net.store.conn.execute("UPDATE functions SET readable=1 WHERE name IN ('game_a', 'game_b')")
     assert net.readability.left(proj) == 1  # the file
+    # what the globals it declares hold comes with it: two getters of class-name strings were named "static data"
+    (root / "src").mkdir()
+    (root / "src" / "game.c").write_text('extern int g_shape_static_data;\nextern float k_ratio;\nextern "C" void f(void);\n'
+                                         "extern int D_00403000[4];\nint get(void);\n")
+    held = {"g_shape_static_data": 'D_00402000 (.rdata+0x0, 32 bytes)\n  +0x000: 43 69 72\n'
+                                   'as f32: 4.46528e+30, 1.49939e-43\nas a string: "Circle"',  # (text reads as floats too)
+            "k_ratio": "D_00402010 (.rdata+0x10, 32 bytes)\n  +0x000: 00 00 80 3f\nas f32: 1",
+            "D_00403000": "D_00403000 (.bss+0x0, 32 bytes): uninitialized data (.bss), zeros at start-up."}
+
+    def read_data(agent, slug, what, length=64):
+        if what not in held:
+            raise NetworkError(f"no data {what}")
+        return held[what]
+    monkeypatch.setattr(net.forks, "read_data", read_data)
     job = net.readability.claim(agent, slug)
     assert job.startswith("TIDY A FILE: game (src/game.c)") and 'tidy_done("game"' in job
+    assert '   g_shape_static_data: as a string: "Circle"' in job and "   k_ratio: as f32: 1" in job
+    assert "   D_00403000: uninitialized data (.bss)" in job and "   f:" not in job
     assert net.readability.claim(agent, slug) == job  # it holds it
     assert "Stop here" in net.readability.claim(other, slug)  # one file, one helper
     with pytest.raises(NetworkError, match="aren't tidying"):

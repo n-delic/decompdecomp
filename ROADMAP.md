@@ -41,8 +41,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
@@ -68,15 +68,15 @@ Where to start on a gap:
 
 ## Recently done
 
+- **The compiler of each object file, from a PS2 game's symbols.** Games linked by CodeWarrior's linker are often
+  GCC's code with CodeWarrior's C library: the three with symbols had GCC's mark on 91-93% of their object files.
+  The one that built most of the code is the game's, and SN's GCC is told from Sony's by its own code; the others'
+  object files get their ranges at import, and Check again suggests them to older projects through the range check.
 - **Polishing reaches every function, then tidies each file.** A floor of 8 instructions and a ceiling of 400 kept
   polishing off a game's smallest and biggest functions for good: every size comes now, the middle first, and a
   function three tries didn't make readable is left. Once a source file's functions are all readable, a helper tidies
   it: types it shares with other files in one header, fields and classes named, the globals it still knows by
   address named (read_data first), dead declarations gone, one naming style (`tidy_done`).
-- **The compiler of each object file, from a PS2 game's symbols.** Games linked by CodeWarrior's linker are often
-  GCC's code with CodeWarrior's C library: the three with symbols had GCC's mark on 91-93% of their object files.
-  The one that built most of the code is the game's, and SN's GCC is told from Sony's by its own code; the others'
-  object files get their ranges at import, and Check again suggests them to older projects through the range check.
 - **Every compiler of the console, then the test of them all** (N64, PS1, PS2). The import offers to install the
   console's missing compilers, and a project page offers it until the first match; the compiler test then tries
   every one. A guess from the program alone can miss: one game's GCC code leaves its return delay slots empty as

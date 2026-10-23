@@ -21,6 +21,7 @@ with duplicate and unused declarations around them. Its edits go through edit_fi
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from pathlib import Path
@@ -63,7 +64,11 @@ driver files) and read_file them.
    a table, a constant); rename_symbol each once you can tell.
 4. Duplicate declarations, ones nothing uses, stray stubs: gone.
 5. One naming style: the one most of the file uses.
-Then tidy_done("{unit}", summary): what you changed, in a sentence or two."""
+Then tidy_done("{unit}", summary): what you changed, in a sentence or two.{data}"""
+# The globals a file declares, read for its tidy brief: helpers named two getters of class-name strings "static
+# data" though read_data was in their brief, and in the tidy's; what each one holds, given up front, can't be missed
+EXTERN_DATA = re.compile(r"^[ \t]*extern\s+(?!\"C\")[^;(){}=]*?\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)*;", re.M)
+DATA_READ, DATA_SHOWN = 32, 40  # bytes read of each, globals listed at most
 
 
 class Readability:
@@ -119,8 +124,34 @@ class Readability:
                 with self.net.store.tx() as db:
                     self.net._event(db, proj["id"], agent.id, "tidy", mine)
             self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
-        source = next((u.source for u in ForkProject(Path(proj["root"])).units() if u.name == mine), None) or mine
-        return TIDY.format(unit=mine, source=source)
+        fp = ForkProject(Path(proj["root"]))
+        source = next((u.source for u in fp.units() if u.name == mine), None) or mine
+        return TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source))
+
+    def _data_held(self, agent: Agent, proj, fp: ForkProject, source: str) -> str:
+        """What the globals a source file declares hold in the original (read_data's summary of each), for its tidy
+        brief; '' when there's nothing to tell."""
+        try:
+            text = (fp.root / source).read_text(errors="replace", encoding="utf-8")
+        except OSError:
+            return ""
+        lines = []
+        for name in list(dict.fromkeys(EXTERN_DATA.findall(text)))[:DATA_SHOWN]:
+            try:
+                said = self.net.forks.read_data(agent, proj["slug"], name, DATA_READ)
+            except Exception:  # not data the console can read (a name it doesn't know, no copy of the game)
+                continue
+            rows = said.splitlines()
+            # a string before floats: read_data lists floats first, and text reads as floats too ("spark" did)
+            told = next((r for r in rows if r.startswith("as a string:")), None) or \
+                next((r for r in rows if r.startswith("as f32:")), None)
+            told = told or (rows[0].split(": ", 1)[1] if rows and ": " in rows[0] else rows[1].strip() if len(rows) > 1 else "")
+            if told:
+                lines.append(f"   {name}: {told}")
+        if not lines:
+            return ""
+        return "\n\nWhat the globals it declares hold in the original (read_data; check names against these):\n" + \
+            "\n".join(lines)
 
     def tidy_done(self, agent: Agent, slug: str, unit: str, summary: str) -> str:
         """An agent's tidy of a file, done: recorded with what it changed (its edits were kept by edit_file only while
