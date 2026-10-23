@@ -22,6 +22,7 @@ from elftools.elf.sections import SymbolTableSection
 _NOT_IDENTIFIER = re.compile(r"[^A-Za-z0-9_]")
 _LOCAL_LABEL = re.compile(r"^(?:\.L|\$L)")
 SHN_LORESERVE = 0xFF00  # section indexes from here are special (absolute, common, MIPS small common), not sections
+SPLAT_FILENAME_BYTES = 253  # splat writes each symbol to a file named after it, and refuses a name longer than this
 
 
 @dataclass
@@ -76,9 +77,13 @@ def read(elf: ELFFile) -> list[Named]:
 
 
 def symbol_addrs(named: list[Named]) -> list[str]:
-    """splat's symbol_addrs.txt lines for `named`: functions with their type and size, data with its size."""
+    """splat's symbol_addrs.txt lines for `named`: functions with their type and size, data with its size. A name
+    too long for a file name gets a short one (its address's): a PS2 game's mangled C++ names (templates as
+    arguments) run far past splat's limit, and the first of them made splat refuse every name the game has."""
     lines = []
     for n in named:
         attributes = (["type:func"] if n.function else []) + ([f"size:0x{n.size:X}"] if n.size else [])
+        if len(n.name.encode()) > SPLAT_FILENAME_BYTES:
+            attributes.append(f"filename:{'func' if n.function else 'D'}_{n.address:08X}")
         lines.append(f"{n.name} = 0x{n.address:08X};" + (f" // {' '.join(attributes)}" if attributes else ""))
     return lines
