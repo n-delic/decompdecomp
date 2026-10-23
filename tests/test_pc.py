@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from decompnet import toolchains
+from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
 from decompnet.forks.project import ForkProject
@@ -89,6 +89,50 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     monkeypatch.setenv("DECOMP_TEST_CL_FAIL", "1")
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert not ok and not obj.with_suffix(".named").exists(), output
+
+
+def _template_tool(name: str):
+    import importlib.util
+
+    path = Path(scratch_pe.__file__).with_name("project_template") / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"pc_template_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_real_name_stands_for_its_address_however_c_or_cpp_spells_it():
+    names = _template_tool("names")
+    real = names.real_names({"names": {"func_00401000": "UpdateTown", "D_00405000": "g_town"}})
+    for sym in (b"?UpdateTown@@YAXH@Z", b"?UpdateTown@Town@@QAEXH@Z", b"_UpdateTown", b"_UpdateTown@8", b"@UpdateTown@8"):
+        assert names.address_of(sym, real) == b"func_00401000", sym
+    assert names.address_of(b"?g_town@@3HA", real) == names.address_of(b"_g_town", real) == b"D_00405000"
+    assert names.address_of(b"_func_00402000@4", real) == b"func_00402000"  # an address still says it
+    for other in (b"?UpdateTownHall@@YAXXZ", b"_memcpy", b"??0Town@@QAE@XZ", b".text"):
+        assert names.address_of(other, real) is None, other
+
+
+def test_a_pc_symbol_is_renamed_by_its_address_in_functions_json(tmp_path):
+    from decompnet.forks.project import ForkError
+
+    conf = tmp_path / "config" / "v"
+    conf.mkdir(parents=True)
+    (conf / "functions.json").write_text(json.dumps(
+        {"units": {"a": [{"name": "_func_00401000@8", "addr": 0x401000, "relocs": []}]}}, indent=1))
+    fp, pc = ForkProject(tmp_path), consoles.get("pc")
+    assert list(pc.rename_symbol(fp, "v", "_func_00401000@8", "UpdateTown")) == [conf / "functions.json"]
+    assert pc.real_names(fp, "v") == {"_func_00401000@8": "UpdateTown"}  # by the report's name
+    pc.rename_symbol(fp, "v", "UpdateTown", "Town_Update")  # again, by the name it has
+    pc.rename_symbol(fp, "v", "D_00405000", "g_town")
+    assert json.loads((conf / "functions.json").read_text())["names"] == {"D_00405000": "g_town",
+                                                                         "func_00401000": "Town_Update"}
+    for old, new in (("func_00409999", "Nowhere"), ("nothing", "Other"), ("D_00405004", "g_town")):
+        with pytest.raises(ForkError):
+            pc.rename_symbol(fp, "v", old, new)
+    # however the source spells it: the report's decorated name, a method, not a longer address
+    pattern = pc.rename_pattern("_func_00401000@8")
+    assert re.sub(pattern, "T", "void Town::func_00401000(int); _func_00401000(); func_004010001();") == \
+        "void Town::T(int); T(); func_004010001();"
 
 
 def test_only_32_bit_x86_programs():
@@ -204,6 +248,20 @@ def test_agents_match_functions(pc):
     code = code.replace("{", "{ /* the bounds are included */", 1)  # (other C than it has: a rewrite)
     text = polish("")
     assert "both ends included. */\n" + code.splitlines()[0] in text  # no comment sent: the file's stays
+    # real names: a __stdcall function and the global it reads renamed, both still match (an Xbox game's polishing
+    # helpers were refused 31 renames); its row keeps the report's name and finds its code by the new one
+    getter = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "settings_get")
+    getter = getter.replace("settings_get", rename["settings_get"])
+    assert net.rename_symbol(agent, slug, rename["g_settings"], "g_settings").startswith("✅")
+    assert net.rename_symbol(agent, slug, getter, "settings_get").startswith("✅")
+    texts = "".join(p.read_text() for p in (root / "src").rglob("*.c*")) + (root / "include" / "common.h").read_text()
+    assert "settings_get(" in texts and rename["settings_get"] not in texts and rename["g_settings"] not in texts
+    fn = net._function(getter, slug)
+    assert fn["status"] == "matched" and json.loads(fn["meta"])["real"] == "settings_get"
+    assert net._function("settings_get", slug)["id"] == fn["id"]
+    again = sub(csource.get(source, "settings_get")).replace(rename["settings_get"], "settings_get")
+    res = net.attempt(agent, "settings_get", again.replace(rename["g_settings"], "g_settings"), slug)
+    assert res["matched"], res["text"]
     other = f"_func_{syms['_entity_points']:08X}"
     wrong = net.attempt(agent, other, sub(csource.get(source, "entity_points")).replace("return 75;", "return 76;"),
                         slug)

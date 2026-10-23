@@ -823,6 +823,8 @@ class ForkEngine:
                 if f["name"] not in data.get(u["name"], ())]
         listed = _set_aside(fp)
         aside = listed if fp.scope == GAME else {}  # the whole program: set-aside code is worked on and counted
+        # real names a report doesn't give (a PC game's stay _func_0041B470@8): how the source spells them
+        reals = consoles.get(cfg.get("platform")).real_names(fp, (fp.manifest or {}).get("version") or cfg.get("version"))
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1
@@ -855,6 +857,8 @@ class ForkEngine:
                 meta = {"symbol": sym, "demangled": md.get("demangled_name"), "source": u.source if u else None}
                 if k:
                     meta["nth"] = k
+                if real := reals.get(sym):
+                    meta["real"] = real
                 old = existing.get((uname, sym, k))
                 if old is None and moved.get((uname.split("/", 1)[0], sym)):
                     old = moved[(uname.split("/", 1)[0], sym)].pop(0)
@@ -1507,15 +1511,18 @@ class ForkEngine:
         comes from (Console.rename_symbol), and as a whole word in every source and header file. Kept only when the
         project sets up again, the game still rebuilds as it did and every match still matches; else every file is
         put back. Polishing in project mode had local names only: functions and globals stayed func_0205d0f4 and
-        data_0222f194. The function's row keeps its history under the new name."""
-        if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"[A-Za-z_]\w*", old) or old == new:
+        data_0222f194. The function's row keeps its history under the new name. Where the report keeps the original's
+        symbol (Console.renames_in_report: a PC game's _func_0041B470@8), the row keeps that name too, and the new one
+        is the function's real name (Console.real_names), how its source spells it."""
+        # (`old` as the report gives a PC function: _func_0041B470@8, @func_0041B470@8)
+        if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"@?[A-Za-z_]\w*(?:@\d+)?", old) or old == new:
             raise NetworkError("rename_symbol takes two different C names: old and new")
         proj, fp, cfg = self.get(slug)
         if slug in self.net.links:
             raise NetworkError("in a room, the host's project is the one to rename in: say it in a note")
         console = consoles.get(cfg.get("platform"))
         version = (fp.manifest or {}).get("version") or cfg.get("version")
-        word, taken = re.compile(rf"\b{re.escape(old)}\b"), re.compile(rf"\b{re.escape(new)}\b")
+        word, taken = re.compile(console.rename_pattern(old)), re.compile(rf"\b{re.escape(new)}\b")
         files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
                        if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
         texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
@@ -1542,7 +1549,8 @@ class ForkEngine:
                 rep = fp.report()
                 now = {f["name"] for u in rep.get("units", []) for f in u.get("functions", [])
                        if (f.get("fuzzy_match_percent") or 0) >= 100}
-                if lost := sorted(n for n in matched if (new if n == old else n) not in now):
+                renamed = new if console.renames_in_report else old
+                if lost := sorted(n for n in matched if (renamed if n == old else n) not in now):
                     raise ForkError(f"these functions would stop matching: {', '.join(lost[:8])}")
             except (ForkError, RomError, ObjdiffError, OSError, ValueError) as e:
                 for p, t in saved.items():
@@ -1551,9 +1559,10 @@ class ForkEngine:
                     fp.run(cmd, log=lambda *_: None)
                 raise NetworkError(f"not renamed, nothing changed: {e}") from None
             with self.net.store.tx() as db:  # the function keeps its row, its matches and notes, under its new name
-                db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
-                           "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
-                           (new, new, proj["id"], old, old))
+                if console.renames_in_report:  # (else sync gives it its real name, from the console's config)
+                    db.execute("UPDATE functions SET name=?, meta=json_set(COALESCE(meta, '{}'), '$.symbol', ?) WHERE "
+                               "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
+                               (new, new, proj["id"], old, old))
                 self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
             self._commit_paths(proj, fp, [str(p.relative_to(fp.root)) for p in saved],
                                f"Rename {old} to {new}\n\n{message.strip() or 'Named'} by "
@@ -1914,9 +1923,10 @@ class ForkEngine:
 
     @staticmethod
     def _names(meta: dict, fn) -> list[str]:
-        """Ways the function may be spelled in source: full C++ name, Class::method, then the plain symbol."""
-        out = []
-        dem = (meta.get("demangled") or "").split("(", 1)[0].strip()
+        """Ways the function may be spelled in source: its real name (a PC game's, Console.real_names), full C++
+        name, Class::method, then the plain symbol."""
+        out = [meta["real"]] if meta.get("real") else []
+        dem =(meta.get("demangled") or "").split("(", 1)[0].strip()
         if dem:
             dem = dem.split(" ")[-1] if " " in dem and "operator" not in dem else dem
             out.append(dem)

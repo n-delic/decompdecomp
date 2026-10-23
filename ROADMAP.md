@@ -42,7 +42,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | dtk and ds-decomp projects |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
@@ -64,6 +64,11 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Real names on Windows PC.** A PC project names functions and data by address (`func_0041B470`, `D_0066DDA4`),
+  and `tools/names.py` pairs them with the original's symbols by that address, so rename_symbol refused them. A real
+  name is kept by address in `config/<version>/functions.json` ("names"), and names.py takes it as that address in C
+  and C++ (a method's too): the function and its callers still match. The report keeps the original's symbol, so the
+  function's row does too, and agents find and call it by its real name.
 - **The compiler of each object file, from a PS2 game's symbols.** Games linked by CodeWarrior's linker are often
   GCC's code with CodeWarrior's C library: the three with symbols had GCC's mark on 91-93% of their object files.
   The one that built most of the code is the game's, and SN's GCC is told from Sony's by its own code; the others'
@@ -288,13 +293,6 @@ only under 3,000 characters.
 Measure each step on that DS game's 25: how many get tried and how far, against the week before. Step 2 is what
 matters most for free models: step 3 adds speed, and contention on one file, so it waits until 2 shows parts can be
 worked on alone.
-
-### Real names on Windows PC
-
-A PC project's source names functions and data by address (`func_0041B470`, `D_0066DDA4`), and the project's
-`tools/names.py` pairs them with the original's symbols by that address. So `rename_symbol` says it can't rename yet,
-and polished PC code keeps those names. It needs a name per address in `config/<version>/functions.json` that
-names.py reads, kept by `Console.rename_symbol` like dtk's and ds-decomp's `symbols.txt`.
 
 ### Library decomps built locally
 
