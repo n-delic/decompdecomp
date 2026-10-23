@@ -791,15 +791,27 @@ class ForkEngine:
         log(said)
         return said if kept else None
 
-    def check(self, slug: str, log=print) -> dict:
-        """After a manual setup (or to refresh): pick the project up once it has an objdiff.json."""
+    def check(self, slug: str, log=print, build: bool = False) -> dict:
+        """After a manual setup (or to refresh): pick the project up once it has an objdiff.json. `build` (the
+        project page's Re-measure and Check again): its build runs first, so sources changed outside decompdecomp (a
+        rollback, an editor) are measured as they are; a measure reads build/ as it is, and a rolled-back Xbox game
+        measured its broken build again and again."""
         proj, fp, cfg = self.get(slug)
         if not (fp.root / "objdiff.json").exists():
             raise NetworkError("no objdiff.json yet. The project's build creates it (often `python configure.py` "
                                "or `make`); see its README")
         cfg["ready"] = True
         self._save_cfg(proj, cfg)
-        measures = self.sync(slug, log=log)
+        if build:
+            log("building what changed since the last build")
+            failed: list[str] = []
+            with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
+                fp.build_all(log=log, failed=failed)
+                rep = fp.report()
+            # a unit whose source doesn't build keeps its last object: what it matched then doesn't count now
+            measures = self.sync(slug, log=log, rep=rep, broken=fp.failed_units(failed))
+        else:
+            measures = self.sync(slug, log=log)
         if fp.linkable():
             self.link_soon(slug)  # files that are finished but not linked yet (in the project as it came, too)
         return measures

@@ -111,7 +111,8 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/fork/check", methods=["POST"])
     async def api_fork_check(request: Request) -> Response:
-        """Pick a hand-built project up (or re-measure one): reads its objdiff.json and progress."""
+        """Pick a hand-built project up (or re-measure one): builds what changed, then reads its objdiff.json and
+        progress."""
         if (bad := guard(request, write=True)):
             return bad
         slug = str((await body(request)).get("slug", ""))
@@ -119,7 +120,7 @@ def register(app: App) -> None:
             fork_of(slug)
         except NetworkError as e:
             return fail(e)
-        return JSONResponse({"job": jobs.start("fork-check", lambda log: net.forks.check(slug, log=log))})
+        return JSONResponse({"job": jobs.start("fork-check", lambda log: net.forks.check(slug, log=log, build=True))})
 
     @mcp.custom_route("/api/fork/rom-check", methods=["POST"])
     async def api_fork_rom_check(request: Request) -> Response:

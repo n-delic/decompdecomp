@@ -279,3 +279,29 @@ def test_the_settings_route_analyses_what_the_import_left_out(client, monkeypatc
     assert j["state"] == "done", j
     assert ran == [slug] and j["result"]["unanalysed"] is None and j["result"]["scope"] == "game"
     assert _statuses(net)["lib_b"] == "asm"  # brought in, and set aside: the project covers the game's own code
+
+
+def test_re_measuring_builds_what_changed_first(tmp_path, monkeypatch):
+    """A measure reads build/ as it is: an Xbox game rolled back with git outside decompdecomp measured its broken build
+    again and again (27 of 33) until it was built by hand. Re-measure builds first, and a unit whose source doesn't
+    build doesn't count what its last object matched. Making the project doesn't build here (its import does that)."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    units = [Unit("game", None, root / "build" / "game.o", "src/game.c", False, None), *UNITS[1:]]
+    monkeypatch.setattr(ForkProject, "units", lambda self: units)
+    builds = []
+
+    def build_all(self, log=lambda *_: None, failed=None):
+        builds.append(1)
+        if failed is not None and len(builds) > 1:  # the second time, game.c doesn't compile
+            failed.append("build/game.o")
+        return True, ""
+    monkeypatch.setattr(ForkProject, "build_all", build_all)
+    net.forks.check(slug, log=lambda *_: None)
+    assert builds == [] and _sums(net) == (2, 1)
+    net.forks.check(slug, log=lambda *_: None, build=True)
+    assert builds == [1] and _sums(net) == (2, 1)
+    net.forks.check(slug, log=lambda *_: None, build=True)
+    assert builds == [1, 1] and _statuses(net)["game_a"] != "matched"
