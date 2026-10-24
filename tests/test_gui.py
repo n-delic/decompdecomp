@@ -114,6 +114,12 @@ def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
     assert c["alone"] is None  # no room, no colours
 
 
+def test_polish_is_offered_once_half_the_games_own_code_matches(gui):
+    """An Xbox game had all 33 of its own functions matched and no Polish to choose: the launcher weighed them against
+    all 274, its 241 set-aside ones (library code, assembly) included, which the header leaves out."""
+    assert gui["checks"]["polish"] == [True, False, False, False]
+
+
 def test_the_import_offers_every_compiler_of_the_games_console(gui):
     """The import's compiler test can only try what's installed: a game linked by CodeWarrior was guessed right only
     because its GCC was there. The import offers the console's missing compilers, both PlayStations' for a disc."""

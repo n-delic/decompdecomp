@@ -735,8 +735,12 @@ class Manager:
             agent_id, agent_id)
         return row["n"]
 
-    def _left(self, slug: str) -> int:
+    def _left(self, slug: str, task: str = "") -> int:
+        """What the session's task has left in the project: open functions, or for polishing, matched ones it can
+        still take (app/readable.py)."""
         proj = self.net.project_row(slug)
+        if task == "readable":
+            return self.net.readability.left(proj)
         row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
@@ -819,8 +823,8 @@ class Manager:
             twins.ordered.wait(ORDER_WAIT)
         failures = fast = throttles = limits = auths = 0
         while not s.stop.is_set():
-            if self._left(s.slug) == 0:
-                self._finish(s, "nothing left to decompile here 🎉")
+            if self._left(s.slug, task := s.options.get("task") or "") == 0:
+                self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")

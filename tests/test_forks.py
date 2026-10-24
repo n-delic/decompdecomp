@@ -58,6 +58,17 @@ def _ref(name: str) -> str:
     return csource.get(REFERENCE, name).strip()
 
 
+def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marker():
+    """A polished function's comment (what it does) goes into its file with it: the lines right above it, never the
+    file's comment past a blank line or a reccmp annotation (`// FUNCTION: 0x...`, the project's own marker)."""
+    text = ("/* the file */\n\n// FUNCTION: 0x00401000\n// Adds them.\n/* Both\n   ints. */\nint add(int a, int b)\n"
+            "{\n    return a + b;\n}\n\n/* not this one's */\n\nint sub(int a, int b) { return a - b; }\n")
+    add, sub = csource.find(text, "add")[0], csource.find(text, "sub")[0]
+    assert text[csource.comment_above(text, add):add] == "// Adds them.\n/* Both\n   ints. */\n"
+    assert csource.comment_above(text, sub) == sub
+    assert csource.comment_above("int f(void) { return 0; }\n", 0) == 0
+
+
 @needs_tools
 def test_fork_state_after_setup(fork):
     net, slug, agent = fork

@@ -60,6 +60,45 @@ def _sums(net: RomNetwork) -> tuple[int, int]:
     return s["functions"] - s["set_aside"], s["matched"]
 
 
+def test_polishing_takes_the_games_own_code_and_leaves_set_aside_library_code(tmp_path, monkeypatch):
+    """An Xbox game's matched SDK functions, set aside as library code, would have been polished with its own: polishing
+    takes and counts the game's own code, as progress does."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16, matched_source='int f(void) { return 0; }'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    assert net.readability.counts(net._project(slug)) == {"matched": 1, "readable": 0}  # game_a, not lib_a
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)
+    other, _ = net.local_agent("claude-sonnet-5-5-2")
+    assert "lib_a" not in net.readability.claim(other, slug)
+
+
+def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, monkeypatch):
+    """Eight polishing helpers on an Xbox game with every function of its own matched all stopped at once: "nothing
+    left to decompile here". A helper's session asks what its task has left: polishing counts what it can still take."""
+    from decompnet.app import agents
+
+    from .test_agents import URL
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16")
+    net.store.conn.execute("UPDATE functions SET status='matched' WHERE name='game_b'")
+    m = agents.Manager(net, tmp_path, URL)
+    assert m._left(slug) == 0  # nothing left to decompile
+    assert m._left(slug, "readable") == 2  # game_a and game_b to polish (not lib_a: library code, set aside)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
+    net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub: nothing to explain
+    assert m._left(slug, "readable") == 0
+
+
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):
     fp = ForkProject(tmp_path)
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({"version": "v", "rebuild": {"identical": True}}))
