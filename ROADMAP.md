@@ -67,7 +67,9 @@ Where to start on a gap:
 
 - **PSP.** A UMD image (read in place) or the game's program, with its title and product code from PARAM.SFO. A
   PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its import stubs
-  are set aside and named by library and NID. The game's own debug symbols come with it: the symbol table and
+  are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID list, 2,491
+  functions in 91 libraries (on a PSP game with debug symbols it names 268 of its 274 stubs, all as the game's own
+  symbols do; a NID it doesn't know keeps `<library>_<NID>`). The game's own debug symbols come with it: the symbol table and
   CodeWarrior's DWARF 1 (source files, prototypes, types, also for CodeWarrior PS2 games). Diffs read the Allegrex's
   VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the PSP SDK's
   GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc. On a PSP game with debug symbols: 2,465 functions, 2,458 named,
@@ -257,8 +259,7 @@ Where to start on a gap:
 Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
 carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned, checksummed decrypter installed
 from Setup, like a compiler, would let a UMD image import as it is. Also: a game's other PRX modules on the disc are
-not split yet (only the main one; the relocator already places several segments), CSO images aren't read, import
-stubs are named by NID only (names need a NID database), SN's pspsnc has no compiler note to be guessed from and no
+not split yet (only the main one; the relocator already places several segments), CSO images aren't read, SN's pspsnc has no compiler note to be guessed from and no
 game tested, and the 2.4.1 CodeWarrior some games were built with isn't archived (3.0.1 matches small functions;
 bigger ones unverified).
 

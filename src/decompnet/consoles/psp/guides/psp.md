@@ -11,8 +11,9 @@ CPU: the Allegrex, a little-endian MIPS II (32-bit registers) with instructions 
 
 The program is a module (PRX). The loader places it in user memory, at 0x08804000 for a game's main module, and
 decompdecomp splits it there. $gp is the module info's `gp_value`.
-- Calls to the system go through stubs in `.sceStub.text`. Each stub is named after its library and NID
-  (`IoFileMgrForUser_109F50BC`) and is set aside: call it like any extern function in your C.
+- Calls to the system go through stubs in `.sceStub.text`. Each stub is set aside: call it like any extern
+  function in your C. It has the system function's name (`sceIoOpen`) from the PSP SDK's list, or the game's own
+  symbol. A function the list doesn't know keeps its library and NID (`IoFileMgrForUser_109F50BC`).
 - Only the main module is split. Code in the game's other PRX files isn't in the project yet.
 
 Compilers: Sony's SDK GCC 3.3.3 (psp-gcc 1.3.1, 1.7.1), Metrowerks CodeWarrior for PSP (3.0.1, builds 121 to 219),

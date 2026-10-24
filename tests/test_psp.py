@@ -160,24 +160,73 @@ def test_a_relocation_the_loader_has_no_rule_for_is_refused_with_a_sentence():
 
 # --------------------------------------------------------------------------------------- imported functions
 
-def _with_stubs() -> bytes:
-    """A fixed program importing two functions of one library: their stubs, the stub table, its name and NIDs."""
+UNKNOWN_NID = 0x12345678  # a NID the SDK names nothing
+
+
+def _with_stubs(symbols: list[tuple] = ()) -> bytes:
+    """A fixed program importing two functions of one library, the SDK's sceIoOpen and a NID it doesn't know: their
+    stubs, the stub table, its name and NIDs; and a symbol table of (name, value, type) in .sceStub.text if given."""
     stubs = struct.pack("<4I", 0x03E00008, 0, 0x03E00008, 0)
     table = struct.pack("<IIBBHII", BASE + 0x300, 0x40010011, 5, 0, 2, BASE + 0x320, BASE + 0x100)
-    rodata = b"IoFileMgrForUser".ljust(32, b"\0") + struct.pack("<II", 0x109F50BC, 0x810C4BC3)
-    return _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE, TEXT, 0, 0),
-                 (".sceStub.text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE + 0x100, stubs, 0, 0),
-                 (".lib.stub", SHT_PROGBITS, SHF_ALLOC, BASE + 0x200, table, 0, 0),
-                 (".rodata.sceResident", SHT_PROGBITS, SHF_ALLOC, BASE + 0x300, rodata, 0, 0)], e_type=ET_EXEC)
+    rodata = b"IoFileMgrForUser".ljust(32, b"\0") + struct.pack("<II", 0x109F50BC, UNKNOWN_NID)
+    sections = [(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE, TEXT, 0, 0),
+                (".sceStub.text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE + 0x100, stubs, 0, 0),
+                (".lib.stub", SHT_PROGBITS, SHF_ALLOC, BASE + 0x200, table, 0, 0),
+                (".rodata.sceResident", SHT_PROGBITS, SHF_ALLOC, BASE + 0x300, rodata, 0, 0)]
+    if symbols:
+        symtab, strtab = _symbols([(name, value, kind, 2) for name, value, kind in symbols])
+        sections += [(".symtab", SHT_SYMTAB, 0, 0, symtab, 6, 0), (".strtab", SHT_STRTAB, 0, 0, strtab, 0, 0)]
+    return _elf(sections, e_type=ET_EXEC)
 
 
-def test_imported_functions_are_named_by_their_library_and_nid():
+def test_imported_functions_are_named_by_the_sdks_nids_and_unknown_ones_by_library_and_nid():
     program = _with_stubs()
-    assert prx.stub_names(program) == {BASE + 0x100: "IoFileMgrForUser_109F50BC",
-                                       BASE + 0x108: "IoFileMgrForUser_810C4BC3"}
+    assert prx.stub_names(program) == {BASE + 0x100: "sceIoOpen", BASE + 0x108: "IoFileMgrForUser_12345678"}
     assert prx.stub_range(program) == (BASE + 0x100, BASE + 0x110)
     named = {n.name: (n.address, n.function, n.size) for n in PSP.debug_info(program, set()).named}
-    assert named["IoFileMgrForUser_810C4BC3"] == (BASE + 0x108, True, 8)
+    assert named["sceIoOpen"] == (BASE + 0x100, True, 8)
+    assert named["IoFileMgrForUser_12345678"] == (BASE + 0x108, True, 8)
+
+
+def test_the_games_own_name_for_a_stub_wins_and_a_name_taken_elsewhere_gets_a_number():
+    """Metrowerks' linker names each stub (an object of no size) beside its library's section symbol; a game
+    function the SDK's name already names elsewhere keeps it, and the stub becomes _2."""
+    program = _with_stubs([(".sceStub.text.IoFileMgrForUser", BASE + 0x100, STT_SECTION),
+                           ("myIoOpen", BASE + 0x100, STT_OBJECT)])
+    assert prx.stub_names(program)[BASE + 0x100] == "myIoOpen"
+    program = _with_stubs([("sceIoOpen", BASE + 0x10, STT_FUNC)])  # (in .sceStub.text's index, but not a stub)
+    named = {n.address: n.name for n in PSP.debug_info(program, set()).named}
+    assert prx.stub_names(program)[BASE + 0x100] == "sceIoOpen" and named[BASE + 0x100] == "sceIoOpen_2"
+
+
+def test_the_nid_database_loads_and_its_names_hash_to_their_nids():
+    from decompnet.consoles.psp import nids
+
+    libraries = nids.database()
+    assert len(libraries) > 50 and sum(map(len, libraries.values())) > 2000
+    for library, nid, name in (("sceDisplay", 0x289D82FE, "sceDisplaySetFrameBuf"),
+                               ("ThreadManForUser", 0x446D8DE6, "sceKernelCreateThread"),
+                               ("IoFileMgrForUser", 0x109F50BC, "sceIoOpen")):
+        assert nids.name(library, nid) == name and nids.nid_of(name) == nid
+    hashed = [nid == nids.nid_of(name) for names in libraries.values() for nid, name in names.items()]
+    assert sum(hashed) > 0.95 * len(hashed)  # the rest are names the SDK guessed for NIDs no name is known to hash to
+    assert nids.name("IoFileMgrForUser", UNKNOWN_NID) is None and nids.name("NoSuchLibrary", 0x109F50BC) is None
+    assert "Redistributions of source code must retain" in (nids.HERE / "LICENSE.pspsdk").read_text()
+
+
+def test_the_nid_database_is_read_from_the_sdks_import_files():
+    from decompnet.consoles.psp import nids
+
+    found = nids.from_sources({
+        "src/display/sceDisplay.S": '\tIMPORT_START\t"sceDisplay",0x40010000\n'
+                                    '\tIMPORT_FUNC\t"sceDisplay",0x289D82FE,sceDisplaySetFrameBuf\n'
+                                    '\tIMPORT_FUNC\t"sceDisplay",0x0E20F177,sceDisplay_0E20F177\n',
+        "src/sas/sceSasCore.S": '\tIMPORT_FUNC_WITH_ALIAS\t"sceSasCore",0xa232cbe6,__sceSasSetTrianglarWave,'
+                                '__sceSasSetTriangularWave\n',
+        "src/samples/prx/MyLib.S": '\tIMPORT_FUNC\t"MyLib",0x563FF2B2,getModuleInfo\n',
+    })
+    assert found == {"sceDisplay": {0x289D82FE: "sceDisplaySetFrameBuf"},
+                     "sceSasCore": {0xA232CBE6: "__sceSasSetTrianglarWave"}}
 
 
 class _Store:

@@ -40,6 +40,7 @@ STUB_SECTION, STUB_TABLES = ".sceStub.text", ".lib.stub"
 STUB_BYTES = 8  # each imported function's stub: jr ra; nop, until the loader links it (j or syscall)
 LIBRARY_NAME, STUB_LENGTH, STUB_COUNT, NID_TABLE, STUB_TABLE = 0, 8, 10, 12, 16  # a SceLibraryStubTable's fields
 LIBRARY_NAME_BYTES = 64
+SYMBOL_BYTES, SYMBOL_TYPE, STT_SECTION = 16, 0xF, 3  # an Elf32_Sym; its st_info's type, a section's symbol
 
 
 def is_elf(data: bytes) -> bool:
@@ -222,10 +223,12 @@ def gp_value(program: bytes) -> int:
 
 
 def stub_names(program: bytes) -> dict[int, str]:
-    """The address of each imported function's stub in a fixed program -> its name: the library's and the NID the
-    loader links it by (`IoFileMgrForUser_109F50BC`), as the game's own symbols don't name them (Metrowerks' linker
-    calls every stub of a library `.sceStub.text.<library>`). The NIDs are what the PSP's homebrew documentation
-    lists the functions by; a later version may give their names."""
+    """The address of each imported function's stub in a fixed program -> its name: the game's own symbol there if
+    its symbol table has one (Metrowerks' linker names each stub, beside a `.sceStub.text.<library>` section symbol),
+    else the name the PSP SDK gives the library's NID (nids.py), else the library and the NID the loader links it by
+    (`IoFileMgrForUser_109F50BC`)."""
+    from . import nids
+
     if not is_elf(program):
         return {}
     by_name = {s.name: s for s in _sections(program)}
@@ -242,6 +245,7 @@ def stub_names(program: bytes) -> dict[int, str]:
         start = section.offset + address - section.addr
         return program[start:start + min(length, section.addr + section.size - address)]
 
+    own = _stub_symbols(program, by_name)
     names: dict[int, str] = {}
     offset = 0
     while offset + NID_TABLE + 8 <= tables.size:
@@ -250,13 +254,34 @@ def stub_names(program: bytes) -> dict[int, str]:
         library = at(struct.unpack_from("<I", entry, LIBRARY_NAME)[0], LIBRARY_NAME_BYTES).split(b"\0", 1)[0]
         count, = struct.unpack_from("<H", entry, STUB_COUNT)
         nids_at, stubs_at = struct.unpack_from("<II", entry, NID_TABLE)
-        nids = at(nids_at, 4 * count)
-        if not words or not library or not library.isascii() or len(nids) != 4 * count:
+        nid_words = at(nids_at, 4 * count)
+        if not words or not library or not library.isascii() or len(nid_words) != 4 * count:
             break  # not a stub table as the loader reads them: names from here on would be wrong
         for k in range(count):
-            names[stubs_at + STUB_BYTES * k] = f"{library.decode()}_{struct.unpack_from('<I', nids, 4 * k)[0]:08X}"
+            nid, = struct.unpack_from("<I", nid_words, 4 * k)
+            stub = stubs_at + STUB_BYTES * k
+            names[stub] = own.get(stub) or nids.name(library.decode(), nid) or f"{library.decode()}_{nid:08X}"
         offset += 4 * words
     return names
+
+
+def _stub_symbols(program: bytes, by_name: dict[str, _Section]) -> dict[int, str]:
+    """The game's own names for its stubs: the symbols in .sceStub.text that aren't a section's (`.sceStub.text.
+    <library>`)."""
+    stubs, table = by_name.get(STUB_SECTION), by_name.get(".symtab")
+    if stubs is None or table is None or table.kind != SHT_SYMTAB:
+        return {}
+    strings = next((s for s in by_name.values() if s.index == table.link), None)
+    if strings is None:
+        return {}
+    names = program[strings.offset:strings.offset + strings.size]
+    own = {}
+    for at in range(table.offset, table.offset + table.size - SYMBOL_BYTES + 1, SYMBOL_BYTES):
+        name_at, value, _, info, _, shndx = struct.unpack_from("<IIIBBH", program, at)
+        name = names[name_at:names.find(b"\0", name_at)].decode("latin-1")
+        if shndx == stubs.index and info & SYMBOL_TYPE != STT_SECTION and name and not name.startswith("."):
+            own.setdefault(value, name)
+    return own
 
 
 def stub_range(program: bytes) -> tuple[int, int] | None:
