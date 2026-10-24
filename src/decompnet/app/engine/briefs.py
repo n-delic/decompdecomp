@@ -448,8 +448,9 @@ class BriefMixin:
 
     def _rom_ops(self, proj) -> dict[tuple[int, int], list[str]]:
         """(vram, size) -> mnemonics of every function, cached until the game's layout changes (renames keep
-        addresses; splits change sizes). Every brief read every function's code again to find out (50 ms on GTA San
-        Andreas); now that's only after a split or a cut, and only new functions are decoded."""
+        addresses; splits change sizes). Every brief read every function's code again to find out (50 ms on a large
+        PS2 game); now that's only after a split or a cut, and only new functions are decoded."""
+        cpu = self.console(proj).cpu_variant
         layout = self._layout_key(proj)
         known = self._ops.get(proj["id"])
         if known and known[0] == layout:
@@ -461,7 +462,7 @@ class BriefMixin:
             key = (r["vram"], r["size"])
             live.add(key)
             if key not in cache:
-                cache[key] = similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0)
+                cache[key] = similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0, cpu)
         for key in set(cache) - live:
             del cache[key]
         self._ops[proj["id"]] = (layout, cache)

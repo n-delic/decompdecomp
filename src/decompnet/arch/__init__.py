@@ -39,11 +39,15 @@ class Arch:
     # the float constants a diff row's instruction loads from data by address: text -> [(address, "f" | "d")], so
     # the diff can show their values (forkengine)
     float_operands: Callable[[str], list[tuple[int, str]]] | None = None
+    # variants of it capstone can't decode (Console.cpu_variant) -> their own reader: (code, big_endian) ->
+    # [(offset, mnemonic, operands)], for scoring's diffs (MIPS: the PSP's Allegrex, read by rabbitizer)
+    variants: dict[str, Callable[[bytes, bool], list[tuple[int, str, str]]]] = field(default_factory=dict)
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
-         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts),
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
+         variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, float_operands=x86.float_operands),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
