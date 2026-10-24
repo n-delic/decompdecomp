@@ -125,11 +125,12 @@ class WindowsPC(Console):
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
         steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
+        kept = {}
         for level, (step, fix) in steps.items():
             if manifest.get("analysis", 1) < level:
-                net.forks.reanalyse(slug, step, fix=fix, log=log)
+                kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
-        if joined:
+        if kept.get(4):  # (taken back: nothing was joined)
             agent, _ = net.local_agent("decompdecomp")
             for name, took in joined.items():
                 net.joined(name, slug)

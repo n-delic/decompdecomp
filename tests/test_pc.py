@@ -1035,5 +1035,23 @@ def test_a_project_made_before_is_brought_up_one_analysis_step_at_a_time(tmp_pat
     assert "_func_0040100F" not in {fn["name"] for fn in units}  # the piece, joined
     assert {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='asm'",
                                               pid)} == set(stubs)
+    note = net.store.one("SELECT text FROM notes WHERE project_id=?", pid)["text"]
+    assert note.startswith("decompdecomp joined _func_0040100F to this function")
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (done: nothing new)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == len(said)
+
+
+def test_joins_that_break_the_rebuild_are_taken_back_without_notes(tmp_path, monkeypatch):
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root, _ = _project_made_before(tmp_path, monkeypatch, 3)
+    before = (root / "config" / "game" / "functions.json").read_text()
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: {
+        "identical": False, "detail": "1 functions rebuilt from the delinked objects differ from your copy"})
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    pid = net.project_row("p")["id"]
+    said = net.store.one("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)["detail"]
+    assert said.startswith("a new analysis of the game (1 pieces") and "was taken back" in said
+    assert (root / "config" / "game" / "functions.json").read_text() == before
+    assert net.store.one("SELECT COUNT(*) AS n FROM notes WHERE project_id=?", pid)["n"] == 0
+    assert json.loads((root / ".decomp.wtf.json").read_text())["analysis"] == consoles.get("pc").ANALYSIS
