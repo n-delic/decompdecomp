@@ -389,6 +389,46 @@ def test_small_data_is_said_each_compilers_way():
     assert PSP.default_flags("pspsnc-1.2.7503", 0) == ["-O2", "-G0"]
 
 
+LW_V0_FROM_GP, LW_V0_FROM_A0, SETS_GP = 0x8F820010, 0x8C820010, 0x279C7FF0  # lw $v0, 0x10($gp|$a0); addiu $gp, $gp
+VFPU_WITH_28_AS_RS = 0x34 << 26 | 28 << 21  # a VFPU instruction (not a load) whose vector register reads as $gp
+
+
+def _gp_program(text: list[int], rels: list[tuple[int, int]] = (), e_type: int = ET_PSP_PRX) -> bytes:
+    """A program whose module info gives a gp value, as every PSP module's does: its code `text`, its code's
+    relocations `rels`."""
+    code = struct.pack(f"<{len(text)}I", *text)
+    return _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0, code, 0, 0),
+                 (".rodata.sceModuleInfo", SHT_PROGBITS, SHF_ALLOC, len(code), MODULE_INFO, 0, 0),
+                 (".rel.text", SHT_PSP_REL, 0, 0, _rels(rels), 0, 1)], e_type=e_type)
+
+
+def test_small_data_is_the_programs_own_evidence_not_its_gp_value():
+    """Every PSP module's info has a gp value; a PSP game with debug symbols has one in all 29 of its modules, none of
+    which reads through $gp, and its code matches only with small data off. A $gp-relative relocation says small data,
+    and so does code that reads through $gp (the demo's linker, like the SDK's, leaves those relocations out)."""
+    assert prx.gp_value(_gp_program([LW_V0_FROM_A0])) and not prx.uses_small_data(_gp_program([LW_V0_FROM_A0]))
+    assert prx.uses_small_data(_gp_program([LW_V0_FROM_A0], [(0, R_MIPS_GPREL16)]))  # the relocation alone
+    assert prx.uses_small_data(_gp_program([LW_V0_FROM_GP]))  # the code alone
+    assert prx.uses_small_data(_gp_program([LW_V0_FROM_GP], e_type=ET_EXEC))  # a fixed program, without relocations
+    assert not prx.uses_small_data(_gp_program([SETS_GP, LW_V0_FROM_A0], e_type=ET_EXEC))  # setting $gp isn't using it
+    assert not prx.uses_small_data(_gp_program([VFPU_WITH_28_AS_RS]))  # (a real game's VFPU code read as $gp once)
+    assert not prx.uses_small_data(_gp_program([LW_V0_FROM_A0], [(0, R_MIPS_HI16), (4, R_MIPS_LO16)]))
+
+
+def test_a_project_without_small_data_builds_with_it_off_whatever_its_gp():
+    gp = 0x088E9410
+    off = {"platform": "psp", "kind": "rom", "gp": gp, "rom": {"small_data": False}}
+    on = {**off, "rom": {"small_data": True}}
+    assert consoles.default_flags(off, "mwccpsp-3.0.1-b219") == ["-O3", "-sdatathreshold", "0"]
+    assert consoles.default_flags(on, "mwccpsp-3.0.1-b219") == ["-O3", "-sdatathreshold", "8"]
+    assert consoles.default_flags(off, "psp-gcc-1.7.1") == ["-O2", "-G0"]
+    assert consoles.small_gp(off) == 0 and consoles.small_gp(on) == gp
+    old = {"platform": "psp", "kind": "rom", "gp": gp, "rom": {}}  # imported before small data was read: its gp says
+    assert consoles.default_flags(old, "psp-gcc-1.7.1") == ["-O2", "-G8"]
+    assert PSP.read_game(_gp_program([LW_V0_FROM_A0])).info["small_data"] is False
+    assert PSP.read_game(_prx()).info["small_data"] is True
+
+
 def test_a_program_without_a_note_that_moves_registers_with_or_is_sncs():
     """SNC leaves no .comment note; its code copies registers with `or rd, rs, $zero` where GCC and CodeWarrior use
     `addu`. The stubs don't count."""
@@ -713,6 +753,39 @@ def test_a_modules_own_names_join_the_main_programs_and_a_name_it_has_gets_its_a
     named = {n.name: n.address for n in debug.named}
     assert named["callee"] == BASE + 0x20 and named["callee_08900000"] == 0x08900000
 
+
+
+def test_modules_whose_small_data_isnt_the_main_programs_build_with_their_own_flags():
+    """The main program reads through $gp (_prx), its modules don't: each module's segment is a range of the
+    project's compiler with small data off, set after the compiler test has chosen that compiler."""
+    from decompnet.consoles.psp import set_module_small_data
+
+    picked = PSP.read_game(_game_with_modules())
+    first, second = BASE + 0x5000, BASE + 0x5000 + 0x13000
+    assert picked.info["small_data"] is True
+    assert picked.info["small_data_differs"] == [[first, first + 0x40], [second, second + 0x40]]
+
+    class Net:
+        def __init__(self):
+            self.ranges = []
+
+        def project_row(self, slug):
+            return {}
+
+        def cfg(self, proj):
+            return {"gp": BASE + 0x4000, "compiler": {"toolchain": "mwccpsp-3.0.1-b219", "flags": ["-O3"]},
+                    "rom": picked.info}
+
+        def set_compiler_ranges(self, slug, spans, toolchain, flags):
+            self.ranges.append((spans, toolchain, flags))
+
+    net = Net()
+    set_module_small_data(net, "game", log=lambda *_: None)
+    assert net.ranges == [(picked.info["small_data_differs"], "mwccpsp-3.0.1-b219", ["-O3", "-sdatathreshold", "0"])]
+    alike = Net()
+    picked.info["small_data_differs"] = []
+    set_module_small_data(alike, "game", log=lambda *_: None)
+    assert alike.ranges == []
 
 
 def test_every_modules_stubs_are_set_aside():

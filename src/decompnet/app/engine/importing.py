@@ -125,17 +125,17 @@ class ImportMixin:
 
         chosen = bool(toolchain or flags or reimport is not None)  # a reimport keeps the project's compiler
         toolchain = toolchain or console.default_compiler(info, res.compiler)
-        default_flags = console.default_flags(toolchain, res.gp)
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
             "segments": [vars(s) for s in res.segments],
-            "compiler": {"toolchain": toolchain, "flags": flags or default_flags, "timeout": 20},
+            "compiler": {"toolchain": toolchain, "flags": flags, "timeout": 20},
             "legal": {"basis": "personal-copy", "license": "personal use only",
                       "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
                       "confirmed_at": time.time()},
             "context": {"file": None},
         }
+        cfg["compiler"]["flags"] = flags or console.default_flags(toolchain, consoles.small_gp(cfg))  # (its rom facts)
         if reimport is not None:
             old_cfg = json.loads(reimport["config"])
             for key, value in old_cfg.items():
@@ -145,7 +145,7 @@ class ImportMixin:
             cfg.pop("export", None)
             cfg.pop("autopilot", None)
             cfg.pop("kernel_calls_named", None)
-        header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if res.gp else "")
+        header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
         symbols = SymbolTable()
         for name, addr in res.named.items():
@@ -343,7 +343,7 @@ class ImportMixin:
         types = DEBUG_TYPES_NOTE + debug.header
         toolchain = cfg["compiler"]["toolchain"]
         if toolchains.installed(toolchain) is not None:
-            base = BASE_HEADER.format(title="") + (GP_NOTE if cfg.get("gp") else "")
+            base = BASE_HEADER.format(title="") + (GP_NOTE if consoles.small_gp(cfg) else "")
             if not compile_source(compiler_config(workdir, cfg), base + types, HEADER_CHECK).ok:
                 (workdir / DEBUG_TYPES_FILE).write_text(debug.header, encoding="utf-8")
                 log(f"the game's types don't compile with {consoles.compiler_name(toolchain)}: they're in "
@@ -367,7 +367,6 @@ class ImportMixin:
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
         current = cfg["compiler"]["toolchain"]
-        console = self.console(proj)
         tcs = [t for t in compilers if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
         rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
@@ -387,7 +386,7 @@ class ImportMixin:
 
         def matches(job) -> bool:
             tc, (fn, source) = job
-            settings = {"toolchain": tc, "flags": console.default_flags(tc, cfg.get("gp")), "timeout": 20}
+            settings = {"toolchain": tc, "flags": consoles.default_flags(cfg, tc), "timeout": 20}
             result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, source)
             if not result.ok:
                 return False
