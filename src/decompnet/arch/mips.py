@@ -296,6 +296,22 @@ def raw_cop2(text: str, big_endian: bool) -> str:
     return _ASM_LINE.sub(one, text)
 
 
+# a spimdisasm data line of 8 bytes: `/* rom vram bytes */ .double 0.5` (or .dword), the bytes in the file's order
+_EIGHT_BYTES = re.compile(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]{8} ([0-9A-Fa-f]{16}) \*/\s*)\.d(?:ouble|word)\b.*$", re.M)
+
+
+def raw_doubles(text: str, big_endian: bool) -> str:
+    """8-byte data (.double, .dword) in spimdisasm's assembly as the two words it is: GNU as aligns those to 8 bytes
+    from the start of their file, and a data file can start 4 bytes past such an address (a PSP game's module whose
+    .data starts at 0x08E27724: every double in it was assembled 4 bytes late, and its export differed from there)."""
+    order = "big" if big_endian else "little"
+
+    def one(m: re.Match) -> str:
+        raw = bytes.fromhex(m[2])
+        return f"{m[1]}.word 0x{int.from_bytes(raw[:4], order):08X}, 0x{int.from_bytes(raw[4:], order):08X}"
+    return _EIGHT_BYTES.sub(one, text)
+
+
 def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str = "", cpu: str = "") -> str | None:
     """Why this MIPS function (its code, from the entry) can't come from a compiler, or None. The console says what
     its compilers do: `eabi`, eight integer arguments (a0-a3 and t0-t3, the PS2's EABI) instead of four; `cop2`, what

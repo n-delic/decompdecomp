@@ -150,10 +150,10 @@ class Console:
 
     def export_asm(self, text: str) -> str:
         """ROM mode's export: a file of spimdisasm's assembly as GNU as reads it. What it can't read as spimdisasm
-        writes it (coprocessor 2's instructions) becomes the raw words it is."""
-        from ..arch.mips import raw_cop2  # (splat's consoles are MIPS)
+        writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
+        from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
 
-        return raw_cop2(text, self.big_endian)
+        return raw_doubles(raw_cop2(text, self.big_endian), self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
         """$gp as the game sets it, when splat didn't say (0: the game keeps no data $gp-relative)."""

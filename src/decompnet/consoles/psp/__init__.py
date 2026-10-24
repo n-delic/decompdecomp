@@ -248,11 +248,12 @@ class PlayStationPortable(Console):
 
     def export_asm(self, text: str) -> str:
         """The Allegrex's own instructions (and the VFPU's) as the words they are: GNU as reads MIPS II, not them.
-        A word is the same bytes wherever the export puts it, as it puts everything at the game's addresses."""
+        A word is the same bytes wherever the export puts it, as it puts everything at the game's addresses. 8-byte
+        data too, as every console's (mips.raw_doubles)."""
         def one(m: re.Match) -> str:
             word = int.from_bytes(bytes.fromhex(m[2]), "little")
             return f"{m[1]}.word 0x{word:08X}" if allegrex_only(word) else m[0]
-        return _ASM_LINE.sub(one, text)
+        return mips.raw_doubles(_ASM_LINE.sub(one, text), False)
 
     def asm_reason(self, code: bytes) -> str | None:
         return mips.asm_reason(code, False, eabi=True, cpu=self.cpu_variant)  # EABI: arguments in t0-t3 too
