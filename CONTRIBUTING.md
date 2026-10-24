@@ -180,6 +180,7 @@ A console works in one of two modes:
    | `split_source(fp, version, source, at, new)`, `splits_sources` | `split_file`: a source file divided where a new one starts (a library's code, a second compiler). |
    | `join_functions(fp, first, last, keep)` | `join_functions`: a function the analysis cut in pieces made whole, once agents agree. |
    | `file_compiler`, `set_file_compiler` | `try_compiler`, when its build lets each source file have its own compiler. |
+   | `generated_functions(fp, version)` | Code its analysis knows no C of its own makes (Visual C++'s exception-handling stubs, `consoles/pc/scratch.py`) set aside when the project is measured, with why. |
    | its processor's `piece` and `jumps` (`arch/arm.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
 
 5. **Its compilers.** One pinned entry each in `toolchains.toml` (see "Adding a compiler" below).

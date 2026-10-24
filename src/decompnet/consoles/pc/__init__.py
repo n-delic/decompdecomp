@@ -3,7 +3,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp cuts each one out of the
   program into a COFF object of its own (the target objdiff compares with), and which Visual C++ built it comes
-  from the program's Rich header.
+  from the program's Rich header. Visual C++'s exception-handling stubs are set aside (exception_stubs); projects
+  made before get that when the app starts (on_start, scratch.ANALYSIS).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -64,6 +65,29 @@ class WindowsPC(Console):
 
         return scratch.tool_args()
 
+    def on_start(self, net, slug: str, log=print) -> None:
+        """A project made before its import set Visual C++'s exception-handling stubs aside gets that once, through
+        forkengine.reanalyse (functions.json changes, no source or build does, so no rebuild check is needed). A
+        project without the user's copy of the program in it yet waits for the next start."""
+        from . import scratch
+
+        if not net.fork_slug(slug):
+            return
+        fp = net.forks.get(slug)[1]
+        manifest = fp.manifest or {}
+        if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= scratch.ANALYSIS:
+            return
+        marked = []
+
+        def stubs(fp):
+            marked.append(scratch.mark_exception_stubs(fp.root, manifest["version"]))
+            return (f"{marked[0]} functions are exception-handling code Visual C++ makes from the function they belong "
+                    "to (its .text$x): set aside, as no C of their own makes them" if marked[0] else None)
+
+        said = net.forks.reanalyse(slug, stubs, log=log)
+        if marked == [0] or said is not None:
+            net.forks.get(slug)[1].update_manifest(analysis=scratch.ANALYSIS)
+
     def read_data(self, fp, name: str, length: int) -> str | None:
         """The program's data isn't in the target objects: it's read from the user's copy."""
         from . import scratch
@@ -103,21 +127,31 @@ class WindowsPC(Console):
 
     def real_names(self, fp, version: str) -> dict[str, str]:
         """(a function's report name is its entry's in functions.json: the target objects are cut out with it)"""
-        import json
-
-        try:
-            info = json.loads((fp.root / "config" / version / "functions.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
+        info = _functions_json(fp, version)
         names = info.get("names") or {}
-        return {fn["name"]: names[key] for fns in info["units"].values() for fn in fns
+        return {fn["name"]: names[key] for fns in info.get("units", {}).values() for fn in fns
                 if (key := f"func_{fn['addr']:08X}") in names}
+
+    def generated_functions(self, fp, version: str) -> dict[str, str]:
+        """functions.json's `generated` entries: the exception-handling stubs (scratch.mark_exception_stubs)."""
+        return {fn["name"]: fn["generated"] for fns in _functions_json(fp, version).get("units", {}).values()
+                for fn in fns if fn.get("generated")}
 
     def rename_pattern(self, old: str) -> str:
         """func_0041B470 however a source spells it (a report's _func_0041B470@8 is func_0041B470 there, a method's
         Town::func_0041B470 too); a real name given before as itself."""
         key = _address_key(old)
         return rf"\b_*{key}\b" if key else super().rename_pattern(old)
+
+
+def _functions_json(fp, version: str) -> dict:
+    """The project's config/<version>/functions.json, or {} (none, or unreadable)."""
+    import json
+
+    try:
+        return json.loads((fp.root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _address_key(name: str) -> str | None:
