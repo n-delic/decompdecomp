@@ -631,3 +631,14 @@ def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_
     # and the reopen is in the events, with what measured it and how much it scored
     events = [(r["kind"], r["detail"]) for r in store.all("SELECT kind, detail FROM events")]
     assert events == [("reopen", "F (unit diff before a compile: 52.70%)")]
+
+
+@needs_tools
+def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
+    # SQLite writes a row's pages even when an UPDATE sets the same values: 34,000 functions on every sync
+    net, slug, _ = fork
+    net.forks.sync(slug, log=lambda *_: None)
+    before = net.store.conn.total_changes
+    net.forks.sync(slug, log=lambda *_: None)
+    functions = net.store.one("SELECT COUNT(*) n FROM functions")["n"]
+    assert net.store.conn.total_changes - before < functions

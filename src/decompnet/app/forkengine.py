@@ -894,8 +894,12 @@ class ForkEngine:
                     # matches doesn't: the queue and briefs would say it's done
                     if status != "matched" and old["best_source"] and old["best_score"] and old["status"] != "matched":
                         score = old["best_score"] if score is None else min(score, old["best_score"])
-                    db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
-                               (size, n, status, score, json.dumps(meta), old["id"]))
+                    # only what changed: SQLite writes a row's pages even when its values are the same, and a
+                    # GameCube game's 34,000 functions rewritten on every sync were most of what the app wrote
+                    if (old["size"], old["n_insns"], old["status"], old["best_score"], self._meta(old)) != \
+                            (size, n, status, score, meta):
+                        db.execute("UPDATE functions SET size=?, n_insns=?, status=?, best_score=?, meta=? WHERE id=?",
+                                   (size, n, status, score, json.dumps(meta), old["id"]))
                     if old["status"] == "matched" and status != "matched":
                         self._reopened(db, proj, old, "full report" + (", the unit doesn't build" if uname in broken
                                                                          else ""), fuzzy,
@@ -2006,7 +2010,7 @@ class ForkEngine:
                     self._reopened(db, proj, r, via, pct, held=pct is not None and pct >= 100)
                 elif pct is not None and r["best_score"] == 0:  # reopened before this was fixed: still says identical
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
-                elif pct is not None and not r["best_source"]:
+                elif pct is not None and not r["best_source"] and r["best_score"] != scaled(pct, r["n_insns"]):
                     db.execute("UPDATE functions SET best_score=? WHERE id=?", (scaled(pct, r["n_insns"]), r["id"]))
 
     def _matched(self, db, proj, r, agent: Agent | None, text: str | None) -> None:
