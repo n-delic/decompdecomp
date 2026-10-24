@@ -287,7 +287,9 @@ def build() -> bool:
     gaps = fill_gaps(provides)
     (ROOT / "build" / "game.ld").write_text(linker_script(provides, gaps), encoding="utf-8")
     objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})
-    run([binutils("ld"), *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", *objs])
+    # the objects in a response file: a PSP game with its modules has 48,000 functions, past the command line's limit
+    (ROOT / "build" / "objects.txt").write_text("\n".join(objs) + "\n", encoding="utf-8")
+    run([binutils("ld"), *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
     run([binutils("objcopy"), "-O", "binary", "build/game.elf", B["output"]])
     out, base = (ROOT / B["output"]).read_bytes(), (ROOT / B["image"]).read_bytes()
     c_count = sum(1 for fn in B["functions"] if c_source(fn))
