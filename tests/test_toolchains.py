@@ -122,6 +122,37 @@ def test_zst_archives_need_no_zstd_command(tmp_path, monkeypatch):
     assert not list(tmp_path.glob("tmp*"))  # no leftovers
 
 
+def test_keep_takes_only_what_a_build_needs_and_merges_folders(tmp_path):
+    """Visual C++ 2010's archive is a whole install (700 MB unpacked): its compiler and headers go where the project
+    looks for them, the Windows SDK's headers with Visual C++'s, and nothing else is unpacked."""
+    import zipfile
+
+    src = tmp_path / "msvc1000-abc"
+    for name in ("VC/bin/cl.exe", "VC/include/stdio.h", "Microsoft SDKs/Windows/v7.0A/Include/windows.h",
+                 "VC/crt/src/printf.c", "VC/lib/libcmt.lib"):
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(name)
+    archive = tmp_path / "msvc.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        t.add(src, arcname=src.name)
+    dest = tmp_path / "out"
+    dest.mkdir()
+    toolchains._extract(archive, dest, "msvc1000-abc", {"VC/bin": "Bin", "Microsoft SDKs/Windows/v7.0A/Include":
+                                                        "Include", "VC/include": "Include"})
+    assert sorted(str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()) == [
+        "Bin/cl.exe", "Include/stdio.h", "Include/windows.h"]
+    # one file of a zip, into a folder that's already there (2010's Bin gets the redistributable's msvcp100.dll)
+    with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as z:
+        z.writestr("X360/16.00/msvcp100.dll", "dll")
+        z.writestr("X360/16.00/cl.exe", "another compiler")
+    toolchains._extract(tmp_path / "bundle.zip", dest, None, {"X360/16.00/msvcp100.dll": "Bin/msvcp100.dll"})
+    assert sorted(p.name for p in (dest / "Bin").iterdir()) == ["cl.exe", "msvcp100.dll"]
+    assert (dest / "Bin" / "cl.exe").read_text() == "VC/bin/cl.exe"
+    with pytest.raises(toolchains.ToolchainError, match="has no VC/missing"):
+        toolchains._extract(archive, dest, "msvc1000-abc", {"VC/missing": "Bin"})
+    assert not list(tmp_path.glob("tmp*"))  # no leftovers
+
+
 def _java(folder, version, javac):
     folder.mkdir(parents=True, exist_ok=True)
     java = folder / "java"
