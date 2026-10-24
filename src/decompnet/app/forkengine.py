@@ -382,14 +382,17 @@ def _file_scope_lines(text: str) -> list[str]:
 
 
 def _pragmas_around(text: str, lo: int, hi: int) -> tuple[int, int]:
-    """Widen a definition's span over the #pragma lines right above and below it (its wrapper)."""
-    start = lo
+    """Widen a definition's span over the #pragma lines right above and below it (its wrapper), and the comment
+    between them and the definition (a polish puts one there: stopping at it left the file's #pragma push behind, never
+    popped, when the next rewrite came without the comment)."""
+    start = above = csource.comment_above(text, lo)
     while start > 0:
         prev = text.rfind("\n", 0, start - 1) + 1
         line = text[prev:start].strip()
         if not _PRAGMA.match(line):
             break
         start = prev
+    start = start if start < above else lo
     end = hi
     while end < len(text):
         nl = text.find("\n", end)
@@ -2302,15 +2305,16 @@ class ForkEngine:
         return "\n".join(out) or "none"
 
     def attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                quiet: int | None = None) -> dict:
+                quiet: int | None = None, comment: bool = False) -> dict:
         """`keep`: whether a version that doesn't match stays in the source file (an agent's work in progress) or
         is undone and kept only as the function's best attempt (autopilot's drafts). `prelude`: (decompdecomp's own
         tries) type definitions the code needs, placed after the file's includes. `quiet`: (the permuter's
         variants) recorded only when better than this score. A try that isn't kept holds the function only while
-        it builds (twins' tries come unclaimed: a 30-minute claim each kept agents off them, then counted as given up)."""
+        it builds (twins' tries come unclaimed: a 30-minute claim each kept agents off them, then counted as given up).
+        `comment`: (polishing) the comment right above the definition goes into the file, in place of the file's."""
         held = None if keep else self._hold_for_try(slug, function, agent)
         try:
-            res = self._attempt(agent, slug, function, source, keep, prelude, quiet)
+            res = self._attempt(agent, slug, function, source, keep, prelude, quiet, comment)
         finally:
             if held is not None:
                 with self.net.store.tx() as db:
@@ -2363,7 +2367,7 @@ class ForkEngine:
             pass
 
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                 quiet: int | None = None) -> dict:
+                 quiet: int | None = None, comment: bool = False) -> dict:
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, function)
         meta = self._meta(fn)
@@ -2376,7 +2380,10 @@ class ForkEngine:
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
         # with the comment right above it (what it does, from polishing): the file kept the definition only
-        span = (csource.comment_above(source, span[0]), span[1])
+        # Polishing's only: a twin's note or a decompiling agent's scratch comment replaced a forked decomp's own
+        # doc comments, and piled up in its files
+        if comment:
+            span = (csource.comment_above(source, span[0]), span[1])
         code = source[span[0]:span[1]]
         commented = code.lstrip().startswith(("//", "/*"))
         unit = fp.unit(fn["unit"])
@@ -2419,11 +2426,16 @@ class ForkEngine:
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
+                kept = ""  # the file's comment, when none was sent
                 if commented:  # a new comment replaces the old one; without one, the file's stays
                     lo = csource.comment_above(before, lo)
                 if any(_PRAGMA.match(ln) for ln in before_lines + after_lines):  # a new wrapper replaces the old one
-                    lo, hi = _pragmas_around(before, lo, hi)
-                after = before[:lo] + pre + code.rstrip("\n") + "\n" + post + before[hi:]
+                    above = csource.comment_above(before, lo)
+                    wrapped, hi = _pragmas_around(before, lo, hi)
+                    if not commented and wrapped < above:
+                        kept = before[above:lo]
+                    lo = wrapped
+                after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
             else:
                 after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
             after = _with_includes(after, includes, prelude)

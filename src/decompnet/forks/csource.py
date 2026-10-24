@@ -92,8 +92,9 @@ def find(text: str, name: str) -> tuple[int, int] | None:
 
 
 # reccmp's annotations (`// FUNCTION: 0x...`, `// GLOBAL:`, `// STUB:`) say which of the original's functions a
-# definition is: the project's markers, not a description of it
-_MARKER = re.compile(r"//\s*[A-Z][A-Z_]*:")
+# definition is: the project's markers, not a description of it. Only reccmp's own words: any `// WORD:` took
+# `// NOTE:` and `// TODO:` for one, and a polished comment that had one was dropped
+_MARKER = re.compile(r"//\s*(?:FUNCTION|STUB|TEMPLATE|SYNTHETIC|LIBRARY|GLOBAL|VTABLE|STRING|LINE):")
 
 
 def comment_above(text: str, start: int) -> int:

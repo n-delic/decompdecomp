@@ -103,7 +103,7 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     assert "MAKE READABLE: func_02001000 in src/a" in brief and "edit_file" in brief and "rename_symbol" in brief
     tried = []
 
-    def attempt(self, agent, slug, function, source, keep=True, prelude="", quiet=None):
+    def attempt(self, agent, slug, function, source, keep=True, prelude="", quiet=None, comment=False):
         tried.append(source)
         ok = "triple" in source
         return {"text": "✅ still matches" if ok else "❌ the matching one was kept", "matched": ok, "score": 0}

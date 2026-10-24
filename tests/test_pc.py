@@ -292,6 +292,11 @@ def test_agents_match_functions(pc):
     code = code.replace("{", "{ /* the bounds are included */", 1)  # (other C than it has: a rewrite)
     text = polish("")
     assert "both ends included. */\n" + code.splitlines()[0] in text  # no comment sent: the file's stays
+    # only polishing's comments go in: a twin's note or an agent's scratch comment replaced a forked decomp's own
+    res = net.attempt(agent, clamp, "// scratch\n" + code.replace("the bounds", "bounds"), slug)
+    assert res["matched"], res["text"]
+    text = file.read_text()
+    assert "scratch" not in text and "both ends included. */\n" in text
     # real names: a __stdcall function and the global it reads renamed, both still match (an Xbox game's polishing
     # helpers were refused 31 renames); its row keeps the report's name and finds its code by the new one
     getter = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "settings_get")

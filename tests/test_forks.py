@@ -67,6 +67,22 @@ def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marke
     assert text[csource.comment_above(text, add):add] == "// Adds them.\n/* Both\n   ints. */\n"
     assert csource.comment_above(text, sub) == sub
     assert csource.comment_above("int f(void) { return 0; }\n", 0) == 0
+    # only reccmp's words are markers: a comment with `// NOTE:` in it was dropped
+    text = "// Sums them.\n// NOTE: wraps at 65521.\nint f(void) { return 0; }\n"
+    assert csource.comment_above(text, text.index("int")) == 0
+
+
+def test_a_wrapper_is_taken_with_the_comment_inside_it():
+    """A polish writes `#pragma push`, the comment, then the definition: the next rewrite's wrapper stopped at the
+    comment and left the file's push behind, never popped."""
+    from decompnet.app.forkengine import _pragmas_around
+
+    text = "int g;\n#pragma push\n#pragma opt 0\n// Adds.\nint f(void) { return 1; }\n#pragma pop\nint h;\n"
+    lo, hi = csource.find(text, "f")
+    assert text[slice(*_pragmas_around(text, lo, hi))] == text[text.index("#pragma push"):text.index("int h")]
+    plain = "int g;\n// Adds.\nint f(void) { return 1; }\n"
+    lo, hi = csource.find(plain, "f")
+    assert _pragmas_around(plain, lo, hi)[0] == lo  # no wrapper: the comment isn't taken
 
 
 @needs_tools

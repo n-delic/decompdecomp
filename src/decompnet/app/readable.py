@@ -105,7 +105,7 @@ class Readability:
         if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
         if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
-            res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source)
+            res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):
                 return res["text"]
             return self._readable(proj, fn, agent, source)
