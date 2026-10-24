@@ -39,13 +39,16 @@ class Arch:
     # the float constants a diff row's instruction loads from data by address: text -> [(address, "f" | "d")], so
     # the diff can show their values (forkengine)
     float_operands: Callable[[str], list[tuple[int, str]]] | None = None
+    # a decompiler's draft of a method shown as `Class::method`, with `this` (x86: Ghidra's, `this` in ecx):
+    # (draft, function's address name, class, name, role, found from) -> the draft, or None (forkengine)
+    method_draft: Callable[..., str | None] | None = None
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
          frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
-    Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, float_operands=x86.float_operands),
+    Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, float_operands=x86.float_operands, method_draft=x86.method_draft),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
     Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason),
     Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason),

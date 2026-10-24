@@ -274,22 +274,16 @@ class BriefMixin:
         return x["classes"]
 
     def get_class(self, project: str | None, what: str = "") -> str:
-        self._rom_only(project, "get_class")
+        if (fork := self.fork_slug(project)):
+            return self.forks.get_class(fork, what)
         proj = self._project(project)
         found = self.classes(proj)
         if found is None:
-            raise NetworkError("get_class reads MIPS code (PlayStation 2, PlayStation, N64) for now")
+            raise NetworkError(classes.WHERE)
         syms = self.symbols(proj["id"])
-        if not found.by_vtable:
-            return "No C++ classes found: no function stores a vtable (a table of function addresses) into an object."
         what = what.strip()
-        if not what:
-            rows = sorted(found.by_vtable.values(), key=lambda c: (-len(c.slots), c.vtable))
-            return (f"{len(rows)} classes, found from the vtables their constructors store (largest first; "
-                    f"get_class(vtable or function) has one's fields and virtual functions):\n"
-                    + "\n".join(f"- {syms.label(c.vtable)} (0x{c.vtable:08X}): {len(c.slots)} virtual functions, "
-                                 f"{len(c.fields)} fields seen, at least 0x{c.size_seen():X} bytes"
-                                 + (f", base {syms.label(c.parent)}" if c.parent is not None else "") for c in rows[:60]))
+        if not what or not found.by_vtable:
+            return classes.listing(found, syms.label)
         m = _ADDRESS.match(what)
         addr = int(m.group(1), 16) if m else syms.resolve(what)
         if addr is None:
@@ -309,18 +303,7 @@ class BriefMixin:
         except Exception:  # a heuristic: it never stands between an agent and the function
             logging.getLogger("decompdecomp").exception("finding C++ classes failed")
             return []
-        roles = found.roles.get(fn["vram"]) if found else None
-        if not roles:
-            return []
-        syms = self.symbols(proj["id"])
-        lines = ["", "### C++ class (found from the vtables constructors store; get_class has the whole layout)"]
-        for vt, role in roles[:3]:
-            cls = found.by_vtable[vt]
-            used = [f"+0x{o:X} {f.ctype()}" for o, f in sorted(cls.fields.items()) if fn["vram"] in f.users]
-            base = f", base class {syms.label(cls.parent)}" if cls.parent is not None else ""
-            lines.append(f"- {role} of {syms.label(vt)} ({len(cls.slots)} virtual functions{base}); vtable pointer at "
-                         f"+0x{cls.vptr:X}" + (f"; this function uses {', '.join(used[:16])}" if used else ""))
-        return lines
+        return classes.brief_lines(found, fn["vram"], self.symbols(proj["id"]).label)
 
     def _own_class(self, proj, vram: int) -> tuple[classes.Class | None, str]:
         """The class a function is a method of, and what it is there ("virtual function 3"), when the class recovery
@@ -328,19 +311,14 @@ class BriefMixin:
         is in its vtable too, at the same slot). And only a class whose vtable starts like a C++ compiler's (a zero
         in its two header words: the offset, or no type information): a C game's table of functions starts with
         functions."""
-        found = self.classes(proj)
-        roles = found.roles.get(vram, []) if found else []
-        owners = {vt for vt, _ in roles}
-        owners = {vt for vt in owners if found.by_vtable[vt].parent not in owners}
-        if len(owners) != 1:
+        cls, role = classes.owner(self.classes(proj), vram)
+        if cls is None:
             return None, ""
-        cls = found.by_vtable[owners.pop()]
         head = self.reader(proj)(cls.vtable, VTABLE_HEADER_BYTES)
         e = ">" if self.cfg(proj).get("big_endian", True) else "<"
         if head is None or 0 not in struct.unpack(e + "2I", head):
             return None, ""
-        role = next(r for vt, r in roles if vt == cls.vtable)
-        return cls, (f"virtual function {role.split()[-1]}" if role.startswith("slot") else "a constructor or destructor")
+        return cls, role
 
     def _draft_shown(self, fn, proj) -> str:
         """The machine draft as the brief shows it: m2c writes C, `func(void *arg0, ...)`; where the class recovery

@@ -336,7 +336,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
+ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary",
             "guess_struct", "redraft",
             "compiler_map", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
@@ -498,9 +498,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:
-        """C++ classes found in the game's code (ROM projects): give a vtable address or a virtual function,
-        constructor or destructor for its class's fields (offset, type, which functions use them) and virtual
-        functions by slot; nothing lists them all. A layout to write the class from: the judge still decides."""
+        """C++ classes found in the game (MIPS games' code; PC programs' run-time type information, which has the
+        classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
+        fields (offset, type, which functions use them) and virtual functions by slot; nothing lists them all. A
+        layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
 
     @mcp.tool(meta=ALWAYS_LOAD)

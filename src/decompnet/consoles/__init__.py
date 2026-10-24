@@ -259,6 +259,12 @@ class Console:
         None where the project can't tell."""
         return None
 
+    def classes(self, fp):
+        """The C++ classes the console reads from a project's program (classes.Classes, with the names agents know
+        its functions by in `labels` and `symbols`), for get_class, briefs and drafts as `Class::method`; None where
+        it reads none (PC: the program's run-time type information, consoles/pc/rtti.py)."""
+        return None
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:

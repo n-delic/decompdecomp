@@ -4,6 +4,7 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp cuts each one out of the
   program into a COFF object of its own (the target objdiff compares with), and which Visual C++ built it comes
   from the program's Rich header.
+- rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -74,6 +75,11 @@ class WindowsPC(Console):
         from . import scratch
 
         return scratch.data_bytes(fp.root, fp.manifest or {}, addr, length)
+
+    def classes(self, fp):
+        from . import rtti
+
+        return rtti.for_project(fp.root, fp.manifest or {})
 
     # The game's names are its addresses (func_0041B470, D_0066DDA4): objdiff pairs a function with the original's by
     # the symbol tools/names.py gives it, and the report keeps that symbol. A real name is kept by address in

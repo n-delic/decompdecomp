@@ -1,4 +1,5 @@
-"""C++ classes, recovered from the game's own machine code (MIPS: PS2, N64).
+"""C++ classes, recovered from the game's own machine code (MIPS: PS2, N64), and what agents read about them (also
+for the classes a PC program's run-time type information names: consoles/pc/rtti.py makes the same Classes).
 
 Agents matched 7% of GTA San Andreas's functions that make virtual calls against 62% of the rest: without the class
 layouts, every `this->field` is a guess. The code holds most of what a layout is:
@@ -35,6 +36,8 @@ _MAX_SLOTS = 400
 # the type-info function) and for CodeWarrior. (Not measured from virtual calls: C's tables of function pointers, as
 # in RenderWare, are called the same way from offset 0.)
 _HEADER = 8
+WHERE = ("get_class reads MIPS games' code (PlayStation 2, PlayStation, N64) and the run-time type information of PC "
+         "programs built with it, for now")  # where there are classes to find (said where there aren't)
 
 
 @dataclass
@@ -67,6 +70,7 @@ class Class:
     parent: int | None = None
     others: dict[int, int] = field(default_factory=dict)  # this+offset -> a second vtable stored there (multiple bases)
     fields: dict[int, Field] = field(default_factory=dict)
+    bases: list[str] = field(default_factory=list)  # every base class by name, the direct one first, where RTTI says
 
     def size_seen(self) -> int:
         return max([f.offset + f.size for f in self.fields.values()] + [self.vptr + 4])
@@ -76,6 +80,11 @@ class Class:
 class Classes:
     by_vtable: dict[int, Class] = field(default_factory=dict)
     roles: dict[int, list[tuple[int, str]]] = field(default_factory=lambda: defaultdict(list))  # function -> (vtable, role)
+    found_from: str = "the vtables constructors store"  # what the classes were read from, as agents are told
+    reads_fields: bool = True  # whether the fields come from the code (not yet from x86's: RTTI names classes only)
+    names: dict[int, str] = field(default_factory=dict)  # vtable -> its class's own name, where the program says (RTTI)
+    labels: dict[int, str] = field(default_factory=dict)  # (project mode) address -> the name agents know it by
+    symbols: dict[str, int] = field(default_factory=dict)  # (project mode) a function's names -> its address
 
     def find(self, addr: int) -> list[Class]:
         """The classes an address is: a vtable, or one of their virtual functions or constructors."""
@@ -236,18 +245,71 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
     return out
 
 
+def listing(found: Classes, label: Callable[[int], str], shown: int = 60) -> str:
+    """get_class() with nothing asked: every class, largest first."""
+    if not found.by_vtable:
+        return ("No C++ classes found: no function stores a vtable (a table of function addresses) into an object."
+                if found.reads_fields else f"No C++ classes found in {found.found_from}.")
+    rows = sorted(found.by_vtable.values(), key=lambda c: (-len(c.slots), c.vtable))
+    fields = (lambda c: f", {len(c.fields)} fields seen, at least 0x{c.size_seen():X} bytes") if found.reads_fields \
+        else (lambda c: "")
+    return (f"{len(rows)} classes, found from {found.found_from} (largest first; get_class(vtable or function) has "
+            f"one's fields and virtual functions):\n"
+            + "\n".join(f"- {label(c.vtable)} (0x{c.vtable:08X}): {len(c.slots)} virtual functions{fields(c)}"
+                        + (f", base {label(c.parent)}" if c.parent is not None else
+                           f", base {c.bases[0]}" if c.bases else "") for c in rows[:shown]))
+
+
+def brief_lines(found: Classes | None, addr: int, label: Callable[[int], str]) -> list[str]:
+    """What get_function says about a virtual function, constructor or destructor: its class and the fields of
+    `this` it uses, so agents write this->field at the right offsets."""
+    roles = found.roles.get(addr) if found else None
+    if not roles:
+        return []
+    lines = ["", f"### C++ class (found from {found.found_from}; get_class has the whole layout)"]
+    for vt, role in roles[:3]:
+        cls = found.by_vtable[vt]
+        used = [f"+0x{o:X} {f.ctype()}" for o, f in sorted(cls.fields.items()) if addr in f.users]
+        base = (f", base class {label(cls.parent)}" if cls.parent is not None else
+                f", base class {cls.bases[0]}" if cls.bases else "")
+        lines.append(f"- {role} of {label(vt)} ({len(cls.slots)} virtual functions{base}); vtable pointer at "
+                     f"+0x{cls.vptr:X}" + (f"; this function uses {', '.join(used[:16])}" if used else ""))
+    return lines
+
+
+def owner(found: Classes | None, addr: int) -> tuple[Class | None, str]:
+    """The class a function is a method of, and what it is there ("virtual function 3"), when that's sure: one class,
+    or one class whose subclasses inherit it (a virtual function a subclass doesn't override is in its vtable too, at
+    the same slot). (None, "") otherwise."""
+    roles = found.roles.get(addr, []) if found else []
+    owners = {vt for vt, _ in roles}
+    owners = {vt for vt in owners if found.by_vtable[vt].parent not in owners}
+    if len(owners) != 1:
+        return None, ""
+    cls = found.by_vtable[owners.pop()]
+    role = next(r for vt, r in roles if vt == cls.vtable)
+    return cls, (f"virtual function {role.removeprefix('slot ')}" if role.startswith("slot") else
+                 "a constructor or destructor")
+
+
 def describe(cls: Class, classes: Classes, label: Callable[[int], str], focus: int | None = None) -> str:
     """The layout as agents read it: fields by offset, then the virtual functions by slot."""
     name = label(cls.vtable)
     parent = classes.by_vtable.get(cls.parent) if cls.parent is not None else None
     lines = [f"class {name}: vtable at 0x{cls.vtable:08X}, {len(cls.slots)} virtual functions from +0x{cls.header:X}"
              + (f"; base class {label(parent.vtable)} ({len(parent.slots)} virtual functions)" if parent else "")]
+    if cls.bases:
+        lines.append("base classes (every one, the direct base first): " + ", ".join(cls.bases))
     if cls.ctors:
         lines.append("stored by (constructors, destructors): " + ", ".join(label(c) for c in sorted(cls.ctors)[:12]))
     for off, other in sorted(cls.others.items()):
         lines.append(f"a second vtable at +0x{off:X}: {label(other)} (a second base class)")
-    lines.append(f"size: at least 0x{cls.size_seen():X} bytes (the furthest field its functions touch)")
-    lines += ["", "fields (offset: type, the functions that use it):", f"  +0x{cls.vptr:02X}: vtable pointer"]
+    if not classes.reads_fields:
+        lines += ["", f"fields: +0x{cls.vptr:02X} is the vtable pointer; the others aren't read from this processor's "
+                      "code yet: the offsets its functions use through `this` are its fields"]
+    else:
+        lines.append(f"size: at least 0x{cls.size_seen():X} bytes (the furthest field its functions touch)")
+        lines += ["", "fields (offset: type, the functions that use it):", f"  +0x{cls.vptr:02X}: vtable pointer"]
     inherited = parent.fields if parent else {}
     for off in sorted(cls.fields):
         fl = cls.fields[off]
