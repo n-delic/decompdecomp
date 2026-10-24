@@ -681,6 +681,14 @@ class Manager:
             db.execute("DELETE FROM helpers WHERE id=?", (sid,))
         self.sessions.pop(sid, None)
 
+    def remove_paused(self, slug: str) -> int:
+        """Forget only paused helpers on this project, without removing one restarted meanwhile."""
+        with self._lock:
+            paused = [s.id for s in self.sessions.values() if s.slug == slug and s.state == "paused"]
+            for sid in paused:
+                self.remove(sid)
+        return len(paused)
+
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
         more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets

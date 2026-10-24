@@ -220,6 +220,57 @@ def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypa
     assert started == [{"model": "opus", "task": "readable", "per_session": agents.PER_SESSION}]
 
 
+def test_remove_paused_removes_only_paused_helpers_on_the_project(app, monkeypatch):
+    from types import SimpleNamespace
+
+    client, _, manager = app
+    monkeypatch.setattr(manager, "sessions", {
+        "paused-here": SimpleNamespace(id="paused-here", slug="game", state="paused"),
+        "working-here": SimpleNamespace(id="working-here", slug="game", state="working"),
+        "paused-elsewhere": SimpleNamespace(id="paused-elsewhere", slug="other", state="paused"),
+    })
+    removed = []
+    monkeypatch.setattr(manager, "remove", lambda sid: removed.append(sid))
+
+    response = client.post("/api/agents/stop", json={"slug": "game", "remove_paused": True},
+                           headers={"X-Decomp": "1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "removed": 1}
+    assert removed == ["paused-here"]
+
+
+def test_all_models_starts_the_selected_count_for_each_available_model(tmp_path, monkeypatch):
+    """All Models multiplies the selected count by the detected model list, rather than the one-start cap."""
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, manager, security, _ = build(net, tmp_path, PORT, SECRET)
+    monkeypatch.setattr(manager, "detected", lambda: [{"id": "claude", "models": [
+        {"id": "sonnet"}, {"id": "opus"}, {"id": "haiku"},
+    ]}])
+    started = []
+
+    def start(kind, slug, count=1, options=None):
+        started.append((kind, slug, count, options))
+        return [f"{options['model']}-{i}" for i in range(count)]
+
+    monkeypatch.setattr(manager, "start", start)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "count": 2, "options": {"all_models": True},
+    })
+
+    assert response.status_code == 200, response.text
+    assert response.json()["started"] == [f"{model}-{i}" for model in ("sonnet", "opus", "haiku") for i in range(2)]
+    assert started == [
+        ("claude", "game", 2, {"model": model, "per_session": agents.PER_SESSION})
+        for model in ("sonnet", "opus", "haiku")
+    ]
+
+
 def test_settings_never_echo_the_api_key(app):
     client, _, _ = app
     out = client.post("/api/settings", json={"api": {"provider": "deepseek", "api_key": "sk-abcdef123456"}},

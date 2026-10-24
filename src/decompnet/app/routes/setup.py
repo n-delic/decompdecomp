@@ -85,6 +85,7 @@ def register(app: App) -> None:
         data = await body(request)
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
         given = data.get("options") or {}
+        all_models = given.get("all_models") is True
         options = {k: v for k, v in given.items() if k in ("model", "per_session", "task")}  # task: "readable" polishes
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
@@ -95,17 +96,26 @@ def register(app: App) -> None:
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]
             if kinds.get(kind).uses_endpoints:
+                if all_models:
+                    raise ValueError("All Models is only available for agents with a model list")
                 picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
                 plan = spread_sessions(settings, manager, picked, count, given)
                 ids = [sid for entry, n in plan for sid in manager.start(kind, slug, n, options | session_options(entry))]
+            elif all_models:
+                found = next((row for row in manager.detected() if row["id"] == kind), None)
+                model_ids = list(dict.fromkeys(str(model["id"]) for model in (found or {}).get("models", [])
+                                               if model.get("id")))
+                if not model_ids:
+                    raise ValueError("no available models were found; look again for installed agents and their models")
+                ids = [sid for model in model_ids for sid in manager.start(kind, slug, count, options | {"model": model})]
             else:
                 ids = manager.start(kind, slug, count, options)
         except (NetworkError, ValueError) as e:
             return fail(e)
         # remembered, so the next start is one click; models typed in come back as suggestions
-        model = str(options.get("model") or "")
+        model = "__all_models" if all_models else str(options.get("model") or "")
         settings.data["launcher"] = {"kind": kind, "model": model, "count": count} | ({"endpoints": picked} if picked else {})
-        if model and not kinds.get(kind).uses_endpoints:
+        if model and model != "__all_models" and not kinds.get(kind).uses_endpoints:
             recent = settings.data.setdefault("recent_models", {}).setdefault(kind, [])
             settings.data["recent_models"][kind] = [model] + [m for m in recent if m != model][:7]
         settings.save()
@@ -113,12 +123,15 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/agents/stop", methods=["POST"])
     async def api_agents_stop(request: Request) -> Response:
-        """Stop a helper (`id`), forget it (`remove`), or stop every helper on a project (`slug`)."""
+        """Stop a helper, remove it, remove paused helpers on a project, or stop every helper there."""
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
         if data.get("remove"):
             await call(manager.remove, str(data.get("id")))
+        elif data.get("remove_paused") and data.get("slug"):
+            removed = await call(manager.remove_paused, str(data["slug"]))
+            return JSONResponse({"ok": True, "removed": removed})
         elif data.get("slug"):
             await call(manager.stop_project, str(data["slug"]))
         elif data.get("id"):
