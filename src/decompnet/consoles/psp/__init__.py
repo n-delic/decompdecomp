@@ -35,9 +35,6 @@ ELF_ENTRY = slice(24, 28)  # e_entry in a 32-bit ELF header
 ENCRYPTED = b"~PSP"  # a program Sony encrypted: the PSP decrypts it as it loads it
 PARAM_SFO = "PSP_GAME/PARAM.SFO"
 PROGRAMS = ("PSP_GAME/SYSDIR/BOOT.BIN", "PSP_GAME/SYSDIR/EBOOT.BIN")  # a plain one first: BOOT.BIN is often zeros
-# the VFPU's own opcodes, besides coprocessor 2's (which mips.asm_reason knows): on the MIPS II Allegrex these are
-# vector arithmetic, prefixes and loads, not the 64-bit instructions other MIPS have there
-VFPU_OPCODES = {0x18, 0x19, 0x1B, 0x34, 0x35, 0x37, 0x3C, 0x3D, 0x3F}
 CODEWARRIOR_BUILDS = (219, 210, 205, 201, 192, 180, 151, 147, 139, 134, 121)  # the newest first: the default
 
 
@@ -47,7 +44,7 @@ class PlayStationPortable(Console):
     short = "PSP"
     status = BETA  # its demo matches and rebuilds; no real game has been rebuilt byte for byte whole yet
     arch = "mips"
-    cpu_variant = "allegrex"  # mips.ALLEGREX
+    cpu_variant = mips.ALLEGREX
     big_endian = False
     mode = ROM
     layout = "splat"
@@ -211,16 +208,12 @@ class PlayStationPortable(Console):
         return _ASM_LINE.sub(one, text)
 
     def asm_reason(self, code: bytes) -> str | None:
-        words = [int.from_bytes(code[at:at + 4], "little") for at in range(0, len(code) - 3, 4)]
-        if any(w >> mips.OPCODE_SHIFT in VFPU_OPCODES for w in words):
-            return ("uses the VFPU (the PSP's vector unit): C reaches it only through inline asm or hand-written "
-                    "assembly")
-        return mips.asm_reason(code, False, eabi=True, cop2="the VFPU")  # EABI: arguments in t0-t3 too
+        return mips.asm_reason(code, False, eabi=True, cpu=self.cpu_variant)  # EABI: arguments in t0-t3 too
 
 
 # a spimdisasm instruction line: `/* rom vram bytes */  mnemonic operands`, the bytes in the file's order
 _ASM_LINE = re.compile(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]+ ([0-9A-Fa-f]{8}) \*/\s+)\S.*$", re.M)
-SPECIAL, SPECIAL2, SPECIAL3, CACHE = 0x00, 0x1C, 0x1F, 0x2F
+SPECIAL2, CACHE = 0x1C, 0x2F  # SPECIAL2: MIPS32's, and the Allegrex's halt, mfic, mtic; cache: MIPS III's
 # SPECIAL's functions MIPS II lacks: movz/movn (MIPS IV), and the Allegrex's clz/clo, madd/maddu, max/min,
 # msub/msubu (where MIPS32 has other encodings, or none)
 ALLEGREX_FUNCTIONS = {0x0A, 0x0B, 0x16, 0x17, 0x1C, 0x1D, 0x2C, 0x2D, 0x2E, 0x2F}
@@ -230,9 +223,9 @@ SRL, SRLV = 0x02, 0x06  # with a 1 where MIPS II has 0 (rs; the shift amount), r
 def allegrex_only(word: int) -> bool:
     """Whether an instruction is the Allegrex's (or the VFPU's) and not MIPS II's."""
     op, funct = word >> mips.OPCODE_SHIFT, word & mips.FUNCT_BITS
-    if op in VFPU_OPCODES or op in (mips.COP2, *mips.COP2_MEMORY, SPECIAL2, SPECIAL3, CACHE):
+    if op in mips.VFPU_OPCODES or op in (SPECIAL2, mips.SPECIAL3, CACHE):
         return True
-    if op != SPECIAL:
+    if op != mips.SPECIAL:
         return False
     rotate = funct == SRL and (word >> mips.RS_SHIFT) & mips.REGISTER_BITS or \
         funct == SRLV and (word >> 6) & mips.REGISTER_BITS
