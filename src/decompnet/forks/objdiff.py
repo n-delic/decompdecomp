@@ -259,7 +259,10 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
         pct = 100.0 if lrows and len(lrows) == len(rrows) and all(m == " " for m, _, _ in rows) else 0.0
     built = {s.get("name") for s in (data.get("right") or {}).get("symbols", [])
              if s.get("kind") == "SYMBOL_FUNCTION" and s.get("instructions")}
-    funcs = [s for s in (data.get("left") or {}).get("symbols", []) if s.get("kind") == "SYMBOL_FUNCTION"]
+    # (not an extern reference: a PC game's delinked object names a function it calls again, as an extern, beside
+    # its definition, and that later entry scored a matched function "not in your build", which reopened it)
+    funcs = [s for s in (data.get("left") or {}).get("symbols", [])
+             if s.get("kind") == "SYMBOL_FUNCTION" and s.get("instructions")]
     scores = {s["name"]: (float(s["match_percent"]) if s.get("match_percent") is not None and s["name"] in built else None)
               for s in funcs}
     order = [s["name"] for s in sorted(funcs, key=lambda s: int(s.get("address") or 0))]

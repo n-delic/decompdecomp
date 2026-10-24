@@ -109,3 +109,15 @@ def test_visual_cpp_exception_labels_are_not_reported_as_renamed_references(monk
     result = objdiff.diff(None, None, "demo_function", cwd=tmp_path)
     assert result.matched
     assert result.renamed == [("_func_0041B470", "_Helper")]  # a real name the game links by is still reported
+
+
+def test_a_function_its_unit_also_calls_keeps_its_score(monkeypatch, tmp_path):
+    """A PC game's delinked object lists a function a second time, as an extern, when another function of the same
+    object calls it: the unit's scores took that entry, said a matched destructor wasn't in the build, and reopened
+    it after its deleting destructor matched."""
+    extern = {"name": "demo_function", "kind": "SYMBOL_FUNCTION", "flags": {"global": True}}
+    data = {"left": {"symbols": [_function(match_percent=100.0), extern]},
+            "right": {"symbols": [_function(match_percent=100.0)]}}
+    monkeypatch.setattr(objdiff, "_run", lambda *args, **kwargs: json.dumps(data))
+    result = objdiff.diff(None, None, None, cwd=tmp_path)
+    assert result.unit_scores == {"demo_function": 100.0} and result.order == ["demo_function"]
