@@ -414,6 +414,73 @@ def test_every_modules_stubs_are_set_aside():
     rows = {r["vram"]: r["status"] for r in store.all("SELECT * FROM functions")}
     assert rows == {BASE + 0x100: "asm", 0x08900010: "asm", 0x08900000: "open"}
 
+# --------------------------------------------------------------------------------------- compressed images
+
+def _cso(image: bytes, *, align: int = 2, magic: bytes = b"CISO") -> bytes:
+    """A CSO of `image`: every other block deflated, the rest stored (as tools do when deflating doesn't pay), each
+    block starting at a multiple of 1 << align."""
+    import zlib
+
+    block = 2048
+    count = -(-len(image) // block)
+    at = 0x18 + 4 * (count + 1)
+    index, body = [], bytearray()
+    for n in range(count):
+        at += -at % (1 << align)
+        body += bytes(at - 0x18 - 4 * (count + 1) - len(body))
+        raw = image[n * block:(n + 1) * block]
+        if n % 2:
+            packer = zlib.compressobj(9, zlib.DEFLATED, -15)
+            raw, stored = packer.compress(raw) + packer.flush(), 0
+        else:
+            stored = 0x80000000
+        index.append(at >> align | stored)
+        body += raw
+        at += len(raw)
+    index.append(at >> align)
+    return struct.pack("<4sIQIBB2x", magic, 0x18, len(image), block, 1, align) + struct.pack(f"<{count + 1}I", *index) \
+        + body
+
+
+def test_a_cso_image_is_read_in_place_and_imports_as_its_disc_does(tmp_path):
+    from decompnet.consoles.ps2 import cso
+
+    disc = _game_with_modules()
+    packed = _cso(disc)
+    with cso.Cso(packed) as image:
+        assert image.read() == disc
+        image.seek(2048 * 3 + 100)  # across a stored block and a deflated one
+        assert image.read(4000) == disc[2048 * 3 + 100:2048 * 3 + 4100]
+    (tmp_path / "game.cso").write_bytes(packed)
+    assert consoles.identify(tmp_path / "game.cso") is PSP and consoles.identify(packed) is PSP
+    from_iso = PSP.read_game(disc)
+    for picked in (PSP.read_game(tmp_path / "game.cso"), PSP.read_game(packed)):
+        assert picked.data == from_iso.data and picked.overlays == from_iso.overlays
+        assert picked.info["title"] == from_iso.info["title"]
+
+
+def test_a_zso_or_damaged_cso_says_what_to_do():
+    from decompnet.consoles.ps2 import cso
+
+    zso = _cso(_game_with_modules(), magic=b"ZISO")
+    assert consoles.identify(zso) is PSP
+    with pytest.raises(RomError, match="LZ4.*decompress it to .iso"):
+        PSP.read_game(zso)
+    with pytest.raises(RomError, match="damaged"):
+        cso.Cso(_cso(_game_with_modules())[:0x40])
+
+
+def test_a_ps2_disc_in_a_cso_is_the_ps2s_and_a_gamecube_ciso_isnt_a_cso():
+    from decompnet.consoles.gc_wii import scratch
+    from decompnet.consoles.ps2 import cso
+
+    ps2 = _cso(_iso({"SYSTEM.CNF": b"BOOT2 = cdrom0:\\SLUS_999.99;1\r\n", "SLUS_999.99": bytes(64)}))
+    assert consoles.identify(ps2).id == "ps2"
+    with pytest.raises(RomError, match="program SLUS_999.99 isn't a PlayStation 2 program"):  # (read inside the CSO)
+        consoles.get("ps2").read_game(ps2)
+    gc_ciso = b"CISO" + struct.pack("<I", 0x200000) + bytes(0x100)
+    assert not cso.is_cso(gc_ciso) and scratch.disc_kind(gc_ciso) == "packed" and scratch.disc_kind(ps2) is None
+
 # ------------------------------------------------------------------------------------ compilers and code
 
 @pytest.mark.parametrize("note, guess", [

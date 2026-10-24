@@ -7,15 +7,15 @@ unit), Sony's SDK GCC, CodeWarrior and SN Systems' SNC compilers, ROM mode.
 - modules.py: the game's other modules (the PRX files beside its program, loaded later), each laid out after the main
   program and split as a segment of its own.
 - sfo.py: PARAM.SFO, the disc's facts about its game (title, product code).
-- the disc itself (an ISO 9660 UMD image, or a CHD of one) is read with the PS2's readers (consoles/ps2/disc.py,
-  chd.py).
+- the disc itself (an ISO 9660 UMD image, or a CSO or CHD of one) is read in place with the PS2's readers
+  (consoles/ps2/disc.py, cso.py, chd.py).
 - guides/psp.md: what agents read about matching PSP code.
 
 Its demo game is projects/demo-psp (the Demo Quest game built with the SDK's GCC 1.3.1 at -O2 -G8, at the address a
 main module is loaded at).
 
 Not yet (ROADMAP.md): programs and modules still encrypted (most retail EBOOT.BINs: the user decrypts them first),
-compressed disc images (CSO), and the names of imported functions (they're named by their NIDs).
+ZSO images (LZ4: decompressed first), and the names of imported functions (they're named by their NIDs).
 """
 
 from __future__ import annotations
@@ -77,9 +77,12 @@ class PlayStationPortable(Console):
     as_flags = ("-EL", "-march=mips2", "-mabi=eabi")  # GNU as knows no Allegrex: its own instructions are words
 
     def sniff(self, head: bytes, file) -> bool:
+        from ..ps2 import cso
         from . import prx
 
-        return prx.is_psp_elf(head) or head[:4] == ENCRYPTED or is_psp_disc(file)
+        # (a ZSO, which can't be read yet, is taken too: read_game says to decompress it)
+        zso = head[:4] == cso.ZSO_MAGIC and cso.is_cso(head)
+        return prx.is_psp_elf(head) or head[:4] == ENCRYPTED or zso or is_psp_disc(file)
 
     def read_game(self, file, name: str = "") -> Picked:
         """The program: an ELF or PRX the user picked, or the one a UMD image has."""
@@ -96,7 +99,8 @@ class PlayStationPortable(Console):
                 return self._from_disc(src)
         if bytes(file[:4]) in (b"\x7fELF", ENCRYPTED):
             return self._from_program(bytes(file), name)
-        return self._from_disc(file)
+        with opened(file) as src:  # (a CSO's bytes: inflated a block at a time)
+            return self._from_disc(src)
 
     def _from_disc(self, src) -> Picked:
         from ..ps2 import disc
@@ -263,8 +267,8 @@ def _encrypted(where: str) -> str:
 
 
 def is_psp_disc(file) -> bool:
-    """An ISO 9660 image (or a CHD of one) with the PSP's PSP_GAME/PARAM.SFO: other PlayStation discs are ISO 9660
-    too."""
+    """An ISO 9660 image (or a CSO or CHD of one) with the PSP's PSP_GAME/PARAM.SFO: other PlayStation discs are
+    ISO 9660 too."""
     from ..ps1.exe import opened
     from ..ps2 import disc
 

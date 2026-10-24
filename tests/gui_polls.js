@@ -151,13 +151,15 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       const umd = head([[0x8001, "CD001"], [0x8008, "PSP GAME                        "]]);
       const ps2 = head([[0x8001, "CD001"], [0x8008, "PLAYSTATION                     "]]);
       const cso = head([[0, "CISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
+      const zso = head([[0, "ZISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
       const gcCiso = head([[0, "CISO"], [4, 0x200000], [8, 0x00010101]]);
       const pbp = head([[0, "\0PBP"]]);
       const platform = (h, f = iso) => identifyHead(h, f)?.platform ?? null;
       return {
         platforms: [platform(umd), platform(ps2), platform(gcCiso), platform(cso, { name: "game.cso", size: 0x9400 }),
                     platform(elf(0xffa0, 0x10a23001)), platform(elf(2, 0x10a23001)), platform(elf(2, 0x20924001))],
-        said: [notSupported(cso, { name: "game.bin", size: 0x9400 }), notSupported(pbp, { name: "EBOOT.PBP", size: 0x9400 })],
+        said: [notSupported(zso, { name: "game.bin", size: 0x9400 }), notSupported(pbp, { name: "EBOOT.PBP", size: 0x9400 })],
+        cso: identifyHead(cso, { name: "game.cso", size: 0x9400 })?.order ?? null,
         name: platformName("playstation"),
       };
     })(),

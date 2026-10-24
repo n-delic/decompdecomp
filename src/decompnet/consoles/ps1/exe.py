@@ -2,8 +2,8 @@
 
 A PS1 game's code is one program on its CD, named in SYSTEM.CNF (`BOOT = cdrom:\\SLUS_000.01;1`), or PSX.EXE on
 discs without one; or the program that one loads, when it's a loader (loaded_program). The disc is read with the
-PS2's ISO 9660 and CHD readers (consoles/ps2/disc.py, chd.py): only the file system and the program, from the user's
-own image; nothing here touches copy protection.
+PS2's ISO 9660, CHD and CSO readers (consoles/ps2/disc.py, chd.py, cso.py): only the file system and the program,
+from the user's own image; nothing here touches copy protection.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from ...rom import RomError
-from ..ps2 import chd, disc
+from ..ps2 import chd, cso, disc
 
 MAGIC = b"PS-X EXE"
 HEADER = 0x800  # the header; the program's bytes follow it
@@ -104,16 +104,21 @@ def text_range(program: bytes) -> tuple[int, int] | None:
 
 @contextmanager
 def opened(file):
-    """A disc image to read in place: bytes as they are, a CHD a hunk at a time, any other file from disk."""
+    """A disc image to read in place: bytes as they are, a CHD a hunk at a time, a CSO a block at a time (bytes or a
+    file), any other file from disk."""
     if not isinstance(file, (str, Path)):
+        if cso.is_cso(bytes(file[:8])):
+            with cso.Cso(file) as image:
+                yield image
+            return
         yield file
         return
     with open(file, "rb") as f:
         head = f.read(8)
-        if not chd.is_chd(head):
+        if not chd.is_chd(head) and not cso.is_cso(head):
             yield f
             return
-    with chd.Chd(file) as image:
+    with (chd.Chd(file) if chd.is_chd(head) else cso.Cso(file)) as image:
         yield image
 
 
