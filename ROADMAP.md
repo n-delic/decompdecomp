@@ -56,8 +56,8 @@ Where to start on a gap:
   program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
   fields need x86's `Arch.field_accesses`.
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far: Newer
-  Windows games, below, is the plan for 2005 to 2015 and 64-bit. A class's constructors are one real name
+  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
+  Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a
   change to names.py (as constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade
@@ -75,6 +75,20 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
+  imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
+  user accepts it) has 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
+  runs through the pinned wibo (2010's with the redistributable's `msvcp100.dll` beside it). The import builds a game
+  with the build its Rich header names (`RICH_BUILDS`), or the closest of its version and says so, and tells a game
+  whose compiler isn't installed which pack to install. The demo builds with each (`build.py 10.0SP1`), imports with
+  that build, and agents' C matches. Functions inlined everywhere are found one by one between the int3s these
+  compilers pad functions with: the demo built with 2010 had 14 of its 19 functions found, the five in the gaps run
+  together. On real games: a 2005 game without a Rich header (its linker says 8.0) builds with 2005 SP1, its 28,777
+  functions rebuild byte for byte, and 8 of 9 small functions written by hand matched on the first try; a 2010 SP1
+  game builds with 2010 SP1, 27,023 functions, 6,583 exception-handling stubs set aside, and 4 of 8 matched at once
+  (the rest: two return types guessed wrong, a function compiled with frame pointers, which `#pragma optimize("y",
+  off)` gives, and a C runtime function built for size). That game keeps an ebp frame in about half its functions:
+  if all of it was built with /Oy-, a project flag would serve better than a pragma per function.
 - **A PC game's import says what it is and whether it can match.** A newer game said only "expect little to match",
   and a 64-bit one was refused at the drop with "decompdecomp starts PC games from their 32-bit x86 .exe". The import
   reads the program's headers (`consoles/pc/scratch.py`, `describe`): the Visual C++ version and build that compiled
@@ -299,22 +313,21 @@ Where to start on a gap:
 
 ## Next
 
-### Newer Windows games (Visual C++ 2005 to 2015)
+### Newer Windows games (Visual C++ 2012 to 2015)
 
-PC projects build with Visual C++ 6.0, 7.0 and 7.1, the compilers of 1998-2005 games. The import already tells a
+PC projects build with Visual C++ 6.0 to 2010 (phases B and C are done: Recently done). The import already tells a
 newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Games built with Visual C++ 2017
 and newer are out of scope for now.
 
-- **B, a spike.** One 2005-2010 compiler, found legally (the decomp community's archives, Microsoft's free editions
-  of the time), run here through wibo, and a demo function matching through the project's real build. Done when
-  there's a yes or no on wibo, and a demo that matches or a write-up of why not.
-- **C, the 2005-2010 pack.** `toolchains.toml` entries with checksums, a line in Setup (proprietary: only after the
-  user accepts), `MSVC_VERSIONS`, the demo PC project built with it, and its tests (skipped in CI, as 6.0's are).
-  The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules tested again (a game rebuilt with
-  2010 tools: 6,581 stubs found; a 2005 game built without C++ exceptions: none). Their linker pads functions to 16
-  bytes with int3, and `scratch.units` ends a source file at any gap: a 2005 game got 19,028 source files for 20,863
-  functions, and a first build of 20 minutes; a file should run on across that padding. Done when a real 2005-2010
-  game (not /GL) gets matches from agents.
+- **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules
+  tested again (a game rebuilt with 2010 tools: 6,583 stubs found; a 2005 game built without C++ exceptions: none).
+  Their linker pads functions to 16 bytes with int3, and `scratch.units` ends a source file at any gap: a 2005 game
+  got 19,028 source files for 20,863 functions, a 2010 one 18,328 for 27,023, and a first build of half an hour; a
+  file should run on across that padding. 2005's RTM isn't in the pack: its Rich header build is SP1's (50727), so
+  SP1 builds both, and a game of 2005-2006 may need RTM (decomp.me's `msvc8.0`). wibo 1.2.0 doesn't run these
+  compilers' linkers (`lstrcmpiW`, added to wibo after it), which only the demo's build needs. On a Windows computer
+  the pack is untested: there the compilers need their C runtime (msvcr80, msvcr90 through side-by-side manifests,
+  msvcr100), which wibo has built in.
 - **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
   2015's updates.
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's

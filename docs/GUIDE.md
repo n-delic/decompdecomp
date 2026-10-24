@@ -185,7 +185,7 @@ the game.
 | **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.6.3 · 2.7.2 · 2.8.1 (PSY-Q), with maspsx | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **GBA · 3DS · PSP · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
@@ -211,7 +211,8 @@ different build, which is planned.
 - **Windows PC** passes every step on the homemade demo game. It is tested on few real games. Its import says what
   a program is from its headers: the Visual C++ version and build that made it, whether it's 64-bit, how much of it
   was built with whole-program optimisation (/GL), and the DRM or packer it's wrapped in. Games built with Visual
-  C++ 6.0 to 7.1 can match; 2005 to 2015 import but can't match until their compilers come; 64-bit programs,
+  C++ 6.0 to 2010 can match, each with the very build of its compiler the program names (2005 to 2010 come in a
+  pack of their own); 2012 to 2015 import but can't match until their compilers come; 64-bit programs,
   programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
   says why. decompdecomp never removes or gets around DRM.
 
