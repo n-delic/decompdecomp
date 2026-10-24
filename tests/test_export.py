@@ -5,6 +5,7 @@ export the project, build it, then build it again from a clean tree (as from a f
 your own copy of the game), and check that nothing made from the game would be committed.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -94,6 +95,12 @@ def test_export_rebuilds_the_game(tmp_path, platform):
     assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
     assert len(list((tree / "src").glob("*/*.c"))) == len(matched(platform))
+    # the functions still in assembly are assembled a run at a time (a PSP game with its modules has 48,000), and
+    # `build.py targets` gives each its own object, where objdiff.json looks for it
+    runs = list((tree / "build" / "asm" / "runs").glob("*/*.o"))
+    assert 0 < len(runs) < out["functions"] - out["matched"]
+    assert subprocess.run([sys.executable, "build.py", "targets"], cwd=tree, capture_output=True).returncode == 0
+    assert all((tree / u["target_path"]).exists() for u in json.loads((tree / "objdiff.json").read_text())["units"])
 
     # a fresh clone: no assembly, assets or build output, only the sources and your copy of the game
     for generated in ("asm", "assets", "build"):
