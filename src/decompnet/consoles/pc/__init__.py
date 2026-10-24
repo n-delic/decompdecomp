@@ -8,6 +8,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check puts the program's code
   back together from those objects (check_code). Visual C++'s exception-handling stubs are set aside
   (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
+  Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
+  and split_file divides one (split_source: a unit of functions.json).
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
@@ -50,7 +52,8 @@ class WindowsPC(Console):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
     # every function's last instruction whole (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
-    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub
+    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub. Its build tools
+    # have a version of their own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
     ANALYSIS = 4
 
     def sniff(self, head: bytes, file) -> bool:
@@ -89,14 +92,17 @@ class WindowsPC(Console):
         come next, found on the repaired functions, so the joins never take one (the function before the run, a C
         runtime function with a frame, would look continued by a funclet that reads ebp). The functions that grew
         are open again, with a note: what set them aside, and older notes, were about a part. A project without the
-        user's copy of the program in it yet waits for the next start: every step reads it."""
+        user's copy of the program in it yet waits for the next start: every step reads it. Last, a project whose
+        build tools aren't the template's (its manifest's "tools", scratch.tools_version) gets them, the same way:
+        one commit and feed line, kept only when the rebuild check stays as it was, and tried once per version."""
         from . import scratch
 
         if not net.fork_slug(slug):
             return
         fp = net.forks.get(slug)[1]
         manifest = fp.manifest or {}
-        if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= self.ANALYSIS:
+        if manifest.get("created") != "from scratch" or (manifest.get("analysis", 1) >= self.ANALYSIS and
+                                                          manifest.get("tools") == scratch.tools_version()):
             return
         version = manifest["version"]
         if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file():
@@ -128,6 +134,10 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        def tools(fp):  # (no source file changes: agents' C stays as it is)
+            changed = scratch.write_tools(fp.root, version)
+            return (f"its build has the fixes decompdecomp's has had since the project was made ({', '.join(changed)})"
+                    if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
         steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
@@ -136,6 +146,9 @@ class WindowsPC(Console):
             if manifest.get("analysis", 1) < level:
                 kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
+        if manifest.get("tools") != scratch.tools_version():
+            net.forks.reanalyse(slug, tools, paths=("tools",), log=log)
+            net.forks.get(slug)[1].update_manifest(tools=scratch.tools_version())  # (tried: not again until they change)
         if kept.get(4):  # (taken back: nothing was joined)
             agent, _ = net.local_agent("decompdecomp")
             for name, took in joined.items():
@@ -156,6 +169,44 @@ class WindowsPC(Console):
         from . import scratch
 
         return scratch.join_functions(fp.root, (fp.manifest or {})["version"], first, last, keep=keep)
+
+    splits_sources = True  # a source file is a unit of functions.json (scratch.split_unit)
+
+    def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
+        from . import scratch
+
+        return scratch.split_unit(fp.root, version, source, at, new)
+
+    # Each source file can have its own Visual C++ (config/<version>/file_compilers.json, which tools/configure.py
+    # reads): a game's Rich header often counts objects of two versions (6.0 and 7.1), as DS games mix CodeWarrior's
+    def file_compiler(self, fp, source: str) -> str | None:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        # a project made before (its configure.py reads no map until on_start brings its tools up to date)
+        if "version" not in manifest or not scratch.compilers_file(fp.root, manifest["version"]).exists():
+            return None
+        own = scratch.file_compilers(fp.root, manifest["version"]).get(source)
+        return f"MSVC/{own}" if own else manifest.get("compiler", f"MSVC/{scratch.MSVC_DEFAULT}")
+
+    def set_file_compiler(self, fp, source: str, compiler: str) -> str:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        scratch.set_file_compiler(fp.root, manifest["version"], source, compiler,
+                                  manifest.get("compiler", f"MSVC/{scratch.MSVC_DEFAULT}"))
+        return scratch.compilers_file(fp.root, manifest["version"]).relative_to(fp.root).as_posix()
+
+    def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        return scratch.file_ranges(fp.root, manifest["version"]) if "version" in manifest else {}
+
+    def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
+        from . import scratch
+
+        return scratch.set_own_compiler(fp.root, fp.manifest or {}, compiler, sources)
 
     def read_data(self, fp, name: str, length: int) -> str | None:
         """The program's data isn't in the target objects: it's read from the user's copy."""

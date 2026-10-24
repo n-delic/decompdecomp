@@ -5,7 +5,7 @@
 
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
-macOS). objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
+macOS): each file with its own version when config/VERSION/file_compilers.json names one. objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
 Made by decompdecomp.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 import ninja_syntax
 
 # Settings (decompdecomp wrote these for this game; change them if the game was built differently)
-MSVC_VERSION = "6.0"
+MSVC_VERSION = "6.0"  # every file's, unless config/<version>/file_compilers.json names another for it
 CL_FLAGS = ["/nologo", "/c", "/O2", "/W3", "/GX"]  # /GX: C++ exceptions, as games of the time were built
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -35,10 +35,8 @@ args = parser.parse_args()
 
 VERSION = args.version
 CONFIG = Path("config") / VERSION / "functions.json"
+FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
 BUILD = Path("build") / VERSION
-MSVC = next((Path(d) / MSVC_VERSION for d in args.msvc if (Path(d) / MSVC_VERSION).is_dir()),
-            Path(args.msvc[-1]) / MSVC_VERSION)
-CL = next((p for p in (MSVC / "Bin" / "CL.EXE", MSVC / "Bin" / "cl.exe") if p.exists()), MSVC / "Bin" / "CL.EXE")
 
 
 def q(argv: list[str]) -> str:
@@ -51,6 +49,21 @@ _W = Path(sys.executable)
 PYTHON = str(_W.with_name("python.exe")) if _W.name.lower() == "pythonw.exe" and _W.with_name("python.exe").is_file() \
     else sys.executable
 PY = q([PYTHON]).replace("$", "$$")
+
+
+def msvc(version: str) -> tuple[str, str]:
+    """A Visual C++ version's compiler and its headers, from the first --msvc folder that has it."""
+    homes = [Path(d) / version for d in args.msvc]
+    home, cl = next(((h, p) for h in homes for p in (h / "Bin" / "CL.EXE", h / "Bin" / "cl.exe") if p.exists()),
+                    (None, None))
+    if cl is None:
+        sys.exit(f"configure: Visual C++ {version} isn't in {' or '.join(args.msvc)} (file_compilers.json or "
+                 "MSVC_VERSION)")
+    return str(cl), str(home / "Include")
+
+
+def file_compilers() -> dict[str, str]:
+    return json.loads(FILE_COMPILERS.read_text(encoding="utf-8")) if FILE_COMPILERS.exists() else {}
 
 
 def files(top: str, suffixes: tuple[str, ...]) -> list[Path]:
@@ -69,26 +82,29 @@ def main() -> None:
     with open("build.ninja", "w", encoding="utf-8") as f:
         n = ninja_syntax.Writer(f)
         n.rule("delink", f"{PY} tools/delink.py {CONFIG} {BUILD / 'target'}", restat=True)
-        compiler = [PYTHON, "tools/compile.py", "--compiler", str(CL), "--include", str(MSVC / "Include"),
-                    "--config", str(CONFIG)]
+        compiler = [PYTHON, "tools/compile.py", "--config", str(CONFIG)]
         if args.wibo and sys.platform != "win32":
             compiler += ["--wrapper", args.wibo]
         # The runner invokes the compiler and names.py separately: cmd /c misparsed quoted compiler paths.
-        n.rule("cl", q(compiler).replace("$", "$$") + " --output $out --source $in -- "
+        n.rule("cl", q(compiler).replace("$", "$$") + " --compiler $cl --include $include --output $out --source $in -- "
                + q(CL_FLAGS).replace("$", "$$") + " $cflags")
         n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
 
         targets = [str(BUILD / "target" / f"{u}.obj") for u in units]
         n.build(targets, "delink", [str(CONFIG), "tools/delink.py"])
         objs = []
+        versions = file_compilers()
         for src in files("src", (".c", ".cpp")):
             obj = BUILD / src.with_suffix(".obj")
-            n.build(str(obj), "cl", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/names.py"])
+            cl, include = msvc(versions.get(src.as_posix(), MSVC_VERSION))
+            n.build(str(obj), "cl", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/names.py"],
+                    variables={"cl": q([cl]).replace("$", "$$"), "include": q([include]).replace("$", "$$")})
             objs.append(str(obj))
         n.build("all_source", "phony", objs)
         n.build("prepare", "phony", [*targets, *objs])
         n.build("build.ninja", "configure", ["tools/configure.py", str(CONFIG), *headers,
-                                             *[str(s) for s in files("src", (".c", ".cpp"))]])
+                                             *[str(s) for s in files("src", (".c", ".cpp"))],
+                                             *([str(FILE_COMPILERS)] if FILE_COMPILERS.exists() else [])])
         n.default(["prepare"])
 
     objdiff = {

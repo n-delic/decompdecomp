@@ -32,7 +32,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
@@ -59,12 +59,7 @@ Where to start on a gap:
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a
-  change to names.py (as constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade
-  step is missing (a step of `WindowsPC.on_start`'s, as the DS has). `split_file` and a compiler per source file
-  (`try_compiler`) need the console's `split_source` and `set_file_compiler`: a unit of functions.json and its file,
-  and a compiler per file where configure.py has one `MSVC_VERSION`; the rebuild check (`scratch.check_code`) can
-  check a split now.
+  would need the mangled signature in "names".
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -89,6 +84,25 @@ Where to start on a gap:
   (the rest: two return types guessed wrong, a function compiled with frame pointers, which `#pragma optimize("y",
   off)` gives, and a C runtime function built for size). That game keeps an ebp frame in about half its functions:
   if all of it was built with /Oy-, a project flag would serve better than a pragma per function.
+- **PC projects get the newest build tools.** A PC project kept the `tools/` it was made with, so a newer names.py
+  (constructors and destructors paired by their class) or delink.py never reached one. The template's tools have a
+  version (`scratch.tools_version`, the manifest's "tools"): a project with another gets them when the app starts
+  (`WindowsPC.on_start`, `scratch.write_tools`), keeping its compiler and flags, in one commit and feed line, kept
+  only when the rebuild check stays as it was and tried once per version; agents' sources are never touched. A demo
+  project made by the previous release got them with its rebuild identical.
+- **Windows PC: `split_file`, and a compiler per source file.** A PC project's source files are runs of about 4 KiB
+  of functions, so one can span two of the game's files, or two compilers (a game's Rich header often counts objects
+  of Visual C++ 6.0 and 7.1). `split_file` divides one (`WindowsPC.split_source`: a unit of functions.json), kept
+  only when the rebuild check stays identical and every match holds; each file can have its own Visual C++
+  (`config/<version>/file_compilers.json`, which tools/configure.py reads), switched by `try_compiler` and the
+  Settings panel as on the DS. On the demo, a file whose matched function 7.1 compiles otherwise stays with 6.0.
+- **Newer PC games get source files of many functions.** From Visual C++ 2005 on, the linker aligns every function
+  to 16 bytes with int3, and the import ended a source file at any gap between functions: a 2005 game got 19,028
+  source files for its 20,863 functions, and a first build of 20 minutes. A gap that is only the padding the program's
+  linker puts before most functions no longer ends a file (`consoles/pc/scratch.py`, `linker_padding`): the 2005 game
+  gets 1,286 files, a 2010 one 1,324 (its Rich header counts 855 compiled files), and a Visual C++ 6.0 game, whose
+  compiler pads its own functions, keeps its 1,851; the rebuild check stays identical. Projects made before keep
+  their files.
 - **A PC game's import says what it is and whether it can match.** A newer game said only "expect little to match",
   and a 64-bit one was refused at the drop with "decompdecomp starts PC games from their 32-bit x86 .exe". The import
   reads the program's headers (`consoles/pc/scratch.py`, `describe`): the Visual C++ version and build that compiled
@@ -321,13 +335,10 @@ and newer are out of scope for now.
 
 - **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules
   tested again (a game rebuilt with 2010 tools: 6,583 stubs found; a 2005 game built without C++ exceptions: none).
-  Their linker pads functions to 16 bytes with int3, and `scratch.units` ends a source file at any gap: a 2005 game
-  got 19,028 source files for 20,863 functions, a 2010 one 18,328 for 27,023, and a first build of half an hour; a
-  file should run on across that padding. 2005's RTM isn't in the pack: its Rich header build is SP1's (50727), so
-  SP1 builds both, and a game of 2005-2006 may need RTM (decomp.me's `msvc8.0`). wibo 1.2.0 doesn't run these
-  compilers' linkers (`lstrcmpiW`, added to wibo after it), which only the demo's build needs. On a Windows computer
-  the pack is untested: there the compilers need their C runtime (msvcr80, msvcr90 through side-by-side manifests,
-  msvcr100), which wibo has built in.
+  2005's RTM isn't in the pack: its Rich header build is SP1's (50727), so SP1 builds both, and a game of 2005-2006
+  may need RTM (decomp.me's `msvc8.0`). wibo 1.2.0 doesn't run these compilers' linkers (`lstrcmpiW`, added to wibo
+  after it), which only the demo's build needs. On a Windows computer the pack is untested: there the compilers need
+  their C runtime (msvcr80, msvcr90 through side-by-side manifests, msvcr100), which wibo has built in.
 - **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
   2015's updates.
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's

@@ -21,6 +21,7 @@ from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
 from decompnet.forks.project import ForkError, ForkProject
+from decompnet.network import NetworkError
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -93,6 +94,20 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     monkeypatch.setenv("DECOMP_TEST_CL_FAIL", "1")
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert not ok and not obj.with_suffix(".named").exists(), output
+    # a file of its own compiler (file_compilers.json): the build follows the map as it changes
+    monkeypatch.delenv("DECOMP_TEST_CL_FAIL")
+    shutil.copytree(compiler_root / "6.0", compiler_root / "7.1")
+    compilers = config.with_name("file_compilers.json")
+    compilers.write_text("{}\n")
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
+                   check=True, capture_output=True, timeout=30)
+    compilers.write_text(json.dumps({"src/auto/sample.cpp": "7.1"}))
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    assert "/I" + str(compiler_root / "7.1/Include") in record.read_text(encoding="utf-8-sig").splitlines()
+    compilers.write_text(json.dumps({"src/auto/sample.cpp": "9.9"}))
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert not ok and "Visual C++ 9.9 isn't in" in output, output
 
 
 def _template_tool(name: str):
@@ -329,17 +344,17 @@ def _map(path: Path = MAP) -> dict[str, int]:
             for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", path.read_text(), re.M)}
 
 
-def _demo_header(net, agent, slug, syms: dict[str, int]):
-    """The demo's header in the project, with the names the import gave its functions and data; returns the
-    renaming, to write the demo's own C as the project names it."""
-    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
-    rename = {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
-              for s, a in syms.items() if not s.startswith("??") and s != "__fltused"}
+def _addresses(path: Path = MAP) -> dict[str, str]:
+    """The demo's C names -> the project's (func_<address>, D_<address>), from a build's map."""
+    return {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
+            for s, a in _map(path).items() if not s.startswith("??") and s != "__fltused"}
+
+
+def _by_address(path: Path = MAP):
+    """The demo's C, written with the project's names."""
+    rename = _addresses(path)
     pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
-    sub = lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
-    header += "extern s32 g_settings[6];\n"
-    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
-    return rename, sub
+    return lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
 
 
 @pytest.fixture(scope="module")
@@ -378,7 +393,11 @@ def test_agents_match_functions(pc):
     net, slug = pc
     syms = _map()
     agent, _ = net.local_agent("pc-agent")
-    rename, sub = _demo_header(net, agent, slug, syms)
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    rename = _addresses()
+    sub = _by_address()
+    header += "extern s32 g_settings[6];\n"
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
     source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
     for name in ("clamp_s32", "player_take_damage", "entity_default_hp", "settings_get", "mix_score"):
         decorated = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == name)
@@ -462,7 +481,10 @@ def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_p
     assert f'MSVC_VERSION = "{version}"' in configure and '"/EHsc"]' in configure
     syms = _map(build / "demoquest.map")
     agent, _ = net.local_agent("pc-agent")
-    rename, sub = _demo_header(net, agent, slug, syms)
+    sub = _by_address(build / "demoquest.map")
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    header += "extern s32 g_settings[6];\n"
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
     source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
     for name in ("clamp_s32", "entity_default_hp", "settings_get", "mix_score", "entity_points"):
         # by its address: inlined where they're called, some are found in the gaps between functions, without the
@@ -472,6 +494,75 @@ def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_p
                             net.project_row(slug)["id"], f"%func_{address:08X}%")
         res = net.attempt(agent, row["name"], sub(csource.get(source, name)), slug)
         assert res["matched"], (name, res["text"])
+
+
+@needs_tools
+@pytest.mark.skipif(toolchains.installed("msvc2005") is None,
+                    reason="needs Visual C++ 2005, 2008 and 2010 (msvc2005, proprietary)")
+def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path):
+    """A compiler per source file in a game of 2010: the map can name a version of either pack (2010 RTM from the
+    2005-2010 pack, 7.1 from the other), and the build finds each in the pack that has it."""
+    from decompnet.app.engine import RomNetwork
+
+    build = DEMO / "build" / "10.0SP1"
+    subprocess.run([sys.executable, str(DEMO / "build.py"), "10.0SP1"], check=True, capture_output=True)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(build / "demoquest.exe", confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("pc-agent")
+    root = Path(net.project_row(slug)["root"])
+    syms, sub = _map(build / "demoquest.map"), _by_address(build / "demoquest.map")
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header + "extern s32 g_settings[6];\n"),
+                               "the game's types").startswith("✅")
+    named = lambda symbol: net.store.one("SELECT name FROM functions WHERE project_id=? AND name LIKE ?",
+                                         net.project_row(slug)["id"], f"%func_{syms[symbol]:08X}%")["name"]
+    adder = named("_add_score")
+    whole = max(p.relative_to(root).as_posix() for p in (root / "src" / "auto").glob("*.cpp")
+                if p.stem <= f"text_{syms['_add_score']:08X}")
+    assert net.forks.split_file(agent, slug, whole, adder).startswith("✅")
+    last = f"src/auto/text_{syms['_add_score']:08X}.cpp"
+    said = net.forks.try_compiler(agent, slug, adder, "MSVC/10.0", source=sub(csource.get(GAME.read_text(), "add_score")))
+    assert f"{last} is built with MSVC/10.0 from now on" in said, said
+    assert scratch_pe.file_compilers(root, "demoquest") == {last: "10.0"}
+    # 7.1, from the other pack, builds the file too, and compiles add_score otherwise: the file keeps 2010 RTM
+    with pytest.raises(NetworkError, match="stays with MSVC/10.0: .* no longer match"):
+        net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")
+    assert scratch_pe.file_compilers(root, "demoquest") == {last: "10.0"}
+    assert net._function(adder, slug)["status"] == "matched"
+
+
+@needs_tools
+def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
+    """split_file on PC divides a source file (the rebuild still identical, every match holding), and each file can
+    have its own Visual C++: chosen in Settings only when its matches hold (a file whose matched function Visual C++
+    7.1 compiles otherwise stays with 6.0), switched by try_compiler when a function matches with another one. The
+    judge, real names and Check again work on the files it made (AGENTS.md: every feature on the console)."""
+    net, slug = pc
+    agent, _ = net.local_agent("pc-agent")
+    root = Path(net.project_row(slug)["root"])
+    syms = _map()
+    assert net.forks.split_file(agent, slug, "src/auto/text_00401000.cpp",
+                                f"_func_{syms['_clamp_s32']:08X}").startswith("✅ src/auto/text_00401000.cpp is divided")
+    assert net.overview(slug)["rebuild"]["identical"]
+    second = f"src/auto/text_{syms['_clamp_s32']:08X}.cpp"
+    with pytest.raises(NetworkError, match="stays with MSVC/6.0: .* no longer match"):  # player_take_damage, in it
+        net.forks.set_file_compiler_by_hand(slug, second, "MSVC/7.1")
+    assert net.forks.split_file(agent, slug, second, f"_func_{syms['_entity_spawn']:08X}").startswith("✅")
+    last = f"src/auto/text_{syms['_entity_spawn']:08X}.cpp"
+    net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")  # (nothing in it matches yet)
+    assert scratch_pe.file_compilers(root, "demoquest") == {last: "7.1"}
+    assert "each source file can have its own compiler" in net.forks.info(slug)
+    adder = f"_func_{syms['_add_score']:08X}"
+    sub = _by_address()
+    said = net.forks.try_compiler(agent, slug, adder, "MSVC/6.0", source=sub(csource.get(GAME.read_text(), "add_score")))
+    assert f"{last} is built with MSVC/6.0 from now on" in said, said
+    assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert f"Build {last} with MSVC/6.0" in log and f"Split text_{syms['_clamp_s32']:08X}.cpp" in log
+    # its function, in the file split off, takes a real name and still matches; Check again has nothing to bring
+    assert net.rename_symbol(agent, slug, adder, "add_score").startswith("✅")
+    assert net._function("add_score", slug)["status"] == "matched" and "add_score(" in (root / last).read_text()
+    assert net.recheck(slug, log=lambda *_: None) == "nothing new"
 
 
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
@@ -733,6 +824,22 @@ def test_functions_nothing_calls_are_cut_at_the_int3s_between_them():
     assert [(f.addr, f.size) for f in found] == [(0x401000, 7), (0x401010, 3), (0x401020, 3), (0x401030, 5)]
 
 
+def test_the_padding_the_linker_aligns_every_function_with_doesnt_end_a_source_file():
+    """Visual C++ 2005 on aligns each function to 16 bytes with int3: a 2005 game got a source file for almost every
+    function (19,028 for 20,863). More than that padding still ends a file, and so does int3 where the compiler pads
+    its functions itself (6.0, with nops) and the linker's int3 is rare: an object's end."""
+    def files(blocks: list[bytes]) -> list[list[int]]:
+        pe = scratch_pe.read_pe(_tiny_exe(b"".join(blocks)))
+        starts = [TEXT + sum(map(len, blocks[:k])) for k in range(len(blocks)) if blocks[k][:1] != b"\xcc"]
+        found = scratch_pe.analyse(pe, [_row(a, a + len(FRAME_RET)) for a in starts])
+        return [[f.addr - TEXT for f in fns] for fns in scratch_pe.units(found, pe).values()]
+    aligned, padded = FRAME_RET.ljust(16, b"\xcc"), FRAME_RET.ljust(16, b"\x90")
+    assert files([aligned] * 6) == [[0, 0x10, 0x20, 0x30, 0x40, 0x50]]
+    assert files([aligned] * 3 + [b"\xcc" * 16] + [aligned] * 3) == [[0, 0x10, 0x20], [0x40, 0x50, 0x60]]
+    assert files([padded] * 3 + [aligned] + [padded] * 2) == [[0, 0x10, 0x20, 0x30], [0x40, 0x50]]
+    assert files([aligned] * 300) == [list(range(0, 0x1000, 0x10)), list(range(0x1000, 0x12C0, 0x10))]  # (4 KiB)
+
+
 def _project(tmp_path: Path, program: bytes, rows: list[dict], unit_bytes: int = 0x1000) -> Path:
     """A PC project's config and delinked objects for a hand-made program, as create writes them (no compiler)."""
     root = tmp_path / "proj"
@@ -817,6 +924,68 @@ def test_agents_join_two_functions_by_their_names(tmp_path):
     assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
     with pytest.raises(ForkError, match="isn't one of the game's functions"):
         scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401020")
+
+
+def _one_file(root: Path) -> None:
+    """The hand-made project's functions all in one source file, text_00401000."""
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"] = {"text_00401000": [fn for fns in info["units"].values() for fn in fns]}
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    for path in (root / "src" / "auto").glob("*.cpp"):
+        if path.stem != "text_00401000":
+            path.unlink()
+
+
+def test_a_source_file_is_divided_at_a_function_and_keeps_its_compiler(tmp_path):
+    """split_file on PC: the file's unit in functions.json ends where the function starts, and a new one, right after
+    it, holds the rest, built with the file's compiler; the code still rebuilds byte for byte."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    _one_file(root)
+    source, new = "src/auto/text_00401000.cpp", "src/auto/text_00401020.cpp"
+    compilers = scratch_pe.compilers_file(root, "game")
+    compilers.write_text(json.dumps({source: "7.1"}))
+    for at, name, why in (("_func_00401000", new, "after its first"), ("_func_0040FFFF", new, "after its first"),
+                          ("_func_00401020", "src/game/b.cpp", "src/auto/<name>.cpp"),
+                          ("_func_00401020", source, "exists already")):
+        with pytest.raises(ForkError, match=re.escape(why)):
+            scratch_pe.split_unit(root, "game", source, at, name)
+    with pytest.raises(ForkError, match="isn't one of the project's source files"):
+        scratch_pe.split_unit(root, "game", "src/auto/nope.cpp", "_func_00401020", new)
+    config = root / "config" / "game" / "functions.json"
+    before = config.read_text()
+    saved = scratch_pe.split_unit(root, "game", source, "_func_00401020", new)
+    assert saved == {config: before, compilers: json.dumps({source: "7.1"})}
+    units = json.loads(config.read_text())["units"]
+    assert {u: [fn["name"] for fn in fns] for u, fns in units.items()} == {
+        "text_00401000": ["_func_00401000", "_func_0040100F"], "text_00401020": ["_func_00401020"]}
+    assert scratch_pe.file_compilers(root, "game") == {source: "7.1", new: "7.1"}
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+def test_each_pc_source_file_can_have_its_own_visual_cpp(tmp_path):
+    """file_compiler, set_file_compiler, file_ranges and set_own_compiler on a PC project: what try_compiler and the
+    Settings panel's compiler per file stand on. A project whose configure.py reads no map has none."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    pc = consoles.get("pc")
+    manifest = {"created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0"}
+    (root / ".decomp.wtf.json").write_text(json.dumps(manifest))
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    fp = ForkProject(root)
+    first = "src/auto/text_00401000.cpp"
+    assert pc.file_compiler(fp, first) is None  # (made before: no map)
+    scratch_pe.compilers_file(root, "game").write_text("{}\n")
+    assert pc.file_compiler(fp, first) == pc.file_compiler(fp, "") == "MSVC/6.0"
+    assert pc.set_file_compiler(fp, first, "MSVC/7.1") == "config/game/file_compilers.json"
+    assert pc.file_compiler(fp, first) == "MSVC/7.1" and pc.file_compiler(fp, "src/auto/text_0040100F.cpp") == "MSVC/6.0"
+    assert pc.file_ranges(fp)[first] == [(0x401000, 0x40100F)]
+    sources = sorted(pc.file_ranges(fp))
+    changed = pc.set_own_compiler(fp, "MSVC/7.1", sources)
+    assert changed == ["config/game/file_compilers.json", "tools/configure.py", ".decomp.wtf.json"]
+    assert pc.file_compiler(fp, "") == "MSVC/7.1" and 'MSVC_VERSION = "7.1"' in (root / "tools/configure.py").read_text()
+    assert scratch_pe.file_compilers(root, "game") == {s: "6.0" for s in sources if s != first}
+    pc.set_file_compiler(fp, first, "MSVC/7.1")  # the project's own: no line
+    assert first not in scratch_pe.file_compilers(root, "game")
 
 
 def test_only_the_frame_helpers_shapes_set_a_frame():
@@ -1025,7 +1194,8 @@ def _project_with_stubs(tmp_path, monkeypatch):
     (root / "src" / "auto").mkdir(parents=True)
     (root / "src" / "auto" / "u.cpp").write_text('#include "common.h"\n')
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
-    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "v"}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "v",
+                                                       "tools": scratch_pe.tools_version()}))
     (root / ".gitignore").write_text("orig/\n")
     for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
@@ -1078,10 +1248,11 @@ def test_a_project_without_the_program_in_it_waits_for_it(tmp_path, monkeypatch)
     assert net._function(stubs[0], "p")["status"] == "open"
 
 
-def _project_made_before(tmp_path, monkeypatch, level: int):
+def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str] | None = None):
     """A PC project as a decompdecomp of analysis `level` left it: a function with a lone epilogue Ghidra cut off
     (PROGRAM), a function with a frame, then Visual C++'s stubs; below 2 one function with a jump table's entries
-    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check."""
+    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check. `tools`: its
+    tools/ files, as an older template made them (else its tools are the template's, and the manifest says so)."""
     from decompnet.app.engine import RomNetwork
     from decompnet.consoles.pc import WindowsPC
     from decompnet.forks.project import Unit
@@ -1110,8 +1281,12 @@ def _project_made_before(tmp_path, monkeypatch, level: int):
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
     (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "game",
                                                        "game": {"path": "orig/game.exe"},
+                                                       **({} if tools else {"tools": scratch_pe.tools_version()}),
                                                        **({"analysis": level} if level > 1 else {})}))
     (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for name, text in (tools or {}).items():
+        (root / "tools").mkdir(exist_ok=True)
+        (root / "tools" / name).write_text(text)
     for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
         subprocess.run(cmd, cwd=root, check=True, capture_output=True)
@@ -1174,3 +1349,64 @@ def test_joins_that_break_the_rebuild_are_taken_back_without_notes(tmp_path, mon
     assert (root / "config" / "game" / "functions.json").read_text() == before
     assert net.store.one("SELECT COUNT(*) AS n FROM notes WHERE project_id=?", pid)["n"] == 0
     assert json.loads((root / ".decomp.wtf.json").read_text())["analysis"] == consoles.get("pc").ANALYSIS
+
+
+def _older_tools() -> dict[str, str]:
+    """The template's tools as a project made before names.py paired constructors and destructors (and before
+    configure.py read each file's compiler) has them, with the game's compiler and a flag the user added."""
+    tools = {p.name: p.read_text() for p in (Path(scratch_pe.__file__).with_name("project_template") / "tools").glob("*.py")}
+    tools["names.py"] = tools["names.py"].replace("??0", "?? 0")
+    tools["configure.py"] = (tools["configure.py"].replace('MSVC_VERSION = "6.0"', 'MSVC_VERSION = "7.1"')
+                             .replace('"/GX"]', '"/GX", "/Gr"]').replace("file_compilers", "no_map"))
+    del tools["compile.py"]  # (a project of 1.0.3 had none)
+    return tools
+
+
+def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkeypatch):
+    """A PC project keeps the tools/ it was made with, so a newer names.py (constructors and destructors) never
+    reached it: at start it gets the template's, with its own compiler and flags, and the map of each file's
+    compiler, in one commit and feed line, kept as the rebuild check stays identical; agents' sources stay."""
+    net, root, _ = _project_made_before(tmp_path, monkeypatch, consoles.get("pc").ANALYSIS, tools=_older_tools())
+    source = (root / "src" / "auto" / "u.cpp").read_text()
+    pc = consoles.get("pc")
+    pc.on_start(net, "p", log=lambda *_: None)
+    template = Path(scratch_pe.__file__).with_name("project_template") / "tools"
+    assert (root / "tools" / "names.py").read_text() == (template / "names.py").read_text()
+    assert (root / "tools" / "compile.py").read_text() == (template / "compile.py").read_text()
+    configure = (root / "tools" / "configure.py").read_text()
+    assert 'MSVC_VERSION = "7.1"' in configure and '"/GX", "/Gr"]' in configure and "file_compilers.json" in configure
+    assert scratch_pe.compilers_file(root, "game").read_text() == "{}\n"
+    assert (root / "src" / "auto" / "u.cpp").read_text() == source
+    pid = net.project_row("p")["id"]
+    said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
+    assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
+                    "tools/configure.py, tools/names.py, config/game/file_compilers.json)"]
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert log.count("Analyse the game again") == 1
+    assert not subprocess.run(["git", "status", "--porcelain", "tools", "config"], cwd=root, capture_output=True,
+                              text=True).stdout.strip()
+    manifest = json.loads((root / ".decomp.wtf.json").read_text())
+    assert manifest["tools"] == scratch_pe.tools_version() and manifest["rebuild"]["identical"]
+    assert pc.file_compiler(ForkProject(root), "src/auto/u.cpp") == "MSVC/6.0"  # (the manifest's: try_compiler works)
+    pc.on_start(net, "p", log=lambda *_: None)  # (done: nothing new)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(tmp_path, monkeypatch):
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root, _ = _project_made_before(tmp_path, monkeypatch, consoles.get("pc").ANALYSIS, tools=_older_tools())
+    before = {p.name: p.read_text() for p in (root / "tools").iterdir()}
+    checks = iter([{"identical": True, "detail": "identical"}, {"identical": False, "detail": "1 functions differ"}])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: next(checks))
+    fp = ForkProject(root)
+    fp.update_manifest(rebuild=WindowsPC.check_rebuild(None, fp, "game"))
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    assert {p.name: p.read_text() for p in (root / "tools").iterdir()} == before
+    assert not scratch_pe.compilers_file(root, "game").exists()
+    pid = net.project_row("p")["id"]
+    said = net.store.one("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)["detail"]
+    assert said.startswith("a new analysis of the game (its build has the fixes") and "was taken back" in said
+    assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
