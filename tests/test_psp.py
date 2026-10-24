@@ -589,3 +589,30 @@ def test_a_saved_psp_project_comes_back_with_what_was_set_aside(tmp_path):
     assert out["matched"] == 1 and out["lost"] == []
     row = fresh._function(aside, out["slug"])
     assert row["status"] == "asm" and "hand-written" in json.loads(row["meta"])["asm_code"]
+
+
+@pytest.mark.skipif(toolchains.installed("psp-gcc-1.3.1") is None, reason="needs psp-gcc-1.3.1")
+def test_a_function_end_report_and_a_split_take_the_address_as_hex_writes_it(tmp_path):
+    """An agent's report_boundary and split_function on the demo: PSP addresses have seven digits (0x8804200), which
+    were refused as "not an address like 0x80001234"."""
+    import subprocess
+    import sys
+
+    from decompnet.app import tools
+    from decompnet.app.engine import RomNetwork
+
+    if not (DEMO / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(DEMO / "build" / "BOOT.BIN", confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    pid = net.project_row(slug)["id"]
+    one, two = net.store.all("SELECT name, vram, size FROM functions WHERE project_id=? AND status='open' AND size>40 "
+                             "ORDER BY vram LIMIT 2", pid)
+    said = tools.call(net, agent, slug, "report_boundary",
+                      {"function": one["name"], "end": hex(one["vram"] + one["size"] - 8), "reason": "two words of padding"})
+    assert said.startswith("Reported"), said
+    net.resolve_boundary(slug, net.cfg(net.project_row(slug))["boundaries"][-1]["id"], True)
+    assert net._function(f"pad_{one['vram'] + one['size'] - 8:08X}", slug)["status"] == "asm"
+    said = tools.call(net, agent, slug, "split_function", {"function": two["name"], "at": hex(two["vram"] + 16)})
+    assert said.startswith("✅"), said
