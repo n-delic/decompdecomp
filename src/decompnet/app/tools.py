@@ -98,6 +98,9 @@ functions, then stop:
    it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
    your last change and try a smaller one.
 
+Once every function in a source file is readable, claim_readable may give you the file to tidy instead (TIDY A
+FILE): follow its list with edit_file and rename_symbol, then tidy_done. A file counts as one of your {count}.
+
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
 
@@ -317,6 +320,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
+    "tidy_done": lambda net, agent, slug, unit, summary: net.readability.tidy_done(agent, slug, unit, summary),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
         net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source),
     "try_compiler": lambda net, agent, slug, function, compiler, flags="", source="":
@@ -339,7 +343,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
             "compiler_map", "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done"}
 
 
 def tool_names(fork: bool) -> list[str]:
@@ -551,6 +555,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """A readable rewrite of a matched function (names, types, a comment). Kept only if it still matches byte
         for byte; otherwise the matching C stays."""
         return await run(ctx, "make_readable", function=function, source=source)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def tidy_done(ctx: Context, unit: str, summary: str) -> str:
+        """The source file claim_readable gave you to tidy is done (its types, names and declarations): say what you
+        changed in a sentence or two."""
+        return await run(ctx, "tidy_done", unit=unit, summary=summary)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:
