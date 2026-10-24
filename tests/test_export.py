@@ -1,6 +1,6 @@
 """Exported projects rebuild the game byte for byte: the base for ports and mods.
 
-For each homemade demo (N64, PlayStation, PlayStation 2), match the game's functions the way an agent would,
+For each homemade demo (N64, PlayStation 2, PSP), match the game's functions the way an agent would,
 export the project, build it, then build it again from a clean tree (as from a fresh clone: only the sources and
 your own copy of the game), and check that nothing made from the game would be committed.
 """
@@ -27,6 +27,8 @@ DEMOS = {
             "gcc-2.7.2-kmc", ROOT / "projects/demo-rom/build.py"),
     "ps2": (ROOT / "projects/demo-ps2/build/SLUS_999.99", ROOT / "projects/demo-ps2/build/demoq_ps2.elf",
             "ee-gcc-2.96", ROOT / "projects/demo-ps2/build.py"),
+    "psp": (ROOT / "projects/demo-psp/build/BOOT.BIN", ROOT / "projects/demo-psp/build/demoq_psp.elf",
+            "psp-gcc-1.3.1", ROOT / "projects/demo-psp/build.py"),
 }
 
 
@@ -36,7 +38,12 @@ def _ready(platform: str) -> bool:
             and shutil.which("ld.lld") is not None)
 
 
-def _decompile(tmp: Path, platform: str):
+# the demo's C that doesn't match on a platform as it is: PSP GCC schedules entity_spawn's call of entity_default_hp
+# as the same file let it, which a function compiled alone can't see
+NEAR_MISSES = {"psp": {"entity_spawn"}}
+
+
+def _decompile(tmp: Path, platform: str, skip: tuple[str, ...] = ()):
     game, elf, _, build = DEMOS[platform]
     if not elf.exists() or not game.exists():
         subprocess.run([sys.executable, str(build)], check=True)
@@ -54,6 +61,8 @@ def _decompile(tmp: Path, platform: str):
                        if not l.startswith("#include") and not re.match(r"typedef \w+( \w+)? [su]\d+;|typedef \w+ f\d+;", l))
     if platform != "n64":  # small globals are $gp-relative: tentative definitions, not extern
         header = re.sub(r"^extern (s32|u32) (g_\w+);", r"\1 \2;", header, flags=re.M)
+    if platform == "psp":  # (consoles/psp/guides/psp.md: GCC found abs_s32 const in the game's file)
+        header += "\ns32 abs_s32(s32 v) __attribute__((const));\n"
     assert net.edit_context(agent, slug, "", header, "the game's types").startswith("✅")
     table = net.symbols(pid)
     for name in FUNCTIONS + ["g_player", "g_entities", "g_score", "g_frame_count", "g_rng_state",
@@ -66,21 +75,25 @@ def _decompile(tmp: Path, platform: str):
                 net.rename_symbol(agent, slug, current, name)
                 table = net.symbols(pid)
     source = (GAME / "game.c").read_text()
-    for name in FUNCTIONS:
+    for name in matched(platform, skip):
         assert net.attempt(agent, name, csource.get(source, name), slug)["matched"], name
     return net, slug
 
 
-@pytest.mark.parametrize("platform", ["n64", "ps2"])
+def matched(platform: str, skip: tuple[str, ...] = ()) -> list[str]:
+    return [f for f in FUNCTIONS if f not in NEAR_MISSES.get(platform, ()) and f not in skip]
+
+
+@pytest.mark.parametrize("platform", ["n64", "ps2", "psp"])
 def test_export_rebuilds_the_game(tmp_path, platform):
     if not _ready(platform):
         pytest.skip(f"needs the {platform} toolchain and binutils-mips")
     net, slug = _decompile(tmp_path, platform)
     out = net.export_rom(slug, log=lambda *_: None)
     assert out["identical"], out["log"]
-    assert out["matched"] == len(FUNCTIONS) and not out["fallback"]
+    assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
-    assert len(list((tree / "src").glob("*/*.c"))) == len(FUNCTIONS)
+    assert len(list((tree / "src").glob("*/*.c"))) == len(matched(platform))
 
     # a fresh clone: no assembly, assets or build output, only the sources and your copy of the game
     for generated in ("asm", "assets", "build"):
@@ -95,6 +108,33 @@ def test_export_rebuilds_the_game(tmp_path, platform):
         files = subprocess.run(["git", "ls-files", "--cached"], cwd=tree, capture_output=True, text=True).stdout.split()
         assert not [f for f in files if f.startswith(("asm/", "assets/", "build/", "baserom"))], files
         assert "build.py" in files and "build.json" in files
+
+
+def test_branches_into_another_function_and_data_named_by_its_address_link(tmp_path):
+    """What a PSP game's export met (a CodeWarrior game with debug symbols, 270 functions matched): hand-written
+    assembly that branches into another function (its SDK's deflate routine, cut in pieces), and a twin's C naming
+    data by its address (D_088EA738) where the symbol has another name. Neither linked. On the PSP demo: a function
+    split between a branch and its target, and a match that names g_entities by its address."""
+    if not _ready("psp"):
+        pytest.skip("needs the psp toolchain and binutils-mips")
+    net, slug = _decompile(tmp_path, "psp", skip=("count_alive_entities",))
+    agent, _ = net.local_agent("agent")
+    pid = net.project_row(slug)["id"]
+    entities = net.symbols(pid).resolve("g_entities")
+    source = csource.get((GAME / "game.c").read_text(), "count_alive_entities").replace("g_entities", f"D_{entities:08X}")
+    source = f"extern Entity D_{entities:08X}[MAX_ENTITIES];\n{source}"
+    assert net.attempt(agent, "count_alive_entities", source, slug)["matched"]
+    branch = re.compile(r"/\* \w+ ([0-9A-F]{8}) [0-9A-F]{8} \*/\s+b\w*\s.*\.L([0-9A-F]{8})")
+    for fn in net.store.all("SELECT name, vram, size, asm FROM functions WHERE project_id=? AND status='open' "
+                            "ORDER BY vram", pid):
+        at = next((int(b, 16) + 8 for b, t in branch.findall(fn["asm"]) if int(t, 16) > int(b, 16) + 8), None)
+        if at is not None and at < fn["vram"] + fn["size"]:
+            assert net.split_function(agent, slug, fn["name"], f"0x{at:08X}").startswith("✅")
+            break
+    else:
+        pytest.fail("no function of the demo branches forward")
+    out = net.export_rom(slug, log=lambda *_: None)
+    assert out["identical"], out["log"]
 
 
 def test_check_records_a_function_written_outside(tmp_path):
