@@ -556,3 +556,36 @@ def test_sncs_cpp_names_are_given_back_to_the_games():
     renamed = ELFFile(BytesIO(unmangle(obj, game.__contains__))).get_section_by_name(".symtab").iter_symbols()
     assert [s.name for s in renamed][1:] == ["func_08804388", "plain_func_088046AC", "func_08804594",
                                              "a_function_name_longer_than_twenty_six", "__0fEMathBmv"]
+
+
+@pytest.mark.skipif(toolchains.installed("psp-gcc-1.3.1") is None, reason="needs psp-gcc-1.3.1")
+def test_a_saved_psp_project_comes_back_with_what_was_set_aside(tmp_path):
+    """The demo's work saved to plain files and opened on another computer: a match judged again, and a function
+    set aside (the user's word here; agents' verdicts and a boundary report's leftover are kept the same way)
+    set aside again, where the restore used to give it back to the agents."""
+    import subprocess
+    import sys
+
+    from decompnet.app import saves
+    from decompnet.app.engine import RomNetwork
+
+    from .test_consoles import _function
+
+    if not (DEMO / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    game, symbols = DEMO / "build" / "BOOT.BIN", json.loads((DEMO / "build" / "demo.json").read_text())["symbols"]
+    net = RomNetwork(tmp_path / "one.db", tmp_path / "one")
+    slug = net.import_rom(game, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    name, source = _function(net, slug, symbols, "abs_s32")
+    net.claim(agent, slug, name)
+    assert net.attempt(agent, name, source, slug)["matched"]
+    aside, _ = _function(net, slug, symbols, "lerp")
+    net.set_aside_by_you(aside, slug, "hand-written")
+    saves.save(net, slug, tmp_path / "save")
+
+    fresh = RomNetwork(tmp_path / "two.db", tmp_path / "two")
+    out = saves.restore(fresh, str(tmp_path / "save"), game, log=lambda *_: None)
+    assert out["matched"] == 1 and out["lost"] == []
+    row = fresh._function(aside, out["slug"])
+    assert row["status"] == "asm" and "hand-written" in json.loads(row["meta"])["asm_code"]
