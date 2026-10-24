@@ -3,7 +3,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp cuts each one out of the
   program into a COFF object of its own (the target objdiff compares with), and which Visual C++ built it comes
-  from the program's Rich header.
+  from the program's Rich header, which also says (with its sections) whether decompdecomp can start it at all:
+  64-bit, Visual C++ 2017 and newer, mostly whole-program optimised, or wrapped in DRM (scratch.describe).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -39,9 +40,10 @@ class WindowsPC(Console):
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
 
     def sniff(self, head: bytes, file) -> bool:
-        from .scratch import is_pe
+        """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
+        from .scratch import is_windows_program
 
-        return is_pe(head)
+        return is_windows_program(head)
 
     def upload_name(self, data: bytes) -> str:
         return "game.exe"

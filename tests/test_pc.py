@@ -322,12 +322,104 @@ def test_agents_match_functions(pc):
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
 
 
-def test_a_program_built_with_a_newer_visual_cpp_is_told_apart():
-    """GitHub #12: a 2010 game said only "Ghidra found no functions". Its Rich header could have said why."""
-    vc6_game = [(0x0A, 8168, 120), (0x0B, 8168, 30), (0x01, 0, 200)]
-    vs2008_game = [(0x83, 30729, 300), (0x84, 30729, 40), (0x91, 30729, 1)]
-    vc71_with_a_newer_library = [(0x5F, 3077, 90), (0x6D, 50727, 2)]
-    assert scratch_pe.newer_tools(vs2008_game)
-    assert not scratch_pe.newer_tools(vc6_game)
-    assert not scratch_pe.newer_tools(vc71_with_a_newer_library)  # the game's own compiler is in the pack
-    assert not scratch_pe.newer_tools([])  # no Rich header: nothing to go by
+def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
+    """A Windows program's headers, made by hand: the DOS header and `stub` bytes of DOS stub, a Rich header of
+    (product id, build, count) entries XORed with its key, the PE header with the linker's version, the sections."""
+    key = bytes([0x5A, 0x17, 0x3C, 0x91])
+    head = bytearray(b"MZ" + bytes(0x3E + stub))
+    if rich:
+        plain = b"DanS" + bytes(12) + b"".join(struct.pack("<II", p << 16 | b, n) for p, b, n in rich)
+        head += bytes(byte ^ key[i % 4] for i, byte in enumerate(plain)) + b"Rich" + key
+    head += bytes(-len(head) % 8)
+    struct.pack_into("<I", head, 0x3C, len(head))
+    opt = bytearray(0xE0 if machine == 0x14C else 0xF0)
+    struct.pack_into("<HBB", opt, 0, 0x10B if machine == 0x14C else 0x20B, *linker)
+    head += b"PE\0\0" + struct.pack("<HHIIIHH", machine, len(sections), 0, 0, 0, len(opt), 0x102) + opt
+    return bytes(head + b"".join(name.encode().ljust(8, b"\0") + bytes(32) for name in sections))
+
+
+def test_the_import_names_the_visual_cpp_build_from_the_rich_header():
+    """GitHub #12: a 2010 game said only "Ghidra found no functions". The Rich header says which Visual C++ and which
+    update built it, and whether decompdecomp can build it too."""
+    vc6 = scratch_pe.describe(_windows_program(rich=[(0x0A, 8047, 169), (0x0B, 8966, 148), (0x0B, 8447, 38),
+                                                     (0x13, 8034, 23)]))
+    # the C library's files come prebuilt by an older build: the game's is the newest that built a tenth of them
+    assert (vc6.version, vc6.build, vc6.compiler) == ("6.0", 8966, "Visual C++ 6.0 SP5 (build 8966)")
+    assert vc6.blockers() == vc6.cannot_match() == [] and vc6.pack_version == "6.0"
+    vs2010 = scratch_pe.describe(_windows_program(rich=[(0xAB, 40219, 503), (0xAA, 40219, 171), (0x30, 9044, 121),
+                                                        (0x9D, 40219, 1)]))
+    assert vs2010.compiler == "Visual C++ 2010 SP1 (10.0, build 40219)" and vs2010.blockers() == []
+    assert vs2010.pack_version == "7.1" and "2005 to 2015 come next" in vs2010.cannot_match()[0]
+    # a 2019 program with middleware built by 2015: the build that linked it compiled the game's own code
+    vs2019 = scratch_pe.describe(_windows_program(rich=[(0x109, 30137, 658), (0x104, 24234, 556), (0x105, 24215, 395),
+                                                        (0x102, 30137, 1)]))
+    assert vs2019.compiler == "Visual C++ 2019 (14.2, build 30137)" and vs2019.out_of_scope
+    assert "2017 and newer are out of its scope" in " ".join(vs2019.blockers())
+    vs2015 = scratch_pe.describe(_windows_program(rich=[(0x105, 24210, 694), (0x105, 23506, 2095), (0x102, 24210, 1)]))
+    assert vs2015.compiler == "Visual C++ 2015 Update 3 (14.0, build 24210)" and not vs2015.out_of_scope
+    moved = scratch_pe.describe(_windows_program(rich=[(0x0B, 8168, 10)], stub=0x80))  # a longer DOS stub
+    assert (moved.version, moved.build) == ("6.0", 8168)
+
+
+def test_without_a_rich_header_the_linker_version_names_the_toolset():
+    """A store's signature can take the Rich header's place (a 2008 game's has none): the linker's version still
+    says which Visual C++ it was."""
+    def built(linker):
+        return scratch_pe.describe(_windows_program(linker=linker))
+
+    assert built((8, 0)).compiler == "Visual C++ 2005 (8.0, by its linker's version)"
+    assert built((8, 0)).build is None and built((8, 0)).pack_version == "7.1"
+    assert (built((7, 10)).version, built((7, 0)).version, built((10, 10)).version) == ("7.1", "7.0", "10.0")
+    assert built((7, 10)).cannot_match() == [] and built((14, 29)).out_of_scope
+    unknown = built((2, 50))  # not a Microsoft linker's version
+    assert unknown.version is None and unknown.pack_version == "6.0" and unknown.blockers() == []
+
+
+def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():
+    mostly = scratch_pe.describe(_windows_program(rich=[(0x60, 3077, 100), (0x64, 3077, 300)]))
+    assert (mostly.whole_program, mostly.compiled) == (300, 400)
+    assert "300 of its 400 compiled files" in mostly.blockers()[0] and "/LTCG" in mostly.blockers()[0]
+    some = scratch_pe.describe(_windows_program(rich=[(0x60, 3077, 300), (0x64, 3077, 10)]))
+    assert some.blockers() == [] and some.cannot_match() == [
+        "10 of its 310 compiled files were built with whole-program optimisation (/GL): their functions can't match"]
+    assert "10 of its 310 compiled files with whole-program optimisation" in some.summary()
+
+
+def test_a_64_bit_program_is_the_pcs_and_told_why_it_cant_start(tmp_path):
+    """The drop refused every 64-bit .exe with "decompdecomp starts PC games from their 32-bit x86 .exe"."""
+    from decompnet.forks.project import ForkError
+
+    game = tmp_path / "game.exe"
+    game.write_bytes(_windows_program(machine=0x8664, rich=[(0xCF, 60610, 1204), (0xCC, 50727, 1)]))
+    assert consoles.identify(game).id == "pc"
+    from decompnet.app.engine import RomNetwork
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
+    with pytest.raises(ForkError) as e:  # the import, before it installs or runs anything
+        net.import_rom(game, confirmed=True, log=lambda *_: None)
+    assert "64-bit (x64) program" in str(e.value) and "Newer Windows games" in str(e.value)
+    assert not list((tmp_path / "work").glob("game*"))
+    assert "Visual C++ 2012 Update 3 (11.0, build 60610)" in scratch_pe.describe(game.read_bytes()).summary()
+    game.write_bytes(_windows_program(rich=[(0x0B, 8966, 148)]))
+    info = scratch_pe.game_info(game)
+    assert info["compiler"] == "6.0" and info["cannot_match"] == []
+    assert info["summary"] == ("32-bit x86, built with Visual C++ 6.0 SP5 (build 8966), no whole-program "
+                               "optimisation, no DRM or packer found")
+
+
+def test_drm_and_packers_are_named_never_unpacked():
+    def wrapper(*sections):
+        return scratch_pe.describe(_windows_program(sections=(".text", ".rdata", ".data", *sections)))
+
+    steam = wrapper(".bind")
+    assert steam.wrapper == "SteamStub (Steam's DRM)" and "never removes or gets around" in steam.blockers()[0]
+    assert wrapper("stxt774", "stxt371").wrapper == "SafeDisc" and wrapper(".securom").wrapper == "SecuROM"
+    upx = scratch_pe.describe(_windows_program(sections=("UPX0", "UPX1", ".rsrc")))
+    assert upx.packed and "compressed with UPX" in upx.blockers()[0]
+    denuvo = wrapper(".xtext", ".xpdata", ".srdata", ".tls", ".pdata", ".reloc", ".rsrc", ".idata")
+    assert denuvo.wrapper == "Denuvo"
+    # a 2002 game's thirteen sections, its exports' .edata among them, are no wrapper's
+    plain = scratch_pe.describe(_windows_program(sections=(".text", "_rwcseg", ".rdata", ".exc", ".rsrc", ".data",
+                                                           ".CRT", ".idata", ".tls", "_rwdseg", ".bss", ".edata",
+                                                           ".reloc")))
+    assert plain.wrapper is None and plain.blockers() == []
