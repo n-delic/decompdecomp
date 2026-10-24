@@ -2381,6 +2381,18 @@ class ForkEngine:
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed: a match has to come from C/C++")
         names = self._names(meta, fn)
         _, span = self._find(source, names)
+        console = consoles.get(cfg.get("platform"))
+        version = (fp.manifest or {}).get("version") or cfg.get("version")
+        structor = None
+        if span is None and console.names_structors and not meta.get("demangled") and "::" in (meta.get("real") or "::"):
+            # a constructor or destructor of a class the agent named (CFoo::~CFoo for func_004A86D0) becomes the
+            # function's real name below, which the build pairs with the original: a class's constructor and
+            # destructor are at two addresses, and can't both be named after the class. One named so before (a
+            # real name with "::") may be renamed: the agent's class has another name now
+            if (structor := csource.structor(source)) is not None:
+                given = console.real_names(fp, version).get(meta.get("symbol") or fn["name"])
+                names = [structor, *names, *([given] if given else [])]
+                _, span = self._find(source, names)
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
         # with the comment right above it (what it does, from polishing): the file kept the definition only
@@ -2449,6 +2461,22 @@ class ForkEngine:
             key = self.net.compile_key(fn, unit.name, after)
             if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
                 return again
+            renamed: dict[Path, str] = {}
+            if structor:
+                try:
+                    with self._build_locks[proj["id"]]:  # builds read the config
+                        renamed = console.rename_symbol(fp, version, fn["name"], structor)
+                except ForkError as e:
+                    raise NetworkError(f"{structor} can't be {fn['name']}'s name: {e}") from None
+
+            def unname() -> None:
+                """The config as it was: a name left behind would keep another function from being that class's
+                constructor (an agent's wrong address)."""
+                with self._build_locks[proj["id"]]:
+                    for p, t in renamed.items():
+                        p.write_text(t, encoding="utf-8")
+
+            committed = [unit.source, *(str(p.relative_to(fp.root)) for p in renamed)]
             _rewrite(path, after)
 
             def remembered(text: str, score: int | None, kept: bool = True) -> str:
@@ -2462,6 +2490,7 @@ class ForkEngine:
 
             def undo() -> None:
                 _rewrite(path, before)
+                unname()
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 
@@ -2471,6 +2500,7 @@ class ForkEngine:
                 # is set up again in the background (one project spent five compiles on a build.ninja whose python
                 # was in another home, then the sessions quit)
                 _rewrite(path, before)
+                unname()
                 threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
                 return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
                                 "and nothing was recorded or counted. decompdecomp is setting the project up again; "
@@ -2541,8 +2571,8 @@ class ForkEngine:
                     return {"text": f"❌ {fn['name']} already matches; your version {why}, so the matching one was "
                                     "kept. Call claim_function for a function that still needs work.",
                             "score": score, "matched": False}
-                self._commit(proj, fp, unit.source, f"Tidy {meta.get('demangled') or symbol} (still matches)\n\n"
-                                                    f"Edited by {agent.name} with decompdecomp.")
+                self._commit_paths(proj, fp, committed, f"Tidy {meta.get('demangled') or symbol} (still matches)\n\n"
+                                                        f"Edited by {agent.name} with decompdecomp.")
                 return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
             self.net._record(fn, agent, score, code, 0, matched=matched)
@@ -2550,8 +2580,8 @@ class ForkEngine:
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)
             if matched:
-                self._commit(proj, fp, unit.source, f"Match {meta.get('demangled') or symbol}\n\n"
-                                                    f"Decompiled by {agent.name} with decompdecomp.")
+                self._commit_paths(proj, fp, committed, f"Match {meta.get('demangled') or symbol}\n\n"
+                                                        f"Decompiled by {agent.name} with decompdecomp.")
                 return {"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
                                 f"{self.net.dependents_note(fn['id'])}"

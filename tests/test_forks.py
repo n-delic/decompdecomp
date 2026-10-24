@@ -242,6 +242,11 @@ def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for(
     names = ForkEngine._names({"symbol": "f"}, {"name": "f"})
     assert names == ["f", "f::~f"] and ForkEngine._find(None, c, names) == ("f", (13, len(c)))
     assert csource.find(c, "g") is None
+    # the one constructor or destructor a source defines names an unnamed PC function (ForkEngine._attempt)
+    assert csource.structor("struct CFoo { CFoo(); ~CFoo(); };\nCFoo::~CFoo() {\n}\n") == "CFoo::~CFoo"
+    assert csource.structor("A::CFoo::CFoo(int x) : y(x) {\n}\n") == "A::CFoo::CFoo"
+    assert csource.structor("CFoo::CFoo() {}\nCFoo::~CFoo() {}\n") is None  # two: which one is the function?
+    assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
 
 
 def test_clone_rejects_odd_sources(tmp_path):

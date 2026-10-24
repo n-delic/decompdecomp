@@ -54,7 +54,10 @@ Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0).
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects).
+  story (the project is delinked COFF objects). A class's constructors are one real name (`CFoo::CFoo`), so of two
+  at two addresses (a copy constructor) only one can be written as a constructor: names.py would need the mangled
+  signature in "names". A project keeps the `tools/` it was made with, so one made before a change to names.py (as
+  constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade step is missing.
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -64,6 +67,12 @@ Where to start on a gap:
   games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **Constructors and destructors on Windows PC.** A Visual C++ game's small exception-using functions are often
+  constructors and destructors, and a class's two are at two addresses: named after an address, only one paired, and
+  a destructor written so (`func_004D9DD0::~func_004D9DD0`) was refused outright. An agent now writes
+  `CFoo::CFoo` for one function and `CFoo::~CFoo` for another; the attempt gives each that real name, and names.py
+  pairs `??0CFoo@@...` and `??1CFoo@@...` with the original's symbols, calls from other functions included.
 
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card

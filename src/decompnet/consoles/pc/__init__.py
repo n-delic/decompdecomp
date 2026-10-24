@@ -79,6 +79,7 @@ class WindowsPC(Console):
     # the symbol tools/names.py gives it, and the report keeps that symbol. A real name is kept by address in
     # functions.json's "names", which names.py reads too, so a renamed function still pairs (and so do its callers).
     renames_in_report = False
+    names_structors = True  # names.py pairs ??0CFoo@@... and ??1CFoo@@... with the function named CFoo::CFoo, ~CFoo
 
     def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:
         """functions.json's "names": `old`'s address (func_0041B470, _func_0041B470@8, D_0066DDA4, or a real name
@@ -95,6 +96,8 @@ class WindowsPC(Console):
         functions = {f"func_{fn['addr']:08X}" for fns in info["units"].values() for fn in fns}
         if key is None or (key.startswith("func_") and key not in functions):
             raise ForkError(f"{old} isn't one of the game's functions or data (func_<address>, D_<address>)")
+        if names.get(key) == new:  # named so already (each attempt at a constructor names it: ForkEngine._attempt)
+            return {}
         if new in names.values() or _address_key(new):
             raise ForkError(f"{new} names another of the game's symbols already: pick another name")
         names[key] = new
