@@ -218,6 +218,52 @@ def test_similarity_ranks_copies_first():
     assert [n for n, _ in ranked][:2] == ["copy", "tweaked"] and ranked[0][1] == 1.0
 
 
+def test_a_source_is_rewritten_from_its_first_change_only(tmp_path, monkeypatch):
+    # a compile writes the agent's version of a dtk unit (up to a megabyte) and an undo writes the original back
+    import os
+
+    from decompnet.app import forkengine
+    head = "".join(f"void f{i}(void) {{ }}\n" for i in range(2000))  # ~40 KB the edit doesn't touch
+    before, after = head + "int g(void) { return 1; }\n", head + "int g(void) { return 2; }\nint h;\n"
+    written = []
+
+    class Spy:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+        def write(self, data):
+            written.append(len(data))
+            return self.f.write(data)
+    monkeypatch.setattr(forkengine, "open", lambda *a, **k: Spy(open(*a, **k)), raising=False)
+    for linesep in ("\n", "\r\n"):  # what text mode writes on Linux and macOS, and on Windows
+        monkeypatch.setattr(os, "linesep", linesep)
+        p = tmp_path / f"unit{len(linesep)}.c"
+        p.write_bytes(before.replace("\n", linesep).encode())
+        for text in (after, before, before[:100], "", before):  # an edit, its undo, shorter, empty, longer again
+            written.clear()
+            forkengine._rewrite(p, text)
+            assert p.read_bytes() == text.replace("\n", linesep).encode()
+        written.clear()
+        forkengine._rewrite(p, after)
+        assert p.read_bytes() == after.replace("\n", linesep).encode()
+        assert 0 < sum(written) < 8192 < len(head)  # only the block with the change, and what follows it
+        os.utime(p, (1, 1))
+        written.clear()
+        forkengine._rewrite(p, after)  # the same text: nothing written, but a build still sees it as new
+        assert not written and p.stat().st_mtime > 1
+    forkengine._rewrite(tmp_path / "new.c", "int x;\n")
+    assert (tmp_path / "new.c").read_text() == "int x;\n"
+
+
 @pytest.mark.skipif(toolchains.installed("m2c") is None, reason="needs m2c")
 def test_drafts_from_project_assembly(tmp_path):
     from decompnet.forks import drafts

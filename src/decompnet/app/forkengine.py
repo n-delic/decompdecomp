@@ -68,6 +68,28 @@ def _strip_comments(code: str) -> str:
     return _REGVAR.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S))
 
 
+def _rewrite(path: Path, text: str) -> None:
+    """`path.write_text(text, encoding="utf-8")`, the same bytes, writing only from the first 4 KB block that differs.
+    A compile writes the agent's version of a unit's source and an undo writes the original back: a dtk unit can be
+    a megabyte, and only the part from the changed function on is new. An unchanged file is only touched, so a build
+    still sees it as new."""
+    data = text.replace("\n", os.linesep).encode("utf-8")  # as text mode writes it
+    try:
+        with open(path, "r+b") as f:
+            old = f.read()
+            if old == data:
+                os.utime(path)
+                return
+            at = 0
+            while old[at:at + 4096] == data[at:at + 4096]:
+                at += 4096
+            f.seek(at)
+            f.write(data[at:])
+            f.truncate()
+    except FileNotFoundError:
+        path.write_bytes(data)
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "fork"
 
@@ -2379,7 +2401,7 @@ class ForkEngine:
             key = self.net.compile_key(fn, unit.name, after)
             if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
                 return again
-            path.write_text(after, encoding="utf-8")
+            _rewrite(path, after)
 
             def remembered(text: str, score: int | None, kept: bool = True) -> str:
                 """A result as repeat_of gives it back later (agents' tries only), plus the note when this variant
@@ -2391,7 +2413,7 @@ class ForkEngine:
                 return text + self.net.same_score_note(fn["id"], agent.id, score, code)
 
             def undo() -> None:
-                path.write_text(before, encoding="utf-8")
+                _rewrite(path, before)
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 
@@ -2400,7 +2422,7 @@ class ForkEngine:
                 # the build itself is broken, not the agent's code: nothing recorded or counted, and the project
                 # is set up again in the background (one project spent five compiles on a build.ninja whose python
                 # was in another home, then the sessions quit)
-                path.write_text(before, encoding="utf-8")
+                _rewrite(path, before)
                 threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
                 return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
                                 "and nothing was recorded or counted. decompdecomp is setting the project up again; "
@@ -2944,11 +2966,11 @@ class ForkEngine:
             existed, text, updated = self._edited(p, rel, old, new)
             bases = {u.name: self._baseline(proj, fp, u, text) for u in units}
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(updated, encoding="utf-8")
+            _rewrite(p, updated)
 
             def undo() -> None:
                 if existed:
-                    p.write_text(text, encoding="utf-8")
+                    _rewrite(p, text)
                 else:
                     p.unlink(missing_ok=True)
                 for u in units:
@@ -3009,11 +3031,11 @@ class ForkEngine:
             protected = {(r["unit"], self._meta(r).get("symbol")) for r in self.net.store.all(
                 "SELECT unit, meta FROM functions WHERE project_id=? AND status='matched'", proj["id"])}
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(updated, encoding="utf-8")
+            _rewrite(p, updated)
 
             def undo() -> None:
                 if existed:
-                    p.write_text(text, encoding="utf-8")
+                    _rewrite(p, text)
                 else:
                     p.unlink(missing_ok=True)
                 self._build_all(proj, fp)
@@ -3047,7 +3069,7 @@ class ForkEngine:
                 if truly:
                     return f"❌ REJECTED and undone: the edit breaks {len(truly)} matched function(s): {', '.join(truly[:10])}"
                 p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(updated, encoding="utf-8")
+                _rewrite(p, updated)
                 self._build_all(proj, fp)
             self._scores = {k: v for k, v in self._scores.items() if k[0] != proj["id"]}
             self._commit(proj, fp, rel, f"{message.strip()}\n\nEdited by {agent.name} with decompdecomp.")
