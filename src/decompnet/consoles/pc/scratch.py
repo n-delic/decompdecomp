@@ -513,7 +513,10 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
             missed = limit - len(rest)
             # less the padding after it, but not its last instruction's zeros (a `ret 8` ends with one)
             body = len(rest.rstrip(b"\x90\xcc\x00"))
-            body = next((i.address + i.size for i in _disasm(md, rest, 0) if i.address + i.size >= body), body)
+            # or up to the int3s Visual C++ 2005 and later pad each function of a file with: what follows them is
+            # another function (inlined everywhere, so nothing calls it: Ghidra missed several in a row there)
+            body = next((i.address + i.size for i in _disasm(md, rest, 0) if i.address + i.size >= body or (
+                i.mnemonic in ("ret", "jmp") and rest[i.address + i.size:i.address + i.size + 1] == b"\xcc")), body)
             rows[missed] = {"entry": missed, "end": missed + body, "name": "",
                             "source": "DEFAULT", "purge": 0, "convention": "__cdecl"}
             starts.insert(i + 1, missed)

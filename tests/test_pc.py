@@ -634,6 +634,18 @@ def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
     assert [(f.addr, f.size) for f in found] == [(0x401000, 1), (0x401001, 5), (0x401006, 5)]
 
 
+def test_functions_nothing_calls_are_cut_at_the_int3s_between_them():
+    """Visual C++ 2005 and later pad each function of a file to 16 bytes with int3. A run of functions inlined
+    everywhere (nothing calls them, so Ghidra misses them) was one function in a 2010 build of the demo: 14
+    functions found of 19, and none of the five in the gaps could match."""
+    pad = lambda code: code + b"\xcc" * (-len(code) % 16)
+    code = (pad(bytes.fromhex("8b442404c20800")) + pad(bytes.fromhex("8bc1c3")) + pad(bytes.fromhex("33c0c3"))
+            + pad(bytes.fromhex("8b442404c3")))
+    pe = scratch_pe.read_pe(_tiny_exe(code))
+    found = scratch_pe.analyse(pe, [_row(0x401000, 0x401007), _row(0x401030, 0x401035)])
+    assert [(f.addr, f.size) for f in found] == [(0x401000, 7), (0x401010, 3), (0x401020, 3), (0x401030, 5)]
+
+
 def _project(tmp_path: Path, program: bytes, rows: list[dict], unit_bytes: int = 0x1000) -> Path:
     """A PC project's config and delinked objects for a hand-made program, as create writes them (no compiler)."""
     root = tmp_path / "proj"
