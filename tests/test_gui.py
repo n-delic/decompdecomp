@@ -105,14 +105,16 @@ def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_
 
 
 def test_the_drop_zone_tells_psp_games_from_the_ps2s_and_says_what_to_do_with_what_it_cant_read(gui):
-    """A PSP's UMD image starts like a PS2 disc and its programs are MIPS ELFs like the PS2's, and a PSP .cso starts
-    with CISO like a compressed GameCube disc: the drop zone reads further, so a PSP game isn't taken for another
-    console's, and a .cso or an EBOOT.PBP (not readable yet) says what to drop instead."""
+    """A PSP's UMD image starts like a PS2 disc and its programs are MIPS ELFs like the PS2's, and a .cso starts with
+    CISO like a compressed GameCube disc: the drop zone reads further, so a PSP game isn't taken for another
+    console's. A .cso is a PlayStation disc whose console the server reads inside it; a .zso or an EBOOT.PBP (not
+    readable yet) says what to drop instead."""
     psp = gui["checks"]["psp"]
-    # a UMD image, a PS2 disc, a GameCube CISO, a PSP .cso, a PRX module, an Allegrex program, a PS2 program
-    assert psp["platforms"] == ["psp", "playstation", "gcwii", None, "psp", "psp", "ps2"]
-    cso, pbp = psp["said"]
-    assert "compressed PSP image" in cso and "decompress it to .iso" in cso
+    # a UMD image, a PS2 disc, a GameCube CISO, a .cso, a PRX module, an Allegrex program, a PS2 program
+    assert psp["platforms"] == ["psp", "playstation", "gcwii", "playstation", "psp", "psp", "ps2"]
+    assert psp["cso"] == "CSO disc image"
+    zso, pbp = psp["said"]
+    assert "ZSO" in zso and "decompress it to .iso" in zso
     assert "EBOOT.PBP" in pbp and "encrypted" in pbp and ".iso" in pbp
     assert psp["name"] == "PlayStation 1, 2 or PSP"
 

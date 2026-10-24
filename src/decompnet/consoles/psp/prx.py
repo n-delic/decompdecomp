@@ -35,7 +35,7 @@ WORD = 0xFFFFFFFF
 JUMP_BITS, REGION_BITS = 0x03FFFFFF, 0x0FFFFFFF  # j/jal's target, and the 256 MB it reaches
 LOW_HALF = 0xFFFF
 MODULE_INFO = ".rodata.sceModuleInfo"
-MODULE_INFO_GP = 32  # SceModuleInfo: attributes (2), version (2), name (28), then gp_value
+MODULE_INFO_NAME, MODULE_INFO_GP = 4, 32  # SceModuleInfo: attributes (2), version (2), name (28), then gp_value
 STUB_SECTION, STUB_TABLES = ".sceStub.text", ".lib.stub"
 STUB_BYTES = 8  # each imported function's stub: jr ra; nop, until the loader links it (j or syscall)
 LIBRARY_NAME, STUB_LENGTH, STUB_COUNT, NID_TABLE, STUB_TABLE = 0, 8, 10, 12, 16  # a SceLibraryStubTable's fields
@@ -220,6 +220,20 @@ def gp_value(program: bytes) -> int:
     if info is None or info.size < MODULE_INFO_GP + 4:
         return 0
     return struct.unpack_from("<I", program, info.offset + MODULE_INFO_GP)[0]
+
+
+def module_name(program: bytes) -> bytes:
+    """The module's own name, as its module info says it (b"" when it has none): what the loader knows it by."""
+    info = next((s for s in _sections(program) if s.name == MODULE_INFO), None) if is_elf(program) else None
+    if info is None or info.size < MODULE_INFO_GP:
+        return b""
+    return program[info.offset + MODULE_INFO_NAME:info.offset + MODULE_INFO_GP].split(b"\0", 1)[0]
+
+
+def extent(program: bytes) -> int:
+    """Where the program's memory ends: its last loaded segment's end, its .bss included (a PRX's counts from 0)."""
+    return max((vaddr + memsz for kind, _, vaddr, _, _, memsz, _, _ in _segments(program) if kind == PT_LOAD),
+               default=0)
 
 
 def stub_names(program: bytes) -> dict[int, str]:

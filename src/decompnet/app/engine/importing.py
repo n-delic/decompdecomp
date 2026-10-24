@@ -101,6 +101,9 @@ class ImportMixin:
                 + ", ".join(f"{o[0]} at 0x{o[2]:08X}" for o in picked.overlays[:6]) + (", ..." if len(picked.overlays) > 6 else ""))
         # a program that kept its symbols names its functions, and its debug sections give their types (#3)
         debug = console.debug_info(rom, _HEADER_NAMES)
+        for other in picked.programs:  # the disc's other programs, split with it (a PSP game's modules)
+            more = console.debug_info(other, _HEADER_NAMES)
+            debug = more if debug is None else debug.merge(more) if more is not None else debug
         if debug is not None:
             log(debug.summary())
         try:
