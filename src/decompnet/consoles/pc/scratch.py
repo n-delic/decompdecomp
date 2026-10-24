@@ -451,12 +451,26 @@ def data_bytes(root: Path, manifest: dict, addr: int, length: int) -> bytes | No
     return data if data and len(data) == length else None
 
 
+def _named_data(root: Path, manifest: dict, name: str) -> str | None:
+    """The D_<address> a real name stands for (functions.json's "names", kept by rename_symbol), or None: a helper
+    that renamed a global could no longer read_data it by its name."""
+    try:
+        info = json.loads((root / "config" / manifest["version"] / "functions.json").read_text(encoding="utf-8"))
+    except (OSError, KeyError, ValueError):
+        return None
+    return next((key for key, real in (info.get("names") or {}).items() if real == name and key.startswith("D_")), None)
+
+
 def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_BYTES) -> str:
     """What read_data shows on a PC project: the bytes at a D_<address> (or any address) in the user's copy, the
     addresses its words point to, and a string or floats when it reads as one."""
     m = re.fullmatch(r"_?D_([0-9A-Fa-f]{8})|(?:0x)?([0-9A-Fa-f]{6,8})", name)
+    real = None
+    if m is None and (key := _named_data(root, manifest, name)) is not None:  # a real name given since
+        real, m = name, re.fullmatch(r"D_([0-9A-F]{8})()", key)
     if m is None:
-        raise ForkError(f"`{name}` isn't data by address: PC data is named D_<address> (D_00402034)")
+        raise ForkError(f"`{name}` isn't data by address or a real name of data: PC data is named D_<address> "
+                        "(D_00402034) until rename_symbol names it")
     addr = int(m.group(1) or m.group(2), 16)
     pe = read_pe((root / manifest["game"]["path"]).read_bytes())
     sec = pe.section_at(addr)
@@ -465,7 +479,7 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
                         f"0x{pe.image_base + pe.image_size:08X})")
     n = max(READ_MIN_BYTES, min(int(length or READ_DEFAULT_BYTES), READ_MAX_BYTES))
     data = pe.read(addr, n)
-    out = [f"D_{addr:08X} ({sec.name}+0x{addr - sec.va:X}, {n} bytes)"]
+    out = [f"{real + ' = ' if real else ''}D_{addr:08X} ({sec.name}+0x{addr - sec.va:X}, {n} bytes)"]
     if not data:
         return out[0] + f": uninitialized data ({sec.name}), zeros at start-up."
     for i in range(0, len(data), HEX_ROW_BYTES):

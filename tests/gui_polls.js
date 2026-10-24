@@ -180,6 +180,9 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return [searchFunctions(fns, "ma", false), searchFunctions(fns, "main", true), searchFunctions(fns, "mai", false).length,
               searchFunctions(fns, "zzz", false)].map((r) => (Array.isArray(r) ? r.map((f) => f.name) : r));
     })(),
+    // Polish is offered once half the game's own code matches: set-aside functions count on neither side
+    polish: [{ functions: 274, set_aside: 241, matched: 33 }, { functions: 274, set_aside: 0, matched: 33 },
+             { functions: 5, set_aside: 5, matched: 0 }, null].map(polishOffered),
     autopilot: burstLines([
       { id: 1, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_1", created_at: 100 },
       { id: 2, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_2", created_at: 101 },

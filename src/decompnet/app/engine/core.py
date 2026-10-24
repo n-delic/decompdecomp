@@ -224,9 +224,10 @@ class Core(Network):
         like = sym.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = self.store.all(
             "SELECT * FROM functions WHERE project_id=? AND (name=? OR substr(name,1,?)=? "
-            "OR json_extract(meta,'$.symbol')=? OR substr(json_extract(meta,'$.demangled'),1,?)=? "
+            "OR json_extract(meta,'$.symbol')=? OR json_extract(meta,'$.real')=? "  # (a PC game's: rename_symbol)
+            "OR substr(json_extract(meta,'$.demangled'),1,?)=? "
             "OR json_extract(meta,'$.demangled') LIKE ? ESCAPE '\\') ORDER BY name",
-            proj["id"], sym, len(sym) + 1, sym + "@", sym, len(sym) + 1, sym + "(", f"% {like}(%")
+            proj["id"], sym, len(sym) + 1, sym + "@", sym, sym, len(sym) + 1, sym + "(", f"% {like}(%")
         if not rows and "::" not in sym and len(sym) >= 4:  # a method by its own name: Class::sym
             rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND json_extract(meta,'$.demangled') "
                                   "LIKE ? ESCAPE '\\' ORDER BY name", proj["id"], f"%::{like}(%")
