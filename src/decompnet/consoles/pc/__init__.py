@@ -3,7 +3,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp cuts each one out of the
   program into a COFF object of its own (the target objdiff compares with), and which Visual C++ built it comes
-  from the program's Rich header.
+  from the program's Rich header. The rebuild check puts the program's code back together from those objects
+  (check_code).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .. import BETA, PROJECT, Compiler, Console
+from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1"]  # the `msvc` pack
 
@@ -37,6 +38,11 @@ class WindowsPC(Console):
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
     demo = "demo-pc"
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
+    own_features = frozenset({REBUILD_CHECK})  # the program's code, rebuilt from its delinked functions
+    # what a project's config holds, in its manifest's "analysis": 1 Ghidra's functions as it found them, 2 no jump
+    # table's entries relocated twice (scratch.drop_repeated_relocations) and every function's last instruction whole
+    # (complete_last_instructions). A project with less gets the rest when the app starts
+    ANALYSIS = 2
 
     def sniff(self, head: bytes, file) -> bool:
         from .scratch import is_pe
@@ -63,6 +69,43 @@ class WindowsPC(Console):
         from . import scratch
 
         return scratch.tool_args()
+
+    def on_start(self, net, slug: str, log=print) -> None:
+        """A project made by an older decompdecomp gets, once, what its import got wrong repaired (a jump table's
+        entries relocated twice, functions ending in the middle of their last instruction), through
+        forkengine.reanalyse: kept only when the program's code then rebuilds byte for byte from the delinked
+        functions (check_rebuild), else taken back."""
+        import json
+
+        from . import scratch
+
+        if not net.fork_slug(slug):
+            return
+        fp = net.forks.get(slug)[1]
+        manifest = fp.manifest or {}
+        if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= self.ANALYSIS:
+            return
+
+        def matched() -> set[str]:
+            return {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                     "status='matched'", net.project_row(slug)["id"])}
+
+        def repairs(fp):
+            n = scratch.drop_repeated_relocations(fp.root, manifest["version"])
+            cut = scratch.complete_last_instructions(fp.root, manifest["version"], keep=matched())
+            said = [f"{n} functions had a jump table's entries relocated twice, and once now"] if n else []
+            if cut:
+                said.append(f"{cut} functions that ended in the middle of their last instruction have all of it now")
+            return "; ".join(said) or None
+        net.forks.reanalyse(slug, repairs, log=log)
+        now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
+        (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
+                                                 encoding="utf-8")
+
+    def check_rebuild(self, fp, version: str, log=print) -> dict:
+        from . import scratch
+
+        return scratch.check_code(fp.root, version, log=log)
 
     def read_data(self, fp, name: str, length: int) -> str | None:
         """The program's data isn't in the target objects: it's read from the user's copy."""
