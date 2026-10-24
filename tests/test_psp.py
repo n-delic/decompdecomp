@@ -316,6 +316,104 @@ def test_an_encrypted_program_says_to_decrypt_it_first():
         PSP.read_game(b"~PSP" + bytes(300), "EBOOT.BIN")
 
 
+# ---------------------------------------------------------------------------------- the game's other modules
+
+def _module(name: bytes, *, memsz: int = 0x2000, symbol: str = "") -> bytes:
+    """A PRX module named `name`: a function that calls itself (a jump the loader relocates), one import stub, its
+    module info and a pointer in .data; its .bss to `memsz`."""
+    text = struct.pack("<4I", 0x0C000000, 0, 0x03E00008, 0)
+    info = struct.pack("<HH28sI", 0, 1, name, 0)
+    sections = [
+        (".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0, text, 0, 0),
+        (".sceStub.text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x10, struct.pack("<2I", 0x03E00008, 0), 0, 0),
+        (".rodata.sceModuleInfo", SHT_PROGBITS, SHF_ALLOC, 0x18, info, 0, 0),
+        (".data", SHT_PROGBITS, SHF_ALLOC | SHF_WRITE, 0x3C, struct.pack("<I", 0x8), 0, 0),
+        (".bss", SHT_NOBITS, SHF_ALLOC | SHF_WRITE, 0x40, b"", 0, 0),
+        (".rel.text", SHT_PSP_REL, 0, 0, _rels([(0, R_MIPS_26)]), 0, 1),
+        (".rel.data", SHT_PSP_REL, 0, 0, _rels([(0x3C, R_MIPS_32)]), 0, 4),
+    ]
+    if symbol:
+        symtab, strtab = _symbols([(symbol, 0, STT_FUNC, 1)])
+        sections += [(".symtab", SHT_SYMTAB, 0, 0, symtab, len(sections) + 2, 0), (".strtab", SHT_STRTAB, 0, 0, strtab, 0, 0)]
+    return _elf(sections, memsz=memsz)
+
+
+def _named_main() -> bytes:
+    data = bytearray(_prx())
+    info = _elffile(bytes(data)).get_section_by_name(".rodata.sceModuleInfo")
+    data[info["sh_offset"] + 4:info["sh_offset"] + 8] = b"main"
+    return bytes(data)
+
+
+def _game_with_modules(**module_b) -> bytes:
+    return _iso({"PSP_GAME/PARAM.SFO": _sfo(PARAMS), "PSP_GAME/SYSDIR/BOOT.BIN": _named_main(),
+                 "PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN": b"~PSP" + bytes(300),  # the system update: not the game's
+                 "PSP_GAME/USRDIR/ENGINE.BIN": _module(b"engine", memsz=0x12345),  # a module by what it is, not its name
+                 "PSP_GAME/USRDIR/GMODULE/MENU.PRX": _module(b"menu", **module_b),
+                 "PSP_GAME/USRDIR/MAIN_DBG.PRX": _named_main(),  # a debug build of the main program
+                 "PSP_GAME/USRDIR/MODULE/LIBFONT.PRX": b"~SCE" + bytes(300),
+                 "PSP_GAME/USRDIR/SOUND.BIN": bytes(4096)})
+
+
+def test_a_discs_other_modules_are_laid_out_one_after_another_after_the_main_program():
+    picked = PSP.read_game(_game_with_modules())
+    first = BASE + 0x5000  # the main program's end, its .bss included, is a page's start
+    second = first + 0x13000  # the next page after the first module's .bss
+    assert [(o[0], o[2]) for o in picked.overlays] == [("engine", first), ("menu", second)]
+    engine = picked.overlays[0]
+    assert struct.unpack_from("<I", engine[1])[0] == 0x0C000000 | first >> 2  # its jump relocated to its own address
+    assert struct.unpack_from("<I", engine[1], 0x3C)[0] == first + 8
+    assert engine[4] == [(0, "c"), (0x10, "c"), (0x18, "rodata"), (0x3C, "data")]
+    assert picked.info["stubs"] == [[first + 0x10, first + 0x18], [second + 0x10, second + 0x18]]
+    assert picked.info["modules_left_out"] == [("PSP_GAME/USRDIR/MODULE/LIBFONT.PRX", "encrypted")]
+    assert [prx.module_name(p) for p in picked.programs] == [b"engine", b"menu"]
+    assert PSP.read_game(_game_with_modules()).overlays == picked.overlays  # the same disc splits the same way
+
+
+def test_a_module_whose_code_wouldnt_fit_below_the_main_programs_jumps_is_left_out():
+    picked = PSP.read_game(_iso({"PSP_GAME/PARAM.SFO": _sfo(PARAMS), "PSP_GAME/SYSDIR/BOOT.BIN": _named_main(),
+                                 "PSP_GAME/USRDIR/A.PRX": _module(b"a", memsz=0x10000000 - BASE - 0x5000),
+                                 "PSP_GAME/USRDIR/B.PRX": _module(b"b")}))
+    assert [o[0] for o in picked.overlays] == ["a"]
+    assert picked.info["modules_left_out"] == [("PSP_GAME/USRDIR/B.PRX", "no room below 0x10000000")]
+
+
+def test_each_module_is_a_segment_of_its_own_in_splats_config_and_the_log_says_whats_left_out(tmp_path):
+    import yaml
+
+    picked = PSP.read_game(_game_with_modules())
+    (tmp_path / "game.rom").write_bytes(bytes(0x100))
+    config = tmp_path / "game.yaml"
+    config.write_text("options:\n  platform: psp\n  compiler: EEGCC\n  target_path: game.rom\n\n  section_order:\n"
+                      "    - .text\nsegments:\n  - name: cod\n    type: code\n    start: 0\n    vram: 0x08804000\n"
+                      "    subsegments:\n      - [0x0, c, cod]\n  - [0x100]\n")
+    said = []
+    image = PSP.add_code(config, tmp_path, "game.rom", picked, log=said.append)
+    segments = yaml.safe_load(config.read_text())["segments"]
+    engine = next(s for s in segments if isinstance(s, dict) and s["name"] == "ovl_engine")
+    start = engine["start"]
+    assert engine["vram"] == BASE + 0x5000
+    assert engine["subsegments"] == [[start, "c", "ovl_engine"], [start + 0x10, "c", "ovl_engine_000010"],
+                                     [start + 0x18, "rodata", "ovl_engine/000018"],
+                                     [start + 0x3C, "data", "ovl_engine/00003C"]]
+    assert (tmp_path / image).read_bytes()[start:start + 0x40] == picked.overlays[0][1]
+    assert any("1 module on the disc left out, encrypted" in line and "LIBFONT.PRX" in line for line in said)
+
+
+def test_a_modules_own_names_join_the_main_programs_and_a_name_it_has_gets_its_address():
+    main = prx.relocate(_prx())
+    module = prx.relocate(_module(b"menu", symbol="callee"), 0x08900000)
+    debug = PSP.debug_info(main, set()).merge(PSP.debug_info(module, set()))
+    named = {n.name: n.address for n in debug.named}
+    assert named["callee"] == BASE + 0x20 and named["callee_08900000"] == 0x08900000
+
+
+def test_every_modules_stubs_are_set_aside():
+    store = _Store([(BASE + 0x100, "open"), (0x08900010, "open"), (0x08900000, "open")])
+    set_stubs_aside(_Net(store, [[BASE + 0x100, BASE + 0x108], [0x08900010, 0x08900018]]), "game", log=lambda *_: None)
+    rows = {r["vram"]: r["status"] for r in store.all("SELECT * FROM functions")}
+    assert rows == {BASE + 0x100: "asm", 0x08900010: "asm", 0x08900000: "open"}
+
 # ------------------------------------------------------------------------------------ compilers and code
 
 @pytest.mark.parametrize("note, guess", [

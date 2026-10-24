@@ -4,6 +4,8 @@ unit), Sony's SDK GCC, CodeWarrior and SN Systems' SNC compilers, ROM mode.
 - prx.py: the game's program, an ELF for the Allegrex: a relocatable module (PRX) is laid out at the address the
   loader gives a game's main module and becomes a fixed program; its $gp, its imported functions' names (library and
   NID), and which compiler its note says.
+- modules.py: the game's other modules (the PRX files beside its program, loaded later), each laid out after the main
+  program and split as a segment of its own.
 - sfo.py: PARAM.SFO, the disc's facts about its game (title, product code).
 - the disc itself (an ISO 9660 UMD image, or a CHD of one) is read with the PS2's readers (consoles/ps2/disc.py,
   chd.py).
@@ -12,9 +14,8 @@ unit), Sony's SDK GCC, CodeWarrior and SN Systems' SNC compilers, ROM mode.
 Its demo game is projects/demo-psp (the Demo Quest game built with the SDK's GCC 1.3.1 at -O2 -G8, at the address a
 main module is loaded at).
 
-Not yet (ROADMAP.md): a game's other modules (the PRX files beside its program, loaded later: v1 splits the main
-module only), programs still encrypted (most retail EBOOT.BINs: the user decrypts them first), compressed disc
-images (CSO), and the names of imported functions (they're named by their NIDs).
+Not yet (ROADMAP.md): programs and modules still encrypted (most retail EBOOT.BINs: the user decrypts them first),
+compressed disc images (CSO), and the names of imported functions (they're named by their NIDs).
 """
 
 from __future__ import annotations
@@ -65,7 +66,9 @@ class PlayStationPortable(Console):
     # m2c has no Allegrex target: the EE's reads its code, with the same EABI (arguments in a0-a3 and t0-t3) and
     # splat's numbered registers ($31), which its little-endian MIPS GCC target takes for a jump table's register
     m2c = "mipsee-gcc"
-    ram = (0x08800000, 0x0C000000)  # user memory, from 0x08800000 (the later models' extra memory reaches 0x0C000000)
+    # user memory, from 0x08800000 (the later models' extra memory reaches 0x0C000000), and past it the game's other
+    # modules, each laid out after the last (modules.py), up to the end of the 256 MB the main program's jumps reach
+    ram = (0x08800000, 0x10000000)
     demo = "demo-psp"
     # (1.7.1: the compiler a program without a note gets, as the demo is; binutils-mips: the export's)
     demo_tools = ("psp-gcc-1.3.1", "psp-gcc-1.7.1", "binutils-mips")
@@ -108,12 +111,27 @@ class PlayStationPortable(Console):
         for where in PROGRAMS:
             data = image.find(where)
             if data and prx.is_elf(data):
-                return self._from_program(data, where.rsplit("/", 1)[-1], facts)
+                return self._with_modules(image, self._from_program(data, where.rsplit("/", 1)[-1], facts))
             if data and data[:4] == ENCRYPTED:
                 encrypted = where
         if encrypted:
             raise RomError(_encrypted(encrypted))
         raise RomError("this PSP disc's program (PSP_GAME/SYSDIR/EBOOT.BIN) isn't one this app can read")
+
+    def _with_modules(self, image, picked: Picked) -> Picked:
+        """The disc's other modules with the main program: each a segment of its own after it (modules.py), their
+        import stubs set aside with its, their own names read with its (Picked.programs)."""
+        from . import modules, prx
+
+        try:
+            found, left_out = modules.find(image, picked.data)
+        except (RomError, struct.error, IndexError):  # an odd disc: the program alone still works
+            return picked
+        picked.overlays = modules.overlays(found)
+        picked.programs = [m.program for m in found]
+        picked.info["stubs"] += [list(r) for m in found if (r := prx.stub_range(m.program))]
+        picked.info["modules_left_out"] = left_out
+        return picked
 
     def _from_program(self, data: bytes, name: str, facts: dict | None = None) -> Picked:
         from . import prx, sfo
@@ -135,7 +153,8 @@ class PlayStationPortable(Console):
             "crc1": 0, "crc2": 0, "size": len(data), "sha1": hashlib.sha1(data).hexdigest(), "byte_order": "elf",
             "compiler_guess": prx.guess_compiler(program), "platform": self.id, "boot": name,
             "prx": program is not data,  # laid out at prx.USER_BASE, as the loader would
-            "stubs": list(prx.stub_range(program) or ()),  # after_import sets the import stubs aside
+            # after_import sets the import stubs aside: the program's, then its modules' (_with_modules)
+            "stubs": [list(r) for r in [prx.stub_range(program)] if r],
         }, False)
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
@@ -153,15 +172,20 @@ class PlayStationPortable(Console):
         """splat's config, as its PS2 reader wrote it (rom/split.py), made the PSP's: the module's tables
         (.lib.stub, .rodata.sceModuleInfo, ...) are read-only data, which it files as .rodata, a section its order
         then lacks (PS2 programs always have one), and the compiler its disassembly allows for is the game's, not
-        EE-GCC (whose branch labels it aligns). The main module is all the code there is: its other modules (PRX
-        files on the disc, loaded later) aren't split yet (ROADMAP.md)."""
+        EE-GCC (whose branch labels it aligns). The disc's other modules follow as segments of their own, as a
+        PS2 disc's overlays do (modules.py)."""
+        from ..ps2.overlays import add_to_config
+        from . import modules
+
         text = config.read_text(encoding="utf-8")
         if not re.search(r"^    - \.rodata$", text, re.M):
             text = re.sub(r"^(  section_order:\n    - \.text\n)", r"\g<1>    - .rodata\n", text, count=1, flags=re.M)
         splat_compiler = "MWCCPS2" if picked.info.get("compiler_guess") == "MWCCPSP" else "GCC"
         text = re.sub(r"^(  compiler: )\w+", rf"\g<1>{splat_compiler}", text, count=1, flags=re.M)
         config.write_text(text, encoding="utf-8")
-        return image
+        for line in modules.left_out_lines(picked.info.get("modules_left_out") or []):
+            log(line)
+        return add_to_config(config, workdir, image, picked.overlays, log) if picked.overlays else image
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
         """The module info's gp_value (the loader sets $gp from it), else what the start-up code sets it to."""
@@ -252,16 +276,16 @@ def is_psp_disc(file) -> bool:
 
 
 def set_stubs_aside(net, slug: str, log=print) -> int:
-    """The functions in the program's import stubs (.sceStub.text) set aside: each is `jr ra; nop` until the loader
-    makes it a jump to the system function it imports, so no C is behind it. Returns how many."""
+    """The functions in the program's and its modules' import stubs (.sceStub.text) set aside: each is `jr ra; nop`
+    until the loader makes it a jump to the system function it imports, so no C is behind it. Returns how many."""
     proj = net.project_row(slug)
-    start, end = (net.cfg(proj).get("rom", {}).get("stubs") or (0, 0))[:2]
-    if end <= start:
-        return 0
+    stubs = net.cfg(proj).get("rom", {}).get("stubs") or []
+    ranges = [stubs] if stubs and isinstance(stubs[0], int) else stubs  # (one range: imported before modules were)
     why = ("an imported system function's stub: the PSP's module loader links it to the library function its NID "
            "names, so no C is behind it")
-    rows = net.store.all("SELECT id, meta FROM functions WHERE project_id=? AND vram>=? AND vram<? AND status='open'",
-                         proj["id"], start, end)
+    rows = [r for start, end in ranges for r in net.store.all(
+        "SELECT id, meta FROM functions WHERE project_id=? AND vram>=? AND vram<? AND status='open'",
+        proj["id"], start, end)]
     with net.store.tx() as db:
         db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
                        [(json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"]) for r in rows])

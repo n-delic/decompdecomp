@@ -44,6 +44,27 @@ class DebugInfo:
     def symbol_addrs(self) -> list[str]:
         return symtab.symbol_addrs(self.named)
 
+    def merge(self, other: DebugInfo) -> DebugInfo:
+        """Another program's names, functions and source files added (a PSP game's module, split with its main
+        program): a name this one has already gets the other's address after it, as a repeated name in one program
+        does (symtab.read). Its types stay out: the header is this program's, and the same type twice won't
+        compile."""
+        names = {n.name for n in self.named}
+        addresses = {n.address for n in self.named}
+        for n in other.named:
+            if n.address in addresses:
+                continue
+            if n.name in names:
+                n.name = f"{n.name}_{n.address:08X}"
+            names.add(n.name)
+            self.named.append(n)
+        self.named.sort(key=lambda n: n.address)
+        self.units = {**other.units, **self.units}
+        self.functions = {**other.functions, **self.functions}
+        self.sources = sorted({*self.sources, *other.sources})
+        self.unread = sorted({*self.unread, *other.unread})
+        return self
+
     def summary(self) -> str:
         """What the import log says: "debug symbols: 3,412 functions named, 812 types, 64 source files"."""
         functions = sum(n.function for n in self.named)

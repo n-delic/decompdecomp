@@ -18,7 +18,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Status | recommended | beta | beta | beta | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program | ✓ | ✓ | ✓ | fork by address |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CHD) | ✓ | ✓ | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ | — | — | — |
@@ -65,9 +65,11 @@ Where to start on a gap:
 
 ## Recently done
 
-- **PSP.** A UMD image (read in place) or the game's program, with its title and product code from PARAM.SFO. A
-  PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its import stubs
-  are set aside and named by library and NID. The game's own debug symbols come with it: the symbol table and
+- **PSP.** A UMD image (read in place) or the game's program, with its title and product code from
+  PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
+  import stubs are set aside and named by library and NID. The disc's other PRX modules come with it, each a segment
+  laid out after the main program (a PSP game with debug symbols: 28 modules, 9,508 more functions to decompile, 36,002
+  more stubs set aside), their functions matching with CodeWarrior 3.0.1 too. The game's own debug symbols come with it: the symbol table and
   CodeWarrior's DWARF 1 (source files, prototypes, types, also for CodeWarrior PS2 games). Diffs read the Allegrex's
   VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the PSP SDK's
   GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc. On a PSP game with debug symbols: 2,465 functions, 2,458 named,
@@ -253,11 +255,12 @@ Where to start on a gap:
 
 ## Next
 
-### PSP: encrypted programs, other modules, compressed images
+### PSP: encrypted programs, compressed images, imported names
 Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
 carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned, checksummed decrypter installed
-from Setup, like a compiler, would let a UMD image import as it is. Also: a game's other PRX modules on the disc are
-not split yet (only the main one; the relocator already places several segments), CSO images aren't read, import
+from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
+now). Also: a module's own $gp isn't the judge's (one per project: a module using small data won't match), its
+imported variables (.rodata.sceVstub) aren't named, CSO images aren't read, import
 stubs are named by NID only (names need a NID database), SN's pspsnc has no compiler note to be guessed from and no
 game tested, and the 2.4.1 CodeWarrior some games were built with isn't archived (3.0.1 matches small functions;
 bigger ones unverified).
