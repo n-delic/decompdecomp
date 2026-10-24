@@ -7,7 +7,9 @@ definition must have exactly that signature or objdiff won't find it.
   `__sinit_file_cpp` static initialisers.
 - Itanium (Switch Clang, many 3DS/PS2/PS3 compilers): `_ZN7CPlayer6updateEf`; `C1`/`C2` and `D0`/`D1`/`D2`
   are the constructor/destructor variants.
-- MSVC (PC, Xbox): `?update@CPlayer@@QAEXM@Z`.
+- MSVC (PC, Xbox): `?update@CPlayer@@QAEXM@Z`; `??0CPlayer@@QAE@XZ` constructor, `??1CPlayer@@QAE@XZ`
+  destructor, `??_GCPlayer@@UAEPAXI@Z` deleting destructor. A PC game started from scratch names its functions by
+  address instead: guide("x86") says how to write its constructors and destructors.
 The brief shows the demangled name when there is one.
 
 Structure

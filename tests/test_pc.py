@@ -112,6 +112,45 @@ def test_a_real_name_stands_for_its_address_however_c_or_cpp_spells_it():
         assert names.address_of(other, real) is None, other
 
 
+def test_a_constructor_or_destructor_stands_for_the_address_its_class_names():
+    """A class's constructor and destructor are two functions at two addresses: named after the class (functions.json's
+    "names": CFoo::CFoo, CFoo::~CFoo), each pairs with its own, and calls to it too, nested classes as well."""
+    names = _template_tool("names")
+    real = names.real_names({"names": {"func_00401000": "CFoo::CFoo", "func_00401020": "CFoo::~CFoo",
+                                       "func_00401040": "Outer::Inner::Inner"}})
+    assert names.address_of(b"??0CFoo@@QAE@XZ", real) == b"func_00401000"
+    assert names.address_of(b"??1CFoo@@QAE@XZ", real) == names.address_of(b"??1CFoo@@UAE@XZ", real) == b"func_00401020"
+    assert names.address_of(b"??0Inner@Outer@@QAE@XZ", real) == b"func_00401040"
+    for other in (b"??0CBar@@QAE@XZ", b"??1Inner@Outer@@QAE@XZ", b"??_GCFoo@@UAEPAXI@Z", b"?CFoo@@YAXXZ"):
+        assert names.address_of(other, real) is None, other
+    assert names.address_of(b"??1func_004D9DD0@@QAE@XZ", {}) == b"func_004D9DD0"  # a class named after an address
+    # in the object: the definition and a call to it from another function get the original's symbol
+    obj = _coff([b"??0CFoo@@QAE@XZ", b"??1CFoo@@QAE@XZ", b"_func_00401060"])
+    out = names.rename(obj, {b"func_00401000": b"_func_00401000", b"func_00401020": b"_func_00401020@4"}, real)
+    assert _coff_names(out) == [b"_func_00401000", b"_func_00401020@4", b"_func_00401060"]
+
+
+def _coff(symbols: list[bytes]) -> bytes:
+    """A COFF object with no sections, only these symbols (long names in the string table)."""
+    strings, table = bytearray(4), b""
+    for name in symbols:
+        table += struct.pack("<II", 0, len(strings)) + struct.pack("<IhHBB", 0, 0, 0x20, 2, 0)
+        strings += name + b"\0"
+    struct.pack_into("<I", strings, 0, len(strings))
+    return struct.pack("<HHIIIHH", 0x14C, 0, 0, 20, len(symbols), 0, 0) + table + bytes(strings)
+
+
+def _coff_names(data: bytes) -> list[bytes]:
+    at, count = struct.unpack_from("<II", data, 8)
+    strings = data[at + 18 * count:]
+    out = []
+    for i in range(count):
+        raw = data[at + 18 * i:at + 18 * i + 8]
+        off = struct.unpack_from("<I", raw, 4)[0] if raw[:4] == b"\0\0\0\0" else None
+        out.append(strings[off:strings.index(b"\0", off)] if off is not None else raw.rstrip(b"\0"))
+    return out
+
+
 def test_a_pc_symbol_is_renamed_by_its_address_in_functions_json(tmp_path):
     from decompnet.forks.project import ForkError
 
@@ -177,6 +216,72 @@ def test_two_renames_at_once_both_reach_every_file(tmp_path, monkeypatch):
     assert source.read_text() == "int Identity(int x) { return x; }\nint Pass(int x) { return Identity(x); }\n"
     names = json.loads((root / "config" / "v" / "functions.json").read_text())["names"]
     assert names == {"func_00401000": "Identity", "func_00401010": "Pass"}
+
+
+def test_an_agents_constructor_and_destructor_name_the_functions_they_are(tmp_path, monkeypatch):
+    """A Visual C++ game's small exception-using functions are often constructors and destructors, and a class's two
+    are at two addresses: named after one address (func_004A8330::func_004A8330), only that one paired. Written as
+    CFoo::CFoo for one function and CFoo::~CFoo for the other, each attempt gives its function that real name (here a
+    stand-in build pairs a function by it, as tools/names.py does), committed with the match; an attempt undone takes
+    its name back, and a name another function has is refused."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks import objdiff
+    from decompnet.forks.project import Unit
+    from decompnet.network import NetworkError
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    config = root / "config" / "v" / "functions.json"
+    config.parent.mkdir(parents=True)
+    functions = ["_func_00401000", "_func_00401020@4", "_func_00401040", "_func_00401060"]
+    config.write_text(json.dumps({"units": {"u": [{"name": n, "addr": int(n[6:14], 16), "relocs": []}
+                                                  for n in functions]}}, indent=1))
+    (root / "src" / "auto").mkdir(parents=True)
+    source = root / "src" / "auto" / "u.cpp"
+    source.write_text("struct CFoo { CFoo(); ~CFoo(); int x; };\n"  # (edit_file puts classes in, before)
+                      "struct CBar { CBar(); int x; };\nstruct CBaz { CBaz(); ~CBaz(); };\n")
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "v",
+                                                  "platform": "pc", "ready": True}, "x")
+    report = {"units": [{"name": "u", "functions": [{"name": n, "size": "8"} for n in functions]}]}
+    unit = Unit("u", None, None, "src/auto/u.cpp", False, None)
+    committed = []
+    monkeypatch.setattr(ForkProject, "report", lambda self: report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [unit])
+    monkeypatch.setattr(ForkProject, "unit", lambda self, name: unit)
+    monkeypatch.setattr(ForkProject, "linkable", lambda self: False)
+    monkeypatch.setattr(ForkProject, "build_problem", lambda self: None)
+    monkeypatch.setattr(ForkProject, "build_unit", lambda self, u, log=None: ("CBar::" not in source.read_text(), "C2059"))
+    monkeypatch.setattr(ForkProject, "git", lambda self, *args: committed.append(args) or "")
+
+    def diff(self, u, symbol):
+        """What tools/names.py pairs: CFoo::~CFoo's code with the function functions.json names so."""
+        given = json.loads(config.read_text()).get("names", {})
+        scores = {n: 100.0 if (real := given.get(f"func_{n[6:14]}")) and csource.find(source.read_text(), real) else 50.0
+                  for n in functions}
+        return objdiff.FunctionDiff(symbol, scores[symbol], [], 8, scores, [], {})
+
+    monkeypatch.setattr(ForkProject, "diff", diff)
+    net.forks.sync("p", log=lambda *_: None)
+    agent, _ = net.local_agent("claude-1")
+    res = net.attempt(agent, "_func_00401000", "CFoo::CFoo() {\n    x = 0;\n}\n", "p")
+    assert res["matched"], res["text"]
+    assert ("add", "--", "src/auto/u.cpp", "config/v/functions.json") in committed  # the name goes with the match
+    res = net.attempt(agent, "_func_00401020@4", "CFoo::~CFoo() {\n    x = 1;\n}\n", "p")
+    assert res["matched"], res["text"]
+    assert json.loads(config.read_text())["names"] == {"func_00401000": "CFoo::CFoo", "func_00401020": "CFoo::~CFoo"}
+    text = source.read_text()
+    assert "CFoo::CFoo() {" in text and "CFoo::~CFoo() {" in text
+    # again, as the function is named already: the same definition, no new name
+    assert net.attempt(agent, "_func_00401020@4", "CFoo::~CFoo() {\n    x = 1; \n}\n", "p")["matched"]
+    with pytest.raises(NetworkError, match="names another"):  # another function can't be CFoo's constructor
+        net.attempt(agent, "_func_00401040", "CFoo::CFoo() {\n    x = 2;\n}\n", "p")
+    res = net.attempt(agent, "_func_00401040", "CBar::CBar() {\n    x = 3;\n}\n", "p")
+    assert "BUILD ERROR" in res["text"] and "func_00401040" not in json.loads(config.read_text())["names"]
+    assert "CBar::CBar" not in source.read_text()
+    # (two at once: which is the function?)
+    with pytest.raises(NetworkError, match="complete definition"):
+        net.attempt(agent, "_func_00401060", "CBaz::CBaz() {\n}\nCBaz::~CBaz() {\n}\n", "p")
 
 
 def test_only_32_bit_x86_programs():

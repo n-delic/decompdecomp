@@ -91,6 +91,18 @@ def find(text: str, name: str) -> tuple[int, int] | None:
     return _stub(text, simple)
 
 
+# a C++ constructor or destructor defined outside its class: CFoo::CFoo(, Outer::CFoo::~CFoo(
+_STRUCTOR = re.compile(r"(?<![\w:~])((?:\w+::)*?(\w+))::(~?)\2\s*\(")
+
+
+def structor(text: str) -> str | None:
+    """The C++ constructor or destructor `text` defines (`CFoo::CFoo`, `CFoo::~CFoo`), when it defines exactly one: a
+    PC game's function an agent writes as one is named after it (ForkEngine._attempt)."""
+    found = {f"{m.group(1)}::{m.group(3)}{m.group(2)}" for m in _STRUCTOR.finditer(_blank(text))}
+    defined = [n for n in found if find(text, n) and not is_stub(get(text, n) or "")]
+    return defined[0] if len(defined) == 1 else None
+
+
 # reccmp's annotations (`// FUNCTION: 0x...`, `// GLOBAL:`, `// STUB:`) say which of the original's functions a
 # definition is: the project's markers, not a description of it. Only reccmp's own words: any `// WORD:` took
 # `// NOTE:` and `// TODO:` for one, and a polished comment that had one was dropped

@@ -222,6 +222,33 @@ def test_csource_finds_definitions_and_stubs():
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
 
 
+def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
+    """A PC game's function written as a class named after it: its constructor was found, its destructor wasn't (an
+    agent's func_004D9DD0::~func_004D9DD0 was refused: "send the complete definition of _func_004D9DD0"). C files
+    (every other console's) find what they found before."""
+    from decompnet.app.forkengine import ForkEngine
+
+    names = ForkEngine._names({"symbol": "_func_004D9DD0"}, {"name": "_func_004D9DD0"})
+    dtor = "struct func_004D9DD0 { ~func_004D9DD0(); };\nfunc_004D9DD0::~func_004D9DD0() {\n    func_005F10E0();\n}\n"
+    assert ForkEngine._find(None, dtor, names)[0] == "func_004D9DD0::~func_004D9DD0"
+    ctor = "func_004D9DD0::func_004D9DD0(int x) {\n}\n"
+    assert ForkEngine._find(None, ctor, names)[1] == (0, len(ctor))
+    # a function with a C++ name (a fork's) is found by it, not by a destructor of the same plain name
+    names = ForkEngine._names({"symbol": "??0Foo@@QAE@XZ", "demangled": "Foo::Foo(void)"}, {"name": "??0Foo@@QAE@XZ"})
+    assert not any("~" in n for n in names)
+    assert ForkEngine._find(None, "Foo::~Foo() {\n}\n", names) == (None, None)
+    # C: a definition, not a call or a prototype, and nothing of C reads as a destructor
+    c = "int g(void);\nint f(int a) {\n    return ~g() + a;\n}\n"
+    names = ForkEngine._names({"symbol": "f"}, {"name": "f"})
+    assert names == ["f", "f::~f"] and ForkEngine._find(None, c, names) == ("f", (13, len(c)))
+    assert csource.find(c, "g") is None
+    # the one constructor or destructor a source defines names an unnamed PC function (ForkEngine._attempt)
+    assert csource.structor("struct CFoo { CFoo(); ~CFoo(); };\nCFoo::~CFoo() {\n}\n") == "CFoo::~CFoo"
+    assert csource.structor("A::CFoo::CFoo(int x) : y(x) {\n}\n") == "A::CFoo::CFoo"
+    assert csource.structor("CFoo::CFoo() {}\nCFoo::~CFoo() {}\n") is None  # two: which one is the function?
+    assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
+
+
 def test_clone_rejects_odd_sources(tmp_path):
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     for bad in ("file:///etc", "https://evil.example/x/y", "--upload-pack=x", str(tmp_path)):
