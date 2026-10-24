@@ -209,6 +209,33 @@ def test_find_similar(fork):
     assert "index covers" in out or "Functions that look like" in out
 
 
+@needs_tools
+def test_the_look_alike_index_is_written_only_when_something_new_is_indexed(fork):
+    # every sync ends an indexing pass; a GameCube game's 11 MB index.json rewritten on each one wrote 50 MB/s
+    from decompnet.forks.project import STATE
+    net, slug, _ = fork
+    proj, fp, _ = net.forks.get(slug)
+    for unit in fp.units():
+        net.forks._unit_index(proj, fp, unit, save=False)
+    net.forks._save_index(proj, fp)
+    path = fp.root / STATE / "index.json"
+    assert json.loads(path.read_text())
+    net.forks._index.pop(proj["id"])  # as after a restart: the index comes back from index.json
+    net.forks._index_of(proj, fp)
+    path.unlink()
+    for unit in fp.units():  # all known already: nothing to write
+        net.forks._unit_index(proj, fp, unit)
+    net.forks._save_index(proj, fp)
+    assert not path.exists()
+    # a compile measures its unit again (the same target): nothing new either
+    from decompnet.app.forkengine import objdiff_diff
+    unit = next(u for u in fp.units() if net.forks._unit_index(proj, fp, u, save=False))
+    symbol = net.forks._unit_index(proj, fp, unit, save=False)["order"][0]
+    net.forks._remember(proj, fp, unit, objdiff_diff(fp, unit, symbol, target_only=True))
+    net.forks._save_index(proj, fp)
+    assert not path.exists()
+
+
 def test_similarity_ranks_copies_first():
     from decompnet import similarity
 

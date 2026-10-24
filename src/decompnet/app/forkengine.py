@@ -415,6 +415,7 @@ class ForkEngine:
         self._scores: dict[tuple[int, str], tuple[str, int | None, dict]] = {}
         self._index: dict[int, dict] = {}  # project id -> {unit: {"mtime", "order", "ops"}}
         self._indexing: set[int] = set()
+        self._index_dirty: set[int] = set()  # projects whose index has entries index.json doesn't have yet
         self._ilock = threading.Lock()
         self._linking: dict[str, dict] = {}  # slug -> background link run
         self._preflight_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
@@ -1599,12 +1600,18 @@ class ForkEngine:
         return self._index[proj["id"]]
 
     def _save_index(self, proj, fp: ForkProject) -> None:
+        """Write index.json, only when something new was indexed: every sync (each pull from a room, each edit)
+        ends an indexing pass, and a GameCube game's 11 MB index rewritten five times a second wrote 50 MB/s."""
         with self._ilock:
+            if proj["id"] not in self._index_dirty:
+                return
+            self._index_dirty.discard(proj["id"])
             snapshot = dict(self._index.get(proj["id"], {}))
         try:
             (fp.root / STATE / "index.json").write_text(json.dumps(snapshot), encoding="utf-8")
         except OSError:
-            pass
+            with self._ilock:
+                self._index_dirty.add(proj["id"])
 
     def _remember(self, proj, fp: ForkProject, unit, d) -> None:
         if unit.target is None or not unit.target.exists():
@@ -1612,7 +1619,10 @@ class ForkEngine:
         entry = {"mtime": unit.target.stat().st_mtime, "order": d.order, "ops": d.ops}
         idx = self._index_of(proj, fp)
         with self._ilock:
+            if idx.get(unit.name) == entry:  # every compile measures its unit again: mostly nothing new
+                return
             idx[unit.name] = entry
+            self._index_dirty.add(proj["id"])
 
     def _unit_index(self, proj, fp: ForkProject, unit, save: bool = True) -> dict | None:
         """Target order and mnemonics of a unit's functions, from its target object only (never races a build)."""
