@@ -43,12 +43,52 @@ TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
 DIR32, REL32 = 0x06, 0x14
 PAD = 0x90  # what Visual C++ 6 pads a function's section with (the linker pads between objects with 0xCC or zeros)
-# Visual C++ versions by the build number its tools leave in the program's Rich header, for the C/C++ compiler
-RICH_BUILDS = {8168: "6.0", 8447: "6.0", 8799: "6.0", 8966: "6.0", 9044: "6.0", 9782: "6.0", 9466: "7.0", 9955: "7.0",
-               3052: "7.1", 3077: "7.1", 4035: "7.1", 6030: "7.1"}
-# Rich header product ids from Visual C++ 2005 on (its C compiler is 0x6D; 7.1 and older use lower ids): a program
-# built with them is newer than the compiler pack (GitHub #12: a 2010 game only said "Ghidra found no functions")
-NEWER_TOOLS_FIRST_PRODUCT = 0x6D
+# Which Visual C++ built each part of the program, by the product ids its Rich header gives: every version numbers its
+# tools anew, so a compiler's id says its version. From the public lists of Rich header tools: richprint's comp_id.txt
+# (github.com/dishather/richprint) and kirschju/richheader's prodids.py. (version, the ids of its C and C++
+# compilers, and of its whole-program objects: /GL's link-time code generation (LTCG) and profile-guided ones)
+RICH_COMPILERS = (
+    ("6.0", (0x0A, 0x0B, *range(0x15, 0x19), 0x23, 0x24, *range(0x30, 0x36)), ()),
+    ("7.0", (0x1C, 0x1D, 0x39, 0x3A), (0x2B, 0x2C, *range(0x41, 0x45))),
+    ("7.1", (*range(0x4C, 0x50), *range(0x5F, 0x63)), (*range(0x50, 0x56), *range(0x63, 0x69))),
+    ("8.0", range(0x6D, 0x71), (*range(0x71, 0x77), 0x82)),
+    ("9.0", range(0x83, 0x87), range(0x89, 0x90)),
+    ("10.0", (0xAA, 0xAB, 0xBC, 0xBD), (*range(0xAE, 0xB5), *range(0xC0, 0xC7))),
+    ("11.0", (0xCE, 0xCF), range(0xD2, 0xD9)),
+    ("12.0", (0xE0, 0xE1, 0xF2, 0xF3), (*range(0xE4, 0xEB), *range(0xF6, 0xFD))),
+    ("14", (0x104, 0x105), range(0x108, 0x10F)),  # 2015 and every version since: the build says which
+)
+# Visual C++ 2015 to 2026 share their tools' ids: the first build of each (comp_id.txt)
+VC14_BUILDS = ((35503, "14.5"), (30401, "14.3"), (27508, "14.2"), (25017, "14.1"), (0, "14.0"))
+VISUAL_STUDIO = {"6.0": "6.0", "7.0": ".NET 2002", "7.1": ".NET 2003", "8.0": "2005", "9.0": "2008", "10.0": "2010",
+                 "11.0": "2012", "12.0": "2013", "14.0": "2015", "14.1": "2017", "14.2": "2019", "14.3": "2022",
+                 "14.4": "2022", "14.5": "2026"}
+# the release each common build is (comp_id.txt), so the import says "2008 SP1": each update generates other code
+RELEASES = {("6.0", 8447): "SP3", ("6.0", 8799): "SP4", ("6.0", 8966): "SP5", ("6.0", 9044): "SP5 Processor Pack",
+            ("6.0", 9782): "SP6", ("7.1", 6030): "SP1", ("9.0", 30729): "SP1", ("10.0", 40219): "SP1",
+            ("11.0", 51106): "Update 1", ("11.0", 60315): "Update 2", ("11.0", 60610): "Update 3",
+            ("11.0", 61030): "Update 4", ("12.0", 30501): "Update 2", ("12.0", 30723): "Update 3",
+            ("12.0", 31101): "Update 4", ("12.0", 40629): "Update 5", ("14.0", 23506): "Update 1",
+            ("14.0", 23918): "Update 2", ("14.0", 24210): "Update 3", ("14.0", 24215): "Update 3.1"}
+LAST_IN_SCOPE = (14, 0)  # Visual C++ 2015: games built with 2017 and newer are out of decompdecomp's scope for now
+LINKER_VERSION_AT = 2  # in the optional header: the linker's major and minor version, a byte each
+# DRM and packers, by the sections they add to a program, as Detect It Easy's rules find them (github.com/horsicq/
+# Detect-It-Easy, db/PE) and Steamless finds Steam's (github.com/atom0s/Steamless: a ".bind" section)
+WRAPPER_SECTIONS = {".bind": "SteamStub (Steam's DRM)", ".securom": "SecuROM", ".dsstext": "SecuROM",
+                    ".cms_t": "SecuROM", ".cms_d": "SecuROM", "stxt774": "SafeDisc", "stxt371": "SafeDisc",
+                    ".sforce3": "StarForce", ".themida": "Themida", ".winlice": "WinLicense", ".vmp0": "VMProtect",
+                    ".vmp1": "VMProtect", ".enigma1": "Enigma Protector", ".enigma2": "Enigma Protector"}
+PACKER_SECTIONS = {"UPX0": "UPX", "UPX1": "UPX"}
+# Denuvo's anti-tamper names no section of its own: Detect It Easy knows it by many sections with names like these
+# (and more evidence). Its ".edata" is left out: that's where any program's exports are (a 2002 game has one), so
+# two such names are asked for instead of one
+DENUVO_SECTION = re.compile(r"\.[ex](text|code)|\.(u|my|s[xr]|x[pd])data|\.arch|\.xtls")
+DENUVO_MIN_SECTIONS, DENUVO_MIN_NAMES = 11, 2
+# the Rich header's linkers (comp_id.txt): the one that linked the program says which build compiled the game's own
+# code; libraries come prebuilt, often by another build (a 2019 game's middleware, built with 2015)
+RICH_LINKERS = {0x04, 0x13, 0x1E, 0x20, 0x25, 0x28, 0x3C, 0x3D, 0x47, 0x56, 0x5A, 0x78, 0x91, 0x9D, 0xBA, 0xCC, 0xDE,
+                0xF0, 0x102}
+MAIN_BUILD_SHARE = 10  # without the linker's build: the newest build that compiled a tenth of the files or more
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -91,9 +131,12 @@ class PE:
 # header (PE32's: a 32-bit program), then the section table
 DOS_HEADER_BYTES, PE_OFFSET_AT = 0x40, 0x3C
 PE_HEADER_BYTES = 0x18  # "PE\0\0" and the COFF header
-MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT = 4, 6, 8  # in the COFF header, from "PE\0\0"
+MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT, OPTIONAL_HEADER_SIZE_AT = 4, 6, 8, 20  # in the COFF header, from "PE\0\0"
 OPTIONAL_HEADER_AT = PE_HEADER_BYTES
 MACHINE_I386, PE32_MAGIC = 0x14C, 0x10B
+X86 = "32-bit x86"
+MACHINES = {MACHINE_I386: X86, 0x8664: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
+            0x200: "Itanium"}
 ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104  # in the optional header
 SECTION_HEADER_BYTES, SECTION_FLAGS_AT = 40, 36
 CODE_AND_EXECUTABLE = 0x20000020  # IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE
@@ -191,9 +234,11 @@ def rich_builds(data: bytes) -> list[tuple[int, int, int]]:
     if end < 0:
         return []
     key = data[end + 4:end + 8]
-    plain = bytes(byte ^ key[i % 4] for i, byte in enumerate(data[RICH_START:end]))
-    if not plain.startswith(b"DanS"):
+    # "DanS", XORed with the key, starts it: usually at 0x80, after the DOS stub, but a longer stub moves it
+    start = data.rfind(bytes(a ^ b for a, b in zip(b"DanS", key)), 0, end)
+    if start < 0:
         return []
+    plain = bytes(byte ^ key[i % 4] for i, byte in enumerate(data[start:end]))
     out = []
     for entry in range(RICH_ENTRIES_AT, len(plain) - RICH_ENTRY_BYTES + 1, RICH_ENTRY_BYTES):
         comp, count = struct.unpack_from("<II", plain, entry)
@@ -201,31 +246,166 @@ def rich_builds(data: bytes) -> list[tuple[int, int, int]]:
     return out
 
 
-def guess_compiler(data: bytes) -> tuple[str, str]:
-    """(Visual C++ version, why): what the Rich header's build numbers say, or the default."""
-    seen: dict[str, int] = {}
-    for _, build, count in rich_builds(data):
-        if build in RICH_BUILDS:
-            seen[RICH_BUILDS[build]] = seen.get(RICH_BUILDS[build], 0) + count
-    if not seen:
-        return MSVC_DEFAULT, "the program doesn't say which Visual C++ built it; 6.0 built most games of its time"
-    version = max(seen, key=seen.get)
-    return version, f"the program's Rich header names Visual C++ {version}'s tools"
+def _version_key(version: str) -> tuple[int, ...]:
+    return tuple(int(part) for part in version.split("."))
 
 
-def newer_tools(builds: list[tuple[int, int, int]]) -> bool:
-    """Whether the Rich header's tools are Visual C++ 2005 or newer: none of the compiler pack's builds, and newer ids."""
-    known = any(build in RICH_BUILDS for _, build, _ in builds)
-    return not known and any(product >= NEWER_TOOLS_FIRST_PRODUCT for product, _, _ in builds)
+@dataclass
+class Build:
+    """What a Windows program says about how it was built (describe)."""
+    machine: str  # X86, "64-bit (x64)"...
+    version: str | None  # the Visual C++ that compiled the game's own code, "9.0"; None: the program doesn't say
+    build: int | None  # that compiler's build number (the Rich header's); None: only the linker's version said
+    whole_program: int = 0  # compiled files built for link-time code generation (/GL)
+    compiled: int = 0  # every compiled file the Rich header counts
+    wrapper: str | None = None  # the DRM or packer it's recognised by
+
+    @property
+    def compiler(self) -> str:
+        """Its name, release and build: "Visual C++ 2008 SP1 (9.0, build 30729)"."""
+        if self.version is None:
+            return "a compiler it doesn't name"
+        year = VISUAL_STUDIO[self.version]
+        release = RELEASES.get((self.version, self.build))
+        detail = [self.version] if year != self.version else []
+        detail.append(f"build {self.build}" if self.build else "by its linker's version")
+        return f"Visual C++ {year}{' ' + release if release else ''} ({', '.join(detail)})"
+
+    @property
+    def packed(self) -> bool:
+        return self.wrapper in PACKER_SECTIONS.values()
+
+    @property
+    def out_of_scope(self) -> bool:
+        return self.version is not None and _version_key(self.version) > LAST_IN_SCOPE
+
+    @property
+    def newer_than_pack(self) -> bool:
+        return self.version is not None and _version_key(self.version) > _version_key(_pack()[-1])
+
+    @property
+    def pack_version(self) -> str:
+        """The compiler pack's Visual C++ to build with: the program's own, or the closest the pack has."""
+        if self.version in _pack():
+            return self.version
+        return _pack()[-1] if self.newer_than_pack else MSVC_DEFAULT
+
+    def summary(self) -> str:
+        """What the program is, in one line, for the import's log."""
+        made = (f"built with {self.compiler}" if self.version else
+                "its Rich header and linker don't say which Visual C++ built it")
+        glued = (f"{self.whole_program} of its {self.compiled} compiled files with whole-program optimisation (/GL)"
+                 if self.whole_program else "no whole-program optimisation")
+        return f"{self.machine}, {made}, {glued}, {f'wrapped in {self.wrapper}' if self.wrapper else 'no DRM or packer found'}"
+
+    def blockers(self) -> list[str]:
+        """Why decompdecomp can't start a project for this program, each with what it means: none, it can."""
+        out = []
+        if self.machine != X86:
+            out.append(f"it's a {self.machine} program, and decompdecomp starts PC games from 32-bit x86 ones for now "
+                       "(64-bit games come after Visual C++ 2005 to 2015: ROADMAP.md, Newer Windows games)")
+        if self.packed:
+            out.append(f"it's compressed with {self.wrapper}, so its code only appears when it runs, and decompdecomp "
+                       "reads a program as it is on disk")
+        elif self.wrapper:
+            out.append(f"it's wrapped in {self.wrapper}, DRM that encrypts or hides its code: decompdecomp never removes "
+                       "or gets around protection, so it works only on programs without it, such as a DRM-free release")
+        if self.out_of_scope:
+            out.append(f"it was built with {self.compiler}, and decompdecomp's PC games stop at Visual C++ 2015: games "
+                       "built with 2017 and newer are out of its scope for now")
+        # a game that is mostly LTCG is refused rather than left to agents for weeks (most of it can't match); a few
+        # such files (a library built with /GL) only cost their own functions, which cannot_match says
+        if self.whole_program * 2 > self.compiled > 0:
+            out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
+                       "optimisation (/GL and /LTCG): the linker made their code for the whole program at once, "
+                       "inlining across files, so no file's code can be matched on its own")
+        return out
+
+    def cannot_match(self) -> list[str]:
+        """Why a program decompdecomp does start can't match (all of it, or some): none, it can."""
+        out = []
+        if self.newer_than_pack:
+            out.append(f"it was built with {self.compiler}, and decompdecomp has Visual C++ 6.0 to 7.1 so far: "
+                       "2005 to 2015 come next (ROADMAP.md, Newer Windows games), so nothing matches until then")
+        if self.whole_program:
+            out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
+                       "optimisation (/GL): their functions can't match")
+        return out
+
+
+def _pack() -> list[str]:
+    from . import MSVC_VERSIONS
+
+    return [v.removeprefix("MSVC/") for v in MSVC_VERSIONS]
+
+
+def is_windows_program(head: bytes) -> bool:
+    """Any Windows program: the console takes them all, so one it can't start is told exactly why (Build.blockers)."""
+    return _pe_header(head) is not None
+
+
+def describe(data: bytes) -> Build:
+    """What the program's headers say about how it was built: its processor, the Visual C++ that compiled most of it
+    (the Rich header's compilers, counted by file; without one, the linker's version), how much of it was built for
+    link-time code generation, and the DRM or packer its sections show."""
+    at = _pe_header(data)
+    if at is None:
+        raise ForkError("this isn't a Windows program (.exe): PC games start from their .exe")
+    machine_id, count = struct.unpack_from("<HH", data, at + MACHINE_AT)
+    opt_size = struct.unpack_from("<H", data, at + OPTIONAL_HEADER_SIZE_AT)[0]
+    files: dict[tuple[str, int], int] = {}
+    whole = 0
+    rich = rich_builds(data)
+    for product, number, n in rich:
+        for version, compilers, glued in RICH_COMPILERS:
+            if product in compilers or product in glued:
+                if version == "14":
+                    version = next(v for first, v in VC14_BUILDS if number >= first)
+                files[version, number] = files.get((version, number), 0) + n
+                whole += n if product in glued else 0
+    linked = [k for k in files if k[1] in {number for product, number, _ in rich if product in RICH_LINKERS}]
+    if linked:
+        version, number = max(linked, key=files.get)
+    elif files:
+        by_version: dict[str, int] = {}
+        for (version, _), n in files.items():
+            by_version[version] = by_version.get(version, 0) + n
+        version = max(by_version, key=by_version.get)
+        number = max(k[1] for k in files if k[0] == version and files[k] * MAIN_BUILD_SHARE >= by_version[version])
+    else:  # no Rich header (stripped, or a store's signature in its place): the linker's version names the toolset
+        major, minor = data[at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT:at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT + 2]
+        version = {6: "6.0", 7: "7.1" if minor >= 10 else "7.0"}.get(major, f"{major}.{minor // 10 if major == 14 else 0}")
+        version, number = (version if version in VISUAL_STUDIO else None), None
+    first = at + OPTIONAL_HEADER_AT + opt_size
+    names = [data[first + SECTION_HEADER_BYTES * i:first + SECTION_HEADER_BYTES * i + 8].rstrip(b"\0").decode("latin-1")
+             for i in range(count)]
+    known = {**WRAPPER_SECTIONS, **PACKER_SECTIONS}
+    wrapper = next((known[name] for name in names if name in known), None)
+    if wrapper is None and len(names) >= DENUVO_MIN_SECTIONS and \
+            len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
+        wrapper = "Denuvo"
+    return Build(MACHINES.get(machine_id, f"machine type {machine_id:#x}"), version, number, whole,
+                 sum(files.values()), wrapper)
 
 
 def game_info(path: Path) -> dict:
+    """The game's facts, after its headers say decompdecomp can start it (a ForkError says why not)."""
     data = path.read_bytes()
+    built = describe(data)
+    if why := built.blockers():
+        raise ForkError(f"decompdecomp can't start this program: {'; and '.join(why)}.")
     pe = read_pe(data)
     stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game"
-    version, why = guess_compiler(data)
+    version = built.pack_version
+    if built.version is None:
+        why = "the program doesn't say which Visual C++ built it; 6.0 built most games of its time"
+    elif version == built.version:
+        why = f"it was built with {built.compiler}"
+    else:
+        why = f"it was built with {built.compiler}; the closest the compiler pack has is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
-            "timestamp": pe.timestamp, "compiler": version, "compiler_why": why}
+            "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
+            "cannot_match": built.cannot_match()}
 
 
 # ---------------------------------------------------------------------------------------------------- analysis
@@ -512,6 +692,11 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     info = game_info(game)
     version = info["id"]
     compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
+    log(f"the program: {info['summary']}")
+    for why in info["cannot_match"]:
+        log(f"what can't match: {why}")
+    if not info["cannot_match"]:
+        log(f"it can match: decompdecomp builds with Visual C++ {compiler}")
     args = tool_args()
     if not (toolchains.path("msvc") / compiler).is_dir():
         raise ForkError(f"Visual C++ {compiler} isn't in the installed compiler pack")
@@ -522,18 +707,12 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         if toolchains.installed("ghidra") is None:
             log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
             toolchains.ensure("ghidra", log=log)
-    data = game.read_bytes()
-    pe = read_pe(data)
-    newer = newer_tools(rich_builds(data))
-    if newer:
-        log("its Rich header names Visual C++ 2005 or newer: decompdecomp builds with 6.0 to 7.1 for now, so expect "
-            "little to match")
+    pe = read_pe(game.read_bytes())
     log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
     found = ghidra.functions(game)
     if not found:
-        why = ("it was built with Visual C++ 2005 or newer (its Rich header says so), and decompdecomp supports 6.0 "
-               "to 7.1 for now" if newer else "a program that is packed or protected (some games' DRM wraps their code) "
-               "shows none until it's unpacked")
+        why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
+                                        "shows none: decompdecomp never unpacks or gets around protection"])[0]
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
     functions = analyse(pe, found)
     groups = units(functions)

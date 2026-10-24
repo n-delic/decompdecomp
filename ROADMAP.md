@@ -54,7 +54,8 @@ Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0).
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects).
+  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far:
+  Newer Windows games, below, is the plan for 2005 to 2015 and 64-bit.
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -64,6 +65,16 @@ Where to start on a gap:
   games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **A PC game's import says what it is and whether it can match.** A newer game said only "expect little to match",
+  and a 64-bit one was refused at the drop with "decompdecomp starts PC games from their 32-bit x86 .exe". The import
+  reads the program's headers (`consoles/pc/scratch.py`, `describe`): the Visual C++ version and build that compiled
+  the game's own code (the Rich header's compilers, the build its linker shares; without a Rich header, the linker's
+  version), how many files were built with whole-program optimisation (/GL), 32 or 64-bit, and the DRM or packer
+  its sections show (SteamStub, SecuROM, SafeDisc, StarForce, Themida, VMProtect, Enigma, Denuvo, UPX), only named,
+  never removed. 64-bit programs, Visual C++ 2017 and newer (out of scope for now), mostly-/GL games and wrapped ones
+  aren't started, each with what it means; 2005 to 2015 games import, told they can't match until their compilers
+  come.
 
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
@@ -244,6 +255,29 @@ Where to start on a gap:
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Newer Windows games (Visual C++ 2005 to 2015)
+
+PC projects build with Visual C++ 6.0, 7.0 and 7.1, the compilers of 1998-2005 games. The import already tells a
+newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Games built with Visual C++ 2017
+and newer are out of scope for now.
+
+- **B, a spike.** One 2005-2010 compiler, found legally (the decomp community's archives, Microsoft's free editions
+  of the time), run here through wibo, and a demo function matching through the project's real build. Done when
+  there's a yes or no on wibo, and a demo that matches or a write-up of why not.
+- **C, the 2005-2010 pack.** `toolchains.toml` entries with checksums, a line in Setup (proprietary: only after the
+  user accepts), `MSVC_VERSIONS`, the demo PC project built with it, and its tests (skipped in CI, as 6.0's are).
+  The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules tested again. Done when a real
+  2005-2010 game (not /GL) gets matches from agents.
+- **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
+  2015's updates.
+- **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
+  object says nothing about the program's bytes. Find out whether some functions can be judged by compiling their
+  file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.
+- **F, 64-bit.** Read PE32+ programs and delink their relocations (nearly all relative), with the x64 calling
+  convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
+  functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and
+  matches.
 
 ### Windows distribution
 

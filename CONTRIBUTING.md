@@ -211,8 +211,9 @@ Example: PC has Visual C++ 6.0, 7.0 and 7.1, and you want Visual C++ 2005 (8.0).
    there. A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
 4. **The console lists it**: `consoles/pc/__init__.py`, `MSVC_VERSIONS`. A ROM console's compilers are its
    `compilers` tuple: `Compiler(id, name, built, guess)` (see `consoles/ps2/__init__.py`).
-5. **Which game used it.** PC reads the program's Rich header: add 8.0's build numbers to `RICH_BUILDS` in
-   `consoles/pc/scratch.py`. A PS2 program's `.comment` note says its GCC: `_GCC` in `consoles/ps2/elf.py`, and the
+5. **Which game used it.** PC reads the program's Rich header: `RICH_COMPILERS` in `consoles/pc/scratch.py`
+   already knows every Visual C++ version's product ids, and `RELEASES` the builds of its updates. Once 8.0 is in
+   `MSVC_VERSIONS`, a game built with it builds with it, and `Build.cannot_match` stops saying it can't match. A PS2 program's `.comment` note says its GCC: `_GCC` in `consoles/ps2/elf.py`, and the
    compiler's `guess` names it.
 6. **Its flags.** The defaults are the toolchain's `flags`, and the console's `default_flags` adjusts them (the PS2's
    small data). PC projects write theirs in `project_template/tools/configure.py` (`CL_FLAGS`; from 8.0 on, `/GX`

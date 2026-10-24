@@ -140,6 +140,15 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return [identifyHead(head(0, "PS-X EXE"), file).platform, identifyHead(head(0x9319, "CD001"), file).platform,
               platformName("playstation"), notSupported(head(0, "PS-X EXE"), file)];
     })(),
+    // Windows programs the PC console can't start: a 64-bit one, one for another processor, a DOS one
+    windows: [0x8664, 0xaa64, 0x14c, null].map((machine) => {
+      const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
+      h.set([0x4d, 0x5a]);
+      if (machine !== null) { dv.setUint32(0x3c, 0x80, true); h.set([0x50, 0x45, 0, 0], 0x80); dv.setUint16(0x84, machine, true); }
+      if (machine === 0x14c) dv.setUint16(0x98, 0x10b, true);
+      const file = { name: "game.exe", size: 0x200 };
+      return [identifyHead(h, file)?.platform ?? null, notSupported(h, file)];
+    }),
     // the import offers every compiler of the game's console this computer lacks (both PlayStations' for a disc)
     missing: (() => {
       const before = S.st;

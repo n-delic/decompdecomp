@@ -104,6 +104,16 @@ def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_
     assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1 or 2", None]
 
 
+def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
+    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, and when 64-bit
+    games come, before uploading hundreds of megabytes the import would refuse."""
+    x64, arm, x86, dos = gui["checks"]["windows"]
+    assert x64[0] is None and "64-bit Windows program" in x64[1] and "Newer Windows games" in x64[1]
+    assert arm[0] is None and "ARM" in arm[1]
+    assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
+    assert dos[0] is None and "DOS program" in dos[1]
+
+
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
     """In a room, every agent's name had the same look whoever ran it. Each computer has a colour now, the same on
     the host's screen and every guest's: the host's first, then the members in the order they joined."""

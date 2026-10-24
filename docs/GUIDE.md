@@ -208,7 +208,12 @@ different build, which is planned.
 - **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game
   again and compares it byte for byte. The homemade demo game passes every step, but no real game is tested from
   start to end yet.
-- **Windows PC** passes every step on the homemade demo game. It is tested on few real games.
+- **Windows PC** passes every step on the homemade demo game. It is tested on few real games. Its import says what
+  a program is from its headers: the Visual C++ version and build that made it, whether it's 64-bit, how much of it
+  was built with whole-program optimisation (/GL), and the DRM or packer it's wrapped in. Games built with Visual
+  C++ 6.0 to 7.1 can match; 2005 to 2015 import but can't match until their compilers come; 64-bit programs,
+  programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
+  says why. decompdecomp never removes or gets around DRM.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
 of its own project.
