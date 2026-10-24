@@ -40,7 +40,7 @@
 
 <!-- 1 · the bytes as the image -->
 <section class="poster" aria-labelledby="claim">
-  <p class="eyebrow">Free and open source · runs on your computer</p>
+  <p class="eyebrow">Free and open source · runs on your computer<span data-version hidden> · <a href="https://github.com/n-delic/decompdecomp/releases"></a></span></p>
   <figure class="bytes" aria-describedby="bytes-cap">
     <div class="bytes-rows" aria-hidden="true">
       <span>0085102A <b class="hl-word">14400005</b> <i>00A01021</i></span>
@@ -72,6 +72,7 @@
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
   </fieldset>
@@ -128,6 +129,16 @@
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
     </article>
+    <article class="pipeline" data-platform="psp" data-file="game.iso">
+      <h3><span class="pl-name">PSP</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>UMD image, ELF or PRX</b><span>an ISO whose program isn't encrypted, or the game's program decrypted (PPSSPP can dump it); its debug symbols, when it has them</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; a PRX is first placed where the PSP loads it</span></li>
+        <li><small>Built by</small><b>CodeWarrior or Sony's GCC</b><span>CodeWarrior for PSP 3.0.1, the PSP SDK's GCC 3.3.3, SN's pspsnc; C and C++</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
+        <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
+      </ol>
+    </article>
     <article class="pipeline" data-platform="pc" data-file="game.exe">
       <h3><span class="pl-name">Windows PC</span> <span class="status beta">Beta</span></h3>
       <ol class="stations">
@@ -151,7 +162,7 @@
   </div>
 
   <p class="fineprint">1.0.3 rewrote most of the app, so every platform needs testing again. Try it on a game you own and <a href="https://github.com/n-delic/decompdecomp/issues">tell us how it went</a>.</p>
-  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, Visual C++) install only after you accept them in Setup. Also: 3DS, PSP, Switch and Xbox, through a fork of a community decomp repository.</p>
+  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox, through a fork of a community decomp repository.</p>
 </section>
 
 <!-- 3 · the proof -->
@@ -222,7 +233,7 @@ jr      $ra
 <footer class="foot">
   <p>decompdecomp continues <a href="https://github.com/i12bp8/decomp.wtf">decomp.wtf</a> by Sam Wolfs. It is built on splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo and the decompals compilers.</p>
   <nav aria-label="Site"><a href="https://github.com/n-delic/decompdecomp">GitHub</a><a href="https://github.com/n-delic/decompdecomp/blob/main/docs/GUIDE.md">Guide</a><a href="https://github.com/n-delic/decompdecomp/issues">Issues</a><a href="https://discord.gg/hhEm3zZagB">Discord</a><a href="privacy.html">Privacy</a></nav>
-  <p class="foot-small">AGPL-3.0 · Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</p>
+  <p class="foot-small"><span data-version hidden><a href="https://github.com/n-delic/decompdecomp/releases"></a> · </span>AGPL-3.0 · Not related to Nintendo, Sony or Microsoft. Platform names are trademarks of their owners.</p>
 </footer>
 <script src="main.js" defer></script>
 </body>
