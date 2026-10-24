@@ -23,8 +23,11 @@ KIND_MARK = {None: " ", "DIFF_NONE": " ", "DIFF_REPLACE": "|", "DIFF_DELETE": "<
 # so a match is a match everywhere; with objdiff's interactive defaults the same function would read 99.9%.
 REPORT_OPTIONS = {"functionRelocDiffs": "none", "combineDataSections": True, "combineTextSections": True,
                   "ppc.calculatePoolRelocations": False}
-# Symbol names compilers make up for literals and pools, which never have to match the original's names.
-_GENERATED = re.compile(r"^(@\d+|\$LC\d+|_\$E\d+|\.\.\..*|@stringBase\d*|\.L.*)$")
+# Symbol names compilers make up for literals and pools, which never have to match the original's names. Visual C++'s
+# $L and $T label its own exception-handling code and tables in the object (.text$x, .xdata$x): a function with a
+# local object's destructor pushes its handler, $L278, where the delinked original names the stub func_006450E8, and
+# the code still links, with its own handler.
+_GENERATED = re.compile(r"^(@\d+|\$LC\d+|\$[LT]\d+|_\$E\d+|\.\.\..*|@stringBase\d*|\.L.*)$")
 
 
 class ObjdiffError(NetworkError):
