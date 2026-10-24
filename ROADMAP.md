@@ -56,11 +56,15 @@ Where to start on a gap:
   program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
   fields need x86's `Arch.field_accesses`.
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far:
-  Newer Windows games, below, is the plan for 2005 to 2015 and 64-bit. A class's constructors are one real name
+  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far: Newer
+  Windows games, below, is the plan for 2005 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a change to names.py (as
-  constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade step is missing.
+  would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a
+  change to names.py (as constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade
+  step is missing (a step of `WindowsPC.on_start`'s, as the DS has). `split_file` and a compiler per source file
+  (`try_compiler`) need the console's `split_source` and `set_file_compiler`: a unit of functions.json and its file,
+  and a compiler per file where configure.py has one `MSVC_VERSION`; the rebuild check (`scratch.check_code`) can
+  check a split now.
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -306,8 +310,11 @@ and newer are out of scope for now.
   there's a yes or no on wibo, and a demo that matches or a write-up of why not.
 - **C, the 2005-2010 pack.** `toolchains.toml` entries with checksums, a line in Setup (proprietary: only after the
   user accepts), `MSVC_VERSIONS`, the demo PC project built with it, and its tests (skipped in CI, as 6.0's are).
-  The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules tested again. Done when a real
-  2005-2010 game (not /GL) gets matches from agents.
+  The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules tested again (a game rebuilt with
+  2010 tools: 6,581 stubs found; a 2005 game built without C++ exceptions: none). Their linker pads functions to 16
+  bytes with int3, and `scratch.units` ends a source file at any gap: a 2005 game got 19,028 source files for 20,863
+  functions, and a first build of 20 minutes; a file should run on across that padding. Done when a real 2005-2010
+  game (not /GL) gets matches from agents.
 - **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
   2015's updates.
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
