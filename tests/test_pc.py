@@ -1059,7 +1059,8 @@ def _project_with_stubs(tmp_path, monkeypatch):
     (root / "src" / "auto").mkdir(parents=True)
     (root / "src" / "auto" / "u.cpp").write_text('#include "common.h"\n')
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
-    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "v"}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "v",
+                                                       "tools": scratch_pe.tools_version()}))
     (root / ".gitignore").write_text("orig/\n")
     for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
@@ -1112,10 +1113,11 @@ def test_a_project_without_the_program_in_it_waits_for_it(tmp_path, monkeypatch)
     assert net._function(stubs[0], "p")["status"] == "open"
 
 
-def _project_made_before(tmp_path, monkeypatch, level: int):
+def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str] | None = None):
     """A PC project as a decompdecomp of analysis `level` left it: a function with a lone epilogue Ghidra cut off
     (PROGRAM), a function with a frame, then Visual C++'s stubs; below 2 one function with a jump table's entries
-    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check."""
+    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check. `tools`: its
+    tools/ files, as an older template made them (else its tools are the template's, and the manifest says so)."""
     from decompnet.app.engine import RomNetwork
     from decompnet.consoles.pc import WindowsPC
     from decompnet.forks.project import Unit
@@ -1144,8 +1146,12 @@ def _project_made_before(tmp_path, monkeypatch, level: int):
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
     (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "game",
                                                        "game": {"path": "orig/game.exe"},
+                                                       **({} if tools else {"tools": scratch_pe.tools_version()}),
                                                        **({"analysis": level} if level > 1 else {})}))
     (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for name, text in (tools or {}).items():
+        (root / "tools").mkdir(exist_ok=True)
+        (root / "tools" / name).write_text(text)
     for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
         subprocess.run(cmd, cwd=root, check=True, capture_output=True)
@@ -1208,3 +1214,64 @@ def test_joins_that_break_the_rebuild_are_taken_back_without_notes(tmp_path, mon
     assert (root / "config" / "game" / "functions.json").read_text() == before
     assert net.store.one("SELECT COUNT(*) AS n FROM notes WHERE project_id=?", pid)["n"] == 0
     assert json.loads((root / ".decomp.wtf.json").read_text())["analysis"] == consoles.get("pc").ANALYSIS
+
+
+def _older_tools() -> dict[str, str]:
+    """The template's tools as a project made before names.py paired constructors and destructors (and before
+    configure.py read each file's compiler) has them, with the game's compiler and a flag the user added."""
+    tools = {p.name: p.read_text() for p in (Path(scratch_pe.__file__).with_name("project_template") / "tools").glob("*.py")}
+    tools["names.py"] = tools["names.py"].replace("??0", "?? 0")
+    tools["configure.py"] = (tools["configure.py"].replace('MSVC_VERSION = "6.0"', 'MSVC_VERSION = "7.1"')
+                             .replace('"/GX"]', '"/GX", "/Gr"]').replace("file_compilers", "no_map"))
+    del tools["compile.py"]  # (a project of 1.0.3 had none)
+    return tools
+
+
+def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkeypatch):
+    """A PC project keeps the tools/ it was made with, so a newer names.py (constructors and destructors) never
+    reached it: at start it gets the template's, with its own compiler and flags, and the map of each file's
+    compiler, in one commit and feed line, kept as the rebuild check stays identical; agents' sources stay."""
+    net, root, _ = _project_made_before(tmp_path, monkeypatch, consoles.get("pc").ANALYSIS, tools=_older_tools())
+    source = (root / "src" / "auto" / "u.cpp").read_text()
+    pc = consoles.get("pc")
+    pc.on_start(net, "p", log=lambda *_: None)
+    template = Path(scratch_pe.__file__).with_name("project_template") / "tools"
+    assert (root / "tools" / "names.py").read_text() == (template / "names.py").read_text()
+    assert (root / "tools" / "compile.py").read_text() == (template / "compile.py").read_text()
+    configure = (root / "tools" / "configure.py").read_text()
+    assert 'MSVC_VERSION = "7.1"' in configure and '"/GX", "/Gr"]' in configure and "file_compilers.json" in configure
+    assert scratch_pe.compilers_file(root, "game").read_text() == "{}\n"
+    assert (root / "src" / "auto" / "u.cpp").read_text() == source
+    pid = net.project_row("p")["id"]
+    said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
+    assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
+                    "tools/configure.py, tools/names.py, config/game/file_compilers.json)"]
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert log.count("Analyse the game again") == 1
+    assert not subprocess.run(["git", "status", "--porcelain", "tools", "config"], cwd=root, capture_output=True,
+                              text=True).stdout.strip()
+    manifest = json.loads((root / ".decomp.wtf.json").read_text())
+    assert manifest["tools"] == scratch_pe.tools_version() and manifest["rebuild"]["identical"]
+    assert pc.file_compiler(ForkProject(root), "src/auto/u.cpp") == "MSVC/6.0"  # (the manifest's: try_compiler works)
+    pc.on_start(net, "p", log=lambda *_: None)  # (done: nothing new)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(tmp_path, monkeypatch):
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root, _ = _project_made_before(tmp_path, monkeypatch, consoles.get("pc").ANALYSIS, tools=_older_tools())
+    before = {p.name: p.read_text() for p in (root / "tools").iterdir()}
+    checks = iter([{"identical": True, "detail": "identical"}, {"identical": False, "detail": "1 functions differ"}])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: next(checks))
+    fp = ForkProject(root)
+    fp.update_manifest(rebuild=WindowsPC.check_rebuild(None, fp, "game"))
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    assert {p.name: p.read_text() for p in (root / "tools").iterdir()} == before
+    assert not scratch_pe.compilers_file(root, "game").exists()
+    pid = net.project_row("p")["id"]
+    said = net.store.one("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)["detail"]
+    assert said.startswith("a new analysis of the game (its build has the fixes") and "was taken back" in said
+    assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1

@@ -1027,6 +1027,44 @@ def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[st
 # ---------------------------------------------------------------------------------------------------- the project
 
 
+# the lines of tools/configure.py a project keeps when its tools are brought up to date: what create (and the
+# Settings panel, set_own_compiler) wrote for the game, and the flags its README says the user may change
+KEPT_SETTINGS = (r'^MSVC_VERSION = "[^"]*"', r"^CL_FLAGS = \[[^\]]*\]")
+
+
+def tools_version() -> str:
+    """The template's build tools, as a short hash: a project whose manifest says another version gets them when the
+    app starts (WindowsPC.on_start), so every change to them reaches every project."""
+    digest = hashlib.sha1()
+    for src in sorted((TEMPLATE / "tools").glob("*.py")):
+        digest.update(src.name.encode() + b"\0" + src.read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def write_tools(root: Path, version: str) -> list[str]:
+    """The template's build tools in a project made by an older decompdecomp (agents never edit tools/:
+    forks/project.py), keeping its configure.py's settings (KEPT_SETTINGS), and the map of each file's compiler the
+    new configure.py reads. A project kept the tools it was made with, so names.py's constructors and destructors
+    never reached one. Returns the files that changed."""
+    cfg = root / "tools" / "configure.py"
+    now = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+    changed = []
+    for src in sorted((TEMPLATE / "tools").glob("*.py")):
+        text = src.read_text(encoding="utf-8")
+        if src.name == "configure.py":
+            for setting in KEPT_SETTINGS:
+                if m := re.search(setting, now, re.M):
+                    text = re.sub(setting, lambda _: m.group(0), text, count=1, flags=re.M)
+        dest = root / "tools" / src.name
+        if not dest.exists() or dest.read_text(encoding="utf-8") != text:
+            dest.write_text(text, encoding="utf-8")
+            changed.append(f"tools/{src.name}")
+    if changed and not (compilers := compilers_file(root, version)).exists():
+        compilers.write_text("{}\n", encoding="utf-8")
+        changed.append(compilers.relative_to(root).as_posix())
+    return changed
+
+
 def tool_args() -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools."""
     if toolchains.installed("msvc") is None:
@@ -1311,6 +1349,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
         "analysis": 4,  # (WindowsPC.ANALYSIS: nothing to repair, its stubs set aside, its pieces joined)
+        "tools": tools_version(),
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,

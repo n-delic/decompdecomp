@@ -50,7 +50,8 @@ class WindowsPC(Console):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
     # every function's last instruction whole (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
-    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub
+    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub. Its build tools
+    # have a version of their own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
     ANALYSIS = 4
 
     def sniff(self, head: bytes, file) -> bool:
@@ -89,14 +90,17 @@ class WindowsPC(Console):
         come next, found on the repaired functions, so the joins never take one (the function before the run, a C
         runtime function with a frame, would look continued by a funclet that reads ebp). The functions that grew
         are open again, with a note: what set them aside, and older notes, were about a part. A project without the
-        user's copy of the program in it yet waits for the next start: every step reads it."""
+        user's copy of the program in it yet waits for the next start: every step reads it. Last, a project whose
+        build tools aren't the template's (its manifest's "tools", scratch.tools_version) gets them, the same way:
+        one commit and feed line, kept only when the rebuild check stays as it was, and tried once per version."""
         from . import scratch
 
         if not net.fork_slug(slug):
             return
         fp = net.forks.get(slug)[1]
         manifest = fp.manifest or {}
-        if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= self.ANALYSIS:
+        if manifest.get("created") != "from scratch" or (manifest.get("analysis", 1) >= self.ANALYSIS and
+                                                          manifest.get("tools") == scratch.tools_version()):
             return
         version = manifest["version"]
         if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file():
@@ -128,6 +132,10 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        def tools(fp):  # (no source file changes: agents' C stays as it is)
+            changed = scratch.write_tools(fp.root, version)
+            return (f"its build has the fixes decompdecomp's has had since the project was made ({', '.join(changed)})"
+                    if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
         steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
@@ -136,6 +144,9 @@ class WindowsPC(Console):
             if manifest.get("analysis", 1) < level:
                 kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
+        if manifest.get("tools") != scratch.tools_version():
+            net.forks.reanalyse(slug, tools, paths=("tools",), log=log)
+            net.forks.get(slug)[1].update_manifest(tools=scratch.tools_version())  # (tried: not again until they change)
         if kept.get(4):  # (taken back: nothing was joined)
             agent, _ = net.local_agent("decompdecomp")
             for name, took in joined.items():

@@ -59,9 +59,7 @@ Where to start on a gap:
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far: Newer
   Windows games, below, is the plan for 2005 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a
-  change to names.py (as constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade
-  step is missing (a step of `WindowsPC.on_start`'s, as the DS has).
+  would need the mangled signature in "names".
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -72,6 +70,12 @@ Where to start on a gap:
 
 ## Recently done
 
+- **PC projects get the newest build tools.** A PC project kept the `tools/` it was made with, so a newer names.py
+  (constructors and destructors paired by their class) or delink.py never reached one. The template's tools have a
+  version (`scratch.tools_version`, the manifest's "tools"): a project with another gets them when the app starts
+  (`WindowsPC.on_start`, `scratch.write_tools`), keeping its compiler and flags, in one commit and feed line, kept
+  only when the rebuild check stays as it was and tried once per version; agents' sources are never touched. A demo
+  project made by the previous release got them with its rebuild identical.
 - **Windows PC: `split_file`, and a compiler per source file.** A PC project's source files are runs of about 4 KiB
   of functions, so one can span two of the game's files, or two compilers (a game's Rich header often counts objects
   of Visual C++ 6.0 and 7.1). `split_file` divides one (`WindowsPC.split_source`: a unit of functions.json), kept
