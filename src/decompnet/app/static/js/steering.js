@@ -288,7 +288,7 @@ function renderSource(ov) {
     const rb = ov.rebuild;
     $("srcText").innerHTML = ov.origin === "scratch"
       ? `This project <b>is</b> the source tree: a ${ov.layout || "decomp"} project that rebuilds your game on every build. Every match is committed to git in the project folder.`
-        + (rb ? `<p class="small ${rb.identical ? "ok" : "warn-text"}">${rb.identical ? "✓ The rebuilt game is your copy, byte for byte" + (/padding/.test(rb.detail) ? " (up to the padding at its end: your copy is trimmed)." : ".")
+        + (rb ? `<p class="small ${rb.identical ? "ok" : "warn-text"}">${rb.identical ? `✓ ${esc(rb.what || "The rebuilt game")} is your copy, byte for byte` + (/padding/.test(rb.detail) ? " (up to the padding at its end: your copy is trimmed)." : ".")
           : `The rebuilt game isn't your copy byte for byte yet: ${esc(rb.detail)}. Decompiling works anyway: every function is compared with your copy's own code.`}</p>` : "")
       : `This project <b>is</b> the source tree${ov.repo_url ? ` (a fork of <a class="link" href="${esc(ov.repo_url)}" target="_blank" rel="noopener">${esc(ov.repo_url.replace(/^https?:\/\//, ""))}</a>)` : ""}. Every match is committed to the <code>decomp-wtf</code> branch, ready to send upstream.`;
     if ($("srcState")._working) return;
@@ -302,7 +302,7 @@ function renderSource(ov) {
       try {
         const { job } = await api("/api/fork/rom-check", { method: "POST", body: { slug: S.slug } });
         const r = await followJob(job, log);
-        toast(r.identical ? "The rebuilt game is your copy, byte for byte." : `Not identical yet: ${esc(r.detail)}`, r.identical ? "match" : "");
+        toast(r.identical ? `${r.what || "The rebuilt game"} is your copy, byte for byte.` : `Not identical yet: ${esc(r.detail)}`, r.identical ? "match" : "");
         S.ov = await api(`/api/project?slug=${S.slug}`);
         panel._working = false;
         if (panel === $("srcState")) renderSource(S.ov);

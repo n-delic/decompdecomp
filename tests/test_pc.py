@@ -6,6 +6,7 @@ must find every function with its exact extent, and agents' C must be judged by 
 Visual C++ is proprietary, so the end-to-end part runs only where `msvc` was installed with its license accepted.
 """
 
+import hashlib
 import json
 import re
 import shutil
@@ -19,7 +20,7 @@ import pytest
 from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
-from decompnet.forks.project import ForkProject
+from decompnet.forks.project import ForkError, ForkProject
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -342,6 +343,7 @@ def test_every_function_is_found_with_its_extent(pc):
     net, slug = pc
     ov = net.overview(slug)
     assert ov["kind"] == "fork" and ov["origin"] == "scratch" and ov["platform"] == "pc" and ov["ready"]
+    assert ov["rebuild"]["identical"]  # its code, put back together from the delinked functions, is the program's
     syms = {a: s for s, a in _map().items() if not s.startswith("??") and a < 0x402000}
     rows = net.store.all("SELECT name, size FROM functions WHERE project_id=?", net.project_row(slug)["id"])
     assert len(rows) == len(syms) == 19  # clamp_s32, which nothing calls, too: Ghidra misses it, the gap doesn't
@@ -528,3 +530,248 @@ def test_drm_and_packers_are_named_never_unpacked():
                                                            ".CRT", ".idata", ".tls", "_rwdseg", ".bss", ".edata",
                                                            ".reloc")))
     assert plain.wrapper is None and plain.blockers() == []
+
+
+# Hand-made x86 code and programs (pieces of functions, the rebuild check): no compiler needed.
+PUSH_FRAME = bytes.fromhex("558bec")  # push ebp; mov ebp, esp
+CALL_0 = bytes.fromhex("e800000000")  # call (a function Ghidra took for one that never returns: throw)
+EH_EPILOGUE = bytes.fromhex("8b4df45f8be55dc3")  # mov ecx, [ebp-0xc]; pop edi; mov esp, ebp; pop ebp; ret
+FRAME_RET = PUSH_FRAME + bytes.fromhex("33c08be55dc3")  # ...; xor eax, eax; mov esp, ebp; pop ebp; ret
+CATCH = bytes.fromhex("8b45ecc3")  # mov eax, [ebp-0x14]; ret: the frame's locals, after the function's return
+UNWIND = bytes.fromhex("8d4df0e900000000")  # lea ecx, [ebp-0x10]; jmp <destructor>: a .text$x funclet
+
+
+def test_a_piece_ghidra_cut_off_is_the_rest_of_the_function_before_it():
+    from decompnet.arch import x86
+
+    # a lone epilogue after a call Ghidra took for one that never returns: the code before runs on into it
+    assert "runs on" in x86.piece(PUSH_FRAME + bytes.fromhex("6a00") + CALL_0, EH_EPILOGUE)
+    assert "restores edi" in x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("5f5ec3"))  # pop edi; pop esi; ret
+    # a catch block after the return of a function with an ebp frame
+    assert "frame" in x86.piece(FRAME_RET, CATCH)
+    # without a frame, a short jump from the code before says it continues there (push ebx; mov ebx, ecx; test eax,
+    # eax; je +2; pop ebx; ret), then mov eax, [ebx+0x14]; pop ebx; ret
+    assert "short jump" in x86.piece(bytes.fromhex("538bd985c074025bc3"), bytes.fromhex("8b43145bc3"))
+    assert x86.piece(bytes.fromhex("538bd985c074005bc3"), bytes.fromhex("8b43145bc3")) is None  # (jumps within)
+
+
+def test_whole_functions_and_exception_funclets_are_not_pieces():
+    from decompnet.arch import x86
+
+    assert x86.piece(FRAME_RET + b"\xcc\xcc", CATCH) is None  # padding ends a function
+    assert x86.piece(FRAME_RET, PUSH_FRAME + bytes.fromhex("8b4508c3")) is None  # sets its frame before using it
+    # MSVC's .text$x funclets use their parent's ebp without a frame, by design: each follows another, which ends
+    # with a jmp and sets up no frame (the exception-handling stubs are set aside by their own rule)
+    assert x86.piece(UNWIND, UNWIND) is None
+    assert x86.piece(bytes.fromhex("b878563412e900000000"), UNWIND) is None  # mov eax, <FuncInfo>; jmp handler
+    # a function setting its frame through __EH_prolog (mov eax, <handler>; call), or with enter
+    assert x86.piece(FRAME_RET, bytes.fromhex("b878563412") + CALL_0 + bytes.fromhex("8b4508c3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("c8800000608b450cc3")) is None
+    # xor esi, esi only sets esi; a function saving what it restores is whole
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("33f68bc6c3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("56be010000005ec3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0 + b"\x8b", EH_EPILOGUE) is None  # code before ends mid-instruction: data
+    # MSVC's alignment filler after a hand-written function (lea esp, [esp]; mov edi, edi) does nothing
+    assert x86.piece(bytes.fromhex("578b7c2408eb6a"), bytes.fromhex("8da424000000008bff")) is None
+
+
+TEXT = 0x401000
+
+
+def _tiny_exe(code: bytes) -> bytes:
+    """A 32-bit Windows program whose .text (at 0x401000) is `code`: just what read_pe and delink.py read."""
+    pe_at, opt_bytes, raw_at = 0x40, 0xE0, 0x200
+    head = bytearray(raw_at)
+    head[:2] = b"MZ"
+    struct.pack_into("<I", head, 0x3C, pe_at)
+    head[pe_at:pe_at + 4] = b"PE\0\0"
+    struct.pack_into("<HHIIIHH", head, pe_at + 4, 0x14C, 1, 0, 0, 0, opt_bytes, 0x102)
+    opt = pe_at + 24
+    struct.pack_into("<H", head, opt, 0x10B)
+    struct.pack_into("<I", head, opt + 16, TEXT - 0x400000)  # entry
+    struct.pack_into("<I", head, opt + 28, 0x400000)  # image base
+    struct.pack_into("<I", head, opt + 56, 0x2000)  # image size
+    struct.pack_into("<8sIIIIIIHHI", head, opt + opt_bytes, b".text", len(code), TEXT - 0x400000, len(code), raw_at,
+                     0, 0, 0, 0, 0x60000020)
+    return bytes(head) + code
+
+
+def _row(start: int, end: int) -> dict:
+    return {"entry": start, "end": end, "name": f"FUN_{start:08x}", "source": "DEFAULT", "purge": 0,
+            "convention": "__cdecl"}
+
+
+# 0x401000 a function with a frame, cut by Ghidra at a call to 0x401020 (taken for one that never returns), holding
+# its own piece's address (mov eax, 0x40100f); 0x40100f its epilogue; 0x401020 another function, which jumps to it
+OWNER = PUSH_FRAME + bytes.fromhex("b80f104000") + bytes.fromhex("e813000000") + bytes.fromhex("6a00")
+PROGRAM = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + PUSH_FRAME + bytes.fromhex("5dc3")
+ROWS = [_row(0x401000, 0x40100F), _row(0x40100F, 0x401017), _row(0x401020, 0x401025)]
+
+
+def test_a_piece_is_delinked_with_the_function_it_belongs_to():
+    pe = scratch_pe.read_pe(_tiny_exe(PROGRAM))
+    found = scratch_pe.analyse(pe, ROWS)
+    assert [f.addr for f in found] == [0x401000, 0x40100F, 0x401020]
+    functions, joined = scratch_pe.merge_pieces(pe, found, log=lambda *_: None)
+    assert joined == {"_func_00401000": ["_func_0040100F"]}
+    whole = functions[0]
+    assert (whole.addr, whole.size) == (0x401000, 0x20)  # the epilogue and the padding after it
+    # its piece's address is its own now (a label, as delink.py writes $L), the call still a relocation
+    assert whole.relocs == [(4, scratch_pe.DIR32, None, 0xF), (9, scratch_pe.REL32, "_func_00401020", 0)]
+    # matched functions stay as they are; so does a piece another function calls (Ghidra was right: a function)
+    assert scratch_pe.merge_pieces(pe, found, keep={"_func_0040100F"}, log=lambda *_: None)[1] == {}
+    called = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e8eaffffffc3")  # call 0x40100f; ret
+    pe = scratch_pe.read_pe(_tiny_exe(called))
+    assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
+
+
+def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
+    """A `ret 8` ends with a zero byte, which the gap's padding was stripped with: the byte belonged to no
+    function, its function's object ended mid-instruction, and the piece after it was never next to it."""
+    code = bytes.fromhex("c3") + bytes.fromhex("33c0c20800") + PUSH_FRAME + bytes.fromhex("5dc3")
+    pe = scratch_pe.read_pe(_tiny_exe(code))
+    found = scratch_pe.analyse(pe, [_row(0x401000, 0x401001), _row(0x401006, 0x40100B)])
+    assert [(f.addr, f.size) for f in found] == [(0x401000, 1), (0x401001, 5), (0x401006, 5)]
+
+
+def _project(tmp_path: Path, program: bytes, rows: list[dict], unit_bytes: int = 0x1000) -> Path:
+    """A PC project's config and delinked objects for a hand-made program, as create writes them (no compiler)."""
+    root = tmp_path / "proj"
+    (root / "orig").mkdir(parents=True)
+    (root / "orig" / "game.exe").write_bytes(_tiny_exe(program))
+    pe = scratch_pe.read_pe(_tiny_exe(program))
+    groups = {}
+    for f in scratch_pe.analyse(pe, rows):  # (one source file per function, to move pieces between them)
+        groups[f"text_{f.addr:08X}"] = [scratch_pe._entry(pe, f)]
+    info = {"exe": "orig/game.exe", "sha1": hashlib.sha1(_tiny_exe(program)).hexdigest(), "image_base": 0x400000,
+            "units": groups}
+    (root / "config" / "game").mkdir(parents=True)
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    (root / "src" / "auto").mkdir(parents=True)
+    for unit in groups:
+        (root / "src" / "auto" / f"{unit}.cpp").write_text('#include "common.h"\n')
+    _delink(root)
+    return root
+
+
+def _delink(root: Path) -> None:
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    exe = (root / info["exe"]).read_bytes()
+    out = root / "build" / "game" / "target"
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    delink = _template_tool("delink")
+    for unit, functions in info["units"].items():
+        (out / f"{unit}.obj").write_bytes(delink.coff(functions, exe))
+
+
+def test_a_project_made_before_gets_its_pieces_joined_and_still_rebuilds(tmp_path):
+    root = _project(tmp_path, PROGRAM, ROWS)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    # the piece is the first function of its source file: it moves to the file before only when that file keeps
+    # other code, and holds no C for it
+    assert scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None) == {}
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"]["text_0040100F"].append(info["units"].pop("text_00401020")[0])
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    piece_file = root / "src" / "auto" / "text_0040100F.cpp"
+    piece_file.write_text("void Obj::func_0040100F(void) {\n}\n")
+    assert scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None) == {}
+    piece_file.write_text('#include "common.h"\n')
+    joined = scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None)
+    assert joined == {"_func_00401000": ["_func_0040100F"]}
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert [[f["name"] for f in fns] for fns in units.values()] == [["_func_00401000"], ["_func_00401020"]]
+    assert units["text_00401000"][0]["size"] == 0x20
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None) == {
+        "identical": True, "detail": "identical: the code of its 2 functions (37 bytes)",
+        "what": "The game's code, rebuilt from its delinked functions,"}
+
+
+def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
+    root = _project(tmp_path, PROGRAM, ROWS)
+    exe, target = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "target" / "text_00401000.obj"
+    owner = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]["text_00401000"][0]
+    coff = _template_tool("delink").coff
+    target.write_bytes(coff([{**owner, "relocs": [[9, scratch_pe.REL32, "_func_0040100F", 0]]}], exe))  # wrong call
+    result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+    assert result == {"identical": False,
+                      "detail": "1 functions rebuilt from the delinked objects differ from your copy: _func_00401000"}
+    target.write_bytes(coff([{**owner, "size": owner["size"] + 1}], exe))  # cut one byte too long
+    result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+    assert not result["identical"] and "_func_0040100F (overlaps _func_00401000)" in result["detail"]
+
+
+def test_agents_join_two_functions_by_their_names(tmp_path):
+    root = _project(tmp_path, PROGRAM, ROWS)
+    with pytest.raises(ForkError, match="is matched"):
+        scratch_pe.join_functions(root, "game", "_func_00401000", "_func_0040100F", keep={"_func_0040100F"})
+    with pytest.raises(ForkError, match="would be left with no code"):  # (each was given a file of its own)
+        scratch_pe.join_functions(root, "game", "_func_00401000", "_func_0040100F")
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"]["text_00401000"] += info["units"].pop("text_0040100F")
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    said = scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401000")
+    assert said == "_func_0040100F joined to _func_00401000"
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    with pytest.raises(ForkError, match="isn't one of the game's functions"):
+        scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401020")
+
+
+def test_only_the_frame_helpers_shapes_set_a_frame():
+    from decompnet.arch import x86
+
+    after_one = bytes.fromhex("6a0c") + CALL_0 + bytes.fromhex("59c3")  # push 0xc; call _lock; pop ecx; ret
+    assert x86.piece(after_one, bytes.fromhex("8b75e4")) is None  # mov esi, [ebp-0x1c]: not this function's
+    seh_prolog = bytes.fromhex("6a0c6888204000") + CALL_0 + bytes.fromhex("33dbc3")  # push 0xc; push <table>; call
+    assert "frame" in x86.piece(seh_prolog, bytes.fromhex("ff7508c3"))  # push [ebp+8]; ...: its __finally
+    eh_prolog3 = bytes.fromhex("6a04b8dd9b8d00") + CALL_0 + bytes.fromhex("c3")  # push 4; mov eax, <h>; call
+    assert "frame" in x86.piece(eh_prolog3, CATCH)
+    assert x86.piece(bytes.fromhex("53b8dd9b8d00") + CALL_0 + bytes.fromhex("5bc3"), CATCH) is None  # push ebx first
+
+
+# a function with two jump tables, one right after the other: jmp [eax*4+T1]; jmp [eax*4+T2]; ret; ret; T1; T2
+TWO_TABLES = (bytes.fromhex("ff2485") + struct.pack("<I", 0x401010) + bytes.fromhex("ff2485") + struct.pack("<I", 0x401018)
+              + bytes.fromhex("c3c3") + struct.pack("<4I", 0x40100E, 0x40100F, 0x40100F, 0x40100E))
+
+
+def test_a_jump_table_ends_where_the_next_one_starts(tmp_path):
+    """Each entry of the second table was relocated twice (23 functions of a PC game): the code rebuilt from the
+    objects had those entries doubled. Projects made before get the repeats dropped."""
+    pe = scratch_pe.read_pe(_tiny_exe(TWO_TABLES))
+    (fn,) = scratch_pe.analyse(pe, [_row(0x401000, 0x401010)])
+    assert [r[0] for r in fn.relocs] == [3, 10, 16, 20, 24, 28]  # the tables' addresses, then four entries, once
+    root = _project(tmp_path, TWO_TABLES, [_row(0x401000, 0x401010)])
+    config = root / "config" / "game" / "functions.json"
+    info = json.loads(config.read_text())
+    entry = info["units"]["text_00401000"][0]
+    entry["relocs"] += entry["relocs"][-2:]  # as analyse made them before
+    config.write_text(json.dumps(info))
+    _delink(root)
+    assert not scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    assert scratch_pe.drop_repeated_relocations(root, "game") == 1
+    assert scratch_pe.drop_repeated_relocations(root, "game") == 0
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+def test_a_project_made_before_gets_its_functions_last_instructions_whole(tmp_path):
+    """Found in a gap, `jmp <next function>` (e9 0a 00 00 00) lost its zeros with the padding after it: the function
+    was 2 bytes, and no C could match it. 465 functions of a PC game ended mid-instruction."""
+    program = bytes.fromhex("c3") + bytes.fromhex("e90a000000") + b"\x90" * 10 + PUSH_FRAME + bytes.fromhex("5dc3")
+    rows = [_row(0x401000, 0x401001), _row(0x401010, 0x401015)]
+    root = _project(tmp_path, program, rows)
+    config = root / "config" / "game" / "functions.json"
+    info = json.loads(config.read_text())
+    assert info["units"]["text_00401001"][0]["size"] == 15  # (as analyse makes it now)
+    info["units"]["text_00401001"][0].update(size=2, relocs=[])  # as it made it before
+    config.write_text(json.dumps(info))
+    assert scratch_pe.complete_last_instructions(root, "game", keep={"_func_00401001"}) == 0
+    assert scratch_pe.complete_last_instructions(root, "game") == 1
+    entry = json.loads(config.read_text())["units"]["text_00401001"][0]
+    assert entry["size"] == 15 and entry["relocs"] == [[1, scratch_pe.REL32, "_func_00401010", 0]]
+    assert scratch_pe.complete_last_instructions(root, "game") == 0
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]

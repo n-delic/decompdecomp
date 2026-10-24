@@ -27,7 +27,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
-| Pieces of functions joined to their function | — | — | — | — | — | ✓ (`recover.merge_pieces`) | — |
+| Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
@@ -94,6 +94,19 @@ Where to start on a gap:
   a destructor written so (`func_004D9DD0::~func_004D9DD0`) was refused outright. An agent now writes
   `CFoo::CFoo` for one function and `CFoo::~CFoo` for another; the attempt gives each that real name, and names.py
   pairs `??0CFoo@@...` and `??1CFoo@@...` with the original's symbols, calls from other functions included.
+- **Pieces of functions joined on Windows PC.** Ghidra starts some functions in the middle of others: a lone
+  epilogue after a call it took for one that never returns (`throw`), a catch block or an `__except` filter after
+  the function's return. Neither part could match. Code that reads or restores ebx, esi, edi or ebp before saving
+  or setting it is joined to the function before it when that one runs on into it, set up the ebp frame it reads,
+  or jumps into it with a short jump (`arch/x86.piece`, `consoles/pc/scratch.merge_pieces`): on a PC game of about
+  2000, 181 of 11,877 functions. MSVC's exception-handling funclets at the end of the code read their parent's
+  frame too, but never follow code that runs on into them, so they stay apart (their own rule sets them aside).
+  PC projects have a rebuild check now: the program's code put back together from the delinked functions
+  (`scratch.check_code`). It found two older analysis faults, fixed for new imports: functions found in gaps lost
+  the zero bytes their last instruction ends with (`ret 8`), and a jump table running into the next one had its
+  entries relocated twice. Older projects get both repaired and their pieces joined when the app starts or on
+  Check again, each kept only when the code still rebuilds byte for byte (on that game: 23 tables, 390 functions,
+  179 pieces). Agents' `join_functions` works on PC too.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.

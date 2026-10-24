@@ -36,6 +36,7 @@ from capstone import x86
 from decompnet.hostenv import NO_WINDOW
 
 from ... import toolchains
+from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 
 UNIT_BYTES = 0x1000
@@ -417,6 +418,7 @@ class Function:
     size: int
     name: str  # the symbol, decorated as MSVC decorates the C name
     relocs: list[tuple[int, int, str | None, int]] = field(default_factory=list)  # (offset, type, symbol, addend)
+    unit: str = ""  # its source file (functions.json's unit), once the project has them
 
 
 def decorate(name: str, convention: str, purge: int, params: int) -> str:
@@ -455,7 +457,8 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
     data_end, entries = code_end, []
     for t in sorted(set(tables)):
         at = t
-        while at + 4 <= limit:
+        while at + 4 <= limit and (at == t or at not in tables):  # (one table ends where the next one starts: its
+            # entries were relocated twice, and the code rebuilt from the objects had them doubled)
             value = struct.unpack("<I", pe.read(at, 4).ljust(4, b"\0"))[0]
             if not start <= value < code_end:
                 break
@@ -492,7 +495,10 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         if rest and not rest.strip(b"\x90\xcc\x00") == b"":
             # code nobody calls directly (callbacks, vtables) that Ghidra didn't make a function: one of its own
             missed = limit - len(rest)
-            rows[missed] = {"entry": missed, "end": missed + len(rest.rstrip(b"\x90\xcc\x00")), "name": "",
+            # less the padding after it, but not its last instruction's zeros (a `ret 8` ends with one)
+            body = len(rest.rstrip(b"\x90\xcc\x00"))
+            body = next((i.address + i.size for i in _disasm(md, rest, 0) if i.address + i.size >= body), body)
+            rows[missed] = {"entry": missed, "end": missed + body, "name": "",
                             "source": "DEFAULT", "purge": 0, "convention": "__cdecl"}
             starts.insert(i + 1, missed)
             limit = missed
@@ -509,41 +515,133 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         names[start] = decorate(base if named else f"func_{start:08X}", r.get("convention", ""),
                                 int(r.get("purge") or 0), int(r.get("params") or 0))
 
-    out = []
-    for start in starts:
-        code_end, end, entries = extents[start]
-        fn = Function(start, end - start, names[start])
+    return [Function(start, extents[start][1] - start, names[start], _relocations(md, pe, start, *extents[start], names))
+            for start in starts]
 
-        def symbol(addr: int) -> tuple[str | None, int]:
-            if start <= addr < end:  # noqa: B023  called within this pass of the loop
-                return None, addr - start  # noqa: B023  called within this pass of the loop
-            if addr in names:
-                return names[addr], 0
-            if addr in pe.imports:
-                return f"__imp__{pe.imports[addr]}", 0
-            return f"_D_{addr:08X}", 0
 
-        for ins in _disasm(md, pe.read(start, code_end - start), start):
-            at = ins.address - start
-            if ins.size >= 5 and (x86.X86_GRP_JUMP in ins.groups or x86.X86_GRP_CALL in ins.groups) \
-                    and ins.operands and ins.operands[0].type == x86.X86_OP_IMM:  # rel32, not a short jump
-                target = ins.operands[0].imm & 0xFFFFFFFF
-                if not start <= target < end:  # calls, and jumps to other functions (tail calls)
-                    name, _ = symbol(target)
-                    fn.relocs.append((at + ins.size - 4, REL32, name, 0))
-                continue
-            for op in ins.operands:
-                if op.type == x86.X86_OP_MEM and ins.disp_size == 4 and pe.contains(op.mem.disp & 0xFFFFFFFF):
-                    name, addend = symbol(op.mem.disp & 0xFFFFFFFF)
-                    fn.relocs.append((at + ins.disp_offset, DIR32, name, addend))
-                elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF):
-                    name, addend = symbol(op.imm & 0xFFFFFFFF)
-                    fn.relocs.append((at + ins.imm_offset, DIR32, name, addend))
-        for off in entries:
-            fn.relocs.append((off, DIR32, None, struct.unpack("<I", pe.read(start + off, 4))[0] - start))
-        fn.relocs.sort()
-        out.append(fn)
-    return out
+def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[int],
+                 names: dict[int, str]) -> list[tuple[int, int, str | None, int]]:
+    """The relocations of the function from `start` to `end` (its code up to `code_end`, then its jump tables, whose
+    entries are at `entries`): what its code says about addresses outside it, by the symbols `names` gives
+    functions' addresses."""
+
+    def symbol(addr: int) -> tuple[str | None, int]:
+        if start <= addr < end:
+            return None, addr - start
+        if addr in names:
+            return names[addr], 0
+        if addr in pe.imports:
+            return f"__imp__{pe.imports[addr]}", 0
+        return f"_D_{addr:08X}", 0
+
+    relocs = []
+    for ins in _disasm(md, pe.read(start, code_end - start), start):
+        at = ins.address - start
+        if ins.size >= 5 and (x86.X86_GRP_JUMP in ins.groups or x86.X86_GRP_CALL in ins.groups) \
+                and ins.operands and ins.operands[0].type == x86.X86_OP_IMM:  # rel32, not a short jump
+            target = ins.operands[0].imm & 0xFFFFFFFF
+            if not start <= target < end:  # calls, and jumps to other functions (tail calls)
+                name, _ = symbol(target)
+                relocs.append((at + ins.size - 4, REL32, name, 0))
+            continue
+        for op in ins.operands:
+            if op.type == x86.X86_OP_MEM and ins.disp_size == 4 and pe.contains(op.mem.disp & 0xFFFFFFFF):
+                name, addend = symbol(op.mem.disp & 0xFFFFFFFF)
+                relocs.append((at + ins.disp_offset, DIR32, name, addend))
+            elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF):
+                name, addend = symbol(op.imm & 0xFFFFFFFF)
+                relocs.append((at + ins.imm_offset, DIR32, name, addend))
+    for off in entries:
+        relocs.append((off, DIR32, None, struct.unpack("<I", pe.read(start + off, 4))[0] - start))
+    return sorted(relocs)
+
+
+CALL = 0xE8  # the opcode before a rel32 call's target
+_DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")  # data by its address, as analyse names it
+MAX_INSTRUCTION_BYTES = 15
+
+
+def join(pe: PE, parts: list[Function], names: dict[int, str]) -> Function:
+    """One function of neighbouring functions (`parts`, in order; one, to give it a new extent), under the first one's
+    name, with the bytes no function claims between them, analysed again as one: what pointed from one part to
+    another is the function's own now (no relocation for a jump, a label for an address), and a jump table after a
+    part is read as the whole's (a function's table comes after its last piece). `names`: every function's address
+    -> its symbol."""
+    first, end = parts[0], parts[-1].addr + parts[-1].size
+    if any(b.addr < a.addr + a.size for a, b in zip(parts, parts[1:])):
+        raise ForkError("they overlap in the project's config, so they can't be joined")
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    code_end, _, entries = _tables(md, pe, first.addr, end, end)
+    return Function(first.addr, end - first.addr, first.name,
+                    _relocations(md, pe, first.addr, code_end, end, entries, names), first.unit)
+
+
+def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset(), movable=None,
+                 log=print) -> tuple[list[Function], dict[str, list[str]]]:
+    """Join the pieces Ghidra cut off functions (arch/x86.piece: a lone epilogue after a call it took for one that
+    never returns, a catch block or an `__except` filter after the function's return) to the function before them,
+    which they continue: on a PC game 181 such pieces could never match, and neither could the functions they
+    belong to. Not a piece another function calls or holds the address of (a function's start: Ghidra's guess was
+    right), nor the function's own jump table (Ghidra made a function of one), nor into or out of a function of
+    `keep` (matched ones: their C would no longer be the whole function). Across two source files
+    (`Function.unit`), a piece moves to the earlier one only when its own keeps other functions and
+    `movable(piece)` says its C isn't there. Returns the functions, and each that grew with the pieces it took."""
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    names = {f.addr: f.name for f in functions}
+    reached: dict[str, set[str]] = {}  # name -> the functions whose code calls it or holds its address
+    for f in functions:
+        for off, kind, name, _ in f.relocs:
+            if name is not None and (kind == DIR32 or pe.read(f.addr + off - 1, 1) == bytes([CALL])):
+                reached.setdefault(name, set()).add(f.name)
+    home: dict[str, str] = {}  # a piece -> the function it was joined to
+
+    def now(name: str) -> str:
+        while name in home:
+            name = home[name]
+        return name
+    out, joined, k = list(functions), {}, 1
+    while k < len(out):
+        owner, part = out[k - 1], out[k]
+        before = pe.read(owner.addr, part.addr - owner.addr)
+        # (its own code may call it, a `__finally` block, or hold its address, where a catch block goes on)
+        if owner.name in keep or part.name in keep or {now(n) for n in reached.get(part.name, ())} - {owner.name} \
+                or not _ends_at(md, before, owner.size) or _reads_from(md, before, owner.addr, part.addr) or \
+                not x86_arch.piece(before, pe.read(part.addr, part.size)) or \
+                owner.unit != part.unit and (sum(f.unit == part.unit for f in out) < 2 or
+                                             (movable is not None and not movable(part))):
+            k += 1
+            continue
+        out[k - 1:k + 1] = [join(pe, [owner, part], names)]
+        home[part.name] = owner.name
+        joined[owner.name] = [*joined.get(owner.name, []), part.name, *joined.pop(part.name, [])]
+        k = max(1, k - 1)  # the grown function may itself continue the one before it now
+    if joined:
+        log(f"{sum(len(v) for v in joined.values())} pieces of functions Ghidra cut off joined to the function they "
+            "belong to")
+    return out, joined
+
+
+def _reads_from(md, code: bytes, at: int, addr: int) -> bool:
+    """Whether the code (at address `at`) reads memory at `addr`: a jump table there (Ghidra made a function of the
+    table after a switch), data, not code."""
+    return any(op.type == x86.X86_OP_MEM and op.mem.disp & 0xFFFFFFFF == addr
+               for ins in _disasm(md, code, at) for op in ins.operands)
+
+
+def _ends_at(md, before: bytes, size: int) -> bool:
+    """Whether the function whose code is `size` bytes, followed by what's up to the next function, ends right
+    there: nothing between them, or only the rest of its own last instruction. Projects made before analyse knew
+    that a `ret 8` ends with a zero byte lost that byte to no function."""
+    if len(before) == size:
+        return True
+    if not 0 < len(before) - size < MAX_INSTRUCTION_BYTES:
+        return False
+    last = None
+    for ins in _disasm(md, before, 0):
+        last = ins
+    return last is not None and last.address < size and last.address + last.size == len(before)
 
 
 def units(functions: list[Function]) -> dict[str, list[Function]]:
@@ -558,6 +656,130 @@ def units(functions: list[Function]) -> dict[str, list[Function]]:
     if cur:
         out[f"text_{cur[0].addr:08X}"] = cur
     return out
+
+
+def _entry(pe: PE, f: Function) -> dict:
+    """A function as functions.json keeps it (tools/delink.py cuts it out of the program by its offset)."""
+    return {"name": f.name, "addr": f.addr, "offset": pe.offset(f.addr), "size": f.size,
+            "relocs": [list(r) for r in f.relocs]}
+
+
+def _project_functions(root: Path, version: str) -> tuple[Path, dict, PE, list[Function]]:
+    """A project's functions.json, what it holds, the program and its functions in address order, each with its
+    source file."""
+    path = root / "config" / version / "functions.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    pe = read_pe((root / info["exe"]).read_bytes())
+    functions = sorted((Function(fn["addr"], fn["size"], fn["name"], [tuple(r) for r in fn["relocs"]], unit)
+                        for unit, fns in info["units"].items() for fn in fns), key=lambda f: f.addr)
+    return path, info, pe, functions
+
+
+def _save_functions(path: Path, info: dict, pe: PE, functions: list[Function]) -> None:
+    """functions.json with these functions, each in its source file, the files in their order."""
+    grouped: dict[str, list[dict]] = {u: [] for u in info["units"]}
+    for f in functions:
+        grouped[f.unit].append(_entry(pe, f))
+    path.write_text(json.dumps({**info, "units": grouped}, indent=1), encoding="utf-8")
+
+
+def _c_of(root: Path, info: dict, f: Function) -> bool:
+    """Whether the C in f's source file defines it (func_0041B470, however it's spelled, or its real name)."""
+    cpp = root / "src" / "auto" / f"{f.unit}.cpp"
+    source = cpp if cpp.exists() or not cpp.with_suffix(".c").exists() else cpp.with_suffix(".c")
+    text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
+    key = f"func_{f.addr:08X}"
+    return any(re.search(rf"\b{re.escape(n)}\s*\([^;{{]*\)\s*\{{", text)
+               for n in (key, (info.get("names") or {}).get(key)) if n)
+
+
+def drop_repeated_relocations(root: Path, version: str) -> int:
+    """A project made before analyse stopped a jump table where the next one starts has the second table's entries
+    relocated twice (in 23 functions of a PC game): the code rebuilt from its objects had them doubled, so its
+    rebuild check could never pass. Drops the repeats from functions.json; returns how many functions had them."""
+    path = root / "config" / version / "functions.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    repeated = 0
+    for fns in info["units"].values():
+        for fn in fns:
+            once = [list(r) for r in dict.fromkeys(tuple(r) for r in fn["relocs"])]
+            repeated += len(once) != len(fn["relocs"])
+            fn["relocs"] = once
+    if repeated:
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return repeated
+
+
+def complete_last_instructions(root: Path, version: str, keep: set[str] = frozenset()) -> int:
+    """A project made before analyse kept the zero bytes a function found in a gap ends with (`ret 8` is c2 08 00,
+    a `jmp` forward has zeros too) has functions ending in the middle of their last instruction (on a PC game 465 of
+    11,877), which no C can match. Each gets the rest of that instruction, and the padding after it, as analyse
+    gives them now; not one ending in data (a jump table), nor a matched one (`keep`). Returns how many grew."""
+    path, info, pe, functions = _project_functions(root, version)
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    names = {f.addr: f.name for f in functions}
+    grown = 0
+    for k, f in enumerate(functions):
+        sec = pe.section_at(f.addr)
+        end = f.addr + f.size
+        limit = min(functions[k + 1].addr if k + 1 < len(functions) else end, sec.va + sec.size if sec else end)
+        if f.name in keep or limit <= end or _tables(md, pe, f.addr, end, end)[:2] != (end, end):
+            continue
+        last = None
+        for ins in _disasm(md, pe.read(f.addr, limit - f.addr), f.addr):
+            if ins.address >= end:
+                break
+            last = ins
+        if last is None or last.address + last.size <= end:
+            continue  # it ends on an instruction, or its code doesn't read as instructions
+        whole = last.address + last.size
+        if not pe.read(whole, limit - whole).strip(b"\x90"):
+            whole = limit  # Visual C++ 6's padding after it, as analyse takes it
+        functions[k] = join(pe, [Function(f.addr, whole - f.addr, f.name, f.relocs, f.unit)], names)
+        grown += 1
+    if grown:
+        _save_functions(path, info, pe, functions)
+    return grown
+
+
+def merge_project_pieces(root: Path, version: str, keep: set[str] = frozenset(), log=print) -> dict[str, list[str]]:
+    """merge_pieces on a project made before it: its functions.json changes, nothing else (each function keeps its
+    source file; a piece first in its file moves to the file before only when no C there defines it). Returns each
+    function that grew, with the pieces it took."""
+    path, info, pe, functions = _project_functions(root, version)
+    out, joined = merge_pieces(pe, functions, keep, movable=lambda part: not _c_of(root, info, part), log=log)
+    if joined:
+        _save_functions(path, info, pe, out)
+    return joined
+
+
+def join_functions(root: Path, version: str, first: str, last: str, keep: set[str] = frozenset()) -> str:
+    """Make one function of `first`, `last` and every function between them: what agents agreed Ghidra cut (join, as
+    merge_pieces does). Across source files, the later files' part moves to the first one's, when their C doesn't
+    define what moves and each keeps some code. Never a matched function (`keep`). Returns what changed, as a
+    sentence."""
+    path, info, pe, functions = _project_functions(root, version)
+    at = {f.name: k for k, f in enumerate(functions)}
+    if first not in at or last not in at:
+        raise ForkError(f"{first if first not in at else last} isn't one of the game's functions")
+    lo, hi = sorted((at[first], at[last]))
+    parts = functions[lo:hi + 1]
+    if lo == hi:
+        raise ForkError(f"{first} and {last} must be two functions")
+    if bad := [f.name for f in parts if f.name in keep]:
+        raise ForkError(f"{bad[0]} is matched: joining would change it, so the join is refused")
+    moved = [f for f in parts if f.unit != parts[0].unit]
+    for f in moved:
+        if all(g in parts for g in functions if g.unit == f.unit):
+            raise ForkError(f"{f.unit} would be left with no code: join only part of it")
+        if _c_of(root, info, f):
+            raise ForkError(f"{f.unit} has C for {f.name}: move it to {parts[0].unit} first")
+    whole = join(pe, parts, {f.addr: f.name for f in functions})
+    _save_functions(path, info, pe, [*functions[:lo], whole, *functions[hi + 1:]])
+    files = sorted({f.unit for f in moved})
+    return (f"{', '.join(f.name for f in parts[1:])} joined to {parts[0].name}"
+            + (f" (moved from {', '.join(files)})" if files else ""))
 
 
 # ---------------------------------------------------------------------------------------------------- the project
@@ -679,6 +901,93 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
     return "\n".join(out)
 
 
+# a COFF object (tools/delink.py writes them): its header, section headers, symbols and relocations
+COFF_HEADER = "<HHIIIHH"  # machine, sections, time, symbol table at, symbols, optional header bytes, flags
+COFF_HEADER_BYTES, COFF_SECTION_BYTES, COFF_SYMBOL_BYTES, COFF_RELOC_BYTES = 20, 40, 18, 10
+CODE_SHOWN = 5  # functions a rebuild that differs names
+
+
+def _coff_sections(obj: bytes) -> list[tuple[str, bytes, list[tuple[int, str, int, int]]]]:
+    """Each section of a COFF object as (its function's symbol, its bytes, its relocations as (offset, symbol,
+    section of a local label or 0, the label's value)), as tools/delink.py writes them: a section per function, its
+    symbol the first one defined in it."""
+    _, count, _, table, symbols, _, _ = struct.unpack_from(COFF_HEADER, obj, 0)
+    strings = table + COFF_SYMBOL_BYTES * symbols
+    syms, k = [], 0
+    while k < symbols:
+        raw, value, section, _, _, aux = struct.unpack_from("<8sIhHBB", obj, table + COFF_SYMBOL_BYTES * k)
+        if raw[:4] == b"\0\0\0\0":
+            at = strings + struct.unpack_from("<I", raw, 4)[0]
+            raw = obj[at:obj.index(b"\0", at)]
+        syms.append((raw.rstrip(b"\0").decode("latin-1"), value, section))
+        syms.extend([("", 0, 0)] * aux)
+        k += 1 + aux
+    out = []
+    for i in range(count):
+        _, _, _, size, data, relocs, _, nrelocs, _, _ = struct.unpack_from(
+            "<8sIIIIIIHHI", obj, COFF_HEADER_BYTES + COFF_SECTION_BYTES * i)
+        owner = next((name for name, value, section in syms if section == i + 1 and not name.startswith("$")), "")
+        rel = []
+        for r in range(nrelocs):
+            off, index, kind = struct.unpack_from("<IIH", obj, relocs + COFF_RELOC_BYTES * r)
+            name, value, section = syms[index]
+            rel.append((off, kind, name, section, value))
+        out.append((owner, obj[data:data + size], rel))
+    return out
+
+
+def check_code(root: Path, version: str, log=print) -> dict:
+    """The rebuild check of a PC project: the program's code rebuilt from the build's delinked objects (each function
+    placed at its address, every relocation filled in with the address its symbol names) compared with the user's
+    copy, byte for byte: {"identical", "detail", "what"}. There's no relink of the whole .exe yet, so this is what a
+    change to the project's functions (a join) is checked against: a function cut too long or too short, or a
+    relocation to the wrong place, comes out different."""
+    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    pe = read_pe((root / info["exe"]).read_bytes())
+    where = {fn["name"]: fn["addr"] for fns in info["units"].values() for fn in fns}
+    where.update({f"__imp__{name}": slot for slot, name in pe.imports.items()})
+    placed, differ = [], []
+    for unit in info["units"]:
+        obj = root / "build" / version / "target" / f"{unit}.obj"
+        if not obj.is_file():
+            differ.append(f"{unit} (no object: the build didn't make it)")
+            continue
+        sections = _coff_sections(obj.read_bytes())
+        starts = [where.get(name) for name, _, _ in sections]
+        for (name, data, relocs), start in zip(sections, starts):
+            if start is None:
+                differ.append(f"{name} (not in functions.json)")
+                continue
+            code = bytearray(data)
+            for off, kind, symbol, section, value in relocs:
+                data_name = _DATA_SYMBOL.fullmatch(symbol)
+                if section > 0:  # a label in its own object ($L, a jump table's entry)
+                    target = None if starts[section - 1] is None else starts[section - 1] + value
+                else:
+                    target = where.get(symbol, int(data_name.group(1), 16) if data_name else None)
+                if target is None:
+                    differ.append(f"{name} (refers to {symbol}, which names no address)")
+                    break
+                inline = struct.unpack_from("<i", code, off)[0]
+                address = target + inline - (start + off + 4 if kind == REL32 else 0)
+                struct.pack_into("<I", code, off, address & 0xFFFFFFFF)
+            else:
+                if bytes(code) != pe.read(start, len(code)):
+                    differ.append(name)
+                placed.append((start, len(code), name))
+    placed.sort()
+    differ += [f"{b[2]} (overlaps {a[2]})" for a, b in zip(placed, placed[1:]) if b[0] < a[0] + a[1]]
+    if differ:
+        detail = (f"{len(differ)} functions rebuilt from the delinked objects differ from your copy: "
+                  f"{', '.join(differ[:CODE_SHOWN])}{'…' if len(differ) > CODE_SHOWN else ''}")
+        log(f"note: {detail}")
+        return {"identical": False, "detail": detail}
+    covered = sum(size for _, size, _ in placed)
+    log(f"the game's code rebuilt from its {len(placed):,} delinked functions is your copy's, byte for byte")
+    return {"identical": True, "detail": f"identical: the code of its {len(placed):,} functions ({covered:,} bytes)",
+            "what": "The game's code, rebuilt from its delinked functions,"}
+
+
 def _run(cmd: list[str], root: Path, what: str, log) -> None:
     ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS)
     if not ok:
@@ -714,7 +1023,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
                                         "shows none: decompdecomp never unpacks or gets around protection"])[0]
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    functions = analyse(pe, found)
+    functions, _ = merge_pieces(pe, analyse(pe, found), log=log)
     groups = units(functions)
     log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
 
@@ -734,8 +1043,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
-        "units": {u: [{"name": f.name, "addr": f.addr, "offset": pe.offset(f.addr), "size": f.size,
-                       "relocs": [list(r) for r in f.relocs]} for f in fns] for u, fns in groups.items()},
+        "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
     }, indent=1), encoding="utf-8")
     for u, fns in groups.items():
         src = root / "src" / "auto" / f"{u}.cpp"  # C++, as PC games of the time were written (C compiles too)
@@ -750,11 +1058,14 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         _run(cmd, root, "the first build", log)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
+    rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
+        "analysis": 3,  # (WindowsPC.ANALYSIS: nothing to repair, its pieces of functions joined already)
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
+        "rebuild": rebuild,
     }, indent=2), encoding="utf-8")
     (root / ".gitignore").write_text("# made from your copy of the game, or by the build\norig/\nbuild/\nbuild.ninja\n"
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
