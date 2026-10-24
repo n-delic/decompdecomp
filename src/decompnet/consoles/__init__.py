@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console`
+consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
 console names. A person or an agent working on PS2 support reads consoles/ps2/ and this file, nothing else.
@@ -7,7 +7,7 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1 and PS2.
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2 and PSP.
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
   project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC and DS.
@@ -79,6 +79,9 @@ class Console:
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
+    # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
+    # create_config reads ELF programs as PS2 ones: rom/split.py)
+    splat_platform = ""
     image_ext = ".bin"
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n'
 
@@ -143,6 +146,13 @@ class Console:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
         return image
+
+    def export_asm(self, text: str) -> str:
+        """ROM mode's export: a file of spimdisasm's assembly as GNU as reads it. What it can't read as spimdisasm
+        writes it (coprocessor 2's instructions) becomes the raw words it is."""
+        from ..arch.mips import raw_cop2  # (splat's consoles are MIPS)
+
+        return raw_cop2(text, self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
         """$gp as the game sets it, when splat didn't say (0: the game keeps no data $gp-relative)."""
@@ -304,11 +314,12 @@ def _registry() -> list[Console]:
     from .pc import PC
     from .ps1 import PS1
     from .ps2 import PS2
+    from .psp import PSP
     from .public import PUBLIC_ONLY
 
-    # the order sniff is asked in: a file is the first console's that says it's its own (the PS1 before the PS2,
-    # whose sniff takes any ISO 9660 disc)
-    return [N64, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
+    # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF)
+    return [N64, PSP, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

@@ -125,6 +125,22 @@ def test_globals_and_what_they_point_to():
     assert found.type_of((structs.GLOBAL, READ)) is None
 
 
+def test_an_element_handed_on_after_the_loops_step_and_epilogue_is_the_arrays_type():
+    """GCC 3.3 (the PSP's) lays a loop out as test, step (in the branch's delay slot), epilogue and return, then the
+    body that hands the element on: in address order the pointer has moved a struct along, and the epilogue has
+    given s0 back its caller's value, before the call. The element is still the global array's type."""
+    array = 0x500000
+    loop = (0x400000, code(i(SW, SP, S0, 0), i(LUI, 0, S0, 0x50), i(ADDIU, S0, S0, 0),
+                           i(LHU, S0, V0, 2), i(BNE, V0, ZERO, 6), NOP,  # an active element: to the body
+                           i(BNE, V1, ZERO, -4), i(ADDIU, S0, S0, 0x1C),  # the next element, in the delay slot
+                           i(LW, SP, S0, 0), JR_RA, NOP,
+                           move(A0, S0), jal(READ), NOP, JR_RA, NOP),
+            [[8, LO16, array], [48, mips_fields.R_MIPS_26, READ]])
+    found = recover(FUNCTIONS[:1] + [loop])
+    assert found.type_of((structs.GLOBAL, array)) == found.type_of((structs.ARGUMENT, READ, 0))
+    assert fields(found, (structs.GLOBAL, array))[2] == ("u16", 1)
+
+
 def test_an_element_of_a_global_array_reached_by_an_index_is_the_arrays_type():
     """PSY-Q's GCC 2.7.2 walks an array of structs as base + index (`addu s0, s1, v0`), where EE-GCC moves a pointer
     along: the element handed to a callee is still the global's type. An argument indexed so (p->items[i]) is still
