@@ -596,3 +596,27 @@ def test_each_psp_compiler_builds_c(toolchain):
     assert result.ok, result.log
     elf = _elffile(result.obj)
     assert elf["e_machine"] == "EM_MIPS" and elf.little_endian
+
+
+@pytest.mark.skipif(any(toolchains.installed(t) is None for t in PSP.demo_tools), reason="needs the PSP demo's tools")
+def test_a_disc_with_a_second_module_imports_and_its_export_rebuilds_both_byte_for_byte(tmp_path):
+    """The demo's module twice on one disc (it has no module info, so no name to tell a copy of the main program by):
+    the copy is a segment of its own at the next free page, its functions are the main program's again there, and the
+    export rebuilds the whole image."""
+    import subprocess
+    import sys
+
+    from decompnet.app.engine import RomNetwork
+
+    if not (DEMO / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    main = (DEMO / "build" / "BOOT.BIN").read_bytes()
+    (tmp_path / "game.iso").write_bytes(_iso({"PSP_GAME/PARAM.SFO": _sfo(PARAMS), "PSP_GAME/SYSDIR/BOOT.BIN": main,
+                                              "PSP_GAME/USRDIR/COPY.PRX": main}))
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(tmp_path / "game.iso", confirmed=True, log=lambda *_: None)
+    pid = net.project_row(slug)["id"]
+    units = [r["unit"] for r in net.store.all("SELECT unit FROM functions WHERE project_id=?", pid)]
+    assert units.count("ovl_copy") > 15 and len([u for u in units if not u.startswith("ovl_")]) == units.count("ovl_copy")
+    res = net.export_rom(slug, log=lambda *_: None)
+    assert res["identical"], res.get("log")

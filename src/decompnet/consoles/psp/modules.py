@@ -64,7 +64,7 @@ def find(image, main: bytes) -> tuple[list[Module], list[tuple[str, str]]]:
             continue
         data = image.read(lba, size)
         try:
-            if not prx.is_psp_elf(data) or prx.module_name(data) == main_name:  # (a debug build of the main program)
+            if not prx.is_psp_elf(data) or main_name and prx.module_name(data) == main_name:  # (a debug build of it)
                 continue
             base = -(-end // PAGE) * PAGE
             program = prx.relocate(data, base)

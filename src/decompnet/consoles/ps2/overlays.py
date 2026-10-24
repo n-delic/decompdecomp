@@ -188,7 +188,10 @@ def add_to_config(config: Path, workdir: Path, image: str, found: list[tuple[str
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
     segs = list(cfg["segments"])
     if segs and isinstance(segs[-1], list) and len(segs[-1]) == 1:
-        segs.pop()  # the image's old end: the overlays go after it (its padding entries stay: split._starts_by_address)
+        # the image's old end: the overlays go after it, its padding a segment of padding (as split._starts_by_address
+        # writes them). Dropped, the program's last section ran on over that padding into the addresses its .bss starts
+        # at, and the export's link found the .bss's first symbols defined twice
+        segs[-1] = [segs[-1][0], "pad"]
     for name, code, vram, code_at, *sections in found:
         data += bytes(-len(data) % 0x10 + 0x10)
         start = len(data)
