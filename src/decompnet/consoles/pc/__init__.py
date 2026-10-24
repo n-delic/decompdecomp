@@ -38,7 +38,7 @@ class WindowsPC(Console):
     layout = "Ghidra + objdiff"
     compilers = tuple(Compiler(v, f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}") for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
-             ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 500 MB)"),
+             ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 600 MB)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
     guides = ("x86", "cpp")
     compiler_guide = "x86"

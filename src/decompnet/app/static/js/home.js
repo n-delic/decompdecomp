@@ -107,7 +107,7 @@ const CW_PACK = {
   mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
-    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. A game of 2005 or later needs Visual C++ 2005, 2008 and 2010 too (about 600 MB), installed in Setup. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
@@ -166,7 +166,7 @@ function notSupported(head, file) {
   if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
     const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
     const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
-    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2005 to 2015 compilers (see the roadmap, Newer Windows games).";
+    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2012 to 2015 compilers (see the roadmap, Newer Windows games).";
     if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
     return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
   }

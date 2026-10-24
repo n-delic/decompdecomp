@@ -334,7 +334,7 @@ class Build:
         out = []
         if self.machine != X86:
             out.append(f"it's a {self.machine} program, and decompdecomp starts PC games from 32-bit x86 ones for now "
-                       "(64-bit games come after Visual C++ 2005 to 2015: ROADMAP.md, Newer Windows games)")
+                       "(64-bit games come after Visual C++ 2012 to 2015: ROADMAP.md, Newer Windows games)")
         if self.packed:
             out.append(f"it's compressed with {self.wrapper}, so its code only appears when it runs, and decompdecomp "
                        "reads a program as it is on disk")
