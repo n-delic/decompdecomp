@@ -19,6 +19,7 @@ game in projects/, add it to CONSOLES below, and make tests/test_consoles.py pas
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -212,6 +213,19 @@ class Console:
         (ForkEngine.rename_symbol does the source files and checks the rebuild). Returns each config file changed,
         with what it held before."""
         raise RomError(f"{self.name} projects can't rename the game's symbols yet: name things in comments meanwhile")
+
+    # rename_symbol's new name is the one objdiff's report gives the function from then on (False: the report keeps
+    # the original's symbol, and the real name is real_names')
+    renames_in_report = True
+
+    def real_names(self, fp, version: str) -> dict[str, str]:
+        """The report's name of a function (the original's symbol, renames_in_report False) -> the real name
+        rename_symbol gave it: how its source spells it now."""
+        return {}
+
+    def rename_pattern(self, old: str) -> str:
+        """A regex for how source files spell `old`, which rename_symbol replaces with the new name."""
+        return rf"\b{re.escape(old)}\b"
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         """Divide `source` (relative to the project) at function `at` (its symbol) in the project's config: its code
