@@ -27,9 +27,9 @@ def test_only_blocks_follow_the_platform():
 
 def test_a_pc_projects_up_front_guides_have_no_gamecube_material_and_gamecubes_no_x86():
     pc = tools.up_front("pc", "fork", "")
-    for word in ("split_file", "func_8001234", "s32", "REL/", 'asm("r4")', "<!--"):
+    for word in (".rodata:0x88", "func_8001234", "s32", "REL/", 'asm("r4")', "<!--"):
         assert word not in pc, word
-    assert "D_00402034" in pc  # its own placeholder names
+    assert "D_00402034" in pc and "split_file(path, at, new_name)" in pc  # its own placeholder names, its own split
     gc = tools.up_front("gc", "fork", "")
     assert "split_file" in gc and "func_8001234" in gc
     for word in ("ret N", "__thiscall", "D_00402034", "<!--"):
@@ -37,6 +37,6 @@ def test_a_pc_projects_up_front_guides_have_no_gamecube_material_and_gamecubes_n
 
 
 def test_the_guide_tool_reads_the_projects_platform():
-    assert "split_file" not in tools.guide_text("fork", "pc")
-    assert "split_file" in tools.guide_text("fork")  # no project: all of it
+    assert "split_file(path, at, new_name, data)" not in tools.guide_text("fork", "pc")  # (GameCube's, with data)
+    assert "split_file(path, at, new_name, data)" in tools.guide_text("fork")  # no project: all of it
     assert "lwc1" not in tools.guide_text("cpp", "pc") and "lwc1" in tools.guide_text("cpp", "n64")

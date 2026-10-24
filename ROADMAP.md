@@ -32,7 +32,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | the project's build | per source file (`try_compiler`, Settings) | the project's build |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
@@ -61,10 +61,7 @@ Where to start on a gap:
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a
   change to names.py (as constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade
-  step is missing (a step of `WindowsPC.on_start`'s, as the DS has). `split_file` and a compiler per source file
-  (`try_compiler`) need the console's `split_source` and `set_file_compiler`: a unit of functions.json and its file,
-  and a compiler per file where configure.py has one `MSVC_VERSION`; the rebuild check (`scratch.check_code`) can
-  check a split now.
+  step is missing (a step of `WindowsPC.on_start`'s, as the DS has).
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -75,6 +72,12 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC: `split_file`, and a compiler per source file.** A PC project's source files are runs of about 4 KiB
+  of functions, so one can span two of the game's files, or two compilers (a game's Rich header often counts objects
+  of Visual C++ 6.0 and 7.1). `split_file` divides one (`WindowsPC.split_source`: a unit of functions.json), kept
+  only when the rebuild check stays identical and every match holds; each file can have its own Visual C++
+  (`config/<version>/file_compilers.json`, which tools/configure.py reads), switched by `try_compiler` and the
+  Settings panel as on the DS. On the demo, a file whose matched function 7.1 compiles otherwise stays with 6.0.
 - **Newer PC games get source files of many functions.** From Visual C++ 2005 on, the linker aligns every function
   to 16 bytes with int3, and the import ended a source file at any gap between functions: a 2005 game got 19,028
   source files for its 20,863 functions, and a first build of 20 minutes. A gap that is only the padding the program's

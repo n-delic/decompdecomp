@@ -812,8 +812,7 @@ def _save_functions(path: Path, info: dict, pe: PE, functions: list[Function]) -
 
 def _c_of(root: Path, info: dict, f: Function) -> bool:
     """Whether the C in f's source file defines it (func_0041B470, however it's spelled, or its real name)."""
-    cpp = root / "src" / "auto" / f"{f.unit}.cpp"
-    source = cpp if cpp.exists() or not cpp.with_suffix(".c").exists() else cpp.with_suffix(".c")
+    source = root / _source(root, f.unit)
     text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
     key = f"func_{f.addr:08X}"
     return any(re.search(rf"\b{re.escape(n)}\s*\([^;{{]*\)\s*\{{", text)
@@ -933,6 +932,96 @@ def join_functions(root: Path, version: str, first: str, last: str, keep: set[st
     files = sorted({f.unit for f in moved})
     return (f"{', '.join(f.name for f in parts[1:])} joined to {parts[0].name}"
             + (f" (moved from {', '.join(files)})" if files else ""))
+
+
+def _source(root: Path, unit: str) -> str:
+    """A unit's source file, as configure.py's source_of names it: .cpp, or .c in projects made before C++."""
+    cpp = Path("src") / "auto" / f"{unit}.cpp"
+    return cpp.as_posix() if (root / cpp).exists() or not (root / cpp).with_suffix(".c").exists() \
+        else cpp.with_suffix(".c").as_posix()
+
+
+def split_unit(root: Path, version: str, source: str, at: str, new: str) -> dict:
+    """Divide `source`'s unit in functions.json at function `at` (its symbol): it and the functions after it go to
+    `new`'s (src/auto/<unit>.cpp), right after it, with the file's compiler (file_compilers.json). Returns each
+    config file changed, with what it held before."""
+    path = root / "config" / version / "functions.json"
+    text = path.read_text(encoding="utf-8")
+    info = json.loads(text)
+    unit = next((u for u in info["units"] if _source(root, u) == source), None)
+    if unit is None:
+        raise ForkError(f"{source} isn't one of the project's source files")
+    m = re.fullmatch(r"src/auto/([A-Za-z0-9_]+)\.(?:cpp|c)", new)
+    if m is None:
+        raise ForkError(f"{new}: a PC project's source files are src/auto/<name>.cpp (letters, digits, _)")
+    if m.group(1) in info["units"]:
+        raise ForkError(f"{new} exists already: pick another new_name")
+    names = [fn["name"] for fn in info["units"][unit]]
+    if at not in names[1:]:
+        raise ForkError(f"{at} isn't one of {source}'s functions after its first")
+    k = names.index(at)
+    units = {}
+    for u, fns in info["units"].items():
+        units[u] = fns[:k] if u == unit else fns
+        if u == unit:
+            units[m.group(1)] = fns[k:]
+    path.write_text(json.dumps({**info, "units": units}, indent=1), encoding="utf-8")
+    saved = {path: text}
+    compilers = compilers_file(root, version)
+    if source in (own := file_compilers(root, version)):
+        saved[compilers] = compilers.read_text(encoding="utf-8")
+        _write_compilers(compilers, {**own, new: own[source]})
+    return saved
+
+
+def compilers_file(root: Path, version: str) -> Path:
+    return root / "config" / version / "file_compilers.json"
+
+
+def file_compilers(root: Path, version: str) -> dict[str, str]:
+    """{source file: Visual C++ version} for the files not built with the project's own (tools/configure.py reads it)."""
+    try:
+        return json.loads(compilers_file(root, version).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_compilers(path: Path, found: dict[str, str]) -> None:
+    tmp = path.with_suffix(".tmp")  # a build reading it meanwhile sees the old map or the new one, never half
+    tmp.write_text(json.dumps(dict(sorted(found.items())), indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def set_file_compiler(root: Path, version: str, source: str, compiler: str, default: str) -> None:
+    """Build `source` with `compiler` ("MSVC/7.1"); the project's own (`default`) needs no line."""
+    found = file_compilers(root, version)
+    found.pop(source, None)
+    if compiler.removeprefix("MSVC/") != default.removeprefix("MSVC/"):
+        found[source] = compiler.removeprefix("MSVC/")
+    _write_compilers(compilers_file(root, version), found)
+
+
+def file_ranges(root: Path, version: str) -> dict[str, list[tuple[int, int]]]:
+    """{source file: [(start, end)]} of its functions' code, from functions.json."""
+    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    return {_source(root, u): [(fns[0]["addr"], fns[-1]["addr"] + fns[-1]["size"])]
+            for u, fns in info["units"].items() if fns}
+
+
+def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[str]) -> list[str]:
+    """`compiler` ("MSVC/7.1") as the project's own (tools/configure.py's MSVC_VERSION and the manifest's), every
+    source file keeping the version it has: the map then names the files built with another."""
+    version, new = manifest["version"], compiler.removeprefix("MSVC/")
+    found = file_compilers(root, version)
+    old = manifest.get("compiler", f"MSVC/{MSVC_DEFAULT}").removeprefix("MSVC/")
+    has = {s: found.get(s, old) for s in sources}
+    path = compilers_file(root, version)
+    _write_compilers(path, {s: v for s, v in has.items() if v != new})
+    cfg = root / "tools" / "configure.py"
+    cfg.write_text(re.sub(r'^MSVC_VERSION = "[^"]*"', f'MSVC_VERSION = "{new}"', cfg.read_text(encoding="utf-8"),
+                          count=1, flags=re.M), encoding="utf-8")
+    (root / ".decomp.wtf.json").write_text(json.dumps({**manifest, "compiler": compiler}, indent=2), encoding="utf-8")
+    return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
 
 
 # ---------------------------------------------------------------------------------------------------- the project
@@ -1201,6 +1290,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
         "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
     }, indent=1), encoding="utf-8")
+    compilers_file(root, version).write_text("{}\n", encoding="utf-8")  # (every file with the project's own, so far)
     if stubs := mark_exception_stubs(root, version):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
     for u, fns in groups.items():
@@ -1237,8 +1327,9 @@ copy of its program and compared with what `src/` compiles to, function by funct
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
 
 Compiler: Visual C++ {compiler} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built
-with another version or other flags). `config/{version}/functions.json` holds what the analysis found: every
-function's address, size, symbol and relocations.
+with another version or other flags; `config/{version}/file_compilers.json` names the files built with another
+version). `config/{version}/functions.json` holds what the analysis found: every function's address, size, symbol
+and relocations, by source file.
 """, encoding="utf-8")
     if shutil.which("git"):
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],

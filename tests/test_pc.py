@@ -21,6 +21,7 @@ from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
 from decompnet.forks.project import ForkError, ForkProject
+from decompnet.network import NetworkError
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -90,6 +91,20 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     monkeypatch.setenv("DECOMP_TEST_CL_FAIL", "1")
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert not ok and not obj.with_suffix(".named").exists(), output
+    # a file of its own compiler (file_compilers.json): the build follows the map as it changes
+    monkeypatch.delenv("DECOMP_TEST_CL_FAIL")
+    shutil.copytree(compiler_root / "6.0", compiler_root / "7.1")
+    compilers = config.with_name("file_compilers.json")
+    compilers.write_text("{}\n")
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
+                   check=True, capture_output=True, timeout=30)
+    compilers.write_text(json.dumps({"src/auto/sample.cpp": "7.1"}))
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    assert "/I" + str(compiler_root / "7.1/Include") in record.read_text(encoding="utf-8-sig").splitlines()
+    compilers.write_text(json.dumps({"src/auto/sample.cpp": "9.9"}))
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert not ok and "Visual C++ 9.9 isn't in" in output, output
 
 
 def _template_tool(name: str):
@@ -326,6 +341,19 @@ def _map() -> dict[str, int]:
             for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", MAP.read_text(), re.M)}
 
 
+def _addresses() -> dict[str, str]:
+    """The demo's C names -> the project's (func_<address>, D_<address>)."""
+    return {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
+            for s, a in _map().items() if not s.startswith("??") and s != "__fltused"}
+
+
+def _by_address():
+    """The demo's C, written with the project's names."""
+    rename = _addresses()
+    pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
+    return lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
+
+
 @pytest.fixture(scope="module")
 def pc(tmp_path_factory):
     from decompnet.app.engine import RomNetwork
@@ -363,10 +391,8 @@ def test_agents_match_functions(pc):
     syms = _map()
     agent, _ = net.local_agent("pc-agent")
     header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
-    rename = {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
-              for s, a in syms.items() if not s.startswith("??") and s != "__fltused"}
-    pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
-    sub = lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
+    rename = _addresses()
+    sub = _by_address()
     header += "extern s32 g_settings[6];\n"
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
     source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
@@ -427,6 +453,35 @@ def test_agents_match_functions(pc):
     net.release(agent, other, "", slug)
     root = Path(net.project_row(slug)["root"])
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
+
+
+@needs_tools
+def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
+    """split_file on PC divides a source file (the rebuild still identical, every match holding), and each file can
+    have its own Visual C++: chosen in Settings only when its matches hold (a file whose matched function Visual C++
+    7.1 compiles otherwise stays with 6.0), switched by try_compiler when a function matches with another one."""
+    net, slug = pc
+    agent, _ = net.local_agent("pc-agent")
+    root = Path(net.project_row(slug)["root"])
+    syms = _map()
+    assert net.forks.split_file(agent, slug, "src/auto/text_00401000.cpp",
+                                f"_func_{syms['_clamp_s32']:08X}").startswith("✅ src/auto/text_00401000.cpp is divided")
+    assert net.overview(slug)["rebuild"]["identical"]
+    second = f"src/auto/text_{syms['_clamp_s32']:08X}.cpp"
+    with pytest.raises(NetworkError, match="stays with MSVC/6.0: .* no longer match"):  # player_take_damage, in it
+        net.forks.set_file_compiler_by_hand(slug, second, "MSVC/7.1")
+    assert net.forks.split_file(agent, slug, second, f"_func_{syms['_entity_spawn']:08X}").startswith("✅")
+    last = f"src/auto/text_{syms['_entity_spawn']:08X}.cpp"
+    net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")  # (nothing in it matches yet)
+    assert scratch_pe.file_compilers(root, "demoquest") == {last: "7.1"}
+    assert "each source file can have its own compiler" in net.forks.info(slug)
+    adder = f"_func_{syms['_add_score']:08X}"
+    sub = _by_address()
+    said = net.forks.try_compiler(agent, slug, adder, "MSVC/6.0", source=sub(csource.get(GAME.read_text(), "add_score")))
+    assert f"{last} is built with MSVC/6.0 from now on" in said, said
+    assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert f"Build {last} with MSVC/6.0" in log and f"Split text_{syms['_clamp_s32']:08X}.cpp" in log
 
 
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
@@ -734,6 +789,68 @@ def test_agents_join_two_functions_by_their_names(tmp_path):
     assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
     with pytest.raises(ForkError, match="isn't one of the game's functions"):
         scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401020")
+
+
+def _one_file(root: Path) -> None:
+    """The hand-made project's functions all in one source file, text_00401000."""
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"] = {"text_00401000": [fn for fns in info["units"].values() for fn in fns]}
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    for path in (root / "src" / "auto").glob("*.cpp"):
+        if path.stem != "text_00401000":
+            path.unlink()
+
+
+def test_a_source_file_is_divided_at_a_function_and_keeps_its_compiler(tmp_path):
+    """split_file on PC: the file's unit in functions.json ends where the function starts, and a new one, right after
+    it, holds the rest, built with the file's compiler; the code still rebuilds byte for byte."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    _one_file(root)
+    source, new = "src/auto/text_00401000.cpp", "src/auto/text_00401020.cpp"
+    compilers = scratch_pe.compilers_file(root, "game")
+    compilers.write_text(json.dumps({source: "7.1"}))
+    for at, name, why in (("_func_00401000", new, "after its first"), ("_func_0040FFFF", new, "after its first"),
+                          ("_func_00401020", "src/game/b.cpp", "src/auto/<name>.cpp"),
+                          ("_func_00401020", source, "exists already")):
+        with pytest.raises(ForkError, match=re.escape(why)):
+            scratch_pe.split_unit(root, "game", source, at, name)
+    with pytest.raises(ForkError, match="isn't one of the project's source files"):
+        scratch_pe.split_unit(root, "game", "src/auto/nope.cpp", "_func_00401020", new)
+    config = root / "config" / "game" / "functions.json"
+    before = config.read_text()
+    saved = scratch_pe.split_unit(root, "game", source, "_func_00401020", new)
+    assert saved == {config: before, compilers: json.dumps({source: "7.1"})}
+    units = json.loads(config.read_text())["units"]
+    assert {u: [fn["name"] for fn in fns] for u, fns in units.items()} == {
+        "text_00401000": ["_func_00401000", "_func_0040100F"], "text_00401020": ["_func_00401020"]}
+    assert scratch_pe.file_compilers(root, "game") == {source: "7.1", new: "7.1"}
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+def test_each_pc_source_file_can_have_its_own_visual_cpp(tmp_path):
+    """file_compiler, set_file_compiler, file_ranges and set_own_compiler on a PC project: what try_compiler and the
+    Settings panel's compiler per file stand on. A project whose configure.py reads no map has none."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    pc = consoles.get("pc")
+    manifest = {"created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0"}
+    (root / ".decomp.wtf.json").write_text(json.dumps(manifest))
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    fp = ForkProject(root)
+    first = "src/auto/text_00401000.cpp"
+    assert pc.file_compiler(fp, first) is None  # (made before: no map)
+    scratch_pe.compilers_file(root, "game").write_text("{}\n")
+    assert pc.file_compiler(fp, first) == pc.file_compiler(fp, "") == "MSVC/6.0"
+    assert pc.set_file_compiler(fp, first, "MSVC/7.1") == "config/game/file_compilers.json"
+    assert pc.file_compiler(fp, first) == "MSVC/7.1" and pc.file_compiler(fp, "src/auto/text_0040100F.cpp") == "MSVC/6.0"
+    assert pc.file_ranges(fp)[first] == [(0x401000, 0x40100F)]
+    sources = sorted(pc.file_ranges(fp))
+    changed = pc.set_own_compiler(fp, "MSVC/7.1", sources)
+    assert changed == ["config/game/file_compilers.json", "tools/configure.py", ".decomp.wtf.json"]
+    assert pc.file_compiler(fp, "") == "MSVC/7.1" and 'MSVC_VERSION = "7.1"' in (root / "tools/configure.py").read_text()
+    assert scratch_pe.file_compilers(root, "game") == {s: "6.0" for s in sources if s != first}
+    pc.set_file_compiler(fp, first, "MSVC/7.1")  # the project's own: no line
+    assert first not in scratch_pe.file_compilers(root, "game")
 
 
 def test_only_the_frame_helpers_shapes_set_a_frame():
