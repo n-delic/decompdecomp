@@ -459,7 +459,8 @@ def test_agents_match_functions(pc):
 def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
     """split_file on PC divides a source file (the rebuild still identical, every match holding), and each file can
     have its own Visual C++: chosen in Settings only when its matches hold (a file whose matched function Visual C++
-    7.1 compiles otherwise stays with 6.0), switched by try_compiler when a function matches with another one."""
+    7.1 compiles otherwise stays with 6.0), switched by try_compiler when a function matches with another one. The
+    judge, real names and Check again work on the files it made (AGENTS.md: every feature on the console)."""
     net, slug = pc
     agent, _ = net.local_agent("pc-agent")
     root = Path(net.project_row(slug)["root"])
@@ -482,6 +483,10 @@ def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
     assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert f"Build {last} with MSVC/6.0" in log and f"Split text_{syms['_clamp_s32']:08X}.cpp" in log
+    # its function, in the file split off, takes a real name and still matches; Check again has nothing to bring
+    assert net.rename_symbol(agent, slug, adder, "add_score").startswith("✅")
+    assert net._function("add_score", slug)["status"] == "matched" and "add_score(" in (root / last).read_text()
+    assert net.recheck(slug, log=lambda *_: None) == "nothing new"
 
 
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
