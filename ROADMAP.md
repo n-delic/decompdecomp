@@ -23,7 +23,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
@@ -36,7 +36,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | named by RTTI; no fields yet | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
@@ -52,7 +52,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
-  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0).
+  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). A PC
+  program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
+  fields need x86's `Arch.field_accesses`.
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far:
   Newer Windows games, below, is the plan for 2005 to 2015 and 64-bit.
@@ -75,7 +77,14 @@ Where to start on a gap:
   never removed. 64-bit programs, Visual C++ 2017 and newer (out of scope for now), mostly-/GL games and wrapped ones
   aren't started, each with what it means; 2005 to 2015 games import, told they can't match until their compilers
   come.
-
+- **C++ classes on Windows PC, by their own names.** A program built with `/GR` keeps each polymorphic class's
+  name (`.?AVClassName@@`) next to its vtable, through the RTTI Complete Object Locator. decompdecomp reads it:
+  `get_class` lists the classes (templates and nested names written as C++), each with its vtable, virtual functions,
+  base classes and the functions that store its vtable (constructors, destructors); `get_function` names the class
+  of a virtual function, and Ghidra's draft of a method reads `Class::func_<address>(...)` with `this`. Methods
+  written that way match, and a renamed one still does. A 2008-era game: 1,522 classes, 3,517 methods drafted as
+  `Class::method`; a 2014 rebuild of a 2004 game: 557 classes, 2,940; a game of about 2000 built without `/GR`:
+  only the 34 classes of its MFC library. Fields aren't read from x86 code yet.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
@@ -348,8 +357,10 @@ reports are approved now). Names only: matching is unaffected. It also names the
 
 ### C++ classes for PowerPC and x86
 
-The class recovery reads MIPS today. GameCube and Wii (CodeWarrior: the vtable pointer often isn't at offset 0) and
-Windows PC (MSVC: `this` in ecx) work the same way with their own instruction readers, in fork mode.
+The class recovery reads MIPS today; Windows PC programs built with RTTI have their classes, vtables, bases and
+constructors named from it (done). Left: the fields of PC classes (MSVC: `this` in ecx), the classes of PC programs
+built without RTTI (from the vtables constructors store, as on MIPS), and GameCube and Wii (CodeWarrior: the vtable
+pointer often isn't at offset 0), with their own instruction readers, in fork mode.
 
 ### A modding-ready check for the export
 

@@ -19,7 +19,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | What agents read about a function | `app/engine/briefs.py` |
 | Claims, attempts, the judge's bookkeeping | `app/engine/judging.py`, under it `network.py` |
 | Compilers, ranges, suggestions | `app/engine/compilers.py`; the compiler map `compilermap.py`; range checks `app/rangecheck.py` |
-| C++ classes found in the code | `classes.py` |
+| C++ classes found in the code | `classes.py`; named by a PC program's RTTI: `consoles/pc/rtti.py` (`Console.classes`) |
 | Struct layouts guessed from the code | `structs.py` (the types), `arch/mips_fields.py` (MIPS's reader), `app/engine/layouts.py` (`guess_struct`, the brief's lines) |
 | Free matches | twins `app/twins.py` (also across your games), autopilot `app/engine/autopilot.py`, the permuter `app/permute.py` (and its generator `permuter_gen.py`, run in decomp-permuter's environment; `permuter.py` the simple rewrites without it) |
 | Machine drafts | `seeds.py` (m2c, and C++ methods), drafted in the background by `app/drafts.py`; forks: `forks/drafts.py` |

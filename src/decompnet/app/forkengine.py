@@ -24,7 +24,7 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import arch, consoles, similarity, toolchains
+from .. import arch, classes, consoles, similarity, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
@@ -2175,7 +2175,8 @@ class ForkEngine:
             seed = self._draft(proj, fp, cfg, fn, unit)
             if seed:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
-                          seed.strip(), "```"]
+                          self._method_draft(fp, cfg, fn, seed).strip(), "```"]
+        lines += self._class_brief(fp, cfg, fn)
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         try:
@@ -2261,6 +2262,73 @@ class ForkEngine:
         with self.net.store.tx() as db:
             db.execute("UPDATE functions SET seed=? WHERE id=?", (text or "", fn["id"]))
         return text
+
+    def _classes(self, fp: ForkProject, cfg: dict) -> classes.Classes | None:
+        """The C++ classes the console reads from the project's program (Console.classes), or None."""
+        try:
+            return consoles.get(cfg.get("platform")).classes(fp)
+        except Exception:  # a reading of the program: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("reading the C++ classes failed")
+            return None
+
+    def _class_of(self, fp: ForkProject, cfg: dict, fn) -> tuple[classes.Classes | None, int | None]:
+        """The project's classes and the function's address in them (None: no classes, or not one of theirs)."""
+        found = self._classes(fp, cfg)
+        return found, found.symbols.get(self._meta(fn).get("symbol") or fn["name"]) if found else None
+
+    def _class_brief(self, fp: ForkProject, cfg: dict, fn) -> list[str]:
+        """get_function's lines on the class of a virtual function, constructor or destructor (classes.brief_lines)."""
+        found, addr = self._class_of(fp, cfg, fn)
+        return classes.brief_lines(found, addr, self._class_label(found)) if addr is not None else []
+
+    @staticmethod
+    def _class_label(found: classes.Classes):
+        return lambda addr: found.labels.get(addr, f"0x{addr:08X}")
+
+    def _method_draft(self, fp: ForkProject, cfg: dict, fn, draft: str) -> str:
+        """The machine draft as the brief shows it: where the function is surely a method of one class
+        (classes.owner), as `Class::name(...)` with `this` (the processor's Arch.method_draft); else as made."""
+        rewrite = arch.get(consoles.get(cfg.get("platform")).arch).method_draft
+        if rewrite is None:
+            return draft
+        try:
+            found, addr = self._class_of(fp, cfg, fn)
+            cls, role = classes.owner(found, addr) if addr is not None else (None, "")
+            if cls is None:
+                return draft
+            label = self._class_label(found)
+            symbol = self._meta(fn).get("symbol") or fn["name"]
+            word = re.sub(r"@.*$", "", symbol.lstrip("_@?"))  # the name inside a decorated symbol: the draft's holds it
+            return rewrite(draft, word, label(cls.vtable), label(addr), role, found.found_from) or draft
+        except Exception:  # a way of showing the draft: it never stands between an agent and it
+            logging.getLogger("decompdecomp").exception("showing a draft as a C++ method failed")
+            return draft
+
+    def get_class(self, slug: str, what: str = "") -> str:
+        """get_class in a project: the classes the console reads from its program (PC: RTTI), by class name, vtable
+        address or one of their functions (as the report, func_<address> or a real name spells it)."""
+        _, fp, cfg = self.get(slug)
+        found = self._classes(fp, cfg)
+        if found is None:
+            raise NetworkError(classes.WHERE)
+        label = self._class_label(found)
+        what = what.strip()
+        if not what or not found.by_vtable:
+            return classes.listing(found, label)
+        addr = found.symbols.get(what, next((vt for vt, name in found.names.items() if name == what), None))
+        if addr is None and (m := re.fullmatch(r"(?:0x)?([0-9A-Fa-f]{6,8})", what)):
+            addr = int(m.group(1), 16)
+        if addr is None:
+            try:
+                fn = self._fn(slug, what)
+                addr = found.symbols.get(self._meta(fn).get("symbol") or fn["name"])
+            except NetworkError:
+                pass
+        hits = found.find(addr) if addr is not None else []
+        if not hits:
+            raise NetworkError(f"`{what}` isn't a class, a vtable, or a virtual function, constructor or destructor of "
+                               f"one of the {len(found.by_vtable)} classes found in this game: get_class() lists them")
+        return "\n\n".join(classes.describe(c, found, label, focus=addr) for c in hits[:3])
 
     def claim(self, agent: Agent, slug: str, function: str | None = None, strategy: str = "easiest") -> str:
         if (link := self.net.links.get(slug)) is not None:
