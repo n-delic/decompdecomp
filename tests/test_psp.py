@@ -385,7 +385,22 @@ def test_small_data_is_said_each_compilers_way():
     assert PSP.default_flags("mwccpsp-3.0.1-b219", 0x08900000) == ["-O3", "-sdatathreshold", "8"]
     assert PSP.default_flags("psp-gcc-1.3.1", 0x08900000) == ["-O2", "-G8"]
     assert PSP.default_flags("psp-gcc-1.7.1", 0) == ["-O2", "-G0"]
-    assert PSP.default_flags("pspsnc-1.2.7503", 0x08900000) == ["-O2"]
+    assert PSP.default_flags("pspsnc-1.2.7503", 0x08900000) == ["-O2", "-G8"]
+    assert PSP.default_flags("pspsnc-1.2.7503", 0) == ["-O2", "-G0"]
+
+
+def test_a_program_without_a_note_that_moves_registers_with_or_is_sncs():
+    """SNC leaves no .comment note; its code copies registers with `or rd, rs, $zero` where GCC and CodeWarrior use
+    `addu`. The stubs don't count."""
+    def program(move: int) -> bytes:
+        code = struct.pack("<4I", move, move, 0x03E00008, 0)
+        return _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE, code, 0, 0),
+                     (".sceStub.text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, BASE + 0x10,
+                      struct.pack("<3I", OR_MOVE, OR_MOVE, OR_MOVE), 0, 0)], e_type=ET_EXEC)
+    OR_MOVE, ADDU_MOVE = 0x00801025, 0x00801021  # or v0, a0, $zero; addu v0, a0, $zero
+    assert prx.guess_compiler(program(OR_MOVE)) == "SNC"
+    assert PSP.default_compiler({"compiler_guess": "SNC"}, "") == "pspsnc-1.2.7503"
+    assert prx.guess_compiler(program(ADDU_MOVE)) == "PSPGCC-1.7"
 
 
 def test_vfpu_code_is_set_aside_and_plain_code_isnt():
@@ -480,3 +495,37 @@ def test_each_psp_compiler_builds_c(toolchain):
     assert result.ok, result.log
     elf = _elffile(result.obj)
     assert elf["e_machine"] == "EM_MIPS" and elf.little_endian
+
+
+SNC = "pspsnc-1.2.7503"
+
+
+@pytest.mark.skipif(any(toolchains.installed(t) is None for t in (SNC, "wibo", "psp-gcc-1.3.1", "binutils-mips")),
+                    reason=f"needs {SNC} (proprietary: installed from Setup), wibo, psp-gcc-1.3.1 and binutils-mips")
+def test_the_demo_built_with_snc_is_guessed_matches_and_rebuilds(tmp_path):
+    """No SN-built PSP game is at hand (the readable one is CodeWarrior's): the demo built with SNC stands in. Its
+    import guesses SNC from the code alone, its C matches with SNC's -O2 -G8, and the export rebuilds it."""
+    import subprocess
+    import sys
+
+    from decompnet.app.engine import RomNetwork
+
+    from .test_consoles import FUNCTION, ZLIB, _function
+
+    if not ZLIB.exists():
+        pytest.skip("needs zlib (projects/zlib-n64/prepare.py)")
+    build = DEMO / "build" / SNC
+    if not (build / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), SNC], check=True)
+    assert prx.guess_compiler(prx.relocate((build / "BOOT.BIN").read_bytes())) == "SNC"
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(build / "BOOT.BIN", confirmed=True, log=lambda *_: None)
+    compiler = net.overview(slug)["compiler"]
+    assert (compiler["toolchain"], compiler["flags"]) == (SNC, ["-O2", "-G8"])
+    name, source = _function(net, slug, json.loads((build / "demo.json").read_text())["symbols"], FUNCTION)
+    agent, _ = net.local_agent("snc-agent")
+    net.claim(agent, slug, name)
+    right = net.attempt(agent, name, source, slug)
+    assert right["matched"] and right["score"] == 0, right["text"]
+    res = net.export_rom(slug, log=lambda *_: None)
+    assert res["identical"], res.get("log") or res.get("detail")

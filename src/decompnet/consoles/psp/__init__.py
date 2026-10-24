@@ -12,7 +12,7 @@ unit), Sony's SDK GCC, CodeWarrior and SN Systems' SNC compilers, ROM mode.
 - guides/psp.md: what agents read about matching PSP code.
 
 Its demo game is projects/demo-psp (the Demo Quest game built with the SDK's GCC 1.3.1 at -O2 -G8, at the address a
-main module is loaded at).
+main module is loaded at; `build.py pspsnc-1.2.7503` builds it with SN's SNC).
 
 Not yet (ROADMAP.md): a game's other modules (the PRX files beside its program, loaded later: v1 splits the main
 module only), programs still encrypted (most retail EBOOT.BINs: the user decrypts them first), and compressed disc
@@ -141,13 +141,13 @@ class PlayStationPortable(Console):
         }, False)
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
-        """A game that uses $gp keeps globals up to 8 bytes $gp-relative (GCC's -G8; CodeWarrior's -sdatathreshold
-        8); SNC's own defaults stay."""
+        """A game that uses $gp keeps globals up to 8 bytes $gp-relative (GCC's and SNC's -G8; CodeWarrior's
+        -sdatathreshold 8). SNC's own default is -G0, as GCC's is."""
         flags = super().default_flags(toolchain, gp)
         small = str(SMALL_DATA_BYTES if gp else 0)
         if toolchain.startswith("mwccpsp"):
             return [*flags, "-sdatathreshold", small]
-        if toolchain.startswith("psp-gcc"):
+        if toolchain.startswith(("psp-gcc", "pspsnc")):
             return [f for f in flags if not f.startswith("-G")] + [f"-G{small}"]
         return flags
 

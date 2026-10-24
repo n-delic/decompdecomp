@@ -26,7 +26,7 @@ SHT_NULL, SHT_SYMTAB, SHT_NOBITS, SHT_REL = 0, 2, 8, 9
 SHT_MIPS_DEBUG = 0x70000005  # Metrowerks' linker gives its debug sections' relocations this type
 SHT_PSP_REL = 0x700000A0  # a PRX's relocations of a loaded section
 PT_NULL, PT_LOAD = 0, 1
-SHF_ALLOC = 2
+SHF_ALLOC, SHF_EXECINSTR = 2, 4
 SHN_LORESERVE = 0xFF00
 USER_BASE = 0x08804000  # where the loader puts a game's main module: the start of user memory, past the kernel's part
 R_MIPS_NONE, R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16 = 0, 2, 4, 5, 6, 7
@@ -298,7 +298,6 @@ def comment(program: bytes) -> bytes:
     return program[found.offset:found.offset + found.size] if found is not None else b""
 
 
-
 _GCC_NOTE = re.compile(rb"GCC: \(GNU\) [\d.]+\+allegrex-[\d.]+-psp-(\d+)\.(\d+)")
 SDK_1_7 = (1, 5)  # SDK GCCs from this version on build like 1.7.1's; earlier ones like 1.3.1's
 
@@ -306,11 +305,20 @@ SDK_1_7 = (1, 5)  # SDK GCCs from this version on build like 1.7.1's; earlier on
 def guess_compiler(program: bytes) -> str:
     """Which compiler built the game, from its .comment note: Metrowerks' ("MW MIPS C Compiler (2.4.1.01)", a
     version decomp.me doesn't keep: every CodeWarrior build it has writes 3.0.0, so CodeWarrior 3.0.1's latest build
-    is the guess and the import's compiler test tries the others), or the SDK's GCC with its version. Without a note
-    (SN Systems' SNC leaves none), the SDK's later GCC; the import's test of the installed compilers decides."""
+    is the guess and the import's compiler test tries the others), or the SDK's GCC with its version. SN Systems' SNC
+    leaves no note, but its code copies registers with `or rd, rs, $zero` where GCC and CodeWarrior use `addu` (the
+    demo built with SNC: 682 to 0; with GCC: 0 to 613; a CodeWarrior game: 0 to 11,153): more of those than addu
+    moves is SNC's. Otherwise the SDK's later GCC; the import's test of the installed compilers decides."""
     note = comment(program)
     if b"MW MIPS C Compiler" in note:
         return "MWCCPSP"
     if (found := _GCC_NOTE.search(note)) is not None:
         return "PSPGCC-1.7" if (int(found[1]), int(found[2])) >= SDK_1_7 else "PSPGCC-1.3"
+    if is_elf(program):
+        from ...compilermap import quirks
+
+        habits = quirks(b"".join(program[s.offset:s.offset + s.size] for s in _sections(program)
+                                 if s.flags & SHF_EXECINSTR and s.kind != SHT_NOBITS and s.name != STUB_SECTION), False)
+        if habits["or move"] > habits["addu move"]:
+            return "SNC"
     return "PSPGCC-1.7"
