@@ -26,7 +26,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | — | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | — | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -65,6 +65,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC: exception-handling stubs are out of agents' way.** C++ built with Visual C++'s `/GX` puts the code
+  that destroys a function's local objects during an exception, and its handler, in `.text$x`, which the linker puts
+  after all of the program's code. Ghidra takes each stub for a function, the smallest in the project, so agents were
+  handed them first. The import now sets aside the stubs in the run that ends the code (`scratch.exception_stubs`),
+  with why (functions.json's `generated`); projects made before get that once at start. On a 2000s Visual C++ 6.0
+  game, 4,677 of 11,877 functions, every one in that run and none in the main body or the C runtime. Hand-written
+  assembly on PC isn't recognised yet (x86 has no `asm_reason`).
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
