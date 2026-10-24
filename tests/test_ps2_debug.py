@@ -252,13 +252,7 @@ def test_a_name_too_long_for_a_file_gets_a_short_file_name():
         f"_vt_{long} = 0x00130000; // size:0x20 filename:D_00130000"]
 
 
-def test_dwarf_is_recognised_and_said_to_be_unread():
-    """CodeWarrior's PS2 compiler writes DWARF 1 (.debug); it's not read yet, and the import log says so."""
-    table, strings = _symbols([("main", 0x100000, 8, STB_GLOBAL, STT_FUNC, 1)])
-    data = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0),
-                 (".debug", SHT_PROGBITS, 0, 0, bytes(8), 0), (".symtab", SHT_SYMTAB, 0, 0, table, 4),
-                 (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
-    assert debuginfo.read(data).summary() == "debug symbols: 1 function named, DWARF 1 (.debug) not read yet"
+def test_a_program_without_debug_information_has_none():
     assert debuginfo.read(_elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0)])) is None
 
 

@@ -2,16 +2,34 @@
 (consoles/ps2/dwarf1.py): its PS2 and PSP compilers write it with -g.
 
 The reader is tested on small entries built here, laid out as CodeWarrior lays them out (children after their
-parent, a padding entry after the last, AT_sibling past them).
+parent, a padding entry after the last, AT_sibling past them); the import's use of it on a hand-made ELF from
+tests/test_ps2_debug.py's helpers; and, when CodeWarrior for PS2 is installed, on what it really writes.
 """
 
 import struct
+import subprocess
 
 import pytest
 
+from decompnet import toolchains
 from decompnet.app.engine.importing import _HEADER_NAMES
-from decompnet.consoles.ps2 import dwarf1
+from decompnet.consoles.ps2 import debuginfo, dwarf1
 from decompnet.consoles.ps2.cheader import Header
+
+from .test_ps2_debug import (
+    SHF_ALLOC,
+    SHF_EXECINSTR,
+    SHT_MIPS_DEBUG,
+    SHT_PROGBITS,
+    SHT_STRTAB,
+    SHT_SYMTAB,
+    STB_GLOBAL,
+    STB_LOCAL,
+    STT_FUNC,
+    STT_OBJECT,
+    _elf,
+    _symbols,
+)
 
 FT_CHAR, FT_SHORT, FT_INT, FT_UNSIGNED, FT_FLOAT = 0x01, 0x04, 0x07, 0x09, 0x0E
 AT_LANGUAGE, AT_PRODUCER, TAG_LEXICAL_BLOCK = 0x0136, 0x0258, 0x0B
@@ -251,3 +269,74 @@ def test_broken_dwarf1_never_stops_a_read(damage):
             Die(dwarf1.TAG_GLOBAL_VARIABLE, (dwarf1.AT_NAME, "x"), _type(Ref("loop")))))])
     sources = dwarf1.read(debug, line)
     Header(sources).text([(v.name, v.type, True) for s in sources for v in s.globals])
+
+
+def _program_elf(debug: bytes, line: bytes) -> bytes:
+    table, strings = _symbols([("actor_tick", 0x100000, 0x40, STB_GLOBAL, STT_FUNC, 1),
+                               ("reset", 0x100040, 8, STB_LOCAL, STT_FUNC, 1),
+                               ("g_actors", 0x100100, 0xA0, STB_GLOBAL, STT_OBJECT, 2)])
+    return _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(0x100), 0),
+                 (".data", SHT_PROGBITS, SHF_ALLOC, 0x100100, bytes(0x200), 0),
+                 (".symtab", SHT_SYMTAB, 0, 0, table, 4), (".strtab", SHT_STRTAB, 0, 0, strings, 0),
+                 (".debug", SHT_MIPS_DEBUG, 0, 0, debug, 0), (".line", SHT_MIPS_DEBUG, 0, 0, line, 0)])
+
+
+def test_a_program_with_dwarf1_imports_with_its_units_prototypes_and_types():
+    info = debuginfo.read(_program_elf(*_sections()), _HEADER_NAMES)
+    assert info.summary() == "debug symbols: 2 functions named, 5 types, 1 source file"
+    assert info.sources == ["actor.c"] and info.units == {0x100000: "actor.c", 0x100040: "actor.c"}
+    assert "struct Actor { /* 0x28 bytes */" in info.header and "extern struct Actor g_actors[4];" in info.header
+    tick = info.functions[0x100000]
+    assert tick == {"source": "actor.c", "prototype": "int actor_tick(struct Actor *a, int dt, float rate)",
+                    "params": ["a in $s0", "rate in $f20"], "line": 12,
+                    "locals": ["int i (the stack at $sp+0x10)", "int calls (static)", "float scale ($f21)"]}
+    assert debuginfo.brief_lines(tick)[2] == "source file actor.c, from line 12; its types are in context.h already"
+
+
+def test_dwarf_2_is_recognised_and_said_to_be_unread():
+    """Later GCCs write DWARF 2 (.debug_info): not read yet, and the import log says so."""
+    table, strings = _symbols([("main", 0x100000, 8, STB_GLOBAL, STT_FUNC, 1)])
+    data = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0),
+                 (".debug_info", SHT_PROGBITS, 0, 0, bytes(8), 0), (".symtab", SHT_SYMTAB, 0, 0, table, 4),
+                 (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
+    assert debuginfo.read(data).summary() == "debug symbols: 1 function named, DWARF 2 or later (.debug_info) not read yet"
+
+
+# ---------------------------------------------------------------------------------------- with the compiler
+
+CW_SOURCE = """typedef struct { short x, y; } Point;
+enum Kind { KIND_NONE, KIND_PLAYER = 3 };
+struct Actor { Point pos; enum Kind kind; unsigned flags : 3, alive : 1; struct Actor *next; int grid[2][2]; };
+struct Actor g_actors[4];
+int actor_tick(struct Actor *a, int dt) { int i, sum = 0; for (i = 0; i < dt; i++) sum += a->grid[i & 1][1]; return sum; }
+"""
+
+
+def test_what_codewarrior_for_ps2_writes_is_read(tmp_path):
+    """CodeWarrior for PS2's own DWARF 1, from -g, in a program linked as a game is: its unit, the prototype, and
+    the types, with the bitfields where CodeWarrior puts them (it writes no typedefs: Point comes inline)."""
+    needs = ("mwcps2-3.0.1", "wibo", "binutils-mips")
+    if any(toolchains.installed(tid) is None for tid in needs):
+        pytest.skip("needs " + ", ".join(needs))
+    from decompnet.compiler import run_in
+    from decompnet.project import compiler_config
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "actor.c").write_text(CW_SOURCE)
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": "mwcps2-3.0.1", "flags": ["-O2", "-g"]}})
+    argv = [a.replace("{src}", "src/actor.c").replace("{obj}", "actor.o").replace("{include}", "src") for a in cfg.cmd]
+    result = run_in(cfg, tmp_path, argv, inputs=["src"], outputs=["actor.o"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    # an object keeps a .debug per function, joined only by the linker
+    ld = str(toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-ld")
+    subprocess.run([ld, "-EL", "-e", "actor_tick", "-Ttext", "0x100000", "-o", "actor.elf", "actor.o"],
+                   cwd=tmp_path, check=True, timeout=60)
+    info = debuginfo.read((tmp_path / "actor.elf").read_bytes(), _HEADER_NAMES)
+    assert info.sources == ["actor.c"] and info.units == {0x100000: "actor.c"}
+    assert info.functions[0x100000]["prototype"] == "int actor_tick(struct Actor *a, int dt)"
+    assert info.functions[0x100000]["line"] == 5
+    assert ("struct Actor { /* 0x20 bytes */\n    struct { short x; short y; } pos; /* 0x0 */\n"
+            "    enum Kind kind; /* 0x4 */\n    unsigned int flags : 3; /* 0x8 bit 0 */\n"
+            "    unsigned int alive : 1; /* 0x8 bit 3 */\n    struct Actor *next; /* 0xC */\n"
+            "    int grid[2][2]; /* 0x10 */\n};") in info.header
+    assert "extern struct Actor g_actors[4];" in info.header
