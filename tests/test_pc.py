@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from decompnet import toolchains
+from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
 from decompnet.forks.project import ForkProject
@@ -89,6 +89,94 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     monkeypatch.setenv("DECOMP_TEST_CL_FAIL", "1")
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert not ok and not obj.with_suffix(".named").exists(), output
+
+
+def _template_tool(name: str):
+    import importlib.util
+
+    path = Path(scratch_pe.__file__).with_name("project_template") / "tools" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"pc_template_{name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_real_name_stands_for_its_address_however_c_or_cpp_spells_it():
+    names = _template_tool("names")
+    real = names.real_names({"names": {"func_00401000": "UpdateTown", "D_00405000": "g_town"}})
+    for sym in (b"?UpdateTown@@YAXH@Z", b"?UpdateTown@Town@@QAEXH@Z", b"_UpdateTown", b"_UpdateTown@8", b"@UpdateTown@8"):
+        assert names.address_of(sym, real) == b"func_00401000", sym
+    assert names.address_of(b"?g_town@@3HA", real) == names.address_of(b"_g_town", real) == b"D_00405000"
+    assert names.address_of(b"_func_00402000@4", real) == b"func_00402000"  # an address still says it
+    for other in (b"?UpdateTownHall@@YAXXZ", b"_memcpy", b"??0Town@@QAE@XZ", b".text"):
+        assert names.address_of(other, real) is None, other
+
+
+def test_a_pc_symbol_is_renamed_by_its_address_in_functions_json(tmp_path):
+    from decompnet.forks.project import ForkError
+
+    conf = tmp_path / "config" / "v"
+    conf.mkdir(parents=True)
+    (conf / "functions.json").write_text(json.dumps(
+        {"units": {"a": [{"name": "_func_00401000@8", "addr": 0x401000, "relocs": []}]}}, indent=1))
+    fp, pc = ForkProject(tmp_path), consoles.get("pc")
+    assert list(pc.rename_symbol(fp, "v", "_func_00401000@8", "UpdateTown")) == [conf / "functions.json"]
+    assert pc.real_names(fp, "v") == {"_func_00401000@8": "UpdateTown"}  # by the report's name
+    pc.rename_symbol(fp, "v", "UpdateTown", "Town_Update")  # again, by the name it has
+    pc.rename_symbol(fp, "v", "D_00405000", "g_town")
+    assert json.loads((conf / "functions.json").read_text())["names"] == {"D_00405000": "g_town",
+                                                                         "func_00401000": "Town_Update"}
+    for old, new in (("func_00409999", "Nowhere"), ("nothing", "Other"), ("D_00405004", "g_town")):
+        with pytest.raises(ForkError):
+            pc.rename_symbol(fp, "v", old, new)
+    # however the source spells it: the report's decorated name, a method, not a longer address
+    pattern = pc.rename_pattern("_func_00401000@8")
+    assert re.sub(pattern, "T", "void Town::func_00401000(int); _func_00401000(); func_004010001();") == \
+        "void Town::T(int); T(); func_004010001();"
+
+
+def test_two_renames_at_once_both_reach_every_file(tmp_path, monkeypatch):
+    """Eight polishing helpers renamed at once: each read the files before taking the project's lock and wrote them
+    back after, undoing the renames made meanwhile in some files and not others, and an Xbox game's harness link lost
+    six functions. Here both start while something else (a build) holds the project."""
+    import threading
+
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import Unit
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    (root / "config" / "v").mkdir(parents=True)
+    (root / "config" / "v" / "functions.json").write_text(json.dumps({"units": {"u": [
+        {"name": "_func_00401000", "addr": 0x401000, "relocs": []},
+        {"name": "_func_00401010", "addr": 0x401010, "relocs": []}]}}, indent=1))
+    (root / "src" / "auto").mkdir(parents=True)
+    source = root / "src" / "auto" / "u.cpp"
+    source.write_text("int func_00401000(int x) { return x; }\nint func_00401010(int x) { return func_00401000(x); }\n")
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "v",
+                                                  "platform": "pc", "ready": True}, "x")
+    report = {"units": [{"name": "u", "functions": [{"name": n, "size": "8", "fuzzy_match_percent": 100.0}
+                                                    for n in ("_func_00401000", "_func_00401010")]}]}
+    monkeypatch.setattr(ForkProject, "report", lambda self: report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [Unit("u", None, None, "src/auto/u.cpp", False, None)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(ForkProject, "git", lambda self, *args: "")
+    net.forks.sync("p", log=lambda *_: None)
+    agent, _ = net.local_agent("claude-1")
+    said = {}
+    first = threading.Thread(target=lambda: said.update(a=net.rename_symbol(agent, "p", "_func_00401000", "Identity")))
+    second = threading.Thread(target=lambda: said.update(b=net.rename_symbol(agent, "p", "_func_00401010", "Pass")))
+    with net.forks._tree(net.project_row("p")).exclusive():  # a build holds the project while both start
+        first.start()
+        second.start()
+        first.join(0.5)  # (they wait for it now; before, each read the files here)
+    first.join(10)
+    second.join(10)
+    assert said["a"].startswith("✅") and said["b"].startswith("✅"), said
+    assert source.read_text() == "int Identity(int x) { return x; }\nint Pass(int x) { return Identity(x); }\n"
+    names = json.loads((root / "config" / "v" / "functions.json").read_text())["names"]
+    assert names == {"func_00401000": "Identity", "func_00401010": "Pass"}
 
 
 def test_only_32_bit_x86_programs():
@@ -184,6 +272,41 @@ def test_agents_match_functions(pc):
     assert net.forks.edit_file(agent, slug, "include/common.h", "", f"struct Num {{ static s32 {abs_name}(s32 v); }};\n",
                                "a class").startswith("✅")
     res = net.attempt(agent, f"_{abs_name}", f"s32 Num::{abs_name}(s32 v) {{\n    return v < 0 ? -v : v;\n}}\n", slug)
+    assert res["matched"], res["text"]
+    # polishing: the comment saying what a function does goes into its file with it (an Xbox game's 18 polished
+    # functions kept their definitions only), a new one replaces it, and a rewrite without one leaves it
+    root = Path(net.project_row(slug)["root"])
+    clamp = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "clamp_s32").replace("clamp_s32", rename["clamp_s32"])
+    code = sub(csource.get(source, "clamp_s32")).strip() + "\n"
+    file = next(p for p in (root / "src").rglob("*.c*") if csource.find(p.read_text(), rename["clamp_s32"]))
+
+    def polish(comment: str) -> str:
+        res = net.readability.submit(agent, slug, clamp, comment + code)
+        assert "readable now" in res, res
+        return file.read_text()
+
+    text = polish("// Keeps v within lo and hi.\n")
+    assert "// Keeps v within lo and hi.\n" + code.splitlines()[0] in text  # right above the definition
+    text = polish("/* Clamps v to [lo, hi],\n   both ends included. */\n")
+    assert "Keeps v within" not in text and text.count("both ends included. */\n" + code.splitlines()[0]) == 1
+    code = code.replace("{", "{ /* the bounds are included */", 1)  # (other C than it has: a rewrite)
+    text = polish("")
+    assert "both ends included. */\n" + code.splitlines()[0] in text  # no comment sent: the file's stays
+    # real names: a __stdcall function and the global it reads renamed, both still match (an Xbox game's polishing
+    # helpers were refused 31 renames); its row keeps the report's name and finds its code by the new one
+    getter = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "settings_get")
+    getter = getter.replace("settings_get", rename["settings_get"])
+    assert net.rename_symbol(agent, slug, rename["g_settings"], "g_settings").startswith("✅")
+    assert net.rename_symbol(agent, slug, getter, "settings_get").startswith("✅")
+    texts = "".join(p.read_text() for p in (root / "src").rglob("*.c*")) + (root / "include" / "common.h").read_text()
+    assert "settings_get(" in texts and rename["settings_get"] not in texts and rename["g_settings"] not in texts
+    fn = net._function(getter, slug)
+    assert fn["status"] == "matched" and json.loads(fn["meta"])["real"] == "settings_get"
+    assert net._function("settings_get", slug)["id"] == fn["id"]
+    # a renamed global is read by its new name (a helper that named one could no longer read_data it)
+    assert net.forks.read_data(agent, slug, "g_settings", 24).startswith(f"g_settings = {rename['g_settings']} (")
+    again = sub(csource.get(source, "settings_get")).replace(rename["settings_get"], "settings_get")
+    res = net.attempt(agent, "settings_get", again.replace(rename["g_settings"], "g_settings"), slug)
     assert res["matched"], res["text"]
     other = f"_func_{syms['_entity_points']:08X}"
     wrong = net.attempt(agent, other, sub(csource.get(source, "entity_points")).replace("return 75;", "return 76;"),

@@ -95,7 +95,8 @@ class Readability:
         """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
         if self.net.is_rom(proj):
             return fn["matched_source"] or ""
-        return self.net.forks._current_source(ForkProject(Path(proj["root"])), fn) or fn["matched_source"] or ""
+        return (self.net.forks._current_source(ForkProject(Path(proj["root"])), fn, comment=True)
+                or fn["matched_source"] or "")
 
     def counts(self, proj) -> dict:
         """The game's own code only (GAME_CODE): library code set aside is out of progress, so out of polishing too."""
