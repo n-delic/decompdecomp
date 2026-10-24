@@ -1,4 +1,4 @@
-"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0, 7.0 or 7.1, PROJECT mode. Only
+"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010, PROJECT mode. Only
 the game is a Windows program: decompdecomp runs on Linux, and so do the compilers (through wibo).
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
@@ -12,8 +12,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
-Its demo game is projects/demo-pc (the Demo Quest game built with Visual C++ 6.0). Older projects' configs say
-"win32" (decomp.dev's id): that's this console too.
+Its demo game is projects/demo-pc (the Demo Quest game built with Visual C++ 6.0, or with any compiler of the
+packs: build.py 10.0SP1). Older projects' configs say "win32" (decomp.dev's id): that's this console too.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from pathlib import Path
 from ...network import NetworkError
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
-MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1"]  # the `msvc` pack
+MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1",  # the `msvc` pack
+                 "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1"]  # `msvc2005`
 
 
 class WindowsPC(Console):
@@ -35,8 +36,9 @@ class WindowsPC(Console):
     arch = "x86"
     mode = PROJECT
     layout = "Ghidra + objdiff"
-    compilers = tuple(Compiler(v, f"Visual C++ {v.removeprefix('MSVC/')}") for v in MSVC_VERSIONS)
+    compilers = tuple(Compiler(v, f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}") for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
+             ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 500 MB)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
     guides = ("x86", "cpp")
     compiler_guide = "x86"

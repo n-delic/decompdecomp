@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write build.ninja and objdiff.json for this PC (Windows) decompilation, then run `ninja`.
 
-    python tools/configure.py VERSION --msvc DIR [--wibo PATH]
+    python tools/configure.py VERSION --msvc DIR [--msvc DIR ...] [--wibo PATH]
 
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
@@ -27,14 +27,17 @@ ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
 parser = argparse.ArgumentParser(description="Writes build.ninja and objdiff.json")
 parser.add_argument("version", help="game version (a directory in config/)")
-parser.add_argument("--msvc", required=True, help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 7.1/Bin/cl.exe, ...)")
+parser.add_argument("--msvc", required=True, action="append",
+                    help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 10.0SP1/Bin/cl.exe, ...); several: the first "
+                         "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
 args = parser.parse_args()
 
 VERSION = args.version
 CONFIG = Path("config") / VERSION / "functions.json"
 BUILD = Path("build") / VERSION
-MSVC = Path(args.msvc) / MSVC_VERSION
+MSVC = next((Path(d) / MSVC_VERSION for d in args.msvc if (Path(d) / MSVC_VERSION).is_dir()),
+            Path(args.msvc[-1]) / MSVC_VERSION)
 CL = next((p for p in (MSVC / "Bin" / "CL.EXE", MSVC / "Bin" / "cl.exe") if p.exists()), MSVC / "Bin" / "CL.EXE")
 
 

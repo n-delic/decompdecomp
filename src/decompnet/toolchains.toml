@@ -589,6 +589,59 @@ url = "https://github.com/OmniBlade/decomp.me/releases/download/msvcwin9x/msvc7.
 sha256 = "49eba7f9f72644f6f872a4176baeac544e8b5dfb2be1f47bb4d439b1136ffeac"
 into = "7.1"
 
+# Each archive is a whole install: `keep` takes its compiler (Bin) and headers (Include: Visual C++'s and the Windows
+# SDK's in one folder, as the 6.0-7.1 pack has them), so the project's build finds every version the same way.
+# 2005's RTM and SP1 share the Rich header's build (50727), so SP1 stands for both: the one most 2005 games were built
+# with. wibo has no msvcp100.dll of its own (2010's compiler calls a few of its functions), so 2010's Bin gets the
+# Visual C++ 2010 redistributable's, from the archive the CodeWarrior pack (mwcc) already pins.
+[msvc2005]
+name = "Microsoft Visual C++ 2005, 2008 and 2010 (PC)"
+kind = "compiler-pack"
+platform = "PC"
+license = "proprietary"
+source = "the decomp community's archives: decomp.me's 2005 SP1 (Drahsid/ffxiv_msvc8.0sp1), archaic-msvc's 2008 and 2010 (msvc900, msvc1000, msvc1000_sp1), Marvisak/msvc900_sp1 (2008 SP1)"
+description = "The compilers of Windows games of 2005-2012: Visual C++ 2005 SP1 (8.0), 2008 and 2008 SP1 (9.0), 2010 and 2010 SP1 (10.0). Windows programs, run through wibo on Linux and macOS."
+[[msvc2005.parts]]
+url = "https://github.com/Drahsid/ffxiv_msvc8.0sp1/archive/0d6f444cfc120e4e62a092726844fa310c74b1bc.tar.gz"  # 14.00.50727.762
+sha256 = "e728de13878c2876e855e2206fc4b8b0a52a3e801c29bd8e0478ef1670aa7be7"
+subdir = "ffxiv_msvc8.0sp1-0d6f444cfc120e4e62a092726844fa310c74b1bc"
+keep = { "bin" = "Bin", "PlatformSDK/Include" = "Include", "include" = "Include" }
+into = "8.0SP1"
+[[msvc2005.parts]]
+url = "https://github.com/archaic-msvc/msvc900/archive/c9d710cef9a3dec08d7d2dca78a3b494335a5baa.tar.gz"  # 15.00.21022.08
+sha256 = "084c135403e1f46abd1db1b7059de9ae95a4304049d2428f2816818e89004b89"
+subdir = "msvc900-c9d710cef9a3dec08d7d2dca78a3b494335a5baa"
+keep = { "VC/bin" = "Bin", "Microsoft SDKs/Windows/v6.0A/Include" = "Include", "VC/include" = "Include" }
+into = "9.0"
+[[msvc2005.parts]]
+url = "https://github.com/Marvisak/msvc900_sp1/archive/a1465772ad6c5767f6d191ff0861282efc822f5c.tar.gz"  # 15.00.30729.01
+sha256 = "2544e8fb817421bd5a09fd4cc243ff0a0db6049cf1a15b92a7b4a3f1f6568e69"
+subdir = "msvc900_sp1-a1465772ad6c5767f6d191ff0861282efc822f5c"
+keep = { "VC/bin" = "Bin", "Microsoft SDKs/Windows/v6.0A/Include" = "Include", "VC/include" = "Include" }
+into = "9.0SP1"
+[[msvc2005.parts]]
+url = "https://github.com/archaic-msvc/msvc1000/archive/f8977e2cacbe6cab4f9e73eb2c05695a88519bfe.tar.gz"  # 16.00.30319.01
+sha256 = "923684491a7e3fbdc326a0681c7d8d4ecfb9a9d217638038ac2859c702c45b01"
+subdir = "msvc1000-f8977e2cacbe6cab4f9e73eb2c05695a88519bfe"
+keep = { "VC/bin" = "Bin", "Microsoft SDKs/Windows/v7.0A/Include" = "Include", "VC/include" = "Include" }
+into = "10.0"
+[[msvc2005.parts]]
+url = "https://github.com/archaic-msvc/msvc1000_sp1/archive/09a53c11f781ec9ab5e66772ba720b9d85e4c2a4.tar.gz"  # 16.00.40219.01
+sha256 = "4d256b37c4fea1327c554e19f9fda3078155a404699a5fb3f33a8a4804258bfb"
+subdir = "msvc1000_sp1-09a53c11f781ec9ab5e66772ba720b9d85e4c2a4"
+keep = { "VC/bin" = "Bin", "Microsoft SDKs/Windows/v7.0A/Include" = "Include", "VC/include" = "Include" }
+into = "10.0SP1"
+[[msvc2005.parts]]
+url = "https://files.decomp.dev/compilers_20251118.zip"
+sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
+keep = { "X360/16.00.11886.00/msvcp100.dll" = "Bin/msvcp100.dll" }
+into = "10.0"
+[[msvc2005.parts]]
+url = "https://files.decomp.dev/compilers_20251118.zip"
+sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
+keep = { "X360/16.00.11886.00/msvcp100.dll" = "Bin/msvcp100.dll" }
+into = "10.0SP1"
+
 [sjiswrap]
 name = "sjiswrap"
 kind = "tool"

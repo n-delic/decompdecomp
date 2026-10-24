@@ -75,8 +75,11 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     (root / "tools/names.py").write_text('import sys\nfrom pathlib import Path\n'
                                         'out = Path(sys.argv[2])\nassert out.read_text() == "object"\n'
                                         'out.with_suffix(".named").write_text("processed")\n')
-    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
-                   check=True, capture_output=True, timeout=30)
+    # every compiler pack: the build takes the one with its version (the 2005-2010 pack has no 6.0)
+    newer = tmp_path / "newer pack"
+    (newer / "10.0SP1" / "Bin").mkdir(parents=True)
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(newer), "--msvc",
+                    str(compiler_root)], check=True, capture_output=True, timeout=30)
     project = ForkProject(root)
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert ok, output
@@ -320,10 +323,23 @@ def test_a_function_your_object_only_calls_is_not_in_your_build_not_a_match(monk
     assert d.match_percent == 100.0 and d.matched
 
 
-def _map() -> dict[str, int]:
+def _map(path: Path = MAP) -> dict[str, int]:
     """Symbol -> address of every function and variable, from the linker's map of the demo."""
     return {m.group(1): int(m.group(2), 16)
-            for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", MAP.read_text(), re.M)}
+            for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", path.read_text(), re.M)}
+
+
+def _demo_header(net, agent, slug, syms: dict[str, int]):
+    """The demo's header in the project, with the names the import gave its functions and data; returns the
+    renaming, to write the demo's own C as the project names it."""
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    rename = {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
+              for s, a in syms.items() if not s.startswith("??") and s != "__fltused"}
+    pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
+    sub = lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
+    header += "extern s32 g_settings[6];\n"
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
+    return rename, sub
 
 
 @pytest.fixture(scope="module")
@@ -362,13 +378,7 @@ def test_agents_match_functions(pc):
     net, slug = pc
     syms = _map()
     agent, _ = net.local_agent("pc-agent")
-    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
-    rename = {re.sub(r"^[_@]|@\d+$", "", s): (f"func_{a:08X}" if a < 0x402000 else f"D_{a:08X}")
-              for s, a in syms.items() if not s.startswith("??") and s != "__fltused"}
-    pattern = re.compile(r"\b(" + "|".join(sorted(rename, key=len, reverse=True)) + r")\b")
-    sub = lambda text: pattern.sub(lambda m: rename[m.group(1)], text)
-    header += "extern s32 g_settings[6];\n"
-    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
+    rename, sub = _demo_header(net, agent, slug, syms)
     source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
     for name in ("clamp_s32", "player_take_damage", "entity_default_hp", "settings_get", "mix_score"):
         decorated = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == name)
@@ -429,6 +439,41 @@ def test_agents_match_functions(pc):
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
 
 
+NEWER = ["8.0SP1", "9.0", "9.0SP1", "10.0", "10.0SP1"]  # the msvc2005 pack
+
+
+@pytest.mark.parametrize("version", NEWER)
+@needs_tools
+@pytest.mark.skipif(toolchains.installed("msvc2005") is None,
+                    reason="needs Visual C++ 2005, 2008 and 2010 (msvc2005, proprietary)")
+def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_path, version):
+    """Newer Windows games, phase C: Demo Quest built by each Visual C++ of 2005-2010 imports with that very build
+    (its Rich header names it), the project compiles with it (/EHsc, its name for /GX), and agents' C matches."""
+    from decompnet.app.engine import RomNetwork
+
+    build = DEMO / "build" / version
+    subprocess.run([sys.executable, str(DEMO / "build.py"), version], check=True, capture_output=True)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said = []
+    slug = net.import_rom(build / "demoquest.exe", confirmed=True, log=said.append)
+    assert net.overview(slug)["rebuild"]["identical"]
+    assert any(f": Visual C++ {version}" in line and "closest" not in line for line in said), said
+    configure = (Path(net.project_row(slug)["root"]) / "tools" / "configure.py").read_text()
+    assert f'MSVC_VERSION = "{version}"' in configure and '"/EHsc"]' in configure
+    syms = _map(build / "demoquest.map")
+    agent, _ = net.local_agent("pc-agent")
+    rename, sub = _demo_header(net, agent, slug, syms)
+    source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
+    for name in ("clamp_s32", "entity_default_hp", "settings_get", "mix_score", "entity_points"):
+        # by its address: inlined where they're called, some are found in the gaps between functions, without the
+        # calling convention a call shows
+        address = next(a for s, a in syms.items() if re.sub(r"^[_@]|@\d+$", "", s) == name)
+        row = net.store.one("SELECT name FROM functions WHERE project_id=? AND name LIKE ?",
+                            net.project_row(slug)["id"], f"%func_{address:08X}%")
+        res = net.attempt(agent, row["name"], sub(csource.get(source, name)), slug)
+        assert res["matched"], (name, res["text"])
+
+
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
     """A Windows program's headers, made by hand: the DOS header and `stub` bytes of DOS stub, a Rich header of
     (product id, build, count) entries XORed with its key, the PE header with the linker's version, the sections."""
@@ -456,7 +501,16 @@ def test_the_import_names_the_visual_cpp_build_from_the_rich_header():
     vs2010 = scratch_pe.describe(_windows_program(rich=[(0xAB, 40219, 503), (0xAA, 40219, 171), (0x30, 9044, 121),
                                                         (0x9D, 40219, 1)]))
     assert vs2010.compiler == "Visual C++ 2010 SP1 (10.0, build 40219)" and vs2010.blockers() == []
-    assert vs2010.pack_version == "7.1" and "2005 to 2015 come next" in vs2010.cannot_match()[0]
+    assert (vs2010.pack_version, vs2010.exact, vs2010.cannot_match()) == ("10.0SP1", True, [])
+    # each update generates other code: the very build, else the closest of its version, said as such
+    vs2008 = scratch_pe.describe(_windows_program(rich=[(0x83, 21022, 40), (0x84, 21022, 300), (0x91, 21022, 1)]))
+    assert (vs2008.pack_version, vs2008.exact) == ("9.0", True)
+    hotfix = scratch_pe.describe(_windows_program(rich=[(0x84, 30411, 300), (0x91, 30411, 1)]))
+    assert (hotfix.pack_version, hotfix.exact) == ("9.0SP1", False)
+    # 2005's RTM and SP1 are both build 50727: SP1 builds it
+    assert scratch_pe.describe(_windows_program(rich=[(0x6E, 50727, 120)])).pack_version == "8.0SP1"
+    vs2012 = scratch_pe.describe(_windows_program(rich=[(0xCF, 60610, 300), (0xCC, 60610, 1)]))
+    assert vs2012.pack_version == "10.0SP1" and "2012 to 2015 come next" in vs2012.cannot_match()[0]
     # a 2019 program with middleware built by 2015: the build that linked it compiled the game's own code
     vs2019 = scratch_pe.describe(_windows_program(rich=[(0x109, 30137, 658), (0x104, 24234, 556), (0x105, 24215, 395),
                                                         (0x102, 30137, 1)]))
@@ -475,11 +529,44 @@ def test_without_a_rich_header_the_linker_version_names_the_toolset():
         return scratch_pe.describe(_windows_program(linker=linker))
 
     assert built((8, 0)).compiler == "Visual C++ 2005 (8.0, by its linker's version)"
-    assert built((8, 0)).build is None and built((8, 0)).pack_version == "7.1"
+    assert built((8, 0)).build is None and built((8, 0)).pack_version == "8.0SP1"
+    assert built((9, 0)).pack_version == "9.0SP1"  # the newest build of its version: the most games had it
     assert (built((7, 10)).version, built((7, 0)).version, built((10, 10)).version) == ("7.1", "7.0", "10.0")
     assert built((7, 10)).cannot_match() == [] and built((14, 29)).out_of_scope
     unknown = built((2, 50))  # not a Microsoft linker's version
     assert unknown.version is None and unknown.pack_version == "6.0" and unknown.blockers() == []
+
+
+def test_every_visual_cpp_the_import_picks_is_in_a_compiler_pack():
+    """RICH_BUILDS names the folders the packs install (toolchains.toml `into`), one for each compiler the console
+    lists, so a game's build always finds its compiler where the project looks."""
+    from decompnet.consoles.pc import MSVC_VERSIONS
+
+    picked = scratch_pe.RICH_BUILDS.values()
+    assert sorted(picked) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
+    assert {scratch_pe.compiler_pack(v) for v in picked} == set(scratch_pe.MSVC_PACKS)
+    with pytest.raises(ForkError, match="no Visual C\\+\\+ 5.0"):
+        scratch_pe.compiler_pack("5.0")
+
+
+def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp_path, monkeypatch):
+    """A 2008 game with only 6.0-7.1 installed: the import names the pack its compiler comes in, before Ghidra runs,
+    instead of building with a compiler nothing can match with."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    (tmp_path / "toolchains" / "msvc" / "7.1").mkdir(parents=True)
+    (tmp_path / "toolchains" / "msvc" / toolchains.MANIFEST).write_text("{}")
+    game = tmp_path / "game.exe"
+    game.write_bytes(_windows_program(rich=[(0x84, 30729, 300), (0x91, 30729, 1)], linker=(9, 0)))
+    with pytest.raises(ForkError, match="Visual C\\+\\+ 9.0SP1, which comes in Microsoft Visual C\\+\\+ 2005, 2008"):
+        scratch_pe.create(tmp_path / "project", game, log=lambda *_: None)
+    assert not (tmp_path / "project").exists()
+    # every installed pack goes to the build, 6.0-7.1's last: an older project's configure.py keeps only the last
+    (tmp_path / "toolchains" / "msvc2005").mkdir()
+    (tmp_path / "toolchains" / "msvc2005" / toolchains.MANIFEST).write_text("{}")
+    monkeypatch.setattr(toolchains, "get", lambda tid: type("T", (), {"supported": False})() if tid == "wibo"
+                        else toolchains.registry()[tid])
+    assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2005"),
+                                      "--msvc", str(tmp_path / "toolchains" / "msvc")]
 
 
 def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():
