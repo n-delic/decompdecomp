@@ -180,7 +180,7 @@ A console works in one of two modes:
    | `split_source(fp, version, source, at, new)`, `splits_sources` | `split_file`: a source file divided where a new one starts (a library's code, a second compiler). |
    | `join_functions(fp, first, last, keep)` | `join_functions`: a function the analysis cut in pieces made whole, once agents agree. |
    | `file_compiler`, `set_file_compiler` | `try_compiler`, when its build lets each source file have its own compiler. |
-   | its processor's `piece` and `jumps` (`arch/arm.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
+   | its processor's `piece` and `jumps` (`arch/arm.py`; x86: `piece`, `arch/x86.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`, `consoles/pc/scratch.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
 
 5. **Its compilers.** One pinned entry each in `toolchains.toml` (see "Adding a compiler" below).
 6. **Its processor**, if `arch/` hasn't got it: add `arch/<name>.py` (relocation masks, capstone's mode, and

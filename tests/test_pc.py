@@ -20,7 +20,7 @@ import pytest
 from decompnet import consoles, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
-from decompnet.forks.project import ForkProject
+from decompnet.forks.project import ForkError, ForkProject
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -344,6 +344,40 @@ CATCH = bytes.fromhex("8b45ecc3")  # mov eax, [ebp-0x14]; ret: the frame's local
 UNWIND = bytes.fromhex("8d4df0e900000000")  # lea ecx, [ebp-0x10]; jmp <destructor>: a .text$x funclet
 
 
+def test_a_piece_ghidra_cut_off_is_the_rest_of_the_function_before_it():
+    from decompnet.arch import x86
+
+    # a lone epilogue after a call Ghidra took for one that never returns: the code before runs on into it
+    assert "runs on" in x86.piece(PUSH_FRAME + bytes.fromhex("6a00") + CALL_0, EH_EPILOGUE)
+    assert "restores edi" in x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("5f5ec3"))  # pop edi; pop esi; ret
+    # a catch block after the return of a function with an ebp frame
+    assert "frame" in x86.piece(FRAME_RET, CATCH)
+    # without a frame, a short jump from the code before says it continues there (push ebx; mov ebx, ecx; test eax,
+    # eax; je +2; pop ebx; ret), then mov eax, [ebx+0x14]; pop ebx; ret
+    assert "short jump" in x86.piece(bytes.fromhex("538bd985c074025bc3"), bytes.fromhex("8b43145bc3"))
+    assert x86.piece(bytes.fromhex("538bd985c074005bc3"), bytes.fromhex("8b43145bc3")) is None  # (jumps within)
+
+
+def test_whole_functions_and_exception_funclets_are_not_pieces():
+    from decompnet.arch import x86
+
+    assert x86.piece(FRAME_RET + b"\xcc\xcc", CATCH) is None  # padding ends a function
+    assert x86.piece(FRAME_RET, PUSH_FRAME + bytes.fromhex("8b4508c3")) is None  # sets its frame before using it
+    # MSVC's .text$x funclets use their parent's ebp without a frame, by design: each follows another, which ends
+    # with a jmp and sets up no frame (the exception-handling stubs are set aside by their own rule)
+    assert x86.piece(UNWIND, UNWIND) is None
+    assert x86.piece(bytes.fromhex("b878563412e900000000"), UNWIND) is None  # mov eax, <FuncInfo>; jmp handler
+    # a function setting its frame through __EH_prolog (mov eax, <handler>; call), or with enter
+    assert x86.piece(FRAME_RET, bytes.fromhex("b878563412") + CALL_0 + bytes.fromhex("8b4508c3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("c8800000608b450cc3")) is None
+    # xor esi, esi only sets esi; a function saving what it restores is whole
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("33f68bc6c3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0, bytes.fromhex("56be010000005ec3")) is None
+    assert x86.piece(PUSH_FRAME + CALL_0 + b"\x8b", EH_EPILOGUE) is None  # code before ends mid-instruction: data
+    # MSVC's alignment filler after a hand-written function (lea esp, [esp]; mov edi, edi) does nothing
+    assert x86.piece(bytes.fromhex("578b7c2408eb6a"), bytes.fromhex("8da424000000008bff")) is None
+
+
 TEXT = 0x401000
 
 
@@ -375,6 +409,23 @@ def _row(start: int, end: int) -> dict:
 OWNER = PUSH_FRAME + bytes.fromhex("b80f104000") + bytes.fromhex("e813000000") + bytes.fromhex("6a00")
 PROGRAM = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + PUSH_FRAME + bytes.fromhex("5dc3")
 ROWS = [_row(0x401000, 0x40100F), _row(0x40100F, 0x401017), _row(0x401020, 0x401025)]
+
+
+def test_a_piece_is_delinked_with_the_function_it_belongs_to():
+    pe = scratch_pe.read_pe(_tiny_exe(PROGRAM))
+    found = scratch_pe.analyse(pe, ROWS)
+    assert [f.addr for f in found] == [0x401000, 0x40100F, 0x401020]
+    functions, joined = scratch_pe.merge_pieces(pe, found, log=lambda *_: None)
+    assert joined == {"_func_00401000": ["_func_0040100F"]}
+    whole = functions[0]
+    assert (whole.addr, whole.size) == (0x401000, 0x20)  # the epilogue and the padding after it
+    # its piece's address is its own now (a label, as delink.py writes $L), the call still a relocation
+    assert whole.relocs == [(4, scratch_pe.DIR32, None, 0xF), (9, scratch_pe.REL32, "_func_00401020", 0)]
+    # matched functions stay as they are; so does a piece another function calls (Ghidra was right: a function)
+    assert scratch_pe.merge_pieces(pe, found, keep={"_func_0040100F"}, log=lambda *_: None)[1] == {}
+    called = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e8eaffffffc3")  # call 0x40100f; ret
+    pe = scratch_pe.read_pe(_tiny_exe(called))
+    assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
 
 
 def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
@@ -417,6 +468,30 @@ def _delink(root: Path) -> None:
         (out / f"{unit}.obj").write_bytes(delink.coff(functions, exe))
 
 
+def test_a_project_made_before_gets_its_pieces_joined_and_still_rebuilds(tmp_path):
+    root = _project(tmp_path, PROGRAM, ROWS)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    # the piece is the first function of its source file: it moves to the file before only when that file keeps
+    # other code, and holds no C for it
+    assert scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None) == {}
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"]["text_0040100F"].append(info["units"].pop("text_00401020")[0])
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    piece_file = root / "src" / "auto" / "text_0040100F.cpp"
+    piece_file.write_text("void Obj::func_0040100F(void) {\n}\n")
+    assert scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None) == {}
+    piece_file.write_text('#include "common.h"\n')
+    joined = scratch_pe.merge_project_pieces(root, "game", log=lambda *_: None)
+    assert joined == {"_func_00401000": ["_func_0040100F"]}
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert [[f["name"] for f in fns] for fns in units.values()] == [["_func_00401000"], ["_func_00401020"]]
+    assert units["text_00401000"][0]["size"] == 0x20
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None) == {
+        "identical": True, "detail": "identical: the code of its 2 functions (37 bytes)",
+        "what": "The game's code, rebuilt from its delinked functions,"}
+
+
 def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
     root = _project(tmp_path, PROGRAM, ROWS)
     exe, target = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "target" / "text_00401000.obj"
@@ -429,6 +504,35 @@ def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
     target.write_bytes(coff([{**owner, "size": owner["size"] + 1}], exe))  # cut one byte too long
     result = scratch_pe.check_code(root, "game", log=lambda *_: None)
     assert not result["identical"] and "_func_0040100F (overlaps _func_00401000)" in result["detail"]
+
+
+def test_agents_join_two_functions_by_their_names(tmp_path):
+    root = _project(tmp_path, PROGRAM, ROWS)
+    with pytest.raises(ForkError, match="is matched"):
+        scratch_pe.join_functions(root, "game", "_func_00401000", "_func_0040100F", keep={"_func_0040100F"})
+    with pytest.raises(ForkError, match="would be left with no code"):  # (each was given a file of its own)
+        scratch_pe.join_functions(root, "game", "_func_00401000", "_func_0040100F")
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    info["units"]["text_00401000"] += info["units"].pop("text_0040100F")
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    said = scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401000")
+    assert said == "_func_0040100F joined to _func_00401000"
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    with pytest.raises(ForkError, match="isn't one of the game's functions"):
+        scratch_pe.join_functions(root, "game", "_func_0040100F", "_func_00401020")
+
+
+def test_only_the_frame_helpers_shapes_set_a_frame():
+    from decompnet.arch import x86
+
+    after_one = bytes.fromhex("6a0c") + CALL_0 + bytes.fromhex("59c3")  # push 0xc; call _lock; pop ecx; ret
+    assert x86.piece(after_one, bytes.fromhex("8b75e4")) is None  # mov esi, [ebp-0x1c]: not this function's
+    seh_prolog = bytes.fromhex("6a0c6888204000") + CALL_0 + bytes.fromhex("33dbc3")  # push 0xc; push <table>; call
+    assert "frame" in x86.piece(seh_prolog, bytes.fromhex("ff7508c3"))  # push [ebp+8]; ...: its __finally
+    eh_prolog3 = bytes.fromhex("6a04b8dd9b8d00") + CALL_0 + bytes.fromhex("c3")  # push 4; mov eax, <h>; call
+    assert "frame" in x86.piece(eh_prolog3, CATCH)
+    assert x86.piece(bytes.fromhex("53b8dd9b8d00") + CALL_0 + bytes.fromhex("5bc3"), CATCH) is None  # push ebx first
 
 
 # a function with two jump tables, one right after the other: jmp [eax*4+T1]; jmp [eax*4+T2]; ret; ret; T1; T2

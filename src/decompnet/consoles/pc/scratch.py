@@ -36,6 +36,7 @@ from capstone import x86
 from decompnet.hostenv import NO_WINDOW
 
 from ... import toolchains
+from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 
 UNIT_BYTES = 0x1000
@@ -375,7 +376,9 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
     return sorted(relocs)
 
 
+CALL = 0xE8  # the opcode before a rel32 call's target
 _DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")  # data by its address, as analyse names it
+MAX_INSTRUCTION_BYTES = 15
 
 
 def join(pe: PE, parts: list[Function], names: dict[int, str]) -> Function:
@@ -392,6 +395,73 @@ def join(pe: PE, parts: list[Function], names: dict[int, str]) -> Function:
     code_end, _, entries = _tables(md, pe, first.addr, end, end)
     return Function(first.addr, end - first.addr, first.name,
                     _relocations(md, pe, first.addr, code_end, end, entries, names), first.unit)
+
+
+def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset(), movable=None,
+                 log=print) -> tuple[list[Function], dict[str, list[str]]]:
+    """Join the pieces Ghidra cut off functions (arch/x86.piece: a lone epilogue after a call it took for one that
+    never returns, a catch block or an `__except` filter after the function's return) to the function before them,
+    which they continue: on a PC game 181 such pieces could never match, and neither could the functions they
+    belong to. Not a piece another function calls or holds the address of (a function's start: Ghidra's guess was
+    right), nor the function's own jump table (Ghidra made a function of one), nor into or out of a function of
+    `keep` (matched ones: their C would no longer be the whole function). Across two source files
+    (`Function.unit`), a piece moves to the earlier one only when its own keeps other functions and
+    `movable(piece)` says its C isn't there. Returns the functions, and each that grew with the pieces it took."""
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    names = {f.addr: f.name for f in functions}
+    reached: dict[str, set[str]] = {}  # name -> the functions whose code calls it or holds its address
+    for f in functions:
+        for off, kind, name, _ in f.relocs:
+            if name is not None and (kind == DIR32 or pe.read(f.addr + off - 1, 1) == bytes([CALL])):
+                reached.setdefault(name, set()).add(f.name)
+    home: dict[str, str] = {}  # a piece -> the function it was joined to
+
+    def now(name: str) -> str:
+        while name in home:
+            name = home[name]
+        return name
+    out, joined, k = list(functions), {}, 1
+    while k < len(out):
+        owner, part = out[k - 1], out[k]
+        before = pe.read(owner.addr, part.addr - owner.addr)
+        # (its own code may call it, a `__finally` block, or hold its address, where a catch block goes on)
+        if owner.name in keep or part.name in keep or {now(n) for n in reached.get(part.name, ())} - {owner.name} \
+                or not _ends_at(md, before, owner.size) or _reads_from(md, before, owner.addr, part.addr) or \
+                not x86_arch.piece(before, pe.read(part.addr, part.size)) or \
+                owner.unit != part.unit and (sum(f.unit == part.unit for f in out) < 2 or
+                                             (movable is not None and not movable(part))):
+            k += 1
+            continue
+        out[k - 1:k + 1] = [join(pe, [owner, part], names)]
+        home[part.name] = owner.name
+        joined[owner.name] = [*joined.get(owner.name, []), part.name, *joined.pop(part.name, [])]
+        k = max(1, k - 1)  # the grown function may itself continue the one before it now
+    if joined:
+        log(f"{sum(len(v) for v in joined.values())} pieces of functions Ghidra cut off joined to the function they "
+            "belong to")
+    return out, joined
+
+
+def _reads_from(md, code: bytes, at: int, addr: int) -> bool:
+    """Whether the code (at address `at`) reads memory at `addr`: a jump table there (Ghidra made a function of the
+    table after a switch), data, not code."""
+    return any(op.type == x86.X86_OP_MEM and op.mem.disp & 0xFFFFFFFF == addr
+               for ins in _disasm(md, code, at) for op in ins.operands)
+
+
+def _ends_at(md, before: bytes, size: int) -> bool:
+    """Whether the function whose code is `size` bytes, followed by what's up to the next function, ends right
+    there: nothing between them, or only the rest of its own last instruction. Projects made before analyse knew
+    that a `ret 8` ends with a zero byte lost that byte to no function."""
+    if len(before) == size:
+        return True
+    if not 0 < len(before) - size < MAX_INSTRUCTION_BYTES:
+        return False
+    last = None
+    for ins in _disasm(md, before, 0):
+        last = ins
+    return last is not None and last.address < size and last.address + last.size == len(before)
 
 
 def units(functions: list[Function]) -> dict[str, list[Function]]:
@@ -431,6 +501,16 @@ def _save_functions(path: Path, info: dict, pe: PE, functions: list[Function]) -
     for f in functions:
         grouped[f.unit].append(_entry(pe, f))
     path.write_text(json.dumps({**info, "units": grouped}, indent=1), encoding="utf-8")
+
+
+def _c_of(root: Path, info: dict, f: Function) -> bool:
+    """Whether the C in f's source file defines it (func_0041B470, however it's spelled, or its real name)."""
+    cpp = root / "src" / "auto" / f"{f.unit}.cpp"
+    source = cpp if cpp.exists() or not cpp.with_suffix(".c").exists() else cpp.with_suffix(".c")
+    text = source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
+    key = f"func_{f.addr:08X}"
+    return any(re.search(rf"\b{re.escape(n)}\s*\([^;{{]*\)\s*\{{", text)
+               for n in (key, (info.get("names") or {}).get(key)) if n)
 
 
 def drop_repeated_relocations(root: Path, version: str) -> int:
@@ -481,6 +561,45 @@ def complete_last_instructions(root: Path, version: str, keep: set[str] = frozen
     if grown:
         _save_functions(path, info, pe, functions)
     return grown
+
+
+def merge_project_pieces(root: Path, version: str, keep: set[str] = frozenset(), log=print) -> dict[str, list[str]]:
+    """merge_pieces on a project made before it: its functions.json changes, nothing else (each function keeps its
+    source file; a piece first in its file moves to the file before only when no C there defines it). Returns each
+    function that grew, with the pieces it took."""
+    path, info, pe, functions = _project_functions(root, version)
+    out, joined = merge_pieces(pe, functions, keep, movable=lambda part: not _c_of(root, info, part), log=log)
+    if joined:
+        _save_functions(path, info, pe, out)
+    return joined
+
+
+def join_functions(root: Path, version: str, first: str, last: str, keep: set[str] = frozenset()) -> str:
+    """Make one function of `first`, `last` and every function between them: what agents agreed Ghidra cut (join, as
+    merge_pieces does). Across source files, the later files' part moves to the first one's, when their C doesn't
+    define what moves and each keeps some code. Never a matched function (`keep`). Returns what changed, as a
+    sentence."""
+    path, info, pe, functions = _project_functions(root, version)
+    at = {f.name: k for k, f in enumerate(functions)}
+    if first not in at or last not in at:
+        raise ForkError(f"{first if first not in at else last} isn't one of the game's functions")
+    lo, hi = sorted((at[first], at[last]))
+    parts = functions[lo:hi + 1]
+    if lo == hi:
+        raise ForkError(f"{first} and {last} must be two functions")
+    if bad := [f.name for f in parts if f.name in keep]:
+        raise ForkError(f"{bad[0]} is matched: joining would change it, so the join is refused")
+    moved = [f for f in parts if f.unit != parts[0].unit]
+    for f in moved:
+        if all(g in parts for g in functions if g.unit == f.unit):
+            raise ForkError(f"{f.unit} would be left with no code: join only part of it")
+        if _c_of(root, info, f):
+            raise ForkError(f"{f.unit} has C for {f.name}: move it to {parts[0].unit} first")
+    whole = join(pe, parts, {f.addr: f.name for f in functions})
+    _save_functions(path, info, pe, [*functions[:lo], whole, *functions[hi + 1:]])
+    files = sorted({f.unit for f in moved})
+    return (f"{', '.join(f.name for f in parts[1:])} joined to {parts[0].name}"
+            + (f" (moved from {', '.join(files)})" if files else ""))
 
 
 # ---------------------------------------------------------------------------------------------------- the project
@@ -725,7 +844,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
                "to 7.1 for now" if newer else "a program that is packed or protected (some games' DRM wraps their code) "
                "shows none until it's unpacked")
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    functions = analyse(pe, found)
+    functions, _ = merge_pieces(pe, analyse(pe, found), log=log)
     groups = units(functions)
     log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
 
@@ -764,7 +883,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 2,  # (WindowsPC.ANALYSIS: nothing to repair)
+        "analysis": 3,  # (WindowsPC.ANALYSIS: nothing to repair, its pieces of functions joined already)
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,
