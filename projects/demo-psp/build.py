@@ -4,6 +4,10 @@ PSP SDK's GCC 1.3.1 at -O2 -G8, all with the toolchain's own compile command.
 
     uv run python projects/demo-psp/build.py    ->  build/BOOT.BIN (a PRX, no symbols, like a game) + build/demoq_psp.elf
 
+With a toolchain id (pspsnc-1.2.7503), the game's C built with that compiler instead, at the same -O2 -G8, into
+build/<toolchain>/. The start-up code (crt0.s) is always the SDK's assembler's, and the SDK's GNU linker links
+every build: SN's own linker (pspld) doesn't run under wibo, and the module it would make is the same layout.
+
 A PSP game's program is a relocatable module (PRX), which the PSP's loader places and relocates: the demo is one
 too. It's linked once at 0 with its relocations kept (ld -q), and those become the PSP's kind (prx_from_link), the
 way the SDK's prxgen makes a module; and once at 0x08804000, where the loader puts a game's main module, for the
@@ -35,29 +39,31 @@ ET_PSP_PRX, SHT_NULL, SHT_PSP_REL, SHF_ALLOC = 0xFFA0, 0, 0x700000A0, 2
 R_MIPS_GPREL16 = 7  # $gp-relative: nothing for the loader to do
 
 
-def compile_all(cfg_flags: list[str]) -> list[str]:
-    """Every source compiled (and crt0.s assembled) in decompdecomp's compiler sandbox, on copies in build/."""
+def compile_all(build: Path, toolchain: str, cfg_flags: list[str]) -> list[str]:
+    """Every source compiled with `toolchain` (and crt0.s assembled by the SDK's GCC) in decompdecomp's compiler
+    sandbox, on copies in `build`."""
     objs = []
     jobs = [("src/crt0.s", []), ("src/demo/main.c", ["-Isrc/game"]), ("src/demo/libc.c", []),
             ("src/game/game.c", ["-Isrc/game"])]
     jobs += [(f"src/zlib/{u}.c", ["-Isrc/zlib"]) for u in ZLIB_UNITS]
     for src, extra in jobs:
         obj = f"{Path(src).stem}.o"
-        cfg = compiler_config(BUILD, {"compiler": {"toolchain": TOOLCHAIN, "flags": [*cfg_flags, *extra]}})
+        tc = TOOLCHAIN if src.endswith(".s") else toolchain
+        cfg = compiler_config(build, {"compiler": {"toolchain": tc, "flags": [*cfg_flags, *extra]}})
         # the toolchain's own compile command, on the copies in build/ (src/sysinclude: the demo's tiny C library)
         argv = [a.replace("{src}", src).replace("{obj}", obj).replace("{include}", "src/sysinclude") for a in cfg.cmd]
-        res = run_in(cfg, BUILD, argv, inputs=["src"], outputs=[obj])
+        res = run_in(cfg, build, argv, inputs=["src"], outputs=[obj])
         if res.returncode != 0:
             sys.exit(f"failed: {src}\n{res.stdout}{res.stderr}")
         objs.append(obj)
     return objs
 
 
-def link(objs: list[str], out: str, *extra: str) -> None:
+def link(build: Path, objs: list[str], out: str, *extra: str) -> None:
     """The SDK's own linker (it knows the Allegrex's objects), run in the sandbox like its compiler: a 32-bit program."""
-    cfg = compiler_config(BUILD, {"compiler": {"toolchain": TOOLCHAIN}})
+    cfg = compiler_config(build, {"compiler": {"toolchain": TOOLCHAIN}})
     ld = str(toolchains.path(TOOLCHAIN) / "bin" / "psp-ld")
-    res = run_in(cfg, BUILD, [ld, "-EL", *extra, "-T", "prx.ld", "-o", out, *objs], inputs=[*objs, "prx.ld"],
+    res = run_in(cfg, build, [ld, "-EL", *extra, "-T", "prx.ld", "-o", out, *objs], inputs=[*objs, "prx.ld"],
                  outputs=[out])
     if res.returncode != 0:
         sys.exit(f"failed: linking {out}\n{res.stdout}{res.stderr}")
@@ -98,25 +104,34 @@ def prx_from_link(data: bytes) -> bytes:
     return bytes(out)
 
 
+def out_dir(toolchain: str) -> Path:
+    return BUILD if toolchain == TOOLCHAIN else BUILD / toolchain
+
+
 def main() -> None:
+    import argparse
     from importlib.util import module_from_spec, spec_from_file_location
 
-    if BUILD.exists():
-        shutil.rmtree(BUILD)
-    (BUILD / "src").mkdir(parents=True)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("toolchain", nargs="?", default=TOOLCHAIN)
+    toolchain = ap.parse_args().toolchain
+    build = out_dir(toolchain)
+    if build.exists():
+        shutil.rmtree(build)
+    (build / "src").mkdir(parents=True)
     for name, src in (("demo", DEMO), ("game", GAME), ("zlib", ZLIB / "original"), ("sysinclude", ZLIB / "sysinclude")):
-        shutil.copytree(src, BUILD / "src" / name)
-    shutil.copy(HERE / "crt0.s", BUILD / "src" / "crt0.s")
-    shutil.copy(HERE / "prx.ld", BUILD / "prx.ld")
-    objs = compile_all(["-O2", "-G8"])
-    link(objs, "demoq_psp.prx.elf", "-q")  # at 0, its relocations kept
-    link(objs, "demoq_psp.elf", f"--section-start=.text=0x{BASE:X}")  # where the loader would put it, for the key
-    game = BUILD / "BOOT.BIN"
-    game.write_bytes(prx_from_link((BUILD / "demoq_psp.prx.elf").read_bytes()))
+        shutil.copytree(src, build / "src" / name)
+    shutil.copy(HERE / "crt0.s", build / "src" / "crt0.s")
+    shutil.copy(HERE / "prx.ld", build / "prx.ld")
+    objs = compile_all(build, toolchain, ["-O2", "-G8"])
+    link(build, objs, "demoq_psp.prx.elf", "-q")  # at 0, its relocations kept
+    link(build, objs, "demoq_psp.elf", f"--section-start=.text=0x{BASE:X}")  # where the loader would put it, for the key
+    game = build / "BOOT.BIN"
+    game.write_bytes(prx_from_link((build / "demoq_psp.prx.elf").read_bytes()))
     spec = spec_from_file_location("demo_ps2_build", HERE.parent / "demo-ps2" / "build.py")
     ps2 = module_from_spec(spec)
     spec.loader.exec_module(ps2)
-    ps2.write_key(BUILD, game, BUILD / "demoq_psp.elf")
+    ps2.write_key(build, game, build / "demoq_psp.elf")
     print(f"built {game.relative_to(HERE)} ({game.stat().st_size} bytes)")
 
 

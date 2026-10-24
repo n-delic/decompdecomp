@@ -26,7 +26,7 @@ SHT_NULL, SHT_SYMTAB, SHT_NOBITS, SHT_REL = 0, 2, 8, 9
 SHT_MIPS_DEBUG = 0x70000005  # Metrowerks' linker gives its debug sections' relocations this type
 SHT_PSP_REL = 0x700000A0  # a PRX's relocations of a loaded section
 PT_NULL, PT_LOAD = 0, 1
-SHF_ALLOC = 2
+SHF_ALLOC, SHF_EXECINSTR = 2, 4
 SHN_LORESERVE = 0xFF00
 USER_BASE = 0x08804000  # where the loader puts a game's main module: the start of user memory, past the kernel's part
 R_MIPS_NONE, R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16 = 0, 2, 4, 5, 6, 7
@@ -40,6 +40,7 @@ STUB_SECTION, STUB_TABLES = ".sceStub.text", ".lib.stub"
 STUB_BYTES = 8  # each imported function's stub: jr ra; nop, until the loader links it (j or syscall)
 LIBRARY_NAME, STUB_LENGTH, STUB_COUNT, NID_TABLE, STUB_TABLE = 0, 8, 10, 12, 16  # a SceLibraryStubTable's fields
 LIBRARY_NAME_BYTES = 64
+SYMBOL_BYTES, SYMBOL_TYPE, STT_SECTION = 16, 0xF, 3  # an Elf32_Sym; its st_info's type, a section's symbol
 
 
 def is_elf(data: bytes) -> bool:
@@ -222,10 +223,12 @@ def gp_value(program: bytes) -> int:
 
 
 def stub_names(program: bytes) -> dict[int, str]:
-    """The address of each imported function's stub in a fixed program -> its name: the library's and the NID the
-    loader links it by (`IoFileMgrForUser_109F50BC`), as the game's own symbols don't name them (Metrowerks' linker
-    calls every stub of a library `.sceStub.text.<library>`). The NIDs are what the PSP's homebrew documentation
-    lists the functions by; a later version may give their names."""
+    """The address of each imported function's stub in a fixed program -> its name: the game's own symbol there if
+    its symbol table has one (Metrowerks' linker names each stub, beside a `.sceStub.text.<library>` section symbol),
+    else the name the PSP SDK gives the library's NID (nids.py), else the library and the NID the loader links it by
+    (`IoFileMgrForUser_109F50BC`)."""
+    from . import nids
+
     if not is_elf(program):
         return {}
     by_name = {s.name: s for s in _sections(program)}
@@ -242,6 +245,7 @@ def stub_names(program: bytes) -> dict[int, str]:
         start = section.offset + address - section.addr
         return program[start:start + min(length, section.addr + section.size - address)]
 
+    own = _stub_symbols(program, by_name)
     names: dict[int, str] = {}
     offset = 0
     while offset + NID_TABLE + 8 <= tables.size:
@@ -250,13 +254,34 @@ def stub_names(program: bytes) -> dict[int, str]:
         library = at(struct.unpack_from("<I", entry, LIBRARY_NAME)[0], LIBRARY_NAME_BYTES).split(b"\0", 1)[0]
         count, = struct.unpack_from("<H", entry, STUB_COUNT)
         nids_at, stubs_at = struct.unpack_from("<II", entry, NID_TABLE)
-        nids = at(nids_at, 4 * count)
-        if not words or not library or not library.isascii() or len(nids) != 4 * count:
+        nid_words = at(nids_at, 4 * count)
+        if not words or not library or not library.isascii() or len(nid_words) != 4 * count:
             break  # not a stub table as the loader reads them: names from here on would be wrong
         for k in range(count):
-            names[stubs_at + STUB_BYTES * k] = f"{library.decode()}_{struct.unpack_from('<I', nids, 4 * k)[0]:08X}"
+            nid, = struct.unpack_from("<I", nid_words, 4 * k)
+            stub = stubs_at + STUB_BYTES * k
+            names[stub] = own.get(stub) or nids.name(library.decode(), nid) or f"{library.decode()}_{nid:08X}"
         offset += 4 * words
     return names
+
+
+def _stub_symbols(program: bytes, by_name: dict[str, _Section]) -> dict[int, str]:
+    """The game's own names for its stubs: the symbols in .sceStub.text that aren't a section's (`.sceStub.text.
+    <library>`)."""
+    stubs, table = by_name.get(STUB_SECTION), by_name.get(".symtab")
+    if stubs is None or table is None or table.kind != SHT_SYMTAB:
+        return {}
+    strings = next((s for s in by_name.values() if s.index == table.link), None)
+    if strings is None:
+        return {}
+    names = program[strings.offset:strings.offset + strings.size]
+    own = {}
+    for at in range(table.offset, table.offset + table.size - SYMBOL_BYTES + 1, SYMBOL_BYTES):
+        name_at, value, _, info, _, shndx = struct.unpack_from("<IIIBBH", program, at)
+        name = names[name_at:names.find(b"\0", name_at)].decode("latin-1")
+        if shndx == stubs.index and info & SYMBOL_TYPE != STT_SECTION and name and not name.startswith("."):
+            own.setdefault(value, name)
+    return own
 
 
 def stub_range(program: bytes) -> tuple[int, int] | None:
@@ -273,7 +298,6 @@ def comment(program: bytes) -> bytes:
     return program[found.offset:found.offset + found.size] if found is not None else b""
 
 
-
 _GCC_NOTE = re.compile(rb"GCC: \(GNU\) [\d.]+\+allegrex-[\d.]+-psp-(\d+)\.(\d+)")
 SDK_1_7 = (1, 5)  # SDK GCCs from this version on build like 1.7.1's; earlier ones like 1.3.1's
 
@@ -281,11 +305,20 @@ SDK_1_7 = (1, 5)  # SDK GCCs from this version on build like 1.7.1's; earlier on
 def guess_compiler(program: bytes) -> str:
     """Which compiler built the game, from its .comment note: Metrowerks' ("MW MIPS C Compiler (2.4.1.01)", a
     version decomp.me doesn't keep: every CodeWarrior build it has writes 3.0.0, so CodeWarrior 3.0.1's latest build
-    is the guess and the import's compiler test tries the others), or the SDK's GCC with its version. Without a note
-    (SN Systems' SNC leaves none), the SDK's later GCC; the import's test of the installed compilers decides."""
+    is the guess and the import's compiler test tries the others), or the SDK's GCC with its version. SN Systems' SNC
+    leaves no note, but its code copies registers with `or rd, rs, $zero` where GCC and CodeWarrior use `addu` (the
+    demo built with SNC: 682 to 0; with GCC: 0 to 613; a CodeWarrior game: 0 to 11,153): more of those than addu
+    moves is SNC's. Otherwise the SDK's later GCC; the import's test of the installed compilers decides."""
     note = comment(program)
     if b"MW MIPS C Compiler" in note:
         return "MWCCPSP"
     if (found := _GCC_NOTE.search(note)) is not None:
         return "PSPGCC-1.7" if (int(found[1]), int(found[2])) >= SDK_1_7 else "PSPGCC-1.3"
+    if is_elf(program):
+        from ...compilermap import quirks
+
+        habits = quirks(b"".join(program[s.offset:s.offset + s.size] for s in _sections(program)
+                                 if s.flags & SHF_EXECINSTR and s.kind != SHT_NOBITS and s.name != STUB_SECTION), False)
+        if habits["or move"] > habits["addu move"]:
+            return "SNC"
     return "PSPGCC-1.7"

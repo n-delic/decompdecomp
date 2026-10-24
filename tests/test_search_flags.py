@@ -20,6 +20,9 @@ def test_the_variants_change_one_flag_each():
     assert all(sum(a != b for a, b in zip(v, base)) <= 1 for v in variants if len(v) == len(base))
     cw = net.flag_variants("mwcps2-3.0.1", ["-O3", "-sdatathreshold", "8"])
     assert ["-O3", "-sdatathreshold", "0"] in cw and ["-O4", "-sdatathreshold", "8"] in cw
+    snc = net.flag_variants("pspsnc-1.2.7503", ["-O2", "-G8"])  # SNC has no -Os (it refuses to build with it)
+    assert ["-O4", "-G8"] in snc and ["-O2", "-G0"] in snc and ["-O2", "-G8", "-Xsched=0"] in snc
+    assert not any("-Os" in v or "-fno-strength-reduce" in v for v in snc)
 
 
 def test_a_project_with_the_wrong_flags_hears_which_ones_match(built, tmp_path):  # noqa: F811

@@ -273,7 +273,7 @@ source = "decompme/compilers release 'compilers'"
 description = "SN Systems' SNC compiler for PSP, from ProDG. Proprietary; a Windows program, run through wibo."
 requires = ["wibo"]
 cmd = ["{tc:wibo}/wibo", "{tc}/pspsnc.exe", "-c", "-td=.", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
-flags = ["-O2"]
+flags = ["-O2"]  # its levels are -O0 to -O5 (-O3 builds as -O2, -O5 as -O4) and it refuses -Os; small data is GCC's -G
 [["pspsnc-1.2.7503".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/pspsnc_1.2.7503.0.tar.gz"
 sha256 = "0d10a4b387e45b62369eea21b6693fc5517335033bf65e65aa7b543a916f4d6d"

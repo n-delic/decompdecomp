@@ -18,12 +18,13 @@ from .common import parse_ranges
 
 # Flag search (search_flags): the flags of each compiler family worth trying, at most MAX_FLAG_VARIANTS compiles
 FLAG_FAMILIES = (("ido", "ido"), ("mwcps2", "mwcps2"), ("mwccpsp", "mwcps2"), ("ee-gcc", "ee"), ("gcc", "gcc"),
-                 ("psp-gcc", "gcc"))
+                 ("psp-gcc", "gcc"), ("pspsnc", "snc"))
 FLAG_LEVELS = {"gcc": ("-O1", "-O2", "-O3", "-Os"), "ee": ("-O1", "-O2", "-O3", "-Os"),
-               "ido": ("-O1", "-O2", "-O3", "-g"), "mwcps2": ("-O1", "-O2", "-O3", "-O4")}
+               "ido": ("-O1", "-O2", "-O3", "-g"), "mwcps2": ("-O1", "-O2", "-O3", "-O4"),
+               "snc": ("-O0", "-O1", "-O2", "-O4")}  # SNC: -O3 builds as -O2 and -O5 as -O4; it has no -Os
 FLAG_EXTRAS = {"gcc": ("-fno-strength-reduce", "-fno-schedule-insns"),
                "ee": ("-fno-strength-reduce", "-fno-schedule-insns", "-fno-common"),
-               "ido": (), "mwcps2": ()}
+               "ido": (), "mwcps2": (), "snc": ("-Xsched=0",)}  # SNC's instruction scheduling off
 SMALL_DATA_SIZES = (0, 8)
 MAX_FLAG_VARIANTS = 12
 FLAGS_SHOWN = 6
@@ -468,7 +469,7 @@ class CompilerMixin:
         for level in levels:
             if level != current:
                 out.append([level if f == current else f for f in base] if current else [*base, level])
-        if family in ("gcc", "ee"):
+        if family in ("gcc", "ee", "snc"):
             small = next((f for f in base if f.startswith("-G") and f[2:].isdigit()), None)
             for g in SMALL_DATA_SIZES:
                 if small and small != f"-G{g}":

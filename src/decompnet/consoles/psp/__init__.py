@@ -2,19 +2,21 @@
 unit), Sony's SDK GCC, CodeWarrior and SN Systems' SNC compilers, ROM mode.
 
 - prx.py: the game's program, an ELF for the Allegrex: a relocatable module (PRX) is laid out at the address the
-  loader gives a game's main module and becomes a fixed program; its $gp, its imported functions' names (library and
-  NID), and which compiler its note says.
+  loader gives a game's main module and becomes a fixed program; its $gp, its imported functions' names, and which
+  compiler its note says.
+- nids.py, nids.json: the system functions' names by library and NID, from the open-source PSP SDK (LICENSE.pspsdk);
+  `python -m decompnet.consoles.psp.nids` remakes them.
 - sfo.py: PARAM.SFO, the disc's facts about its game (title, product code).
 - the disc itself (an ISO 9660 UMD image, or a CHD of one) is read with the PS2's readers (consoles/ps2/disc.py,
   chd.py).
 - guides/psp.md: what agents read about matching PSP code.
 
 Its demo game is projects/demo-psp (the Demo Quest game built with the SDK's GCC 1.3.1 at -O2 -G8, at the address a
-main module is loaded at).
+main module is loaded at; `build.py pspsnc-1.2.7503` builds it with SN's SNC).
 
 Not yet (ROADMAP.md): a game's other modules (the PRX files beside its program, loaded later: v1 splits the main
-module only), programs still encrypted (most retail EBOOT.BINs: the user decrypts them first), compressed disc
-images (CSO), and the names of imported functions (they're named by their NIDs).
+module only), programs still encrypted (most retail EBOOT.BINs: the user decrypts them first), and compressed disc
+images (CSO).
 """
 
 from __future__ import annotations
@@ -139,13 +141,13 @@ class PlayStationPortable(Console):
         }, False)
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
-        """A game that uses $gp keeps globals up to 8 bytes $gp-relative (GCC's -G8; CodeWarrior's -sdatathreshold
-        8); SNC's own defaults stay."""
+        """A game that uses $gp keeps globals up to 8 bytes $gp-relative (GCC's and SNC's -G8; CodeWarrior's
+        -sdatathreshold 8). SNC's own default is -G0, as GCC's is."""
         flags = super().default_flags(toolchain, gp)
         small = str(SMALL_DATA_BYTES if gp else 0)
         if toolchain.startswith("mwccpsp"):
             return [*flags, "-sdatathreshold", small]
-        if toolchain.startswith("psp-gcc"):
+        if toolchain.startswith(("psp-gcc", "pspsnc")):
             return [f for f in flags if not f.startswith("-G")] + [f"-G{small}"]
         return flags
 
@@ -172,7 +174,9 @@ class PlayStationPortable(Console):
 
     def debug_info(self, program: bytes, known: set[str]):
         """The game's own symbols and debug information, read as the PS2's are, and the imported functions' stubs
-        named by their library and NID where no symbol names them."""
+        named (prx.stub_names) where no function symbol names them. A stub's name the game already gives something
+        else, or a second stub of one function (two of a library's stub tables can import it), gets _2, as the PS2's
+        kernel stubs do."""
         from ..ps2 import debuginfo, symtab
         from . import prx
 
@@ -180,10 +184,17 @@ class PlayStationPortable(Console):
         stubs = prx.stub_names(program)
         if stubs:
             info = info or debuginfo.DebugInfo()
-            taken = {n.address for n in info.named} | {n.name for n in info.named}
-            info.named = sorted([*info.named, *(symtab.Named(name, at, prx.STUB_BYTES, True, prx.STUB_SECTION)
-                                                for at, name in stubs.items() if at not in taken and name not in taken)],
-                                key=lambda n: n.address)
+            addresses, used = {n.address for n in info.named}, {n.name for n in info.named}
+            named = []
+            for at, name in stubs.items():
+                if at in addresses:
+                    continue
+                new, copy = name, 2
+                while new in used:
+                    new, copy = f"{name}_{copy}", copy + 1
+                used.add(new)
+                named.append(symtab.Named(new, at, prx.STUB_BYTES, True, prx.STUB_SECTION))
+            info.named = sorted([*info.named, *named], key=lambda n: n.address)
         return info
 
     def debug_brief(self, known: dict) -> list[str]:
