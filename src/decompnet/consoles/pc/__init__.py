@@ -46,8 +46,8 @@ class WindowsPC(Console):
     own_features = frozenset({REBUILD_CHECK})  # the program's code, rebuilt from its delinked functions
     # what a project's config holds, in its manifest's "analysis" (on_start brings one with less up, step by step):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
-    # relocated twice (scratch.drop_repeated_relocations) and every function's last instruction whole
-    # (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
+    # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
+    # every function's last instruction whole (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
     # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub
     ANALYSIS = 4
 
@@ -106,8 +106,12 @@ class WindowsPC(Console):
 
         def repairs(fp):
             n = scratch.drop_repeated_relocations(fp.root, version)
+            far = scratch.drop_far_call_relocations(fp.root, version)
             cut = scratch.complete_last_instructions(fp.root, version, keep=matched())
             said = [f"{n} functions had a jump table's entries relocated twice, and once now"] if n else []
+            if far:
+                said.append(f"{far} functions had a far call's address taken for a call to another function, and keep "
+                            "it as it is now")
             if cut:
                 said.append(f"{cut} functions that ended in the middle of their last instruction have all of it now")
             return "; ".join(said) or None

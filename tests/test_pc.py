@@ -757,6 +757,26 @@ def test_a_jump_table_ends_where_the_next_one_starts(tmp_path):
     assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
 
 
+def test_a_far_call_is_not_taken_for_a_call_to_another_function(tmp_path):
+    """Bytes Ghidra took for code in a 2005 PC game held `lcall 0x300:0`: analyse relocated its address as a near
+    call's, and the code rebuilt from the objects had it changed, so the rebuild check could never pass."""
+    far_call = PUSH_FRAME + bytes.fromhex("9a000000000003") + bytes.fromhex("e800100000") + bytes.fromhex("5dc3")
+    pe = scratch_pe.read_pe(_tiny_exe(far_call))
+    [fn] = scratch_pe.analyse(pe, [_row(0x401000, 0x401000 + len(far_call))])
+    assert [r[0] for r in fn.relocs] == [11]  # the near call's target only
+    root = _project(tmp_path, far_call, [_row(0x401000, 0x401000 + len(far_call))])
+    config = root / "config" / "game" / "functions.json"
+    info = json.loads(config.read_text())
+    info["units"]["text_00401000"][0]["relocs"].insert(0, [6, scratch_pe.REL32, "_D_00000300", 0])  # as before
+    config.write_text(json.dumps(info))
+    _delink(root)
+    assert not scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    assert scratch_pe.drop_far_call_relocations(root, "game") == 1
+    assert scratch_pe.drop_far_call_relocations(root, "game") == 0
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
 def test_a_project_made_before_gets_its_functions_last_instructions_whole(tmp_path):
     """Found in a gap, `jmp <next function>` (e9 0a 00 00 00) lost its zeros with the padding after it: the function
     was 2 bytes, and no C could match it. 465 functions of a PC game ended mid-instruction."""

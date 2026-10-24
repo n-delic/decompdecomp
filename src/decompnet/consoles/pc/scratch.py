@@ -554,7 +554,8 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
     for ins in _disasm(md, pe.read(start, code_end - start), start):
         at = ins.address - start
         if ins.size >= 5 and (x86.X86_GRP_JUMP in ins.groups or x86.X86_GRP_CALL in ins.groups) \
-                and ins.operands and ins.operands[0].type == x86.X86_OP_IMM:  # rel32, not a short jump
+                and ins.operands and ins.operands[0].type == x86.X86_OP_IMM \
+                and ins.id not in (x86.X86_INS_LCALL, x86.X86_INS_LJMP):  # rel32: not a short jump, nor a far one
             target = ins.operands[0].imm & 0xFFFFFFFF
             if not start <= target < end:  # calls, and jumps to other functions (tail calls)
                 name, _ = symbol(target)
@@ -573,6 +574,7 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
 
 
 CALL = 0xE8  # the opcode before a rel32 call's target
+JMP_REL32, TWO_BYTE_OPCODE, JCC_REL32 = 0xE9, 0x0F, range(0x80, 0x90)  # the other near rel32 jumps' opcodes
 _DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")  # data by its address, as analyse names it
 MAX_INSTRUCTION_BYTES = 15
 
@@ -804,6 +806,31 @@ def drop_repeated_relocations(root: Path, version: str) -> int:
     if repeated:
         path.write_text(json.dumps(info, indent=1), encoding="utf-8")
     return repeated
+
+
+def _near_rel32(pe: PE, at: int) -> bool:
+    """Whether the 4 bytes at `at` are the target of a near call or jump (e8, e9, 0f 80-8f before them)."""
+    before = pe.read(at - 2, 2)
+    return before[1] in (CALL, JMP_REL32) or before[0] == TWO_BYTE_OPCODE and before[1] in JCC_REL32
+
+
+def drop_far_call_relocations(root: Path, version: str) -> int:
+    """A project made before analyse told a far call or jump (`lcall 0x300:0`, 9a or ea, in bytes Ghidra took for
+    code) from a near one relocated its address as a call to another function: the code rebuilt from its objects had
+    it changed (one function of a 2005 PC game), so its rebuild check could never pass. Drops those relocations from
+    functions.json; returns how many functions had one."""
+    path = root / "config" / version / "functions.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    pe = read_pe((root / info["exe"]).read_bytes())
+    changed = 0
+    for fns in info["units"].values():
+        for fn in fns:
+            near = [r for r in fn["relocs"] if r[1] != REL32 or _near_rel32(pe, fn["addr"] + r[0])]
+            changed += len(near) != len(fn["relocs"])
+            fn["relocs"] = near
+    if changed:
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return changed
 
 
 def complete_last_instructions(root: Path, version: str, keep: set[str] = frozenset()) -> int:
