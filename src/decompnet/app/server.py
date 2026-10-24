@@ -86,7 +86,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("%s's console work at start failed", row["slug"])
     threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
-    saves.Autosave(net).start()  # each ROM project's work as plain files in its progress/ folder (app/saves.py)
+    saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the

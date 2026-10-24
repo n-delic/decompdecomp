@@ -133,6 +133,20 @@ class JudgeMixin:
             time.sleep(0.2)
 
     def attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
+        fn = self._function(function, project)
+        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        with self.progress.judging(slug):
+            return self._attempt(agent, function, source, project)
+
+    def _record(self, fn, *args, **kwargs):
+        with self.progress.lock:
+            if not self.progress.applying:
+                slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+                self.progress.sync(slug, force=True)
+            self.progress.check_result()
+            return super()._record(fn, *args, **kwargs)
+
+    def _attempt(self, agent: Agent, function: str, source: str, project: str | None = None) -> dict:
         self._yield_autopilot(function, project)
         if (fork := self.fork_slug(project)):
             return self.forks.attempt(agent, fork, function, source)

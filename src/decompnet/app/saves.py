@@ -1,8 +1,8 @@
 """A ROM project's work as a folder of plain files, and a project rebuilt from one: to move to another computer (the
 owner changes Linux distributions now and then), to keep in git, or to start over after something broke.
 
-The work lives in the app's database, not in the project's folder, so copying the folder kept none of it. A save
-writes what people and agents made: the matched C, the best attempts, the shared headers, the names, the function
+The progress folder is authoritative; progress.py keeps the engine's database in step with edits and git merges.
+It contains what people and agents made: the matched C, the best attempts, the shared headers, the names, the function
 splits, the notes, the instructions, what agents learned, the compiler and its ranges. Never the game: the save
 holds its fingerprint (sha1), and a restore asks for the user's own copy and checks it's the same game. Every
 matched function is judged again on the way in: a match counts because it matches, not because a file says so.
@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from .. import compiler, consoles, toolchains
@@ -33,7 +34,6 @@ from . import save_readme
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
-AUTOSAVE_SECONDS = 300
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -42,8 +42,14 @@ def _header_file(unit: str) -> str:
     return "common.h" if not unit else f"common_{unit}.h"
 
 
+def _source_text(text: str) -> str:
+    # Leading blank lines can affect __LINE__, so saving must preserve them too.
+    return text if text.endswith("\n") else text + "\n"
+
+
 def default_folder(net, slug: str) -> Path:
-    return Path(net.project_row(slug)["root"]) / SAVE_FOLDER
+    proj = net.project_row(slug)
+    return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
 
 
 def save(net, slug: str, folder: Path | None = None) -> dict:
@@ -52,44 +58,80 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     folder = Path(folder) if folder else default_folder(net, slug)
     if not net.is_rom(proj):
         return _save_best(net, proj, folder)
+    net.progress.sync(slug, force=True)
+    files, result = _render(net, slug, folder)
+    if folder == default_folder(net, slug):
+        net.progress.sync(slug, force=True)
+    else:
+        _publish(folder, files)
+    return result | {"folder": str(folder)}
+
+
+def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
+             expected: dict[str, str] | None = None) -> bool:
+    """Only change owned files whose contents changed; keep git and contributors' other files intact."""
+    if expected is not None:
+        for name in files.keys() | (previous or {}).keys():
+            if name == "README.md":
+                continue
+            path = folder / name
+            current = path.read_text(encoding="utf-8") if path.exists() else None
+            if current != expected.get(name):
+                return False  # git or an editor wrote while the database was being rendered: read it next time
+    for name in (previous or {}).keys() - files.keys():
+        (folder / name).unlink(missing_ok=True)
+    for name, text in files.items():
+        path = folder / name
+        if path.exists() and path.read_text(encoding="utf-8") == text:
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_text(text, encoding="utf-8")
+        temporary.replace(path)
+    return True
+
+
+def _render(net, slug: str, folder: Path | None = None) -> tuple[dict[str, str], dict]:
+    proj = net._project(slug)
     cfg = net.cfg(proj)
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
                          "best_agent_id, readable FROM functions WHERE project_id=? ORDER BY vram", pid)
-    for sub in ("src", "best", "include"):
-        shutil.rmtree(folder / sub, ignore_errors=True)
-        (folder / sub).mkdir(parents=True, exist_ok=True)
+    files = {}
     functions = {}
     for r in rows:
         if r["status"] == "matched" and r["matched_source"]:
-            (folder / "src" / f"{r['name']}.c").write_text(r["matched_source"].strip() + "\n", encoding="utf-8")
+            files[f"src/{r['name']}.c"] = _source_text(r["matched_source"])
             functions[r["name"]] = {"vram": r["vram"], "matched_by": names.get(r["matched_agent_id"], ""),
                                     "readable": bool(r["readable"])}
         elif r["best_source"] and r["best_score"] is not None:
-            (folder / "best" / f"{r['name']}.c").write_text(r["best_source"].strip() + "\n", encoding="utf-8")
+            files[f"best/{r['name']}.c"] = _source_text(r["best_source"])
             functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"], "best_by": names.get(r["best_agent_id"], "")}
     units = {""} | net._unit_contexts(pid)
     for unit in sorted(units):
-        (folder / "include" / _header_file(unit)).write_text(net._context(pid, unit)["header"], encoding="utf-8")
+        files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
     notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or ""} for r in net.store.all(
         "SELECT n.text, a.name AS agent, f.name AS fn FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
-        "JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
+        "LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
     knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
     manifest = {
-        "format": FORMAT, "saved_at": time.time(), "title": proj["name"], "platform": cfg.get("platform"),
+        "format": FORMAT, "title": proj["name"], "platform": cfg.get("platform"),
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
+        "priority": cfg.get("priority") or [],
+        "auto_compiler": cfg.get("auto_compiler"),
         "knowledge_auto": bool(cfg.get("knowledge_auto")), "headers": {u: _header_file(u) for u in sorted(units)},
         "functions": functions,
-        "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"]} for r in rows],
+        "layout": [{"name": r["name"], "vram": r["vram"], "size": r["size"],
+                    "status": "asm" if r["status"] == "asm" else "open"} for r in rows],
         "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
                                                     pid) if not AUTO_NAME.match(r["name"])],
         "notes": notes,
     }
-    (folder / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
+    files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
     matched = sum(1 for f in functions.values() if "matched_by" in f)
     compiler = cfg.get("compiler") or {}
     compiler_name = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
@@ -127,9 +169,17 @@ README.md             this file
 Open decompdecomp, choose **New project → Open a saved project**, then pick this folder (or paste its git
 repository's address) and your own copy of the game. decompdecomp checks it's the same game and judges every saved
 function again: a match counts because it matches, not because a file says so.
+
+## Collaborate
+
+This folder is the source of truth. Edit its C, headers, names, notes or settings and pull or merge contributions
+here. decompdecomp picks up changes automatically and judges changed code again. Deleted sources reopen their
+functions. Keep git conflict markers out of these files; unresolved conflicts pause synchronization.
 """
-    save_readme.update(net, proj, folder, readme, len(functions) - matched, details)
-    return {"folder": str(folder), "matched": matched, "best": len(functions) - matched}
+    readme_folder = folder or default_folder(net, slug)
+    readme_folder.mkdir(parents=True, exist_ok=True)
+    save_readme.update(net, proj, readme_folder, readme, len(functions) - matched, details)
+    return files, {"matched": matched, "best": len(functions) - matched}
 
 
 def _save_best(net, proj, folder: Path) -> dict:
@@ -215,31 +265,71 @@ def restore(net, source: str, game: Path, log=print) -> dict:
             raise NetworkError(f"that's not the same game: this save is for {manifest['title']} "
                                f"({manifest['game'].get('file') or 'its original file'}); pick your copy of that one")
         log("importing and splitting your game copy")
-        with compiler.cancellable(getattr(log, "check_cancel", lambda: None)):
-            slug = net.import_rom(data, confirmed=True, name=data.name, log=log)
-            getattr(log, "check_cancel", lambda: None)()
-            return _apply(net, slug, folder, manifest, log) | {"slug": slug}
+        progress = getattr(net, "progress", None)
+        with compiler.cancellable(getattr(log, "check_cancel", lambda: None)), \
+                (progress.lock if progress is not None else nullcontext()):
+            if progress is not None:
+                progress.local.busy = True  # importing must not create a second progress folder before binding this one
+            try:
+                slug = net.import_rom(data, confirmed=True, name=data.name, log=log)
+                getattr(log, "check_cancel", lambda: None)()
+                # Keep a local checkout in place; keep a clone (including .git) after the temporary directory ends.
+                if Path(source).expanduser().is_dir():
+                    live = folder.resolve()
+                else:
+                    live = Path(net._project(slug)["root"]) / SAVE_FOLDER
+                    if (live / ".git").exists():
+                        raise NetworkError("This project already has a progress checkout. Pull changes there, or open that local folder.")
+                    from .progress import _read
+                    _publish(live, {}, _read(live))
+                    shutil.copytree(folder, live, dirs_exist_ok=True)
+                net._update_cfg(slug, lambda cfg: cfg.__setitem__("progress_folder", str(live)))
+                if progress is None:
+                    raise RuntimeError("restoring a saved project requires progress synchronization")
+                progress.disk.pop(slug, None)
+                progress.projected.pop(slug, None)
+            finally:
+                if progress is not None:
+                    progress.local.busy = False
+            progress.sync(slug, force=True, logger=log)
+            return progress.results[slug] | {"slug": slug}
 
 
-def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
+def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, str] | None = None) -> dict:
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
     pid = proj["id"]
     log("putting back the function splits and names")
-    net.apply_remote_layout(slug, manifest.get("layout") or [], manifest.get("symbols") or [])
+    layout = manifest.get("layout") or []
+    symbols = manifest.get("symbols") or []
+    symbols = symbols + [{"name": f["name"], "address": f["vram"], "size": f["size"], "kind": "func"}
+                         for f in layout if not any(s["address"] == f["vram"] for s in symbols)]
+    _join_saved_layout(net, proj, layout)
+    net.apply_remote_layout(slug, layout, symbols)
+
+    def source(name):
+        if files is not None:
+            return files.get(name)
+        path = folder / name
+        return path.read_text(encoding="utf-8") if path.exists() else None
 
     def setup(cfg):
         if manifest.get("compiler") and toolchains.installed(manifest["compiler"].get("toolchain") or "") is not None:
             cfg["compiler"] = manifest["compiler"]
-        cfg["compiler_ranges"] = manifest.get("compiler_ranges") or cfg.get("compiler_ranges") or []
-        cfg["instructions"] = manifest.get("instructions") or cfg.get("instructions") or ""
+        cfg["compiler_ranges"] = manifest.get("compiler_ranges") or []
+        cfg["instructions"] = manifest.get("instructions") or ""
+        cfg["priority"] = manifest.get("priority") or []
+        cfg["auto_compiler"] = manifest.get("auto_compiler")
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
     net._update_cfg(slug, setup)
+    if manifest.get("title"):
+        with net.store.tx() as db:
+            db.execute("UPDATE projects SET name=? WHERE id=?", (manifest["title"], pid))
     restorer, _ = net.local_agent("restored")
     with net.store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
             check_cancel()
-            header = (folder / "include" / file).read_text(encoding="utf-8") if (folder / "include" / file).exists() else None
+            header = source("include/" + file)
             if header is not None and header != net._context(pid, unit)["header"]:
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, restorer.id,
@@ -263,23 +353,34 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
         getattr(log, "check_cancel", lambda: None)()
         log(f"checking {old_name}")
         kind = "src" if "matched_by" in info else "best"
-        path = folder / kind / f"{old_name}.c"
+        text = source(f"{kind}/{old_name}.c")
         name = by_vram.get(info["vram"])
-        if name is None or not path.exists():
+        if name is None or text is None:
             lost.append(old_name) if kind == "src" else None
             continue
-        if net.store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, name)["status"] == "matched":
+        current = net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+        if current["status"] == "matched":
             matched += kind == "src"
             continue
-        agent, _ = net.local_agent((info.get("matched_by") or info.get("best_by") or "restored"))
+        if kind == "best" and current["best_source"] == text:
+            best += 1
+            continue
+        credit, _ = net.local_agent((info.get("matched_by") or info.get("best_by") or "restored"))
+        agent, _ = net.local_agent("progress-judge")
         try:
-            result = net.attempt(agent, name, path.read_text(encoding="utf-8"), slug)
+            result = net.attempt(agent, name, text, slug)
         except NetworkError as e:
             log(f"{name}: {e}")
             result = {"matched": False}
         finally:
             with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
-                db.execute("DELETE FROM claims WHERE agent_id=?", (agent.id,))
+                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                           "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
+                       (credit.id, pid, name, agent.id))
+            db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
+                       (credit.id, pid, name, agent.id))
         if kind == "src":
             if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
                 with net.store.tx() as db:
@@ -293,34 +394,70 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
     return {"matched": matched, "best": best, "lost": lost}
 
 
+def _join_saved_layout(net, proj, layout: list[dict]) -> None:
+    """Switching git branches can undo a split. Join its stored assembly before applying the new splits."""
+    from dataclasses import replace
+
+    pid = proj["id"]
+    for entry in layout:
+        start, end = entry["vram"], entry["vram"] + entry["size"]
+        rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? ORDER BY vram",
+                             pid, start, end)
+        if len(rows) < 2 or rows[0]["vram"] != start:
+            continue
+        parts = [net._parse_asm(r["name"], r["asm"], r["unit"]) for r in rows]
+        lines = {line.vram: line for part in parts for line in part.lines if line.vram < end}
+        missing = set(range(start, end, 4)) - lines.keys()
+        if missing:
+            from ..rom.split import AsmLine
+            read = net.reader(proj)
+            for address in sorted(missing):
+                # split_function trims padding from the head; undoing that split must put its original NOPs back.
+                if read(address, 4) != b"\0\0\0\0":
+                    break
+                previous = lines[max(at for at in lines if at < address)]
+                lines[address] = AsmLine(previous.rom + address - previous.vram, address, 0, "nop", "")
+        if sorted(lines) != list(range(start, end, 4)):
+            raise NetworkError("The saved layout crosses a gap in this analysis. Reimport the game before continuing.")
+        joined = replace(parts[0], lines=[lines[address] for address in sorted(lines)],
+                         labels=set().union(*(part.labels for part in parts)))
+        target = net._make_target(proj, joined, net.symbols(pid))
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL WHERE id=?",
+                       (joined.size, len(joined.lines), target.code, json.dumps(target.to_json()),
+                        net._asm_source(joined), rows[0]["id"]))
+            for tail in rows[1:]:
+                for table in ("claims", "attempts", "twin_misses"):
+                    db.execute(f"DELETE FROM {table} WHERE function_id=?", (tail["id"],))
+                db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (tail["id"], tail["id"]))
+                db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (rows[0]["id"], tail["id"]))
+                db.execute("DELETE FROM functions WHERE id=?", (tail["id"],))
+                db.execute("DELETE FROM symbols WHERE project_id=? AND address=? AND kind='func'", (pid, tail["vram"]))
+        net._syms.pop(pid, None)
+
+
 class Autosave:
-    """Every few minutes, each ROM project with something new since its last save is saved to its progress/ folder:
-    copying ~/Decomp kept none of the work (it's in the app's database)."""
+    """Follow local work and contributions in progress/, including while no project window is open."""
 
     def __init__(self, net):
         self.net = net
-        self.last: dict[str, int] = {}
         self.stop = threading.Event()
 
     def start(self) -> None:
         threading.Thread(target=self._loop, daemon=True, name="autosave").start()
 
     def _loop(self) -> None:
-        while not self.stop.wait(AUTOSAVE_SECONDS):
+        while not self.stop.is_set():
             self.run_once()
+            self.stop.wait(1)
 
     def run_once(self) -> list[str]:
-        """Save every ROM project that changed since its last save (a new event). Returns the slugs saved."""
+        """Synchronize every ROM project, including file changes that have no database event."""
         saved = []
-        for row in self.net.store.all("SELECT p.slug, (SELECT MAX(id) FROM events e WHERE e.project_id=p.id) AS last "
-                                      "FROM projects p"):
-            if row["last"] is None or self.last.get(row["slug"]) == row["last"]:
-                continue
+        for row in self.net.store.all("SELECT slug FROM projects"):
             try:
-                if self.net.is_rom(self.net._project(row["slug"])):
-                    save(self.net, row["slug"])
+                if self.net.progress.sync(row["slug"], force=True):
                     saved.append(row["slug"])
-                self.last[row["slug"]] = row["last"]
             except Exception:  # never stands between the user and their work
                 log.exception("saving %s failed", row["slug"])
         return saved

@@ -95,6 +95,10 @@ class Readability:
 
     def submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
         """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte."""
+        with self.net.progress.judging(slug):
+            return self._submit(agent, slug, function, source)
+
+    def _submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
         proj = self.net._project(slug)
         fn = self.net._function(function, proj["slug"])
         if fn["status"] != "matched":
@@ -128,7 +132,8 @@ class Readability:
 
     def _readable(self, proj, fn, agent: Agent, source: str) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
-        with self.net.store.tx() as db:
+        with self.net.progress.lock, self.net.store.tx() as db:
+            self.net.progress.check_result()
             db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
                        (source, source, fn["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))

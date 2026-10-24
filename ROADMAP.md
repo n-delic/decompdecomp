@@ -177,6 +177,9 @@ Where to start on a gap:
 - **Room presence during slow syncs.** A separate heartbeat keeps members online while importing the host's work
   or rebuilding a source project. Sync failures and recovery are logged, and syncing continues automatically
   after a temporary connection failure. Applies to ROM and project rooms on every console.
+- **Bring saved ROM progress into a room.** When joining with a game already imported, saved matches the host has
+  not matched yet are submitted for the host to verify. Better unfinished attempts are shared when both projects
+  use the same compiler settings; functions whose layout or name differs are skipped.
 - **A standalone app.** Its own window (GTK and WebKitGTK) and a tray icon, so closing the window doesn't stop
   helper agents; **Quit** ends everything the app started. Only helpers the app starts work on projects: the old
   `decomp mcp` bridge is gone, and the first start removes its registrations from your agents. A development copy is

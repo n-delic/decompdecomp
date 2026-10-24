@@ -1,5 +1,6 @@
 """Room presence continues while receiving work is slow, without requiring a game or compiler."""
 
+import json
 import threading
 import time
 from types import SimpleNamespace
@@ -117,6 +118,102 @@ def test_failed_heartbeat_does_not_keep_room_online(connection, caplog):
     assert link.status()["state"] == "offline"
     assert link.last_contact == 0
     assert link.error == "local sync error"
+
+
+def test_join_shares_only_stronger_saved_rom_progress():
+    class RoomLink:
+        cursor = {}
+
+        def __init__(self):
+            self.attempts = []
+            self.reports = []
+            self.synced = False
+
+        def _req(self, method, route, params):
+            assert method == "GET" and route == "/collab/state" and params["fresh"] == 1
+            return {
+                "matched": [{"vram": 0x1000, "name": "already_matched"}],
+                "functions": [
+                    {"vram": 0x1000, "size": 4, "name": "already_matched"},
+                    {"vram": 0x2000, "size": 4, "name": "saved_match"},
+                    {"vram": 0x3000, "size": 4, "name": "better_attempt"},
+                    {"vram": 0x4000, "size": 4, "name": "worse_attempt"},
+                ],
+                "best": [{"vram": 0x4000, "score": 3}],
+            }
+
+        def attempt(self, agent, function, source):
+            self.attempts.append((function, source))
+            return {"matched": True}
+
+        def call(self, route, agent, **data):
+            self.reports.append((route, data))
+
+        def sync(self):
+            self.synced = True
+
+    class Net:
+        def local_agent(self, name):
+            assert name == "saved-progress"
+            return SimpleNamespace(name=name), None
+
+    candidates = [
+        {"name": "already_matched", "vram": 0x1000, "size": 4, "status": "matched",
+         "matched_source": "already"},
+        {"name": "saved_match", "vram": 0x2000, "size": 4, "status": "matched",
+         "matched_source": "match"},
+        {"name": "better_attempt", "vram": 0x3000, "size": 4, "status": "open",
+         "best_score": 2, "best_source": "better"},
+        {"name": "worse_attempt", "vram": 0x4000, "size": 4, "status": "open",
+         "best_score": 4, "best_source": "worse"},
+    ]
+    room = RoomLink()
+    log = []
+
+    collab._share_saved_progress(Net(), "project", room, candidates, fork=False,
+                                 best_comparable=True, log=log.append)
+
+    assert room.attempts == [("saved_match", "match")]
+    assert room.reports == [("/collab/best", {"function": "better_attempt", "source": "better", "score": 2})]
+    assert room.synced
+    assert any("host confirmed 1 saved match" in message for message in log)
+
+
+def test_a_rom_guest_can_wait_for_approval_after_joining(monkeypatch):
+    hello = {"kind": "rom", "room": "game", "sha1": "same", "title": "Game", "game_code": "ABCD",
+             "region": "USA", "functions": 1, "matched": 0,
+             "compiler": {"toolchain": "gcc", "flags": ""}}
+    monkeypatch.setattr(collab, "_hello", lambda *args: ("https://host.example", "invite", hello))
+    monkeypatch.setattr("decompnet.consoles.identify", lambda _: SimpleNamespace(
+        read_game=lambda *_: SimpleNamespace(info={"sha1": "same"})))
+    monkeypatch.setattr(collab, "_saved_progress", lambda *args, **kwargs: [])
+    requests = []
+
+    def host(request):
+        requests.append(request.url.path)
+        if request.url.path == "/collab/join":
+            return httpx.Response(200, json={"token": "secret", "name": "guest", "waiting": True})
+        return httpx.Response(400)
+
+    class Net:
+        store = SimpleNamespace(all=lambda *_: [])
+
+        def import_rom(self, *args, **kwargs):
+            return "game"
+
+        def project_row(self, slug):
+            assert slug == "game"
+            return {"config": json.dumps({"compiler": hello["compiler"]})}
+
+        def link_project(self, *args, **kwargs):
+            return SimpleNamespace(run=lambda: None)
+
+    with httpx.Client(transport=httpx.MockTransport(host)) as client:
+        slug = collab.join_room(Net(), "https://host.example/join/invite", "guest", b"rom",
+                                log=lambda *_: None, client=client, start=False)
+
+    assert slug == "game"
+    assert requests == ["/collab/join"]
 
 
 def test_heartbeat_recovers_without_rejoining(connection, caplog):

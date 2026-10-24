@@ -55,6 +55,11 @@ class ImportMixin:
         """ROM mode: split the program `console` read from the user's file, store every function as a target."""
         if reimport_slug is None:
             return self._import_split(console, picked, toolchain=toolchain, flags=flags, log=log)
+        with self.progress.rebuilding(reimport_slug):
+            return self._reimport_split(console, picked, toolchain=toolchain, flags=flags, log=log,
+                                        reimport_slug=reimport_slug)
+
+    def _reimport_split(self, console, picked, *, toolchain, flags, log, reimport_slug):
         proj = self._project(reimport_slug)
         cfg = json.loads(proj["config"])
         if cfg.get("kind") != "rom" or self.console(proj).id != console.id:

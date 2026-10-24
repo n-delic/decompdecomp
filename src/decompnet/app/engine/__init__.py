@@ -21,6 +21,9 @@ The engine is one class, RomNetwork, put together from a module per topic:
 - rooms.py: rooms (collab.py), the engine's side
 - gui.py: what the GUI shows, and the export
 - autopilot.py: autopilot, and what a match sets off
+
+app/progress.py keeps ROM progress files authoritative; core.py checks them before serving a project and
+judging.py rejects compiles made against progress that has since changed.
 """
 
 from __future__ import annotations

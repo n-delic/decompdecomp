@@ -61,6 +61,15 @@ class Core(Network):
         from ..drafts import Drafter
         self.drafter = Drafter(self)
         self.find_moved_projects()
+        from ..progress import Progress
+        self.progress = Progress(self)
+
+    def _project(self, slug: str | None):
+        row = super()._project(slug)
+        if hasattr(self, "progress"):
+            self.progress.sync(row["slug"])
+            row = super()._project(row["slug"])
+        return row
 
     @staticmethod
     def cfg(proj) -> dict:
@@ -86,6 +95,10 @@ class Core(Network):
             here = self.workspace / row["slug"]
             if row["root"] and not Path(row["root"]).exists() and here.is_dir():
                 with self.store.tx() as db:
+                    cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (row["id"],)).fetchone()["config"])
+                    if cfg.get("progress_folder") and Path(cfg["progress_folder"]).is_relative_to(Path(row["root"])):
+                        cfg["progress_folder"] = str(here / Path(cfg["progress_folder"]).relative_to(Path(row["root"])))
+                        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), row["id"]))
                     db.execute("UPDATE projects SET root=? WHERE id=?", (str(here), row["id"]))
                 moved.append(row["slug"])
         return moved
@@ -171,6 +184,8 @@ class Core(Network):
     def _function(self, name: str, project: str | None):
         """Functions can also be named by address (0x80001234), handy for agents reading assembly, and the way
         agents write names they read elsewhere (see _loose_functions)."""
+        if project:
+            self._project(project)
         m = _ADDRESS.match(name.strip()) if name else None
         if m:
             proj = self._project(project)
@@ -272,6 +287,7 @@ class Core(Network):
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             change(cfg)
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+        self.progress.sync(slug, force=True)
         return cfg
 
     def local_agent(self, name: str) -> tuple[Agent, str]:

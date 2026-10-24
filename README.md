@@ -90,6 +90,11 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
 
 You can also continue a community decomp: paste the address of its repository and pick your own copy of its game.
 
+To decompile with friends, open a project's **Decompile together** panel to host a room, or choose **Join a team's
+room** from **New project**. If you've already imported that exact game, joining also shares your saved matches that
+the host hasn't matched yet; the host verifies each one. For ROM projects, better unfinished attempts are shared too
+when both projects use the same compiler settings. Everyone needs their own copy of the game.
+
 When you close the window while agents work, decompdecomp asks you: stop them and quit, or keep them working.
 **Quit** ends the app and everything it started.
 

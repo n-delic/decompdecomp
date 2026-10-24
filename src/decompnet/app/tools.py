@@ -359,12 +359,20 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
     return args
 
 
+def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
+    """Every helper sees pulled changes before acting, and its completed work is on disk before it gets an answer."""
+    net.progress.sync(slug, force=True)
+    result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+    net.progress.sync(slug, force=True)
+    return result
+
+
 def call(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
     """Run one tool for the built-in agent; errors come back as text the model can act on."""
     if name not in HANDLERS:
         return f"error: unknown tool {name!r}"
     try:
-        return HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
+        return _invoke(net, agent, slug, name, args)
     except NetworkError as e:
         return f"error: {e}"
     except TypeError as e:
@@ -386,7 +394,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         except NetworkError as e:
             raise ToolError(str(e)) from None
         try:
-            return await anyio.to_thread.run_sync(lambda: HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args)))
+            return await anyio.to_thread.run_sync(lambda: _invoke(net, agent, slug, name, args))
         except NetworkError as e:
             raise ToolError(str(e)) from None
 

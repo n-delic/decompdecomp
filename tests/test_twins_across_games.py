@@ -3,6 +3,8 @@ libraries come in the same code from game to game. The second game here is the d
 with its own names, so the names have to be swapped as its own symbols say."""
 
 import json
+import shutil
+from pathlib import Path
 
 from decompnet.app.engine import RomNetwork
 
@@ -11,12 +13,18 @@ from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo RO
 
 
 def copy_project(net, slug, new_slug):
-    """The same game as another project: every function, symbol and header row copied under a new id."""
+    """The same game as another project: copy its ROM, functions, symbols and headers under a new id."""
     src = net._project(slug)
+    root = Path(src["root"]) / new_slug
+    cfg = json.loads(src["config"])
+    rom = Path(cfg["rom"]["file"])
+    destination = root / rom
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path(src["root"]) / rom, destination)
     with net.store.tx() as db:
         pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
-                         (new_slug, "Another Game", "", src["arch"], src["big_endian"], src["root"],
-                          json.dumps((cfg := json.loads(src["config"])) | {"rom": cfg["rom"] | {"sha1": "another"}}))).lastrowid
+                         (new_slug, "Another Game", "", src["arch"], src["big_endian"], str(root),
+                          src["config"])).lastrowid
         for table, cols in (("functions", "name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset"),
                             ("symbols", "name,address,size,kind"),
                             ("context_versions", "version,header,agent_id,message,created_at,unit")):

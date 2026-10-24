@@ -110,6 +110,8 @@ class AutopilotMixin:
         those twins itself.)"""
         if proj is None:
             return
+        if self.progress.applying:
+            return  # importing authoritative progress must not start new work before all its headers are loaded
         if agent is not None and agent.name == "autopilot" and self.twins._full_running(proj["slug"]):
             return
         self.twins.after_match(proj, function_id)
@@ -119,6 +121,13 @@ class AutopilotMixin:
     def try_quietly(self, agent, proj, fn, source: str) -> dict:
         """Judge one candidate for a function nobody holds (autopilot's tries): held only while it compiles,
         recorded as an attempt like any other. {"matched", "score"}."""
+        with self.progress.judging(proj["slug"]):
+            return self._try_quietly(agent, proj, fn, source)
+
+    def _try_quietly(self, agent, proj, fn, source: str) -> dict:
+        fn = self.store.one("SELECT * FROM functions WHERE id=?", fn["id"])
+        if fn is None or fn["status"] != "open":
+            raise NetworkError("This function is no longer open. Read the updated project before trying another draft.")
         now = time.time()
         with self.store.tx() as db:
             self._expire_claims(db)

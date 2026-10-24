@@ -93,6 +93,35 @@ def test_host_work_reaches_the_guest(room):
     assert guest.overview(gslug)["room"]["role"] == "guest"
 
 
+def test_join_shares_stronger_saved_progress(built, tmp_path):  # noqa: F811
+    host_home = tmp_path / "host"
+    host_home.mkdir()
+    host = RomNetwork(host_home / "d.db", host_home)
+    slug = host.import_rom(built, confirmed=True, log=lambda *_: None)
+    host_agent, _ = host.local_agent("claude-1")
+    host.split_function(host_agent, slug, "func_800007C4", "0x800007D0")
+    host.rooms[slug] = collab.Room(host, slug)
+    code = host.rooms[slug].open_invite()
+    client = TestClient(collab.host_app(host, host.rooms), base_url="https://abc.trycloudflare.com")
+    link = f"https://abc.trycloudflare.com/join/{code}#room={slug}"
+
+    guest = RomNetwork(tmp_path / "saved.db", tmp_path)
+    gslug = guest.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = guest.local_agent("claude-1")
+    guest.split_function(agent, gslug, "func_800007C4", "0x800007D0")
+    assert guest.compile_and_diff(agent, "func_800007D0", CLAMP, gslug).startswith("✅ MATCH")
+    best = guest.attempt(agent, "func_800007F4", "s32 func_800007F4(s32 v) { return v + 1; }", gslug)
+    assert best["score"] and not best["matched"]
+
+    joined = collab.join_room(guest, link, "bea", built, log=lambda *_: None, client=client, start=False)
+
+    assert joined == gslug
+    assert host._function("func_800007D0", slug)["status"] == "matched"
+    received = host._function("func_800007F4", slug)
+    assert received["best_score"] == best["score"]
+    assert "v + 1" in received["best_source"]
+
+
 def test_guest_edits_go_through_the_host(room):
     host, slug, guest, gslug, client, code, link = room
     agent, _ = guest.local_agent("claude-2")

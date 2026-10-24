@@ -507,7 +507,7 @@ $("reimportBtn").onclick = async () => {
   }
 };
 
-/* Save your progress (app/saves.py): the app saves by itself every few minutes into the project's progress folder;
+/* Save your progress (app/saves.py): progress/ stays authoritative and follows local work and git contributions;
    this saves now, or to a folder of the user's choice (a USB stick, a git checkout). */
 $("recheckBtn").onclick = async () => {
   const b = $("recheckBtn");

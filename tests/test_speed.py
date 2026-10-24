@@ -13,7 +13,7 @@ import pytest
 from elftools.elf.elffile import ELFFile
 
 from decompnet import toolchains
-from decompnet.app import tools
+from decompnet.app import saves, tools
 from decompnet.app.engine import RomNetwork
 from decompnet.app.twins import Print, apply, renames
 from decompnet.forks import csource
@@ -280,10 +280,18 @@ def test_the_permuter_finishes_a_near_miss(game, monkeypatch):
     source = csource.get((GAME / "game.c").read_text(), "entity_update_physics")
     assert net.attempt(agent, "entity_update_physics", source, slug)["matched"]
     fn = net._function("entity_update_physics", slug)
+    (saves.default_folder(net, slug) / "src" / f"{fn['name']}.c").unlink()
+    net.progress.sync(slug, force=True)
+    fn = net._function("entity_update_physics", slug)
     near = None
     for seed in range(200):  # a variant that compiles and is close, but not the same code
         variant = mutate(source, random.Random(seed))
         res = net.try_quietly(agent, net.project_row(slug), {**fn, "status": "open"}, variant) if variant else None
+        if res and res["matched"]:
+            (saves.default_folder(net, slug) / "src" / f"{fn['name']}.c").unlink()
+            net.progress.sync(slug, force=True)
+            fn = net._function("entity_update_physics", slug)
+            continue
         if res and res["score"] and res["score"] <= fn["n_insns"] * 100 * 0.06:
             near = (variant, res["score"])
             break
