@@ -1979,6 +1979,10 @@ class ForkEngine:
         out.append(meta.get("symbol") or fn["name"].split("@")[0])
         if (c := _MSVC_C.fullmatch(meta.get("symbol") or "")):  # _f, _f@8 (__stdcall), @f@8 (__fastcall): f in C
             out.append(c.group(1))
+        if not dem and re.fullmatch(r"[A-Za-z_]\w*", out[-1]):
+            # a class named after the function, and its destructor (func_004D9DD0::~func_004D9DD0): a PC game's
+            # build pairs it by the address in its name; its constructor is func_004D9DD0::func_004D9DD0 already
+            out.append(f"{out[-1]}::~{out[-1]}")
         return list(dict.fromkeys(out))
 
     def _find(self, text: str, names: list[str]):
