@@ -39,13 +39,18 @@ def _systemd_run() -> str | None:
     return exe if ok else None
 
 
-def capped(argv: list[str], memory: int | None = None) -> list[str]:
-    """`argv`, wrapped so it's stopped when it uses more than `memory` bytes (default: default_cap())."""
+def capped(argv: list[str], memory: int | None = None, stop_all: bool = True) -> list[str]:
+    """`argv`, wrapped so it's stopped when it uses more than `memory` bytes (default: default_cap()). Over the cap
+    the kernel kills the command's biggest process, and systemd then stops the rest of it; with `stop_all` False the
+    rest carries on without that process, for a tool that copes: Ghidra's analysis of a 6 MB game ran one decompiler
+    process up to 6 GB, and when the kernel killed it at the cap systemd stopped Ghidra too, which then said nothing
+    about why. Ghidra starts another decompiler for the next function."""
     exe = _systemd_run()
     if exe is None:
         return list(argv)
     mb = (memory or default_cap()) >> 20
-    return [exe, "--user", "--scope", "--quiet", "-p", f"MemoryMax={mb}M", "-p", "MemorySwapMax=0", "--", *argv]
+    keep = [] if stop_all else ["-p", "OOMPolicy=continue"]
+    return [exe, "--user", "--scope", "--quiet", "-p", f"MemoryMax={mb}M", "-p", "MemorySwapMax=0", *keep, "--", *argv]
 
 
 def killed_for_memory(returncode: int) -> bool:

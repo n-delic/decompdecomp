@@ -2,11 +2,13 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tarfile
 
 import pytest
 
-from decompnet import toolchains
+from decompnet import limits, toolchains
 
 
 @pytest.fixture
@@ -150,7 +152,7 @@ def test_ghidra_without_a_jdk_runs_with_the_pinned_one(tc_root, monkeypatch):
     jdk = toolchains.registry()["jdk"]
     assert jdk.parts_for("linux-x86_64") and all(p["sha256"] for p in jdk.parts)
     monkeypatch.setattr(toolchains, "jdk_version", lambda: 25)
-    assert ghidra.java_home() is None and ghidra._env() is None  # the computer's own JDK
+    assert ghidra.java_home() is None and ghidra._env().get("JAVA_HOME") == os.environ.get("JAVA_HOME")  # its own
 
 
 @pytest.mark.skipif(os.name == "nt", reason="a shell-script stand-in for Ghidra")
@@ -170,3 +172,55 @@ def test_a_ghidra_that_didnt_run_says_why(tmp_path, monkeypatch):
     monkeypatch.setattr(ghidra, "available", lambda: True)
     assert ghidra.decompile_object(program, tmp_path / "cache") == {}  # a draft is optional: none, nothing cached
     assert not (tmp_path / "cache").exists()
+
+
+def test_ghidras_java_heap_is_half_its_memory_cap(monkeypatch):
+    """analyzeHeadless gives Java 2 GB whatever the cap: a bigger game's analysis gets half the cap instead, and the
+    other half is left to the decompiler processes it starts. A heap the user chose stays."""
+    from decompnet.forks import ghidra
+
+    monkeypatch.delenv("GHIDRA_MAXMEM", raising=False)
+    monkeypatch.delenv("GHIDRA_HEADLESS_MAXMEM", raising=False)
+    monkeypatch.setattr(ghidra, "default_cap", lambda: 8 << 30)
+    assert ghidra._env()["GHIDRA_HEADLESS_MAXMEM"] == "4096M"
+    monkeypatch.setattr(ghidra, "default_cap", lambda: 2 << 30)
+    assert ghidra._env()["GHIDRA_HEADLESS_MAXMEM"] == "2048M"  # never less than its own
+    monkeypatch.setenv("GHIDRA_MAXMEM", "12G")
+    assert "GHIDRA_HEADLESS_MAXMEM" not in ghidra._env()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="shell-script stand-ins for Ghidra")
+@pytest.mark.parametrize("dies", ["kill -9 $$", "echo 'Exception in thread main java.lang.OutOfMemoryError: Java heap "
+                                               "space' >&2; exit 1"])
+def test_a_ghidra_out_of_memory_says_so(tmp_path, monkeypatch, dies):
+    """A Ghidra stopped at its memory cap said only "Ghidra didn't run: WARNING: sun.misc.Unsafe...", Java's last
+    line at its start."""
+    from decompnet.forks import ghidra
+    from decompnet.forks.project import ForkError
+
+    fake = tmp_path / "analyzeHeadless"
+    fake.write_text(f"#!/bin/sh\necho 'WARNING: sun.misc.Unsafe::staticFieldOffset has been called' >&2\n{dies}\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(ghidra, "_headless", lambda: fake)
+    monkeypatch.setattr(ghidra, "capped", lambda argv, **_: argv)
+    program = tmp_path / "game.exe"
+    program.write_bytes(b"MZ" + bytes(64))
+    with pytest.raises(ForkError, match="Ghidra ran out of memory analysing game.exe: .* GB decompdecomp lets one tool"):
+        ghidra.functions(program)
+
+
+@pytest.mark.skipif(limits._systemd_run() is None, reason="needs systemd-run --user (a Linux desktop session)")
+def test_a_process_killed_at_the_cap_stops_its_command_unless_it_copes():
+    """Over the cap the kernel kills the biggest process; systemd then stopped the rest of the command, so Ghidra
+    died with its runaway decompiler process (6 GB on a 6 MB game) and never said why. A tool that copes keeps
+    going (stop_all=False), still capped."""
+    parent = ("import subprocess, sys, time\n"
+              "child = subprocess.run([sys.executable, '-c', 'x = bytearray(400 << 20); import time; time.sleep(5)'])\n"
+              "time.sleep(2)\nprint('carried on after', child.returncode)\n")
+    cap = 200 << 20
+    kept = subprocess.run(limits.capped([sys.executable, "-c", parent], cap, stop_all=False), capture_output=True,
+                          text=True, timeout=60)
+    assert kept.returncode == 0 and "carried on after -9" in kept.stdout
+    stopped = subprocess.run(limits.capped([sys.executable, "-c", parent], cap), capture_output=True, text=True,
+                             timeout=60)
+    assert stopped.returncode != 0 and "carried on" not in stopped.stdout
