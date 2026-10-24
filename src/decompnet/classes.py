@@ -31,10 +31,14 @@ _GPR_LOADS = {0x20, 0x21, 0x23, 0x24, 0x25, 0x27, 0x37, 0x1E, 0x1A, 0x1B, 0x22, 
 _CALLER_SAVED = set(range(1, 16)) | {24, 25, 31}
 _THIS = 4  # $a0
 _MAX_SLOTS = 400
-# Where the virtual functions start in a vtable: after two header words for g++ with -fvtable-thunks (an offset and
-# the type-info function) and for CodeWarrior. (Not measured from virtual calls: C's tables of function pointers, as
-# in RenderWare, are called the same way from offset 0.)
-_HEADER = 8
+# Where the virtual functions are, from the address a constructor stores: (the first one, bytes from one to the next).
+# g++ 2.9x with -fvtable-thunks (an offset and the type-info function) and CodeWarrior (type info and an offset) store
+# the vtable's start, two header words before them; g++ 3 and later (the Itanium ABI: PSP GCC, EE-GCC 3.2) store the
+# address of the first one; SN's SNC (cfront's layout) stores the start, 8 bytes of zeros, then an 8-byte entry per
+# function, the adjustment to `this` before its address. A vtable is read every way and the way that finds the most
+# functions in a row is its compiler's: the others stop at a header word, or skip slots. (Not measured from virtual
+# calls: C's tables of function pointers, as in RenderWare, are called the same way from offset 0.)
+_LAYOUTS = ((8, 4), (0, 4), (12, 8))
 
 
 @dataclass
@@ -59,9 +63,10 @@ class Field:
 
 @dataclass
 class Class:
-    vtable: int  # the address constructors store (the vtable's start; virtual functions begin `header` bytes in)
+    vtable: int  # the address constructors store (virtual functions begin `header` bytes in, `stride` apart)
     header: int
     slots: list[int]  # the virtual functions, in slot order
+    stride: int = 4
     vptr: int = 0  # where the object keeps its vtable pointer
     ctors: set[int] = field(default_factory=set)  # functions that store this vtable into `this`
     parent: int | None = None
@@ -152,6 +157,17 @@ def scan(code: bytes, relocs: list, big_endian: bool, vtables: set[int] | None =
     return out
 
 
+def _slots(data: bytes, header: int, stride: int, starts: set[int], e: str) -> list[int]:
+    """The functions in a row from `header` on, `stride` apart: the vtable read one compiler's way."""
+    slots = []
+    for at in range(header, min(len(data) - 3, header + stride * _MAX_SLOTS), stride):
+        (w,) = struct.unpack_from(e + "I", data, at)
+        if w not in starts:
+            break
+        slots.append(w)
+    return slots
+
+
 def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, int], bytes | None],
             big_endian: bool) -> Classes:
     """Classes from (address, code, relocations) of every function and a reader of the program's data."""
@@ -164,14 +180,11 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
         for vt, _, _ in s.stores:
             if vt in out.by_vtable:
                 continue
-            data = read(vt + _HEADER, 4 * _MAX_SLOTS) or b""
-            slots = []
-            for (w,) in struct.iter_unpack(e + "I", data[:len(data) // 4 * 4]):
-                if w not in starts:
-                    break
-                slots.append(w)
+            data = read(vt, 12 + 8 * _MAX_SLOTS) or b""
+            found = [(_slots(data, header, stride, starts, e), header, stride) for header, stride in _LAYOUTS]
+            slots, header, stride = max(found, key=lambda f: len(f[0]))  # (of equals, the first in _LAYOUTS)
             if slots:
-                out.by_vtable[vt] = Class(vt, _HEADER, slots)
+                out.by_vtable[vt] = Class(vt, header, slots, stride=stride)
     if not out.by_vtable:
         return out
     # A function that stores several vtables at one place in `this` constructs (or destroys) the most derived class:
@@ -260,5 +273,5 @@ def describe(cls: Class, classes: Classes, label: Callable[[int], str], focus: i
     pslots = parent.slots if parent else []
     for i, f in enumerate(cls.slots):
         how = ("inherited" if i < len(pslots) and pslots[i] == f else "overrides" if i < len(pslots) else "new")
-        lines.append(f"  {i} (+0x{cls.header + 4 * i:X}): {label(f)}, {how}" + (" ← this function" if f == focus else ""))
+        lines.append(f"  {i} (+0x{cls.header + cls.stride * i:X}): {label(f)}, {how}" + (" ← this function" if f == focus else ""))
     return "\n".join(lines)
