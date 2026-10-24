@@ -137,6 +137,11 @@ class PlayStationPortable(Console):
         picked.programs = [m.program for m in found]
         picked.info["stubs"] += [list(r) for m in found if (r := prx.stub_range(m.program))]
         picked.info["modules_left_out"] = left_out
+        # modules that keep small data where the main program doesn't, or the other way round: after_import gives
+        # them their own flags
+        picked.info["small_data_differs"] = [[vaddr, vaddr + len(data)] for m in found
+                                             if m.small_data != picked.info["small_data"]
+                                             for vaddr, data, _ in modules.loaded(m.program)]
         return picked
 
     def _from_program(self, data: bytes, name: str, facts: dict | None = None) -> Picked:
@@ -158,14 +163,16 @@ class PlayStationPortable(Console):
             "version": 0, "entrypoint": struct.unpack("<I", program[ELF_ENTRY])[0], "gp": prx.gp_value(program),
             "crc1": 0, "crc2": 0, "size": len(data), "sha1": hashlib.sha1(data).hexdigest(), "byte_order": "elf",
             "compiler_guess": prx.guess_compiler(program), "platform": self.id, "boot": name,
+            "small_data": prx.uses_small_data(data),  # (every module has a gp value: whether its code uses it)
             "prx": program is not data,  # laid out at prx.USER_BASE, as the loader would
             # after_import sets the import stubs aside: the program's, then its modules' (_with_modules)
             "stubs": [list(r) for r in [prx.stub_range(program)] if r],
         }, False)
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
-        """A game that uses $gp keeps globals up to 8 bytes $gp-relative (GCC's and SNC's -G8; CodeWarrior's
-        -sdatathreshold 8). SNC's own default is -G0, as GCC's is."""
+        """A game that keeps data $gp-relative (prx.uses_small_data: not every module that has a gp value does)
+        keeps globals up to 8 bytes there (GCC's and SNC's -G8; CodeWarrior's -sdatathreshold 8). SNC's own default
+        is -G0, as GCC's is."""
         flags = super().default_flags(toolchain, gp)
         small = str(SMALL_DATA_BYTES if gp else 0)
         if toolchain.startswith("mwccpsp"):
@@ -237,14 +244,16 @@ class PlayStationPortable(Console):
         set_stubs_aside(net, slug, log=log)
         if not chosen:
             net.test_compilers(slug, [c.id for c in self.compilers], log=log)
+            set_module_small_data(net, slug, log=log)
 
     def export_asm(self, text: str) -> str:
         """The Allegrex's own instructions (and the VFPU's) as the words they are: GNU as reads MIPS II, not them.
-        A word is the same bytes wherever the export puts it, as it puts everything at the game's addresses."""
+        A word is the same bytes wherever the export puts it, as it puts everything at the game's addresses. 8-byte
+        data too, as every console's (mips.raw_doubles)."""
         def one(m: re.Match) -> str:
             word = int.from_bytes(bytes.fromhex(m[2]), "little")
             return f"{m[1]}.word 0x{word:08X}" if allegrex_only(word) else m[0]
-        return _ASM_LINE.sub(one, text)
+        return mips.raw_doubles(_ASM_LINE.sub(one, text), False)
 
     def asm_reason(self, code: bytes) -> str | None:
         return mips.asm_reason(code, False, eabi=True, cpu=self.cpu_variant)  # EABI: arguments in t0-t3 too
@@ -307,6 +316,22 @@ def set_stubs_aside(net, slug: str, log=print) -> int:
     if rows:
         log(f"{len(rows)} imported system functions' stubs set aside (no C is behind them)")
     return len(rows)
+
+
+def set_module_small_data(net, slug: str, log=print) -> None:
+    """The modules whose small data isn't the main program's (prx.uses_small_data: one may keep it, another not) as
+    compiler ranges of the project's compiler with their own small data, so their functions build as they were built.
+    After the compiler test, which may change the project's compiler. shortcut: a module that keeps small data is
+    judged with the main program's $gp, not its own, until a game whose modules differ shows that it matters."""
+    cfg = net.cfg(net.project_row(slug))
+    spans = cfg["rom"].get("small_data_differs") or []
+    if not spans:
+        return
+    toolchain = cfg["compiler"]["toolchain"]
+    own = PSP.default_flags(toolchain, 0 if cfg["rom"].get("small_data") else cfg.get("gp") or 0)
+    net.set_compiler_ranges(slug, spans, toolchain, own)
+    log(f"{len(spans)} module segments keep small data {'off' if cfg['rom'].get('small_data') else 'on'}, unlike "
+        "the main program: they build with their own flags")
 
 
 PSP = PlayStationPortable()

@@ -295,7 +295,7 @@ class CompilerMixin:
                 raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only "
                                    "(where its files can have their own, try_compiler keeps the one that matches)")
             tc = self._toolchain_named(cfg, compiler)
-            flag_list = flags.split() or consoles.of(cfg).default_flags(tc, cfg.get("gp"))
+            flag_list = flags.split() or consoles.default_flags(cfg, tc)
             if not spans and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
                 raise NetworkError("that's already the project's compiler and flags")
             if function:
@@ -443,7 +443,7 @@ class CompilerMixin:
         proj = self._project(slug)
         cfg = self.cfg(proj)
         tc = self._toolchain_named(cfg, compiler)
-        flag_list = flags.split() or consoles.of(cfg).default_flags(tc, cfg.get("gp"))
+        flag_list = flags.split() or consoles.default_flags(cfg, tc)
         fn = self._function(function, slug)
         source = source.strip() or self._source_of(fn)
         if not source:
@@ -493,7 +493,7 @@ class CompilerMixin:
         fn = self._function(function, slug)
         own = compiler_for(cfg, fn["vram"])
         tc = self._toolchain_named(cfg, compiler) if compiler else own["toolchain"]
-        base = list(own["flags"]) if tc == own["toolchain"] else consoles.of(cfg).default_flags(tc, cfg.get("gp"))
+        base = list(own["flags"]) if tc == own["toolchain"] else consoles.default_flags(cfg, tc)
         source = source.strip() or self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
@@ -543,7 +543,7 @@ class CompilerMixin:
         if toolchain:
             cfg = self.cfg(self._project(slug))
             toolchain = toolchains.get(toolchain).id
-            flags = flags or consoles.of(cfg).default_flags(toolchain, cfg.get("gp"))
+            flags = flags or consoles.default_flags(cfg, toolchain)
         flags = flags or []
 
         before = self.cfg(self._project(slug)).get("compiler_ranges", [])
@@ -597,7 +597,7 @@ class CompilerMixin:
         tc = toolchains.get(toolchain)
         cfg = json.loads(proj["config"])  # a copy of its own: changed below
         before = cfg["compiler"]
-        cfg["compiler"] = {"toolchain": tc.id, "flags": flags or consoles.of(cfg).default_flags(tc.id, cfg.get("gp")),
+        cfg["compiler"] = {"toolchain": tc.id, "flags": flags or consoles.default_flags(cfg, tc.id),
                            "timeout": 20}
         with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))

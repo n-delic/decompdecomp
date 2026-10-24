@@ -82,7 +82,11 @@ Where to start on a gap:
   export with those 270 in C rebuilds byte for byte, from a fresh clone too. What that turned up is fixed for every
   console: the permuter now reads autopilot's drafts, get_class reads GCC 3's and SNC's vtables, SNC's C++ names
   match, a save keeps what was set aside, the export keeps switch cases in their function and links branches into
-  other functions.
+  other functions. Small data is read from each program's code, not its gp value (every module's info has one): that
+  game keeps none, and the compiler test's drafts of 60 of its functions match 23 with it off against 12. Its export
+  with all 28 modules (47,975 functions, 491 in C) rebuilds byte for byte in two minutes, from a fresh clone in four:
+  the assembly between C functions is assembled a run at a time (1,216 objects; one per function kept ld busy for
+  over 40 minutes), and 8-byte data as words (GNU as moved a module's doubles).
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
@@ -268,10 +272,9 @@ Where to start on a gap:
 Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
 carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned, checksummed decrypter installed
 from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
-now). Also: a module's own $gp isn't the judge's (one per project: a module using small data won't match), its
-imported variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, the export of a game with all its
-modules (48,000 functions, an object each; most are set-aside stubs) keeps ld matching objects for over 40 minutes
-(runs of assembly could share an object), SN's pspsnc is tested on the demo only (no SN-built game was at hand: the
+now). Also: a module's own $gp isn't the judge's (one per project: a module that keeps small data where the main
+program doesn't gets its own flags, but its $gp-relative data is named from the main program's $gp), its imported
+variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no SN-built game was at hand: the
 readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some games were built with isn't
 archived (3.0.1 matches small functions;
 bigger ones unverified).

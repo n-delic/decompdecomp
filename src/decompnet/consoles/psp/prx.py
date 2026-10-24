@@ -5,8 +5,9 @@ relocation applied (PSP's own kind, SHT_PSP_REL), the sections and symbols at th
 sections' addresses with them, so the program reads like an ordinary executable (ET_EXEC) from then on. A fixed
 program (some games' EBOOT.BIN) is already that.
 
-What the module itself says is read here too: its $gp (the module info's gp_value), and the names of the system
-functions it imports (each library's stub table: a NID per stub in .sceStub.text, which the loader links).
+What the module itself says is read here too: its $gp (the module info's gp_value), whether it keeps any data
+$gp-relative at all, and the names of the system functions it imports (each library's stub table: a NID per stub in
+.sceStub.text, which the loader links).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import re
 import struct
 from dataclasses import dataclass
 
+from ...arch import mips
 from ...rom import RomError
 
 ELF_MAGIC = b"\x7fELF"
@@ -30,6 +32,10 @@ SHF_ALLOC, SHF_EXECINSTR = 2, 4
 SHN_LORESERVE = 0xFF00
 USER_BASE = 0x08804000  # where the loader puts a game's main module: the start of user memory, past the kernel's part
 R_MIPS_NONE, R_MIPS_32, R_MIPS_26, R_MIPS_HI16, R_MIPS_LO16, R_MIPS_GPREL16 = 0, 2, 4, 5, 6, 7
+# the loads and stores, whose rs is their base register: lb to swr, cache, lwc1 and swc1, and the VFPU's lv.s, lvl.q,
+# lv.q, sv.s, svl.q, sv.q (its other opcodes in that range are arithmetic, with a vector register where rs is)
+LOADS_STORES = frozenset(range(0x20, 0x30)) | {0x31, 0x39, 0x32, 0x35, 0x36, 0x3A, 0x3D, 0x3E}
+GP_RELATIVE = {R_MIPS_GPREL16, 8, 12}  # GPREL16, LITERAL (a float constant), GPREL32: data counted from $gp
 REL_BYTES = 8  # an Elf32_Rel
 WORD = 0xFFFFFFFF
 JUMP_BITS, REGION_BITS = 0x03FFFFFF, 0x0FFFFFFF  # j/jal's target, and the 256 MB it reaches
@@ -222,6 +228,37 @@ def gp_value(program: bytes) -> int:
     return struct.unpack_from("<I", program, info.offset + MODULE_INFO_GP)[0]
 
 
+def uses_small_data(data: bytes) -> bool:
+    """Whether the program keeps data $gp-relative (small data: GCC's and SNC's -G8, CodeWarrior's -sdatathreshold 8),
+    by its own evidence: a $gp-relative relocation of its code or data, or (a linker that leaves them out, as the
+    demo's does: the loader has nothing to do for them) code that loads, stores or takes an address through $gp. Not
+    by its gp_value: every module's info has one, used or not (a PSP game with debug symbols has it in each of its 29
+    modules, and not one of them reads through $gp: its code matches only with small data off). `data`: the program
+    as it came, before relocate() applies its relocations and drops their tables."""
+    if not is_elf(data):
+        return False
+    sections = _sections(data)
+    for rel in sections:
+        target = sections[rel.info] if rel.info < len(sections) else None
+        if rel.kind in (SHT_PSP_REL, SHT_REL) and target is not None and target.flags & SHF_ALLOC and any(
+                data[rel.offset + REL_BYTES * k + 4] in GP_RELATIVE for k in range(rel.size // REL_BYTES)):
+            return True
+    code = _code(data, sections)
+    for word, in struct.iter_unpack("<I", code[:len(code) & ~3]):
+        op, base, rt = word >> mips.OPCODE_SHIFT, word >> mips.RS_SHIFT & mips.REGISTER_BITS, \
+            word >> mips.RT_SHIFT & mips.REGISTER_BITS
+        # (start-up code that sets $gp itself, `addiu $gp, $gp, %lo(_gp)`, isn't small data)
+        if base == mips.GP and rt != mips.GP and (op == mips.ADDIU or op in LOADS_STORES):
+            return True
+    return False
+
+
+def _code(program: bytes, sections: list[_Section]) -> bytes:
+    """The program's own code, its import stubs left out (the loader writes them)."""
+    return b"".join(program[s.offset:s.offset + s.size] for s in sections
+                    if s.flags & SHF_EXECINSTR and s.kind != SHT_NOBITS and s.name != STUB_SECTION)
+
+
 def module_name(program: bytes) -> bytes:
     """The module's own name, as its module info says it (b"" when it has none): what the loader knows it by."""
     info = next((s for s in _sections(program) if s.name == MODULE_INFO), None) if is_elf(program) else None
@@ -331,8 +368,7 @@ def guess_compiler(program: bytes) -> str:
     if is_elf(program):
         from ...compilermap import quirks
 
-        habits = quirks(b"".join(program[s.offset:s.offset + s.size] for s in _sections(program)
-                                 if s.flags & SHF_EXECINSTR and s.kind != SHT_NOBITS and s.name != STUB_SECTION), False)
+        habits = quirks(_code(program, _sections(program)), False)
         if habits["or move"] > habits["addu move"]:
             return "SNC"
     return "PSPGCC-1.7"

@@ -5,6 +5,7 @@ export the project, build it, then build it again from a clean tree (as from a f
 your own copy of the game), and check that nothing made from the game would be committed.
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -94,6 +95,12 @@ def test_export_rebuilds_the_game(tmp_path, platform):
     assert out["matched"] == len(matched(platform)) and not out["fallback"]
     tree = Path(out["path"])
     assert len(list((tree / "src").glob("*/*.c"))) == len(matched(platform))
+    # the functions still in assembly are assembled a run at a time (a PSP game with its modules has 48,000), and
+    # `build.py targets` gives each its own object, where objdiff.json looks for it
+    runs = list((tree / "build" / "asm" / "runs").glob("*/*.o"))
+    assert 0 < len(runs) < out["functions"] - out["matched"]
+    assert subprocess.run([sys.executable, "build.py", "targets"], cwd=tree, capture_output=True).returncode == 0
+    assert all((tree / u["target_path"]).exists() for u in json.loads((tree / "objdiff.json").read_text())["units"])
 
     # a fresh clone: no assembly, assets or build output, only the sources and your copy of the game
     for generated in ("asm", "assets", "build"):
@@ -151,6 +158,20 @@ def test_check_records_a_function_written_outside(tmp_path):
     (tree / "src" / "main" / "lerp.c").write_text('#include "common.h"\n\n' + csource.get((GAME / "game.c").read_text(), "lerp"))
     assert py("check", "lerp").returncode == 0
     assert "identical" in py().stdout
+
+
+def test_eight_byte_data_is_exported_as_the_words_it_is():
+    """GNU as aligns a .double to 8 bytes from the start of its file, and a data file can start 4 bytes past such an
+    address (a PSP game's module: every double in its .data was assembled 4 bytes late, and the export differed)."""
+    from decompnet.arch.mips import raw_doubles
+    from decompnet.consoles import get
+
+    line = "    /* E6F30 08E27B00 AE0AA9BECFDE5A3F */ .double 0.00164003646445169292\n"
+    assert raw_doubles(line, False) == "    /* E6F30 08E27B00 AE0AA9BECFDE5A3F */ .word 0xBEA90AAE, 0x3F5ADECF\n"
+    assert get("psp").export_asm(line) == raw_doubles(line, False)
+    big = "    /* 1F30 80027B00 3F5ADECFBEA90AAE */ .dword 0x3F5ADECFBEA90AAE\n"
+    assert get("n64").export_asm(big) == "    /* 1F30 80027B00 3F5ADECFBEA90AAE */ .word 0x3F5ADECF, 0xBEA90AAE\n"
+    assert raw_doubles("    /* 1F30 80027B00 3F800000 */ .float 1.0\n", True).endswith(".float 1.0\n")
 
 
 def test_an_agents_own_include_of_context_h_names_the_exports_header():

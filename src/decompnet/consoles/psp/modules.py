@@ -43,6 +43,7 @@ class Module:
     path: str  # where it is on the disc
     name: str  # its segment's name: the file's, as the PS2's overlays are named
     program: bytes  # laid out at its own addresses, as a fixed program
+    small_data: bool = False  # whether it keeps data $gp-relative (prx.uses_small_data), read before it was laid out
 
 
 def find(image, main: bytes) -> tuple[list[Module], list[tuple[str, str]]]:
@@ -81,7 +82,7 @@ def find(image, main: bytes) -> tuple[list[Module], list[tuple[str, str]]]:
         while name in names:
             name += "_"
         names.add(name)
-        found.append(Module(path, name, program))
+        found.append(Module(path, name, program, prx.uses_small_data(data)))
     return found, left_out
 
 

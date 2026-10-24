@@ -2,8 +2,8 @@
 
 The tree is a normal decomp project. splat's assembly for every function and all data (with the project's names),
 the matched functions as C, a linker script and a build script that rebuilds the game's image and checks it against
-the original byte for byte. Each function is its own object: a matched one is compiled exactly the way decompdecomp
-verified it, the rest are assembled. Data stays labeled assembly; a matched function's own constants (strings,
+the original byte for byte. A matched function is its own object, compiled exactly the way decompdecomp verified it;
+the rest are assembled, each run of them that follow one another as one object. Data stays labeled assembly; a matched function's own constants (strings,
 jump tables) are mapped onto the game's copy at the addresses the matcher verified, so nothing is duplicated.
 
 Anyone can keep working on it outside decompdecomp: edit src/, run build.py, and the build says whether it still
@@ -339,7 +339,7 @@ A matching decompilation of {title} for the {console_name}, started with [decomp
 | `include/common.h` | Types, structs and prototypes worked out so far. |
 | `game.ld` | Places every function and data block at its original address. |
 | `build.json`, `build.py` | How each file is built, and the build. |
-| `objdiff.json` | Per-function units for [objdiff](https://github.com/encounter/objdiff). |
+| `objdiff.json` | Per-function units for [objdiff](https://github.com/encounter/objdiff) (`python3 build.py targets` makes their targets). |
 
 Keep going with any tool: write a function in C under `src/`, add it to `build.json` (see the existing entries),
 run `build.py`. When it says *identical*, the function matches. This is the base for ports and mods: once
