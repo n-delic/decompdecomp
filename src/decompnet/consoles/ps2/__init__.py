@@ -5,7 +5,7 @@ kernel's calls, ROM mode.
 - disc.py, chd.py: the disc image the program comes on (ISO 9660 as .iso or raw .bin, or a CHD), read in place.
 - overlays.py: code the game keeps in other files of its disc, placed at the address it's loaded at.
 - syscalls.py: names for the kernel's call stubs (FlushCache, CreateThread...), from the number each one loads.
-- symtab.py, mdebug.py, stabs.py, cheader.py, debuginfo.py: a game's own debug symbols, when it shipped with them
+- symtab.py, mdebug.py, stabs.py, dwarf1.py, cheader.py, debuginfo.py: a game's own debug symbols, when it shipped with them
   (#3): names, source files, prototypes and types, read from its symbol table and its STABS (in .mdebug).
 - guides/ps2.md: what agents read about matching PS2 code.
 

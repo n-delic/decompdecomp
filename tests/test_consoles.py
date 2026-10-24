@@ -91,6 +91,17 @@ def test_a_file_no_console_reads_says_which_ones_do():
         consoles.identify(bytes(4096))
 
 
+def test_a_psp_cso_is_not_taken_for_a_gamecube_disc():
+    """Both start with CISO: a GameCube/Wii CISO goes on with its block size, a PSP .cso with its header's size."""
+    from decompnet.consoles.gc_wii import scratch
+
+    gc_ciso = b"CISO" + struct.pack("<I", 0x200000) + b"\x01\x01\x00" + bytes(0x100)
+    psp_cso = b"CISO" + struct.pack("<IQIBB", 0x18, 0x4000000, 0x800, 1, 0) + bytes(0x100)
+    assert scratch.disc_kind(gc_ciso) == "packed"
+    assert scratch.disc_kind(psp_cso) is None
+    assert consoles.identify(gc_ciso) is consoles.get("gc")
+
+
 def test_mips_code_in_a_forks_object_isnt_judged_without_its_console():
     """A fork's objects don't say their console, and which registers carry arguments depends on it (the PS2's EABI
     passes them in t0-t3): a MIPS function there isn't set aside as hand-written, though its console would."""

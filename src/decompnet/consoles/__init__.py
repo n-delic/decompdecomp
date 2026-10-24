@@ -275,7 +275,7 @@ class Console:
     def asm_reason(self, code: bytes) -> str | None:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason
-        return reason(code, self.big_endian) if reason else None
+        return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
 
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""

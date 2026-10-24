@@ -52,6 +52,7 @@ class FunctionObj:
     big_endian: bool
     code: bytes
     relocs: list[Reloc] = field(default_factory=list)
+    cpu: str = ""  # its processor's variant when capstone can't read it (Console.cpu_variant: "allegrex"), else ""
 
     def normalized(self) -> bytes:
         return mask_relocs(self.code, self.relocs, self.arch, self.big_endian)

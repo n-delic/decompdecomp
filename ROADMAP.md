@@ -38,7 +38,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | — | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -204,7 +204,8 @@ Where to start on a gap:
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).
 - **Flag search** (`search_flags`, MIPS): each flag of the compiler changed once, up to 12 builds.
 - **PS2 debug symbols** (#3): names and sizes from the symbol table; from STABS the source files as units,
-  prototypes, parameters and locals in the brief, every type and global in the header. Big headers: the brief
+  prototypes, parameters and locals in the brief, every type and global in the header; the same from the DWARF 1
+  CodeWarrior writes (.debug, .line), with the line each function starts on. Big headers: the brief
   carries only the declarations the function uses.
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
