@@ -64,8 +64,16 @@ _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUD
 _REGVAR = re.compile(r"\b(?:asm|__asm__|__asm)\s*\(\s*\"\$?[a-z]{1,2}\d{0,2}\"\s*\)", re.I)
 
 
+# A typed extern with an assembler *name* changes linkage only; it emits no assembly.
+# Keep this grammar narrow so instruction strings/extended asm still fail the check.
+_LINKAGE_DECL = re.compile(
+    r'\bextern\s+__typeof__\s*\(\s*[A-Za-z_]\w*\s*\)\s+[A-Za-z_]\w*\s+'
+    r'__asm__\s*\(\s*"[A-Za-z_]\w*"\s*\)\s*'
+    r'__attribute__\s*\(\(\s*visibility\s*\(\s*"hidden"\s*\)\s*\)\)\s*;')
+
+
 def _strip_comments(code: str) -> str:
-    return _REGVAR.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S))
+    return _REGVAR.sub(" ", _LINKAGE_DECL.sub(" ", re.sub(r"//[^\n]*|/\*.*?\*/", " ", code, flags=re.S)))
 
 
 def _rewrite(path: Path, text: str) -> None:
@@ -2252,7 +2260,7 @@ class ForkEngine:
                 found = ghidra.decompile_object(unit.target, fp.root / STATE / "ghidra")
                 names = [meta.get("symbol") or fn["name"], *self._names(meta, fn)]
                 body = next((found[n] for n in names if n in found), None)
-                text = body and "/* Ghidra */\n" + body.strip()
+                text = body and "/* Ghidra */\n" + consoles.get(cfg.get("platform") or "").adapt_draft(body.strip())
         except OSError:
             text = None
         with self.net.store.tx() as db:

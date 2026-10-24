@@ -612,3 +612,18 @@ url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 
+
+["clang-5.0.2"]
+name = "Clang 5.0.2 (PS4-era x86-64)"
+license = "NCSA"
+source = "LLVM 5.0.2 official release, Ubuntu 16.04 x86-64"
+description = "Compiles decrypted PS4 ELF projects with the public PS4 target; no Sony SDK is supplied."
+platform = "ps4"
+arch = "x86_64"
+binary_name = "clang"
+cc = ["{tc}/bin/clang", "-target", "x86_64-scei-ps4", "-ffreestanding", "-c"]
+[["clang-5.0.2".parts]]
+url = "https://releases.llvm.org/5.0.2/clang+llvm-5.0.2-x86_64-linux-gnu-ubuntu-16.04.tar.xz"
+sha256 = "15a97aa654b529793da7d115bcfdd8b93281d94f86ec98f0850aff7cf82cbb3f"
+subdir = "clang+llvm-5.0.2-x86_64-linux-gnu-ubuntu-16.04"
+platforms = ["linux-x86_64"]

@@ -95,6 +95,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/ps1/` | PlayStation | ROM | `exe.py` the game's program (PS-X EXE) and the disc's BOOT line; its discs and overlays through the PS2's readers · `guides/` |
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
+| `consoles/ps4/` | PlayStation 4 | PROJECT | `scratch.py` reads decrypted Orbis ELF segments and function maps; `project_template/` builds strict objdiff targets with public clang; `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
 | `consoles/nds/` | Nintendo DS | PROJECT | `scratch.py` a ds-decomp project for the ROM, a CodeWarrior version per source file · `project_template/` · `guides/` |
 
