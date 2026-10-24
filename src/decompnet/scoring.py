@@ -27,7 +27,7 @@ _CS = arch.capstone_modes()  # (arch, big-endian) -> capstone's (architecture, m
 
 _REG = re.compile(
     r"^\$?(r[a-z0-9]+|e[a-z]{2}|[a-d][lhx]|[sd]il?|[bs]pl?|[xyz]mm\d+|r\d+[dwb]?"  # x86
-    r"|zero|at|v[01]|a[0-3]|t\d|s[0-8]|k[01]|gp|fp|ra|f\d+"  # mips
+    r"|zero|at|v[01]|a[0-3]|t\d|s[0-8]|k[01]|gp|fp|ra|f\d+|[SCRME]\d{3}"  # mips (the last: the Allegrex's VFPU)
     r"|cr\d|lr|pc|ip|sb|sl|d\d+|s\d+)$"  # ppc / arm
 )
 _NUM = re.compile(r"^-?(0x[0-9a-f]+|\d+)$", re.I)
@@ -52,31 +52,39 @@ def percent_text(p: float | None) -> str:
     return f"{math.floor(max(0.0, p) * 10) / 10:.1f}%"
 
 
-def disassemble(fn: FunctionObj) -> list[Insn]:
+VARIANT_INSN_BYTES = 4  # what a variant's own reader decodes (arch.Arch.variants): fixed-width words
+
+
+def disassemble(fn: FunctionObj, cpu: str | None = None) -> list[Insn]:
     """A function's instructions, with relocated fields masked and named after their symbols, so the target and a
-    candidate compare by what they do, not by where they were linked."""
-    arch, mode = _CS[(fn.arch, fn.big_endian)]
-    md = capstone.Cs(arch, mode)
-    md.detail = True
-    md.skipdata = True
+    candidate compare by what they do, not by where they were linked. `cpu`: the processor's variant (fn.cpu by
+    default); one capstone can't decode (the PSP's Allegrex) is read by its processor's own reader (arch/)."""
     code = mask_relocs(fn.code, fn.relocs, fn.arch, fn.big_endian)
+    own = arch.get(fn.arch).variants.get(fn.cpu if cpu is None else cpu)
+    if own:
+        lines = [(at, VARIANT_INSN_BYTES, name, ops, None) for at, name, ops in own(code, fn.big_endian)]
+    else:
+        cs_arch, mode = _CS[(fn.arch, fn.big_endian)]
+        md = capstone.Cs(cs_arch, mode)
+        md.detail = True
+        md.skipdata = True
+        lines = [(ins.address, ins.size, ins.mnemonic, ins.op_str, ins) for ins in md.disasm(code, 0)]
     mips_names = _mips_reloc_names(fn.relocs) if fn.arch == "mips" else {}
     out: list[Insn] = []
-    for ins in md.disasm(code, 0):
-        ops = ins.op_str
-        rel = next((r for r in fn.relocs if ins.address <= r.offset < ins.address + ins.size), None)
+    for address, size, mnemonic, ops, ins in lines:
+        rel = next((r for r in fn.relocs if address <= r.offset < address + size), None)
         if rel is not None and rel.offset in mips_names:
             ops = _mips_symbolize(ops, mips_names[rel.offset])
         elif rel is not None:
             off = rel.addend
             if fn.arch == "x86_64" and rel.type in (2, 4):
                 # PC-relative: addend = field_offset - (bytes from reloc field to end of insn)
-                off += (ins.address + ins.size) - rel.offset
+                off += (address + size) - rel.offset
             target = f"<{rel.symbol}{f'{off:+#x}' if off else ''}>"
-            ops = _symbolize(ins, ops, rel.offset - ins.address, target, fn.arch)
-        elif ins.id and ins.group(capstone.CS_GRP_JUMP) and _NUM.match(ops.strip()):
+            ops = _symbolize(ins, ops, rel.offset - address, target, fn.arch)
+        elif ins is not None and ins.id and ins.group(capstone.CS_GRP_JUMP) and _NUM.match(ops.strip()):
             ops = f".L{int(ops, 16):x}"  # intra-function branch: keep it position-relative
-        out.append(Insn(ins.address, ins.mnemonic, ops, f"{ins.mnemonic} {ops}".strip()))
+        out.append(Insn(address, mnemonic, ops, f"{mnemonic} {ops}".strip()))
     return out
 
 
@@ -252,7 +260,7 @@ def compact_asm(text: str) -> str:
 def diff(target: FunctionObj, candidate: FunctionObj) -> DiffResult:
     """Compare a candidate with the target instruction by instruction: a score (0 is a match, lower is closer), the
     rows to show, and what's missing or extra. Equal bytes are a match whatever the score."""
-    t_ins, c_ins = disassemble(target), disassemble(candidate)
+    t_ins, c_ins = disassemble(target), disassemble(candidate, target.cpu)  # (a candidate is the target's processor)
     max_score = max(1, len(t_ins)) * PENALTY_INSERTION
     bytes_match = target.fingerprint() == candidate.fingerprint()
 

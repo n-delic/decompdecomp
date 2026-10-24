@@ -59,6 +59,7 @@ class Console:
     aliases: tuple[str, ...] = ()  # other ids older configs or public decomps use for it ("win32" for "pc")
     status = PUBLIC  # RECOMMENDED, BETA or PUBLIC
     arch = ""  # its processor, an id in arch/ ("mips")
+    cpu_variant: str = ""  # a variant of it capstone can't decode, read by arch/'s own reader ("allegrex": the PSP's)
     big_endian = False
     mode = ""  # ROM, PROJECT, or "" (only public decomps)
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
@@ -264,7 +265,7 @@ class Console:
     def asm_reason(self, code: bytes) -> str | None:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason
-        return reason(code, self.big_endian) if reason else None
+        return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
 
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""

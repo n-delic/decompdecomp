@@ -14,15 +14,20 @@ from difflib import SequenceMatcher
 MAX_OPS = 800  # compare at most this many instructions of very large functions
 
 
-def mips_mnemonics(code: bytes, big_endian: bool = True, vram: int = 0) -> list[str]:
-    """A MIPS function's instructions by name (operands differ between copies of the same code)."""
+def mips_mnemonics(code: bytes, big_endian: bool = True, vram: int = 0, cpu: str = "") -> list[str]:
+    """A MIPS function's instructions by name (operands differ between copies of the same code). `cpu`: the
+    console's processor variant (Console.cpu_variant): read as plain MIPS, a PSP's vadd, vsub and vdiv would all be
+    daddi, and unlike code would look alike."""
     import rabbitizer
 
+    from .arch import mips
+
+    category = mips.rabbitizer_category(cpu)
     order = "big" if big_endian else "little"
     out = []
     for i in range(0, len(code) - 3, 4):
         word = int.from_bytes(code[i:i + 4], order)
-        out.append(rabbitizer.Instruction(word, vram + i).getOpcodeName())
+        out.append(rabbitizer.Instruction(word, vram + i, category).getOpcodeName())
     return out
 
 
