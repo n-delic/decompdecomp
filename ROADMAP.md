@@ -260,7 +260,10 @@ Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes So
 carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned, checksummed decrypter installed
 from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
 now). Also: a module's own $gp isn't the judge's (one per project: a module using small data won't match), its
-imported variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, import
+imported variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, the export of a game with all its
+modules (48,000 functions, an object each; most are set-aside stubs) keeps ld matching objects for over 40 minutes
+(runs of assembly could share an object), the export of a PSP game with debug symbols fails on hand-written code that
+branches to labels in its neighbours (`.L0881FAB8` undefined), import
 stubs are named by NID only (names need a NID database), SN's pspsnc has no compiler note to be guessed from and no
 game tested, and the 2.4.1 CodeWarrior some games were built with isn't archived (3.0.1 matches small functions;
 bigger ones unverified).
