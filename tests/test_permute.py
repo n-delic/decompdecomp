@@ -270,6 +270,23 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
         gen.close()
 
 
+@needs_tool
+def test_autopilots_drafts_are_permuted_with_their_macros_kept():
+    """A draft autopilot judged starts with m2c's macros (#ifndef M2C_DEFINES): pycparser reads no preprocessor
+    lines, so the near misses autopilot left (a PSP demo's every one) never got decomp-permuter's variants. The
+    lines are read around, and each variant gets them back for the compiler."""
+    from decompnet import seeds
+
+    draft = f"{seeds.M2C_MACROS}\nvoid g(s32);\n\nvoid f(s32 a) {{\n    g(M2C_ERROR(/* unknown instruction */));\n    g(a);\n}}\n"
+    gen = permute.Generator()
+    try:
+        header = HEADER + "typedef signed char s8;\ntypedef short s16;\n"  # (the macros' types use them)
+        variants = gen.batch({"header": header, "source": draft, "function": "f", "family": "gcc", "seed": 1, "count": 5})
+    finally:
+        gen.close()
+    assert variants and all(v.startswith("#ifndef M2C_DEFINES\n#define M2C_DEFINES\n") and " f(" in v for v in variants)
+
+
 def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):
     """A best attempt with a helper the source file hasn't: every variant the permuter sent was refused, each with a
     traceback in the user's log. The refusal is an answer, not a crash."""

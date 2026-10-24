@@ -74,7 +74,12 @@ Where to start on a gap:
   VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the PSP SDK's
   GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc (known by its code, which moves registers with `or`: the demo built with
   it imports, matches at -O2 -G8 and rebuilds byte for byte). On a PSP game with debug symbols: 2,465 functions, 2,458
-  named, CodeWarrior 3.0.1 matching its functions byte for byte.
+  named, CodeWarrior 3.0.1 matching its functions byte for byte. Every row of the table was then tried on the PSP
+  demo and that game: autopilot matched 251 of the game's 1,968 open functions from drafts and twins 19 more, and its
+  export with those 270 in C rebuilds byte for byte, from a fresh clone too. What that turned up is fixed for every
+  console: the permuter now reads autopilot's drafts, get_class reads GCC 3's and SNC's vtables, SNC's C++ names
+  match, a save keeps what was set aside, the export keeps switch cases in their function and links branches into
+  other functions.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
@@ -264,6 +269,12 @@ not split yet (only the main one; the relocator already places several segments)
 pspsnc is tested on the demo only (no SN-built game was at hand: the readable one is CodeWarrior's, the others
 encrypted), and the 2.4.1 CodeWarrior some games were built with isn't archived (3.0.1 matches small functions;
 bigger ones unverified).
+
+### PSP drafts: the Allegrex's own instructions
+m2c has no Allegrex target: the EE's reads PSP code, and knows `seb`, `seh` and `madd` but not `min`, `max`, `ext` or
+`ins`, which PSP GCC emits from plain C. Drafts have `M2C_ERROR(unknown instruction)` there, and those functions
+rarely match from autopilot (the guide tells agents what each one is). Rewriting them for m2c before it reads the
+code (`min` as `slt` and `movn`, outside delay slots) would give those drafts their arithmetic back.
 
 ### Windows distribution
 

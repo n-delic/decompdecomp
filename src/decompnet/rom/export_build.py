@@ -43,7 +43,7 @@ def decompdecomps_python() -> str | None:
 
 
 try:
-    from decompnet import toolchains
+    from decompnet import consoles, toolchains
     from decompnet.compiler import run_in
     from decompnet.elfobj import unmangle
     from decompnet.project import compiler_config, compiler_for
@@ -85,6 +85,11 @@ def setup() -> None:
         run([sys.executable, "-m", "splat", "split", "splat.yaml"])
         for generated in (ROOT / "src").glob("*.c"):
             generated.unlink()  # splat's INCLUDE_ASM files; this tree builds one object per function
+        console = consoles.get(B["platform"])
+        for path in (ROOT / "asm").glob("**/*.s"):  # what GNU as can't read (the PSP's own instructions), as words
+            text = path.read_text(encoding="utf-8")
+            if (raw := console.export_asm(text)) != text:
+                path.write_text(raw, encoding="utf-8")
     for seg in B["segments"]:
         if seg.get("incbin"):
             stub = ROOT / seg["stub"]
@@ -258,11 +263,15 @@ def linker_script(provides: dict[str, str], gaps: list[tuple[int, str]]) -> str:
     if B.get("gp"):
         lines.append(f"_gp = 0x{B['gp']:08X};")
     lines += [f"{name} = 0x{addr:08X};" for name, addr in B["symbols"].items()]
-    # jump tables in the data point at labels inside functions (.L001006F8); with one object per function those
-    # labels are local to another object, so give them their addresses (which their names spell out)
+    # jump tables in the data point at labels inside functions (.L001006F8), and hand-written assembly branches into
+    # another function (a PSP SDK's deflate routine, cut in pieces); with one object per function those labels are
+    # local to another object, so give them their addresses (which their names spell out)
     labels = set()
     for path in (ROOT / "asm" / "data").glob("**/*.s"):
         labels.update(re.findall(r"\.word\s+\.L([0-9A-Fa-f]{8})\b", path.read_text(errors="replace", encoding="utf-8")))
+    for path in (ROOT / "asm" / "nonmatchings").glob("**/*.s"):
+        text = path.read_text(errors="replace", encoding="utf-8")
+        labels.update(set(re.findall(r"\.L([0-9A-Fa-f]{8})\b(?!:)", text)) - set(re.findall(r"\.L([0-9A-Fa-f]{8}):", text)))
     lines += [f'".L{label}" = 0x{label};' for label in sorted(labels)]
     # the segment symbols splat projects use (start-up code clears .bss with them)
     image_size = (ROOT / B["image"]).stat().st_size

@@ -2,7 +2,9 @@
 
 CPU: the Allegrex, a little-endian MIPS II (32-bit registers) with instructions of its own.
 - `max`/`min`, `ext`/`ins` (bit fields), `seb`/`seh` (sign extension), `clz`/`clo`, `wsbh`, `rotr`,
-  `movz`/`movn`, and `madd`/`msub` into hi/lo: compilers emit them from plain C.
+  `movz`/`movn`, and `madd`/`msub` into hi/lo: compilers emit them from plain C. The machine draft (m2c) doesn't
+  know `max`/`min`/`ext`/`ins`: `M2C_ERROR(/* unknown instruction: min ... */)` stands where they are. `min` is
+  `a < b ? a : b`, `ext` a shift and a mask.
 - The FPU is single precision: `double` arithmetic becomes calls (`__adddf3`, `__muldf3`). A literal without `f`
   makes a double.
 - The VFPU (`lv.q`, `vadd.q`, `vdot.p`, `sv.s`, `mtv`, `vpfxs`...) is the vector unit. C reaches it only through
@@ -26,6 +28,9 @@ flags) with several builds when C looks right but won't match.
   frame (`sw $ra, 0xC($sp)`), and it uses branch-likely (`beql`, `bnel`) a lot.
 - GCC: `-G8` when the game uses $gp. Sony's own libraries (libc, libgu) in a CodeWarrior game are often GCC's: their
   frames keep $ra at 0($sp). Suggest a range for them.
+- GCC works out by itself that a function defined earlier in the same file only reads its arguments (an `abs`), and
+  then schedules calls to it like a `const` function's. When the instructions around such a call are in another
+  order, declare it `s32 abs_s32(s32 v) __attribute__((const));` in context.h (the PSP demo's call matched that way).
 - SNC: `-G8` when the game uses $gp. Its levels are -O0, -O1, -O2 and -O4 (-O3 builds as -O2, -O5 as -O4). It
   has no -Os. `-Xsched=0` turns its instruction scheduling off. Its frames save $s registers at the bottom and $ra
   above them (`sw $s0, 0($sp)`, `sw $ra, 4($sp)`), and it loads 0 with `li` as `ori`. SNC is tested on the demo

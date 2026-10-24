@@ -527,5 +527,92 @@ def test_the_demo_built_with_snc_is_guessed_matches_and_rebuilds(tmp_path):
     net.claim(agent, slug, name)
     right = net.attempt(agent, name, source, slug)
     assert right["matched"] and right["score"] == 0, right["text"]
-    res = net.export_rom(slug, log=lambda *_: None)
+    # a function written as a class's method: SNC's name for it (__0fESaveN...) is given back to the game's
+    name, source = _function(net, slug, json.loads((build / "demo.json").read_text())["symbols"], "checksum_save")
+    method = source.replace(f"u32 {name}(", f"struct Save {{ static u32 {name}(const u8 *, s32); }};\nu32 Save::{name}(", 1)
+    net.claim(agent, slug, name)
+    assert net.attempt(agent, name, method, slug)["matched"]
+    res = net.export_rom(slug, log=lambda *_: None)  # (the method built as .cpp, to the same bytes)
     assert res["identical"], res.get("log") or res.get("detail")
+
+
+def test_sncs_cpp_names_are_given_back_to_the_games():
+    """SN's SNC writes an identifier's length as a letter (A-Z 0-25, a-z 26-51): a method an agent wrote, a function
+    C++ compiled, one in a namespace; a name that isn't the game's stays."""
+    from io import BytesIO
+
+    from elftools.elf.elffile import ELFFile
+
+    from decompnet.elfobj import unmangle
+
+    from .test_ps2_debug import STB_GLOBAL, _elf, _symbols
+
+    names = ["__0fEMathNfunc_08804388iii", "__0FTplain_func_088046ACi", "__0f5CnsCInNfunc_08804594iT",
+             "__0fnA_very_long_class_name_of_forty_chars_xma_function_name_longer_than_twenty_sixv", "__0fEMathBmv"]
+    table, strings = _symbols([(n, 0, 8, STB_GLOBAL, STT_FUNC, 1) for n in names])
+    obj = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0, bytes(8), 0),
+                (".symtab", SHT_SYMTAB, 0, 0, table, 3), (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
+    game = {"func_08804388", "plain_func_088046AC", "func_08804594", "a_function_name_longer_than_twenty_six"}
+    renamed = ELFFile(BytesIO(unmangle(obj, game.__contains__))).get_section_by_name(".symtab").iter_symbols()
+    assert [s.name for s in renamed][1:] == ["func_08804388", "plain_func_088046AC", "func_08804594",
+                                             "a_function_name_longer_than_twenty_six", "__0fEMathBmv"]
+
+
+@pytest.mark.skipif(toolchains.installed("psp-gcc-1.3.1") is None, reason="needs psp-gcc-1.3.1")
+def test_a_saved_psp_project_comes_back_with_what_was_set_aside(tmp_path):
+    """The demo's work saved to plain files and opened on another computer: a match judged again, and a function
+    set aside (the user's word here; agents' verdicts and a boundary report's leftover are kept the same way)
+    set aside again, where the restore used to give it back to the agents."""
+    import subprocess
+    import sys
+
+    from decompnet.app import saves
+    from decompnet.app.engine import RomNetwork
+
+    from .test_consoles import _function
+
+    if not (DEMO / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    game, symbols = DEMO / "build" / "BOOT.BIN", json.loads((DEMO / "build" / "demo.json").read_text())["symbols"]
+    net = RomNetwork(tmp_path / "one.db", tmp_path / "one")
+    slug = net.import_rom(game, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    name, source = _function(net, slug, symbols, "abs_s32")
+    net.claim(agent, slug, name)
+    assert net.attempt(agent, name, source, slug)["matched"]
+    aside, _ = _function(net, slug, symbols, "lerp")
+    net.set_aside_by_you(aside, slug, "hand-written")
+    saves.save(net, slug, tmp_path / "save")
+
+    fresh = RomNetwork(tmp_path / "two.db", tmp_path / "two")
+    out = saves.restore(fresh, str(tmp_path / "save"), game, log=lambda *_: None)
+    assert out["matched"] == 1 and out["lost"] == []
+    row = fresh._function(aside, out["slug"])
+    assert row["status"] == "asm" and "hand-written" in json.loads(row["meta"])["asm_code"]
+
+
+@pytest.mark.skipif(toolchains.installed("psp-gcc-1.3.1") is None, reason="needs psp-gcc-1.3.1")
+def test_a_function_end_report_and_a_split_take_the_address_as_hex_writes_it(tmp_path):
+    """An agent's report_boundary and split_function on the demo: PSP addresses have seven digits (0x8804200), which
+    were refused as "not an address like 0x80001234"."""
+    import subprocess
+    import sys
+
+    from decompnet.app import tools
+    from decompnet.app.engine import RomNetwork
+
+    if not (DEMO / "build" / "demo.json").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(DEMO / "build" / "BOOT.BIN", confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("claude-opus-5.5-1")
+    pid = net.project_row(slug)["id"]
+    one, two = net.store.all("SELECT name, vram, size FROM functions WHERE project_id=? AND status='open' AND size>40 "
+                             "ORDER BY vram LIMIT 2", pid)
+    said = tools.call(net, agent, slug, "report_boundary",
+                      {"function": one["name"], "end": hex(one["vram"] + one["size"] - 8), "reason": "two words of padding"})
+    assert said.startswith("Reported"), said
+    net.resolve_boundary(slug, net.cfg(net.project_row(slug))["boundaries"][-1]["id"], True)
+    assert net._function(f"pad_{one['vram'] + one['size'] - 8:08X}", slug)["status"] == "asm"
+    said = tools.call(net, agent, slug, "split_function", {"function": two["name"], "at": hex(two["vram"] + 16)})
+    assert said.startswith("✅"), said
