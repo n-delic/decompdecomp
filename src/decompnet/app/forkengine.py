@@ -1485,7 +1485,7 @@ class ForkEngine:
         rows = [r for r in self.net.store.all("SELECT id, name, meta FROM functions WHERE project_id=? AND unit=? AND "
                                               "status != 'nosource'", proj["id"], unit.name)]
         stem = re.sub(r"_[0-9A-Fa-f]{8}$", "", Path(rel).stem)
-        tail = re.search(r"([0-9A-Fa-f]{8})$", sym)
+        tail = re.search(r"([0-9A-Fa-f]{8})(?:@\d+)?$", sym)  # (a PC function: @func_0041B470@8)
         new = new_name.strip().lstrip("./") or (Path(rel).parent / f"{stem}_{(tail.group(1) if tail else sym).upper()}"
                                                 f"{Path(rel).suffix}").as_posix()
         old_path, new_path = fp.root / rel, fp.root / new
