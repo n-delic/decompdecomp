@@ -339,6 +339,9 @@ CODE_AT = 0x401000
 FRAME_FUNCTION = bytes.fromhex("55 8bec 8b4508 5d c3")  # push ebp; mov ebp, esp; mov eax, [ebp+8]; pop ebp; ret
 LONE_EPILOGUE = bytes.fromhex("8b45f8 c9 c3")  # a piece Ghidra cut off a function: mov eax, [ebp-8]; leave; ret
 EH_PROLOG = bytes.fromhex("b800204000 e800000000 51 c3")  # mov eax, <handler>; call __EH_prolog; push ecx; ret
+# the C runtime's __SEH_prolog, which sets ebp with a lea: push <handler>; push fs:[0]; mov eax, [esp+0x10];
+# mov [esp+0x10], ebp; lea ebp, [esp+0x10]; sub esp, eax; push ebx; push esi; push edi; mov eax, [ebp-8]
+SEH_PROLOG = bytes.fromhex("6800104000 64ff3500000000 8b442410 896c2410 8d6c2410 2be0 53 56 57 8b45f8 c3")
 EH_STUBS = [bytes.fromhex("8d4dec e900000000"),  # lea ecx, [ebp-0x14]; jmp <destructor>
             bytes.fromhex("b810204000 e900000000"),  # mov eax, <FuncInfo>; jmp __CxxFrameHandler
             bytes.fromhex("8b4df0 e900000000"),  # mov ecx, [ebp-0x10]; jmp <destructor> (new in progress)
@@ -373,11 +376,20 @@ def test_exception_handling_stubs_are_found_only_where_the_linker_puts_them():
     """Stubs end the program's code (.text$x goes after all of .text). The same shapes in the main body are pieces
     Ghidra cut off real functions, and a real function building its frame through __EH_prolog isn't one."""
     main = [FRAME_FUNCTION, LONE_EPILOGUE] + [FRAME_FUNCTION] * (scratch_pe.EH_STUB_GAP + 1)
-    data, extents = _tiny_pe(main + [EH_PROLOG] + EH_STUBS)
+    data, extents = _tiny_pe(main + [SEH_PROLOG, EH_PROLOG] + EH_STUBS)
     found = scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents)
     assert found == {addr for addr, _ in extents[-len(EH_STUBS):]}
     # without a handler, a few funclet shapes at the end are something else
     data, extents = _tiny_pe(main + [EH_STUBS[0], EH_STUBS[2]])
+    assert scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents) == set()
+    # Visual C++ 2005 on: dynamic initializers follow the run (a 2000s game rebuilt with Visual C++ 2008 tools had 37,
+    # a global's destructor among them), so the run must be long; a short one there is pieces of the main body
+    initializers = [FRAME_FUNCTION] * 10 + [EH_STUBS[-1]] + [FRAME_FUNCTION] * 10
+    stubs = EH_STUBS * (scratch_pe.EH_STUB_FOLLOWED_RUN // len(EH_STUBS) + 1)
+    data, extents = _tiny_pe(main + stubs + initializers)
+    found = scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents)
+    assert found == {addr for addr, _ in extents[len(main):len(main) + len(stubs)]}
+    data, extents = _tiny_pe(main + EH_STUBS + initializers)
     assert scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents) == set()
 
 

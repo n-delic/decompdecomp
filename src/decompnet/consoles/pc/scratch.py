@@ -126,6 +126,9 @@ PRINTABLE = range(32, 127)
 EH_STUB_WHY = ("exception-handling code Visual C++ makes (its .text$x): it comes out of compiling the function it "
                "belongs to, so no C of its own makes it")
 EH_STUB_GAP = 4  # functions without the shape the run of stubs may hold in a row (Ghidra merged or cut a few)
+# a run of stubs that code follows (Visual C++ 2005 on: the linker puts the dynamic initializers' .text$yc and
+# .text$yd after .text$x) has at least this many, so a few pieces cut off near the end of the main body never pass
+EH_STUB_FOLLOWED_RUN = 64
 EH_STUB_BYTES = 32  # how much of a function's start its shape is read from (an array funclet's pushes and lea)
 TOOL_SECONDS = 3600  # Ghidra on a big game, the project's build
 ERROR_TAIL = 1500  # how much of a tool's output an error shows
@@ -391,9 +394,9 @@ def eh_stub(md, code: bytes, addr: int) -> str | None:
         return "handler" if ins[0].operands[0].reg == x86.X86_REG_EAX else "funclet"
     for one in ins:
         first = one.operands[0] if one.operands else None
-        if one.id in (x86.X86_INS_PUSH, x86.X86_INS_MOV) and first is not None and first.type == x86.X86_OP_REG \
+        if one.id in (x86.X86_INS_PUSH, x86.X86_INS_MOV, x86.X86_INS_LEA) and first is not None and first.type == x86.X86_OP_REG \
                 and first.reg == x86.X86_REG_EBP:
-            return None  # its own frame
+            return None  # its own frame (the C runtime's __SEH_prolog: lea ebp, [esp+N])
         if any(op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_EBP for op in one.operands):
             return "funclet"
         if one.id in (x86.X86_INS_CALL, x86.X86_INS_RET, x86.X86_INS_JMP):
@@ -403,27 +406,37 @@ def eh_stub(md, code: bytes, addr: int) -> str | None:
 
 def exception_stubs(pe: PE, functions: list[tuple[int, int]]) -> set[int]:
     """The addresses of the exception-handling stubs among the functions ((address, size)): those with a stub's shape
-    (eh_stub) in the run of them that ends a code section, where the linker puts .text$x, and only when the run has a
-    handler (every function with exception handling has one). Elsewhere the same shapes are pieces Ghidra cut off real
-    functions, such as a lone epilogue: on a Visual C++ 6.0 game, 204 in the main body."""
+    (eh_stub) in the last run of them in a code section, where the linker puts .text$x, and only when the run has a
+    handler (every function with exception handling has one). Visual C++ 6.0 to 7.1 end the section with the run; from
+    2005 on, a few dynamic initializers follow it, and then the run must be long (EH_STUB_FOLLOWED_RUN). Elsewhere the
+    same shapes are pieces Ghidra cut off real functions, such as a lone epilogue: on a Visual C++ 6.0 game, 204 in
+    the main body."""
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     found: set[int] = set()
     for sec in (s for s in pe.sections if s.code):
-        run, kinds, gap = [], set(), 0
+        run, kinds, gap, after = [], set(), 0, 0
         for addr, size in sorted(((a, n) for a, n in functions if sec.va <= a < sec.va + sec.size), reverse=True):
             kind = eh_stub(md, pe.read(addr, min(size, EH_STUB_BYTES)), addr)
-            if kind is None:
-                gap += 1
-                if gap > EH_STUB_GAP:
+            if kind is not None:
+                run.append(addr)
+                kinds.add(kind)
+                gap = 0
+            elif not run:
+                after += 1
+            elif (gap := gap + 1) > EH_STUB_GAP:
+                if _stubs_run(kinds, after, len(run)):
                     break
-                continue
-            run.append(addr)
-            kinds.add(kind)
-            gap = 0
-        if "handler" in kinds:
+                # not the run (a global's destructor among the initializers after it, say): code after it
+                run, kinds, gap, after = [], set(), 0, after + len(run) + gap
+        if _stubs_run(kinds, after, len(run)):
             found.update(run)
     return found
+
+
+def _stubs_run(kinds: set[str], after: int, count: int) -> bool:
+    """Whether a run of `count` stub shapes (`kinds`), with `after` functions after it in its section, is .text$x."""
+    return "handler" in kinds and (after <= EH_STUB_GAP or count >= EH_STUB_FOLLOWED_RUN)
 
 
 def mark_exception_stubs(root: Path, version: str) -> int | None:

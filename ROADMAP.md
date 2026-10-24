@@ -70,7 +70,8 @@ Where to start on a gap:
   after all of the program's code. Ghidra takes each stub for a function, the smallest in the project, so agents were
   handed them first. The import now sets aside the stubs in the run that ends the code (`scratch.exception_stubs`),
   with why (functions.json's `generated`); projects made before get that once at start. On a 2000s Visual C++ 6.0
-  game, 4,677 of 11,877 functions, every one in that run and none in the main body or the C runtime. Hand-written
+  game, 4,677 of 11,877 functions, every one in that run and none in the main body or the C runtime; on a 2000s game
+  rebuilt with Visual C++ 2008 tools, where dynamic initializers follow the run, 6,581 of 24,843. Hand-written
   assembly on PC isn't recognised yet (x86 has no `asm_reason`).
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
