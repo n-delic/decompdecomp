@@ -101,7 +101,7 @@ function parseRom(buf) {
 }
 
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
-const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1 or 2" }[p] || consoleOf(p)?.name || "");
+const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1, 2 or PSP" }[p] || consoleOf(p)?.name || "");
 /* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
 const CW_PACK = {
   mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
@@ -126,6 +126,14 @@ function isNds(head, dv) {
   return crc === dv.getUint16(0x15e, true) && off >= 0x200 && ram >= 0x02000000 && ram < 0x02400000 && entry >= ram && entry < ram + size;
 }
 
+/* A PSP .cso (a compressed UMD): its CISO header starts with its own size (0x18, or 0 from older tools) where a
+   GameCube or Wii CISO has its block size, 2 MiB by default (consoles/gc_wii/scratch.py tells them apart the same way). */
+const PSP_CISO_HEADER_SIZES = [0, 0x18];
+const isPspCiso = (head) => head.length >= 8 && String.fromCharCode(...head.slice(0, 4)) === "CISO"
+  && PSP_CISO_HEADER_SIZES.includes(new DataView(head.buffer).getUint32(4, true));
+// a PSP's ELF: a PRX module by its type, or a program whose flags name the Allegrex (a PS2's name the R5900)
+const ELF_TYPE_PSP_PRX = 0xffa0, ELF_MACH_BITS = 0x00ff0000, ELF_MACH_ALLEGREX = 0x00a20000;
+
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
@@ -137,13 +145,19 @@ function identifyHead(head, file) {
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
-  // which PlayStation a disc is for, its SYSTEM.CNF says (the server reads it)
+  // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
+  // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
+  if (text(0x8001, 0x8006) === "CD001" && ascii(0x8008, 0x8028) === "PSP GAME") return { ...base, platform: "psp", order: "UMD disc image" };
   if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "playstation", order: "disc image" };
   if (text(0, 8) === "MComprHD") return { ...base, platform: "playstation", order: "CHD disc image" };
-  if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) return { ...base, platform: "ps2", order: "ELF program", entry: dv.getUint32(24, true) };
+  if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) {
+    const prx = dv.getUint16(16, true) === ELF_TYPE_PSP_PRX, psp = prx || (dv.getUint32(36, true) & ELF_MACH_BITS) === ELF_MACH_ALLEGREX;
+    return { ...base, platform: psp ? "psp" : "ps2", order: prx ? "PRX module" : "ELF program", entry: dv.getUint32(24, true) };
+  }
   if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
-  const packed = { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
+  const packed = isPspCiso(head) ? null  // (notSupported says what to do with it)
+    : { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
   if (packed) return { ...base, platform: "gcwii", order: `${packed} disc image` };
   if (head.length >= 0x100) {  // a DOL: section offsets, addresses and sizes that make sense, entry in RAM
     const entry = dv.getUint32(0xe0);
@@ -173,7 +187,9 @@ function notSupported(head, file) {
   if (ext === "cue") return "That's the .cue sheet: pick the .bin file next to it (the track with the game's data, usually Track 1).";
   if (["zip", "7z", "rar"].includes(ext)) return "That's an archive: unpack it first, then drop the game file inside.";
   if (ext === "apk") return "Android apps aren't supported yet.";
-  if (ext === "pbp" || ext === "cso") return "That's a PSP file. PSP games aren't supported yet.";
+  if (isPspCiso(head) || ext === "cso") return "That's a compressed PSP image (.cso): decompress it to .iso first (maxcso and similar tools do that), then drop the .iso.";
+  if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
+  if (text(0, 4) === "~PSP") return "That's an encrypted PSP program. Decrypt it first and drop the decrypted .elf or .prx, or drop the game's UMD image (.iso).";
   return null;
 }
 // 1.0.3 rewrote most of the app: every platform is being tested again, and reports are how a platform moves up
@@ -248,9 +264,10 @@ function setupCompilers(info) {
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
 
-/* The compilers of a game's console (both PlayStations' for a disc not read yet) this computer doesn't have. */
+/* The compilers of a game's console this computer doesn't have (every PlayStation's for a disc not read yet: a CHD
+   can be a PSP game's too). */
 function missingCompilers(p) {
-  const cons = p === "playstation" ? ["ps", "ps2"].map(consoleOf) : [consoleOf(p)];
+  const cons = p === "playstation" ? ["ps", "ps2", "psp"].map(consoleOf) : [consoleOf(p)];
   const tcs = S.st?.toolchains || [];
   return cons.filter(Boolean).flatMap((c) => c.installable || []).map((id) => tcs.find((t) => t.id === id)).filter((t) => t && !t.installed);
 }
