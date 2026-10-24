@@ -634,6 +634,22 @@ def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
     assert [(f.addr, f.size) for f in found] == [(0x401000, 1), (0x401001, 5), (0x401006, 5)]
 
 
+def test_the_padding_the_linker_aligns_every_function_with_doesnt_end_a_source_file():
+    """Visual C++ 2005 on aligns each function to 16 bytes with int3: a 2005 game got a source file for almost every
+    function (19,028 for 20,863). More than that padding still ends a file, and so does int3 where the compiler pads
+    its functions itself (6.0, with nops) and the linker's int3 is rare: an object's end."""
+    def files(blocks: list[bytes]) -> list[list[int]]:
+        pe = scratch_pe.read_pe(_tiny_exe(b"".join(blocks)))
+        starts = [TEXT + sum(map(len, blocks[:k])) for k in range(len(blocks)) if blocks[k][:1] != b"\xcc"]
+        found = scratch_pe.analyse(pe, [_row(a, a + len(FRAME_RET)) for a in starts])
+        return [[f.addr - TEXT for f in fns] for fns in scratch_pe.units(found, pe).values()]
+    aligned, padded = FRAME_RET.ljust(16, b"\xcc"), FRAME_RET.ljust(16, b"\x90")
+    assert files([aligned] * 6) == [[0, 0x10, 0x20, 0x30, 0x40, 0x50]]
+    assert files([aligned] * 3 + [b"\xcc" * 16] + [aligned] * 3) == [[0, 0x10, 0x20], [0x40, 0x50, 0x60]]
+    assert files([padded] * 3 + [aligned] + [padded] * 2) == [[0, 0x10, 0x20, 0x30], [0x40, 0x50]]
+    assert files([aligned] * 300) == [list(range(0, 0x1000, 0x10)), list(range(0x1000, 0x12C0, 0x10))]  # (4 KiB)
+
+
 def _project(tmp_path: Path, program: bytes, rows: list[dict], unit_bytes: int = 0x1000) -> Path:
     """A PC project's config and delinked objects for a hand-made program, as create writes them (no compiler)."""
     root = tmp_path / "proj"

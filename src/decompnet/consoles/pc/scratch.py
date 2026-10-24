@@ -44,6 +44,11 @@ from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 
 UNIT_BYTES = 0x1000
+# the linker aligns code to 16 bytes (a function's section, from Visual C++ 2005 on each function's), filling the gap
+# with int3 (zeros in a program another linker rewrote); when such a gap follows a third of the functions or more, it's
+# the linker's padding before every function, not an object's end: a 2005 game has one after 88% of its functions, a
+# 2010 one after 60%, a Visual C++ 6.0 game after 10% (where its compiler's nops pad the rest: analyse's PAD)
+FUNCTION_ALIGN, PADDING_BYTES, ALIGNED_SHARE = 16, (0xCC, 0x00, 0x90), 3
 TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
 DIR32, REL32 = 0x06, 0x14
@@ -739,12 +744,36 @@ def mark_exception_stubs(root: Path, version: str) -> int | None:
     return len(marked)
 
 
-def units(functions: list[Function]) -> dict[str, list[Function]]:
-    """Source files: runs of neighbouring functions of about UNIT_BYTES each."""
+def _padding(pe: PE, before: Function, after: Function) -> int | None:
+    """The byte the gap between two neighbouring functions is filled with, when it's only what aligns the next one
+    (fewer than FUNCTION_ALIGN bytes of one filler, up to an aligned start); None: no gap, or more than that."""
+    end = before.addr + before.size
+    gap = pe.read(end, after.addr - end) if 0 < after.addr - end < FUNCTION_ALIGN else b""
+    return gap[0] if gap and after.addr % FUNCTION_ALIGN == 0 and gap.count(gap[:1]) == len(gap) and \
+        gap[0] in PADDING_BYTES else None
+
+
+def linker_padding(pe: PE, functions: list[Function]) -> int | None:
+    """The filler the program's linker aligns every function with, when it does (Visual C++ 2005 on: int3), or None
+    (Visual C++ 6.0: its compiler pads each function itself, and the linker's int3 is rare enough to mean something)."""
+    found: dict[int, int] = {}
+    for a, b in zip(functions, functions[1:]):
+        if (byte := _padding(pe, a, b)) is not None:
+            found[byte] = found.get(byte, 0) + 1
+    byte = max(found, key=found.get, default=None)
+    return byte if byte is not None and found[byte] * ALIGNED_SHARE >= len(functions) else None
+
+
+def units(functions: list[Function], pe: PE | None = None) -> dict[str, list[Function]]:
+    """Source files: runs of neighbouring functions of about UNIT_BYTES each. A gap between two functions ends a file
+    (an object's end), unless it's only the padding the program's linker puts before every function (linker_padding:
+    a 2005 game got 19,028 source files for its 20,863 functions)."""
+    filler = linker_padding(pe, functions) if pe is not None else None
     out: dict[str, list[Function]] = {}
     cur: list[Function] = []
     for fn in functions:
-        if cur and (fn.addr + fn.size - cur[0].addr > UNIT_BYTES or fn.addr != cur[-1].addr + cur[-1].size):
+        if cur and (fn.addr + fn.size - cur[0].addr > UNIT_BYTES or fn.addr != cur[-1].addr + cur[-1].size and
+                    (filler is None or _padding(pe, cur[-1], fn) != filler)):
             out[f"text_{cur[0].addr:08X}"] = cur
             cur = []
         cur.append(fn)
@@ -1151,7 +1180,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
     stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
     functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
-    groups = units(functions)
+    groups = units(functions, pe)
     log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
 
     shutil.copytree(TEMPLATE, root)

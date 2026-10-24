@@ -75,6 +75,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Newer PC games get source files of many functions.** From Visual C++ 2005 on, the linker aligns every function
+  to 16 bytes with int3, and the import ended a source file at any gap between functions: a 2005 game got 19,028
+  source files for its 20,863 functions, and a first build of 20 minutes. A gap that is only the padding the program's
+  linker puts before most functions no longer ends a file (`consoles/pc/scratch.py`, `linker_padding`): the 2005 game
+  gets 1,286 files, a 2010 one 1,324 (its Rich header counts 855 compiled files), and a Visual C++ 6.0 game, whose
+  compiler pads its own functions, keeps its 1,851; the rebuild check stays identical. Projects made before keep
+  their files.
 - **A PC game's import says what it is and whether it can match.** A newer game said only "expect little to match",
   and a 64-bit one was refused at the drop with "decompdecomp starts PC games from their 32-bit x86 .exe". The import
   reads the program's headers (`consoles/pc/scratch.py`, `describe`): the Visual C++ version and build that compiled
@@ -311,10 +318,8 @@ and newer are out of scope for now.
 - **C, the 2005-2010 pack.** `toolchains.toml` entries with checksums, a line in Setup (proprietary: only after the
   user accepts), `MSVC_VERSIONS`, the demo PC project built with it, and its tests (skipped in CI, as 6.0's are).
   The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules tested again (a game rebuilt with
-  2010 tools: 6,581 stubs found; a 2005 game built without C++ exceptions: none). Their linker pads functions to 16
-  bytes with int3, and `scratch.units` ends a source file at any gap: a 2005 game got 19,028 source files for 20,863
-  functions, and a first build of 20 minutes; a file should run on across that padding. Done when a real 2005-2010
-  game (not /GL) gets matches from agents.
+  2010 tools: 6,581 stubs found; a 2005 game built without C++ exceptions: none). Done when a real 2005-2010 game
+  (not /GL) gets matches from agents.
 - **D, 2012-2013, then 2015.** The same, per generation: SSE2 float code by default from 2012, and one toolset for
   2015's updates.
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
