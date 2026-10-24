@@ -6,7 +6,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
   which also says (with its sections) whether decompdecomp can start it at all: 64-bit, Visual C++ 2017 and newer,
   mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check puts the program's code
-  back together from those objects (check_code).
+  back together from those objects (check_code). Visual C++'s exception-handling stubs are set aside
+  (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
@@ -43,11 +44,12 @@ class WindowsPC(Console):
     demo = "demo-pc"
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
     own_features = frozenset({REBUILD_CHECK})  # the program's code, rebuilt from its delinked functions
-    # what a project's config holds, in its manifest's "analysis": 1 Ghidra's functions as it found them, 2 no jump
-    # table's entries relocated twice (scratch.drop_repeated_relocations) and every function's last instruction whole
-    # (complete_last_instructions), 3 the pieces of functions it cut off joined to them (scratch.merge_pieces). A
-    # project with less gets the rest when the app starts
-    ANALYSIS = 3
+    # what a project's config holds, in its manifest's "analysis" (on_start brings one with less up, step by step):
+    # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
+    # relocated twice (scratch.drop_repeated_relocations) and every function's last instruction whole
+    # (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
+    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub
+    ANALYSIS = 4
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
@@ -77,14 +79,15 @@ class WindowsPC(Console):
         return scratch.tool_args()
 
     def on_start(self, net, slug: str, log=print) -> None:
-        """A project made by an older decompdecomp gets, once, what its import got wrong repaired (a jump table's
-        entries relocated twice, functions ending in the middle of their last instruction), then the pieces of
-        functions Ghidra cut off joined to them, each through forkengine.reanalyse: kept only when the program's code
-        still rebuilds byte for byte from the delinked functions (check_rebuild), else taken back. The repairs go
-        first, in a step of their own: without them the rebuild can't be identical, and the join needs it to be. The
-        functions that grew are open again, with a note: what set them aside, and older notes, were about a part."""
-        import json
-
+        """A project made by an older decompdecomp gets what its import has learnt since, one step at a time from the
+        level its manifest's "analysis" says (ANALYSIS lists them), each through forkengine.reanalyse: one commit and
+        one line in the project's feed per step. A step that changes code (the repairs, the joins) is kept only when
+        the program's code still rebuilds byte for byte from the delinked functions (check_rebuild), else taken back.
+        The repairs go first: without them the rebuild can't be identical, and the joins need it to be. The stubs
+        come next, found on the repaired functions, so the joins never take one (the function before the run, a C
+        runtime function with a frame, would look continued by a funclet that reads ebp). The functions that grew
+        are open again, with a note: what set them aside, and older notes, were about a part. A project without the
+        user's copy of the program in it yet waits for the next start: every step reads it."""
         from . import scratch
 
         if not net.fork_slug(slug):
@@ -93,27 +96,40 @@ class WindowsPC(Console):
         manifest = fp.manifest or {}
         if manifest.get("created") != "from scratch" or manifest.get("analysis", 1) >= self.ANALYSIS:
             return
+        version = manifest["version"]
+        if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file():
+            return
 
         def matched() -> set[str]:  # not into or out of a matched function: its C would no longer be the whole one
             return {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                      "status='matched'", net.project_row(slug)["id"])}
 
         def repairs(fp):
-            n = scratch.drop_repeated_relocations(fp.root, manifest["version"])
-            cut = scratch.complete_last_instructions(fp.root, manifest["version"], keep=matched())
+            n = scratch.drop_repeated_relocations(fp.root, version)
+            cut = scratch.complete_last_instructions(fp.root, version, keep=matched())
             said = [f"{n} functions had a jump table's entries relocated twice, and once now"] if n else []
             if cut:
                 said.append(f"{cut} functions that ended in the middle of their last instruction have all of it now")
             return "; ".join(said) or None
+
+        def stubs(fp):
+            n = scratch.mark_exception_stubs(fp.root, version)
+            return (f"{n} functions are exception-handling code Visual C++ makes from the function they belong to "
+                    "(its .text$x): set aside, as no C of their own makes them" if n else None)
         joined: dict[str, list[str]] = {}
 
         def pieces(fp):
-            joined.update(scratch.merge_project_pieces(fp.root, manifest["version"], keep=matched(), log=log))
+            joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
-        if manifest.get("analysis", 1) < 2:
-            net.forks.reanalyse(slug, repairs, log=log)
-        if net.forks.reanalyse(slug, pieces, log=log):
+        # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
+        # isn't identical yet too)
+        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
+        for level, (step, fix) in steps.items():
+            if manifest.get("analysis", 1) < level:
+                net.forks.reanalyse(slug, step, fix=fix, log=log)
+                net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
+        if joined:
             agent, _ = net.local_agent("decompdecomp")
             for name, took in joined.items():
                 net.joined(name, slug)
@@ -123,9 +139,6 @@ class WindowsPC(Console):
                                  name)
                 except NetworkError:  # gone meanwhile
                     pass
-        now = net.forks.get(slug)[1].manifest or {}  # with the rebuild reanalyse wrote
-        (fp.root / ".decomp.wtf.json").write_text(json.dumps({**now, "analysis": self.ANALYSIS}, indent=2),
-                                                 encoding="utf-8")
 
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch
@@ -184,21 +197,31 @@ class WindowsPC(Console):
 
     def real_names(self, fp, version: str) -> dict[str, str]:
         """(a function's report name is its entry's in functions.json: the target objects are cut out with it)"""
-        import json
-
-        try:
-            info = json.loads((fp.root / "config" / version / "functions.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
+        info = _functions_json(fp, version)
         names = info.get("names") or {}
-        return {fn["name"]: names[key] for fns in info["units"].values() for fn in fns
+        return {fn["name"]: names[key] for fns in info.get("units", {}).values() for fn in fns
                 if (key := f"func_{fn['addr']:08X}") in names}
+
+    def generated_functions(self, fp, version: str) -> dict[str, str]:
+        """functions.json's `generated` entries: the exception-handling stubs (scratch.mark_exception_stubs)."""
+        return {fn["name"]: fn["generated"] for fns in _functions_json(fp, version).get("units", {}).values()
+                for fn in fns if fn.get("generated")}
 
     def rename_pattern(self, old: str) -> str:
         """func_0041B470 however a source spells it (a report's _func_0041B470@8 is func_0041B470 there, a method's
         Town::func_0041B470 too); a real name given before as itself."""
         key = _address_key(old)
         return rf"\b_*{key}\b" if key else super().rename_pattern(old)
+
+
+def _functions_json(fp, version: str) -> dict:
+    """The project's config/<version>/functions.json, or {} (none, or unreadable)."""
+    import json
+
+    try:
+        return json.loads((fp.root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _address_key(name: str) -> str | None:

@@ -106,7 +106,9 @@ def piece(before: bytes, code: bytes) -> str | None:
 
     MSVC's C++ unwind funclets (`.text$x`, after the C runtime) read their parent's ebp without a frame too, by
     design, but they're not pieces: each follows another funclet, which ends with a jmp or a ret and never sets up a
-    frame, so none of the three holds. They're set aside by a rule of their own; keep the two apart."""
+    frame, so none of the three holds; but the first follows the last function before the run, which may have set up
+    a frame. So they're found first, by a rule of their own (consoles/pc/scratch.exception_stubs), and kept out of the
+    joins; keep the two apart."""
     ins = list(_READER.disasm(before, 0))
     if not ins or sum(i.size for i in ins) != len(before) or ins[-1].mnemonic in _PADDING:
         return None  # data at its end (a jump table), or padding: a function's end

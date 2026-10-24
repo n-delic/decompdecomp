@@ -10,7 +10,11 @@ does the delinking itself:
 - capstone reads every instruction for the addresses it holds: calls and jumps to other functions, and data
   addresses, become relocations (functions by their decorated names, `_func_00401000`, `_func_00401020@8` for
   __stdcall, `@func_00401040@8` for __fastcall; data as `_D_00402034`; imports as `__imp__Name@4`), so each function
-  matches whatever names the C uses, under objdiff's usual rules.
+  matches whatever names the C uses, under objdiff's usual rules;
+- the exception-handling stubs Visual C++ makes (its `.text$x` code, at the end of the program's code) are set aside:
+  functions.json says why (`generated`), and no C of their own makes them (exception_stubs);
+- the pieces Ghidra cut off functions (a lone epilogue, a catch block) are joined back to them (merge_pieces), never
+  a stub; check_code puts the program's code back together from the delinked functions, the rebuild check.
 
 The project (tools/configure.py, tools/delink.py) cuts the functions out of the user's copy into COFF objects at
 build time, one per source file (src/auto/text_<address>.cpp, about 4 KiB of functions each), and compiles src/ with
@@ -158,6 +162,18 @@ POINTERS_SHOWN, FLOATS_SHOWN = 24, 8
 PLAUSIBLE_FLOAT = (1e-6, 1e7)  # magnitudes a float in game data has; other words aren't floats
 MIN_STRING_CHARS = 3
 PRINTABLE = range(32, 127)
+# exception_stubs: C++ built with /GX (as games of the time were) puts the code that destroys a function's local objects
+# when an exception passes through it, and the function's handler, in a section of its own, .text$x, which the linker
+# puts after all of the program's code. Ghidra takes each stub for a function, the smallest of the project, so agents
+# were handed them first, though compiling the function they belong to is what makes them (a 2000s Visual C++ 6.0
+# game: 4,677 of its 11,877 functions)
+EH_STUB_WHY = ("exception-handling code Visual C++ makes (its .text$x): it comes out of compiling the function it "
+               "belongs to, so no C of its own makes it")
+EH_STUB_GAP = 4  # functions without the shape the run of stubs may hold in a row (Ghidra merged or cut a few)
+# a run of stubs that code follows (Visual C++ 2005 on: the linker puts the dynamic initializers' .text$yc and
+# .text$yd after .text$x) has at least this many, so a few pieces cut off near the end of the main body never pass
+EH_STUB_FOLLOWED_RUN = 64
+EH_STUB_BYTES = 32  # how much of a function's start its shape is read from (an array funclet's pushes and lea)
 TOOL_SECONDS = 3600  # Ghidra on a big game, the project's build
 ERROR_TAIL = 1500  # how much of a tool's output an error shows
 
@@ -584,7 +600,8 @@ def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset()
     which they continue: on a PC game 181 such pieces could never match, and neither could the functions they
     belong to. Not a piece another function calls or holds the address of (a function's start: Ghidra's guess was
     right), nor the function's own jump table (Ghidra made a function of one), nor into or out of a function of
-    `keep` (matched ones: their C would no longer be the whole function). Across two source files
+    `keep` (matched ones: their C would no longer be the whole function; the exception-handling stubs, whose first
+    one reads the frame of the function before it). Across two source files
     (`Function.unit`), a piece moves to the earlier one only when its own keeps other functions and
     `movable(piece)` says its C isn't there. Returns the functions, and each that grew with the pieces it took."""
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
@@ -644,6 +661,82 @@ def _ends_at(md, before: bytes, size: int) -> bool:
     return last is not None and last.address < size and last.address + last.size == len(before)
 
 
+def eh_stub(md, code: bytes, addr: int) -> str | None:
+    """Whether a function's code has the shape of an exception-handling stub: "handler" (`mov eax, <its FuncInfo>;
+    jmp __CxxFrameHandler`; Ghidra merges a few into one function at times), "funclet" (it runs in its parent's frame:
+    it uses [ebp±N] before it sets up a frame, calls anything or leaves, as `lea ecx, [ebp-N]; jmp <destructor>`, or
+    destroys a global: `mov ecx, <global>; jmp <destructor>`), or None. A real function that builds its frame through
+    __EH_prolog (`mov eax, <handler>; call __EH_prolog`) calls before it uses ebp: not a stub."""
+    ins = list(_disasm(md, code[:EH_STUB_BYTES], addr))
+    if len(ins) >= 2 and ins[0].id == x86.X86_INS_MOV and ins[1].id == x86.X86_INS_JMP \
+            and ins[0].operands[1].type == x86.X86_OP_IMM and ins[0].operands[0].reg in (x86.X86_REG_EAX, x86.X86_REG_ECX):
+        return "handler" if ins[0].operands[0].reg == x86.X86_REG_EAX else "funclet"
+    for one in ins:
+        first = one.operands[0] if one.operands else None
+        if one.id in (x86.X86_INS_PUSH, x86.X86_INS_MOV, x86.X86_INS_LEA) and first is not None and first.type == x86.X86_OP_REG \
+                and first.reg == x86.X86_REG_EBP:
+            return None  # its own frame (the C runtime's __SEH_prolog: lea ebp, [esp+N])
+        if any(op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_EBP for op in one.operands):
+            return "funclet"
+        if one.id in (x86.X86_INS_CALL, x86.X86_INS_RET, x86.X86_INS_JMP):
+            return None
+    return None
+
+
+def exception_stubs(pe: PE, functions: list[tuple[int, int]]) -> set[int]:
+    """The addresses of the exception-handling stubs among the functions ((address, size)): those with a stub's shape
+    (eh_stub) in the last run of them in a code section, where the linker puts .text$x, and only when the run has a
+    handler (every function with exception handling has one). Visual C++ 6.0 to 7.1 end the section with the run; from
+    2005 on, a few dynamic initializers follow it, and then the run must be long (EH_STUB_FOLLOWED_RUN). Elsewhere the
+    same shapes are pieces Ghidra cut off real functions, such as a lone epilogue: on a Visual C++ 6.0 game, 204 in
+    the main body."""
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    found: set[int] = set()
+    for sec in (s for s in pe.sections if s.code):
+        run, kinds, gap, after = [], set(), 0, 0
+        for addr, size in sorted(((a, n) for a, n in functions if sec.va <= a < sec.va + sec.size), reverse=True):
+            kind = eh_stub(md, pe.read(addr, min(size, EH_STUB_BYTES)), addr)
+            if kind is not None:
+                run.append(addr)
+                kinds.add(kind)
+                gap = 0
+            elif not run:
+                after += 1
+            elif (gap := gap + 1) > EH_STUB_GAP:
+                if _stubs_run(kinds, after, len(run)):
+                    break
+                # not the run (a global's destructor among the initializers after it, say): code after it
+                run, kinds, gap, after = [], set(), 0, after + len(run) + gap
+        if _stubs_run(kinds, after, len(run)):
+            found.update(run)
+    return found
+
+
+def _stubs_run(kinds: set[str], after: int, count: int) -> bool:
+    """Whether a run of `count` stub shapes (`kinds`), with `after` functions after it in its section, is .text$x."""
+    return "handler" in kinds and (after <= EH_STUB_GAP or count >= EH_STUB_FOLLOWED_RUN)
+
+
+def mark_exception_stubs(root: Path, version: str) -> int | None:
+    """Set the project's exception-handling stubs aside (exception_stubs): each one's entry in functions.json says why
+    (`generated`, which the project's measuring reads: Console.generated_functions). Returns how many it marked; None
+    when the user's copy of the program isn't in the project (yet)."""
+    path = root / "config" / version / "functions.json"
+    info = json.loads(path.read_text(encoding="utf-8"))
+    exe = root / info["exe"]
+    if not exe.is_file():
+        return None
+    entries = [fn for fns in info["units"].values() for fn in fns]
+    stubs = exception_stubs(read_pe(exe.read_bytes()), [(fn["addr"], fn["size"]) for fn in entries])
+    marked = [fn for fn in entries if fn["addr"] in stubs and fn.get("generated") != EH_STUB_WHY]
+    for fn in marked:
+        fn["generated"] = EH_STUB_WHY
+    if marked:
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return len(marked)
+
+
 def units(functions: list[Function]) -> dict[str, list[Function]]:
     """Source files: runs of neighbouring functions of about UNIT_BYTES each."""
     out: dict[str, list[Function]] = {}
@@ -676,10 +769,13 @@ def _project_functions(root: Path, version: str) -> tuple[Path, dict, PE, list[F
 
 
 def _save_functions(path: Path, info: dict, pe: PE, functions: list[Function]) -> None:
-    """functions.json with these functions, each in its source file, the files in their order."""
+    """functions.json with these functions, each in its source file, the files in their order. A function that
+    keeps its extent keeps why no C makes it (`generated`, mark_exception_stubs); one that grew isn't a stub."""
+    was = {(fn["addr"], fn["size"]): fn["generated"] for fns in info["units"].values() for fn in fns
+           if fn.get("generated")}
     grouped: dict[str, list[dict]] = {u: [] for u in info["units"]}
     for f in functions:
-        grouped[f.unit].append(_entry(pe, f))
+        grouped[f.unit].append(_entry(pe, f) | ({"generated": why} if (why := was.get((f.addr, f.size))) else {}))
     path.write_text(json.dumps({**info, "units": grouped}, indent=1), encoding="utf-8")
 
 
@@ -748,7 +844,8 @@ def merge_project_pieces(root: Path, version: str, keep: set[str] = frozenset(),
     source file; a piece first in its file moves to the file before only when no C there defines it). Returns each
     function that grew, with the pieces it took."""
     path, info, pe, functions = _project_functions(root, version)
-    out, joined = merge_pieces(pe, functions, keep, movable=lambda part: not _c_of(root, info, part), log=log)
+    stubs = {fn["name"] for fns in info["units"].values() for fn in fns if fn.get("generated")}  # (none joined)
+    out, joined = merge_pieces(pe, functions, keep | stubs, movable=lambda part: not _c_of(root, info, part), log=log)
     if joined:
         _save_functions(path, info, pe, out)
     return joined
@@ -1023,7 +1120,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
                                         "shows none: decompdecomp never unpacks or gets around protection"])[0]
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    functions, _ = merge_pieces(pe, analyse(pe, found), log=log)
+    functions = analyse(pe, found)
+    # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
+    stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
+    functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
     groups = units(functions)
     log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
 
@@ -1045,6 +1145,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
         "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
     }, indent=1), encoding="utf-8")
+    if stubs := mark_exception_stubs(root, version):
+        log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
     for u, fns in groups.items():
         src = root / "src" / "auto" / f"{u}.cpp"  # C++, as PC games of the time were written (C compiles too)
         src.parent.mkdir(parents=True, exist_ok=True)
@@ -1062,7 +1164,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 3,  # (WindowsPC.ANALYSIS: nothing to repair, its pieces of functions joined already)
+        "analysis": 4,  # (WindowsPC.ANALYSIS: nothing to repair, its stubs set aside, its pieces joined)
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,

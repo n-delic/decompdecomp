@@ -849,8 +849,10 @@ class ForkEngine:
                 if f["name"] not in data.get(u["name"], ())]
         listed = _set_aside(fp)
         aside = listed if fp.scope == GAME else {}  # the whole program: set-aside code is worked on and counted
+        console, version = consoles.get(cfg.get("platform")), (fp.manifest or {}).get("version") or cfg.get("version")
         # real names a report doesn't give (a PC game's stay _func_0041B470@8): how the source spells them
-        reals = consoles.get(cfg.get("platform")).real_names(fp, (fp.manifest or {}).get("version") or cfg.get("version"))
+        reals = console.real_names(fp, version)
+        generated = console.generated_functions(fp, version)  # no C of their own makes them (a PC game's EH stubs)
         counts: dict[str, int] = defaultdict(int)
         for _, f in rows:
             counts[f["name"]] += 1
@@ -903,6 +905,8 @@ class ForkEngine:
                     kept = _KEPT_KEYS if old["size"] == size else ("reopened",)
                     meta.update({k: v for k, v in was.items() if k in kept
                                  and not (k == "asm_code" and was.get("set_aside"))})  # (set aside: decided below)
+                if sym in generated and not meta.get("reopened"):  # set aside as assembly is, whatever the scope
+                    meta["asm_code"] = generated[sym]
                 if sym in aside:  # code the project says isn't the game's own (library code, middleware)
                     meta["asm_code"] = aside[sym]
                     meta["set_aside"] = True  # and progress takes it off, as no C code is (network.SET_ASIDE)

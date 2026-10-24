@@ -775,3 +775,265 @@ def test_a_project_made_before_gets_its_functions_last_instructions_whole(tmp_pa
     assert scratch_pe.complete_last_instructions(root, "game") == 0
     _delink(root)
     assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+# Exception-handling stubs (Visual C++'s .text$x): a 2000s Visual C++ 6.0 game's last 4,677 functions were stubs,
+# the smallest of its 11,877, so agents were handed them first though no C of their own makes them.
+CODE_AT = 0x401000
+FRAME_FUNCTION = bytes.fromhex("55 8bec 8b4508 5d c3")  # push ebp; mov ebp, esp; mov eax, [ebp+8]; pop ebp; ret
+LONE_EPILOGUE = bytes.fromhex("8b45f8 c9 c3")  # a piece Ghidra cut off a function: mov eax, [ebp-8]; leave; ret
+EH_PROLOG = bytes.fromhex("b800204000 e800000000 51 c3")  # mov eax, <handler>; call __EH_prolog; push ecx; ret
+# the C runtime's __SEH_prolog, which sets ebp with a lea: push <handler>; push fs:[0]; mov eax, [esp+0x10];
+# mov [esp+0x10], ebp; lea ebp, [esp+0x10]; sub esp, eax; push ebx; push esi; push edi; mov eax, [ebp-8]
+SEH_PROLOG = bytes.fromhex("6800104000 64ff3500000000 8b442410 896c2410 8d6c2410 2be0 53 56 57 8b45f8 c3")
+EH_STUBS = [bytes.fromhex("8d4dec e900000000"),  # lea ecx, [ebp-0x14]; jmp <destructor>
+            bytes.fromhex("b810204000 e900000000"),  # mov eax, <FuncInfo>; jmp __CxxFrameHandler
+            bytes.fromhex("8b4df0 e900000000"),  # mov ecx, [ebp-0x10]; jmp <destructor> (new in progress)
+            # an array's: push <destructor>; push 2; push 4; lea eax, [ebp-0x20]; push eax; call <iterator>; ret
+            bytes.fromhex("6800104000 6a02 6a04 8d45e0 50 e800000000 c3"),
+            bytes.fromhex("b900304000 e900000000")]  # mov ecx, <global>; jmp <destructor>
+
+
+def _tiny_pe(functions: list[bytes]) -> tuple[bytes, list[tuple[int, int]]]:
+    """A 32-bit Windows program whose .text holds `functions` one after another (at CODE_AT), and their (address,
+    size): enough for read_pe."""
+    code = b"".join(functions)
+    pe_at, optional_bytes, file_align = 0x40, 0xE0, 0x200
+    head = bytearray(file_align)
+    head[:2], head[0x3C:0x40] = b"MZ", struct.pack("<I", pe_at)
+    struct.pack_into("<4sHHIIIHH", head, pe_at, b"PE\0\0", 0x14C, 1, 0, 0, 0, optional_bytes, 0x10F)
+    opt = pe_at + 0x18
+    struct.pack_into("<H", head, opt, 0x10B)
+    struct.pack_into("<I", head, opt + 16, CODE_AT - 0x400000)
+    struct.pack_into("<I", head, opt + 28, 0x400000)
+    struct.pack_into("<I", head, opt + 56, 0x1000 + len(code))
+    struct.pack_into("<8sIIII", head, opt + optional_bytes, b".text", len(code), 0x1000, len(code), file_align)
+    struct.pack_into("<I", head, opt + optional_bytes + 36, 0x60000020)
+    extents, at = [], CODE_AT
+    for fn in functions:
+        extents.append((at, len(fn)))
+        at += len(fn)
+    return bytes(head) + code, extents
+
+
+def test_exception_handling_stubs_are_found_only_where_the_linker_puts_them():
+    """Stubs end the program's code (.text$x goes after all of .text). The same shapes in the main body are pieces
+    Ghidra cut off real functions, and a real function building its frame through __EH_prolog isn't one."""
+    main = [FRAME_FUNCTION, LONE_EPILOGUE] + [FRAME_FUNCTION] * (scratch_pe.EH_STUB_GAP + 1)
+    data, extents = _tiny_pe(main + [SEH_PROLOG, EH_PROLOG] + EH_STUBS)
+    found = scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents)
+    assert found == {addr for addr, _ in extents[-len(EH_STUBS):]}
+    # without a handler, a few funclet shapes at the end are something else
+    data, extents = _tiny_pe(main + [EH_STUBS[0], EH_STUBS[2]])
+    assert scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents) == set()
+    # Visual C++ 2005 on: dynamic initializers follow the run (a 2000s game rebuilt with Visual C++ 2008 tools had 37,
+    # a global's destructor among them), so the run must be long; a short one there is pieces of the main body
+    initializers = [FRAME_FUNCTION] * 10 + [EH_STUBS[-1]] + [FRAME_FUNCTION] * 10
+    stubs = EH_STUBS * (scratch_pe.EH_STUB_FOLLOWED_RUN // len(EH_STUBS) + 1)
+    data, extents = _tiny_pe(main + stubs + initializers)
+    found = scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents)
+    assert found == {addr for addr, _ in extents[len(main):len(main) + len(stubs)]}
+    data, extents = _tiny_pe(main + EH_STUBS + initializers)
+    assert scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents) == set()
+
+
+def _coff_sections(obj: bytes) -> list[tuple[str, bytes]]:
+    """(name, raw bytes) of a COFF object's sections."""
+    count, symbols_at, symbol_count = struct.unpack_from("<HxxxxII", obj, 2)
+    strings = symbols_at + 18 * symbol_count
+    out = []
+    for i in range(count):
+        name, size, raw = struct.unpack_from("<8s8xII", obj, 20 + 40 * i)
+        name = name.rstrip(b"\0").decode()
+        if name.startswith("/"):  # a long name, in the string table
+            name = obj[strings + int(name[1:]):].split(b"\0", 1)[0].decode()
+        out.append((name, obj[raw:raw + size]))
+    return out
+
+
+@pytest.mark.parametrize("version", ["6.0", "7.0", "7.1"])
+@pytest.mark.skipif(toolchains.installed("msvc") is None
+                    or (sys.platform != "win32" and toolchains.installed("wibo") is None),
+                    reason="needs Visual C++ (msvc, proprietary) and wibo")
+def test_the_stubs_visual_cpp_makes_are_found(tmp_path, version):
+    """What each Visual C++ of the pack makes with /GX for functions with local objects to destroy: the functions
+    stay, every stub of their .text$x is found (cut as Ghidra cuts them, after each jmp or ret)."""
+    import capstone
+
+    msvc = toolchains.path("msvc") / version / "Bin"
+    cl = next((p for p in (msvc / "CL.EXE", msvc / "cl.exe") if p.exists()), None)
+    if cl is None:
+        pytest.skip(f"the pack has no Visual C++ {version}")
+    (tmp_path / "t.cpp").write_text("struct Obj { int v; Obj(); ~Obj(); };\nvoid use(Obj *o);\n"
+                                    "int one(int x) { Obj a; use(&a); return x; }\n"
+                                    "int two(int x) { Obj a; Obj b[3]; use(&a); use(b); Obj *p = new Obj; use(p); "
+                                    "return x; }\n")
+    wibo = [str(toolchains.binary("wibo"))] if sys.platform != "win32" else []
+    subprocess.run([*wibo, str(cl), "/nologo", "/c", "/GX", "/O2", "t.cpp"], cwd=tmp_path, check=True,
+                   capture_output=True, timeout=120)
+    sections = _coff_sections((tmp_path / "t.obj").read_bytes())
+    functions = [raw for name, raw in sections if name == ".text" and raw]
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    stubs = []
+    for raw in (raw for name, raw in sections if name == ".text$x"):
+        start = 0
+        for ins in md.disasm(raw, 0):
+            if ins.mnemonic in ("jmp", "ret"):
+                stubs.append(raw[start:ins.address + ins.size])
+                start = ins.address + ins.size
+    assert len(functions) == 2 and len(stubs) >= 4
+    data, extents = _tiny_pe(functions + stubs)
+    found = scratch_pe.exception_stubs(scratch_pe.read_pe(data), extents)
+    assert found == {addr for addr, _ in extents[len(functions):]}
+
+
+def _project_with_stubs(tmp_path, monkeypatch):
+    """A PC project made before its import set stubs aside: a program whose code ends with stubs, its functions.json
+    without `generated`, a manifest without `analysis`, measured once."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.forks.project import Unit
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    data, extents = _tiny_pe([FRAME_FUNCTION] * 6 + EH_STUBS)
+    (root / "orig").mkdir(parents=True)
+    (root / "orig" / "v.exe").write_bytes(data)
+    entries = [{"name": f"_func_{addr:08X}", "addr": addr, "offset": addr - CODE_AT + 0x200, "size": size,
+                "relocs": []} for addr, size in extents]
+    (root / "config" / "v").mkdir(parents=True)
+    (root / "config" / "v" / "functions.json").write_text(json.dumps({"exe": "orig/v.exe", "units": {"u": entries}},
+                                                                     indent=1))
+    (root / "src" / "auto").mkdir(parents=True)
+    (root / "src" / "auto" / "u.cpp").write_text('#include "common.h"\n')
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "v"}))
+    (root / ".gitignore").write_text("orig/\n")
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
+        subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "v",
+                                                  "platform": "pc", "ready": True}, "x")
+    report = {"units": [{"name": "u", "functions": [{"name": e["name"], "size": str(e["size"]),
+                                                     "fuzzy_match_percent": 0.0} for e in entries]}]}
+    monkeypatch.setattr(ForkProject, "report", lambda self: report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [Unit("u", None, None, "src/auto/u.cpp", False, None)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    net.forks.sync("p", log=lambda *_: None)
+    return net, root, [e["name"] for e in entries[-len(EH_STUBS):]]
+
+
+def test_a_project_made_before_gets_its_stubs_set_aside_once(tmp_path, monkeypatch):
+    """The plan's migration: at start, functions.json says which functions are stubs, measuring sets them aside with
+    why, the project's feed says how many, and the next start leaves the project alone."""
+    net, root, stubs = _project_with_stubs(tmp_path, monkeypatch)
+    pid = net.project_row("p")["id"]
+    assert net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", pid)["n"] == 11
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    info = json.loads((root / "config" / "v" / "functions.json").read_text())
+    assert [fn["name"] for fn in info["units"]["u"] if fn.get("generated")] == stubs
+    rows = {r["name"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
+    for name, row in rows.items():
+        assert row["status"] == ("asm" if name in stubs else "open"), name
+    from decompnet import network
+
+    assert network.set_aside(rows[stubs[0]])["set_aside"] == scratch_pe.EH_STUB_WHY
+    assert json.loads((root / ".decomp.wtf.json").read_text())["analysis"] == consoles.get("pc").ANALYSIS
+    said = net.store.one("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)["detail"]
+    assert said.startswith(f"{len(EH_STUBS)} functions are exception-handling code")
+    log = subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
+    assert "Analyse the game again" in log and not subprocess.run(["git", "status", "--porcelain", "config"], cwd=root,
+                                                                  capture_output=True, text=True).stdout.strip()
+    # given back to the agents, a stub stays theirs: measuring again doesn't set it aside again
+    net.reopen(stubs[0], "p")
+    net.forks.sync("p", log=lambda *_: None)
+    assert net._function(stubs[0], "p")["status"] == "open" and net._function(stubs[1], "p")["status"] == "asm"
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (already done: nothing new in the feed)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+def test_a_project_without_the_program_in_it_waits_for_it(tmp_path, monkeypatch):
+    net, root, stubs = _project_with_stubs(tmp_path, monkeypatch)
+    (root / "orig" / "v.exe").unlink()
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    assert "analysis" not in json.loads((root / ".decomp.wtf.json").read_text())
+    assert net._function(stubs[0], "p")["status"] == "open"
+
+
+def _project_made_before(tmp_path, monkeypatch, level: int):
+    """A PC project as a decompdecomp of analysis `level` left it: a function with a lone epilogue Ghidra cut off
+    (PROGRAM), a function with a frame, then Visual C++'s stubs; below 2 one function with a jump table's entries
+    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles.pc import WindowsPC
+    from decompnet.forks.project import Unit
+
+    framed = [FRAME_RET] * (scratch_pe.EH_STUB_GAP + 1)  # (the main body's end: no stub's shape in a row)
+    program = PROGRAM.ljust(0x30, b"\x90") + b"".join(framed + EH_STUBS)
+    rows, at = list(ROWS), 0x401030
+    for stub in framed + EH_STUBS:
+        rows.append(_row(at, at + len(stub)))
+        at += len(stub)
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    (root / "orig").mkdir(parents=True)
+    (root / "orig" / "game.exe").write_bytes(_tiny_exe(program))
+    pe = scratch_pe.read_pe(_tiny_exe(program))
+    entries = [scratch_pe._entry(pe, f) for f in scratch_pe.analyse(pe, rows)]
+    if level < 2:
+        entries[0]["relocs"].append(entries[0]["relocs"][0])
+    if level >= 3:
+        for fn in entries[-len(EH_STUBS):]:
+            fn["generated"] = scratch_pe.EH_STUB_WHY
+    (root / "config" / "game").mkdir(parents=True)
+    (root / "config" / "game" / "functions.json").write_text(json.dumps({"exe": "orig/game.exe", "units": {"u": entries}}))
+    (root / "src" / "auto").mkdir(parents=True)
+    (root / "src" / "auto" / "u.cpp").write_text('#include "common.h"\n')
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "version": "game",
+                                                       "game": {"path": "orig/game.exe"},
+                                                       **({"analysis": level} if level > 1 else {})}))
+    (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
+        subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "origin": "scratch", "version": "game",
+                                                  "platform": "pc", "ready": True}, "x")
+
+    def report(self):
+        units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+        return {"units": [{"name": "u", "functions": [{"name": fn["name"], "size": str(fn["size"]),
+                                                       "fuzzy_match_percent": 0.0} for fn in units["u"]]}]}
+    monkeypatch.setattr(ForkProject, "report", report)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [Unit("u", None, None, "src/auto/u.cpp", False, None)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: (
+        _delink(fp.root), scratch_pe.check_code(fp.root, version, log=log))[1])
+    net.forks.sync("p", log=lambda *_: None)
+    return net, root, [f"_func_{row['entry']:08X}" for row in rows[-len(EH_STUBS):]]
+
+
+@pytest.mark.parametrize("level", [1, 3])
+def test_a_project_made_before_is_brought_up_one_analysis_step_at_a_time(tmp_path, monkeypatch, level):
+    """From a project made before PC projects had an analysis level (1) every step runs, each its own commit and
+    feed line: the repairs, the stubs set aside, the pieces joined, the rebuild identical after each. The joins never
+    take a stub, though the first one reads the frame of the function before it, as a piece would; a project at 3
+    gets only the joins."""
+    net, root, stubs = _project_made_before(tmp_path, monkeypatch, level)
+    pid = net.project_row("p")["id"]
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis' "
+                                               "ORDER BY id", pid)]
+    expected = ["1 functions had a jump table", f"{len(EH_STUBS)} functions are exception-handling code",
+                "1 pieces of functions Ghidra cut off"][0 if level == 1 else 2:]
+    assert len(said) == len(expected) and all(s.startswith(e) for s, e in zip(said, expected)), said
+    log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert log.count("Analyse the game again") == len(said)
+    manifest = json.loads((root / ".decomp.wtf.json").read_text())
+    assert manifest["analysis"] == consoles.get("pc").ANALYSIS and manifest["rebuild"]["identical"]
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]["u"]
+    assert [fn["name"] for fn in units if fn.get("generated")] == stubs  # every stub still its own, and set aside
+    assert "_func_0040100F" not in {fn["name"] for fn in units}  # the piece, joined
+    assert {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='asm'",
+                                              pid)} == set(stubs)
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (done: nothing new)
+    assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == len(said)

@@ -26,7 +26,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | — | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -57,10 +57,9 @@ Where to start on a gap:
   fields need x86's `Arch.field_accesses`.
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 7.1 can match so far:
-  Newer Windows games, below, is the plan for 2005 to 2015 and 64-bit.
-  story (the project is delinked COFF objects). A class's constructors are one real name (`CFoo::CFoo`), so of two
-  at two addresses (a copy constructor) only one can be written as a constructor: names.py would need the mangled
-  signature in "names". A project keeps the `tools/` it was made with, so one made before a change to names.py (as
+  Newer Windows games, below, is the plan for 2005 to 2015 and 64-bit. A class's constructors are one real name
+  (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
+  would need the mangled signature in "names". A project keeps the `tools/` it was made with, so one made before a change to names.py (as
   constructors' names) needs those files from `consoles/pc/project_template/tools/`: an upgrade step is missing.
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
@@ -94,19 +93,28 @@ Where to start on a gap:
   a destructor written so (`func_004D9DD0::~func_004D9DD0`) was refused outright. An agent now writes
   `CFoo::CFoo` for one function and `CFoo::~CFoo` for another; the attempt gives each that real name, and names.py
   pairs `??0CFoo@@...` and `??1CFoo@@...` with the original's symbols, calls from other functions included.
+- **Windows PC: exception-handling stubs are out of agents' way.** C++ built with Visual C++'s `/GX` puts the code
+  that destroys a function's local objects during an exception, and its handler, in `.text$x`, which the linker puts
+  after all of the program's code. Ghidra takes each stub for a function, the smallest in the project, so agents were
+  handed them first. The import now sets aside the stubs in the run that ends the code (`scratch.exception_stubs`),
+  with why (functions.json's `generated`), and projects made before get it at start. On a 2000s Visual C++ 6.0
+  game, 4,677 of 11,877 functions, every one in that run and none in the main body or the C runtime; on a 2000s game
+  rebuilt with Visual C++ 2008 tools, where dynamic initializers follow the run, 6,581 of 24,843. Hand-written
+  assembly on PC isn't recognised yet (x86 has no `asm_reason`).
 - **Pieces of functions joined on Windows PC.** Ghidra starts some functions in the middle of others: a lone
   epilogue after a call it took for one that never returns (`throw`), a catch block or an `__except` filter after
   the function's return. Neither part could match. Code that reads or restores ebx, esi, edi or ebp before saving
   or setting it is joined to the function before it when that one runs on into it, set up the ebp frame it reads,
   or jumps into it with a short jump (`arch/x86.piece`, `consoles/pc/scratch.merge_pieces`): on a PC game of about
   2000, 181 of 11,877 functions. MSVC's exception-handling funclets at the end of the code read their parent's
-  frame too, but never follow code that runs on into them, so they stay apart (their own rule sets them aside).
+  frame too, and the first follows a function with a frame of its own: they're set aside first, and no join takes one.
   PC projects have a rebuild check now: the program's code put back together from the delinked functions
   (`scratch.check_code`). It found two older analysis faults, fixed for new imports: functions found in gaps lost
   the zero bytes their last instruction ends with (`ret 8`), and a jump table running into the next one had its
-  entries relocated twice. Older projects get both repaired and their pieces joined when the app starts or on
-  Check again, each kept only when the code still rebuilds byte for byte (on that game: 23 tables, 390 functions,
-  179 pieces). Agents' `join_functions` works on PC too.
+  entries relocated twice. Older projects get what the import learnt when the app starts or on Check again, one
+  step at a time (the manifest's `analysis`): the repairs, the stubs set aside, then the pieces joined, never a
+  stub; each step that changes code is kept only when the code still rebuilds byte for byte (on that game: 23
+  tables, 390 functions, 179 pieces). Agents' `join_functions` works on PC too.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.

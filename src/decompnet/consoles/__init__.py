@@ -226,6 +226,12 @@ class Console:
         rename_symbol gave it: how its source spells it now."""
         return {}
 
+    def generated_functions(self, fp, version: str) -> dict[str, str]:
+        """The report's name of each function the project's analysis found no C of its own makes -> why (PC: Visual
+        C++'s exception-handling stubs, which compiling the function they belong to makes): measuring sets them aside
+        as hand-written assembly is, whatever the project covers, unless the user gave one back to the agents."""
+        return {}
+
     def rename_pattern(self, old: str) -> str:
         """A regex for how source files spell `old`, which rename_symbol replaces with the new name."""
         return rf"\b{re.escape(old)}\b"
