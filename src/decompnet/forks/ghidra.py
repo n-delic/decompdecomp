@@ -13,6 +13,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+from collections import defaultdict
 from importlib import resources
 from pathlib import Path
 
@@ -96,21 +98,30 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
         return rows
 
 
+# The background drafter asks for every function of a PC game, a source file's object at a time, on the workers
+# every project shares: one Ghidra per object (the functions of one ask for it together), and a few at once (each
+# starts a Java of its own, with a heap of half the memory cap)
+_RUNS = threading.Semaphore(2)
+_OBJECTS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+
 def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[str, str]:
     """name -> decompiled C for every function in an object file (cached by the object's content)."""
     key = hashlib.sha1(obj.read_bytes()).hexdigest()[:16]
     cache = cache_dir / f"{obj.stem}-{key}.json"
-    if cache.exists():
-        return json.loads(cache.read_text(encoding="utf-8"))
-    if not available():
-        return {}
-    try:
-        result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
-    except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
-        return {}
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(result), encoding="utf-8")
-    return result
+    with _OBJECTS[str(cache)]:
+        if cache.exists():
+            return json.loads(cache.read_text(encoding="utf-8"))
+        if not available():
+            return {}
+        try:
+            with _RUNS:
+                result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
+        except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
+            return {}
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(result), encoding="utf-8")
+        return result
 
 
 def functions(program: Path, timeout: float = 3600) -> list[dict]:

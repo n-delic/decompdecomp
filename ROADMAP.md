@@ -21,9 +21,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
@@ -33,7 +33,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
@@ -55,8 +55,10 @@ Where to start on a gap:
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
   has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
   `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
-- **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is). Only games built with
-  Visual C++ 6.0 to 2010 can match so far: Newer
+- **Windows PC**: autopilot's Ghidra drafts compile, but rarely match beyond the tiny shapes exact drafts cover:
+  Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
+  arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
+  step). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names". A game's own DLLs come along when its folder or .exe is given by
@@ -85,6 +87,20 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Autopilot on Windows PC.** Autopilot didn't run on PC: its free matches come from drafts that compile, and
+  Ghidra's didn't (undefined4, in_ECX, a method's `this` dropped). Now it tries, for each function, exact drafts of the
+  tiny shapes Visual C++ makes from a line or two of C, read straight from the code (getters, setters, constants, a
+  global object's constructor call, thunks, vtable stores, float static initializers: `consoles/pc/drafts.py`), then
+  Ghidra's draft made into C++ that compiles in the project (ghidra.h for its types, `this` for a method, callees
+  declared by their calling convention). Each is judged like an agent's attempt. On a Visual C++ 6.0 game of 7,090
+  functions, 670 have an exact draft and 524 matched for free (517 exact, 7 from Ghidra's drafts). The same drafts
+  are made in the background (`app/drafts.py`, a source file at a time), follow the project's headers (a class that
+  declares the function, a global's type), and `redraft` remakes one with an agent's declarations.
+- **Windows PC: the frame pointer, per source file.** About half of a Visual C++ 2010 game's functions keep an ebp
+  frame (/Oy-), which no C matched under the project's /O2. The import reads each source file's functions and builds
+  the files that keep frames with /Oy- (`config/<version>/file_flags.json`, `scratch.frame_flags`); projects made
+  before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (/Oy-, /O1,
+  /Ob1) and keeps what matches, as `try_compiler` keeps a compiler.
 - **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in DLLs
   of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by path,
   a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):

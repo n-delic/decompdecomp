@@ -115,7 +115,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         except NetworkError:
             return ListToolsResult(tools=[])
         slug = manager.project_of(agent.id)
-        keep = set(tools.tool_names(bool(slug and net.fork_slug(slug))))
+        keep = set(tools.project_tools(net, slug))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
 
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)
