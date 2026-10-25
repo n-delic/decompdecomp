@@ -129,6 +129,7 @@ $("stopAll").onclick = async () => {
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
 const LZ = { kind: null, model: "", count: 1, per: null, effort: "", task: "" };
+const ALL_MODELS = "__all_models";
 const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
 // an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
@@ -154,10 +155,12 @@ function modelOptions(a) {
   const opts = [{ id: "", name: a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
   for (const m of a.models || []) opts.push(m);
   for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
+  if ((a.models || []).length) opts.push({ id: ALL_MODELS, name: "All Models", note: "" });
   return opts;
 }
 function modelName(a, model) {
   if (!model) return "";
+  if (model === ALL_MODELS) return "All Models";
   const m = (a.models || []).find((x) => x.id === model);
   return m ? m.name : model;
 }
@@ -168,6 +171,11 @@ function launchLabel(a, model, count) {
     if (picked.length > 1) return `Start ${count} across ${picked.length} endpoints${eff}`;
     return `Start ${picked[0] ? picked[0].name : "API model"}${eff}${count > 1 ? ` × ${count}` : ""}`;
   }
+  if (model === ALL_MODELS) {
+    const models = (a.models || []).length;
+    const effort = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
+    return `Start all ${models} ${models === 1 ? "model" : "models"}${effort} × ${count} = ${models * count} agents`;
+  }
   return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${effortOf(a) && model ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : ""}${count > 1 ? ` × ${count}` : ""}`;
 }
 
@@ -175,14 +183,16 @@ async function startAgents(a, model, count, btn, extra = {}) {
   if (btn) btn.disabled = true;
   try {
     const options = { ...extra };
-    if (model && !a.uses_endpoints) options.model = withEffort(a, model);
+    const allModels = model === ALL_MODELS;
+    if (model && !a.uses_endpoints && !allModels) options.model = withEffort(a, model);
+    if (allModels) options.all_models = true;
     if (a.uses_endpoints && effortOf(a)) options.effort = effortOf(a);  // its model is the endpoint's
     else if (effortOf(a) && !model) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
     S.st.settings.launcher = { kind: a.id, model: model || "", count };
-    if (model && !a.uses_endpoints) {
+    if (model && model !== ALL_MODELS && !a.uses_endpoints) {
       const rec = (S.st.settings.recent_models ||= {});
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
@@ -587,4 +597,3 @@ function addThoughts(sessions, first) {
   }
   if (first) renderLog();
 }
-
