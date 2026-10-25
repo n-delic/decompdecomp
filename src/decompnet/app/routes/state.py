@@ -22,6 +22,8 @@ from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
 
+DEBUG_SUFFIXES = (".pdb", ".map")  # files sent with a game: debug information its import reads (consoles/pc/debuginfo.py)
+
 
 def system_name() -> str:
     """The Linux distribution, as it names itself ("Ubuntu 24.04.1 LTS"), for bug reports: problems often depend on it
@@ -124,6 +126,24 @@ def register(app: App) -> None:
         after = q.get("after", "")
         return JSONResponse(await call(net.events_after, int(after) if after.isdigit() else None))
 
+    def split_extras(game: Path, size: int, extras: str | None) -> None:
+        """The files dropped with a game, sent after it in one upload (`extras`: [[name, bytes], ...]): a PC game's
+        program database or linker map, cut off the end and put beside it, where its import looks for them."""
+        if not extras:
+            return
+        try:
+            wanted = [(Path(str(name)).name, int(n)) for name, n in json.loads(extras)]
+        except (ValueError, TypeError):
+            raise ValueError("the files sent with the game aren't listed right") from None
+        if any(not name.lower().endswith(DEBUG_SUFFIXES) or name == game.name or n < 0 for name, n in wanted) or \
+                sum(n for _, n in wanted) >= size:
+            raise ValueError("only a PC game's .pdb or .map can be sent with it")
+        with open(game, "r+b") as f:
+            f.seek(size - sum(n for _, n in wanted))
+            for name, n in wanted:
+                (game.parent / name).write_bytes(f.read(n))
+            f.truncate(size - sum(n for _, n in wanted))
+
     @mcp.custom_route("/api/import", methods=["POST"])
     async def api_import(request: Request) -> Response:
         """A game the user owns: the demo, an upload streamed to disk (discs are gigabytes), or a local path."""
@@ -146,8 +166,8 @@ def register(app: App) -> None:
                 return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
             if q.get("path"):
                 game = hostenv.local_path(q["path"])
-                if not game.is_file():
-                    return fail(ValueError(f"no file at {game}"))
+                if not game.exists():  # (a folder too: a PC game's, whose own DLLs come along)
+                    return fail(ValueError(f"no file or folder at {game}"))
                 name = game.name
             else:
                 name = Path(q.get("name") or "game.bin").name
@@ -166,6 +186,11 @@ def register(app: App) -> None:
                 if size == 0:
                     game.unlink(missing_ok=True)
                     return fail(ValueError("the file was empty"))
+                try:
+                    split_extras(game, size, q.get("extras"))
+                except ValueError as e:
+                    shutil.rmtree(game.parent, ignore_errors=True)
+                    return fail(e)
         uploaded = isinstance(game, Path) and game.parent.parent == home / "uploads"
 
         def work(log):

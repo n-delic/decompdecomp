@@ -126,10 +126,10 @@ agent (copy `agents/template.py`, fill in its parts, register it, pass `tests/te
 
 Shared pieces: `network.py` (claims, attempts, notes, shared header), `compiler.py` (sandboxed compiler runs),
 `scoring.py` (capstone disassembly and diffs for every arch), `elfobj.py` (ELF objects), `classes.py` (C++ classes
-from the vtables constructors store, MIPS, or named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
+from the vtables constructors store, MIPS and x86, named by a PC program's RTTI, `consoles/pc/rtti.py`: the `get_class`
 tool and the class lines of `get_function`),
 `structs.py` (struct layouts from the loads and stores through pointers, read by the processor's
-`Arch.field_accesses`, MIPS: `arch/mips_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
+`Arch.field_accesses`, MIPS: `arch/mips_fields.py`, x86: `arch/x86_fields.py`; the `guess_struct` tool and the brief's lines, `app/engine/layouts.py`),
 `compilermap.py` (which compiler built each part of a MIPS game; the judge's survey is `engine.survey_compilers`;
 `app/rangecheck.py` tests a suggested range on its neighbours before it applies), `app/tools.py` (the MCP
 tools helpers get and their prompt; MCP is only the app's private wiring to the CLI helpers it starts), `app/window.py`

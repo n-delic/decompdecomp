@@ -14,17 +14,23 @@ does the delinking itself:
 - the exception-handling stubs Visual C++ makes (its `.text$x` code, at the end of the program's code) are set aside:
   functions.json says why (`generated`), and no C of their own makes them (exception_stubs);
 - the pieces Ghidra cut off functions (a lone epilogue, a catch block) are joined back to them (merge_pieces), never
-  a stub; check_code puts the program's code back together from the delinked functions, the rebuild check.
+  a stub.
 
 The project (tools/configure.py, tools/delink.py) cuts the functions out of the user's copy into COFF objects at
 build time, one per source file (src/auto/text_<address>.cpp, about 4 KiB of functions each), and compiles src/ with
 MSVC through wibo. A program built without relocations (most games before 2005) has every address fixed, which is
-what this reads; there's no relink of the whole .exe yet, so files aren't linked into the game as on GameCube.
+what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together from the project, each function
+at its address from its C where that compiles to the game's code, else from the delinked objects, the rest your
+copy's, and compares it with the user's copy: the project's rebuild check (check_code) and its export.
+The game's own DLLs are analysed the same way, each a program of the project (find_modules), rebuilt against its
+own copy.
 """
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -42,6 +48,7 @@ from decompnet.hostenv import NO_WINDOW
 from ... import toolchains
 from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
+from . import debuginfo
 
 UNIT_BYTES = 0x1000
 # the linker aligns code to 16 bytes (a function's section, from Visual C++ 2005 on each function's), filling the gap
@@ -185,6 +192,14 @@ EH_STUB_GAP = 4  # functions without the shape the run of stubs may hold in a ro
 # .text$yd after .text$x) has at least this many, so a few pieces cut off near the end of the main body never pass
 EH_STUB_FOLLOWED_RUN = 64
 EH_STUB_BYTES = 32  # how much of a function's start its shape is read from (an array funclet's pushes and lea)
+# import thunks: a call to a DLL's function declared without __declspec(dllimport) goes to a `jmp dword ptr
+# [__imp__Name]` the linker adds from the import library, 6 bytes each, in runs. Ghidra marks them thunks and analyse
+# left them out, so their bytes became one function with the code before them (on a Visual C++ 6.0 game, 8 thunks,
+# a table and 8 more in one 799-byte "function"), and calls to them were calls into its middle (`_D_0062F7A6`)
+IMPORT_JUMP, THUNK_BYTES = b"\xff\x25", 6
+THUNK_WHY = "an import thunk the linker adds for calls to {name}, a DLL's function: no C of its own makes it"
+PADDING = b"\x90\xcc"  # what pads code: Visual C++ 6's nops, the linker's int3
+MAX_PURGE = 0x400  # what a __stdcall function's arguments can take off the stack; Ghidra says 2147483647 when unsure
 TOOL_SECONDS = 3600  # Ghidra on a big game, the project's build
 ERROR_TAIL = 1500  # how much of a tool's output an error shows
 
@@ -424,6 +439,28 @@ def describe(data: bytes) -> Build:
                  sum(files.values()), wrapper)
 
 
+def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
+    """The Visual C++ builds the Rich header says compiled the program's files: (the packs' version that builds them,
+    as the console names it, how many files, "Visual C++ 6.0 SP5 (build 8966)", whether its pack is installed),
+    most files first."""
+    files: dict[tuple[str, int], int] = {}
+    for product, number, n in rich_builds(data):
+        for version, compilers, glued in RICH_COMPILERS:
+            if product in compilers or product in glued:
+                if version == "14":
+                    version = next(v for first, v in VC14_BUILDS if number >= first)
+                files[version, number] = files.get((version, number), 0) + n
+    out = []
+    for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
+        built = Build(X86, version, number)
+        try:
+            installed = toolchains.installed(compiler_pack(built.pack_version)) is not None
+        except ForkError:
+            installed = False
+        out.append((f"MSVC/{built.pack_version}", n, built.compiler, installed))
+    return out
+
+
 def game_info(path: Path) -> dict:
     """The game's facts, after its headers say decompdecomp can start it (a ForkError says why not)."""
     data = path.read_bytes()
@@ -442,6 +479,241 @@ def game_info(path: Path) -> dict:
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
             "cannot_match": built.cannot_match()}
+
+
+# ---------------------------------------------------------------------------------------------------- the game's DLLs
+# Many games keep much of their code in DLLs of their own beside the .exe (#12: a 2010 racing game's .exe is small;
+# an engine and its game logic are two DLLs). Each is a program of the project: its source files in a folder of its
+# name, its functions delinked from it. DLLs are relocatable, and many prefer the same address (0x10000000, the
+# linker's default): the first keeps its own, a later one that would overlap the program or a DLL before it is moved
+# by its base relocations to the next free 64 KiB, as Windows' loader moves it. So no two functions or data share an
+# address, and func_<address> and D_<address> stay names no two programs have.
+DLL_GRANULARITY = 0x10000  # where Windows puts a DLL it moves: its allocation granularity
+MODULE_DEPTH = 2  # folders below the game's a DLL is looked for in (a game's own: <game>/<mod>/dlls/)
+EXPORTS_AT, BASE_RELOCATIONS_AT = 96, 136  # the export table's and the base relocations' directories (optional header)
+CHARACTERISTICS_AT, RELOCS_STRIPPED = 18, 0x0001  # the COFF header's flags; linked /FIXED: it can't move
+EXPORT_DIRECTORY_BYTES, MAX_EXPORTS = 40, 65536
+MODULE_YEAR = 365 * 24 * 3600
+PLAUSIBLE_TIMESTAMPS = (788918400, 2208988800)  # 1995 to 2040: a build's time (reproducible builds hash it instead)
+RUNTIME, STAND_IN, MIDDLEWARE, PROTECTION, PLUGIN = "runtime", "stand-in", "middleware", "protection", "plugin"
+LATER, NO_ROOM, NOT_PROGRAM = "later", "no room", "not a program"
+# what's not the game's own, by the DLL's name: what Windows and Visual C++ install, what a wrapper or a fix replaces
+# (in a game's folder a ddraw.dll is dgVoodoo's or a widescreen fix's: the real one is Windows'), licensed middleware
+# (sound, video, physics, a store's SDK) and copy protection
+OTHERS_DLLS = (
+    (RUNTIME, re.compile(r"msvc[rp]\w*|msvcirt|mfc\d+\w*|vcruntime\w*|ucrtbased?|api_ms_win_\w*|concrt\w*|vcomp\w*"
+                         r"|atl\d+|msvbvm\w*|unicows|vcamp\w*|vccorlib\w*")),
+    (STAND_IN, re.compile(r"d3d\w*|ddraw|dinput8?|dsound|dxgi|xinput\w*|x3daudio\w*|xaudio\w*|winmm|version|dbghelp"
+                          r"|opengl32|glu32|wsock32|ws2_32|msacm32|dplayx|dsetup\w*|xlive|gdiplus|comctl32|wininet"
+                          r"|winhttp|kernel32|user32|gdi32|advapi32|ole32|oleaut32|shell32|msvfw32|avifil32")),
+    (MIDDLEWARE, re.compile(r"binkw32|bink2w32|binkawin|smackw32|mss\w*|mp3dec|fmod\w*|bass\w*|eax\w*|ogg|vorbis\w*"
+                            r"|libogg\w*|libvorbis\w*|theora\w*|openal32|wrap_oal|soft_oal|physx\w*|nvcuda|cudart\w*"
+                            r"|cg|cggl|cgd3d\w*|steam_api\w*|steamclient\w*|galaxy\w*|discord\w*|sdl\d*(_\w+)?"
+                            r"|libcef|chromehtml|icu\w*|avcodec\w*|avformat\w*|avutil\w*|swscale\w*|swresample\w*"
+                            r"|zlib\w*|libpng\w*|jpeg\w*|ijl\d+|lua\d*\w*|python\d+\w*|granny2|iconv|xvid\w*|divx\w*"
+                            r"|a3dapi|nvapi\w*|gfsdk\w*|amd_ags\w*|crashrpt\w*|bugsplat\w*|havok\w*|speedtree\w*"
+                            r"|scaleform\w*|awesomium\w*|gameux\w*|wmvcore|quartz")),
+    (PROTECTION, re.compile(r"drvmgt|dvm|secdrv|pbsv|pbcl|pbag|cdac\w*|starforce\w*|protect\w*")),
+)
+LEFT_OUT = {
+    RUNTIME: "Microsoft's C and C++ runtime or Windows' own: they come with Visual C++ and Windows, not with the game",
+    STAND_IN: "named as Windows' own (DirectX, input, sound): in a game's folder, a wrapper or a fix someone added, as "
+              "the real one comes with Windows",
+    MIDDLEWARE: "middleware the game licensed (sound, video, physics, a store's SDK), not the game's own code",
+    PROTECTION: "copy protection's: decompdecomp never works on protection",
+    PLUGIN: "ASI plugins: mods an ASI loader puts into the game (or a sound library's codecs), not the game's own code",
+    LATER: "built a year or more after the program: a mod's, a fix's or a launcher's, not the game's own",
+    NO_ROOM: "their addresses are the program's or another DLL's, and without base relocations they can't move",
+    NOT_PROGRAM: "not 32-bit x86 Windows programs decompdecomp reads",
+}
+
+
+@dataclass
+class Module:
+    """One of the game's own DLLs, as the project has it."""
+    path: Path  # the user's copy
+    rel: str  # where it is in the game's folder: "valve/dlls/hl.dll"
+    name: str  # its source files' folder, src/auto/<name>/
+    pe: PE  # at the address the project gives it
+    built: Build
+    preferred: int  # the address its header prefers
+
+
+@functools.cache
+def _delink_tool():
+    """The project's tools/delink.py (standard library only), whose rebase and programs the analysis shares."""
+    spec = importlib.util.spec_from_file_location("decompdecomp_pc_delink", TEMPLATE / "tools" / "delink.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def rebase(data: bytes, base: int) -> bytes:
+    return _delink_tool().rebase(data, base)
+
+
+def unit_module(unit: str) -> str:
+    """The program a unit is of: its folder, a DLL's name ("" for the .exe's)."""
+    return _delink_tool().module(unit)
+
+
+def export_name(raw: str) -> str | None:
+    """The real name of what a DLL exports as `raw`: a C name as it is, a decorated one bare (_Init@4 is Init), a
+    C++ function by its name and a method by its class's too (?start@App@@QAEXXZ is App::start, as tools/names.py
+    reads it); None: none to write (an operator, a constructor, a template's)."""
+    if raw.startswith("?"):
+        word, _, rest = raw[1:].partition("@")
+        scopes = [] if rest.startswith("@") else rest.split("@@", 1)[0].split("@")[::-1]
+        return "::".join([*scopes, word]) if all(_IDENT.fullmatch(n) for n in (*scopes, word)) else None
+    m = re.fullmatch(r"[_@]?([A-Za-z_][A-Za-z0-9_]*)(?:@\d+)?", raw)
+    return m.group(1) if m else None
+
+
+def exports(pe: PE) -> dict[int, str]:
+    """Address -> the name a DLL exports it by, from its export table (export_name); forwarded exports (code of
+    another DLL) left out."""
+    at = _pe_header(pe.data) + OPTIONAL_HEADER_AT
+    rva, size = struct.unpack_from("<II", pe.data, at + EXPORTS_AT)
+    table = pe.read(pe.image_base + rva, EXPORT_DIRECTORY_BYTES) if rva else b""
+    if len(table) < EXPORT_DIRECTORY_BYTES:
+        return {}
+    _, _, _, _, _, _, count, named, functions, names, ordinals = struct.unpack("<IIHHIIIIIII", table)
+    out = {}
+    for k in range(min(named, MAX_EXPORTS)):
+        word, number = pe.read(pe.image_base + names + 4 * k, 4), pe.read(pe.image_base + ordinals + 2 * k, 2)
+        if len(word) < 4 or len(number) < 2 or (index := struct.unpack("<H", number)[0]) >= count:
+            continue
+        target = struct.unpack("<I", pe.read(pe.image_base + functions + 4 * index, 4).ljust(4, b"\0"))[0]
+        raw = pe.read(pe.image_base + struct.unpack("<I", word)[0], IMPORT_NAME_BYTES).split(b"\0", 1)[0]
+        name = export_name(raw.decode("latin-1"))
+        if name and target and not rva <= target < rva + size:
+            out.setdefault(pe.image_base + target, name)
+    return out
+
+
+def program_in(folder: Path) -> Path | None:
+    """The game's program in a folder the user pointed at: the biggest 32-bit x86 .exe in it decompdecomp can start
+    (a launcher, a tool or an uninstaller is smaller than the game), else the biggest it can't (whose import then says
+    why); None: no Windows program in it."""
+    found = []
+    for path in sorted(folder.glob("*")):
+        if path.suffix.lower() == ".exe" and path.is_file():
+            with open(path, "rb") as f:
+                head = f.read(PE_PROBE_BYTES)
+            if is_windows_program(head):
+                data = path.read_bytes()
+                found.append((not is_pe(head) or bool(describe(data).blockers()), -len(data), path))
+    return min(found)[2] if found else None
+
+
+def _others(path: Path) -> str | None:
+    """Why a DLL isn't the game's own, by its name; None: nothing says so."""
+    if path.suffix.lower() == ".asi":
+        return PLUGIN
+    stem = path.stem.lower().replace("-", "_")  # (avcodec-53, api-ms-win-crt-heap-l1-1-0)
+    return next((why for why, names in OTHERS_DLLS if names.fullmatch(stem)), None)
+
+
+def _overlaps(start: int, size: int, taken: list[tuple[int, int]]) -> tuple[int, int] | None:
+    return next(((a, b) for a, b in taken if start < b and a < start + size), None)
+
+
+def find_modules(game: Path, main: PE) -> tuple[list[Module], list[tuple[str, str]]]:
+    """The game's own DLLs beside its program `game` (in its folder and MODULE_DEPTH below, not in a folder with a
+    program of its own: a launcher's, a tool's, an installer's), each at the address the project gives it, in the
+    order Windows would load them (the game's folder first); and (where, why) of each DLL left out: someone else's by
+    its name (OTHERS_DLLS), an ASI plugin, one the import can't start (Build.blockers), or built long after the
+    program (a mod's or a fix's)."""
+    top = game.parent
+    taken = [(main.image_base, main.image_base + main.image_size)]
+    found: list[Module] = []
+    left_out: list[tuple[str, str]] = []
+    names = {""}
+    candidates = [p for depth in range(MODULE_DEPTH + 1) for p in sorted(top.glob("/".join(["*"] * (depth + 1))),
+                                                                         key=lambda p: p.as_posix().lower())
+                  if p.suffix.lower() in (".dll", ".asi") and p.is_file()]
+    for path in candidates:
+        rel = path.relative_to(top)
+        folders = [top.joinpath(*rel.parts[:k]) for k in range(1, len(rel.parts))]
+        if any(f.name.startswith(".") or any(p.suffix.lower() == ".exe" for p in f.iterdir()) for f in folders):
+            continue
+        if why := _others(path):
+            left_out.append((rel.as_posix(), why))
+            continue
+        data = path.read_bytes()
+        if not is_pe(data[:PE_PROBE_BYTES]):
+            left_out.append((rel.as_posix(), NOT_PROGRAM))
+            continue
+        built = describe(data)
+        if blockers := built.blockers():
+            left_out.append((rel.as_posix(), "; ".join(blockers)))
+            continue
+        pe = read_pe(data)
+        stamps = (main.timestamp, pe.timestamp)
+        if all(PLAUSIBLE_TIMESTAMPS[0] < t < PLAUSIBLE_TIMESTAMPS[1] for t in stamps) and \
+                pe.timestamp - main.timestamp > MODULE_YEAR:
+            left_out.append((rel.as_posix(), LATER))
+            continue
+        base, preferred = pe.image_base, pe.image_base
+        while (hit := _overlaps(base, pe.image_size, taken)) is not None:
+            base = -(-hit[1] // DLL_GRANULARITY) * DLL_GRANULARITY
+        if base != preferred:
+            flags = struct.unpack_from("<H", data, _pe_header(data) + 4 + CHARACTERISTICS_AT)[0]
+            relocations = struct.unpack_from("<II", data, _pe_header(data) + OPTIONAL_HEADER_AT + BASE_RELOCATIONS_AT)
+            if flags & RELOCS_STRIPPED or not relocations[1]:
+                left_out.append((rel.as_posix(), NO_ROOM))
+                continue
+            pe = read_pe(rebase(data, base))
+        taken.append((base, base + pe.image_size))
+        name = re.sub(r"[^a-z0-9_]+", "_", path.stem.lower()).strip("_") or "dll"
+        while name in names:
+            name += "_"
+        names.add(name)
+        found.append(Module(path, rel.as_posix(), name, pe, built, preferred))
+    return found, left_out
+
+
+def left_out_lines(left_out: list[tuple[str, str]]) -> list[str]:
+    """What the import log says of the DLLs left out: a line for each reason, naming them."""
+    reasons = dict.fromkeys(why for _, why in left_out)
+    return [f"left out, {LEFT_OUT.get(why, why)}: {', '.join(rel for rel, w in left_out if w == why)}"
+            for why in reasons]
+
+
+def missing(root: Path, version: str) -> list[str]:
+    """The user's copies a project's programs need that aren't in it (yet): its .exe, its DLLs."""
+    try:
+        info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [exe for exe, _, _ in _delink_tool().programs(info).values() if not (root / exe).is_file()]
+
+
+class Programs:
+    """A project's programs as one address space (the .exe and the game's DLLs, at the addresses the project gives
+    them, which no two share), for what reads code and data by address only: the classes and struct layouts."""
+
+    def __init__(self, pes):
+        self.pes = list(pes)
+
+    def program_at(self, addr: int) -> PE | None:
+        return next((pe for pe in self.pes if pe.section_at(addr) is not None), None)
+
+    def section_at(self, addr: int) -> Section | None:
+        pe = self.program_at(addr)
+        return None if pe is None else pe.section_at(addr)
+
+    def read(self, addr: int, n: int) -> bytes:
+        pe = self.program_at(addr)
+        return b"" if pe is None else pe.read(addr, n)
+
+
+def programs(root: Path, info: dict) -> dict[str, PE]:
+    """Each program of a project (functions.json's `info`) by its source files' folder ("" for the .exe), at the
+    address the project gives it."""
+    return {name: read_pe(data if base is None else rebase(data, base))
+            for name, (path, _, base) in _delink_tool().programs(info).items()
+            for data in [(root / path).read_bytes()]}
 
 
 # ---------------------------------------------------------------------------------------------------- analysis
@@ -513,9 +785,10 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
     rows: dict[int, dict] = {}
     for r in found:
         s = pe.section_at(r["entry"])
-        if r.get("thunk") or s is None or not s.code or pe.offset(r["entry"]) is None:
-            continue
-        rows[r["entry"]] = r
+        if r.get("thunk") and import_thunk(pe, r["entry"]) is None or s is None or not s.code or \
+                pe.offset(r["entry"]) is None:
+            continue  # (a thunk to one of the program's own functions: part of the code it's in, as Ghidra found it)
+        rows[r["entry"]] = r if not r.get("thunk") else {**r, "end": r["entry"] + THUNK_BYTES}
     starts = sorted(rows)
     i = 0
     extents: dict[int, tuple[int, int, list[int]]] = {}  # start -> (code end, end, jump table entries)
@@ -552,6 +825,9 @@ def analyse(pe: PE, found: list[dict]) -> list[Function]:
         named = r.get("source") in ("IMPORTED", "USER_DEFINED") and _IDENT.fullmatch(base) and base != "entry"
         names[start] = decorate(base if named else f"func_{start:08X}", r.get("convention", ""),
                                 int(r.get("purge") or 0), int(r.get("params") or 0))
+    for start, r in rows.items():  # an import thunk by its import's name (`_RtlUnwind@16`), once
+        if r.get("thunk") and (symbol := _thunk_symbol(import_thunk(pe, start), r)) not in names.values():
+            names[start] = symbol
 
     return [Function(start, extents[start][1] - start, names[start], _relocations(md, pe, start, *extents[start], names))
             for start in starts]
@@ -595,9 +871,23 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
     return sorted(relocs)
 
 
+def import_thunk(pe: PE, addr: int) -> str | None:
+    """The import an import thunk at `addr` jumps to (`jmp dword ptr [__imp__Name]`: "RtlUnwind"), or None."""
+    code = pe.read(addr, THUNK_BYTES)
+    if len(code) < THUNK_BYTES or code[:len(IMPORT_JUMP)] != IMPORT_JUMP:
+        return None
+    return pe.imports.get(struct.unpack_from("<I", code, len(IMPORT_JUMP))[0])
+
+
+def _thunk_symbol(name: str, row: dict | None = None) -> str:
+    """The symbol of an import thunk, as the import library names it: _Name, _Name@16 for a __stdcall one (Ghidra's
+    purge, where it knows the function: Win32's, from its type libraries)."""
+    purge = int((row or {}).get("purge") or 0)
+    return decorate(name, "", purge if 0 < purge <= MAX_PURGE else 0, 0)
+
+
 CALL = 0xE8  # the opcode before a rel32 call's target
 JMP_REL32, TWO_BYTE_OPCODE, JCC_REL32 = 0xE9, 0x0F, range(0x80, 0x90)  # the other near rel32 jumps' opcodes
-_DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")  # data by its address, as analyse names it
 MAX_INSTRUCTION_BYTES = 15
 
 
@@ -748,11 +1038,13 @@ def mark_exception_stubs(root: Path, version: str) -> int | None:
     when the user's copy of the program isn't in the project (yet)."""
     path = root / "config" / version / "functions.json"
     info = json.loads(path.read_text(encoding="utf-8"))
-    exe = root / info["exe"]
-    if not exe.is_file():
+    if missing(root, version):
         return None
+    stubs: set[int] = set()
+    for name, pe in programs(root, info).items():  # (each program's stubs end its own code)
+        stubs |= exception_stubs(pe, [(fn["addr"], fn["size"]) for unit, fns in info["units"].items()
+                                      if unit_module(unit) == name for fn in fns])
     entries = [fn for fns in info["units"].values() for fn in fns]
-    stubs = exception_stubs(read_pe(exe.read_bytes()), [(fn["addr"], fn["size"]) for fn in entries])
     marked = [fn for fn in entries if fn["addr"] in stubs and fn.get("generated") != EH_STUB_WHY]
     for fn in marked:
         fn["generated"] = EH_STUB_WHY
@@ -781,10 +1073,15 @@ def linker_padding(pe: PE, functions: list[Function]) -> int | None:
     return byte if byte is not None and found[byte] * ALIGNED_SHARE >= len(functions) else None
 
 
-def units(functions: list[Function], pe: PE | None = None) -> dict[str, list[Function]]:
+def units(functions: list[Function], pe: PE | None = None, sources: dict[int, str] | None = None) \
+        -> dict[str, list[Function]]:
     """Source files: runs of neighbouring functions of about UNIT_BYTES each. A gap between two functions ends a file
     (an object's end), unless it's only the padding the program's linker puts before every function (linker_padding:
-    a 2005 game got 19,028 source files for its 20,863 functions)."""
+    a 2005 game got 19,028 source files for its 20,863 functions). Where the game's debug information names the
+    source file of the code at an address (`sources`, debuginfo.find), the functions from there on are that file's,
+    the game's own: src/auto/game.cpp for game.c, whose functions all go in it, wherever the linker put them."""
+    if sources:
+        return _source_units(functions, pe, sources)
     filler = linker_padding(pe, functions) if pe is not None else None
     out: dict[str, list[Function]] = {}
     cur: list[Function] = []
@@ -799,31 +1096,59 @@ def units(functions: list[Function], pe: PE | None = None) -> dict[str, list[Fun
     return out
 
 
+def _source_units(functions: list[Function], pe: PE | None, sources: dict[int, str]) -> dict[str, list[Function]]:
+    """units() by the game's source files: a function's is the one named at its address or the closest before it
+    (a function the debug information doesn't name is in the object of the one before it); functions before the
+    first are in files of their own, as without debug information."""
+    import bisect
+
+    starts = sorted(sources)
+    keys: dict[str, str] = {}
+    out: dict[str, list[Function]] = {}
+    rest = []
+    for fn in functions:
+        k = bisect.bisect_right(starts, fn.addr) - 1
+        source = sources[starts[k]] if k >= 0 else ""
+        if not source:
+            rest.append(fn)
+            continue
+        if source not in keys:
+            stem = re.sub(r"[^A-Za-z0-9_]", "_", source.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]) or "unit"
+            key, n = stem, 2
+            while key in keys.values() or re.fullmatch(r"text_[0-9A-F]{8}", key):
+                key, n = f"{stem}_{n}", n + 1
+            keys[source] = key
+        out.setdefault(keys[source], []).append(fn)
+    out.update(units(rest, pe))
+    return dict(sorted(out.items(), key=lambda unit: unit[1][0].addr))
+
+
 def _entry(pe: PE, f: Function) -> dict:
     """A function as functions.json keeps it (tools/delink.py cuts it out of the program by its offset)."""
     return {"name": f.name, "addr": f.addr, "offset": pe.offset(f.addr), "size": f.size,
             "relocs": [list(r) for r in f.relocs]}
 
 
-def _project_functions(root: Path, version: str) -> tuple[Path, dict, PE, list[Function]]:
-    """A project's functions.json, what it holds, the program and its functions in address order, each with its
-    source file."""
+def _project_functions(root: Path, version: str) -> tuple[Path, dict, dict[str, PE], list[Function]]:
+    """A project's functions.json, what it holds, its programs (`programs`) and its functions in address order, each
+    with its source file (whose folder says its program: unit_module)."""
     path = root / "config" / version / "functions.json"
     info = json.loads(path.read_text(encoding="utf-8"))
-    pe = read_pe((root / info["exe"]).read_bytes())
+    pes = programs(root, info)
     functions = sorted((Function(fn["addr"], fn["size"], fn["name"], [tuple(r) for r in fn["relocs"]], unit)
                         for unit, fns in info["units"].items() for fn in fns), key=lambda f: f.addr)
-    return path, info, pe, functions
+    return path, info, pes, functions
 
 
-def _save_functions(path: Path, info: dict, pe: PE, functions: list[Function]) -> None:
+def _save_functions(path: Path, info: dict, pes: dict[str, PE], functions: list[Function]) -> None:
     """functions.json with these functions, each in its source file, the files in their order. A function that
     keeps its extent keeps why no C makes it (`generated`, mark_exception_stubs); one that grew isn't a stub."""
     was = {(fn["addr"], fn["size"]): fn["generated"] for fns in info["units"].values() for fn in fns
            if fn.get("generated")}
     grouped: dict[str, list[dict]] = {u: [] for u in info["units"]}
     for f in functions:
-        grouped[f.unit].append(_entry(pe, f) | ({"generated": why} if (why := was.get((f.addr, f.size))) else {}))
+        why = was.get((f.addr, f.size))
+        grouped[f.unit].append(_entry(pes[unit_module(f.unit)], f) | ({"generated": why} if why else {}))
     path.write_text(json.dumps({**info, "units": grouped}, indent=1), encoding="utf-8")
 
 
@@ -866,10 +1191,11 @@ def drop_far_call_relocations(root: Path, version: str) -> int:
     functions.json; returns how many functions had one."""
     path = root / "config" / version / "functions.json"
     info = json.loads(path.read_text(encoding="utf-8"))
-    pe = read_pe((root / info["exe"]).read_bytes())
+    pes = programs(root, info)
     changed = 0
-    for fns in info["units"].values():
+    for unit, fns in info["units"].items():
         for fn in fns:
+            pe = pes[unit_module(unit)]
             near = [r for r in fn["relocs"] if r[1] != REL32 or _near_rel32(pe, fn["addr"] + r[0])]
             changed += len(near) != len(fn["relocs"])
             fn["relocs"] = near
@@ -883,12 +1209,13 @@ def complete_last_instructions(root: Path, version: str, keep: set[str] = frozen
     a `jmp` forward has zeros too) has functions ending in the middle of their last instruction (on a PC game 465 of
     11,877), which no C can match. Each gets the rest of that instruction, and the padding after it, as analyse
     gives them now; not one ending in data (a jump table), nor a matched one (`keep`). Returns how many grew."""
-    path, info, pe, functions = _project_functions(root, version)
+    path, info, pes, functions = _project_functions(root, version)
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     names = {f.addr: f.name for f in functions}
     grown = 0
     for k, f in enumerate(functions):
+        pe = pes[unit_module(f.unit)]
         sec = pe.section_at(f.addr)
         end = f.addr + f.size
         limit = min(functions[k + 1].addr if k + 1 < len(functions) else end, sec.va + sec.size if sec else end)
@@ -907,7 +1234,7 @@ def complete_last_instructions(root: Path, version: str, keep: set[str] = frozen
         functions[k] = join(pe, [Function(f.addr, whole - f.addr, f.name, f.relocs, f.unit)], names)
         grown += 1
     if grown:
-        _save_functions(path, info, pe, functions)
+        _save_functions(path, info, pes, functions)
     return grown
 
 
@@ -915,11 +1242,16 @@ def merge_project_pieces(root: Path, version: str, keep: set[str] = frozenset(),
     """merge_pieces on a project made before it: its functions.json changes, nothing else (each function keeps its
     source file; a piece first in its file moves to the file before only when no C there defines it). Returns each
     function that grew, with the pieces it took."""
-    path, info, pe, functions = _project_functions(root, version)
+    path, info, pes, functions = _project_functions(root, version)
     stubs = {fn["name"] for fns in info["units"].values() for fn in fns if fn.get("generated")}  # (none joined)
-    out, joined = merge_pieces(pe, functions, keep | stubs, movable=lambda part: not _c_of(root, info, part), log=log)
+    out, joined = [], {}
+    for name, pe in pes.items():  # (a piece is of a function of its own program)
+        own, took = merge_pieces(pe, [f for f in functions if unit_module(f.unit) == name], keep | stubs,
+                                 movable=lambda part: not _c_of(root, info, part), log=log)
+        out += own
+        joined.update(took)
     if joined:
-        _save_functions(path, info, pe, out)
+        _save_functions(path, info, pes, sorted(out, key=lambda f: f.addr))
     return joined
 
 
@@ -928,7 +1260,7 @@ def join_functions(root: Path, version: str, first: str, last: str, keep: set[st
     merge_pieces does). Across source files, the later files' part moves to the first one's, when their C doesn't
     define what moves and each keeps some code. Never a matched function (`keep`). Returns what changed, as a
     sentence."""
-    path, info, pe, functions = _project_functions(root, version)
+    path, info, pes, functions = _project_functions(root, version)
     at = {f.name: k for k, f in enumerate(functions)}
     if first not in at or last not in at:
         raise ForkError(f"{first if first not in at else last} isn't one of the game's functions")
@@ -938,17 +1270,221 @@ def join_functions(root: Path, version: str, first: str, last: str, keep: set[st
         raise ForkError(f"{first} and {last} must be two functions")
     if bad := [f.name for f in parts if f.name in keep]:
         raise ForkError(f"{bad[0]} is matched: joining would change it, so the join is refused")
+    if len({unit_module(f.unit) for f in parts}) > 1:
+        raise ForkError(f"{first} and {last} are in two programs (the .exe and a DLL, or two DLLs): only functions of "
+                        "one program can be joined")
     moved = [f for f in parts if f.unit != parts[0].unit]
     for f in moved:
         if all(g in parts for g in functions if g.unit == f.unit):
             raise ForkError(f"{f.unit} would be left with no code: join only part of it")
         if _c_of(root, info, f):
             raise ForkError(f"{f.unit} has C for {f.name}: move it to {parts[0].unit} first")
-    whole = join(pe, parts, {f.addr: f.name for f in functions})
-    _save_functions(path, info, pe, [*functions[:lo], whole, *functions[hi + 1:]])
+    whole = join(pes[unit_module(parts[0].unit)], parts, {f.addr: f.name for f in functions})
+    _save_functions(path, info, pes, [*functions[:lo], whole, *functions[hi + 1:]])
     files = sorted({f.unit for f in moved})
     return (f"{', '.join(f.name for f in parts[1:])} joined to {parts[0].name}"
             + (f" (moved from {', '.join(files)})" if files else ""))
+
+
+def cut(pe: PE, f: Function, starts: list[int], names: dict[int, str]) -> list[Function]:
+    """f in pieces, one from each of `starts` (addresses inside it, f's own first, in order) to the next, each analysed
+    again as a function of its own (join): what one piece's code says of another's address is a relocation now.
+    `names`: every function's address -> its symbol, the pieces' too."""
+    ends = [*starts[1:], f.addr + f.size]
+    return [join(pe, [Function(start, end - start, names[start], [], f.unit)], names) for start, end in zip(starts, ends)]
+
+
+def _cut_functions(path: Path, info: dict, pes: dict[str, PE], functions: list[Function], plan: dict[int, list[int]],
+                   symbols: dict[int, str]) -> list[Function]:
+    """functions.json with the functions `plan` names (index -> the addresses to cut it at) in pieces (cut), each
+    new piece called as `symbols` says (else `_func_<address>`), and every relocation that named a piece's address
+    as data inside the function before (`_D_<address>`), or a function whose symbol changed, naming it as it is now.
+    Returns the functions."""
+    names = {f.addr: f.name for f in functions}
+    for k, starts in plan.items():
+        names.update({a: symbols.get(a) or decorate(f"func_{a:08X}", "", 0, 0) for a in starts[1:]})
+        names[starts[0]] = symbols.get(starts[0], names[starts[0]])
+    renamed = {f.name: names[f.addr] for k, f in enumerate(functions) if k in plan and names[f.addr] != f.name}
+    renamed.update({f"_D_{a:08X}": names[a] for starts in plan.values() for a in starts[1:]})
+    out = []
+    for k, f in enumerate(functions):
+        out += cut(pes[unit_module(f.unit)], f, plan[k], names) if k in plan else [f]
+    for f in out:
+        f.relocs = [(off, kind, renamed.get(name, name), addend) for off, kind, name, addend in f.relocs]
+    _save_functions(path, info, pes, out)
+    return out
+
+
+def _thunk_cuts(pe: PE, f: Function) -> list[int]:
+    """Where a function made of import thunks the analysis took for one (it starts with one) has each of them: the
+    thunks from its start, and further runs of them (two in a row or more, a table between runs); [] for any other
+    function. (Only such a function: a real one can end in `jmp [__imp__free]`, a tail call.)"""
+    end = f.addr + f.size
+    thunk = lambda at: at + THUNK_BYTES <= end and import_thunk(pe, at) is not None  # noqa: E731
+    if not thunk(f.addr):
+        return []
+    found, at = [], f.addr
+    while at < end:
+        if thunk(at):
+            found.append(at)
+            at += THUNK_BYTES
+            continue
+        at = next((k for k in range(at, end - 2 * THUNK_BYTES + 1) if thunk(k) and thunk(k + THUNK_BYTES)), end)
+    return found
+
+
+def name_import_thunks(root: Path, version: str, keep: set[str] = frozenset()) -> int | None:
+    """Every import thunk of the project a function of its own, named after its import (`_RtlUnwind`: a call to it
+    reads as one, in the brief and the draft) and set aside: functions.json says why (`generated`) and gives the
+    import's name as the address's real name ("names"), so the C calls it however it's declared (`RtlUnwind`,
+    `__stdcall RtlUnwind`: tools/names.py pairs them). A project made before has its runs of thunks cut out of the
+    function they were taken for (_thunk_cuts), the rest a function of its own; not one a matched function (`keep`)
+    is, or refers to. The game's DLLs have thunks of their own, each read by its own import table. Returns how many
+    thunks were set aside; None without the user's copies of the programs."""
+    if missing(root, version):
+        return None
+    path, info, pes, functions = _project_functions(root, version)
+    reached = {name for f in functions if f.name in keep for _, _, name, _ in f.relocs if name}
+    taken = {f.name for f in functions}
+    plan, symbols = {}, {}
+    for k, f in enumerate(functions):
+        pe = pes[unit_module(f.unit)]
+        starts = _thunk_cuts(pe, f) if f.name not in keep | reached else []
+        cuts = [a for a in starts if a != f.addr]
+        for a in starts:  # what follows a thunk is a function of its own, unless it's only padding (the thunk's)
+            after = min([b for b in starts if b > a] + [f.addr + f.size])
+            cuts += [a + THUNK_BYTES] if pe.read(a + THUNK_BYTES, after - a - THUNK_BYTES).strip(PADDING) else []
+        if not cuts or any(f"_D_{a:08X}" in reached for a in cuts):
+            continue
+        plan[k] = sorted({f.addr, *cuts})
+        for a in starts:
+            if (symbol := _thunk_symbol(import_thunk(pe, a))) not in taken:
+                symbols[a] = symbol
+                taken.add(symbol)
+    if plan:
+        functions = _cut_functions(path, info, pes, functions, plan, symbols)
+    info = json.loads(path.read_text(encoding="utf-8"))
+    names = dict(info.get("names") or {})
+    marked = 0
+    for pe, fn in ((pes[unit_module(unit)], fn) for unit, fns in info["units"].items() for fn in fns):
+        if (name := import_thunk(pe, fn["addr"])) is None or fn["size"] < THUNK_BYTES or fn.get("generated") or \
+                pe.read(fn["addr"] + THUNK_BYTES, fn["size"] - THUNK_BYTES).strip(PADDING):
+            continue
+        fn["generated"] = THUNK_WHY.format(name=name)
+        if (key := f"func_{fn['addr']:08X}") not in names and name not in names.values():
+            names[key] = name
+        marked += 1
+    if marked:
+        path.write_text(json.dumps({**info, "names": dict(sorted(names.items()))}, indent=1), encoding="utf-8")
+    return marked
+
+
+def function_extent(root: Path, version: str, name: str) -> tuple[int, int] | None:
+    """(address, size) of a function of the project by its symbol, or None."""
+    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    return next(((fn["addr"], fn["size"]) for fns in info["units"].values() for fn in fns if fn["name"] == name), None)
+
+
+def _reads_as_code(md, code: bytes) -> bool:
+    """Whether bytes read as a function's code: instructions to the end (less padding), the last one a return or a
+    jump, as a function's last instruction is."""
+    body = code.rstrip(PADDING)
+    last = None
+    for ins in _disasm(md, body, 0):
+        last = ins
+    return last is not None and last.address + last.size == len(body) and last.mnemonic in ("ret", "retf", "jmp")
+
+
+def cut_function(root: Path, version: str, name: str, at: int, keep: set[str] = frozenset(), why: str = "") -> str:
+    """End `name` at `at`, what agents agreed (report_boundary): the rest becomes a function of its own, at `at`
+    (`_func_<address>`), open to agents when it reads as code (the analysis merged two functions), else set aside
+    with `why` (data, leftovers). Not a matched function (`keep`), nor one a matched function refers to inside it, nor
+    only padding cut off (Visual C++ puts it in the function's own section: its C makes it). Returns what changed,
+    as a sentence."""
+    path, info, pes, functions = _project_functions(root, version)
+    k = next((k for k, f in enumerate(functions) if f.name == name), None)
+    if k is None:
+        raise ForkError(f"{name} isn't one of the game's functions")
+    f = functions[k]
+    pe = pes[unit_module(f.unit)]
+    if not f.addr < at < f.addr + f.size:
+        raise ForkError(f"0x{at:08X} isn't inside {name} (0x{f.addr:08X}, {f.size} bytes)")
+    if name in keep:
+        raise ForkError(f"{name} is matched: its end is proven")
+    if any(r[2] in (name, f"_D_{at:08X}") for g in functions if g.name in keep for r in g.relocs):
+        raise ForkError(f"a matched function refers to {name} as it is, so it can't be cut")
+    rest = pe.read(at, f.addr + f.size - at)
+    if not rest.strip(PADDING):
+        raise ForkError(f"what follows 0x{at:08X} is padding Visual C++ puts in the function's own section: it's "
+                        f"part of {name}")
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    if not any(ins.address + ins.size == at - f.addr for ins in _disasm(md, pe.read(f.addr, at - f.addr), 0)):
+        raise ForkError(f"0x{at:08X} isn't where one of {name}'s instructions ends")
+    functions = _cut_functions(path, info, pes, functions, {k: [f.addr, at]}, {})
+    tail = functions[k + 1]
+    code = _reads_as_code(md, rest)
+    if not code:
+        info = json.loads(path.read_text(encoding="utf-8"))
+        for fn in (fn for fns in info["units"].values() for fn in fns if fn["addr"] == at):
+            fn["generated"] = f"not code (cut off {name} by agents): {why}" if why else f"not code (cut off {name})"
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return (f"{name} ends at 0x{at:08X}; the {f.addr + f.size - at} bytes after it are {tail.name}, "
+            + ("a function of its own" if code else "set aside as not code"))
+
+
+def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], keep: set[str] = frozenset()) -> str | None:
+    """A new analysis of the programs in `found` (Ghidra's function list for each, by its source files' folder: "" the
+    .exe, a DLL's name; a DLL's rows at the address the project gives it: module_rows), read by this analyse, the
+    stubs set aside, the pieces joined, the thunks named, in place of the project's, keeping the work: every matched
+    function (`keep`) keeps its extent, and what the new analysis has there yields to it; each function goes to the
+    source file whose code held its address, so agents' C stays where it is; code no file held gets files of its own
+    (in its program's folder). A program not in `found` keeps its functions. The real names and each file's compiler
+    stay. Returns what changed, as a sentence; None: nothing did."""
+    path, info, pes, old = _project_functions(root, version)
+    # matched functions, and those of a program not analysed again, stay as they are, in their files
+    kept = [f for f in old if f.name in keep or unit_module(f.unit) not in found]
+    new = []
+    for program, rows in found.items():
+        pe = pes[program]
+        fresh = analyse(pe, rows)
+        stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh])
+        fresh = merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
+        own_symbols(fresh, {f.name for f in old if unit_module(f.unit) != program} | {f.name for f in new})
+        new += fresh
+    new = sorted([f for f in new if not any(f.addr < k.addr + k.size and k.addr < f.addr + f.size for k in kept)]
+                 + kept, key=lambda f: f.addr)
+    if [(f.addr, f.size, f.name) for f in new] == [(f.addr, f.size, f.name) for f in old]:
+        return None
+    spans = [(fns[0]["addr"], fns[-1]["addr"] + fns[-1]["size"], unit) for unit, fns in info["units"].items() if fns]
+    stay = {id(f) for f in kept}
+    homeless: dict[str, list[Function]] = {}
+    for f in (f for f in new if id(f) not in stay):
+        program = next((name for name, pe in pes.items() if pe.section_at(f.addr) is not None), "")
+        f.unit = next((unit for start, end, unit in spans if start <= f.addr < end and unit_module(unit) == program), "")
+        if not f.unit:
+            homeless.setdefault(program, []).append(f)
+    added = {}
+    for program, fns in homeless.items():
+        added.update({f"{program}/{u}" if program else u: fns for u, fns in units(fns, pes[program]).items()})
+    added = {u: fns for u, fns in added.items() if u not in info["units"]}
+    for unit, fns in added.items():
+        for f in fns:
+            f.unit = unit
+        src = root / "src" / "auto" / f"{unit}.cpp"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from 0x{fns[0].addr:08X}, found by a new "
+                       "analysis. */\n#include \"common.h\"\n", encoding="utf-8")
+    info["units"] = {**{u: fns for u, fns in info["units"].items() if any(f.unit == u for f in new)},
+                     **{u: [] for u in added}}
+    _save_functions(path, info, pes, new)
+    mark_exception_stubs(root, version)
+    name_import_thunks(root, version, keep)
+    before = {(f.addr, f.size) for f in old}
+    changed = sum((f.addr, f.size) not in before for f in new)
+    return (f"{len(new):,} functions (it had {len(old):,}), {changed:,} of them new or with another extent"
+            + (f", {len(added)} new source files" if added else "")
+            + f"; its {sum(f.name in keep for f in kept)} matched functions kept")
 
 
 def _source(root: Path, unit: str) -> str:
@@ -968,9 +1504,11 @@ def split_unit(root: Path, version: str, source: str, at: str, new: str) -> dict
     unit = next((u for u in info["units"] if _source(root, u) == source), None)
     if unit is None:
         raise ForkError(f"{source} isn't one of the project's source files")
-    m = re.fullmatch(r"src/auto/([A-Za-z0-9_]+)\.(?:cpp|c)", new)
-    if m is None:
-        raise ForkError(f"{new}: a PC project's source files are src/auto/<name>.cpp (letters, digits, _)")
+    m = re.fullmatch(r"src/auto/((?:[A-Za-z0-9_]+/)?[A-Za-z0-9_]+)\.(?:cpp|c)", new)
+    if m is None or unit_module(m.group(1)) != unit_module(unit):
+        folder = f"src/auto/{unit_module(unit)}/" if unit_module(unit) else "src/auto/"
+        raise ForkError(f"{new}: this file's functions are in {folder} (a DLL's files are in a folder of its name): "
+                        f"name it {folder}<name>.cpp (letters, digits, _)")
     if m.group(1) in info["units"]:
         raise ForkError(f"{new} exists already: pick another new_name")
     names = [fn["name"] for fn in info["units"][unit]]
@@ -1041,6 +1579,84 @@ def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[st
     return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
 
 
+# Each source file can be built with more flags than the project's (config/<version>/file_flags.json, which
+# tools/configure.py reads): /Oy- above all. Visual C++'s /O2 omits the frame pointer (/Oy); a game built with /Oy-
+# keeps `push ebp; mov ebp, esp` in every function that touches its stack, and no C matches it without the flag. In
+# a Visual C++ 2010 game of 20,000 functions, 71% of those of 32 bytes or more keep one; in a 2005 one, 2%
+FRAME_FLAG = "/Oy-"
+FRAME_SHARE = 0.5  # a file whose functions keep a frame this often or more was built with /Oy-
+FRAME_MIN_BYTES = 32  # a smaller function often touches no stack at all, and keeps no frame even with /Oy-
+_FRAME_STARTS = (b"\x55\x8b\xec", b"\x8b\xff\x55\x8b\xec")  # push ebp; mov ebp, esp (after 2005's mov edi, edi)
+_HANDLER_FRAME = b"\x64\xa1\x00\x00\x00\x00"  # mov eax, fs:[0]: an exception handler's, which keeps ebp anyway
+_HANDLER_BYTES = 48  # how far into a function its handler's frame is set up
+
+
+def flags_file(root: Path, version: str) -> Path:
+    return root / "config" / version / "file_flags.json"
+
+
+def file_flags(root: Path, version: str) -> dict[str, list[str]]:
+    """{source file: flags} for the files built with more flags than the project's (tools/configure.py reads it)."""
+    try:
+        return json.loads(flags_file(root, version).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def set_file_flags(root: Path, version: str, source: str, flags: list[str]) -> None:
+    """Build `source` with `flags` on top of the project's (none: no line)."""
+    found = file_flags(root, version)
+    found.pop(source, None)
+    if flags:
+        found[source] = list(flags)
+    _write_compilers(flags_file(root, version), found)
+
+
+def keeps_frames(pe: PE, functions: list[Function]) -> bool | None:
+    """Whether most of these functions keep an ebp frame though no exception handler needs one (their code was
+    built with /Oy-); None when none of them says (all small, or all with a handler)."""
+    told = []
+    for f in functions:
+        head = pe.read(f.addr, min(f.size, _HANDLER_BYTES))
+        if f.size >= FRAME_MIN_BYTES and _HANDLER_FRAME not in head:
+            told.append(head.startswith(_FRAME_STARTS))
+    return sum(told) >= FRAME_SHARE * len(told) if told else None
+
+
+def frame_flags(pe: PE, groups: dict[str, list[Function]], skip: set[int] = frozenset(),
+                source=lambda unit: f"src/auto/{unit}.cpp") -> dict[str, list[str]]:
+    """{source file: [/Oy-]} for the units whose functions keep an ebp frame (keeps_frames); a unit whose own
+    functions don't say follows the whole program's. `skip`: functions no C makes (exception-handling stubs)."""
+    every = keeps_frames(pe, [f for fns in groups.values() for f in fns if f.addr not in skip])
+    out = {}
+    for unit, fns in groups.items():
+        own = keeps_frames(pe, [f for f in fns if f.addr not in skip])
+        if own or own is None and every:
+            out[source(unit)] = [FRAME_FLAG]
+    return out
+
+
+def set_frame_flags(root: Path, version: str, keep: set[str] = frozenset()) -> int | None:
+    """A project made before decompdecomp read frames gets /Oy- for the files that keep them (frame_flags), except
+    `keep`'s (files with matched code: their C matches with the flags they have). Returns how many files got it;
+    None without the user's copies of the programs. Each of the game's DLLs is read by itself: it was built apart."""
+    if missing(root, version):
+        return None
+    _, info, pes, functions = _project_functions(root, version)
+    stubs = {fn["addr"] for fns in info["units"].values() for fn in fns if fn.get("generated")}
+    found = file_flags(root, version)
+    wanted = {}
+    for name, pe in pes.items():
+        groups: dict[str, list[Function]] = {}
+        for f in (f for f in functions if unit_module(f.unit) == name):
+            groups.setdefault(f.unit, []).append(f)
+        wanted.update({s: v for s, v in frame_flags(pe, groups, stubs, lambda unit: _source(root, unit)).items()
+                       if s not in keep and s not in found})
+    if wanted:  # (none: no file of it, which a step that changed nothing would leave behind)
+        _write_compilers(flags_file(root, version), {**found, **wanted})
+    return len(wanted)
+
+
 # ---------------------------------------------------------------------------------------------------- the project
 
 
@@ -1084,9 +1700,10 @@ def write_tools(root: Path, version: str) -> list[str]:
         if not dest.exists() or dest.read_text(encoding="utf-8") != text:
             dest.write_text(text, encoding="utf-8")
             changed.append(f"tools/{src.name}")
-    if changed and not (compilers := compilers_file(root, version)).exists():
-        compilers.write_text("{}\n", encoding="utf-8")
-        changed.append(compilers.relative_to(root).as_posix())
+    for kept in (compilers_file(root, version), flags_file(root, version)):  # (configure.py's build reads them)
+        if changed and not kept.exists():
+            kept.write_text("{}\n", encoding="utf-8")
+            changed.append(kept.relative_to(root).as_posix())
     return changed
 
 
@@ -1134,27 +1751,91 @@ typedef int BOOL;
 #endif
 """
 
+# what common.h defines already: the game's typedefs of these names are left out of its types (cheader.Header)
+HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", TYPES_H) for name in pair if name}
+DEBUG_TYPES = "debug_types.h"  # include/: the game's own types and globals, from its debug information
+DEBUG_FILE = "debug.json"  # config/<version>/: what each function's brief says from it (WindowsPC.debug_of)
+DEBUG_TYPES_NOTE = """/* The game's own types and global variables, from the debug information it shipped with (decompdecomp wrote
+ * them at import): each field is at the offset the game has it (the comments say where). Use these names; don't
+ * declare them again. */
+#ifndef DEBUG_TYPES_H
+#define DEBUG_TYPES_H
 
-_PROGRAMS: dict[tuple[str, int], object] = {}  # (path, mtime) -> its parsed program, for data_bytes
+"""
 
 
-def _program(root: Path, manifest: dict):
-    """The user's copy, parsed once per change of the file (a diff reads several constants from it)."""
-    path = root / manifest["game"]["path"]
-    key = (str(path), path.stat().st_mtime_ns)
+def debug_names(info, functions: list[Function]) -> dict[str, str]:
+    """functions.json's "names" from the game's debug information: each function Ghidra found (func_<address>) and
+    each datum (D_<address>) by the name the game gave it (rename_symbol's form, which names.py reads)."""
+    found = {f.addr for f in functions}
+    names = {}
+    for n in info.named:
+        if n.function and n.address in found:
+            names[f"func_{n.address:08X}"] = n.name
+        elif not n.function and n.address not in found:
+            names[f"D_{n.address:08X}"] = n.name
+    return dict(sorted(names.items()))
+
+
+def write_debug(root: Path, version: str, info) -> None:
+    """The game's types and globals for include/ (common.h includes them), and its functions' prototypes,
+    parameters and locals for their briefs (config/<version>/debug.json)."""
+    if info.functions:
+        (root / "config" / version / DEBUG_FILE).write_text(json.dumps(
+            {f"func_{addr:08X}": known for addr, known in sorted(info.functions.items())}, indent=1), encoding="utf-8")
+    if info.header:
+        (root / "include" / DEBUG_TYPES).write_text(DEBUG_TYPES_NOTE + info.header + "\n#endif\n", encoding="utf-8")
+        common = root / "include" / "common.h"
+        text = common.read_text(encoding="utf-8")
+        common.write_text(text[:text.rindex("#endif")] + f'#include "{DEBUG_TYPES}"\n\n#endif\n', encoding="utf-8")
+
+
+def debug_of(root: Path, version: str, symbol: str) -> dict | None:
+    """What the game's debug information says about a function, by its symbol (_func_0041B470@8)."""
+    m = re.search(r"func_[0-9A-Fa-f]{8}", symbol)
+    try:
+        known = json.loads((root / "config" / version / DEBUG_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return known.get(m.group(0)[:5] + m.group(0)[5:].upper()) if m else None
+
+
+def _header_compiles(root: Path, version: str, unit: str, log) -> bool:
+    """Whether a source file that includes common.h, with the game's types, builds: a header that doesn't would fail
+    every attempt in every file."""
+    obj = (Path("build") / version / _source(root, unit)).with_suffix(".obj").as_posix()
+    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS)[0]
+
+
+_PROGRAMS: dict[tuple, list[PE]] = {}  # (paths, mtimes) -> the parsed programs, for data_bytes
+
+
+def _programs_of(root: Path, manifest: dict) -> list[PE]:
+    """The user's copies (the .exe, then the game's DLLs: functions.json's "modules"), parsed once per change of
+    them (a diff reads several constants)."""
+    config = root / "config" / manifest["version"] / "functions.json"
+    paths = [root / manifest["game"]["path"], *([config] if config.is_file() else [])]
+    key = tuple((str(path), path.stat().st_mtime_ns) for path in paths)
     if key not in _PROGRAMS:
+        info = json.loads(config.read_text(encoding="utf-8")) if config.is_file() else {}
+        modules = programs(root, info) if info.get("modules") else {}
         _PROGRAMS.clear()
-        _PROGRAMS[key] = read_pe(path.read_bytes())
+        _PROGRAMS[key] = [read_pe(paths[0].read_bytes()), *(pe for name, pe in modules.items() if name)]
     return _PROGRAMS[key]
+
+
+def _program_at(root: Path, manifest: dict, addr: int) -> PE | None:
+    """The program (the .exe or one of the game's DLLs) whose sections hold `addr`, or None."""
+    return next((pe for pe in _programs_of(root, manifest) if pe.section_at(addr) is not None), None)
 
 
 def data_bytes(root: Path, manifest: dict, addr: int, length: int) -> bytes | None:
     """The bytes at an address of the user's copy, or None (not in it, uninitialized, no copy)."""
     try:
-        pe = _program(root, manifest)
+        pe = _program_at(root, manifest, addr)
     except Exception:  # no copy, or one that doesn't parse: the diff goes without values
         return None
-    if pe.section_at(addr) is None:
+    if pe is None:
         return None
     data = pe.read(addr, length)
     return data if data and len(data) == length else None
@@ -1181,11 +1862,12 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
         raise ForkError(f"`{name}` isn't data by address or a real name of data: PC data is named D_<address> "
                         "(D_00402034) until rename_symbol names it")
     addr = int(m.group(1) or m.group(2), 16)
-    pe = read_pe((root / manifest["game"]["path"]).read_bytes())
+    pe = _program_at(root, manifest, addr)
+    if pe is None:
+        spans = ", ".join(f"0x{p.image_base:08X}-0x{p.image_base + p.image_size:08X}"
+                          for p in _programs_of(root, manifest))
+        raise ForkError(f"0x{addr:08X} isn't in the game's program or its DLLs (they span {spans})")
     sec = pe.section_at(addr)
-    if sec is None:
-        raise ForkError(f"0x{addr:08X} isn't in the game's program (it spans 0x{pe.image_base:08X}-"
-                        f"0x{pe.image_base + pe.image_size:08X})")
     n = max(READ_MIN_BYTES, min(int(length or READ_DEFAULT_BYTES), READ_MAX_BYTES))
     data = pe.read(addr, n)
     out = [f"{real + ' = ' if real else ''}D_{addr:08X} ({sec.name}+0x{addr - sec.va:X}, {n} bytes)"]
@@ -1208,91 +1890,77 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
     return "\n".join(out)
 
 
-# a COFF object (tools/delink.py writes them): its header, section headers, symbols and relocations
-COFF_HEADER = "<HHIIIHH"  # machine, sections, time, symbol table at, symbols, optional header bytes, flags
-COFF_HEADER_BYTES, COFF_SECTION_BYTES, COFF_SYMBOL_BYTES, COFF_RELOC_BYTES = 20, 40, 18, 10
 CODE_SHOWN = 5  # functions a rebuild that differs names
 
 
-def _coff_sections(obj: bytes) -> list[tuple[str, bytes, list[tuple[int, str, int, int]]]]:
-    """Each section of a COFF object as (its function's symbol, its bytes, its relocations as (offset, symbol,
-    section of a local label or 0, the label's value)), as tools/delink.py writes them: a section per function, its
-    symbol the first one defined in it."""
-    _, count, _, table, symbols, _, _ = struct.unpack_from(COFF_HEADER, obj, 0)
-    strings = table + COFF_SYMBOL_BYTES * symbols
-    syms, k = [], 0
-    while k < symbols:
-        raw, value, section, _, _, aux = struct.unpack_from("<8sIhHBB", obj, table + COFF_SYMBOL_BYTES * k)
-        if raw[:4] == b"\0\0\0\0":
-            at = strings + struct.unpack_from("<I", raw, 4)[0]
-            raw = obj[at:obj.index(b"\0", at)]
-        syms.append((raw.rstrip(b"\0").decode("latin-1"), value, section))
-        syms.extend([("", 0, 0)] * aux)
-        k += 1 + aux
-    out = []
-    for i in range(count):
-        _, _, _, size, data, relocs, _, nrelocs, _, _ = struct.unpack_from(
-            "<8sIIIIIIHHI", obj, COFF_HEADER_BYTES + COFF_SECTION_BYTES * i)
-        owner = next((name for name, value, section in syms if section == i + 1 and not name.startswith("$")), "")
-        rel = []
-        for r in range(nrelocs):
-            off, index, kind = struct.unpack_from("<IIH", obj, relocs + COFF_RELOC_BYTES * r)
-            name, value, section = syms[index]
-            rel.append((off, kind, name, section, value))
-        out.append((owner, obj[data:data + size], rel))
-    return out
+def _template_tool(name: str):
+    """One of the template's build tools (tools/<name>.py), as a module: the rebuild check runs the template's
+    rebuild.py, so a project made before it was written is checked the same way."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(f"pc_tools_{name}", TEMPLATE / "tools" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def check_code(root: Path, version: str, log=print) -> dict:
-    """The rebuild check of a PC project: the program's code rebuilt from the build's delinked objects (each function
-    placed at its address, every relocation filled in with the address its symbol names) compared with the user's
-    copy, byte for byte: {"identical", "detail", "what"}. There's no relink of the whole .exe yet, so this is what a
-    change to the project's functions (a join) is checked against: a function cut too long or too short, or a
-    relocation to the wrong place, comes out different."""
-    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
-    pe = read_pe((root / info["exe"]).read_bytes())
-    where = {fn["name"]: fn["addr"] for fns in info["units"].values() for fn in fns}
-    where.update({f"__imp__{name}": slot for slot, name in pe.imports.items()})
-    placed, differ = [], []
-    for unit in info["units"]:
-        obj = root / "build" / version / "target" / f"{unit}.obj"
-        if not obj.is_file():
-            differ.append(f"{unit} (no object: the build didn't make it)")
-            continue
-        sections = _coff_sections(obj.read_bytes())
-        starts = [where.get(name) for name, _, _ in sections]
-        for (name, data, relocs), start in zip(sections, starts):
-            if start is None:
-                differ.append(f"{name} (not in functions.json)")
-                continue
-            code = bytearray(data)
-            for off, kind, symbol, section, value in relocs:
-                data_name = _DATA_SYMBOL.fullmatch(symbol)
-                if section > 0:  # a label in its own object ($L, a jump table's entry)
-                    target = None if starts[section - 1] is None else starts[section - 1] + value
-                else:
-                    target = where.get(symbol, int(data_name.group(1), 16) if data_name else None)
-                if target is None:
-                    differ.append(f"{name} (refers to {symbol}, which names no address)")
-                    break
-                inline = struct.unpack_from("<i", code, off)[0]
-                address = target + inline - (start + off + 4 if kind == REL32 else 0)
-                struct.pack_into("<I", code, off, address & 0xFFFFFFFF)
-            else:
-                if bytes(code) != pe.read(start, len(code)):
-                    differ.append(name)
-                placed.append((start, len(code), name))
-    placed.sort()
-    differ += [f"{b[2]} (overlaps {a[2]})" for a, b in zip(placed, placed[1:]) if b[0] < a[0] + a[1]]
-    if differ:
+    """The rebuild check of a PC project: the whole program rebuilt from the project (tools/rebuild.py: every
+    function's code at its address, from what src/ compiles to where that is the game's code, else from the delinked
+    objects, each relocation filled in with the address its symbol names), compared with the user's copy, byte for
+    byte: {"identical", "detail", "what"}. A change to the project's functions (a join) is checked against it too: a
+    function cut too long or too short, or a relocation to the wrong place, comes out different."""
+    report = _template_tool("rebuild").rebuild(Path("config") / version / "functions.json", Path("build") / version,
+                                               root)
+    if report["differ"] or not report["identical"]:
+        differ = report["differ"] or ["the program (outside its functions)"]
         detail = (f"{len(differ)} functions rebuilt from the delinked objects differ from your copy: "
                   f"{', '.join(differ[:CODE_SHOWN])}{'…' if len(differ) > CODE_SHOWN else ''}")
         log(f"note: {detail}")
         return {"identical": False, "detail": detail}
-    covered = sum(size for _, size, _ in placed)
-    log(f"the game's code rebuilt from its {len(placed):,} delinked functions is your copy's, byte for byte")
-    return {"identical": True, "detail": f"identical: the code of its {len(placed):,} functions ({covered:,} bytes)",
-            "what": "The game's code, rebuilt from its delinked functions,"}
+    c, n = len(report["c"]), report["functions"]
+    each = ""
+    if len(report["programs"]) > 1:  # each program's own count: a DLL's rebuild is checked against that DLL
+        each = "; by program: " + ", ".join(f"{Path(r['output']).name} {r['functions']:,}"
+                                             for r in report["programs"].values())
+    log(f"the game's program rebuilt from the project ({report['output']}, {c:,} of its {n:,} functions from C) is "
+        f"your copy, byte for byte{each}")
+    return {"identical": True, "detail": f"identical: the whole program ({report['size']:,} bytes); its {n:,} "
+                                         f"functions ({report['bytes']:,} bytes of code), {c:,} of them from C{each}",
+            "what": "The game's program, rebuilt from the project,"}
+
+
+def _program_units(pe: PE, found: list[dict], log, sources: dict[int, str] | None = None) -> dict[str, list[Function]]:
+    """One program's functions (from Ghidra's rows, `found`), its exception-handling stubs kept whole and the
+    pieces Ghidra cut off joined to their function, in source files (the game's own, where its debug information
+    names them: `sources`)."""
+    functions = analyse(pe, found)
+    # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
+    stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
+    functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
+    return units(functions, pe, sources)
+
+
+def own_symbols(functions: list[Function], taken: set[str]) -> None:
+    """A program's functions whose symbols another program of the project has (the .exe's and a DLL's import thunks
+    for one import: _RtlUnwind@16) go by their address instead, as other functions do, and so do the calls to them:
+    a symbol names one address in the project (rebuild.py, names.py). `taken` gets this program's symbols."""
+    renamed = {}
+    for f in functions:
+        if f.name in taken:
+            new = re.sub(r"^([_@]?)[^@]+", rf"\g<1>func_{f.addr:08X}", f.name, count=1)
+            renamed[f.name], f.name = new, new
+        taken.add(f.name)
+    for f in functions if renamed else ():
+        f.relocs = [(off, kind, renamed.get(name, name), addend) for off, kind, name, addend in f.relocs]
+
+
+def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
+    """Ghidra's functions of one of the game's DLLs, at the address the project gives it (`moved` from the one its
+    header prefers, where Ghidra reads it). Its own names (its exports, its debug information) go to "names"
+    instead, as several DLLs export the same names (an engine's and a game's DLL both export their interface)."""
+    return [{**r, "entry": r["entry"] + moved, **({"end": r["end"] + moved} if "end" in r else {}),
+             "source": "DEFAULT"} for r in ghidra.functions(module)]
 
 
 def _run(cmd: list[str], root: Path, what: str, log) -> None:
@@ -1326,26 +1994,78 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
             log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
             toolchains.ensure("ghidra", log=log)
     pe = read_pe(game.read_bytes())
+    modules, left_out = find_modules(game, pe)
+    if modules or left_out:
+        log(f"the game's own DLLs beside {game.name}: {', '.join(m.rel for m in modules) or 'none'}")
+    for line in left_out_lines(left_out):
+        log(line)
     log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
     found = ghidra.functions(game)
     if not found:
         why = (info["cannot_match"] or ["a program that is packed or protected in a way decompdecomp doesn't recognise "
                                         "shows none: decompdecomp never unpacks or gets around protection"])[0]
         raise ForkError(f"Ghidra found no functions in this program: {why}.")
-    functions = analyse(pe, found)
-    # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
-    stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
-    functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
-    groups = units(functions, pe)
-    log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
+    debug = debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
+    if debug is not None:
+        log(f"{debug.source}: {debug.info.summary()}")
+    groups = _program_units(pe, found, log, debug.info.units if debug is not None else None)
+    log(f"{sum(map(len, groups.values()))} functions; {info['compiler_why']}: Visual C++ {compiler}")
+    pes, own = {"": pe}, {}
+    debugs = [debug.info] if debug is not None else []
+    real = debug_names(debug.info, [f for fns in groups.values() for f in fns]) if debug is not None else {}
+    taken = {re.sub(r"^[_@]|@\d+$", "", f.name) for fns in groups.values() for f in fns} | set(real.values())
+    symbols = {f.name for fns in groups.values() for f in fns}
+    for m in modules:
+        pes[m.name] = m.pe
+        moved = m.pe.image_base - m.preferred
+        where = (f"at 0x{m.pe.image_base:08X}, its own address" if not moved else
+                 f"at 0x{m.pe.image_base:08X}: the program or a DLL before it has its own address, 0x{m.preferred:08X}, "
+                 "so it's moved by its base relocations, as Windows moves it")
+        log(f"analysing {m.rel} with Ghidra: {m.built.summary()}, {where}")
+        rows = module_rows(ghidra, m.path, moved)
+        found_debug = debuginfo.find(m.path, m.pe.data, HEADER_NAMES, log=log)  # (read at its address in the project)
+        if found_debug is not None:
+            log(f"{m.rel}: {found_debug.source}: {found_debug.info.summary()}")
+            debugs.append(found_debug.info)
+        made = {f"{m.name}/{u}": fns for u, fns in _program_units(
+            m.pe, rows, log, found_debug.info.units if found_debug is not None else None).items()}
+        own_symbols([f for fns in made.values() for f in fns], symbols)
+        groups.update(made)
+        starts = {f.addr for fns in made.values() for f in fns}
+        names = list(debug_names(found_debug.info, [f for fns in made.values() for f in fns]).items()) \
+            if found_debug is not None else []
+        names += [(f"func_{addr:08X}" if addr in starts else f"D_{addr:08X}", name)
+                  for addr, name in sorted(exports(m.pe).items())]
+        named = 0
+        for key, name in names:  # its debug information's names first, then its exports'
+            # a C name another program has too (an engine's and a game's DLL both export their interface) gets the
+            # DLL's name in front; a method's other overloads stay by address
+            real_name = next((n for n in (name, *([f"{m.name}_{name}"] if "::" not in name else [])) if n not in taken),
+                             None)
+            if real_name is not None and key not in real:
+                real[key] = real_name
+                taken.add(real_name)
+                named += key.startswith("func_")
+        version_of = m.built.pack_version
+        if version_of != compiler:  # a DLL built by another Visual C++ than the program builds with its own
+            if (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
+                own.update({f"src/auto/{u}.cpp": version_of for u in made})
+            else:
+                log(f"{m.rel} was built with {m.built.compiler}: its files build with Visual C++ {compiler} until "
+                    f"{toolchains.get(compiler_pack(version_of)).name} is installed (Setup), then with try_compiler")
+        for why in m.built.cannot_match():
+            log(f"what can't match in {m.rel}: {why}")
+        log(f"{m.rel}: {len(starts)} functions, {named} named by its "
+            + ("debug information and " if found_debug is not None else "") + "exports")
 
     shutil.copytree(TEMPLATE, root)
     (root / "orig").mkdir()
-    exe = root / "orig" / f"{version}.exe"
-    try:
-        exe.hardlink_to(game)
-    except OSError:
-        shutil.copyfile(game, exe)
+    for source, dest in ((game, root / "orig" / f"{version}.exe"), *((m.path, root / "orig" / m.rel) for m in modules)):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dest.hardlink_to(source)
+        except OSError:
+            shutil.copyfile(source, dest)
     (root / "include").mkdir()
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
@@ -1357,29 +2077,55 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
-        "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
+        **({"modules": [{"name": m.name, "exe": f"orig/{m.rel}", "sha1": hashlib.sha1(m.path.read_bytes()).hexdigest(),
+                         "image_base": m.pe.image_base, "preferred_base": m.preferred} for m in modules]}
+           if modules else {}),
+        "units": {u: [_entry(pes[unit_module(u)], f) for f in fns] for u, fns in groups.items()},
+        **({"names": dict(sorted(real.items()))} if real else {}),
     }, indent=1), encoding="utf-8")
-    compilers_file(root, version).write_text("{}\n", encoding="utf-8")  # (every file with the project's own, so far)
+    if debugs:
+        # shortcut: one program's types for include/debug_types.h (the first with any), every program's prototypes;
+        # two PDBs' headers would define the same types twice. Merge them when a game ships PDBs for its DLLs too.
+        for more in debugs[1:]:
+            debugs[0].functions.update(more.functions)
+            debugs[0].header = debugs[0].header or more.header
+        write_debug(root, version, debugs[0])
+    _write_compilers(compilers_file(root, version), own)  # (the DLLs built by another Visual C++; the rest: its own)
+    _write_compilers(flags_file(root, version), {})  # (set_frame_flags below: once the thunks are functions)
     if stubs := mark_exception_stubs(root, version):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
+    if thunks := name_import_thunks(root, version):
+        log(f"{thunks} of them are import thunks the linker adds for calls to DLLs' functions: named after the "
+            "function each calls, and set aside")
+    if frames := set_frame_flags(root, version):
+        log(f"{frames} of {len(groups)} source files keep an ebp frame in most of their functions: they build "
+            f"with {FRAME_FLAG} (Visual C++ keeps the frame pointer)")
+    sources = {addr: source for known in debugs for addr, source in known.units.items()}
     for u, fns in groups.items():
         src = root / "src" / "auto" / f"{u}.cpp"  # C++, as PC games of the time were written (C compiles too)
         src.parent.mkdir(parents=True, exist_ok=True)
-        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from 0x{fns[0].addr:08X} to "
-                       f"0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra. */\n#include \"common.h\"\n",
-                       encoding="utf-8")
-    log(f"{len(groups)} source files for agents to write into")
+        named = next((sources[f.addr] for f in fns if f.addr in sources), "") \
+            if not u.rsplit("/", 1)[-1].startswith("text_") else ""
+        where = (f"the game's {named}, as its debug information says" if named else
+                 f"0x{fns[0].addr:08X} to 0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra")
+        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from {where}. */\n"
+                       "#include \"common.h\"\n", encoding="utf-8")
+    log(f"{len(groups)} source files for agents to write into"
+        + (f" (each DLL's in src/auto/<its name>/: {', '.join(m.name for m in modules)})" if modules else ""))
 
-    setup = [[sys.executable, "tools/configure.py", version, *args], ["ninja", "prepare"]]
-    for cmd in setup:
-        _run(cmd, root, "the first build", log)
+    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log)
+    if (root / "include" / DEBUG_TYPES).exists() and not _header_compiles(root, version, next(iter(groups)), log):
+        log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
+            "for agents to fix, and common.h doesn't include it yet")
+        (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+    _run(["ninja", "prepare"], root, "the first build", log)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
     rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 4,  # (WindowsPC.ANALYSIS: nothing to repair, its stubs set aside, its pieces joined)
+        "analysis": 6,  # (WindowsPC.ANALYSIS: nothing to repair, stubs set aside, pieces joined, thunks named, frames read)
         "tools": tools_version(),
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
@@ -1395,12 +2141,20 @@ copy of its program and compared with what `src/` compiles to, function by funct
 1. Put your own copy of the game's program here as `orig/{version}.exe` (never commit it).
 2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`.
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
+4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
+   where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.
 
 Compiler: Visual C++ {compiler} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built
 with another version or other flags; `config/{version}/file_compilers.json` names the files built with another
 version). `config/{version}/functions.json` holds what the analysis found: every function's address, size, symbol
 and relocations, by source file.
-""", encoding="utf-8")
+""" + (f"""
+The game's own DLLs are programs of this project too, each with its source files in `src/auto/<its name>/`:
+{chr(10).join(f"- `orig/{m.rel}` ({m.name}, at 0x{m.pe.image_base:08X})" for m in modules)}
+
+Put your copies of them there too. A DLL at another address than its own (the program or a DLL before it has that
+one) is moved by its base relocations at build time, as Windows moves it.
+""" if modules else ""), encoding="utf-8")
     if shutil.which("git"):
         for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",

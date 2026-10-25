@@ -2,8 +2,9 @@
 
 The relocations a match ignores, how capstone reads the code, the float constants an instruction loads, the
 constants a function stores into objects (a constructor's vtable: consoles/pc/rtti.py), Ghidra's drafts of methods
-shown as `Class::method`, and the pieces of functions Ghidra's analysis cut off (`piece`). Hand-written assembly, the
-compiler map and the fields of classes and structs have no x86 reader yet (ROADMAP.md says where to start).
+shown as `Class::method`, and the pieces of functions Ghidra's analysis cut off (`piece`). What functions do with
+pointers (the fields of classes and structs) is x86_fields.py's. Hand-written assembly and the compiler map have no
+x86 reader yet (ROADMAP.md says where to start).
 """
 
 from __future__ import annotations

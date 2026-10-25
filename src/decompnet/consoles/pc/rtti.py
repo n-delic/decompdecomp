@@ -9,8 +9,12 @@ virtual functions, what typeid and dynamic_cast read at run time:
 - the type descriptor holds the class's decorated name, `.?AVTown@@` (`.?AU` for a struct);
 - the hierarchy descriptor lists the class and every base class it has, the class itself first, then its bases
   depth first (the direct base next).
-So these are the programmer's own names, not guesses. A program built without /GR has none of this and gets no
-classes here: classes.py's reading of the vtables constructors store is MIPS's only for now (ROADMAP.md).
+So these are the programmer's own names, not guesses. A program built without /GR has none of this: its classes
+come from the vtables its constructors store (classes.from_facts, as on MIPS), named after their vtable's address
+(Class_0064C80C) until its symbol gets a real name. Both get their fields from the code (read_code): what
+arch/x86_fields.py reads each function doing through `this`, merged across a class's methods, its bases' inherited;
+the same reading gives guess_struct its layouts. Reading a game of 25,000 functions takes about 10 seconds, once per
+change to the program or functions.json.
 """
 
 from __future__ import annotations
@@ -21,8 +25,8 @@ import struct
 from array import array
 from pathlib import Path
 
-from ... import classes
-from ...arch import x86
+from ... import classes, structs
+from ...arch import x86, x86_fields
 
 # `.?AV` (a class) or `.?AU` (a struct), then the name, `Inner@Outer` for nested names, and `@@`
 TYPE_NAME = re.compile(rb"\.\?A[VU]([^\0]{1,1024}?)@@\0")
@@ -33,7 +37,9 @@ MAX_BASES = 256  # a broken hierarchy descriptor stops here
 MAX_VPTR_OFFSET = 0x10000  # where a second base's vtable pointer can sit in an object
 MAX_SLOTS = 1024
 WORD = 4
-_FOUND: dict[tuple, classes.Classes] = {}  # the last project's, by what it was read from
+_FOUND: dict[tuple, tuple[classes.Classes, structs.Structs]] = {}  # the last project's, by what it was read from
+_FACTS: dict[tuple, dict[int, structs.Facts]] = {}  # what its functions do with pointers, by the program and them
+STORED = "the vtables its constructors store"
 
 
 # the one- and two-letter codes of built-in types in a decorated name
@@ -259,10 +265,58 @@ def _constructors(pe, out: classes.Classes, relocs: dict[int, list], owner: dict
                     out.roles[addr].append((cls.vtable, "constructor or destructor"))
 
 
+def read_code(pe, functions: list[dict], found: classes.Classes, real: dict[str, str] | None = None,
+              facts: dict[int, structs.Facts] | None = None) -> structs.Structs:
+    """What every function does with pointers (arch/x86_fields.py), read once for both: the struct layouts
+    (guess_struct) and the classes' fields. `functions`: functions.json's entries; `found`: the classes RTTI names,
+    which get their fields here, the constructors their code shows, and the classes of the program's code built
+    without RTTI (from the vtables constructors store, named after the vtable's address until its symbol gets a real
+    name in `real`, functions.json's "names"). `facts`: what the functions do, read before (kept here when empty):
+    reading them is most of the time, and a rename doesn't change them."""
+    pops = {fn["addr"]: n for fn in functions if (n := x86_fields.pops(fn["name"])) is not None}
+    facts = {} if facts is None else facts
+    known = dict(facts)
+
+    def read(addr: int, code: bytes, relocs: list, datum) -> structs.Facts:
+        if addr not in known:
+            facts[addr] = x86_fields.read_facts(addr, code, relocs, datum=datum, pops=pops)
+        return facts[addr]
+
+    def data(addr: int) -> int | None:  # every address the code names is a datum of its own (D_<address>)
+        section = pe.section_at(addr)
+        return addr if section is not None and not section.code else None
+
+    layouts = structs.recover(((fn["addr"], pe.read(fn["addr"], fn["size"]), []) for fn in functions), read, data)
+    named = set(found.by_vtable)
+    classes.from_facts(facts, lambda addr, n: pe.read(addr, n) or None, (structs.ARGUMENT, structs.THIS), known=found,
+                       code=lambda addr: (section := pe.section_at(addr)) is not None and section.code)
+    added = [vt for vt in found.by_vtable if vt not in named]
+    for vt in added:
+        found.names[vt] = found.labels[vt] = (real or {}).get(f"D_{vt:08X}", f"Class_{vt:08X}")
+    found.found_from = (f"the program's run-time type information and {STORED}" if named and added else
+                        STORED if added else found.found_from)
+    found.reads_fields = True
+    return layouts
+
+
 def for_project(root: Path, manifest: dict) -> classes.Classes | None:
     """A PC project's classes, with its functions' names (functions.json: func_0041B470, or the real name
-    rename_symbol gave it), read again when the program or functions.json changes. None without either."""
-    from .scratch import read_pe
+    rename_symbol gave it), read again when the program or functions.json changes. None without either. The game's
+    DLLs (functions.json's "modules") have RTTI and code of their own, read the same way: at the addresses the project
+    gives them, which no two programs share."""
+    read = _read(root, manifest)
+    return read[0] if read else None
+
+
+def structs_for_project(root: Path, manifest: dict) -> structs.Structs | None:
+    """A PC project's struct layouts (structs.py), with the names agents know its functions by, read with its
+    classes."""
+    read = _read(root, manifest)
+    return read[1] if read else None
+
+
+def _read(root: Path, manifest: dict) -> tuple[classes.Classes, structs.Structs] | None:
+    from .scratch import Programs, programs
 
     try:
         config = root / "config" / manifest["version"] / "functions.json"
@@ -275,10 +329,32 @@ def for_project(root: Path, manifest: dict) -> classes.Classes | None:
         real = info.get("names") or {}
         functions = [fn for fns in info["units"].values() for fn in fns]
         labels = {fn["addr"]: real.get(f"func_{fn['addr']:08X}", f"func_{fn['addr']:08X}") for fn in functions}
-        found = recover(read_pe(exe.read_bytes()), labels, {fn["addr"]: fn["relocs"] for fn in functions})
+        try:
+            pes = programs(root, info)
+        except OSError:  # a DLL of the game's not in the project (yet)
+            return None
+        relocs = {fn["addr"]: fn["relocs"] for fn in functions}
+        found = None
+        for pe in pes.values():  # each program's own RTTI
+            one = recover(pe, labels, relocs)
+            if found is None:
+                found = one
+                continue
+            found.by_vtable.update(one.by_vtable)
+            found.names.update(one.names)
+            for addr, roles in one.roles.items():
+                found.roles[addr].extend(roles)
+        code = key[:2] + (hash(tuple((fn["addr"], fn["size"], fn["name"]) for fn in functions)),)
+        if code not in _FACTS:  # (renames keep them: polishing renames a function at a time)
+            _FACTS.clear()
+            _FACTS[code] = {}
+        # the code of every program at once: a DLL's class can derive from one of the .exe's
+        layouts = read_code(Programs(pes.values()), functions, found, real, _FACTS[code])
         for fn in functions:  # every way a function is spelled: the report's symbol, func_<address>, its real name
             for name in (fn["name"], f"func_{fn['addr']:08X}", labels[fn["addr"]]):
                 found.symbols[name] = fn["addr"]
+        data = {int(key[2:], 16): name for key, name in real.items() if key.startswith("D_")}
+        layouts.labels, layouts.symbols = {**data, **found.labels}, found.symbols
         _FOUND.clear()
-        _FOUND[key] = found
+        _FOUND[key] = (found, layouts)
     return _FOUND[key]

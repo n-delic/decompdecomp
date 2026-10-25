@@ -100,8 +100,12 @@ class CompilerMixin:
         return f"{consoles.compiler_name(lab[0])} {' '.join(lab[1])}".strip()
 
     def compiler_map_text(self, slug: str, survey: bool = False, check_ranges: bool = False) -> str:
-        """The map for agents: where it differs from the compiler the game builds with today, and why."""
-        self._rom_only(slug, "compiler_map")
+        """The map for agents: where it differs from the compiler the game builds with today, and why. A project
+        whose source files each have a compiler (PC, DS) has it over its files (app/filecompilers.py)."""
+        if self.filecompilers.applies(slug):
+            return self.filecompilers.text(slug, survey, check_ranges)
+        if self.fork_slug(slug):
+            raise NetworkError("this project's own build sets its compilers: there's no compiler map to read")
         proj = self._project(slug)
         cmap = self.compiler_map(proj, fresh=True)  # an agent asked: what the evidence says now
         if cmap is None:
@@ -288,10 +292,11 @@ class CompilerMixin:
         proj = self._project(slug)
         cfg = self.cfg(proj)
         tc, flag_list, check = None, [], None
+        if compiler and self.filecompilers.applies(slug):  # its files each have one: a range is checked on files
+            return self.filecompilers.suggest(agent, slug, text, compiler, function, ranges)
         if compiler:
             if self.fork_slug(slug):
-                raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only "
-                                   "(where its files can have their own, try_compiler keeps the one that matches)")
+                raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only")
             tc = self._toolchain_named(cfg, compiler)
             flag_list = flags.split() or consoles.of(cfg).default_flags(tc, cfg.get("gp"))
             if not spans and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
@@ -345,7 +350,15 @@ class CompilerMixin:
         it's older than SURVEY_AGAIN_SECONDS, and every applied range gets looked at again once. "Survey again" and
         "Check the applied ranges" were buttons nobody could say when to press, the owner and their author included.
         `check_now`: both at once, whatever their age."""
-        if self.fork_slug(slug):  # a project whose source files each have a compiler (DS): the files are its parts
+        if self.fork_slug(slug):  # a project whose source files each have a compiler (PC, DS): the files are its parts
+            files = self.filecompilers
+            if files.applies(slug):  # the survey and the checks, as below, over its files (app/filecompilers.py)
+                last = self.cfg(self._project(slug)).get("file_survey") or {}
+                if len(files.candidates(slug)) > 1 and (check_now or time.time() - (last.get("t") or 0) >
+                                                         self.SURVEY_AGAIN_SECONDS):
+                    files.start_survey(slug)
+                if check_now:
+                    files.recheck(slug)
             return self.forks.compiler_answer(slug)
         self._rom_only(slug, "the compiler answer")
         proj = self._project(slug)
@@ -484,8 +497,8 @@ class CompilerMixin:
         """A function's C (its best attempt, or `source`) built with the variants of its compiler's flags
         (flag_variants), each judged like an attempt and recorded nowhere: when the C looks right but won't match,
         the flags are often what's wrong, and agents tried them one compile at a time."""
-        if self.fork_slug(slug):
-            raise NetworkError("a fork builds with its project's own compilers and flags")
+        if self.fork_slug(slug):  # where the project lets each file have its own flags (PC), the fork engine's
+            return self.forks.search_flags(agent, slug, function, compiler, source)
         proj = self._project(slug)
         cfg = self.cfg(proj)
         fn = self._function(function, slug)
@@ -523,7 +536,9 @@ class CompilerMixin:
         hit = next((s for s in self.cfg(self._project(slug)).get("suggestions", []) if s["id"] == sid), None)
         if hit is None:
             raise NetworkError(f"no suggestion {sid}")
-        if apply and hit["toolchain"] and hit.get("ranges"):
+        if apply and hit["toolchain"] and hit.get("ranges") and self.fork_slug(slug):  # (its files: each if it holds)
+            self.forks.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"])
+        elif apply and hit["toolchain"] and hit.get("ranges"):
             self.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], hit["flags"])
         elif apply and hit["toolchain"]:
             self.set_compiler(slug, hit["toolchain"], hit["flags"], guard=guard)

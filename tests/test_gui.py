@@ -1,6 +1,7 @@
 """The GUI's own logic, run in node against a stand-in for the page (tests/gui_polls.js): no browser needed."""
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -134,3 +135,29 @@ def test_the_import_offers_every_compiler_of_the_games_console(gui):
     """The import's compiler test can only try what's installed: a game linked by CodeWarrior was guessed right only
     because its GCC was there. The import offers the console's missing compilers, both PlayStations' for a disc."""
     assert gui["checks"]["missing"] == [["ee-gcc-2.96", "mwcps2-3.0.1"], 3, 0]
+
+
+def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui):
+    """A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's: the drop reads the
+    Rich header (or the linker's version) as the import does, and offers the pack the import will build with."""
+    from decompnet.consoles.pc import scratch
+
+    packs = gui["checks"]["pcPack"]
+    for head, pack, offered in packs:
+        built = scratch.describe(bytes.fromhex(head))
+        assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
+    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc"]
+
+
+def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
+    """home.js reads a dropped program's Rich header for the pack to offer (pcPack): its ids are scratch's."""
+    from decompnet.consoles.pc import scratch
+
+    text = (Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static" / "js" / "home.js").read_text()
+    table = re.search(r"const RICH_COMPILERS = \{(.*?)\};", text, re.S).group(1)
+    js = {v: {i for lo, hi in re.findall(r"\[(0x[0-9a-f]+), (0x[0-9a-f]+)\]", ranges) for i in range(int(lo, 16),
+                                                                                                    int(hi, 16))}
+          for v, ranges in re.findall(r'"([\d.]+)": (\[\[.*?\]\])', table)}
+    assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
+    linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
+    assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS

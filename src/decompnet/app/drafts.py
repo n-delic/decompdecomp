@@ -11,6 +11,10 @@ whenever the header, the compiler, a name or the game's layout changed (`draft_m
 them on the background workers every project shares with the permuter (workers.py), at a lower CPU priority that m2c
 inherits: agents' compiles and the app come first. A function whose draft changed and that autopilot tried before is tried again by autopilot (the new
 draft through the judge), which skips a draft it already judged with the same header.
+
+A PC game started from scratch gets Ghidra's drafts the same way (forkengine: can_draft, stale_drafts, draft_mark,
+background_draft), a source file at a time; what follows its headers there is the draft made compilable from them
+(consoles/pc/drafts.py), so a header that changed sends autopilot back to the functions it tried.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ POLL_SECONDS = 30  # how often a drafter looks whether what drafts are made from
 
 @dataclass
 class State:
-    state: str = "running"  # running | stopped | done (the project can't have drafts: not ROM, no m2c)
+    state: str = "running"  # running | stopped | done (the project can't have drafts: no m2c, or no Ghidra on PC)
     total: int = 0  # drafts to make in this pass
     made: int = 0
     retried: int = 0  # changed drafts autopilot judged again
@@ -90,13 +94,17 @@ class Drafter:
             fn = self.net.store.one("SELECT * FROM functions WHERE id=?", fid)
             if fn is None or fn["status"] != "open":
                 return
-            self.net._seed_for(fn, proj)
+            fork = self.net.fork_slug(proj["slug"])  # a game started from scratch in project mode (PC)
+            if fork:
+                self.net.forks.background_draft(proj, fn)
+            else:
+                self.net._seed_for(fn, proj)
             st.made += 1
             if proj["slug"] not in self.net.links and self.net.store.one(
                     "SELECT 1 FROM attempts WHERE function_id=? AND agent_id=?", fid, agent.id):
                 # autopilot tried this function's draft before: the new one goes through the judge too (in a room,
                 # the host's copy does that, and its matches come back here)
-                outcome = self.net._autopilot_one(agent, proj, fid)
+                outcome = (self.net.forks.autopilot_one if fork else self.net._autopilot_one)(agent, proj, fid)
                 st.retried += outcome in ("match", "near", "far")
                 st.matched += outcome == "match"
         except Exception as e:  # one odd function must not stop the rest

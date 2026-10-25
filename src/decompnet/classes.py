@@ -1,7 +1,8 @@
-"""C++ classes, recovered from the game's own machine code (MIPS: PS2, N64), and what agents read about them (also
-for the classes a PC program's run-time type information names: consoles/pc/rtti.py makes the same Classes).
+"""C++ classes, recovered from the game's own machine code (MIPS: PS2, N64, read here; x86: PC programs, from what
+arch/x86_fields.py says each function does, `from_facts`), and what agents read about them (also for the classes a
+PC program's run-time type information names: consoles/pc/rtti.py makes the same Classes, and adds the fields).
 
-Agents matched 7% of GTA San Andreas's functions that make virtual calls against 62% of the rest: without the class
+Agents matched 7% of a PS2 game's functions that make virtual calls against 62% of the rest: without the class
 layouts, every `this->field` is a guess. The code holds most of what a layout is:
 - a constructor stores its class's vtable address into the object (`lui/addiu` the address, `sw` it at this+0):
   that store names the class, and the run of function addresses at that address are its virtual functions;
@@ -21,6 +22,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Iterable
 
+from . import structs
+
 R_MIPS_LO16 = 6
 
 # loads and stores: opcode -> (bytes, kind); kind "" is a store that doesn't say signed or unsigned
@@ -36,8 +39,8 @@ _MAX_SLOTS = 400
 # the type-info function) and for CodeWarrior. (Not measured from virtual calls: C's tables of function pointers, as
 # in RenderWare, are called the same way from offset 0.)
 _HEADER = 8
-WHERE = ("get_class reads MIPS games' code (PlayStation 2, PlayStation, N64) and the run-time type information of PC "
-         "programs built with it, for now")  # where there are classes to find (said where there aren't)
+WHERE = ("get_class reads MIPS games' code (PlayStation 2, PlayStation, N64) and PC programs' (their run-time type "
+         "information too), for now")  # where there are classes to find (said where there aren't)
 
 
 @dataclass
@@ -54,6 +57,8 @@ class Field:
             return "void *"
         if self.kind == "f32":
             return "float"
+        if self.kind == "f64":
+            return "double"
         names = {1: "8", 2: "16", 4: "32", 8: "64", 16: "128"}
         if self.kind in ("s8", "s16", "s32"):
             return f"s{names[self.size]}"
@@ -81,7 +86,7 @@ class Classes:
     by_vtable: dict[int, Class] = field(default_factory=dict)
     roles: dict[int, list[tuple[int, str]]] = field(default_factory=lambda: defaultdict(list))  # function -> (vtable, role)
     found_from: str = "the vtables constructors store"  # what the classes were read from, as agents are told
-    reads_fields: bool = True  # whether the fields come from the code (not yet from x86's: RTTI names classes only)
+    reads_fields: bool = True  # whether the fields come from the code (rtti.recover's alone don't: read_code adds them)
     names: dict[int, str] = field(default_factory=dict)  # vtable -> its class's own name, where the program says (RTTI)
     labels: dict[int, str] = field(default_factory=dict)  # (project mode) address -> the name agents know it by
     symbols: dict[str, int] = field(default_factory=dict)  # (project mode) a function's names -> its address
@@ -165,22 +170,85 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
             big_endian: bool) -> Classes:
     """Classes from (address, code, relocations) of every function and a reader of the program's data."""
     funcs = list(functions)
-    starts = {addr for addr, _, _ in funcs}
     scans = {addr: scan(code, relocs, big_endian) for addr, code, relocs in funcs}
+    out = from_scans(scans, read, big_endian, _HEADER)
+    add_fields(out, scans)
+    return out
+
+
+def from_facts(facts: dict[int, structs.Facts], read: Callable[[int, int], bytes | None], this: tuple,
+               header: int = 0, big_endian: bool = False, known: Classes | None = None,
+               code: Callable[[int], bool] | None = None) -> Classes:
+    """Classes from what a processor's reader for structs.py (Arch.field_accesses) says each function does with
+    pointers, where `this` is the term of the object a method gets (x86: ecx at entry): the globals stored into
+    objects (a constructor's vtable), the accesses through `this`, the calls handed `this`. `known`: the classes
+    another source names already (a PC program's RTTI), which get the constructors found here and every class's
+    fields; the vtables it doesn't know are added to it (a program's code built without RTTI). `code`: whether an
+    address is code, for the vtables' slots (by default: a function's start)."""
+    scans = {addr: _scan_of(f, this) for addr, f in facts.items()}
+    found = from_scans(scans, read, big_endian, header, code)
+    if known is not None:
+        _merge(known, found)
+        found = known
+    add_fields(found, scans)
+    return found
+
+
+def _merge(known: Classes, found: Classes) -> None:
+    """The classes of `found` into `known`: constructors of the ones it has, and the others whole (not a second
+    base's vtable `known` names: that's one of its classes too)."""
+    for vt, cls in found.by_vtable.items():
+        own = known.by_vtable.get(vt)
+        if own is not None:
+            for c in sorted(cls.ctors - own.ctors):
+                own.ctors.add(c)
+                known.roles[c].append((vt, "constructor or destructor"))
+        elif vt not in known.names:
+            known.by_vtable[vt] = cls
+            for f in set(cls.slots) | cls.ctors:
+                known.roles[f] += [(v, role) for v, role in found.roles.get(f, []) if v == vt]
+    for cls in known.by_vtable.values():
+        if cls.parent is not None and cls.parent not in known.by_vtable:
+            cls.parent = None
+
+
+def _scan_of(facts: structs.Facts, this: tuple) -> _Scan:
+    out = _Scan()
+    for term, offset, size, kind in facts.accesses:
+        if term == this:
+            out.accesses.append((offset, size, kind, False))
+        elif term[0] == structs.FIELD and term[1] == this:  # a word of `this` used as an address: a pointer
+            out.accesses.append((term[2], 4, "", True))
+    out.stores = [(value[1], offset, term == this) for term, offset, value in facts.stores if value[0] == structs.GLOBAL]
+    out.this_calls = [callee for callee, n, term in facts.calls if term == this and n == this[1]]
+    return out
+
+
+def from_scans(scans: dict[int, _Scan], read: Callable[[int, int], bytes | None], big_endian: bool,
+               header: int, code: Callable[[int], bool] | None = None) -> Classes:
+    """Classes from each function's _Scan, without their fields yet (add_fields): a stored address whose words (from
+    `header` bytes in) are functions is a vtable; the functions that store it into `this` are its constructors and
+    destructors. A vtable's slots run while its words are code (`code`; by default a function's start), up to the
+    next address a function stores: vtables built without type information (MSVC's without RTTI) sit side by side,
+    and a function the program's analysis merged into the one before it (as a PC game's tiny virtual functions
+    between nop padding were) is still a slot."""
+    starts = set(scans)
+    code = code or starts.__contains__
+    stored_anywhere = {vt for s in scans.values() for vt, _, _ in s.stores}
     e = ">" if big_endian else "<"
     out = Classes()
     for addr, s in scans.items():
         for vt, _, _ in s.stores:
             if vt in out.by_vtable:
                 continue
-            data = read(vt + _HEADER, 4 * _MAX_SLOTS) or b""
+            data = read(vt + header, 4 * _MAX_SLOTS) or b""
             slots = []
             for (w,) in struct.iter_unpack(e + "I", data[:len(data) // 4 * 4]):
-                if w not in starts:
+                if not code(w) or (slots and vt + header + 4 * len(slots) in stored_anywhere):
                     break
                 slots.append(w)
             if slots:
-                out.by_vtable[vt] = Class(vt, _HEADER, slots)
+                out.by_vtable[vt] = Class(vt, header, slots)
     if not out.by_vtable:
         return out
     # A function that stores several vtables at one place in `this` constructs (or destroys) the most derived class:
@@ -195,11 +263,16 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
         return at
     together: dict[int, Counter] = defaultdict(Counter)
     vptrs: dict[int, Counter] = defaultdict(Counter)
+    # Of two vtables as long, the class is the one fewer functions store: a base's is stored by its own constructors
+    # and every derived class's (a destructor stores its class's first and its base's last, a constructor the other
+    # way round: the order can't say)
+    storers = Counter(vt for addr in scans for vts in stored(addr).values() for vt in set(vts))
     for addr, s in scans.items():
         at = stored(addr)
         if not at:
             continue
-        mine = {off: max(reversed(vts), key=lambda v: len(out.by_vtable[v].slots)) for off, vts in at.items()}
+        mine = {off: max(reversed(vts), key=lambda v: (len(out.by_vtable[v].slots), -storers[v]))
+                for off, vts in at.items()}
         first = min(mine)
         cls = out.by_vtable[mine[first]]
         cls.ctors.add(addr)
@@ -222,13 +295,18 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
         if bases:  # the closest ancestor: the longest vtable; then the one with most of the same functions
             cls.parent = max(bases, key=lambda b: (len(out.by_vtable[b].slots),
                                                    sum(x == y for x, y in zip(out.by_vtable[b].slots, cls.slots))))
-    # fields, from the virtual functions and constructors (an inherited one's fields are the base's: the class has
-    # them too, at the same offsets)
     for vt, cls in out.by_vtable.items():
         for i, f in enumerate(cls.slots):
             out.roles[f].append((vt, f"slot {i}"))
         for c in cls.ctors:
             out.roles[c].append((vt, "constructor or destructor"))
+    return out
+
+
+def add_fields(found: Classes, scans: dict[int, _Scan]) -> None:
+    """Each class's fields, from its virtual functions and constructors (an inherited one's fields are the base's:
+    the class has them too, at the same offsets), then its base classes' fields: a derived object has them all."""
+    for cls in found.by_vtable.values():
         for f in set(cls.slots) | cls.ctors:
             for off, size, kind, ptr in scans[f].accesses if f in scans else ():
                 if off < 0 or off == cls.vptr or off >= 0x10000:
@@ -238,11 +316,25 @@ def recover(functions: Iterable[tuple[int, bytes, list]], read: Callable[[int, i
                     fl = cls.fields[off] = Field(off, size, kind)
                 elif size > fl.size and not ptr:
                     fl.size = size
-                if kind and (not fl.kind or kind == "f32"):
+                if kind and (not fl.kind or kind in ("f32", "f64")):
                     fl.kind = kind
                 fl.pointer |= ptr and fl.size == 4
                 fl.users.add(f)
-    return out
+    done: set[int] = set()
+
+    def inherit(cls: Class, seen: frozenset) -> None:
+        if cls.vtable in done:
+            return
+        parent = found.by_vtable.get(cls.parent) if cls.parent is not None else None
+        if parent is not None and parent.vtable not in seen:
+            inherit(parent, seen | {cls.vtable})
+            for off, fl in parent.fields.items():
+                if off not in cls.fields and off != cls.vptr:
+                    cls.fields[off] = Field(fl.offset, fl.size, fl.kind, fl.pointer, set(fl.users))
+        done.add(cls.vtable)
+
+    for cls in found.by_vtable.values():
+        inherit(cls, frozenset())
 
 
 def listing(found: Classes, label: Callable[[int], str], shown: int = 60) -> str:

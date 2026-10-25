@@ -147,7 +147,10 @@ class BriefMixin:
     def stale_drafts(self, proj) -> list[int]:
         """Open functions whose machine draft is missing or was made from something that changed since, smallest
         first (claims go smallest first too). The names in each function's assembly are read once per size of it
-        (a split changes it): on GTA San Andreas, reading all 69 MB of its open functions' assembly takes 1.2 s."""
+        (a split changes it): on GTA San Andreas, reading all 69 MB of its open functions' assembly takes 1.2 s.
+        A game started from scratch in project mode: the fork engine's (Ghidra's drafts, PC)."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.stale_drafts(proj)
         names = self._asm_names.setdefault(proj["id"], {})
         rows = self.store.all("SELECT id, size, unit, vram, seed, seed_key FROM functions WHERE project_id=? "
                               "AND status='open' ORDER BY n_insns, vram", proj["id"])
@@ -164,6 +167,8 @@ class BriefMixin:
 
     def draft_mark(self, proj) -> tuple:
         """What drafts are made from, summed up: a new header version, compiler, rename or split changes it."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.draft_mark(proj)
         version = self.store.one("SELECT MAX(version) AS v FROM context_versions WHERE project_id=?", proj["id"])["v"]
         event = self.store.one("SELECT MAX(id) AS e FROM events WHERE project_id=? AND kind IN "
                                "('context', 'compiler', 'rename', 'split', 'sync', 'import')", proj["id"])["e"]
@@ -171,15 +176,19 @@ class BriefMixin:
 
     def can_draft(self, proj) -> bool:
         """Whether this project's functions get machine drafts here: a ROM project, with m2c installed and able to
-        read its code."""
+        read its code, or a game started from scratch on a console with drafts of its own (PC: Ghidra's)."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.can_draft(proj)
         return (self.is_rom(proj) and seeds.available()
                 and bool(seeds.m2c_target(self.cfg(proj)["compiler"]["toolchain"])))
 
     def redraft(self, project: str | None, function: str, context: str) -> str:
         """m2c's draft of a function made again with declarations an agent worked out (a struct, a prototype) on top
         of the shared header's, replacing the header's where they declare the same names. Recorded nowhere: the agent
-        tries it with compile_and_diff, and shares what helped with edit_context."""
-        self._rom_only(project, "redraft")
+        tries it with compile_and_diff, and shares what helped with edit_context. A PC game: Ghidra's draft made
+        compilable with them (forks.redraft)."""
+        if (fork := self.fork_slug(project)):
+            return self.forks.redraft(fork, function, context)
         proj = self._project(project)
         fn = self._function(function, proj["slug"])
         if not seeds.available():

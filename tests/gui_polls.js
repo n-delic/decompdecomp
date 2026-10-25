@@ -149,6 +149,32 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       const file = { name: "game.exe", size: 0x200 };
       return [identifyHead(h, file)?.platform ?? null, notSupported(h, file)];
     }),
+    // the Visual C++ pack a dropped program asks for, from its Rich header or linker version: [head as hex, pack, what
+    // the drop says]. tests/test_gui.py asks scratch.describe about the same bytes
+    pcPack: [[[0xab, 40219, 503], [0xaa, 40219, 171], [0x30, 9044, 121], [0x9d, 40219, 1]],
+             [[0x0a, 8047, 169], [0x0b, 8966, 148], [0x0b, 8447, 38], [0x13, 8034, 23]],
+             [[0x5d, 3077, 40], [0x5f, 3077, 300], [0x78, 50727, 1]],  // 2003's code, linked by 2005's linker
+             [[0x6d, 50727, 30], [0x0b, 8168, 10]],  // no linker entry: the version that built the most files
+             [], [[0x01, 0, 5]]].map((rich, k) => {
+      const key = [0x5a, 0x17, 0x3c, 0x91], bytes = [0x4d, 0x5a, ...new Array(0x3e + 0x40).fill(0)];
+      if (rich.length) {
+        const plain = [..."DanS"].map((c) => c.charCodeAt(0)).concat(new Array(12).fill(0));
+        for (const [product, build, count] of rich) {
+          const w = [((product << 16) | build) >>> 0, count];
+          for (const v of w) plain.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, v >>> 24);
+        }
+        bytes.push(...plain.map((b, i) => b ^ key[i % 4]), 0x52, 0x69, 0x63, 0x68, ...key);
+      }
+      while (bytes.length % 8) bytes.push(0);
+      const pe = bytes.length;
+      bytes.push(0x50, 0x45, 0, 0, 0x4c, 0x01, 3, 0, ...new Array(12).fill(0), 0xe0, 0, 0x02, 0x01);
+      bytes.push(0x0b, 0x01, k === 4 ? 9 : 6, 0, ...new Array(0xe0 - 4).fill(0));
+      const h = new Uint8Array(0x400);
+      h.set(bytes);
+      h[0x3c] = pe;
+      const info = identifyHead(h, { name: "game.exe", size: 0x400 });
+      return [[...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join(""), info.pack, packOf(info)];
+    }),
     // the import offers every compiler of the game's console this computer lacks (both PlayStations' for a disc)
     missing: (() => {
       const before = S.st;

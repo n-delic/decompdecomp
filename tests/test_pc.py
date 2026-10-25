@@ -25,7 +25,7 @@ from decompnet.network import NetworkError
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
-EXE, MAP = DEMO / "build" / "demoquest.exe", DEMO / "build" / "demoquest.map"
+EXE, MAP = DEMO / "build" / "demoquest.exe", DEMO / "build" / "symbols.map"
 GAME = ROOT / "projects" / "demo-n64" / "original" / "game.c"
 
 needs_tools = pytest.mark.skipif(
@@ -53,7 +53,7 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     source.write_text("int sample(void) { return 1; }\n")
     config = root / "config/TEST/functions.json"
     config.parent.mkdir(parents=True)
-    config.write_text(json.dumps({"units": {"sample": {}}}))
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"sample": {}}}))
     (root / "include").mkdir()
     compiler_root = tmp_path / "Compiler & tools $ ü"
     compiler = compiler_root / "6.0/Bin/CL.EXE"
@@ -129,6 +129,11 @@ def test_a_real_name_stands_for_its_address_however_c_or_cpp_spells_it():
     assert names.address_of(b"_func_00402000@4", real) == b"func_00402000"  # an address still says it
     for other in (b"?UpdateTownHall@@YAXXZ", b"_memcpy", b"??0Town@@QAE@XZ", b".text"):
         assert names.address_of(other, real) is None, other
+    # a method named with its class (a DLL exports start of two classes): Town::start is the class's, not Mill's
+    real = names.real_names({"names": {"func_00401000": "Town::start", "func_00402000": "Game::UI::start"}})
+    assert names.address_of(b"?start@Town@@QAEXXZ", real) == b"func_00401000"
+    assert names.address_of(b"?start@UI@Game@@QAEXXZ", real) == b"func_00402000"
+    assert names.address_of(b"?start@Mill@@QAEXXZ", real) is None
 
 
 def test_a_constructor_or_destructor_stands_for_the_address_its_class_names():
@@ -361,7 +366,7 @@ def _by_address(path: Path = MAP):
 def pc(tmp_path_factory):
     from decompnet.app.engine import RomNetwork
 
-    if not EXE.exists():
+    if not MAP.exists():  # (a build from before the map was symbols.map: its demoquest.map would name everything)
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     work = tmp_path_factory.mktemp("pc")
     net = RomNetwork(work / "app.db", work)
@@ -458,6 +463,38 @@ def test_agents_match_functions(pc):
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
 
 
+@needs_tools
+def test_the_project_rebuilds_the_whole_program_from_its_matched_c(pc, tmp_path):
+    """The rebuildable export on PC is the project itself: `ninja rebuild` puts the whole .exe back together with
+    every matched function from its C, the rebuild check says it's the user's copy byte for byte, and a fresh clone of
+    the project, given the user's copy, builds the same."""
+    net, slug = pc
+    proj = net.project_row(slug)
+    root, version = Path(proj["root"]), "demoquest"
+    agent, _ = net.local_agent("pc-agent")
+    clamp = next(s for s in _map() if re.sub(r"^[_@]|@\d+$", "", s) == "clamp_s32")
+    res = net.attempt(agent, clamp.replace("clamp_s32", _addresses()["clamp_s32"]),
+                      _by_address()(csource.get(GAME.read_text(), "clamp_s32")), slug)
+    assert res["matched"], res["text"]
+    matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",
+                                                proj["id"])}
+    result = net.forks.check_rom(slug, log=lambda *_: None)
+    assert result["identical"] and result["what"] == "The game's program, rebuilt from the project,", result
+    from_c = set(json.loads((root / "build" / version / "rebuild.json").read_text())["c"])
+    assert matched and matched <= from_c, matched - from_c
+    assert net.overview(slug)["rebuild"]["identical"]
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(root), str(clone)], check=True)
+    (clone / "orig").mkdir()
+    shutil.copyfile(root / "orig" / f"{version}.exe", clone / "orig" / f"{version}.exe")
+    fp = ForkProject(clone)
+    for cmd in ([sys.executable, "tools/configure.py", version, *scratch_pe.tool_args()], ["ninja", "rebuild"]):
+        ok, out = fp.run(cmd, log=lambda *_: None)
+        assert ok, out
+    assert (clone / "build" / version / f"{version}.exe").read_bytes() == (root / "orig" / f"{version}.exe").read_bytes()
+    assert set(json.loads((clone / "build" / version / "rebuild.json").read_text())["c"]) == from_c
+
+
 NEWER = ["8.0SP1", "9.0", "9.0SP1", "10.0", "10.0SP1"]  # the msvc2005 pack
 
 
@@ -479,9 +516,9 @@ def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_p
     assert any(f": Visual C++ {version}" in line and "closest" not in line for line in said), said
     configure = (Path(net.project_row(slug)["root"]) / "tools" / "configure.py").read_text()
     assert f'MSVC_VERSION = "{version}"' in configure and '"/EHsc"]' in configure
-    syms = _map(build / "demoquest.map")
+    syms = _map(build / "symbols.map")
     agent, _ = net.local_agent("pc-agent")
-    sub = _by_address(build / "demoquest.map")
+    sub = _by_address(build / "symbols.map")
     header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
     header += "extern s32 g_settings[6];\n"
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
@@ -512,7 +549,7 @@ def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path, b
     slug = net.import_rom(build / "demoquest.exe", confirmed=True, log=lambda *_: None)
     agent, _ = net.local_agent("pc-agent")
     root = Path(net.project_row(slug)["root"])
-    syms, sub = _map(build / "demoquest.map"), _by_address(build / "demoquest.map")
+    syms, sub = _map(build / "symbols.map"), _by_address(build / "symbols.map")
     header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header + "extern s32 g_settings[6];\n"),
                                "the game's types").startswith("✅")
@@ -895,8 +932,9 @@ def test_a_project_made_before_gets_its_pieces_joined_and_still_rebuilds(tmp_pat
     assert units["text_00401000"][0]["size"] == 0x20
     _delink(root)
     assert scratch_pe.check_code(root, "game", log=lambda *_: None) == {
-        "identical": True, "detail": "identical: the code of its 2 functions (37 bytes)",
-        "what": "The game's code, rebuilt from its delinked functions,"}
+        "identical": True, "detail": "identical: the whole program (549 bytes); its 2 functions (37 bytes of code), "
+                                     "0 of them from C", "what": "The game's program, rebuilt from the project,"}
+    assert (root / "build" / "game" / "game.exe").read_bytes() == (root / "orig" / "game.exe").read_bytes()
 
 
 def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
@@ -911,6 +949,67 @@ def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
     target.write_bytes(coff([{**owner, "size": owner["size"] + 1}], exe))  # cut one byte too long
     result = scratch_pe.check_code(root, "game", log=lambda *_: None)
     assert not result["identical"] and "_func_0040100F (overlaps _func_00401000)" in result["detail"]
+
+
+def _compiled(code: bytes, name: str, relocs: list[tuple[int, int, int]], data: bytes = b"") -> bytes:
+    """An object as Visual C++ compiles one: .text holding the function `name` (symbol 0), .data holding `data` (a
+    string, $SG1: symbol 1), and the code's relocations as (offset, symbol, type)."""
+    text_at = 20 + 40 * 2
+    rel_at = text_at + len(code)
+    data_at = rel_at + 10 * len(relocs)
+    table_at = data_at + len(data)
+    strings = bytearray(4)
+    table = b""
+    for sym, value, section, typ, cls in ((name, 0, 1, 0x20, 2), ("$SG1", 0, 2, 0, 3)):
+        raw = sym.encode()
+        field = raw.ljust(8, b"\0") if len(raw) <= 8 else struct.pack("<II", 0, len(strings))
+        strings += b"" if len(raw) <= 8 else raw + b"\0"
+        table += struct.pack("<8sIhHBB", field, value, section, typ, cls, 0)
+    struct.pack_into("<I", strings, 0, len(strings))
+    return (struct.pack("<HHIIIHH", 0x14C, 2, 0, table_at, 2, 0, 0)
+            + struct.pack("<8sIIIIIIHHI", b".text", 0, 0, len(code), text_at, rel_at, 0, len(relocs), 0, 0x60500020)
+            + struct.pack("<8sIIIIIIHHI", b".data", 0, 0, len(data), data_at, 0, 0, 0, 0, 0xC0300040)
+            + code + b"".join(struct.pack("<IIH", *r) for r in relocs) + data + table + bytes(strings))
+
+
+def test_the_project_rebuilds_the_program_with_each_function_from_its_c_where_that_is_the_games_code(tmp_path):
+    """The rebuildable export on PC: tools/rebuild.py puts the whole program back together, each function from what
+    src/ compiles to where that is the game's code once its relocations are filled in (its own string where the game
+    has the same bytes), else from the function delinked from the user's copy; a best attempt that doesn't match, or
+    calls another function, stays the game's bytes, and the program is the user's copy either way."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    exe, compiled = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "src" / "auto"
+    compiled.mkdir(parents=True)
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    coff = _template_tool("delink").coff
+    for unit, fns in info["units"].items():  # (C that compiles to each function: its own object, as delinked)
+        (compiled / f"{unit}.obj").write_bytes(coff(fns, exe))
+
+    def built() -> list[str]:
+        result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+        assert result["identical"], result
+        assert (root / "build" / "game" / "game.exe").read_bytes() == exe
+        return json.loads((root / "build" / "game" / "rebuild.json").read_text())["c"]
+    assert built() == ["_func_00401000", "_func_0040100F", "_func_00401020"]
+    owner = info["units"]["text_00401000"][0]
+    (compiled / "text_00401000.obj").write_bytes(coff([{**owner, "relocs": [[9, scratch_pe.REL32, "_func_0040100F", 0]]}],
+                                                      exe))  # calls another function
+    assert built() == ["_func_0040100F", "_func_00401020"]
+    wrong = bytearray(exe)
+    wrong[scratch_pe.read_pe(exe).offset(0x401020) + 1] ^= 1  # another instruction
+    (compiled / "text_00401020.obj").write_bytes(coff(info["units"]["text_00401020"], bytes(wrong)))
+    assert built() == ["_func_0040100F"]
+    # a string of its own: used where the game's code reads it from, when the game has the same bytes there
+    load = bytes.fromhex("b810104000c3")  # mov eax, 0x401010; ret
+    program = load.ljust(0x10, b"\x90") + b"hi\0"
+    root = _project(tmp_path / "string", program, [_row(0x401000, 0x401006)])
+    exe, compiled = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "src" / "auto"
+    compiled.mkdir(parents=True)
+    code = bytes.fromhex("b800000000c3")
+    (compiled / "text_00401000.obj").write_bytes(_compiled(code, "_func_00401000", [(1, 1, scratch_pe.DIR32)], b"hi\0"))
+    assert built() == ["_func_00401000"]
+    (compiled / "text_00401000.obj").write_bytes(_compiled(code, "_func_00401000", [(1, 1, scratch_pe.DIR32)], b"ho\0"))
+    assert built() == []
 
 
 def test_agents_join_two_functions_by_their_names(tmp_path):
@@ -990,6 +1089,68 @@ def test_each_pc_source_file_can_have_its_own_visual_cpp(tmp_path):
     assert scratch_pe.file_compilers(root, "game") == {s: "6.0" for s in sources if s != first}
     pc.set_file_compiler(fp, first, "MSVC/7.1")  # the project's own: no line
     assert first not in scratch_pe.file_compilers(root, "game")
+
+
+# a function that calls an import through its thunk, the thunks (RtlUnwind's, closesocket's), then a function that
+# calls the second thunk; the import address table's slots are at the end of the code
+SLOTS = {0x401F00: "RtlUnwind", 0x401F04: "closesocket"}
+CALLS_THUNKS = (bytes.fromhex("e80b000000c3").ljust(0x10, b"\x90")  # call 0x401010; ret
+                + bytes.fromhex("ff25001f4000") + bytes.fromhex("ff25041f4000").ljust(0xA, b"\x90")
+                + bytes.fromhex("e8f1ffffffc3"))  # call 0x401016; ret
+
+
+def test_import_thunks_are_functions_of_their_own_named_after_their_imports(monkeypatch):
+    """Ghidra marks the linker's `jmp [__imp__Name]` thunks as thunks, which analyse used to leave out: their bytes
+    went to the function before them, and calls to the second one were calls into its middle (_D_00401016)."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    pe = scratch_pe.read_pe(_tiny_exe(CALLS_THUNKS))
+    assert scratch_pe.import_thunk(pe, 0x401010) == "RtlUnwind" and scratch_pe.import_thunk(pe, 0x401000) is None
+    rows = [_row(0x401000, 0x401006), {**_row(0x401010, 0x401016), "name": "RtlUnwind", "thunk": True,
+                                        "convention": "__stdcall", "purge": 16},
+            {**_row(0x401016, 0x40101C), "name": "closesocket", "thunk": True, "purge": 2147483647},
+            _row(0x401020, 0x401026)]
+    found = scratch_pe.analyse(pe, rows)
+    assert [(f.name, f.size) for f in found] == [("_func_00401000", 0x10), ("_RtlUnwind@16", 6),
+                                                 ("_closesocket", 0xA), ("_func_00401020", 6)]
+    assert found[0].relocs == [(1, scratch_pe.REL32, "_RtlUnwind@16", 0)]
+    assert found[1].relocs == [(2, scratch_pe.DIR32, "__imp__RtlUnwind", 0)]
+    assert found[3].relocs == [(1, scratch_pe.REL32, "_closesocket", 0)]
+
+
+def test_a_project_made_before_gets_its_import_thunks_cut_out_named_and_set_aside(tmp_path, monkeypatch):
+    """The thunks a project made before took for one function (found in a gap) become functions of their own, the
+    caller of the second calls it by name, functions.json sets them aside and names them as their imports (so C
+    declaring `__stdcall RtlUnwind` pairs with them), and the code still rebuilds byte for byte."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    rows = [_row(0x401000, 0x401006), _row(0x401020, 0x401026)]
+    root = _project(tmp_path, CALLS_THUNKS, rows)
+    config = root / "config" / "game" / "functions.json"
+    before = config.read_text()
+    units = json.loads(before)["units"]
+    assert [(fns[0]["name"], fns[0]["size"]) for fns in units.values()][1] == ("_func_00401010", 0x10)
+    assert units["text_00401020"][0]["relocs"] == [[1, scratch_pe.REL32, "_D_00401016", 0]]
+    # a matched function calling into the run: its C names it as it is, so the run stays
+    assert scratch_pe.name_import_thunks(root, "game", keep={"_func_00401020"}) == 0
+    assert config.read_text() == before
+    assert scratch_pe.name_import_thunks(root, "game") == 2
+    info = json.loads(config.read_text())
+    entries = {fn["name"]: fn for fns in info["units"].values() for fn in fns}
+    assert {n: (fn["size"], fn.get("generated", "")[:41]) for n, fn in entries.items()} == {
+        "_func_00401000": (0x10, ""), "_RtlUnwind": (6, "an import thunk the linker adds for calls"),
+        "_closesocket": (0xA, "an import thunk the linker adds for calls"), "_func_00401020": (6, "")}
+    assert entries["_func_00401000"]["relocs"] == [[1, scratch_pe.REL32, "_RtlUnwind", 0]]
+    assert entries["_func_00401020"]["relocs"] == [[1, scratch_pe.REL32, "_closesocket", 0]]
+    assert info["names"] == {"func_00401010": "RtlUnwind", "func_00401016": "closesocket"}
+    names = _template_tool("names")
+    assert names.address_of(b"_RtlUnwind@16", names.real_names(info)) == b"func_00401010"
+    assert consoles.get("pc").generated_functions(ForkProject(root), "game")["_closesocket"].startswith("an import")
+    _delink(root)
+    rebuild = _template_tool("rebuild")  # (the tiny program has no import table: the rebuild reads SLOTS too)
+    monkeypatch.setattr(rebuild.Program, "_imports", lambda self, exe, at, base: {
+        f"__imp__{name}": slot for slot, name in SLOTS.items()})
+    monkeypatch.setattr(scratch_pe, "_template_tool", lambda name: rebuild)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    assert scratch_pe.name_import_thunks(root, "game") == 0  # (done)
 
 
 def test_only_the_frame_helpers_shapes_set_a_frame():
@@ -1313,16 +1474,17 @@ def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str
 @pytest.mark.parametrize("level", [1, 3])
 def test_a_project_made_before_is_brought_up_one_analysis_step_at_a_time(tmp_path, monkeypatch, level):
     """From a project made before PC projects had an analysis level (1) every step runs, each its own commit and
-    feed line: the repairs, the stubs set aside, the pieces joined, the rebuild identical after each. The joins never
-    take a stub, though the first one reads the frame of the function before it, as a piece would; a project at 3
-    gets only the joins."""
+    feed line: the repairs, the stubs set aside, the pieces joined, its file of framed functions built with /Oy-, the
+    rebuild identical after each. The joins never take a stub, though the first one reads the frame of the function
+    before it, as a piece would; a project at 3 gets only the joins and the flags."""
     net, root, stubs = _project_made_before(tmp_path, monkeypatch, level)
     pid = net.project_row("p")["id"]
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis' "
                                                "ORDER BY id", pid)]
     expected = ["1 functions had a jump table", f"{len(EH_STUBS)} functions are exception-handling code",
-                "1 pieces of functions Ghidra cut off"][0 if level == 1 else 2:]
+                "1 pieces of functions Ghidra cut off",
+                "1 source files whose functions keep an ebp frame build with /Oy-"][0 if level == 1 else 2:]
     assert len(said) == len(expected) and all(s.startswith(e) for s, e in zip(said, expected)), said
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == len(said)
@@ -1384,7 +1546,8 @@ def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkey
     pid = net.project_row("p")["id"]
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
     assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
-                    "tools/configure.py, tools/names.py, config/game/file_compilers.json)"]
+                    "tools/configure.py, tools/names.py, config/game/file_compilers.json, "
+                    "config/game/file_flags.json)"]
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == 1
     assert not subprocess.run(["git", "status", "--porcelain", "tools", "config"], cwd=root, capture_output=True,
@@ -1414,3 +1577,590 @@ def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(t
     assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+@needs_tools
+def test_the_guess_for_the_demos_struct_is_the_struct_its_source_has(pc):
+    """guess_struct reads Visual C++'s code: entity_update_physics's argument (on the stack) is the demo's Entity,
+    field for field, from the functions that share it, as on MIPS (tests/test_structs.py). Two differences: the flags
+    at +2 are only or'd and tested, which say nothing of their sign, and +0x18 (hp) is written only as an element of
+    the global array, `[index + address]`, which isn't read as the array's type yet."""
+    net, slug = pc
+    syms = _map()
+    name = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "entity_update_physics")
+    name = name.replace("entity_update_physics", f"func_{syms[name]:08X}")
+    text = net.guess_struct(slug, name, "arg0")
+    guessed = {int(offset, 16): ctype for offset, ctype in re.findall(r"/\* 0x([0-9A-F]+) \*/ (\w+) unk_", text)}
+    assert guessed == {0x00: "s16", 0x02: "s16", 0x04: "s32", 0x08: "s32", 0x0C: "s32", 0x10: "s32", 0x14: "s16",
+                       0x16: "s16"}, text
+    assert f"The same type: the global D_{syms['_g_entities']:08X}" in text  # the array entity_update's loop walks
+    brief = net.get_function(name, slug)
+    assert "### Likely struct layouts" in brief and f"- arg0: S_D_{syms['_g_entities']:08X}, +0x0 s16" in brief
+
+
+def _registered(tmp_path, monkeypatch, program: bytes, rows: list[dict], slug: str = "p", net=None):
+    """A hand-made PC project (_project: a source file per function) as the app has it: registered, measured from
+    its functions.json (no compiler: nothing matches), its targets and rebuild check the delinked objects'."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles.pc import WindowsPC
+    from decompnet.forks.project import Unit
+
+    root = _project(tmp_path / slug, program, rows)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({
+        "created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0",
+        "game": {"path": "orig/game.exe", "sha1": hashlib.sha1(_tiny_exe(program)).hexdigest()},
+        "analysis": consoles.get("pc").ANALYSIS, "tools": scratch_pe.tools_version()}))
+    (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
+        subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+    net = net or RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    net.forks._register(slug, slug.upper(), "fork", root, {"kind": "fork", "origin": "scratch", "version": "game",
+                                                            "platform": "pc", "ready": True}, "x")
+
+    def units(fp) -> dict:
+        return json.loads((fp.root / "config" / "game" / "functions.json").read_text())["units"]
+    monkeypatch.setattr(ForkProject, "report", lambda self: {"units": [
+        {"name": u, "functions": [{"name": fn["name"], "size": str(fn["size"]), "fuzzy_match_percent": 0.0} for fn in fns]}
+        for u, fns in units(self).items()]})
+    unit = lambda self, u: Unit(u, self.root / "build" / "game" / "target" / f"{u}.obj", None,  # noqa: E731
+                                f"src/auto/{u}.cpp", False, None)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [unit(self, u) for u in units(self)])
+    monkeypatch.setattr(ForkProject, "unit", lambda self, u: unit(self, u) if u in units(self) else
+                        (_ for _ in ()).throw(ForkError(f"no unit {u!r}")))
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: (
+        _delink(fp.root), scratch_pe.check_code(fp.root, version, log=log))[1])
+    net.forks.sync(slug, log=lambda *_: None)
+    return net, root
+
+
+# Ghidra took two functions for one (0x401000), and a function with data after its return for all code (0x401020)
+MERGED = FRAME_RET * 2 + b"\x90" * 14 + FRAME_RET + bytes(range(1, 8)) + FRAME_RET
+MERGED_ROWS = [_row(0x401000, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401039)]
+
+
+def test_agents_of_two_models_end_a_function_where_it_really_ends(tmp_path, monkeypatch):
+    """report_boundary on PC: three agents of two models say where a function ends; the rest becomes a function of
+    its own (code: open to agents; data: set aside), checked by the rebuild, with a note; one that can't hold is
+    refused and remembered."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    say = lambda who, fn, end, why="a second function starts there: push ebp": net.request_boundary(  # noqa: E731
+        net.local_agent(who)[0], "p", fn, end, why)
+    for end in ("+0x30", "0x00401000", "hello"):
+        with pytest.raises(NetworkError, match="an address inside it"):
+            say("claude-opus-5-5-1", "_func_00401000", end)
+    assert "1 of 3 agents" in say("opencode-beam-free-1", "_func_00401000", "+9")
+    assert "1 of 2 models" in say("opencode-beam-free-2", "_func_00401000", "0x00401009")  # (the same address)
+    said = say("claude-sonnet-5-5-1", "_func_00401000", "+9")
+    assert said.startswith("With yours, 3 agents of 2 models agree: _func_00401000 ends at 0x00401009; the 23 bytes "
+                           "after it are _func_00401009, a function of its own"), said
+    rows = {r["name"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", net.project_row("p")["id"])}
+    assert rows["_func_00401000"]["size"] == 9 and rows["_func_00401009"]["status"] == "open"
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert "decompdecomp cut it" in net.store.one("SELECT text FROM notes WHERE function_id=?",
+                                                  rows["_func_00401000"]["id"])["text"]
+    data = "data after its return: 01 02 03 04 isn't code"
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        said = say(who, "_func_00401020", "+9", data)
+    assert said.endswith("_func_00401029, set aside as not code. The game still builds byte for byte."), said
+    tail = net._function("_func_00401029", "p")
+    assert tail["status"] == "asm" and data in json.loads(tail["meta"])["asm_code"]
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2"):  # cutting off the padding Visual C++ puts there
+        say(who, "_func_00401009", "+9", "nops")
+    assert "refused: what follows 0x00401012 is padding" in say("claude-sonnet-5-5-1", "_func_00401009", "+9", "nops")
+    assert "was tried, and refused" in say("claude-opus-5-5-1", "_func_00401009", "+9", "nops")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    with pytest.raises(NetworkError, match="its end is proven"):
+        say("claude-opus-5-5-1", "_func_00401030", "+3")
+
+
+def _calls(at: int, target: int, count: int = 6) -> bytes:
+    """A function at `at` with a frame that calls `target` `count` times: push ebp; mov ebp, esp; call...; pop; ret."""
+    code = bytearray(PUSH_FRAME)
+    for _ in range(count):
+        code += b"\xe8" + struct.pack("<i", target - (at + len(code) + 5))
+    return bytes(code + bytes.fromhex("5dc3"))
+
+
+# the same function (it calls its neighbour six times) in two programs, at other addresses, calling other addresses
+GAME_A = _calls(0x401000, 0x401030).ljust(0x30, b"\x90") + FRAME_RET
+GAME_B = FRAME_RET.ljust(0x10, b"\x90") + _calls(0x401010, 0x401040).ljust(0x30, b"\x90") + FRAME_RET
+ROWS_A = [_row(0x401000, 0x401023), _row(0x401030, 0x401039)]
+ROWS_B = [_row(0x401000, 0x401009), _row(0x401010, 0x401033), _row(0x401040, 0x401049)]
+
+
+def test_a_pc_projects_targets_have_twins_by_their_masked_code():
+    """A PC project's targets are COFF objects, which twins read as nothing (pyelftools): no function of a PC game
+    had a twin, in it or across games. Identical code with other addresses is one fingerprint; its relocations name
+    what C writes (func_00401030, not _func_00401030)."""
+    from decompnet.app import twins
+
+    prints = []
+    for program, rows in ((GAME_A, ROWS_A), (GAME_B, ROWS_B)):
+        pe = scratch_pe.read_pe(_tiny_exe(program))
+        entries = [scratch_pe._entry(pe, f) for f in scratch_pe.analyse(pe, rows)]
+        prints.append(twins.object_prints(_template_tool("delink").coff(entries, _tiny_exe(program))))
+    a, b = prints[0]["_func_00401000"], prints[1]["_func_00401010"]
+    assert a.key == b.key and a.key != prints[1]["_func_00401000"].key
+    assert (a.name, a.refs[0], b.refs[0]) == ("func_00401000", "func_00401030", "func_00401040")
+    assert twins.renames(a, b, a.name, b.name) == {"func_00401000": "func_00401010", "func_00401030": "func_00401040"}
+
+
+def test_code_matched_in_one_pc_game_is_tried_on_its_twin_in_another(tmp_path, monkeypatch):
+    """Twins across your games, in project mode: a function matched in one PC project, identical in another (a C
+    runtime both link), is tried there with that project's names; the judge decides. Only where both files are
+    built with the same Visual C++."""
+    from decompnet.app.forkengine import ForkEngine
+
+    net, root_a = _registered(tmp_path, monkeypatch, GAME_A, ROWS_A, slug="a")
+    _, root_b = _registered(tmp_path, monkeypatch, GAME_B, ROWS_B, slug="b", net=net)
+    (root_a / "src" / "auto" / "text_00401000.cpp").write_text(
+        '#include "common.h"\nvoid func_00401030(void);\n\nvoid func_00401000(void) {\n'
+        + "    func_00401030();\n" * 6 + "}\n")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401000' AND project_id=?",
+                   (net.project_row("a")["id"],))
+    tried = []
+    monkeypatch.setattr(ForkEngine, "attempt", lambda self, agent, slug, function, source, keep=True, **kw: (
+        tried.append((slug, function, source)), {"matched": True, "score": 0})[1])
+    scratch_pe.compilers_file(root_a, "game").write_text("{}")  # (both built with the project's own, 6.0)
+    scratch_pe.compilers_file(root_b, "game").write_text(json.dumps({"src/auto/text_00401010.cpp": "7.1"}))
+    assert net.twins.across_games("b") == 0 and not tried  # (another Visual C++ builds that file)
+    scratch_pe.compilers_file(root_b, "game").write_text("{}")
+    assert net.twins.across_games("b") == 1
+    (slug, function, source), = tried
+    assert (slug, function) == ("b", "_func_00401010")
+    assert source.endswith("void func_00401040(void);\nvoid func_00401010(void) {\n" + "    func_00401040();\n" * 6 + "}\n")
+    assert "identical to _func_00401000 in A (matched)" in source
+
+
+FIVE = FRAME_RET.ljust(0x10, b"\x90") * 5  # five functions, a source file each (_project), 6.0 the project's compiler
+FIVE_ROWS = [_row(0x401000 + 0x10 * k, 0x401009 + 0x10 * k) for k in range(5)]
+
+
+def _file_compiler_project(tmp_path, monkeypatch, scores: dict[tuple[str, str], tuple[dict, dict]]):
+    """A PC project of five files whose builds are `scores` ((file, compiler) -> its functions' match % with the
+    file's own compiler and with that one), its Rich header naming 6.0 and 7.1, proven changes applying by
+    themselves, and every file switch recorded instead of built."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root = _registered(tmp_path, monkeypatch, FIVE, FIVE_ROWS)
+    scratch_pe.compilers_file(root, "game").write_text("{}")
+    net.filecompilers.background = False
+    net.set_auto_adjust("p", True)
+    monkeypatch.setattr(WindowsPC, "program_compilers", lambda self, fp: [
+        ("MSVC/6.0", 148, "Visual C++ 6.0 SP5 (build 8966)", True), ("MSVC/7.1", 30, "Visual C++ .NET 2003 (7.1, build 3077)", True)])
+    monkeypatch.setattr(ForkEngine, "file_scores", lambda self, slug, source, compiler: scores.get(
+        (source.removeprefix("src/auto/text_").removesuffix(".cpp"), compiler), ({}, {})))
+    switched = []
+    monkeypatch.setattr(ForkEngine, "set_compiler_ranges", lambda self, slug, ranges, compiler: switched.append(
+        (ranges, compiler)) or "switched")
+    return net, root, switched
+
+
+def _only_with(name: str, compiler: str = "MSVC/7.1", own: float = 50.0) -> dict:
+    return {(name[-8:], compiler): ({f"_func_{name[-8:]}": own}, {f"_func_{name[-8:]}": 100.0})}
+
+
+def test_the_survey_confirms_another_visual_cpp_and_its_neighbouring_file_applies_it(tmp_path, monkeypatch):
+    """The compiler map on PC: the Rich header's compilers, the survey building each file with them (a function that
+    matches with 7.1 and not with its file's 6.0 confirms 7.1), the map's run becoming a suggestion, and the range
+    check applying it once the next file confirms it too, stopping at a file whose match needs 6.0."""
+    scores = {**_only_with("00401020"), **_only_with("00401030"),
+              ("00401010", "MSVC/7.1"): ({"_func_00401010": 100.0}, {"_func_00401010": 60.0})}  # needs its 6.0
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    text = net.compiler_map_text("p")
+    assert "Visual C++ 6.0 SP5 (build 8966): 148 files; Visual C++ .NET 2003 (7.1, build 3077): 30 files" in text
+    assert "not run yet" in text
+    assert net.filecompilers.survey("p")["tried"] == 0  # (no C for any function yet: nothing to build)
+    with net.store.tx() as db:  # agents' attempts
+        db.execute("UPDATE functions SET best_source='int f(void);' WHERE project_id=?", (net.project_row("p")["id"],))
+    # (only the first file's builds this time: the survey goes on where it stopped)
+    assert net.filecompilers.survey("p", limit=3)["confirmed"] == 1
+    survey = net.cfg(net.project_row("p"))["file_survey"]
+    assert survey["confirmed"] == {"_func_00401020": "MSVC/7.1"}
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and check["origin"] == "src/auto/text_00401020.cpp"
+    assert check["evidence"]["src/auto/text_00401010.cpp"] == "refuted"
+    assert check["evidence"]["src/auto/text_00401030.cpp"] == "confirmed"
+    assert switched == [([[0x401020, 0x401040]], "MSVC/7.1")]
+    (suggestion,) = net.cfg(net.project_row("p"))["suggestions"]
+    assert suggestion["status"] == "applied" and suggestion["ranges"] == [[0x401020, 0x401040]]
+    text = net.compiler_map_text("p")
+    assert "1 functions confirmed in 3 files" in text and "#1 0x401020-0x401030 Visual C++ 7.1: confirmed by" in text
+    answer = net.compiler_answer("p")
+    assert answer["checks"][0]["status"] == "confirmed" and answer["survey"]["confirmed"] == 1
+
+
+def test_a_suggested_file_compiler_both_neighbours_refute_is_a_quirk(tmp_path, monkeypatch):
+    """An agent's suggestion for a file whose function matches with 7.1, between two files whose matches need 6.0:
+    dismissed, with a note on the function to find C that matches with its file's compiler."""
+    refutes = lambda name: {(name, "MSVC/7.1"): ({f"_func_{name}": 100.0}, {})}  # noqa: E731  (doesn't build with it)
+    scores = {**_only_with("00401020"), **refutes("00401010"), **refutes("00401030")}
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    said = net.suggest(agent, "p", "7.1 built this file", compiler="MSVC/7.1", function="_func_00401020")
+    assert said.startswith("Suggested. Range check #1 started")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "quirk" and not switched
+    assert net.cfg(net.project_row("p"))["suggestions"][0]["status"] == "dismissed"
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401020", "p")["id"])
+    assert "Range check #1" in note["text"] and "matches with Visual C++ 7.1" in note["text"]
+
+
+def test_a_neighbouring_file_nobody_can_tell_yet_goes_to_an_agent(tmp_path, monkeypatch):
+    """Where no file settles a check, the nearest file without evidence is the next agent's task (first in line, a
+    note saying to try_compiler); a try_compiler that switches it confirms the check."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "checking" and check["said"].startswith("checking: _func_00401010 in src/auto/text_00401010")
+    assert net.cfg(net.project_row("p"))["priority"] == ["_func_00401010"]
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401010", "p")["id"])
+    assert 'try_compiler("_func_00401010", "MSVC/7.1")' in note["text"]
+    net.filecompilers.tried("p", "src/auto/text_00401010.cpp", "MSVC/7.1")  # (what try_compiler's switch says)
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and switched == [([[0x401010, 0x401030]], "MSVC/7.1")]
+    assert net.cfg(net.project_row("p"))["priority"] == []
+
+
+@needs_tools
+def test_a_file_built_with_another_visual_cpp_keeps_its_own_and_says_which_matches_need_it(pc):
+    """The survey's and range checks' evidence, built for real: the file holding player_take_damage (matched with
+    6.0, otherwise with 7.1) built with 7.1 refutes 7.1 for it, and the file is its own compiler's again after."""
+    net, slug = pc
+    root = Path(net.project_row(slug)["root"])
+    name = next(r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",
+                                                 net.project_row(slug)["id"]) if f"{_map()['_player_take_damage']:08X}" in r["name"])
+    meta = json.loads(net._function(name, slug)["meta"])
+    source, name = meta["source"], meta["symbol"]  # (the report's name: the row's can have a ' after it)
+    before = scratch_pe.file_compilers(root, "demoquest")
+    mine, theirs = net.forks.file_scores(slug, source, "MSVC/7.1")
+    assert mine[name] == 100 and theirs.get(name, 0) < 100
+    assert net.filecompilers.verdict(slug, source, "MSVC/7.1") == "refuted"
+    assert scratch_pe.file_compilers(root, "demoquest") == before
+    assert net.forks.file_scores(slug, source, "MSVC/6.0")[0][name] == 100  # (built with its own again)
+    # the demo's Rich header names 6.0 only, and every file is 6.0's again (the test before): nothing else to try
+    assert "the survey has no other compiler to try" in net.compiler_map_text(slug)
+
+
+def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tmp_path, monkeypatch):
+    """Reimport for PC (Settings): Ghidra again, read by the newest rules; a function the old analysis merged is two
+    now, each in the source file that held its code, the matched function keeps its extent whatever the new analysis
+    says there, the code still rebuilds byte for byte; another program is refused."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
+    monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
+    with pytest.raises(NetworkError, match="isn't this project's program"):
+        net.forks.reimport("p", ROOT / "README.md")
+    said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
+    assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert {u: [(f["name"], f["size"]) for f in fns] for u, fns in units.items()} == {
+        "text_00401000": [("_func_00401000", 9), ("_func_00401009", 0x17)], "text_00401020": [("_func_00401020", 0x10)],
+        "text_00401030": [("_func_00401030", 9)]}
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert said["functions"] == 4 and "Analyse the game again" in subprocess.run(
+        ["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert net.forks.overview("p")["reimports"]
+    assert net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)["said"].startswith("the new analysis "
+                                                                                                    "changed nothing")
+
+
+# ---------------------------------------------------------------------------------------------------- the game's DLLs
+YEAR = 365 * 24 * 3600
+BUILT = 1_017_000_000  # (2002: a build's time)
+
+
+def _tiny_program(code: bytes, base: int, *, dll: bool = True, timestamp: int = BUILT, exports: dict | None = None,
+                  relocs: tuple[int, ...] = (), stripped: bool = False) -> bytes:
+    """A 32-bit Windows program (a DLL by default) whose .text, at base + 0x1000, is `code`; its export table
+    (`exports`: offset in .text -> name, or a forwarder's "dll.name" as the value of a negative offset) and base
+    relocations (`relocs`: offsets in .text of the addresses in it) in sections of their own."""
+    text_rva, edata_rva, reloc_rva, raw = 0x1000, 0x2000, 0x3000, 0x200
+    edata = bytearray(40)
+    named = sorted((exports or {}).items(), key=lambda kv: kv[1])
+    functions = edata_rva + 40
+    names_at = functions + 4 * len(named)
+    ordinals = names_at + 4 * len(named)
+    strings = ordinals + 2 * len(named)
+    struct.pack_into("<IIHHIIIIIII", edata, 0, 0, 0, 0, 0, 0, 1, len(named), len(named), functions, names_at, ordinals)
+    table, pointers, numbers, text = bytearray(), bytearray(), bytearray(), bytearray()
+    for k, (offset, name) in enumerate(named):
+        name, forward = (name, None) if offset >= 0 else (name.split(".")[1], name)
+        target = text_rva + offset if forward is None else strings + len(text)
+        if forward is not None:
+            text += forward.encode() + b"\0"
+        table += struct.pack("<I", target)
+        numbers += struct.pack("<H", k)
+        pointers += struct.pack("<I", strings + len(text))
+        text += name.encode() + b"\0"
+    edata += table + pointers + numbers + text
+    block = struct.pack("<II", text_rva, 8 + 2 * len(relocs) + 2 * (len(relocs) % 2)) + b"".join(
+        struct.pack("<H", 0x3000 | r) for r in relocs) + b"\0\0" * (len(relocs) % 2)
+    bodies = [code, bytes(edata), block]
+    head = bytearray(raw)
+    head[:2], head[0x3C:0x40] = b"MZ", struct.pack("<I", 0x40)
+    flags = 0x0102 | (0x2000 if dll else 0) | (0x0001 if stripped else 0)
+    struct.pack_into("<4sHHIIIHH", head, 0x40, b"PE\0\0", 0x14C, 3, timestamp, 0, 0, 0xE0, flags)
+    opt = 0x58
+    struct.pack_into("<H", head, opt, 0x10B)
+    struct.pack_into("<I", head, opt + 16, text_rva)
+    struct.pack_into("<I", head, opt + 28, base)
+    struct.pack_into("<I", head, opt + 56, 0x4000)
+    struct.pack_into("<II", head, opt + 96, edata_rva if named else 0, len(edata) if named else 0)
+    struct.pack_into("<II", head, opt + 136, reloc_rva if relocs else 0, len(block) if relocs else 0)
+    out, at = bytearray(), raw
+    for k, (name, rva, body, kind) in enumerate(zip((b".text", b".edata", b".reloc"), (text_rva, edata_rva, reloc_rva),
+                                                   bodies, (0x60000020, 0x40000040, 0x42000040))):
+        size = -(-len(body) // raw) * raw
+        struct.pack_into("<8sIIIIIIHHI", head, opt + 0xE0 + 40 * k, name, len(body), rva, size, at, 0, 0, 0, 0, kind)
+        out += body.ljust(size, b"\0")
+        at += size
+    return bytes(head) + bytes(out)
+
+
+# 0x10001000 reads the word at 0x10001010 (its own data: mov eax, [0x10001010]; ret), 0x10001010 returns the address
+# of 0x10001000 (mov eax, 0x10001000; ret): both relocated, so moving the DLL changes both
+DLL_CODE = bytes.fromhex("a110100010c3").ljust(0x10, b"\x90") + bytes.fromhex("b800100010c3").ljust(0x10, b"\x90")
+DLL_RELOCS = (0x1, 0x11)
+
+
+def _game_folder(tmp_path: Path) -> Path:
+    """A game's folder: its program, two DLLs of its own that both want 0x10000000, and the others' DLLs games carry."""
+    top = tmp_path / "game"
+    (top / "data").mkdir(parents=True)
+    exe = _tiny_program(bytes.fromhex("33c0c3"), 0x400000, dll=False)
+    (top / "game.exe").write_bytes(exe)
+    engine = _tiny_program(DLL_CODE, 0x10000000, exports={0: "_Engine_Init@4", 0x10: "Engine_Data"}, relocs=DLL_RELOCS)
+    (top / "engine.dll").write_bytes(engine)
+    (top / "data" / "logic.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, exports={0: "Engine_Init"},
+                                                           relocs=DLL_RELOCS))
+    for name in ("msvcr71.dll", "d3d8.dll", "binkw32.dll", "avcodec-53.dll", "drvmgt.dll", "widescreen.asi"):
+        (top / name).write_bytes(engine)
+    (top / "patch.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, relocs=DLL_RELOCS, timestamp=BUILT + 3 * YEAR))
+    (top / "fixed.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, stripped=True))
+    (top / "notes.dll").write_bytes(b"not a program")
+    for folder in ("launcher", ".cache", "a/b/c"):  # a program's own folder, a hidden one, one too deep: not looked in
+        (top / folder).mkdir(parents=True)
+        (top / folder / "hook.dll").write_bytes(engine)
+    (top / "launcher" / "launcher.exe").write_bytes(exe)
+    return top
+
+
+def test_the_games_own_dlls_are_found_and_the_others_left_out_with_why(tmp_path):
+    """#12: many games keep much of their code in DLLs of their own. The import takes those beside the .exe (its
+    folder and two below), each at its own address unless the program or a DLL before it has that one; the C
+    runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins and DLLs built long
+    after the program (a mod's) are left out, and the log says which and why."""
+    top = _game_folder(tmp_path)
+    main = scratch_pe.read_pe((top / "game.exe").read_bytes())
+    found, left_out = scratch_pe.find_modules(top / "game.exe", main)
+    assert [(m.rel, m.name, hex(m.pe.image_base), hex(m.preferred)) for m in found] == [
+        ("engine.dll", "engine", "0x10000000", "0x10000000"), ("data/logic.dll", "logic", "0x10010000", "0x10000000")]
+    assert dict(left_out) == {"avcodec-53.dll": scratch_pe.MIDDLEWARE, "binkw32.dll": scratch_pe.MIDDLEWARE,
+                              "d3d8.dll": scratch_pe.STAND_IN,
+                              "drvmgt.dll": scratch_pe.PROTECTION, "fixed.dll": scratch_pe.NO_ROOM,
+                              "msvcr71.dll": scratch_pe.RUNTIME, "notes.dll": scratch_pe.NOT_PROGRAM,
+                              "patch.dll": scratch_pe.LATER, "widescreen.asi": scratch_pe.PLUGIN}
+    lines = scratch_pe.left_out_lines(left_out)
+    assert len(lines) == 8 and any(line.startswith("left out, ASI plugins") and line.endswith("widescreen.asi")
+                                   for line in lines)
+    # moved as Windows moves it: every address its base relocations name, and its header's base
+    logic = found[1].pe
+    assert logic.read(0x10011000, 6) == bytes.fromhex("a110100110c3")
+    assert logic.read(0x10011010, 6) == bytes.fromhex("b800100110c3")
+    assert scratch_pe.rebase(logic.data, 0x10000000) == (top / "data" / "logic.dll").read_bytes()
+    # the names it exports, as C names them
+    assert scratch_pe.exports(found[0].pe) == {0x10001000: "Engine_Init", 0x10001010: "Engine_Data"}
+
+
+def test_a_dlls_exports_are_named_as_c_and_cpp_write_them():
+    for raw, name in (("Init", "Init"), ("_Init@4", "Init"), ("@Mix@8", "Mix"), ("?start@App@@QAEXXZ", "App::start"),
+                      ("?start@UI@Game@@QAEXXZ", "Game::UI::start"), ("?init@@YAXXZ", "init"),
+                      ("??0App@@QAE@XZ", None), ("?f@?$Vec@H@@QAEXXZ", None), ("Init@@", None)):
+        assert scratch_pe.export_name(raw) == name, raw
+
+
+def test_a_forwarded_export_is_another_dlls_code():
+    dll = _tiny_program(DLL_CODE, 0x10000000, exports={0: "Init", -1: "kernel32.Sleep"})
+    assert scratch_pe.exports(scratch_pe.read_pe(dll)) == {0x10001000: "Init"}
+
+
+def test_a_folder_imports_its_biggest_program_decompdecomp_can_start(tmp_path):
+    """Pointing at a game's folder: its .exe is the biggest program decompdecomp can start (a launcher or an
+    uninstaller is smaller; a 64-bit tool can't start), and the GUI knows a PC game's DLLs come with its path, not a
+    dropped file."""
+    top = _game_folder(tmp_path)
+    (top / "setup.exe").write_bytes(_tiny_program(bytes.fromhex("c3"), 0x400000, dll=False)[:0x400])
+    (top / "tool64.exe").write_bytes(_windows_program(machine=0x8664) + bytes(0x10000))
+    assert consoles.game_in(top) == top / "game.exe"
+    with pytest.raises(Exception, match="holds no game file"):
+        consoles.game_in(top / "data")
+    assert consoles.get("pc").describe()["games_in_folders"] and not consoles.get("n64").describe()["games_in_folders"]
+
+
+def test_importing_a_folder_starts_from_its_program(tmp_path, monkeypatch):
+    from decompnet.app.engine import RomNetwork
+
+    top = _game_folder(tmp_path)
+    started = []
+    monkeypatch.setattr(type(consoles.get("pc")), "import_game", lambda self, net, file, **_: started.append(file) or "s")
+    said = []
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
+    assert net.import_rom(top, confirmed=True, log=said.append) == "s"
+    assert started == [top / "game.exe"] and said == ["the game's program in that folder: game.exe"]
+
+
+def _project_with_dlls(tmp_path: Path) -> Path:
+    """A PC project of the game folder's program and its two DLLs, as create writes it (no Ghidra, no compiler), and
+    its objects delinked by the project's own tools/delink.py."""
+    top = _game_folder(tmp_path)
+    root = tmp_path / "proj"
+    main = scratch_pe.read_pe((top / "game.exe").read_bytes())
+    found, _ = scratch_pe.find_modules(top / "game.exe", main)
+    (root / "orig" / "data").mkdir(parents=True)
+    shutil.copy(top / "game.exe", root / "orig" / "game.exe")
+    units = {"text_00401000": [scratch_pe._entry(main, f) for f in scratch_pe.analyse(main, [_row(0x401000, 0x401003)])]}
+    modules = []
+    for m in found:
+        shutil.copy(m.path, root / "orig" / m.rel)
+        base = m.pe.image_base
+        fns = scratch_pe.analyse(m.pe, [_row(base + 0x1000, base + 0x1006), _row(base + 0x1010, base + 0x1016)])
+        units[f"{m.name}/text_{base + 0x1000:08X}"] = [scratch_pe._entry(m.pe, f) for f in fns]
+        modules.append({"name": m.name, "exe": f"orig/{m.rel}", "sha1": hashlib.sha1(m.path.read_bytes()).hexdigest(),
+                        "image_base": base, "preferred_base": m.preferred})
+    info = {"exe": "orig/game.exe", "sha1": hashlib.sha1((top / "game.exe").read_bytes()).hexdigest(),
+            "image_base": 0x400000, "modules": modules, "units": units}
+    (root / "config" / "game").mkdir(parents=True)
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    for unit in units:
+        (root / "src" / "auto" / f"{unit}.cpp").parent.mkdir(parents=True, exist_ok=True)
+        (root / "src" / "auto" / f"{unit}.cpp").write_text('#include "common.h"\n')
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    subprocess.run([sys.executable, "tools/delink.py", "config/game/functions.json", "build/game/target"], cwd=root,
+                   check=True)
+    return root
+
+
+def test_a_projects_dlls_are_delinked_at_their_addresses_and_rebuild_byte_for_byte(tmp_path):
+    """Each DLL's functions are cut out of it at the address the project gives it (the moved one moved by delink.py
+    as by the import), refer to its own code and data by func_/D_<address> (no two programs share one), and the
+    rebuild check puts each program's code back together against that program."""
+    root = _project_with_dlls(tmp_path)
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    logic = info["units"]["logic/text_10011000"]
+    assert [fn["name"] for fn in logic] == ["_func_10011000", "_func_10011010"]
+    assert logic[0]["relocs"] == [[1, scratch_pe.DIR32, "_func_10011010", 0]]
+    assert logic[1]["relocs"] == [[1, scratch_pe.DIR32, "_func_10011000", 0]]
+    assert (root / "build" / "game" / "target" / "logic" / "text_10011000.obj").is_file()
+    result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+    assert result["identical"], result
+    assert result["detail"].endswith("by program: game.exe 1, engine.dll 2, logic.dll 2")
+    # an object delinked from the DLL at its preferred address instead differs: the check reads each program
+    coff = _template_tool("delink").coff
+    moved = root / "build" / "game" / "target" / "logic" / "text_10011000.obj"
+    moved.write_bytes(coff([{**logic[0], "relocs": []}], (root / "orig" / "data" / "logic.dll").read_bytes()))
+    assert not scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+def test_a_dlls_thunk_for_an_import_the_program_has_too_goes_by_its_address():
+    """The .exe and a DLL both call RtlUnwind through a thunk of their own, each analysed as _RtlUnwind@16: one symbol
+    for two addresses would rebuild every call to it at one of them (a Visual C++ 6.0 game with a DLL of its own). The
+    later program's thunk goes by its address, and its calls with it."""
+    F = scratch_pe.Function
+    thunk, caller = F(0x10001000, 6, "_RtlUnwind@16"), F(0x10001010, 9, "_func_10001010", [(1, 20, "_RtlUnwind@16", 0)])
+    taken = {"_RtlUnwind@16", "_func_00401000"}
+    scratch_pe.own_symbols([thunk, caller], taken)
+    assert (thunk.name, caller.relocs) == ("_func_10001000@16", [(1, 20, "_func_10001000@16", 0)])
+    assert {"_func_10001000@16", "_func_10001010"} <= taken
+
+
+def test_a_moved_dll_is_rebuilt_at_its_own_address_and_reanalysed_on_its_own(tmp_path):
+    """`ninja rebuild` writes each DLL where orig/ has it, back at the address its header prefers, byte for byte the
+    user's copy (the project moved it); Reimport analyses each program again by itself: a DLL's new analysis changes
+    its functions only, and its new files stay in its folder."""
+    root = _project_with_dlls(tmp_path)
+    report = _template_tool("rebuild").rebuild(Path("config/game/functions.json"), Path("build/game"), root)
+    assert report["identical"] and set(report["programs"]) == {"", "engine", "logic"}
+    assert (root / "build" / "game" / "data" / "logic.dll").read_bytes() == (root / "orig" / "data" / "logic.dll").read_bytes()
+    assert report["programs"]["logic"]["output"] == "build/game/data/logic.dll"
+    before = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    base = 0x10010000
+    # Ghidra took logic.dll's two functions for one this time
+    said = scratch_pe.reanalyse_program(root, "game", {"logic": [_row(base + 0x1000, base + 0x1016)]})
+    assert said == "4 functions (it had 5), 1 of them new or with another extent; its 0 matched functions kept"
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert {u: fns for u, fns in units.items() if not u.startswith("logic/")} == \
+        {u: fns for u, fns in before.items() if not u.startswith("logic/")}
+    assert [(fn["name"], fn["size"]) for fn in units["logic/text_10011000"]] == [("_func_10011000", 0x16)]
+    assert scratch_pe.reanalyse_program(root, "game", {"engine": [_row(0x10001000, 0x10001006),
+                                                                  _row(0x10001010, 0x10001016)]}) is None
+
+
+def test_a_dlls_data_functions_and_files_are_its_own(tmp_path):
+    """read_data and the diff's values read the program an address is in; joins stay within one program; a DLL's new
+    source file stays in its folder; its classes come from its own RTTI (none here) without failing."""
+    root = _project_with_dlls(tmp_path)
+    manifest = {"version": "game", "game": {"path": "orig/game.exe"}}
+    assert scratch_pe.data_bytes(root, manifest, 0x10011000, 6) == bytes.fromhex("a110100110c3")
+    assert scratch_pe.data_bytes(root, manifest, 0x401000, 3) == bytes.fromhex("33c0c3")
+    assert "a1 10 10 01 10 c3" in scratch_pe.read_data(root, manifest, "D_10011000", 8)
+    with pytest.raises(ForkError, match="or its DLLs"):
+        scratch_pe.read_data(root, manifest, "D_20000000", 8)
+    with pytest.raises(ForkError, match="two programs"):
+        scratch_pe.join_functions(root, "game", "_func_10001010", "_func_10011000")
+    with pytest.raises(ForkError, match="src/auto/logic/"):
+        scratch_pe.split_unit(root, "game", "src/auto/logic/text_10011000.cpp", "_func_10011010", "src/auto/b.cpp")
+    scratch_pe.split_unit(root, "game", "src/auto/logic/text_10011000.cpp", "_func_10011010", "src/auto/logic/b.cpp")
+    assert "logic/b" in json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert scratch_pe.mark_exception_stubs(root, "game") == 0
+    from decompnet.consoles.pc import rtti
+
+    assert rtti.for_project(root, manifest).by_vtable == {}
+    (root / "orig" / "engine.dll").unlink()  # a DLL not in the project (yet): what reads every program waits
+    assert scratch_pe.missing(root, "game") == ["orig/engine.dll"] and scratch_pe.mark_exception_stubs(root, "game") is None
+
+
+@needs_tools
+@pytest.mark.skipif(toolchains.installed("msvc2005") is None, reason="the demo's DLL is built with Visual C++ 2010 SP1")
+def test_a_game_folder_brings_its_dll_and_agents_match_the_dlls_functions(tmp_path):
+    """Demo Quest with a DLL of its own (build.py dll), imported from its folder: the DLL is analysed at its own
+    address (moved, as the program has that one), its exports name its functions, its files build with the Visual
+    C++ that built it (2010 SP1; the program: 6.0), the rebuild check passes for each program, and an agent matches
+    a DLL function written under the name the DLL exports it by."""
+    from decompnet.app.engine import RomNetwork
+
+    folder = DEMO / "build" / "dll"
+    if not (folder / "demoquest.dll").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), "dll"], check=True)
+    said = []
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(folder, confirmed=True, log=said.append)
+    ov = net.overview(slug)
+    assert ov["ready"] and ov["rebuild"]["identical"], ov["rebuild"]
+    assert re.search(r"by program: demoquest\.exe \d+, demoquest\.dll \d+$", ov["rebuild"]["detail"])
+    assert any("the game's own DLLs beside demoquest.exe: demoquest.dll" in line for line in said)
+    assert any("moved by its base relocations" in line for line in said)
+    root = Path(net.project_row(slug)["root"])
+    info = json.loads((root / "config" / "demoquest" / "functions.json").read_text())
+    (dll,) = info["modules"]
+    assert dll["preferred_base"] == 0x400000 and dll["image_base"] > 0x400000
+    clamp = next(key for key, real in info["names"].items() if real == "clamp_s32")
+    assert int(clamp[5:], 16) > dll["image_base"]
+    dll_units = [unit for unit in info["units"] if int(unit[-8:], 16) >= dll["image_base"]]
+    assert dll_units and all(unit.startswith("demoquest/") for unit in dll_units)
+    assert scratch_pe.file_compilers(root, "demoquest") == {f"src/auto/{unit}.cpp": "10.0SP1" for unit in dll_units}
+    agent, _ = net.local_agent("pc-agent")
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", header, "the game's types").startswith("✅")
+    symbol = next(fn["name"] for fns in info["units"].values() for fn in fns if fn["name"].endswith(clamp))
+    res = net.attempt(agent, symbol, csource.get(GAME.read_text(), "clamp_s32"), slug)
+    assert res["matched"], res["text"]

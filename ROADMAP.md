@@ -21,55 +21,162 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
 | Judge | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI) | — | — |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | named by RTTI; no fields yet | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
+| Rebuildable export | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
-  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). A PC
-  program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
-  fields need x86's `Arch.field_accesses`.
-- **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
+  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
+  has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
+  `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
+- **Windows PC**: autopilot's Ghidra drafts compile, but rarely match beyond the tiny shapes exact drafts cover:
+  Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
+  arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
+  step). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names".
-- **Function-end reports** cut MIPS functions (`engine._cut`).
-- **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
-  `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
-  (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
+  would need the mangled signature in "names". A game's own DLLs come along when its folder or .exe is given by
+  path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project made before can't take its
+  DLLs in yet (Reimport analyses the programs a project has), a project restored or cloned asks only for the .exe (`ForkProject.needs` names
+  one file: the DLLs go in `orig/` by hand, as its README says), and a game whose .exe can't start (Visual C++
+  2017 and newer) can't start from its DLLs either.
+- **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
+  PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE) and
+  Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
+  method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
+  aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
+  can't take one in yet.
+- **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
+  (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
+- **Struct layouts** read MIPS and x86 loads and stores (`arch/mips_fields.py`, `arch/x86_fields.py`); another
+  processor adds its reader as its `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's
+  fifth to eighth arguments (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`). On
+  x86: an element of a global array reached as `[index + address]` (every address the code names is a global of its
+  own, `D_<address>`, so the array's fields past the first aren't the element's type), edx's __fastcall argument,
+  and the sign of a field the code only or's and tests.
 - **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
-  mode a project's matched C is its git repository; what's missing there is matching identical code across your
-  games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
+  mode a project's matched C is its git repository; twins across games pair two projects' target objects
+  (`Twins._across_projects`, PC so far: GameCube, Wii and DS projects of two games would work the same way but
+  weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
 
+- **Autopilot on Windows PC.** Autopilot didn't run on PC: its free matches come from drafts that compile, and
+  Ghidra's didn't (undefined4, in_ECX, a method's `this` dropped). Now it tries, for each function, exact drafts of the
+  tiny shapes Visual C++ makes from a line or two of C, read straight from the code (getters, setters, constants, a
+  global object's constructor call, thunks, vtable stores, float static initializers: `consoles/pc/drafts.py`), then
+  Ghidra's draft made into C++ that compiles in the project (ghidra.h for its types, `this` for a method, callees
+  declared by their calling convention). Each is judged like an agent's attempt. On a Visual C++ 6.0 game of 7,090
+  functions, 670 have an exact draft and 524 matched for free (517 exact, 7 from Ghidra's drafts). The same drafts
+  are made in the background (`app/drafts.py`, a source file at a time), follow the project's headers (a class that
+  declares the function, a global's type), and `redraft` remakes one with an agent's declarations.
+- **Windows PC: the frame pointer, per source file.** About half of a Visual C++ 2010 game's functions keep an ebp
+  frame (/Oy-), which no C matched under the project's /O2. The import reads each source file's functions and builds
+  the files that keep frames with /Oy- (`config/<version>/file_flags.json`, `scratch.frame_flags`); projects made
+  before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (/Oy-, /O1,
+  /Ob1) and keeps what matches, as `try_compiler` keeps a compiler.
+- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in DLLs
+  of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by path,
+  a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
+  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its
+  export table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per
+  source file), its calls into other programs through its import table. DLLs are relocatable and many prefer
+  0x10000000: the first keeps its address, a later one that would overlap is moved by its base relocations, as
+  Windows moves it (delink.py does the same at build time), so func_/D_<address> stay names no two programs share.
+  `ninja rebuild` and the rebuild check put each DLL back together against that DLL, and the import's other steps
+  (thunks by its own import table, its debug symbols, classes, Reimport) read each program. Left out, each with why in the
+  import's log: the C runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins,
+  ones the import can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py`
+  (find_modules), `Console.program_in` (a game that is a folder).
+- **A Windows PC project rebuilds the whole game.** A PC project compiled each function and compared it with the one
+  cut out of the user's .exe, but nothing put the program back together: its export was "—". `ninja rebuild`
+  (tools/rebuild.py, standard library only) writes the whole .exe again, every function at its address from what
+  `src/` compiles to where that is the game's code once its relocations are filled in from the project's symbols
+  (a constant of its own, a string or a float, where the game has the same bytes), else from the delinked function,
+  and the rest (headers, data, imports, resources) from the user's copy, and compares it byte for byte. It's the
+  project's rebuild check too, so "Rebuild the game and compare" and every check of a join or a new analysis test
+  the whole program with the matched C in it. On a Visual C++ 6.0 game of 11,846 functions it comes out identical
+  with its six matched functions from C (constructors, destructors and exception handling), in under a second, and
+  from a fresh clone of the project. Not a linker: the program's data isn't delinked, and Visual C++'s LINK.EXE would
+  have to place every object, library and resource as the original did (and 2005's and later stop in wibo 1.2.0),
+  so the code goes back where the game has it; moving code is the modding-ready check below.
+- **A Windows game's own debug symbols.** A PC game that shipped its program database (.pdb), its linker's map or
+  COFF symbols imported as if it had none. The import reads them now (Visual C++ 6.0's PDB 2.0 and the MSF 7.00 of
+  .NET 2002 on, read by decompdecomp itself, no new dependency), using a PDB only with the build whose CodeView
+  record names it: its functions and data get the game's names (functions.json's "names", methods as
+  `Class::name`), its object files become the project's source files, and from a PDB its types, globals and free
+  functions go into include/debug_types.h and each function's brief gets its prototype, parameters and locals. The
+  demo built with 6.0's /Zi and /DEBUG imports with all 19 names and its two files, and C written with the game's
+  own names and types matches. A .pdb or .map dropped with the game goes with it. No agent time; nothing leaves
+  your computer.
+- **The right Visual C++ pack at the drop.** A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then
+  asked for 2005-2010's: the page reads the program's Rich header (or its linker's version) as the import does.
+- **Windows PC: reimport, and twins in and across your games.** Settings' Reimport works on PC projects: the
+  program is analysed by Ghidra again and read by the newest rules (`scratch.reanalyse_program`), every function
+  going to the source file that held its code, new code to files of its own, each matched function keeping its
+  extent whatever the new analysis says there, names and each file's compiler kept, and the whole kept only when
+  the code still rebuilds byte for byte. Twins never worked on PC: the targets are COFF objects, which twins read
+  as nothing. They're fingerprinted now (`coffobj.py`), with names as C writes them, and code matched in one PC
+  project is tried on its identical functions in another, where both files are built by the same Visual C++. A
+  Visual C++ 6.0 game has 523 groups of identical functions (8 bytes or more) in itself; it and another PC game of
+  the user's (a 2002 game whose program names no compiler) share no function of 32 bytes or more, so across games
+  is proven on two hand-made projects only.
+- **Windows PC: the compiler map, the judge's survey and range checks, over source files.** A PC game mixes
+  Visual C++ versions (a 2010 game's Rich header counts files of 2010 SP1, 6.0, 7.0 and 2008), and each source file
+  can have its own, but nothing measured which. `compiler_map` now works where a project's files each have a compiler
+  (`app/filecompilers.py`): what the program's Rich header says built it (`Console.program_compilers`), matches by
+  compiler, and the survey, which builds each file with agents' C with every compiler the program names
+  (`ForkEngine.file_scores`, the file keeping its own): a function that matches with another and not its file's
+  confirms it. The map spreads confirmations over neighbouring files (compilermap.build, a file for a function),
+  and a run becomes a suggestion; a suggested compiler for a stretch of files, an agent's or the map's, applies only
+  after a second file confirms it, walking out from the first and stopping at a file whose matches need its own
+  (`rangecheck.evaluate`); refuted on both sides it's a quirk, with a note; a file nobody can tell goes to an agent.
+  The Settings answer shows the survey and checks. On the demo, the file holding a function matched with 6.0
+  refutes 7.1, built for real, and keeps 6.0; a Visual C++ 6.0 game's header names five 6.0 builds, so its survey
+  has nothing else to try. DS has the code path (its files each have a CodeWarrior) but no Rich header and wasn't
+  run.
+- **Windows PC: function-end reports.** Ghidra sometimes runs a function on into the data after its return, or
+  into the next function. `report_boundary` works on PC projects: once three agents of two models give the same
+  end (an address, or an offset into the function), the function ends there and the rest becomes a function of its
+  own, open to agents when it reads as code and set aside with what agents said when it doesn't
+  (`scratch.cut_function`). As a join is, it's kept only when the game's code still rebuilds byte for byte, never
+  touches a matched function, and one that doesn't hold is remembered. Cutting off only the padding Visual C++ puts
+  in the function's own section is refused. ROM projects still ask the user. API helpers have the tool now too.
+- **Windows PC: import thunks named and set aside.** A call to a DLL's function declared without
+  `__declspec(dllimport)` goes to a `jmp [__imp__Name]` the linker adds. Ghidra marks those as thunks and the
+  import left them out, so their bytes became one function with the code before them, and calls to them read as
+  calls into its middle (`_D_0062F7A6`). Each is a function of its own now, named after its import (`_RtlUnwind@16`
+  where Ghidra knows the import's arguments), set aside with why, and its import's name is its real name, so a
+  caller's brief and draft read `RtlUnwind(...)` and C that declares it either way pairs with it
+  (`scratch.name_import_thunks`). Projects made before get it at start, never touching a run a matched function
+  calls into. On a Visual C++ 6.0 game: 22 thunks (WinSock, DirectX, Video for Windows, KERNEL32), 21 of them cut
+  out of two functions of an older project, whose code still rebuilds byte for byte.
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
   user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
@@ -119,7 +226,20 @@ Where to start on a gap:
   of a virtual function, and Ghidra's draft of a method reads `Class::func_<address>(...)` with `this`. Methods
   written that way match, and a renamed one still does. A 2008-era game: 1,522 classes, 3,517 methods drafted as
   `Class::method`; a 2014 rebuild of a 2004 game: 557 classes, 2,940; a game of about 2000 built without `/GR`:
-  only the 34 classes of its MFC library. Fields aren't read from x86 code yet.
+  only the 34 classes of its MFC library. Their fields, and the classes of code built without `/GR`: next item.
+- **Struct layouts and class fields on Windows PC.** x86 has its reader of what each function does with pointers
+  (`arch/x86_fields.py`): `this` in ecx, the arguments on the stack (through esp, followed across pushes, calls and
+  `__chkstk`, or an ebp frame), the words loaded from them, globals. `guess_struct` and the brief's layout lines
+  work on PC projects as on MIPS games (a struct through `this`, arg0-arg3, what a function returns, a global), and
+  `get_class` shows each class's fields (offset, type, which functions use them), merged across its methods, with its
+  bases' inherited. Classes of code built without RTTI come from the vtables its constructors store, named
+  `Class_<vtable address>` until the vtable gets a real name. The demo's entity struct comes out field for field
+  (bar one written only as an array element); a C runtime's FILE comes out as FILE is. A game of about 2000 built
+  without `/GR`: 458 classes (424 from its code), 4,917 of its 11,696 functions with a layout for an argument; a 2001
+  game without RTTI: 38 classes (every vtable its code stores), 2,544 of 4,793; a 2008-era game: 1,980 classes (458
+  of code built without RTTI), 15,632 of 20,863; a 2014 rebuild of a 2004 game: 593 classes, 11,664 of 24,784, its
+  entity classes' position, matrix and model index where the community's headers have them. Reading a game takes 5
+  to 15 seconds, once per change to the program or its functions' extents (a rename reads only the names again).
 - **Constructors and destructors on Windows PC.** A Visual C++ game's small exception-using functions are often
   constructors and destructors, and a class's two are at two addresses: named after an address, only one paired, and
   a destructor written so (`func_004D9DD0::~func_004D9DD0`) was refused outright. An agent now writes
@@ -270,8 +390,9 @@ Where to start on a gap:
   project** rebuilds it on another computer from your own copy, and judges every function again.
 - **Reimport a ROM project** (Settings): replace the split from a newly selected copy, keeping matched C only where
   its target is unchanged, plus notes, settings, saves and the names agents gave (functions are paired by address).
-  A matched function the new split doesn't have keeps its C in a note. Project mode can't yet: its project's own
-  analysis makes the functions, and Check again redoes what decompdecomp adds to it.
+  A matched function the new split doesn't have keeps its C in a note. PC projects reimport too (Ghidra again);
+  other project-mode consoles can't yet: their project's own analysis makes the functions, and Check again redoes
+  what decompdecomp adds to it.
 - **Polish matched code** (ROM projects): helpers give matched functions real names, types and a comment; a change
   counts only when the function still matches. The project shows matched and readable.
 - **Shared knowledge**: what agents learn about a game reaches every agent once helpers of two different models
@@ -416,18 +537,18 @@ class and the parameter types, so carrying them over gives agents real signature
 constants they use, spread the pairs through the call graph, and let the user approve the names in bulk (as boundary
 reports are approved now). Names only: matching is unaffected. It also names the classes `get_class` finds.
 
-### C++ classes for PowerPC and x86
+### C++ classes for PowerPC
 
-The class recovery reads MIPS today; Windows PC programs built with RTTI have their classes, vtables, bases and
-constructors named from it (done). Left: the fields of PC classes (MSVC: `this` in ecx), the classes of PC programs
-built without RTTI (from the vtables constructors store, as on MIPS), and GameCube and Wii (CodeWarrior: the vtable
-pointer often isn't at offset 0), with their own instruction readers, in fork mode.
+The class recovery reads MIPS and x86 (Windows PC: RTTI's names, the classes of code built without it, and their
+fields: done). Left: GameCube and Wii (CodeWarrior: the vtable pointer often isn't at offset 0), with a PowerPC
+reader (`Arch.field_accesses`), in fork mode.
 
 ### A modding-ready check for the export
 
 The export rebuilds the game byte for byte; mods need code that can move. Build a second copy with padding inserted
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
-it is.
+it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
+(tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
 
 ### A list of open rooms (to investigate)
 

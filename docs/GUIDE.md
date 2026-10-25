@@ -214,7 +214,11 @@ different build, which is planned.
   C++ 6.0 to 2010 can match, each with the very build of its compiler the program names (2005 to 2010 come in a
   pack of their own); 2012 to 2015 import but can't match until their compilers come; 64-bit programs,
   programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
-  says why. decompdecomp never removes or gets around DRM.
+  says why. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them
+  when you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the
+  project, with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C
+  runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long
+  after the game (mods) are left out, and the import's log says which and why.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
 of its own project.
@@ -225,7 +229,7 @@ of its own project.
 | :-- | :-- |
 | N64, PS1, PS2 | splat and spimdisasm. They also find code that the game loads later, and overlays. |
 | GameCube, Wii | decomp-toolkit, in a [dtk-template](https://github.com/encounter/dtk-template) project (`consoles/gc_wii/scratch.py`) |
-| Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
+| Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe and the game's own DLLs into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
 **C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
 classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
@@ -320,7 +324,7 @@ uv run pytest              # the tests
 | `src/decompnet/consoles/` | A folder per console (`n64/`, `ps1/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |
-| `src/decompnet/classes.py` | C++ classes found in MIPS code: vtables, base classes, fields. |
+| `src/decompnet/classes.py` | C++ classes found in MIPS and x86 code: vtables, base classes, fields. |
 | `src/decompnet/compilermap.py` | The compiler map: which compiler built each part of a MIPS game. |
 | `src/decompnet/toolchains.py` | The pinned compilers and tools. |
 | `packaging/linux/` | `build.sh` makes the `.deb`, the `.rpm` and the AppImage; `.github/workflows/release.yml` runs it for each `v*` tag. |

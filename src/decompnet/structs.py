@@ -6,7 +6,7 @@ most of a layout: a function that loads a halfword at arg0+0x22 says arg0 points
 0x22, and every function that is handed the same pointer says more about the same struct.
 
 How the guess is made:
-- the processor's reader (arch/: `Arch.field_accesses`, MIPS today) goes through each function once and says what
+- the processor's reader (arch/: `Arch.field_accesses`, MIPS and x86) goes through each function once and says what
   it does with pointers: the loads and stores through its arguments, through words loaded from them (a pointer
   field: the struct it points to is a type too), through globals and through what callees return; which pointer it
   passes as which argument of which callee, what it returns, and which pointers it stores into fields;
@@ -41,6 +41,7 @@ GLOBAL = "global"  # (GLOBAL, address): the datum starting at address (the struc
 CALL = "call"  # (CALL, at, callee): what the call at instruction `at` returned
 FIELD = "field"  # (FIELD, term, offset): the word at term+offset (a pointer field: the struct it points to)
 RETURNED = -1  # the argument number of a call's result, in Facts.calls
+THIS = -2  # the argument number of x86's ecx at entry: a method's `this` (__thiscall), or __fastcall's first argument
 RETURN = "ret"  # (RETURN, function): what a function returns (a type of its own, between it and its callers)
 NAMED = (GLOBAL, ARGUMENT, RETURN)  # what a type is named after, and listed by, for agents
 
@@ -172,6 +173,8 @@ class Structs:
         self._named = named
         self._members: dict[int, list[tuple]] | None = None
         self._pointed: dict[int, list[tuple[int, int]]] | None = None
+        self.labels: dict[int, str] = {}  # (project mode) address -> the name agents know it by
+        self.symbols: dict[str, int] = {}  # (project mode) a function's names -> its address
 
     def type_of(self, key: tuple, path: Iterable[int] = ()) -> int | None:
         """The type of a named thing: (ARGUMENT, function, n), (RETURN, function) or (GLOBAL, address); `path`
@@ -244,13 +247,18 @@ class Structs:
             if kind == GLOBAL:
                 return f"S_{label(rest[0])}"
             if kind == ARGUMENT:
-                return f"S_{label(rest[0])}_arg{rest[1]}"
+                return f"S_{label(rest[0])}_{argument_name(rest[1])}"
             if kind == RETURN:
                 return f"S_{label(rest[0])}_ret"
         for parent, offset in self._pointed.get(type_id, []):  # else after a pointer field to it: S_func_0012A0_arg0_14
             if any(m[0] in NAMED for m in self._members.get(parent, [])):
                 return f"{self.name(parent, label)}_{offset:X}"
         return f"S_type{type_id}"
+
+
+def argument_name(n: int) -> str:
+    """How agents name a function's argument n: arg0 (a0 on MIPS, the first on the stack on x86), or `this` (ecx)."""
+    return "this" if n == THIS else f"arg{n}"
 
 
 def _member_order(member: tuple) -> tuple:
@@ -420,6 +428,6 @@ def argument_type(source: str, function: str, n: int) -> str | None:
     """The type matched code gives argument register n (a0 + n), when no float comes before it: floats travel in
     registers of their own, and whether that moves the integer ones depends on the console's calling convention."""
     params = parameter_types(source, function)
-    if n >= len(params) or any(FLOATS.match(p) for p in params[:n + 1]):
+    if not 0 <= n < len(params) or any(FLOATS.match(p) for p in params[:n + 1]):
         return None
     return params[n]
