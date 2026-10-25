@@ -817,6 +817,18 @@ class ForkEngine:
         log(said)
         return said if kept else None
 
+    def reimport(self, slug: str, game: Path, log=print) -> dict:
+        """Settings' Reimport for a project decompdecomp made (Console.reimport: PC analyses its program again), every
+        match, note and name kept. Returns what the GUI says: functions, matched, and what changed."""
+        proj, fp, cfg = self.get(slug)
+        if cfg.get("origin") != "scratch" or not consoles.get(cfg.get("platform")).reimports:
+            raise NetworkError("this project's own build sets its functions: it can't be reimported")
+        said = consoles.get(cfg.get("platform")).reimport(self.net, slug, game, log=log)
+        agg = self.net.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(status='matched'), 0) AS m FROM functions WHERE "
+                                 "project_id=?", proj["id"])
+        return {"slug": slug, "functions": agg["n"], "matched": agg["m"],
+                "said": said or "the new analysis changed nothing (or was taken back: the project's feed says why)"}
+
     def check(self, slug: str, log=print) -> dict:
         """After a manual setup (or to refresh): pick the project up once it has an objdiff.json."""
         proj, fp, cfg = self.get(slug)
@@ -3334,6 +3346,7 @@ class ForkEngine:
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
             "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
+            "reimports": cfg.get("origin") == "scratch" and consoles.get(cfg.get("platform")).reimports,
             **self._scope_facts(proj, fp, cfg),
             # why it doesn't build on this computer (preflight; checked once a run when its page first opens)
             "build_problem": cfg.get("build_problem") if cfg.get("ready") else None,

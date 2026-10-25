@@ -1146,6 +1146,45 @@ def cut_function(root: Path, version: str, name: str, at: int, keep: set[str] = 
             + ("a function of its own" if code else "set aside as not code"))
 
 
+def reanalyse_program(root: Path, version: str, found: list[dict], keep: set[str] = frozenset()) -> str | None:
+    """A new analysis of the whole program (Ghidra's function list `found`, read by this analyse, the stubs set aside,
+    the pieces joined, the thunks named) in place of the project's, keeping the work: every matched function (`keep`)
+    keeps its extent, and what the new analysis has there yields to it; each function goes to the source file whose
+    code held its address, so agents' C stays where it is; code no file held gets files of its own. The real names
+    and each file's compiler stay. Returns what changed, as a sentence; None: nothing did."""
+    path, info, pe, old = _project_functions(root, version)
+    new = analyse(pe, found)
+    stubs = exception_stubs(pe, [(f.addr, f.size) for f in new])
+    new, _ = merge_pieces(pe, new, keep={f.name for f in new if f.addr in stubs}, log=lambda *_: None)
+    kept = [f for f in old if f.name in keep]
+    new = sorted([f for f in new if not any(f.addr < k.addr + k.size and k.addr < f.addr + f.size for k in kept)]
+                 + kept, key=lambda f: f.addr)
+    if [(f.addr, f.size, f.name) for f in new] == [(f.addr, f.size, f.name) for f in old]:
+        return None
+    spans = [(fns[0]["addr"], fns[-1]["addr"] + fns[-1]["size"], unit) for unit, fns in info["units"].items() if fns]
+    homeless = []
+    for f in new:
+        f.unit = next((unit for start, end, unit in spans if start <= f.addr < end), "")
+        if not f.unit:
+            homeless.append(f)
+    added = {u: fns for u, fns in units(homeless, pe).items() if u not in info["units"]}
+    for unit, fns in added.items():
+        for f in fns:
+            f.unit = unit
+        src = root / "src" / "auto" / f"{unit}.cpp"
+        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from 0x{fns[0].addr:08X}, found by a new "
+                       "analysis. */\n#include \"common.h\"\n", encoding="utf-8")
+    info["units"] = {**{u: fns for u, fns in info["units"].items() if any(f.unit == u for f in new)},
+                     **{u: [] for u in added}}
+    _save_functions(path, info, pe, new)
+    mark_exception_stubs(root, version)
+    name_import_thunks(root, version, keep)
+    before = {(f.addr, f.size) for f in old}
+    changed = sum((f.addr, f.size) not in before for f in new)
+    return (f"{len(new):,} functions (it had {len(old):,}), {changed:,} of them new or with another extent"
+            + (f", {len(added)} new source files" if added else "") + f"; its {len(kept)} matched functions kept")
+
+
 def _source(root: Path, unit: str) -> str:
     """A unit's source file, as configure.py's source_of names it: .cpp, or .c in projects made before C++."""
     cpp = Path("src") / "auto" / f"{unit}.cpp"

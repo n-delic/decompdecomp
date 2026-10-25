@@ -1485,7 +1485,8 @@ def _registered(tmp_path, monkeypatch, program: bytes, rows: list[dict], slug: s
     (root / "objdiff.json").write_text(json.dumps({"units": []}))
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0",
-        "game": {"path": "orig/game.exe"}, "analysis": consoles.get("pc").ANALYSIS, "tools": scratch_pe.tools_version()}))
+        "game": {"path": "orig/game.exe", "sha1": hashlib.sha1(_tiny_exe(program)).hexdigest()},
+        "analysis": consoles.get("pc").ANALYSIS, "tools": scratch_pe.tools_version()}))
     (root / ".gitignore").write_text("orig/\nbuild/\n")
     for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
                 ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
@@ -1722,3 +1723,28 @@ def test_a_file_built_with_another_visual_cpp_keeps_its_own_and_says_which_match
     assert net.forks.file_scores(slug, source, "MSVC/6.0")[0][name] == 100  # (built with its own again)
     # the demo's Rich header names 6.0 only, and every file is 6.0's again (the test before): nothing else to try
     assert "the survey has no other compiler to try" in net.compiler_map_text(slug)
+
+
+def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tmp_path, monkeypatch):
+    """Reimport for PC (Settings): Ghidra again, read by the newest rules; a function the old analysis merged is two
+    now, each in the source file that held its code, the matched function keeps its extent whatever the new analysis
+    says there, the code still rebuilds byte for byte; another program is refused."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
+    monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
+    with pytest.raises(NetworkError, match="isn't this project's program"):
+        net.forks.reimport("p", ROOT / "README.md")
+    said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
+    assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert {u: [(f["name"], f["size"]) for f in fns] for u, fns in units.items()} == {
+        "text_00401000": [("_func_00401000", 9), ("_func_00401009", 0x17)], "text_00401020": [("_func_00401020", 0x10)],
+        "text_00401030": [("_func_00401030", 9)]}
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert said["functions"] == 4 and "Analyse the game again" in subprocess.run(
+        ["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert net.forks.overview("p")["reimports"]
+    assert net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)["said"].startswith("the new analysis "
+                                                                                                    "changed nothing")

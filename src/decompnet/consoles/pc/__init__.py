@@ -49,6 +49,7 @@ class WindowsPC(Console):
     demo = "demo-pc"
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
     own_features = frozenset({REBUILD_CHECK})  # the program's code, rebuilt from its delinked functions
+    reimports = True  # Ghidra again, read by the newest rules, matches kept (reimport)
     # what a project's config holds, in its manifest's "analysis" (on_start brings one with less up, step by step):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
@@ -166,6 +167,26 @@ class WindowsPC(Console):
                                  name)
                 except NetworkError:  # gone meanwhile
                     pass
+
+    def reimport(self, net, slug: str, game: Path, log=print) -> str | None:
+        """Ghidra's analysis again, read by this decompdecomp's rules (scratch.reanalyse_program), through
+        forkengine.reanalyse: kept only when the program's code still rebuilds byte for byte."""
+        import hashlib
+
+        from ...forks import ghidra
+        from . import scratch
+
+        fp = net.forks.get(slug)[1]
+        manifest = fp.manifest or {}
+        if hashlib.sha1(game.read_bytes()).hexdigest() != manifest.get("game", {}).get("sha1", ""):
+            raise NetworkError("that isn't this project's program (its SHA-1 differs): choose the same .exe, or start "
+                               "a new project for another one")
+        log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
+        found = ghidra.functions(game)
+        matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                     "status='matched'", net.project_row(slug)["id"])}
+        return net.forks.reanalyse(slug, lambda fp: scratch.reanalyse_program(fp.root, manifest["version"], found,
+                                                                                keep=matched), log=log)
 
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         from . import scratch

@@ -39,13 +39,13 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | named by RTTI; no fields yet | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -66,11 +66,22 @@ Where to start on a gap:
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
   (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
 - **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
-  mode a project's matched C is its git repository; what's missing there is matching identical code across your
-  games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
+  mode a project's matched C is its git repository; twins across games pair two projects' target objects
+  (`Twins._across_projects`, PC so far: GameCube, Wii and DS projects of two games would work the same way but
+  weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
 
+- **Windows PC: reimport, and twins in and across your games.** Settings' Reimport works on PC projects: the
+  program is analysed by Ghidra again and read by the newest rules (`scratch.reanalyse_program`), every function
+  going to the source file that held its code, new code to files of its own, each matched function keeping its
+  extent whatever the new analysis says there, names and each file's compiler kept, and the whole kept only when
+  the code still rebuilds byte for byte. Twins never worked on PC: the targets are COFF objects, which twins read
+  as nothing. They're fingerprinted now (`coffobj.py`), with names as C writes them, and code matched in one PC
+  project is tried on its identical functions in another, where both files are built by the same Visual C++. A
+  Visual C++ 6.0 game has 523 groups of identical functions (8 bytes or more) in itself; it and another PC game of
+  the user's (a 2002 game whose program names no compiler) share no function of 32 bytes or more, so across games
+  is proven on two hand-made projects only.
 - **Windows PC: the compiler map, the judge's survey and range checks, over source files.** A PC game mixes
   Visual C++ versions (a 2010 game's Rich header counts files of 2010 SP1, 6.0, 7.0 and 2008), and each source file
   can have its own, but nothing measured which. `compiler_map` now works where a project's files each have a compiler
@@ -301,8 +312,9 @@ Where to start on a gap:
   project** rebuilds it on another computer from your own copy, and judges every function again.
 - **Reimport a ROM project** (Settings): replace the split from a newly selected copy, keeping matched C only where
   its target is unchanged, plus notes, settings, saves and the names agents gave (functions are paired by address).
-  A matched function the new split doesn't have keeps its C in a note. Project mode can't yet: its project's own
-  analysis makes the functions, and Check again redoes what decompdecomp adds to it.
+  A matched function the new split doesn't have keeps its C in a note. PC projects reimport too (Ghidra again);
+  other project-mode consoles can't yet: their project's own analysis makes the functions, and Check again redoes
+  what decompdecomp adds to it.
 - **Polish matched code** (ROM projects): helpers give matched functions real names, types and a comment; a change
   counts only when the function still matches. The project shows matched and readable.
 - **Shared knowledge**: what agents learn about a game reaches every agent once helpers of two different models

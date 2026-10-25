@@ -355,7 +355,7 @@ async function renderProjectSettings() {
   const ov = S.ov;
   if (!ov) return;
   const fork = ov.kind === "fork";
-  $("reimportGame").hidden = fork;
+  $("reimportGame").hidden = fork && !ov.reimports;  // (a PC project analyses its program again)
   // a fork's build sets its compilers, except where each source file has one (DS): then the same panel, with the
   // project's flags its build's and nothing for the ROM engine's survey to check
   $("compilerPanel").hidden = !(ov.compilers || []).length;

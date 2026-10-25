@@ -193,6 +193,14 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def reimport(self, net, slug: str, game: Path, log=print) -> str | None:
+        """A new analysis of a project the console made, from the user's copy (`game`) again, keeping every match,
+        note and name (forkengine.reanalyse): Settings' Reimport. Returns what changed, as a sentence; None: nothing
+        did, or the change was taken back (the project's feed says why)."""
+        raise RomError(f"{self.name} projects can't be reimported yet: their own build sets their functions")
+
+    reimports = False  # reimport is its own (Settings shows Reimport for its projects)
+
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         """Build the project and compare what it makes with the user's copy: {"identical", "detail"}."""
         raise RomError(f"{self.name} projects aren't rebuilt and compared here")
