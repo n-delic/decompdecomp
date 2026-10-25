@@ -42,6 +42,7 @@ from decompnet.hostenv import NO_WINDOW
 from ... import toolchains
 from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
+from . import debuginfo
 
 UNIT_BYTES = 0x1000
 # the linker aligns code to 16 bytes (a function's section, from Visual C++ 2005 on each function's), filling the gap
@@ -781,10 +782,15 @@ def linker_padding(pe: PE, functions: list[Function]) -> int | None:
     return byte if byte is not None and found[byte] * ALIGNED_SHARE >= len(functions) else None
 
 
-def units(functions: list[Function], pe: PE | None = None) -> dict[str, list[Function]]:
+def units(functions: list[Function], pe: PE | None = None, sources: dict[int, str] | None = None) \
+        -> dict[str, list[Function]]:
     """Source files: runs of neighbouring functions of about UNIT_BYTES each. A gap between two functions ends a file
     (an object's end), unless it's only the padding the program's linker puts before every function (linker_padding:
-    a 2005 game got 19,028 source files for its 20,863 functions)."""
+    a 2005 game got 19,028 source files for its 20,863 functions). Where the game's debug information names the
+    source file of the code at an address (`sources`, debuginfo.find), the functions from there on are that file's,
+    the game's own: src/auto/game.cpp for game.c, whose functions all go in it, wherever the linker put them."""
+    if sources:
+        return _source_units(functions, pe, sources)
     filler = linker_padding(pe, functions) if pe is not None else None
     out: dict[str, list[Function]] = {}
     cur: list[Function] = []
@@ -797,6 +803,33 @@ def units(functions: list[Function], pe: PE | None = None) -> dict[str, list[Fun
     if cur:
         out[f"text_{cur[0].addr:08X}"] = cur
     return out
+
+
+def _source_units(functions: list[Function], pe: PE | None, sources: dict[int, str]) -> dict[str, list[Function]]:
+    """units() by the game's source files: a function's is the one named at its address or the closest before it
+    (a function the debug information doesn't name is in the object of the one before it); functions before the
+    first are in files of their own, as without debug information."""
+    import bisect
+
+    starts = sorted(sources)
+    keys: dict[str, str] = {}
+    out: dict[str, list[Function]] = {}
+    rest = []
+    for fn in functions:
+        k = bisect.bisect_right(starts, fn.addr) - 1
+        source = sources[starts[k]] if k >= 0 else ""
+        if not source:
+            rest.append(fn)
+            continue
+        if source not in keys:
+            stem = re.sub(r"[^A-Za-z0-9_]", "_", source.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0]) or "unit"
+            key, n = stem, 2
+            while key in keys.values() or re.fullmatch(r"text_[0-9A-F]{8}", key):
+                key, n = f"{stem}_{n}", n + 1
+            keys[source] = key
+        out.setdefault(keys[source], []).append(fn)
+    out.update(units(rest, pe))
+    return dict(sorted(out.items(), key=lambda unit: unit[1][0].addr))
 
 
 def _entry(pe: PE, f: Function) -> dict:
@@ -1134,6 +1167,61 @@ typedef int BOOL;
 #endif
 """
 
+# what common.h defines already: the game's typedefs of these names are left out of its types (cheader.Header)
+HEADER_NAMES = {name for pair in re.findall(r"typedef [^;]*\b(\w+);|#define (\w+)", TYPES_H) for name in pair if name}
+DEBUG_TYPES = "debug_types.h"  # include/: the game's own types and globals, from its debug information
+DEBUG_FILE = "debug.json"  # config/<version>/: what each function's brief says from it (WindowsPC.debug_of)
+DEBUG_TYPES_NOTE = """/* The game's own types and global variables, from the debug information it shipped with (decompdecomp wrote
+ * them at import): each field is at the offset the game has it (the comments say where). Use these names; don't
+ * declare them again. */
+#ifndef DEBUG_TYPES_H
+#define DEBUG_TYPES_H
+
+"""
+
+
+def debug_names(info, functions: list[Function]) -> dict[str, str]:
+    """functions.json's "names" from the game's debug information: each function Ghidra found (func_<address>) and
+    each datum (D_<address>) by the name the game gave it (rename_symbol's form, which names.py reads)."""
+    found = {f.addr for f in functions}
+    names = {}
+    for n in info.named:
+        if n.function and n.address in found:
+            names[f"func_{n.address:08X}"] = n.name
+        elif not n.function and n.address not in found:
+            names[f"D_{n.address:08X}"] = n.name
+    return dict(sorted(names.items()))
+
+
+def write_debug(root: Path, version: str, info) -> None:
+    """The game's types and globals for include/ (common.h includes them), and its functions' prototypes,
+    parameters and locals for their briefs (config/<version>/debug.json)."""
+    if info.functions:
+        (root / "config" / version / DEBUG_FILE).write_text(json.dumps(
+            {f"func_{addr:08X}": known for addr, known in sorted(info.functions.items())}, indent=1), encoding="utf-8")
+    if info.header:
+        (root / "include" / DEBUG_TYPES).write_text(DEBUG_TYPES_NOTE + info.header + "\n#endif\n", encoding="utf-8")
+        common = root / "include" / "common.h"
+        text = common.read_text(encoding="utf-8")
+        common.write_text(text[:text.rindex("#endif")] + f'#include "{DEBUG_TYPES}"\n\n#endif\n', encoding="utf-8")
+
+
+def debug_of(root: Path, version: str, symbol: str) -> dict | None:
+    """What the game's debug information says about a function, by its symbol (_func_0041B470@8)."""
+    m = re.search(r"func_[0-9A-Fa-f]{8}", symbol)
+    try:
+        known = json.loads((root / "config" / version / DEBUG_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return known.get(m.group(0)[:5] + m.group(0)[5:].upper()) if m else None
+
+
+def _header_compiles(root: Path, version: str, unit: str, log) -> bool:
+    """Whether a source file that includes common.h, with the game's types, builds: a header that doesn't would fail
+    every attempt in every file."""
+    obj = (Path("build") / version / _source(root, unit)).with_suffix(".obj").as_posix()
+    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS)[0]
+
 
 _PROGRAMS: dict[tuple[str, int], object] = {}  # (path, mtime) -> its parsed program, for data_bytes
 
@@ -1336,7 +1424,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     # the stubs first, as a project made before gets them (WindowsPC.on_start): no join takes one
     stubs = exception_stubs(pe, [(f.addr, f.size) for f in functions])
     functions, _ = merge_pieces(pe, functions, keep={f.name for f in functions if f.addr in stubs}, log=log)
-    groups = units(functions, pe)
+    debug = debuginfo.find(game, pe.data, HEADER_NAMES, log=log)
+    if debug is not None:
+        log(f"{debug.source}: {debug.info.summary()}")
+    groups = units(functions, pe, debug.info.units if debug is not None else None)
     log(f"{len(functions)} functions; {info['compiler_why']}: Visual C++ {compiler}")
 
     shutil.copytree(TEMPLATE, root)
@@ -1358,21 +1449,30 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (conf / "functions.json").write_text(json.dumps({
         "exe": f"orig/{version}.exe", "sha1": info["sha1"], "image_base": pe.image_base,
         "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
+        **({"names": debug_names(debug.info, functions)} if debug is not None else {}),
     }, indent=1), encoding="utf-8")
+    if debug is not None:
+        write_debug(root, version, debug.info)
     compilers_file(root, version).write_text("{}\n", encoding="utf-8")  # (every file with the project's own, so far)
     if stubs := mark_exception_stubs(root, version):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
+    own = debug.info.units if debug is not None else {}
     for u, fns in groups.items():
         src = root / "src" / "auto" / f"{u}.cpp"  # C++, as PC games of the time were written (C compiles too)
         src.parent.mkdir(parents=True, exist_ok=True)
-        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from 0x{fns[0].addr:08X} to "
-                       f"0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra. */\n#include \"common.h\"\n",
-                       encoding="utf-8")
+        named = next((own[f.addr] for f in fns if f.addr in own), "") if not u.startswith("text_") else ""
+        where = (f"the game's {named}, as its debug information says" if named else
+                 f"0x{fns[0].addr:08X} to 0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra")
+        src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from {where}. */\n"
+                       "#include \"common.h\"\n", encoding="utf-8")
     log(f"{len(groups)} source files for agents to write into")
 
-    setup = [[sys.executable, "tools/configure.py", version, *args], ["ninja", "prepare"]]
-    for cmd in setup:
-        _run(cmd, root, "the first build", log)
+    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log)
+    if (root / "include" / DEBUG_TYPES).exists() and not _header_compiles(root, version, next(iter(groups)), log):
+        log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
+            "for agents to fix, and common.h doesn't include it yet")
+        (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
+    _run(["ninja", "prepare"], root, "the first build", log)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
     rebuild = check_code(root, version, log=log)

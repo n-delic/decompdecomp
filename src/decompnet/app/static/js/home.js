@@ -68,8 +68,15 @@ drop.addEventListener("click", (e) => { if (!$("dropIdle").hidden && !e.target.c
 drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !$("dropIdle").hidden && e.target === drop) { e.preventDefault(); $("file").click(); } });
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]); });
-$("file").addEventListener("change", () => { if ($("file").files[0]) pickFile($("file").files[0]); });
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); pickFiles(e.dataTransfer.files); });
+$("file").addEventListener("change", () => pickFiles($("file").files));
+/* A game, and the debug information that may come with it (a PC game's .pdb or linker .map: its import reads them). */
+const DEBUG_FILE = /\.(pdb|map)$/i;
+function pickFiles(list) {
+  const files = [...list], debug = files.filter((f) => DEBUG_FILE.test(f.name));
+  const game = files.find((f) => !debug.includes(f)) || files[0];
+  if (game) pickFile(game, debug.filter((f) => f !== game));
+}
 $("own").addEventListener("change", updateAnalyse);
 $("cancelPick").onclick = resetDrop;
 
@@ -231,7 +238,7 @@ function notSupported(head, file) {
 const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
 const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
 
-async function pickFile(file) {
+async function pickFile(file, extras = []) {
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
   let info = identifyHead(head, file), buf = file;
   if (!info) {
@@ -242,7 +249,8 @@ async function pickFile(file) {
       return toast(esc(NOT_A_GAME), "err");
     }
   }
-  picked = { buf, info, name: file.name };
+  // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
+  picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
   if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
@@ -252,7 +260,7 @@ async function pickFile(file) {
        ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
     : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
        info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
-       ["Project", consoleOf(p)?.layout || ""]];
+       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
   $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
   const level = platformStatus(p);
   $("romStatus").hidden = !level;
@@ -402,10 +410,12 @@ $("analyse").onclick = async () => {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
     try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
   }
-  const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
+  // the debug files go after the game in the same upload; the server cuts them off and puts them beside it
+  const body = new Blob([picked.buf, ...picked.extras]);
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}`, body, title, picked.name);
+  const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => {
   e.stopPropagation();

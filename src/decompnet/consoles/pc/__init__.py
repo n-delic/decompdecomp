@@ -11,6 +11,9 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json).
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
+- debuginfo.py, pdb.py: the game's own debug information, when it has it (a .pdb beside it, the linker's .map, COFF
+  symbols): real names, the game's source files, types for include/debug_types.h and prototypes for briefs
+  (debug_of).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -218,6 +221,18 @@ class WindowsPC(Console):
         from . import scratch
 
         return scratch.data_bytes(fp.root, fp.manifest or {}, addr, length)
+
+    def debug_of(self, fp, version: str, symbol: str) -> dict | None:
+        """The prototype, parameters and locals the game's program database gave a function at import
+        (config/<version>/debug.json, debuginfo.py)."""
+        from . import scratch
+
+        return scratch.debug_of(fp.root, version, symbol)
+
+    def debug_brief(self, known: dict) -> list[str]:
+        from ..ps2.debuginfo import brief_lines
+
+        return brief_lines(known, "include/debug_types.h (common.h includes it)")
 
     def classes(self, fp):
         from . import rtti
