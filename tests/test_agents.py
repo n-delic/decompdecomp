@@ -753,6 +753,38 @@ def test_a_model_spinning_on_a_game_gets_advice_to_weigh_not_an_order(tmp_path, 
     assert agents.spin_advice([{"kind": "api", "model": "m", "usd": 0, "compiles": 150, "matches": 0}]) == {}  # too few
 
 
+def test_polishing_sessions_dont_make_a_model_look_like_its_spinning(tmp_path, quiet):
+    """A model run only to polish an Xbox game was told its 1,282 compiles of a day had made no match: polishing
+    compiles matched code and matches nothing new. Sessions keep their helper's task, those from before it was kept
+    too, and only decompiling ones count for the advice."""
+    import time
+
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state) VALUES "
+                   "(1, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\", \"task\": \"readable\"}', "
+                   "'stopped'), (2, 'game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\"}', 'stopped')")
+        for helper, model, usd, compiles, matches in ((1, "sonnet", 20.0, 1282, 0), (2, "opus", 104.4, 650, 10)):
+            db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, compiles, "
+                       "matches) VALUES(?, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (helper, model, now - 3600, usd,
+                                                                                   compiles, matches))
+    m = agents.Manager(net, tmp_path, URL)
+    assert {r["model"]: r["task"] for r in net.store.all("SELECT model, task FROM helper_sessions")} == \
+        {"sonnet": "readable", "opus": ""}
+    rows = {r["model"]: r for r in m.costs("game")}
+    assert rows["sonnet"]["advice"] == "" and rows["sonnet"]["compiles"] == 1282  # still in what it spent
+    # a decompiling helper of the same model, spinning: that one counts
+    with net.store.tx() as db:
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(3, 'game', 'claude', 'sonnet', 'b', ?, 900, 0)", (now - 60,))
+    said = {r["model"]: r for r in m.costs("game")}["sonnet"]["advice"]
+    assert said.startswith("In the last day sonnet's helpers here made 900 compiles for no matches")
+
+
 def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):
     """Codex gets it as its model_reasoning_effort setting (from the model's name, as Claude Code and opencode);
     an API helper, whose model is its endpoint's, as the `effort` option, sent as OpenAI's reasoning_effort."""

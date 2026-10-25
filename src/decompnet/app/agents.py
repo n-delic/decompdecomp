@@ -131,7 +131,7 @@ SCHEMA = (
       output_tokens INTEGER NOT NULL DEFAULT 0, cache_read_tokens INTEGER NOT NULL DEFAULT 0,
       cache_write_tokens INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
       turns INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, compiles INTEGER NOT NULL DEFAULT 0,
-      matches INTEGER NOT NULL DEFAULT 0)""",
+      matches INTEGER NOT NULL DEFAULT 0, task TEXT NOT NULL DEFAULT '')""",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
 )
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents report, as `usage` items say it
@@ -468,6 +468,11 @@ class Manager:
         with net.store.tx() as db:
             for statement in SCHEMA:
                 db.execute(statement)
+            if "task" not in {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}:
+                # sessions from before it was kept: their helper's task, while its record is there
+                db.execute("ALTER TABLE helper_sessions ADD COLUMN task TEXT NOT NULL DEFAULT ''")
+                db.execute("UPDATE helper_sessions SET task=COALESCE((SELECT json_extract(h.options, '$.task') "
+                           "FROM helpers h WHERE h.id=helper_sessions.helper_id), '')")
         self._restore()
         self.refresh_detected()
 
@@ -684,12 +689,14 @@ class Manager:
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
         more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets
-        `advice` (spin_advice)."""
+        `advice` (spin_advice), from its decompiling sessions only: polishing compiles matched code and matches nothing
+        new, so a model run only to polish an Xbox game was told its 1,282 compiles of a day had made no match."""
         query = ("SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS "
-                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? "
+                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
-        rows = self.net.store.all(query, slug, 0)
-        recent = [dict(r) for r in self.net.store.all(query, slug, time.time() - SPIN_WINDOW)]
+        rows = self.net.store.all(query.format(""), slug, 0)
+        recent = [dict(r) for r in self.net.store.all(query.format("AND task != 'readable'"), slug,
+                                                      time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
         out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
                           "advice": advice.get((r["kind"], r["model"]), "")} for r in rows]
@@ -993,9 +1000,9 @@ class Manager:
     def _session_begin(self, s: Session) -> int:
         s.usage = _fresh_usage()
         with self.net.store.tx() as db:
-            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at) "
-                              "VALUES(?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
-                                                      s.agent_name, time.time())).lastrowid
+            return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
+                              "VALUES(?,?,?,?,?,?,?)", (s.id, s.slug, s.kind, s.model or agents.get(s.kind).config_model() or "",
+                                                        s.agent_name, time.time(), s.options.get("task") or "")).lastrowid
 
     def _session_end(self, s: Session, row: int, agent, began: float, outcome: str) -> None:
         """What a session did and spent, on its row: to compare models on cost per match."""
