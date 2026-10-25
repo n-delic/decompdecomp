@@ -30,11 +30,13 @@ class Box extends Element {
   set innerHTML(html) {
     this.html = html;
     this.elements = [];
-    const tagPattern = /<(button|input|select|option|output|a)\b([^>]*)>/g;
+    const tagPattern = /<(button|input|select|option|output|a|span)\b([^>]*)>/g;
     for (const match of html.matchAll(tagPattern)) {
       const attrs = {};
       for (const item of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[item[1]] = item[2] ?? "";
-      this.elements.push(new Element(match[1], attrs));
+      const element = new Element(match[1], attrs);
+      if (match[1] === "span") element.textContent = html.slice(match.index + match[0].length, html.indexOf("</span>", match.index));
+      this.elements.push(element);
     }
     for (const select of this.elements.filter((element) => element.tag === "select")) {
       const start = html.indexOf(`<select${select.attributes["data-f"] ? ` data-f="${select.attributes["data-f"]}"` : ""}`);
@@ -98,7 +100,7 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "
 
 const apiAgent = { id: "api", name: "API", uses_endpoints: true, installed: true, recommended: true, takes_effort: false };
 const cliAgent = { id: "claude", name: "Claude Code", installed: true, recommended: false, takes_effort: false,
-  models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }] };
+  models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }, { id: "haiku", name: "Haiku" }] };
 const manualAgent = { id: "manual", name: "Manual provider", installed: true, recommended: false, takes_effort: false, models: [] };
 ctx.S.st.agents = [apiAgent, cliAgent, manualAgent];
 ctx.renderLauncher(box);
@@ -186,5 +188,24 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   const manualCall = calls.filter((call) => call.url === "/api/agents/start" && call.body.kind === "manual").at(-1);
   requireOk(JSON.stringify(manualCall.body.options.models) === JSON.stringify(["first-custom", "second-custom"]),
     `no-list Multiple mode must send only typed model names: ${JSON.stringify(manualCall.body.options.models)}`);
+
+  const selections = {
+    api: [{ endpoint: "e1", model: "m-one" }, { endpoint: "e1", model: "m-two" }, { endpoint: "e1", model: "m-three" }],
+    claude: ["opus", "sonnet", "haiku"],
+    manual: ["first-custom", "second-custom", "third-custom"],
+  };
+  for (const kind of Object.keys(selections)) for (const count of [1, 2, 4]) {
+    vm.runInContext(`LZ.kind=${JSON.stringify(kind)}; LZ.eps=["e1"]; LZ.count=${count}; LZ.model=""; LZ.multiple=true; LZ.models=${JSON.stringify(selections[kind])};`, ctx);
+    ctx.renderLauncher(box);
+    requireOk(!box.querySelector('[data-act="start"]').disabled,
+      `${kind} should allow ${selections[kind].length} selected models with ${count} sessions each`);
+    requireOk(box.html.includes(`Each selected model gets ${count} session`), "multiple mode should explain per-model session count");
+    requireOk(!box.html.includes("maximum 8 helpers total"), "multiple mode must not imply an aggregate helper limit");
+  }
+  vm.runInContext(`LZ.kind="api"; LZ.eps=["e1"]; LZ.count=1; LZ.multiple=true; LZ.models=${JSON.stringify(selections.api)};`, ctx);
+  ctx.renderLauncher(box);
+  box.querySelectorAll("[data-step]").find((button) => button.dataset.step === "1").onclick();
+  requireOk(box.querySelector("[data-model-limit]").textContent.includes("2 sessions"),
+    "API per-model count guidance must update with the How many control");
   console.log("launcher model selections passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -273,7 +273,7 @@ function renderLauncher(box, compact = true) {
     const selectedApi = LZ.apiSingleModel ? `${LZ.apiSingleModel.endpoint}::${LZ.apiSingleModel.model}` : "";
     const singleCustom = LZ.apiSingleModel && !apiModels.some((m) => m.id === selectedApi);
     body = why + body + (eps.length && !LZ.adding ? `<label class="field"><span>Model</span><select data-f="api-model">${singleOptions.map((o) => `<option value="${esc(o.id)}" ${(LZ.multiple ? o.id === "__multiple" : singleCustom ? o.id === "__other" : o.id === selectedApi) ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>
-      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${apiModels.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.some((x) => x.endpoint === m.endpoint && x.model === m.model) ? "checked" : ""}><span>${esc(m.name)}</span></label>`).join("")}</div><span class="muted small">${apiModels.length ? `Choose up to ${Math.floor(MAX_AT_ONCE / LZ.count)} models; each gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.` : "Model listing unavailable; type a model name below and add it for the selected endpoints."}</span></div>` : ""}
+      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${apiModels.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.some((x) => x.endpoint === m.endpoint && x.model === m.model) ? "checked" : ""}><span>${esc(m.name)}</span></label>`).join("")}</div>${apiModels.length ? `<span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>` : `<span class="muted small">Model listing unavailable; type a model name below and add it for the selected endpoints.</span>`}</div>` : ""}
       ${!LZ.multiple && (singleCustom || LZ.apiCustomModel) ? `<input data-f="api-custom" class="mono lz-custom" placeholder="API model name" value="${esc(LZ.apiCustomModel || LZ.apiSingleModel?.model || "")}">` : ""}
       ${LZ.multiple ? `<div class="row"><input data-f="api-custom" class="mono" placeholder="API model name"><button type="button" class="ghost small-btn" data-act="add-api-model">Add model to selected endpoints</button></div>` : ""}${effortField(a)}` : "");
   } else {
@@ -283,7 +283,7 @@ function renderLauncher(box, compact = true) {
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
     body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${(!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple") ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}</select></label>
       ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""}><span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
-      <span class="muted small" data-model-limit>Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} models at this session count (maximum ${MAX_AT_ONCE} helpers total).</span>
+      <span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>
       ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${custom ? esc(LZ.model) : ""}" ${custom ? "" : "hidden"}>
       ${effortField(a)}`;
@@ -329,12 +329,11 @@ function renderLauncher(box, compact = true) {
   const label = () => {
     const btn = box.querySelector('[data-act="start"]');
     if (btn) {
-      const total = LZ.models.length * LZ.count;
       btn.textContent = launchLabel(a, LZ.model, LZ.count, LZ.models);
-      btn.disabled = total > MAX_AT_ONCE || (LZ.multiple && !LZ.models.length);
+      btn.disabled = LZ.multiple && !LZ.models.length;
     }
     const limit = box.querySelector("[data-model-limit]");
-    if (limit) limit.textContent = `Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} at this session count (maximum ${MAX_AT_ONCE} helpers total).`;
+    if (limit) limit.textContent = `Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.`;
     box.querySelectorAll("[data-model-choice]").forEach((c) => { c.disabled = !!LZ.model; });
   };
   label();

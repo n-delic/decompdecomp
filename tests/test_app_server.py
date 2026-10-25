@@ -221,7 +221,7 @@ def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypa
 
 
 def test_selected_models_start_only_the_chosen_models_within_the_helper_limit(tmp_path, monkeypatch):
-    """Starting multiple models uses only the explicit selection and keeps the total at MAX_AT_ONCE."""
+    """Starting multiple models uses only the explicit selection, with `count` sessions for each model."""
     from .test_loading import tiny_game
 
     (tmp_path / "settings.json").write_text(json.dumps({
@@ -242,12 +242,17 @@ def test_selected_models_start_only_the_chosen_models_within_the_helper_limit(tm
     monkeypatch.setattr(manager, "start", start)
     client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
                         base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
-    over_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
-        "kind": "claude", "slug": "game", "count": 5,
-        "options": {"models": ["sonnet", "opus"], "effort": "high"},
+    many_models = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "count": 4,
+        "options": {"models": ["sonnet", "opus", "haiku"], "effort": "high"},
     })
-    assert over_limit.status_code == 400
-    assert started == []
+    assert many_models.status_code == 200, many_models.text
+    assert many_models.json()["started"] == [f"{model}#high-{i}" for model in ("sonnet", "opus", "haiku") for i in range(4)]
+    assert started == [
+        ("claude", "game", 4, {"model": f"{model}#high", "effort": "high", "per_session": agents.PER_SESSION})
+        for model in ("sonnet", "opus", "haiku")
+    ]
+    started.clear()
 
     unavailable = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
         "kind": "claude", "slug": "game", "options": {"models": ["retired-model"]},
@@ -317,26 +322,26 @@ def test_api_models_are_discovered_and_started_only_on_their_saved_endpoint(tmp_
     common = {"kind": "api", "slug": "game", "options": {"multiple_models": True, "models": [
         {"endpoint": first["id"], "model": "model-a"}, {"endpoint": first["id"], "model": "model-b"},
     ]}}
-    over_model_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 5})
-    assert over_model_limit.status_code == 400 and started == []
-    assert "no more than 1 models" in over_model_limit.json()["error"]
     malformed = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
         "kind": "api", "slug": "game", "options": {"models": [{"endpoint": first["id"], "model": "x", "extra": []}]},
     })
     assert malformed.status_code == 400 and started == []
-    over_endpoint_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 3})
-    assert over_endpoint_limit.status_code == 400 and started == []
-    assert "allows 2 sessions" in over_endpoint_limit.json()["error"]
-
     client.post("/api/settings", headers={"X-Decomp": "1"}, json={
         "endpoint": {"id": first["id"], "max_sessions": 4},
     })
-    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 2})
+    over_endpoint_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 3})
+    assert over_endpoint_limit.status_code == 400 and started == []
+    assert "allows 4 sessions" in over_endpoint_limit.json()["error"]
+
+    client.post("/api/settings", headers={"X-Decomp": "1"}, json={
+        "endpoint": {"id": first["id"], "max_sessions": 10},
+    })
+    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 5})
     assert response.status_code == 200, response.text
-    assert response.json()["started"] == [f"{first['id']}:model-a:{i}" for i in range(2)] + [
-        f"{first['id']}:model-b:{i}" for i in range(2)]
+    assert response.json()["started"] == [f"{first['id']}:model-a:{i}" for i in range(5)] + [
+        f"{first['id']}:model-b:{i}" for i in range(5)]
     assert [(n, options["endpoint"], options["model"], options["api_key"]) for n, options in started] == [
-        (2, first["id"], "model-a", "secret-one"), (2, first["id"], "model-b", "secret-one")]
+        (5, first["id"], "model-a", "secret-one"), (5, first["id"], "model-b", "secret-one")]
     started.clear()
     common["options"]["models"] = [{"endpoint": first["id"], "model": "model-a"},
                                     {"endpoint": second["id"], "model": "model-b"}]

@@ -132,8 +132,6 @@ def register(app: App) -> None:
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
         if requested_models and options.get("model"):
             return fail(ValueError("choose specific models or one model, not both"))
-        if len(requested_models) * count > agents.MAX_AT_ONCE:
-            return fail(ValueError(f"select no more than {agents.MAX_AT_ONCE // count} models at this session count"))
         picked: list[str] = []
         try:
             net.project_row(slug)
@@ -145,8 +143,6 @@ def register(app: App) -> None:
                     if any(not isinstance(model, dict) or not model.get("endpoint") for model in requested_models):
                         raise ValueError("choose API models from a saved endpoint")
                     choices = [(str(model["endpoint"]), str(model["model"])) for model in requested_models]
-                    if len(choices) * count > agents.MAX_AT_ONCE:
-                        raise ValueError(f"select no more than {agents.MAX_AT_ONCE // count} models at this session count")
                     entries = {eid: settings.endpoint(eid) for eid, _ in choices}
                     if any(entry is None for entry in entries.values()):
                         raise ValueError("an endpoint you picked isn't saved any more: pick again")
