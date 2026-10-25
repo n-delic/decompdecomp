@@ -48,5 +48,19 @@ def capped(argv: list[str], memory: int | None = None) -> list[str]:
     return [exe, "--user", "--scope", "--quiet", "-p", f"MemoryMax={mb}M", "-p", "MemorySwapMax=0", "--", *argv]
 
 
+def no_core_dumps() -> None:
+    """No core dumps from this process or anything it starts: a compiler run through wibo aborts on a Windows
+    function wibo doesn't have, and a period compiler can crash on odd C, so the desktop's crash reporter put up a
+    dialog for each one an agent's attempt hit. Children inherit the limit, and systemd-coredump honours it."""
+    try:
+        import resource
+    except ImportError:  # Windows: no core dumps to stop
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, resource.getrlimit(resource.RLIMIT_CORE)[1]))
+    except (ValueError, OSError):
+        pass
+
+
 def killed_for_memory(returncode: int) -> bool:
     return returncode in (137, -9)
