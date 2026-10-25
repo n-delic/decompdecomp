@@ -107,11 +107,56 @@ const CW_PACK = {
   mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
-    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. A game of 2005 or later needs Visual C++ 2005, 2008 and 2010 too (about 600 MB), installed in Setup. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+    note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
-const packOf = (p) => CW_PACK[consoleOf(p)?.packs[0]] ? consoleOf(p).packs[0] : "mwcc";
+// the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
+const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
+
+/* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
+   short. A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's. Its Rich header
+   counts the files each tool built (product id << 16 | build, XORed with its key): the compiler whose build is also
+   the linker's built the game's own code, else the version that built the most files; without a Rich header, the
+   linker's version says. (tests/test_pc_debug.py keeps these ids scratch.RICH_COMPILERS' and RICH_LINKERS'.) */
+const RICH_COMPILERS = {  // version -> its compilers' product ids (whole-program ones too), as [from, to) ranges
+  "6.0": [[0x0a, 0x0c], [0x15, 0x19], [0x23, 0x25], [0x30, 0x36]], "7.0": [[0x1c, 0x1e], [0x39, 0x3b], [0x2b, 0x2d], [0x41, 0x45]],
+  "7.1": [[0x4c, 0x56], [0x5f, 0x69]], "8.0": [[0x6d, 0x77], [0x82, 0x83]], "9.0": [[0x83, 0x87], [0x89, 0x90]],
+  "10.0": [[0xaa, 0xac], [0xbc, 0xbe], [0xae, 0xb5], [0xc0, 0xc7]], "11.0": [[0xce, 0xd0], [0xd2, 0xd9]],
+  "12.0": [[0xe0, 0xe2], [0xf2, 0xf4], [0xe4, 0xeb], [0xf6, 0xfd]], "14": [[0x104, 0x106], [0x108, 0x10f]],
+};
+const RICH_LINKERS = [0x04, 0x13, 0x1e, 0x20, 0x25, 0x28, 0x3c, 0x3d, 0x47, 0x56, 0x5a, 0x78, 0x91, 0x9d, 0xba, 0xcc,
+  0xde, 0xf0, 0x102];
+function pcPack(head, pe) {
+  const word = (at) => new DataView(head.buffer).getUint32(at, true);
+  const find = (bytes, from, to, back) => {
+    for (let at = back ? to - 4 : from; back ? at >= from : at <= to - 4; at += back ? -1 : 1)
+      if (bytes.every((b, i) => head[at + i] === b)) return at;
+    return -1;
+  };
+  const end = find([0x52, 0x69, 0x63, 0x68], 0x80, pe, false);  // "Rich", then its key
+  const start = end > 0 ? find([..."DanS"].map((c, i) => c.charCodeAt(0) ^ head[end + 4 + i]), 0, end, true) : -1;
+  const files = new Map(), linkers = new Set();  // "version build" -> files it compiled; the linkers' builds
+  for (let at = start + 16; start >= 0 && at + 8 <= end; at += 8) {
+    const comp = (word(at) ^ word(end + 4)) >>> 0, count = (word(at + 4) ^ word(end + 4)) >>> 0;
+    const product = comp >>> 16, build = comp & 0xffff;
+    if (RICH_LINKERS.includes(product)) linkers.add(build);
+    const version = Object.keys(RICH_COMPILERS).find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    if (version) files.set(`${version} ${build}`, (files.get(`${version} ${build}`) || 0) + count);
+  }
+  const most = (counts) => [...counts].reduce((best, kv) => (kv[1] > best[1] ? kv : best))[0];
+  let version;
+  if (!files.size) version = String(head[pe + 24 + 2]);  // the linker's major version: 6, 7, 8, 9, 10...
+  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1]))) version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1])));
+  else {
+    const byVersion = new Map();
+    for (const [k, n] of files) byVersion.set(k.split(" ")[0], (byVersion.get(k.split(" ")[0]) || 0) + n);
+    version = most(byVersion);
+  }
+  return parseFloat(version) >= 8 ? "msvc2005" : "msvc";  // (newer than 2010: the closest the packs have, 2010)
+}
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
 
 /* A DS ROM (consoles/nds/scratch.is_nds): the header's own CRC-16 is right and the ARM9 program sits in main RAM. */
@@ -135,7 +180,7 @@ function identifyHead(head, file) {
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true) };
+    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // which PlayStation a disc is for, its SYSTEM.CNF says (the server reads it)
   if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "playstation", order: "disc image" };
@@ -247,7 +292,7 @@ function setupCompilers(info) {
   const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
   select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
-  const pack = packOf(p);
+  const pack = packOf(info);
   note.hidden = false;
   note.textContent = CW_PACK[pack].note;
   $("mwText").textContent = CW_PACK[pack].text;
@@ -342,7 +387,7 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
-  const id = packOf(picked?.info.platform);
+  const id = packOf(picked?.info);
   $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
   const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
@@ -355,7 +400,7 @@ $("analyse").onclick = async () => {
   const title = `Analysing ${picked.info.title}…`;
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
-    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info.platform)].title, e, $("jobLog").textContent); return; }
+    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
   }
   const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
