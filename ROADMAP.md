@@ -38,7 +38,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -60,6 +60,12 @@ Where to start on a gap:
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names".
+- **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
+  PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE) and
+  Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
+  method only through a declaration in the class), and optimised code's register locals (2005's S_LOCAL ranges)
+  aren't listed. A game's PDB has to be beside its program, or dropped with it, at import: a project made before
+  can't take one in yet.
 - **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
   (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
 - **Struct layouts** read MIPS and x86 loads and stores (`arch/mips_fields.py`, `arch/x86_fields.py`); another
@@ -75,6 +81,17 @@ Where to start on a gap:
 
 ## Recently done
 
+- **A Windows game's own debug symbols.** A PC game that shipped its program database (.pdb), its linker's map or
+  COFF symbols imported as if it had none. The import reads them now (Visual C++ 6.0's PDB 2.0 and the MSF 7.00 of
+  .NET 2002 on, read by decompdecomp itself, no new dependency), using a PDB only with the build whose CodeView
+  record names it: its functions and data get the game's names (functions.json's "names", methods as
+  `Class::name`), its object files become the project's source files, and from a PDB its types, globals and free
+  functions go into include/debug_types.h and each function's brief gets its prototype, parameters and locals. The
+  demo built with 6.0's /Zi and /DEBUG imports with all 19 names and its two files, and C written with the game's
+  own names and types matches. A .pdb or .map dropped with the game goes with it. No agent time; nothing leaves
+  your computer.
+- **The right Visual C++ pack at the drop.** A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then
+  asked for 2005-2010's: the page reads the program's Rich header (or its linker's version) as the import does.
 - **Windows PC: reimport, and twins in and across your games.** Settings' Reimport works on PC projects: the
   program is analysed by Ghidra again and read by the newest rules (`scratch.reanalyse_program`), every function
   going to the source file that held its code, new code to files of its own, each matched function keeping its

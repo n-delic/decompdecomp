@@ -152,8 +152,13 @@ class Console:
         return None
 
     def debug_brief(self, known: dict) -> list[str]:
-        """A function's brief lines from what debug_info knew about it (stored with the function)."""
+        """A function's brief lines from what debug_info (or debug_of) knew about it."""
         return []
+
+    def debug_of(self, fp, version: str, symbol: str) -> dict | None:
+        """PROJECT mode: what the game's own debug information says about a function (its symbol in the report), for
+        its brief (debug_brief's lines); None: nothing (the import found none, or not about this function)."""
+        return None
 
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""

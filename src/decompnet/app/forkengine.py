@@ -2201,6 +2201,7 @@ class ForkEngine:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
+        lines += self._debug_brief(fp, cfg, fn)
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         try:
@@ -2304,6 +2305,13 @@ class ForkEngine:
         """get_function's lines on the class of a virtual function, constructor or destructor (classes.brief_lines)."""
         found, addr = self._class_of(fp, cfg, fn)
         return classes.brief_lines(found, addr, self._class_label(found)) if addr is not None else []
+
+    def _debug_brief(self, fp: ForkProject, cfg: dict, fn) -> list[str]:
+        """What the game's own debug information says about the function (Console.debug_of), when it has any."""
+        console = consoles.get(cfg.get("platform"))
+        version = (fp.manifest or {}).get("version") or cfg.get("version")
+        known = console.debug_of(fp, version, self._meta(fn).get("symbol") or fn["name"]) if version else None
+        return console.debug_brief(known) if known else []
 
     @staticmethod
     def _struct_label(found: structs.Structs):

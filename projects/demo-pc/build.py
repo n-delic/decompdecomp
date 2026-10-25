@@ -6,13 +6,21 @@ nothing calls, so the demo has all of Demo Quest to decompile. No C runtime: the
 
 MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain install msvc --accept-license).
 
-    uv run python projects/demo-pc/build.py    ->  build/demoquest.exe (+ build/demoquest.map with every symbol)
+    uv run python projects/demo-pc/build.py    ->  build/demoquest.exe (+ build/symbols.map with every symbol)
     uv run python projects/demo-pc/build.py 10.0SP1    ->  build/10.0SP1/demoquest.exe
+    uv run python projects/demo-pc/build.py 6.0 --pdb  ->  build/pdb/demoquest.exe + demoquest.pdb (its debug symbols)
 
 With a version of the `msvc2005` pack (8.0, 8.0SP1, 9.0, 9.0SP1, 10.0, 10.0SP1) it's Demo Quest as a game of 2005-2012:
 compiled by that Visual C++, linked by 6.0's linker all the same. wibo runs 2005's and later linkers only up to their
 first lstrcmpiW (wibo 1.2.0; their compilers run), and the program's Rich header names the compiler of every file
 whichever linker wrote it, which is what the import reads.
+
+The linker's map is symbols.map, not demoquest.map: the import reads a map named like the program as the game's
+own symbols (consoles/pc/debuginfo.py), and the demo is a game without them unless it's built with --pdb.
+
+--pdb builds it as a game that shipped its program database: compiled with /Zi, linked with /DEBUG (a PDB 2.0, as
+Visual C++ 6.0 wrote them). Only 6.0's: under wibo 1.2.0, 7.1's linker stops at lstrcmpiA with /DEBUG, and 2005's and
+later compilers at NdrClientCall2 with /Zi (their PDB server), so MSF 7.00 PDBs are tests/test_pc_debug.py's own.
 """
 
 from __future__ import annotations
@@ -29,7 +37,8 @@ from decompnet.consoles.pc.scratch import compiler_pack
 
 HERE = Path(__file__).resolve().parent
 VERSION = sys.argv[1] if len(sys.argv) > 1 else "6.0"
-BUILD = HERE / "build" / ("" if VERSION == "6.0" else VERSION)
+PDB = "--pdb" in sys.argv[2:]
+BUILD = HERE / "build" / ("pdb" if PDB else "" if VERSION == "6.0" else VERSION)
 GAME = HERE.parent / "demo-n64" / "original"
 CFLAGS = ["/nologo", "/c", "/O2", "/Gd", "/W0"]
 
@@ -44,7 +53,7 @@ def write_key() -> None:
     """build/demo.json: the game this build made and the address of every symbol in the linker's map, so
     tests/test_consoles.py knows which of the project's functions is which."""
     symbols = {m.group(1): int(m.group(2), 16)
-               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", (BUILD / "demoquest.map").read_text(), re.M)}
+               for m in re.finditer(r"^\s+\S+\s+(\S+)\s+([0-9a-f]{8}) ", (BUILD / "symbols.map").read_text(), re.M)}
     (BUILD / "demo.json").write_text(json.dumps({"game": "demoquest.exe", "symbols": symbols}, indent=1), encoding="utf-8")
 
 
@@ -58,10 +67,13 @@ def main() -> None:
     msvc = toolchains.require("msvc") / "6.0" / "Bin"
     cl = toolchains.require(compiler_pack(VERSION)) / VERSION / "Bin"
     wibo = [str(toolchains.binary("wibo"))] if sys.platform != "win32" else []
+    if PDB and VERSION != "6.0":
+        sys.exit("--pdb builds with Visual C++ 6.0 only (see this file's docstring)")
+    debug = (["/Zi", "/Fdvc60.pdb"], ["/DEBUG", "/PDB:demoquest.pdb"]) if PDB else ([], [])
     for src in ("game.c", "pcmain.c"):
-        run([*wibo, next(p for p in (cl / "CL.EXE", cl / "cl.exe") if p.exists()), *CFLAGS, src])
+        run([*wibo, next(p for p in (cl / "CL.EXE", cl / "cl.exe") if p.exists()), *CFLAGS, *debug[0], src])
     run([*wibo, msvc / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF",
-         "/MAP:demoquest.map", "/OUT:demoquest.exe", "pcmain.obj", "game.obj"])
+         *debug[1], "/MAP:symbols.map", "/OUT:demoquest.exe", "pcmain.obj", "game.obj"])
     write_key()
     print(f"built {(BUILD / 'demoquest.exe').relative_to(HERE)} ({(BUILD / 'demoquest.exe').stat().st_size} bytes)")
 

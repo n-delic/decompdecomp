@@ -25,7 +25,7 @@ from decompnet.network import NetworkError
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
-EXE, MAP = DEMO / "build" / "demoquest.exe", DEMO / "build" / "demoquest.map"
+EXE, MAP = DEMO / "build" / "demoquest.exe", DEMO / "build" / "symbols.map"
 GAME = ROOT / "projects" / "demo-n64" / "original" / "game.c"
 
 needs_tools = pytest.mark.skipif(
@@ -361,7 +361,7 @@ def _by_address(path: Path = MAP):
 def pc(tmp_path_factory):
     from decompnet.app.engine import RomNetwork
 
-    if not EXE.exists():
+    if not MAP.exists():  # (a build from before the map was symbols.map: its demoquest.map would name everything)
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     work = tmp_path_factory.mktemp("pc")
     net = RomNetwork(work / "app.db", work)
@@ -479,9 +479,9 @@ def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_p
     assert any(f": Visual C++ {version}" in line and "closest" not in line for line in said), said
     configure = (Path(net.project_row(slug)["root"]) / "tools" / "configure.py").read_text()
     assert f'MSVC_VERSION = "{version}"' in configure and '"/EHsc"]' in configure
-    syms = _map(build / "demoquest.map")
+    syms = _map(build / "symbols.map")
     agent, _ = net.local_agent("pc-agent")
-    sub = _by_address(build / "demoquest.map")
+    sub = _by_address(build / "symbols.map")
     header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
     header += "extern s32 g_settings[6];\n"
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
@@ -512,7 +512,7 @@ def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path, b
     slug = net.import_rom(build / "demoquest.exe", confirmed=True, log=lambda *_: None)
     agent, _ = net.local_agent("pc-agent")
     root = Path(net.project_row(slug)["root"])
-    syms, sub = _map(build / "demoquest.map"), _by_address(build / "demoquest.map")
+    syms, sub = _map(build / "symbols.map"), _by_address(build / "symbols.map")
     header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header + "extern s32 g_settings[6];\n"),
                                "the game's types").startswith("✅")
