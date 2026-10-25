@@ -295,3 +295,49 @@ def test_members_stay_in_the_room_when_their_app_restarts(built, tmp_path):  # n
     again.links[gslug].stop()
     again.links[gslug].sync()
     assert [m["name"] for m in room._members_now()] == ["sam"]
+
+
+def test_a_name_the_host_moved_to_a_split_off_tail_still_applies(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "kim", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    g.links[gslug].sync()
+    assert host.split_function(agent, slug, "bounds", "0x800007D0", "bounds_tail").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds", "bounds_head").startswith("✅")
+    assert host.rename_symbol(agent, slug, "bounds_tail", "bounds").startswith("✅")
+    g.links[gslug].sync()  # used to fail with UNIQUE constraint failed: functions.project_id, functions.name
+    assert g._function("bounds", gslug)["vram"] == 0x800007D0
+    assert g._function("bounds_head", gslug)["vram"] == 0x800007C4
+
+
+def test_names_the_host_swapped_still_apply(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "pat", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "first").startswith("✅")
+    assert host.rename_symbol(agent, slug, "func_80000808", "second").startswith("✅")
+    g.links[gslug].sync()
+    assert host.rename_symbol(agent, slug, "first", "spare").startswith("✅")
+    assert host.rename_symbol(agent, slug, "second", "first").startswith("✅")
+    assert host.rename_symbol(agent, slug, "spare", "second").startswith("✅")
+    g.links[gslug].sync()
+    assert g._function("first", gslug)["vram"] == 0x80000808
+    assert g._function("second", gslug)["vram"] == 0x800007C4
+    for r in g.store.all("SELECT name, vram FROM functions"):
+        assert g.store.one("SELECT 1 FROM symbols WHERE name=? AND address=?", r["name"], r["vram"]), r["name"]
+
+
+def test_a_name_applies_to_one_of_two_functions_sharing_an_address(built, tmp_path):  # noqa: F811
+    """Overlays load at the same address as main code, so two functions can have one vram."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g, gslug = _guest(tmp_path, "ola", f"http://192.168.1.20:6481/join/{code}#room={slug}", built, client)
+    with g.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,unit,vram,rom_offset) "
+                   "SELECT project_id,'ovl_'||name,size,n_insns,target,relocs,asm,'ovl',vram,rom_offset "
+                   "FROM functions WHERE name='func_800007C4'")
+    agent, _ = host.local_agent("codex-1")
+    assert host.rename_symbol(agent, slug, "func_800007C4", "bounds").startswith("✅")
+    g.links[gslug].sync()  # used to rename both functions to "bounds": UNIQUE constraint failed
+    assert g._function("bounds", gslug)["unit"] != "ovl"
+    assert g._function("ovl_func_800007C4", gslug)["vram"] == 0x800007C4

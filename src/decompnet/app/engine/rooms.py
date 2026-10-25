@@ -144,6 +144,22 @@ class RoomMixin:
                        "VALUES(?,?,?,?,?,?,?)", (proj["id"], version, header, None, f"from the room (host v{host_version})",
                                                   time.time(), ""))
 
+    @staticmethod
+    def _free_function_name(db, pid: int, name: str, vram: int) -> None:
+        """If a function other than the one at `vram` holds `name`, move it to its address's name
+        (func_XXXXXXXX, with _2, _3... if that's taken) until the host's name for it arrives."""
+        holder = db.execute("SELECT vram FROM functions WHERE project_id=? AND name=? AND vram IS NOT ?",
+                            (pid, name, vram)).fetchone()
+        if holder is None:
+            return
+        base = f"func_{holder['vram']:08X}"
+        spare, n = base, 2
+        while db.execute("SELECT 1 FROM functions WHERE project_id=? AND name=?", (pid, spare)).fetchone()                 or db.execute("SELECT 1 FROM symbols WHERE project_id=? AND name=?", (pid, spare)).fetchone():
+            spare, n = f"{base}_{n}", n + 1
+        db.execute("UPDATE functions SET name=? WHERE project_id=? AND name=?", (spare, pid, name))
+        db.execute("UPDATE symbols SET name=? WHERE project_id=? AND name=? AND address=?",
+                   (spare, pid, name, holder["vram"]))
+
     def apply_remote_layout(self, slug: str, functions: list[dict], symbols: list[dict]) -> None:
         """Mirror the room's splits and names. The host already regression-tested them on the same ROM."""
         proj = self._project(slug)
@@ -164,6 +180,7 @@ class RoomMixin:
             syms.add(Symbol(f["name"], f["vram"], tail.size, "func"))
             th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
             with self.store.tx() as db:
+                self._free_function_name(db, pid, f["name"], f["vram"])
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL WHERE id=?",
                            (head.size, len(head.lines), th.code, json.dumps(th.to_json()), self._asm_source(head), owner["id"]))
                 db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
@@ -182,10 +199,16 @@ class RoomMixin:
             old = current if off == 0 else f"D_{sym['address']:08X}"
             word = re.compile(rf"\b{re.escape(old)}\b")
             with self.store.tx() as db:
+                if sym["address"] in local:  # data symbols have no function row
+                    self._free_function_name(db, pid, sym["name"], sym["address"])
                 db.execute("DELETE FROM symbols WHERE project_id=? AND (name=? OR name=?)", (pid, old, sym["name"]))
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, sym["name"], sym["address"], sym["size"], sym["kind"]))
-                db.execute("UPDATE functions SET name=? WHERE project_id=? AND vram=?", (sym["name"], pid, sym["address"]))
+                # an overlay can share an address with the main code: rename the one that held the old name, not both
+                if not db.execute("UPDATE functions SET name=? WHERE project_id=? AND vram=? AND name=?",
+                                  (sym["name"], pid, sym["address"], old)).rowcount:
+                    db.execute("UPDATE functions SET name=? WHERE id=(SELECT MIN(id) FROM functions "
+                               "WHERE project_id=? AND vram=?)", (sym["name"], pid, sym["address"]))
                 for r in db.execute("SELECT id, matched_source, best_source FROM functions WHERE project_id=? AND "
                                     "(matched_source IS NOT NULL OR best_source IS NOT NULL)", (pid,)).fetchall():
                     db.execute("UPDATE functions SET matched_source=?, best_source=? WHERE id=?",
