@@ -30,22 +30,22 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -60,7 +60,8 @@ Where to start on a gap:
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names".
-- **Function-end reports** cut MIPS functions (`engine._cut`).
+- **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
+  (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
 - **Struct layouts** read MIPS and x86 loads and stores (`arch/mips_fields.py`, `arch/x86_fields.py`); another
   processor adds its reader as its `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's
   fifth to eighth arguments (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`). On
@@ -68,11 +69,52 @@ Where to start on a gap:
   own, `D_<address>`, so the array's fields past the first aren't the element's type), edx's __fastcall argument,
   and the sign of a field the code only or's and tests.
 - **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
-  mode a project's matched C is its git repository; what's missing there is matching identical code across your
-  games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
+  mode a project's matched C is its git repository; twins across games pair two projects' target objects
+  (`Twins._across_projects`, PC so far: GameCube, Wii and DS projects of two games would work the same way but
+  weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
 
+- **Windows PC: reimport, and twins in and across your games.** Settings' Reimport works on PC projects: the
+  program is analysed by Ghidra again and read by the newest rules (`scratch.reanalyse_program`), every function
+  going to the source file that held its code, new code to files of its own, each matched function keeping its
+  extent whatever the new analysis says there, names and each file's compiler kept, and the whole kept only when
+  the code still rebuilds byte for byte. Twins never worked on PC: the targets are COFF objects, which twins read
+  as nothing. They're fingerprinted now (`coffobj.py`), with names as C writes them, and code matched in one PC
+  project is tried on its identical functions in another, where both files are built by the same Visual C++. A
+  Visual C++ 6.0 game has 523 groups of identical functions (8 bytes or more) in itself; it and another PC game of
+  the user's (a 2002 game whose program names no compiler) share no function of 32 bytes or more, so across games
+  is proven on two hand-made projects only.
+- **Windows PC: the compiler map, the judge's survey and range checks, over source files.** A PC game mixes
+  Visual C++ versions (a 2010 game's Rich header counts files of 2010 SP1, 6.0, 7.0 and 2008), and each source file
+  can have its own, but nothing measured which. `compiler_map` now works where a project's files each have a compiler
+  (`app/filecompilers.py`): what the program's Rich header says built it (`Console.program_compilers`), matches by
+  compiler, and the survey, which builds each file with agents' C with every compiler the program names
+  (`ForkEngine.file_scores`, the file keeping its own): a function that matches with another and not its file's
+  confirms it. The map spreads confirmations over neighbouring files (compilermap.build, a file for a function),
+  and a run becomes a suggestion; a suggested compiler for a stretch of files, an agent's or the map's, applies only
+  after a second file confirms it, walking out from the first and stopping at a file whose matches need its own
+  (`rangecheck.evaluate`); refuted on both sides it's a quirk, with a note; a file nobody can tell goes to an agent.
+  The Settings answer shows the survey and checks. On the demo, the file holding a function matched with 6.0
+  refutes 7.1, built for real, and keeps 6.0; a Visual C++ 6.0 game's header names five 6.0 builds, so its survey
+  has nothing else to try. DS has the code path (its files each have a CodeWarrior) but no Rich header and wasn't
+  run.
+- **Windows PC: function-end reports.** Ghidra sometimes runs a function on into the data after its return, or
+  into the next function. `report_boundary` works on PC projects: once three agents of two models give the same
+  end (an address, or an offset into the function), the function ends there and the rest becomes a function of its
+  own, open to agents when it reads as code and set aside with what agents said when it doesn't
+  (`scratch.cut_function`). As a join is, it's kept only when the game's code still rebuilds byte for byte, never
+  touches a matched function, and one that doesn't hold is remembered. Cutting off only the padding Visual C++ puts
+  in the function's own section is refused. ROM projects still ask the user. API helpers have the tool now too.
+- **Windows PC: import thunks named and set aside.** A call to a DLL's function declared without
+  `__declspec(dllimport)` goes to a `jmp [__imp__Name]` the linker adds. Ghidra marks those as thunks and the
+  import left them out, so their bytes became one function with the code before them, and calls to them read as
+  calls into its middle (`_D_0062F7A6`). Each is a function of its own now, named after its import (`_RtlUnwind@16`
+  where Ghidra knows the import's arguments), set aside with why, and its import's name is its real name, so a
+  caller's brief and draft read `RtlUnwind(...)` and C that declares it either way pairs with it
+  (`scratch.name_import_thunks`). Projects made before get it at start, never touching a run a matched function
+  calls into. On a Visual C++ 6.0 game: 22 thunks (WinSock, DirectX, Video for Windows, KERNEL32), 21 of them cut
+  out of two functions of an older project, whose code still rebuilds byte for byte.
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
   user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
@@ -286,8 +328,9 @@ Where to start on a gap:
   project** rebuilds it on another computer from your own copy, and judges every function again.
 - **Reimport a ROM project** (Settings): replace the split from a newly selected copy, keeping matched C only where
   its target is unchanged, plus notes, settings, saves and the names agents gave (functions are paired by address).
-  A matched function the new split doesn't have keeps its C in a note. Project mode can't yet: its project's own
-  analysis makes the functions, and Check again redoes what decompdecomp adds to it.
+  A matched function the new split doesn't have keeps its C in a note. PC projects reimport too (Ghidra again);
+  other project-mode consoles can't yet: their project's own analysis makes the functions, and Check again redoes
+  what decompdecomp adds to it.
 - **Polish matched code** (ROM projects): helpers give matched functions real names, types and a comment; a change
   counts only when the function still matches. The project shows matched and readable.
 - **Shared knowledge**: what agents learn about a game reaches every agent once helpers of two different models

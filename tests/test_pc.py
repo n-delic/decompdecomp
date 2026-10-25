@@ -992,6 +992,64 @@ def test_each_pc_source_file_can_have_its_own_visual_cpp(tmp_path):
     assert first not in scratch_pe.file_compilers(root, "game")
 
 
+# a function that calls an import through its thunk, the thunks (RtlUnwind's, closesocket's), then a function that
+# calls the second thunk; the import address table's slots are at the end of the code
+SLOTS = {0x401F00: "RtlUnwind", 0x401F04: "closesocket"}
+CALLS_THUNKS = (bytes.fromhex("e80b000000c3").ljust(0x10, b"\x90")  # call 0x401010; ret
+                + bytes.fromhex("ff25001f4000") + bytes.fromhex("ff25041f4000").ljust(0xA, b"\x90")
+                + bytes.fromhex("e8f1ffffffc3"))  # call 0x401016; ret
+
+
+def test_import_thunks_are_functions_of_their_own_named_after_their_imports(monkeypatch):
+    """Ghidra marks the linker's `jmp [__imp__Name]` thunks as thunks, which analyse used to leave out: their bytes
+    went to the function before them, and calls to the second one were calls into its middle (_D_00401016)."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    pe = scratch_pe.read_pe(_tiny_exe(CALLS_THUNKS))
+    assert scratch_pe.import_thunk(pe, 0x401010) == "RtlUnwind" and scratch_pe.import_thunk(pe, 0x401000) is None
+    rows = [_row(0x401000, 0x401006), {**_row(0x401010, 0x401016), "name": "RtlUnwind", "thunk": True,
+                                        "convention": "__stdcall", "purge": 16},
+            {**_row(0x401016, 0x40101C), "name": "closesocket", "thunk": True, "purge": 2147483647},
+            _row(0x401020, 0x401026)]
+    found = scratch_pe.analyse(pe, rows)
+    assert [(f.name, f.size) for f in found] == [("_func_00401000", 0x10), ("_RtlUnwind@16", 6),
+                                                 ("_closesocket", 0xA), ("_func_00401020", 6)]
+    assert found[0].relocs == [(1, scratch_pe.REL32, "_RtlUnwind@16", 0)]
+    assert found[1].relocs == [(2, scratch_pe.DIR32, "__imp__RtlUnwind", 0)]
+    assert found[3].relocs == [(1, scratch_pe.REL32, "_closesocket", 0)]
+
+
+def test_a_project_made_before_gets_its_import_thunks_cut_out_named_and_set_aside(tmp_path, monkeypatch):
+    """The thunks a project made before took for one function (found in a gap) become functions of their own, the
+    caller of the second calls it by name, functions.json sets them aside and names them as their imports (so C
+    declaring `__stdcall RtlUnwind` pairs with them), and the code still rebuilds byte for byte."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    rows = [_row(0x401000, 0x401006), _row(0x401020, 0x401026)]
+    root = _project(tmp_path, CALLS_THUNKS, rows)
+    config = root / "config" / "game" / "functions.json"
+    before = config.read_text()
+    units = json.loads(before)["units"]
+    assert [(fns[0]["name"], fns[0]["size"]) for fns in units.values()][1] == ("_func_00401010", 0x10)
+    assert units["text_00401020"][0]["relocs"] == [[1, scratch_pe.REL32, "_D_00401016", 0]]
+    # a matched function calling into the run: its C names it as it is, so the run stays
+    assert scratch_pe.name_import_thunks(root, "game", keep={"_func_00401020"}) == 0
+    assert config.read_text() == before
+    assert scratch_pe.name_import_thunks(root, "game") == 2
+    info = json.loads(config.read_text())
+    entries = {fn["name"]: fn for fns in info["units"].values() for fn in fns}
+    assert {n: (fn["size"], fn.get("generated", "")[:41]) for n, fn in entries.items()} == {
+        "_func_00401000": (0x10, ""), "_RtlUnwind": (6, "an import thunk the linker adds for calls"),
+        "_closesocket": (0xA, "an import thunk the linker adds for calls"), "_func_00401020": (6, "")}
+    assert entries["_func_00401000"]["relocs"] == [[1, scratch_pe.REL32, "_RtlUnwind", 0]]
+    assert entries["_func_00401020"]["relocs"] == [[1, scratch_pe.REL32, "_closesocket", 0]]
+    assert info["names"] == {"func_00401010": "RtlUnwind", "func_00401016": "closesocket"}
+    names = _template_tool("names")
+    assert names.address_of(b"_RtlUnwind@16", names.real_names(info)) == b"func_00401010"
+    assert consoles.get("pc").generated_functions(ForkProject(root), "game")["_closesocket"].startswith("an import")
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    assert scratch_pe.name_import_thunks(root, "game") == 0  # (done)
+
+
 def test_only_the_frame_helpers_shapes_set_a_frame():
     from decompnet.arch import x86
 
@@ -1433,3 +1491,279 @@ def test_the_guess_for_the_demos_struct_is_the_struct_its_source_has(pc):
     assert f"The same type: the global D_{syms['_g_entities']:08X}" in text  # the array entity_update's loop walks
     brief = net.get_function(name, slug)
     assert "### Likely struct layouts" in brief and f"- arg0: S_D_{syms['_g_entities']:08X}, +0x0 s16" in brief
+
+
+def _registered(tmp_path, monkeypatch, program: bytes, rows: list[dict], slug: str = "p", net=None):
+    """A hand-made PC project (_project: a source file per function) as the app has it: registered, measured from
+    its functions.json (no compiler: nothing matches), its targets and rebuild check the delinked objects'."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles.pc import WindowsPC
+    from decompnet.forks.project import Unit
+
+    root = _project(tmp_path / slug, program, rows)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({
+        "created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0",
+        "game": {"path": "orig/game.exe", "sha1": hashlib.sha1(_tiny_exe(program)).hexdigest()},
+        "analysis": consoles.get("pc").ANALYSIS, "tools": scratch_pe.tools_version()}))
+    (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
+        subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+    net = net or RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    net.forks._register(slug, slug.upper(), "fork", root, {"kind": "fork", "origin": "scratch", "version": "game",
+                                                            "platform": "pc", "ready": True}, "x")
+
+    def units(fp) -> dict:
+        return json.loads((fp.root / "config" / "game" / "functions.json").read_text())["units"]
+    monkeypatch.setattr(ForkProject, "report", lambda self: {"units": [
+        {"name": u, "functions": [{"name": fn["name"], "size": str(fn["size"]), "fuzzy_match_percent": 0.0} for fn in fns]}
+        for u, fns in units(self).items()]})
+    unit = lambda self, u: Unit(u, self.root / "build" / "game" / "target" / f"{u}.obj", None,  # noqa: E731
+                                f"src/auto/{u}.cpp", False, None)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [unit(self, u) for u in units(self)])
+    monkeypatch.setattr(ForkProject, "unit", lambda self, u: unit(self, u) if u in units(self) else
+                        (_ for _ in ()).throw(ForkError(f"no unit {u!r}")))
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: (
+        _delink(fp.root), scratch_pe.check_code(fp.root, version, log=log))[1])
+    net.forks.sync(slug, log=lambda *_: None)
+    return net, root
+
+
+# Ghidra took two functions for one (0x401000), and a function with data after its return for all code (0x401020)
+MERGED = FRAME_RET * 2 + b"\x90" * 14 + FRAME_RET + bytes(range(1, 8)) + FRAME_RET
+MERGED_ROWS = [_row(0x401000, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401039)]
+
+
+def test_agents_of_two_models_end_a_function_where_it_really_ends(tmp_path, monkeypatch):
+    """report_boundary on PC: three agents of two models say where a function ends; the rest becomes a function of
+    its own (code: open to agents; data: set aside), checked by the rebuild, with a note; one that can't hold is
+    refused and remembered."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    say = lambda who, fn, end, why="a second function starts there: push ebp": net.request_boundary(  # noqa: E731
+        net.local_agent(who)[0], "p", fn, end, why)
+    for end in ("+0x30", "0x00401000", "hello"):
+        with pytest.raises(NetworkError, match="an address inside it"):
+            say("claude-opus-5-5-1", "_func_00401000", end)
+    assert "1 of 3 agents" in say("opencode-beam-free-1", "_func_00401000", "+9")
+    assert "1 of 2 models" in say("opencode-beam-free-2", "_func_00401000", "0x00401009")  # (the same address)
+    said = say("claude-sonnet-5-5-1", "_func_00401000", "+9")
+    assert said.startswith("With yours, 3 agents of 2 models agree: _func_00401000 ends at 0x00401009; the 23 bytes "
+                           "after it are _func_00401009, a function of its own"), said
+    rows = {r["name"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", net.project_row("p")["id"])}
+    assert rows["_func_00401000"]["size"] == 9 and rows["_func_00401009"]["status"] == "open"
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert "decompdecomp cut it" in net.store.one("SELECT text FROM notes WHERE function_id=?",
+                                                  rows["_func_00401000"]["id"])["text"]
+    data = "data after its return: 01 02 03 04 isn't code"
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        said = say(who, "_func_00401020", "+9", data)
+    assert said.endswith("_func_00401029, set aside as not code. The game still builds byte for byte."), said
+    tail = net._function("_func_00401029", "p")
+    assert tail["status"] == "asm" and data in json.loads(tail["meta"])["asm_code"]
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2"):  # cutting off the padding Visual C++ puts there
+        say(who, "_func_00401009", "+9", "nops")
+    assert "refused: what follows 0x00401012 is padding" in say("claude-sonnet-5-5-1", "_func_00401009", "+9", "nops")
+    assert "was tried, and refused" in say("claude-opus-5-5-1", "_func_00401009", "+9", "nops")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    with pytest.raises(NetworkError, match="its end is proven"):
+        say("claude-opus-5-5-1", "_func_00401030", "+3")
+
+
+def _calls(at: int, target: int, count: int = 6) -> bytes:
+    """A function at `at` with a frame that calls `target` `count` times: push ebp; mov ebp, esp; call...; pop; ret."""
+    code = bytearray(PUSH_FRAME)
+    for _ in range(count):
+        code += b"\xe8" + struct.pack("<i", target - (at + len(code) + 5))
+    return bytes(code + bytes.fromhex("5dc3"))
+
+
+# the same function (it calls its neighbour six times) in two programs, at other addresses, calling other addresses
+GAME_A = _calls(0x401000, 0x401030).ljust(0x30, b"\x90") + FRAME_RET
+GAME_B = FRAME_RET.ljust(0x10, b"\x90") + _calls(0x401010, 0x401040).ljust(0x30, b"\x90") + FRAME_RET
+ROWS_A = [_row(0x401000, 0x401023), _row(0x401030, 0x401039)]
+ROWS_B = [_row(0x401000, 0x401009), _row(0x401010, 0x401033), _row(0x401040, 0x401049)]
+
+
+def test_a_pc_projects_targets_have_twins_by_their_masked_code():
+    """A PC project's targets are COFF objects, which twins read as nothing (pyelftools): no function of a PC game
+    had a twin, in it or across games. Identical code with other addresses is one fingerprint; its relocations name
+    what C writes (func_00401030, not _func_00401030)."""
+    from decompnet.app import twins
+
+    prints = []
+    for program, rows in ((GAME_A, ROWS_A), (GAME_B, ROWS_B)):
+        pe = scratch_pe.read_pe(_tiny_exe(program))
+        entries = [scratch_pe._entry(pe, f) for f in scratch_pe.analyse(pe, rows)]
+        prints.append(twins.object_prints(_template_tool("delink").coff(entries, _tiny_exe(program))))
+    a, b = prints[0]["_func_00401000"], prints[1]["_func_00401010"]
+    assert a.key == b.key and a.key != prints[1]["_func_00401000"].key
+    assert (a.name, a.refs[0], b.refs[0]) == ("func_00401000", "func_00401030", "func_00401040")
+    assert twins.renames(a, b, a.name, b.name) == {"func_00401000": "func_00401010", "func_00401030": "func_00401040"}
+
+
+def test_code_matched_in_one_pc_game_is_tried_on_its_twin_in_another(tmp_path, monkeypatch):
+    """Twins across your games, in project mode: a function matched in one PC project, identical in another (a C
+    runtime both link), is tried there with that project's names; the judge decides. Only where both files are
+    built with the same Visual C++."""
+    from decompnet.app.forkengine import ForkEngine
+
+    net, root_a = _registered(tmp_path, monkeypatch, GAME_A, ROWS_A, slug="a")
+    _, root_b = _registered(tmp_path, monkeypatch, GAME_B, ROWS_B, slug="b", net=net)
+    (root_a / "src" / "auto" / "text_00401000.cpp").write_text(
+        '#include "common.h"\nvoid func_00401030(void);\n\nvoid func_00401000(void) {\n'
+        + "    func_00401030();\n" * 6 + "}\n")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401000' AND project_id=?",
+                   (net.project_row("a")["id"],))
+    tried = []
+    monkeypatch.setattr(ForkEngine, "attempt", lambda self, agent, slug, function, source, keep=True, **kw: (
+        tried.append((slug, function, source)), {"matched": True, "score": 0})[1])
+    scratch_pe.compilers_file(root_a, "game").write_text("{}")  # (both built with the project's own, 6.0)
+    scratch_pe.compilers_file(root_b, "game").write_text(json.dumps({"src/auto/text_00401010.cpp": "7.1"}))
+    assert net.twins.across_games("b") == 0 and not tried  # (another Visual C++ builds that file)
+    scratch_pe.compilers_file(root_b, "game").write_text("{}")
+    assert net.twins.across_games("b") == 1
+    (slug, function, source), = tried
+    assert (slug, function) == ("b", "_func_00401010")
+    assert source.endswith("void func_00401040(void);\nvoid func_00401010(void) {\n" + "    func_00401040();\n" * 6 + "}\n")
+    assert "identical to _func_00401000 in A (matched)" in source
+
+
+FIVE = FRAME_RET.ljust(0x10, b"\x90") * 5  # five functions, a source file each (_project), 6.0 the project's compiler
+FIVE_ROWS = [_row(0x401000 + 0x10 * k, 0x401009 + 0x10 * k) for k in range(5)]
+
+
+def _file_compiler_project(tmp_path, monkeypatch, scores: dict[tuple[str, str], tuple[dict, dict]]):
+    """A PC project of five files whose builds are `scores` ((file, compiler) -> its functions' match % with the
+    file's own compiler and with that one), its Rich header naming 6.0 and 7.1, proven changes applying by
+    themselves, and every file switch recorded instead of built."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root = _registered(tmp_path, monkeypatch, FIVE, FIVE_ROWS)
+    scratch_pe.compilers_file(root, "game").write_text("{}")
+    net.filecompilers.background = False
+    net.set_auto_adjust("p", True)
+    monkeypatch.setattr(WindowsPC, "program_compilers", lambda self, fp: [
+        ("MSVC/6.0", 148, "Visual C++ 6.0 SP5 (build 8966)", True), ("MSVC/7.1", 30, "Visual C++ .NET 2003 (7.1, build 3077)", True)])
+    monkeypatch.setattr(ForkEngine, "file_scores", lambda self, slug, source, compiler: scores.get(
+        (source.removeprefix("src/auto/text_").removesuffix(".cpp"), compiler), ({}, {})))
+    switched = []
+    monkeypatch.setattr(ForkEngine, "set_compiler_ranges", lambda self, slug, ranges, compiler: switched.append(
+        (ranges, compiler)) or "switched")
+    return net, root, switched
+
+
+def _only_with(name: str, compiler: str = "MSVC/7.1", own: float = 50.0) -> dict:
+    return {(name[-8:], compiler): ({f"_func_{name[-8:]}": own}, {f"_func_{name[-8:]}": 100.0})}
+
+
+def test_the_survey_confirms_another_visual_cpp_and_its_neighbouring_file_applies_it(tmp_path, monkeypatch):
+    """The compiler map on PC: the Rich header's compilers, the survey building each file with them (a function that
+    matches with 7.1 and not with its file's 6.0 confirms 7.1), the map's run becoming a suggestion, and the range
+    check applying it once the next file confirms it too, stopping at a file whose match needs 6.0."""
+    scores = {**_only_with("00401020"), **_only_with("00401030"),
+              ("00401010", "MSVC/7.1"): ({"_func_00401010": 100.0}, {"_func_00401010": 60.0})}  # needs its 6.0
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    text = net.compiler_map_text("p")
+    assert "Visual C++ 6.0 SP5 (build 8966): 148 files; Visual C++ .NET 2003 (7.1, build 3077): 30 files" in text
+    assert "not run yet" in text
+    assert net.filecompilers.survey("p")["tried"] == 0  # (no C for any function yet: nothing to build)
+    with net.store.tx() as db:  # agents' attempts
+        db.execute("UPDATE functions SET best_source='int f(void);' WHERE project_id=?", (net.project_row("p")["id"],))
+    # (only the first file's builds this time: the survey goes on where it stopped)
+    assert net.filecompilers.survey("p", limit=3)["confirmed"] == 1
+    survey = net.cfg(net.project_row("p"))["file_survey"]
+    assert survey["confirmed"] == {"_func_00401020": "MSVC/7.1"}
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and check["origin"] == "src/auto/text_00401020.cpp"
+    assert check["evidence"]["src/auto/text_00401010.cpp"] == "refuted"
+    assert check["evidence"]["src/auto/text_00401030.cpp"] == "confirmed"
+    assert switched == [([[0x401020, 0x401040]], "MSVC/7.1")]
+    (suggestion,) = net.cfg(net.project_row("p"))["suggestions"]
+    assert suggestion["status"] == "applied" and suggestion["ranges"] == [[0x401020, 0x401040]]
+    text = net.compiler_map_text("p")
+    assert "1 functions confirmed in 3 files" in text and "#1 0x401020-0x401030 Visual C++ 7.1: confirmed by" in text
+    answer = net.compiler_answer("p")
+    assert answer["checks"][0]["status"] == "confirmed" and answer["survey"]["confirmed"] == 1
+
+
+def test_a_suggested_file_compiler_both_neighbours_refute_is_a_quirk(tmp_path, monkeypatch):
+    """An agent's suggestion for a file whose function matches with 7.1, between two files whose matches need 6.0:
+    dismissed, with a note on the function to find C that matches with its file's compiler."""
+    refutes = lambda name: {(name, "MSVC/7.1"): ({f"_func_{name}": 100.0}, {})}  # noqa: E731  (doesn't build with it)
+    scores = {**_only_with("00401020"), **refutes("00401010"), **refutes("00401030")}
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    said = net.suggest(agent, "p", "7.1 built this file", compiler="MSVC/7.1", function="_func_00401020")
+    assert said.startswith("Suggested. Range check #1 started")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "quirk" and not switched
+    assert net.cfg(net.project_row("p"))["suggestions"][0]["status"] == "dismissed"
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401020", "p")["id"])
+    assert "Range check #1" in note["text"] and "matches with Visual C++ 7.1" in note["text"]
+
+
+def test_a_neighbouring_file_nobody_can_tell_yet_goes_to_an_agent(tmp_path, monkeypatch):
+    """Where no file settles a check, the nearest file without evidence is the next agent's task (first in line, a
+    note saying to try_compiler); a try_compiler that switches it confirms the check."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "checking" and check["said"].startswith("checking: _func_00401010 in src/auto/text_00401010")
+    assert net.cfg(net.project_row("p"))["priority"] == ["_func_00401010"]
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401010", "p")["id"])
+    assert 'try_compiler("_func_00401010", "MSVC/7.1")' in note["text"]
+    net.filecompilers.tried("p", "src/auto/text_00401010.cpp", "MSVC/7.1")  # (what try_compiler's switch says)
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and switched == [([[0x401010, 0x401030]], "MSVC/7.1")]
+    assert net.cfg(net.project_row("p"))["priority"] == []
+
+
+@needs_tools
+def test_a_file_built_with_another_visual_cpp_keeps_its_own_and_says_which_matches_need_it(pc):
+    """The survey's and range checks' evidence, built for real: the file holding player_take_damage (matched with
+    6.0, otherwise with 7.1) built with 7.1 refutes 7.1 for it, and the file is its own compiler's again after."""
+    net, slug = pc
+    root = Path(net.project_row(slug)["root"])
+    name = next(r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",
+                                                 net.project_row(slug)["id"]) if f"{_map()['_player_take_damage']:08X}" in r["name"])
+    meta = json.loads(net._function(name, slug)["meta"])
+    source, name = meta["source"], meta["symbol"]  # (the report's name: the row's can have a ' after it)
+    before = scratch_pe.file_compilers(root, "demoquest")
+    mine, theirs = net.forks.file_scores(slug, source, "MSVC/7.1")
+    assert mine[name] == 100 and theirs.get(name, 0) < 100
+    assert net.filecompilers.verdict(slug, source, "MSVC/7.1") == "refuted"
+    assert scratch_pe.file_compilers(root, "demoquest") == before
+    assert net.forks.file_scores(slug, source, "MSVC/6.0")[0][name] == 100  # (built with its own again)
+    # the demo's Rich header names 6.0 only, and every file is 6.0's again (the test before): nothing else to try
+    assert "the survey has no other compiler to try" in net.compiler_map_text(slug)
+
+
+def test_a_pc_project_is_reimported_with_a_new_analysis_and_keeps_its_matches(tmp_path, monkeypatch):
+    """Reimport for PC (Settings): Ghidra again, read by the newest rules; a function the old analysis merged is two
+    now, each in the source file that held its code, the matched function keeps its extent whatever the new analysis
+    says there, the code still rebuilds byte for byte; another program is refused."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    rows = [_row(0x401000, 0x401009), _row(0x401009, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401033)]
+    monkeypatch.setattr(ghidra, "functions", lambda program, timeout=3600: rows)
+    with pytest.raises(NetworkError, match="isn't this project's program"):
+        net.forks.reimport("p", ROOT / "README.md")
+    said = net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)
+    assert said["said"] == "4 functions (it had 3), 2 of them new or with another extent; its 1 matched functions kept"
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert {u: [(f["name"], f["size"]) for f in fns] for u, fns in units.items()} == {
+        "text_00401000": [("_func_00401000", 9), ("_func_00401009", 0x17)], "text_00401020": [("_func_00401020", 0x10)],
+        "text_00401030": [("_func_00401030", 9)]}
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert said["functions"] == 4 and "Analyse the game again" in subprocess.run(
+        ["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
+    assert net.forks.overview("p")["reimports"]
+    assert net.forks.reimport("p", root / "orig" / "game.exe", log=lambda *_: None)["said"].startswith("the new analysis "
+                                                                                                    "changed nothing")

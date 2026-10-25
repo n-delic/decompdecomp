@@ -193,6 +193,14 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def reimport(self, net, slug: str, game: Path, log=print) -> str | None:
+        """A new analysis of a project the console made, from the user's copy (`game`) again, keeping every match,
+        note and name (forkengine.reanalyse): Settings' Reimport. Returns what changed, as a sentence; None: nothing
+        did, or the change was taken back (the project's feed says why)."""
+        raise RomError(f"{self.name} projects can't be reimported yet: their own build sets their functions")
+
+    reimports = False  # reimport is its own (Settings shows Reimport for its projects)
+
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         """Build the project and compare what it makes with the user's copy: {"identical", "detail"}."""
         raise RomError(f"{self.name} projects aren't rebuilt and compared here")
@@ -248,10 +256,28 @@ class Console:
         functions (`keep`)."""
         raise RomError(f"{self.name} projects can't join functions yet: the agents' agreement is kept for when they can")
 
+    def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
+        """(address, size) of a function by its symbol, in a project the console made: where report_boundary's `end`
+        falls. None where it can't tell (a fork's functions are its project's own)."""
+        return None
+
+    def cut_function(self, fp, symbol: str, at: int, keep: set[str], why: str = "") -> str:
+        """End a function at address `at` in the project's config (agents agreed it runs on past its end:
+        ForkEngine.report_boundary, which checks the rebuild); the rest becomes a function of its own, set aside when
+        it isn't code (`why`: what agents said it is). Returns what changed, as a sentence. Not for matched functions
+        (`keep`)."""
+        raise RomError(f"{self.name} projects can't cut functions yet: the agents' agreement is kept for when they can")
+
     def set_file_compiler(self, fp, source: str, compiler: str) -> str:
         """Make the project build a source file with `compiler` (file_compiler says whether it can); returns the file
         that says so, relative to the project (to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
+
+    def program_compilers(self, fp) -> list[tuple[str, int, str, bool]]:
+        """What the game's program itself says built it, where its files each have a compiler: (one of `compilers`
+        to build them with, how many of its files, in words, whether it's installed), most files first; [] where it
+        doesn't say. The compiler map shows it, and its survey tries these (app/filecompilers.py)."""
+        return []
 
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a

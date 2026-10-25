@@ -54,6 +54,10 @@ two. When you can tell where one ends (a class's methods together, a library's c
 C++ matches), `split_file(path, at, new_name)` divides it there: the function `at` and everything after it go to the
 new file (`src/auto/<name>.cpp`) with their C and the file's compiler, and `try_compiler` can then switch the new
 file's. A split that doesn't keep the game's code identical, or loses a match, isn't made.
+Ghidra can be wrong about where a function ends. One that runs on into data after its return, or into another
+function (a `push ebp; mov ebp, esp` after its `ret`): `report_boundary(function, end, reason)`, `end` an address or
+an offset into it (`+0x40`). Once agents of two models agree, it ends there, and the rest is a function of its own
+(set aside when it isn't code). One cut short: `join_functions` with the next.
 <!-- end -->
 
 Conventions

@@ -336,9 +336,9 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary",
+ROM_ONLY = {"get_context", "edit_context", "split_function",
             "redraft",
-            "compiler_map", "search_flags"}
+            "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
 
@@ -478,9 +478,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def report_boundary(ctx: Context, function: str, end: str, reason: str) -> str:
-        """Report that a function really ends earlier: the words after `end` are alignment padding, linker
-        leftovers or data, not code anyone wrote, so no C can match the whole thing. The user approves it on the
-        project page; then the function ends at `end` and the rest is set aside. Say how you can tell."""
+        """Report that a function really ends earlier: what follows `end` is alignment padding, linker leftovers
+        or data, not code anyone wrote (or, in a PC project, another function the analysis merged with it), so no C
+        can match the whole thing. ROM projects: the user approves it on the project page; then the function ends at
+        `end` (an address) and the rest is set aside. PC projects: once agents of two models agree, the function is
+        cut at `end` (an address, or an offset into it: +0x20) and the rest is a function of its own, set aside
+        when it isn't code, kept only if the game still builds byte for byte. Say how you can tell."""
         return await run(ctx, "report_boundary", function=function, end=end, reason=reason)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -516,12 +519,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def compiler_map(ctx: Context, survey: bool = False, check_ranges: bool = False) -> str:
-        """Which compiler built each part of the game (ROM projects, MIPS): where the code looks built by another
-        compiler than the one its address builds with today, from matches, habits that rule compilers out, and the
-        judge. survey=true also starts the judge's survey in the background: agents' C for unmatched functions built
-        with each compiler the project uses; what it confirms becomes a suggestion. A suggested range is tested on
-        its neighbours before it applies (range checks, listed here); check_ranges=true looks at the applied ranges
-        again the same way (a report: nothing changes by itself)."""
+        """Which compiler built each part of the game (ROM projects, MIPS; projects whose source files each have a
+        compiler, PC and DS: over their files, with what the program itself says built it): where the code looks
+        built by another compiler than the one it builds with today, from matches, habits that rule compilers out,
+        and the judge. survey=true also starts the judge's survey in the background: agents' C for unmatched
+        functions built with each compiler the project uses; what it confirms becomes a suggestion. A suggested range
+        is tested on its neighbours before it applies (range checks, listed here); check_ranges=true looks at the
+        applied ranges (projects: the open checks) again the same way."""
         return await run(ctx, "compiler_map", survey=survey, check_ranges=check_ranges)
 
     @mcp.tool(meta=ALWAYS_LOAD)
