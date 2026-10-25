@@ -5,8 +5,9 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
   which also says (with its sections) whether decompdecomp can start it at all: 64-bit, Visual C++ 2017 and newer,
-  mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check puts the program's code
-  back together from those objects (check_code). Visual C++'s exception-handling stubs are set aside
+  mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
+  project's export, puts the whole program back together from the project (`ninja rebuild`, check_code): each
+  function from its C where that compiles to the game's code, else from those objects. Visual C++'s exception-handling stubs are set aside
   (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json).
@@ -47,7 +48,8 @@ class WindowsPC(Console):
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
     demo = "demo-pc"
     demo_tools = ("msvc", "objdiff-cli", "wibo", "ghidra", "java")  # Ghidra needs Java 21 or newer
-    own_features = frozenset({REBUILD_CHECK})  # the program's code, rebuilt from its delinked functions
+    # the whole program rebuilt from the project: like GameCube's and DS's, the project is the export
+    own_features = frozenset({REBUILD_CHECK})
     # what a project's config holds, in its manifest's "analysis" (on_start brings one with less up, step by step):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
@@ -161,8 +163,11 @@ class WindowsPC(Console):
                     pass
 
     def check_rebuild(self, fp, version: str, log=print) -> dict:
+        """The program rebuilt from what the project builds now: its objects first (a file that no longer compiles
+        keeps the object it had, whose functions are checked against the game's code as any)."""
         from . import scratch
 
+        fp.run(["ninja", "prepare"], log=lambda *_: None, timeout=scratch.TOOL_SECONDS)
         return scratch.check_code(fp.root, version, log=log)
 
     def join_functions(self, fp, first: str, last: str, keep: set[str], log=print) -> str:

@@ -6,6 +6,7 @@
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
 macOS): each file with its own version when config/VERSION/file_compilers.json names one. objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
+`ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks it against your copy.
 Made by decompdecomp.
 """
 
@@ -77,7 +78,8 @@ def source_of(unit: str) -> str:
 
 
 def main() -> None:
-    units = json.loads(CONFIG.read_text(encoding="utf-8"))["units"]
+    info = json.loads(CONFIG.read_text(encoding="utf-8"))
+    units = info["units"]
     headers = [str(p) for p in files("include", (".h", ".hpp"))]
     with open("build.ninja", "w", encoding="utf-8") as f:
         n = ninja_syntax.Writer(f)
@@ -102,6 +104,12 @@ def main() -> None:
             objs.append(str(obj))
         n.build("all_source", "phony", objs)
         n.build("prepare", "phony", [*targets, *objs])
+        # the whole program, from what src/ compiles to and the delinked functions (not the default: a build for
+        # objdiff needs only the objects)
+        program = str(BUILD / Path(info["exe"]).name)
+        n.rule("rebuild", f"{PY} tools/rebuild.py {CONFIG} {BUILD}")
+        n.build(program, "rebuild", [*targets, *objs], implicit=[str(CONFIG), info["exe"], "tools/rebuild.py"])
+        n.build("rebuild", "phony", [program])
         n.build("build.ninja", "configure", ["tools/configure.py", str(CONFIG), *headers,
                                              *[str(s) for s in files("src", (".c", ".cpp"))],
                                              *([str(FILE_COMPILERS)] if FILE_COMPILERS.exists() else [])])

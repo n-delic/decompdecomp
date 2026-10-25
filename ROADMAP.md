@@ -46,7 +46,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | — | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | the project | — | the project | the project |
+| Rebuildable export | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -55,8 +55,7 @@ Where to start on a gap:
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). A PC
   program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
   fields need x86's `Arch.field_accesses`.
-- **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
-  story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
+- **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names".
@@ -70,6 +69,18 @@ Where to start on a gap:
 
 ## Recently done
 
+- **A Windows PC project rebuilds the whole game.** A PC project compiled each function and compared it with the one
+  cut out of the user's .exe, but nothing put the program back together: its export was "—". `ninja rebuild`
+  (tools/rebuild.py, standard library only) writes the whole .exe again, every function at its address from what
+  `src/` compiles to where that is the game's code once its relocations are filled in from the project's symbols
+  (a constant of its own, a string or a float, where the game has the same bytes), else from the delinked function,
+  and the rest (headers, data, imports, resources) from the user's copy, and compares it byte for byte. It's the
+  project's rebuild check too, so "Rebuild the game and compare" and every check of a join or a new analysis test
+  the whole program with the matched C in it. On a Visual C++ 6.0 game of 11,846 functions it comes out identical
+  with its six matched functions from C (constructors, destructors and exception handling), in under a second, and
+  from a fresh clone of the project. Not a linker: the program's data isn't delinked, and Visual C++'s LINK.EXE would
+  have to place every object, library and resource as the original did (and 2005's and later stop in wibo 1.2.0),
+  so the code goes back where the game has it; moving code is the modding-ready check below.
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
   user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
@@ -427,7 +438,8 @@ pointer often isn't at offset 0), with their own instruction readers, in fork mo
 
 The export rebuilds the game byte for byte; mods need code that can move. Build a second copy with padding inserted
 and report every address that is still hard-coded ("93% movable, 41 addresses left"). The matching build stays as
-it is.
+it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
+(tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
 
 ### A list of open rooms (to investigate)
 
