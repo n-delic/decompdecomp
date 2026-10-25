@@ -184,6 +184,16 @@ class Readability:
             fn = held if held is not None and held["status"] == "matched" else None
             if held is not None and fn is None:
                 raise NetworkError(f"you hold {held['name']}; match it or release_function it first")
+            left = None
+            if fn is not None:
+                # taking a held function up again is a try too: a helper whose every rewrite of one failed to compile
+                # kept its claim (each compile renewed it) and got it back each session, 174 times in an afternoon on
+                # an Xbox game, as only a new claim counted
+                if db.execute(f"SELECT 1 FROM functions WHERE id=? AND {TODO}", (fn["id"], proj["id"])).fetchone():
+                    self.net._event(db, proj["id"], agent.id, "polish", fn["name"])
+                else:
+                    db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
+                    left, fn = fn["name"], None
             if fn is None:
                 # in ORDER. The game's own code: an Xbox game's matched SDK functions, set aside, would have been
                 # polished with its 33
@@ -193,12 +203,14 @@ class Readability:
                 if fn is not None:
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
                     self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
+        given_up = (f"You held {left}, tried {POLISH_TRIES} times without a rewrite that kept it matching: it's left as "
+                    "it is now.\n\n") if left else ""
         if fn is None:
             if fork and (job := self._tidy_job(agent, proj)) is not None:  # every function done: the files next
-                return job
+                return given_up + job
             if self.left(proj):  # what's left is held by other helpers
-                return self._held_by_others(proj)
-            return ("Every matched function is readable already (or was tried "
+                return given_up + self._held_by_others(proj)
+            return (given_up + "Every matched function is readable already (or was tried "
                     f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
                     "left to polish.")
         counts = self.counts(proj)
@@ -213,7 +225,7 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
-        return (f"MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
+        return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
                 f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
                 "Make it readable without changing what the compiler makes of it:\n" + names +

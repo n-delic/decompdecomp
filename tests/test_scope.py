@@ -139,6 +139,31 @@ def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on
     assert net.readability.left(proj) == 1 and "game_b" in net.readability.claim(agent, slug)
 
 
+def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
+    """A helper whose every rewrite of one function failed to compile kept its claim (each compile renewed it) and was
+    handed the same function at the start of each session, 174 times in an afternoon on an Xbox game: only a new claim
+    counted as a try. Taking a held one up again counts too, and after POLISH_TRIES it's let go for the next."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    net.store.conn.execute("UPDATE functions SET n_insns=20 WHERE name='game_a'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    for _ in range(readable.POLISH_TRIES):  # never released: each session's claim_readable gives it back
+        said = net.readability.claim(agent, slug)
+        assert said.startswith("MAKE READABLE: game_b")
+    said = net.readability.claim(agent, slug)
+    assert said.startswith(f"You held game_b, tried {readable.POLISH_TRIES} times")
+    assert "MAKE READABLE: game_a" in said
+    held = net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id")
+    assert [r["name"] for r in held] == ["game_a"]
+
+
 def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tmp_path, monkeypatch):
     """A ceiling of 400 instructions left a game's biggest functions unpolished for good ("they wait"): they come after
     the functions people read most, smallest of them first, and their brief asks for names and comments in place."""
