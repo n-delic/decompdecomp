@@ -496,16 +496,18 @@ def test_a_game_of_2005_to_2010_builds_with_its_own_visual_cpp_and_matches(tmp_p
         assert res["matched"], (name, res["text"])
 
 
+@pytest.mark.parametrize(("built", "other"), [("10.0SP1", "10.0"), ("8.0", "8.0")])
 @needs_tools
 @pytest.mark.skipif(toolchains.installed("msvc2005") is None,
                     reason="needs Visual C++ 2005, 2008 and 2010 (msvc2005, proprietary)")
-def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path):
-    """A compiler per source file in a game of 2010: the map can name a version of either pack (2010 RTM from the
-    2005-2010 pack, 7.1 from the other), and the build finds each in the pack that has it."""
+def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path, built, other):
+    """A compiler per source file in a newer game: the map can name a version of either pack (2010 RTM from the
+    2005-2010 pack, 7.1 from the other), and the build finds each in the pack that has it. 2005 RTM (#42) shares SP1's
+    Rich build, so a game of it imports with SP1 and its files are switched to RTM this way."""
     from decompnet.app.engine import RomNetwork
 
-    build = DEMO / "build" / "10.0SP1"
-    subprocess.run([sys.executable, str(DEMO / "build.py"), "10.0SP1"], check=True, capture_output=True)
+    build = DEMO / "build" / built
+    subprocess.run([sys.executable, str(DEMO / "build.py"), built], check=True, capture_output=True)
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     slug = net.import_rom(build / "demoquest.exe", confirmed=True, log=lambda *_: None)
     agent, _ = net.local_agent("pc-agent")
@@ -521,13 +523,14 @@ def test_a_file_of_a_newer_game_takes_any_installed_packs_visual_cpp(tmp_path):
                 if p.stem <= f"text_{syms['_add_score']:08X}")
     assert net.forks.split_file(agent, slug, whole, adder).startswith("✅")
     last = f"src/auto/text_{syms['_add_score']:08X}.cpp"
-    said = net.forks.try_compiler(agent, slug, adder, "MSVC/10.0", source=sub(csource.get(GAME.read_text(), "add_score")))
-    assert f"{last} is built with MSVC/10.0 from now on" in said, said
-    assert scratch_pe.file_compilers(root, "demoquest") == {last: "10.0"}
-    # 7.1, from the other pack, builds the file too, and compiles add_score otherwise: the file keeps 2010 RTM
-    with pytest.raises(NetworkError, match="stays with MSVC/10.0: .* no longer match"):
-        net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")
-    assert scratch_pe.file_compilers(root, "demoquest") == {last: "10.0"}
+    said = net.forks.try_compiler(agent, slug, adder, f"MSVC/{other}", source=sub(csource.get(GAME.read_text(), "add_score")))
+    assert f"{last} is built with MSVC/{other} from now on" in said, said
+    assert scratch_pe.file_compilers(root, "demoquest") == {last: other}
+    if built == "10.0SP1":  # 7.1, from the other pack, builds the file too, and compiles add_score otherwise (2005
+        # RTM and 7.1 compile it alike): the file keeps its compiler
+        with pytest.raises(NetworkError, match=f"stays with MSVC/{other}: .* no longer match"):
+            net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")
+        assert scratch_pe.file_compilers(root, "demoquest") == {last: other}
     assert net._function(adder, slug)["status"] == "matched"
 
 
@@ -634,7 +637,8 @@ def test_every_visual_cpp_the_import_picks_is_in_a_compiler_pack():
     from decompnet.consoles.pc import MSVC_VERSIONS
 
     picked = scratch_pe.RICH_BUILDS.values()
-    assert sorted(picked) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
+    # every one but 2005 RTM, whose Rich build is SP1's: it's chosen by file (try_compiler, Settings)
+    assert sorted([*picked, "8.0"]) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
     assert {scratch_pe.compiler_pack(v) for v in picked} == set(scratch_pe.MSVC_PACKS)
     with pytest.raises(ForkError, match="no Visual C\\+\\+ 5.0"):
         scratch_pe.compiler_pack("5.0")

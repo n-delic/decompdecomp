@@ -72,7 +72,7 @@ Where to start on a gap:
 
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
-  user accepts it) has 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
+  user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each
   runs through the pinned wibo (2010's with the redistributable's `msvcp100.dll` beside it). The import builds a game
   with the build its Rich header names (`RICH_BUILDS`), or the closest of its version and says so, and tells a game
   whose compiler isn't installed which pack to install. The demo builds with each (`build.py 10.0SP1`), imports with

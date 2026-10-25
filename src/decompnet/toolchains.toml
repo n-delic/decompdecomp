@@ -591,16 +591,22 @@ into = "7.1"
 
 # Each archive is a whole install: `keep` takes its compiler (Bin) and headers (Include: Visual C++'s and the Windows
 # SDK's in one folder, as the 6.0-7.1 pack has them), so the project's build finds every version the same way.
-# 2005's RTM and SP1 share the Rich header's build (50727), so SP1 stands for both: the one most 2005 games were built
-# with. wibo has no msvcp100.dll of its own (2010's compiler calls a few of its functions), so 2010's Bin gets the
+# 2005's RTM and SP1 share the Rich header's build (50727), so an import takes SP1, the one most 2005 games were built
+# with; RTM is there for the rest (#42): try_compiler and Settings switch a file to it. wibo has no msvcp100.dll of its own (2010's compiler calls a few of its functions), so 2010's Bin gets the
 # Visual C++ 2010 redistributable's, from the archive the CodeWarrior pack (mwcc) already pins.
 [msvc2005]
 name = "Microsoft Visual C++ 2005, 2008 and 2010 (PC)"
 kind = "compiler-pack"
 platform = "PC"
 license = "proprietary"
-source = "the decomp community's archives: decomp.me's 2005 SP1 (Drahsid/ffxiv_msvc8.0sp1), archaic-msvc's 2008 and 2010 (msvc900, msvc1000, msvc1000_sp1), Marvisak/msvc900_sp1 (2008 SP1)"
-description = "The compilers of Windows games of 2005-2012: Visual C++ 2005 SP1 (8.0), 2008 and 2008 SP1 (9.0), 2010 and 2010 SP1 (10.0). Windows programs, run through wibo on Linux and macOS."
+source = "the decomp community's archives: decomp.me's 2005 RTM (widberg/msvc8.0) and SP1 (Drahsid/ffxiv_msvc8.0sp1), archaic-msvc's 2008 and 2010 (msvc900, msvc1000, msvc1000_sp1), Marvisak/msvc900_sp1 (2008 SP1)"
+description = "The compilers of Windows games of 2005-2012: Visual C++ 2005 and 2005 SP1 (8.0), 2008 and 2008 SP1 (9.0), 2010 and 2010 SP1 (10.0). Windows programs, run through wibo on Linux and macOS."
+[[msvc2005.parts]]
+url = "https://github.com/widberg/msvc8.0/archive/936f93b9e9e92943ed5c9398d24712a32c2e9fe4.tar.gz"  # 14.00.50727.42
+sha256 = "18e876d22285aa17be6676d765be6556cb30ffb26e0c9dad59ddd66e5ccf6afa"
+subdir = "msvc8.0-936f93b9e9e92943ed5c9398d24712a32c2e9fe4"
+keep = { "bin" = "Bin", "PlatformSDK/Include" = "Include", "include" = "Include" }
+into = "8.0"
 [[msvc2005.parts]]
 url = "https://github.com/Drahsid/ffxiv_msvc8.0sp1/archive/0d6f444cfc120e4e62a092726844fa310c74b1bc.tar.gz"  # 14.00.50727.762
 sha256 = "e728de13878c2876e855e2206fc4b8b0a52a3e801c29bd8e0478ef1670aa7be7"

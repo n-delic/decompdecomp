@@ -9,7 +9,7 @@ MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain instal
     uv run python projects/demo-pc/build.py    ->  build/demoquest.exe (+ build/demoquest.map with every symbol)
     uv run python projects/demo-pc/build.py 10.0SP1    ->  build/10.0SP1/demoquest.exe
 
-With a version of the `msvc2005` pack (8.0SP1, 9.0, 9.0SP1, 10.0, 10.0SP1) it's Demo Quest as a game of 2005-2012:
+With a version of the `msvc2005` pack (8.0, 8.0SP1, 9.0, 9.0SP1, 10.0, 10.0SP1) it's Demo Quest as a game of 2005-2012:
 compiled by that Visual C++, linked by 6.0's linker all the same. wibo runs 2005's and later linkers only up to their
 first lstrcmpiW (wibo 1.2.0; their compilers run), and the program's Rich header names the compiler of every file
 whichever linker wrote it, which is what the import reads.
