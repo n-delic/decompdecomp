@@ -129,7 +129,7 @@ $("stopAll").onclick = async () => {
 };
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
-const LZ = { kind: null, model: "", models: [], count: 1, per: null, effort: "", task: "" };
+const LZ = { kind: null, model: "", customModel: false, apiSingleModel: null, apiCustomModel: "", models: [], multiple: false, endpointModels: {}, byKind: {}, count: 1, per: null, effort: "", task: "" };
 const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
 // an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
@@ -145,7 +145,9 @@ function launcherInit() {
   const first = S.st.agents.find((a) => a.recommended) || S.st.agents[0];
   LZ.kind = known ? known.id : first ? first.id : null;
   LZ.model = known && l.model !== "__all_models" ? (l.model || "") : "";
-  LZ.models = known && Array.isArray(l.models) ? l.models.map(String) : [];
+  LZ.models = known && Array.isArray(l.models) ? l.models.map((m) => typeof m === "string" ? m : ({ endpoint: String(m.endpoint), model: String(m.model) })) : [];
+  LZ.multiple = !!(known && (l.multiple || l.model === "__all_models" || LZ.models.length));
+  LZ.apiSingleModel = known && l.api_model ? { endpoint: String(l.api_model.endpoint), model: String(l.api_model.model) } : null;
   LZ.count = l.count || 1;
   const eps = S.st.settings.endpoints || [];
   LZ.eps = (l.endpoints || []).filter((id) => eps.some((e) => e.id === id));
@@ -154,13 +156,31 @@ function launcherInit() {
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
   const opts = [{ id: "", name: a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
-  for (const r of recent) if (!opts.some((o) => o.id === r) && !(a.models || []).some((m) => m.id === r)) {
-    opts.push({ id: r, name: r, note: "used before" });
-  }
+  for (const m of a.models || []) opts.push({ id: m.id, name: m.name, note: m.note || "" });
+  for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
+  opts.push({ id: "__multiple", name: "Multiple models", note: "" });
+  opts.push({ id: "__other", name: "Another model…", note: "" });
   return opts;
 }
 function selectableModels(a) {
-  return a.models || [];
+  if (a.uses_endpoints) {
+    const eps = (S.st.settings.endpoints || []).filter((e) => (LZ.eps || []).includes(e.id));
+    const listed = eps.flatMap((e) => (LZ.endpointModels[e.id] || []).map((m) => ({
+      id: `${e.id}::${m.id}`, endpoint: e.id, model: m.id, name: `${e.name} · ${m.name}`,
+    })));
+    for (const chosen of LZ.models) if (typeof chosen === "object" && eps.some((e) => e.id === chosen.endpoint) &&
+      !listed.some((m) => m.endpoint === chosen.endpoint && m.model === chosen.model)) {
+      const endpoint = eps.find((e) => e.id === chosen.endpoint);
+      listed.push({ id: `${chosen.endpoint}::${chosen.model}`, endpoint: chosen.endpoint, model: chosen.model,
+        name: `${endpoint.name} · ${chosen.model}`, note: "typed model" });
+    }
+    return listed;
+  }
+  const listed = [...(a.models || [])];
+  if (!listed.length) for (const model of LZ.models) if (typeof model === "string" && !listed.some((m) => m.id === model)) {
+    listed.push({ id: model, name: model, note: "typed model" });
+  }
+  return listed;
 }
 function modelName(a, model) {
   if (!model) return "";
@@ -168,16 +188,16 @@ function modelName(a, model) {
   return m ? m.name : model;
 }
 function launchLabel(a, model, count, models = []) {
+  if (models.length) {
+    const total = models.length * count;
+    const effort = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
+    return `Start ${models.length} ${models.length === 1 ? "model" : "models"}${effort} × ${count} = ${total} ${total === 1 ? "agent" : "agents"}`;
+  }
   if (a.uses_endpoints) {
     const picked = (S.st.settings.endpoints || []).filter((e) => (LZ.eps || []).includes(e.id));
     const eff = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
     if (picked.length > 1) return `Start ${count} across ${picked.length} endpoints${eff}`;
     return `Start ${picked[0] ? picked[0].name : "API model"}${eff}${count > 1 ? ` × ${count}` : ""}`;
-  }
-  if (models.length) {
-    const total = models.length * count;
-    const effort = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
-    return `Start ${models.length} ${models.length === 1 ? "model" : "models"}${effort} × ${count} = ${total} ${total === 1 ? "agent" : "agents"}`;
   }
   return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${effortOf(a) && model ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : ""}${count > 1 ? ` × ${count}` : ""}`;
 }
@@ -187,19 +207,22 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
   try {
     const options = { ...extra };
     if (models.length) options.models = models;
+    if (LZ.multiple) options.multiple_models = true;
     else if (model && !a.uses_endpoints) options.model = withEffort(a, model);
     if ((a.uses_endpoints || models.length) && effortOf(a)) options.effort = effortOf(a);
     else if (effortOf(a) && !model && !models.length) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
-    S.st.settings.launcher = { kind: a.id, model: model || "", models, count };
+    S.st.settings.launcher = { kind: a.id, model: model || "", models, multiple: LZ.multiple, count,
+      ...(a.uses_endpoints && LZ.apiSingleModel ? { api_model: LZ.apiSingleModel } : {}),
+      ...(a.uses_endpoints ? { endpoints: LZ.eps || [] } : {}) };
     if (model && !a.uses_endpoints) {
       const rec = (S.st.settings.recent_models ||= {});
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
     hideLaunch();
-    const total = models.length ? models.length * count : count;
+    const total = LZ.multiple ? models.length * count : count;
     toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
@@ -232,22 +255,36 @@ function renderLauncher(box, compact = true) {
     const eps = S.st.settings.endpoints || [];
     const why = `<p class="muted small">The app talks to the model itself: nothing else to install, and no other program's update can break it. Any OpenAI-compatible provider works (OpenAI, DeepSeek, OpenRouter) or a model on this computer; you pay your provider for what it uses.</p>`;
     LZ.eps = (LZ.eps || []).filter((id) => eps.some((e) => e.id === id));
-    if (!LZ.eps.length && eps.length) LZ.eps = [eps[0].id];
+    for (const e of eps) if (LZ.eps.includes(e.id) && !LZ.endpointModels[`loaded:${e.id}`] && !LZ.endpointModels[`loading:${e.id}`]) {
+      LZ.endpointModels[`loading:${e.id}`] = true;
+      api(`/api/endpoints/models?id=${encodeURIComponent(e.id)}`).then((result) => {
+        LZ.endpointModels[e.id] = result.models || [];
+        LZ.endpointModels[`loaded:${e.id}`] = true;
+        if (box.isConnected) renderLauncher(box, compact);
+      }).catch(() => { LZ.endpointModels[e.id] = []; LZ.endpointModels[`loaded:${e.id}`] = true; if (box.isConnected) renderLauncher(box, compact); });
+    }
     body = eps.length && !LZ.adding ? `<div class="ep-pick">${eps.map((e) => `<label class="check inline"><input type="checkbox" data-ep="${esc(e.id)}" ${LZ.eps.includes(e.id) ? "checked" : ""}>
         <span><b>${esc(e.name)}</b> <span class="mono small">${esc(e.model)}</span><br><span class="muted small mono">${esc(hostOf(e.base_url))}${e.max_sessions ? ` · at most ${e.max_sessions} at once` : ""}</span></span></label>`).join("")}</div>
       <p class="muted small">${eps.length > 1 ? "Tick several to spread the sessions across them. " : ""}<a class="link" href="#/agents">Manage endpoints</a> · <button type="button" class="link-btn" data-act="add-ep">Add one</button></p>`
       : `<div class="lz-fields">${endpointFields({ provider: "deepseek" }, compact)}</div>${eps.length ? `<p class="muted small"><button type="button" class="link-btn" data-act="pick-ep">Back to your endpoints</button></p>` : ""}`;
-    body = why + body + (eps.length && !LZ.adding ? effortField(a) : "");
+    const apiModels = selectableModels(a);
+    const singleOptions = [{ id: "", name: `Default · ${eps.find((e) => LZ.eps.includes(e.id))?.model || "endpoint model"}` },
+      ...apiModels.map((m) => ({ id: m.id, name: m.name })), { id: "__multiple", name: "Multiple models" }, { id: "__other", name: "Another model…" }];
+    const selectedApi = LZ.apiSingleModel ? `${LZ.apiSingleModel.endpoint}::${LZ.apiSingleModel.model}` : "";
+    const singleCustom = LZ.apiSingleModel && !apiModels.some((m) => m.id === selectedApi);
+    body = why + body + (eps.length && !LZ.adding ? `<label class="field"><span>Model</span><select data-f="api-model">${singleOptions.map((o) => `<option value="${esc(o.id)}" ${(LZ.multiple ? o.id === "__multiple" : singleCustom ? o.id === "__other" : o.id === selectedApi) ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</select></label>
+      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${apiModels.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.some((x) => x.endpoint === m.endpoint && x.model === m.model) ? "checked" : ""}><span>${esc(m.name)}</span></label>`).join("")}</div><span class="muted small">${apiModels.length ? `Choose up to ${Math.floor(MAX_AT_ONCE / LZ.count)} models; each gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.` : "Model listing unavailable; type a model name below and add it for the selected endpoints."}</span></div>` : ""}
+      ${!LZ.multiple && (singleCustom || LZ.apiCustomModel) ? `<input data-f="api-custom" class="mono lz-custom" placeholder="API model name" value="${esc(LZ.apiCustomModel || LZ.apiSingleModel?.model || "")}">` : ""}
+      ${LZ.multiple ? `<div class="row"><input data-f="api-custom" class="mono" placeholder="API model name"><button type="button" class="ghost small-btn" data-act="add-api-model">Add model to selected endpoints</button></div>` : ""}${effortField(a)}` : "");
   } else {
     const opts = modelOptions(a), available = selectableModels(a);
     const known = opts.some((o) => o.id === LZ.model);
-    const custom = !known && !!LZ.model;
+    const custom = LZ.customModel || (!known && !!LZ.model);
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
-    body = `${available.length ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""} ${LZ.model ? "disabled" : ""}>
-        <span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
-      <span class="muted small" data-model-limit>Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} at this session count (maximum ${MAX_AT_ONCE} helpers total).</span></div>` : ""}
-      <label class="field"><span>Or use one model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${!custom && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
-        <option value="__other" ${custom ? "selected" : ""}>Another model…</option></select></label>
+    body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${(!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple") ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}</select></label>
+      ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""}><span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
+      <span class="muted small" data-model-limit>Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} models at this session count (maximum ${MAX_AT_ONCE} helpers total).</span>
+      ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
       <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${custom ? esc(LZ.model) : ""}" ${custom ? "" : "hidden"}>
       ${effortField(a)}`;
   }
@@ -270,19 +307,31 @@ function renderLauncher(box, compact = true) {
   const rerender = () => renderLauncher(box, compact);
   box.querySelectorAll("[data-task]").forEach((b) => { b.onclick = () => { LZ.task = b.dataset.task; rerender(); }; });
   box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => {
+    LZ.byKind[LZ.kind] = { model: LZ.model, customModel: LZ.customModel, apiSingleModel: LZ.apiSingleModel,
+      apiCustomModel: LZ.apiCustomModel, models: LZ.models, multiple: LZ.multiple, eps: LZ.eps };
     LZ.kind = b.dataset.k;
+    const cached = LZ.byKind[LZ.kind];
+    if (cached) {
+      Object.assign(LZ, cached);
+      rerender();
+      return;
+    }
     const saved = S.st.settings.launcher || {};
     LZ.model = saved.kind === LZ.kind && saved.model !== "__all_models" ? saved.model || "" : "";
-    LZ.models = saved.kind === LZ.kind && Array.isArray(saved.models) ? saved.models.map(String) : [];
+    LZ.customModel = false;
+    LZ.apiSingleModel = saved.kind === LZ.kind && saved.api_model ? { ...saved.api_model } : null;
+    LZ.models = saved.kind === LZ.kind && Array.isArray(saved.models) ? saved.models.map((m) => typeof m === "string" ? m : ({ endpoint: String(m.endpoint), model: String(m.model) })) : [];
+    LZ.multiple = saved.kind === LZ.kind && !!(saved.multiple || LZ.models.length);
     rerender();
   }; });
   const sel = box.querySelector('select[data-f="model"]'), custom = box.querySelector('[data-f="custom"]');
+  const apiSel = box.querySelector('[data-f="api-model"]');
   const label = () => {
     const btn = box.querySelector('[data-act="start"]');
     if (btn) {
       const total = LZ.models.length * LZ.count;
       btn.textContent = launchLabel(a, LZ.model, LZ.count, LZ.models);
-      btn.disabled = total > MAX_AT_ONCE;
+      btn.disabled = total > MAX_AT_ONCE || (LZ.multiple && !LZ.models.length);
     }
     const limit = box.querySelector("[data-model-limit]");
     if (limit) limit.textContent = `Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} at this session count (maximum ${MAX_AT_ONCE} helpers total).`;
@@ -290,20 +339,37 @@ function renderLauncher(box, compact = true) {
   };
   label();
   if (sel) sel.onchange = () => {
-    LZ.models = [];
-    if (sel.value === "__other") { custom.hidden = false; custom.focus(); LZ.model = custom.value.trim(); }
-    else { custom.hidden = true; LZ.model = sel.value; }
+    LZ.multiple = sel.value === "__multiple";
+    if (!LZ.multiple) LZ.models = [];
+    if (sel.value === "__other") { LZ.customModel = true; LZ.model = ""; }
+    else { LZ.customModel = false; LZ.model = LZ.multiple ? "" : sel.value; }
+    rerender();
     label();
   };
-  if (custom) custom.oninput = () => { LZ.model = custom.value.trim(); label(); };
+  if (custom) custom.oninput = () => { LZ.customModel = true; LZ.model = custom.value.trim(); label(); };
+  if (apiSel) apiSel.onchange = () => {
+    LZ.multiple = apiSel.value === "__multiple";
+    LZ.model = "";
+    LZ.models = [];
+    LZ.apiCustomModel = "";
+    if (apiSel.value === "__other") LZ.apiSingleModel = { endpoint: (LZ.eps || [])[0] || "", model: "" };
+    else if (apiSel.value) {
+      const item = selectableModels(a).find((m) => m.id === apiSel.value);
+      LZ.apiSingleModel = item ? { endpoint: item.endpoint, model: item.model } : null;
+    } else LZ.apiSingleModel = null;
+    rerender();
+  };
+  const apiCustom = box.querySelector('[data-f="api-custom"]');
+  if (apiCustom && !LZ.multiple) apiCustom.oninput = () => {
+    LZ.apiCustomModel = apiCustom.value.trim();
+    if (LZ.apiSingleModel) LZ.apiSingleModel.model = LZ.apiCustomModel;
+  };
   box.querySelectorAll("[data-model-choice]").forEach((c) => {
     c.onchange = () => {
-      LZ.models = [...box.querySelectorAll("[data-model-choice]:checked")].map((x) => x.dataset.modelChoice);
-      if (LZ.models.length) {
-        LZ.model = "";
-        if (sel) sel.value = "";
-        if (custom) { custom.value = ""; custom.hidden = true; }
-      }
+      LZ.models = [...box.querySelectorAll("[data-model-choice]:checked")].map((x) => {
+        const item = selectableModels(a).find((m) => m.id === x.dataset.modelChoice);
+        return a.uses_endpoints ? { endpoint: item.endpoint, model: item.model } : x.dataset.modelChoice;
+      });
       label();
     };
   });
@@ -313,7 +379,28 @@ function renderLauncher(box, compact = true) {
   const per = box.querySelector('[data-f="per"]');
   if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(MAX_PER_SESSION, Number(per.value) || S.st.settings.per_session)); };
   wireEndpointFields(box);
-  box.querySelectorAll("[data-ep]").forEach((c) => { c.onchange = () => { LZ.eps = [...box.querySelectorAll("[data-ep]:checked")].map((x) => x.dataset.ep); label(); }; });
+  box.querySelectorAll("[data-ep]").forEach((c) => { c.onchange = () => {
+    LZ.eps = [...box.querySelectorAll("[data-ep]:checked")].map((x) => x.dataset.ep);
+    LZ.models = LZ.models.filter((m) => LZ.eps.includes(m.endpoint));
+    if (LZ.apiSingleModel && !LZ.eps.includes(LZ.apiSingleModel.endpoint)) LZ.apiSingleModel = null;
+    rerender();
+  }; });
+  const addModel = box.querySelector('[data-act="add-api-model"]');
+  if (addModel) addModel.onclick = () => {
+    const name = box.querySelector('[data-f="api-custom"]').value.trim();
+    if (!name) return toast("Type an API model name first.", "err");
+    for (const endpoint of LZ.eps || []) if (!LZ.models.some((m) => m.endpoint === endpoint && m.model === name)) LZ.models.push({ endpoint, model: name });
+    const input = box.querySelector('[data-f="api-custom"]');
+    if (input) input.value = "";
+    rerender();
+  };
+  const addCliModel = box.querySelector('[data-act="add-cli-model"]');
+  if (addCliModel) addCliModel.onclick = () => {
+    const input = box.querySelector('[data-f="manual-model"]'), model = input.value.trim();
+    if (!model) return toast("Type a model name first.", "err");
+    if (!LZ.models.includes(model)) LZ.models.push(model);
+    rerender();
+  };
   const addEp = box.querySelector('[data-act="add-ep"]'), pickEp = box.querySelector('[data-act="pick-ep"]');
   if (addEp) addEp.onclick = () => { LZ.adding = true; rerender(); };
   if (pickEp) pickEp.onclick = () => { LZ.adding = false; rerender(); };
@@ -347,6 +434,11 @@ function renderLauncher(box, compact = true) {
         LZ.adding = false;
       }
       if (!(LZ.eps || []).length) return toast("Tick an endpoint to start on.", "err");
+      if (LZ.multiple) return startAgents(a, "", LZ.count, go, {}, LZ.models);
+      if (LZ.apiSingleModel) {
+        if (!LZ.apiSingleModel.model.trim()) return toast("Choose or type an API model name.", "err");
+        return startAgents(a, "", LZ.count, go, { endpoints: [LZ.apiSingleModel.endpoint], model: LZ.apiSingleModel.model });
+      }
       return startAgents(a, "", LZ.count, go, { endpoints: LZ.eps });
     }
     startAgents(a, LZ.model, LZ.count, go, {}, LZ.models);

@@ -270,6 +270,99 @@ def test_selected_models_start_only_the_chosen_models_within_the_helper_limit(tm
     assert saved["model"] == "" and saved["models"] == ["sonnet", "haiku"]
 
 
+def test_api_models_are_discovered_and_started_only_on_their_saved_endpoint(tmp_path, monkeypatch):
+    """Each API model uses the saved endpoint that listed it, and its key never reaches another endpoint."""
+    from decompnet.app import support
+    from decompnet.app.routes import setup
+
+    from .test_loading import tiny_game
+
+    settings = support.Settings(tmp_path / "settings.json")
+    first = settings.save_endpoint({"provider": "custom", "name": "first", "base_url": "http://one.test/v1",
+                                    "model": "fallback-one", "api_key": "secret-one", "max_sessions": 2})
+    second = settings.save_endpoint({"provider": "custom", "name": "second", "base_url": "http://two.test/v1",
+                                     "model": "fallback-two", "api_key": "secret-two", "max_sessions": 1})
+    settings.save()
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, manager, security, _ = build(net, tmp_path, PORT, SECRET)
+    requests = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": [{"id": "model-a", "name": "Model A"}, {"id": "model-b"}]}
+
+    def get(url, **kwargs):
+        requests.append((url, kwargs["headers"]))
+        return Response()
+
+    monkeypatch.setattr(setup.httpx, "get", get)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    listed = client.get(f"/api/endpoints/models?id={first['id']}")
+    assert listed.json() == {"models": [{"id": "model-a", "name": "Model A"}, {"id": "model-b", "name": "model-b"}]}
+    assert requests == [("http://one.test/v1/models", {"Authorization": "Bearer secret-one"})]
+    assert "secret-one" not in listed.text
+
+    started = []
+
+    def start(kind, slug, count=1, options=None):
+        started.append((count, options))
+        return [f"{options['endpoint']}:{options['model']}:{i}" for i in range(count)]
+
+    monkeypatch.setattr(manager, "start", start)
+    common = {"kind": "api", "slug": "game", "options": {"multiple_models": True, "models": [
+        {"endpoint": first["id"], "model": "model-a"}, {"endpoint": first["id"], "model": "model-b"},
+    ]}}
+    over_model_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 5})
+    assert over_model_limit.status_code == 400 and started == []
+    assert "no more than 1 models" in over_model_limit.json()["error"]
+    malformed = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "api", "slug": "game", "options": {"models": [{"endpoint": first["id"], "model": "x", "extra": []}]},
+    })
+    assert malformed.status_code == 400 and started == []
+    over_endpoint_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 3})
+    assert over_endpoint_limit.status_code == 400 and started == []
+    assert "allows 2 sessions" in over_endpoint_limit.json()["error"]
+
+    client.post("/api/settings", headers={"X-Decomp": "1"}, json={
+        "endpoint": {"id": first["id"], "max_sessions": 4},
+    })
+    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 2})
+    assert response.status_code == 200, response.text
+    assert response.json()["started"] == [f"{first['id']}:model-a:{i}" for i in range(2)] + [
+        f"{first['id']}:model-b:{i}" for i in range(2)]
+    assert [(n, options["endpoint"], options["model"], options["api_key"]) for n, options in started] == [
+        (2, first["id"], "model-a", "secret-one"), (2, first["id"], "model-b", "secret-one")]
+    started.clear()
+    common["options"]["models"] = [{"endpoint": first["id"], "model": "model-a"},
+                                    {"endpoint": second["id"], "model": "model-b"}]
+    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json=common | {"count": 1})
+    assert response.status_code == 200, response.text
+    assert [(n, options["endpoint"], options["model"], options["api_key"]) for n, options in started] == [
+        (1, first["id"], "model-a", "secret-one"), (1, second["id"], "model-b", "secret-two")]
+    saved = json.loads((tmp_path / "settings.json").read_text())["launcher"]
+    assert saved["multiple"] and saved["models"] == common["options"]["models"]
+    assert "secret-one" not in json.dumps(saved) and "secret-two" not in json.dumps(saved)
+
+
+def test_multiple_model_mode_requires_a_selection(tmp_path):
+    from .test_loading import tiny_game
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    tiny_game(net)
+    mcp, _, security, _ = build(net, tmp_path, PORT, SECRET)
+    client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                        base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "options": {"multiple_models": True},
+    })
+    assert response.status_code == 400 and response.json()["error"] == "choose at least one model"
+
+
 def test_settings_never_echo_the_api_key(app):
     client, _, _ = app
     out = client.post("/api/settings", json={"api": {"provider": "deepseek", "api_key": "sk-abcdef123456"}},
