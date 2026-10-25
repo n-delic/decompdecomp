@@ -1313,16 +1313,17 @@ def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str
 @pytest.mark.parametrize("level", [1, 3])
 def test_a_project_made_before_is_brought_up_one_analysis_step_at_a_time(tmp_path, monkeypatch, level):
     """From a project made before PC projects had an analysis level (1) every step runs, each its own commit and
-    feed line: the repairs, the stubs set aside, the pieces joined, the rebuild identical after each. The joins never
-    take a stub, though the first one reads the frame of the function before it, as a piece would; a project at 3
-    gets only the joins."""
+    feed line: the repairs, the stubs set aside, the pieces joined, its file of framed functions built with /Oy-, the
+    rebuild identical after each. The joins never take a stub, though the first one reads the frame of the function
+    before it, as a piece would; a project at 3 gets only the joins and the flags."""
     net, root, stubs = _project_made_before(tmp_path, monkeypatch, level)
     pid = net.project_row("p")["id"]
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis' "
                                                "ORDER BY id", pid)]
     expected = ["1 functions had a jump table", f"{len(EH_STUBS)} functions are exception-handling code",
-                "1 pieces of functions Ghidra cut off"][0 if level == 1 else 2:]
+                "1 pieces of functions Ghidra cut off",
+                "1 source files whose functions keep an ebp frame build with /Oy-"][0 if level == 1 else 2:]
     assert len(said) == len(expected) and all(s.startswith(e) for s, e in zip(said, expected)), said
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == len(said)
@@ -1384,7 +1385,8 @@ def test_a_project_made_before_gets_the_newest_build_tools_once(tmp_path, monkey
     pid = net.project_row("p")["id"]
     said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
     assert said == ["its build has the fixes decompdecomp's has had since the project was made (tools/compile.py, "
-                    "tools/configure.py, tools/names.py, config/game/file_compilers.json)"]
+                    "tools/configure.py, tools/names.py, config/game/file_compilers.json, "
+                    "config/game/file_flags.json)"]
     log = subprocess.run(["git", "log", "--format=%s"], cwd=root, capture_output=True, text=True).stdout
     assert log.count("Analyse the game again") == 1
     assert not subprocess.run(["git", "status", "--porcelain", "tools", "config"], cwd=root, capture_output=True,

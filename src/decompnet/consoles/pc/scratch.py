@@ -1041,6 +1041,83 @@ def set_own_compiler(root: Path, manifest: dict, compiler: str, sources: list[st
     return [path.relative_to(root).as_posix(), "tools/configure.py", ".decomp.wtf.json"]
 
 
+# Each source file can be built with more flags than the project's (config/<version>/file_flags.json, which
+# tools/configure.py reads): /Oy- above all. Visual C++'s /O2 omits the frame pointer (/Oy); a game built with /Oy-
+# keeps `push ebp; mov ebp, esp` in every function that touches its stack, and no C matches it without the flag. In
+# a Visual C++ 2010 game of 20,000 functions, 71% of those of 32 bytes or more keep one; in a 2005 one, 2%
+FRAME_FLAG = "/Oy-"
+FRAME_SHARE = 0.5  # a file whose functions keep a frame this often or more was built with /Oy-
+FRAME_MIN_BYTES = 32  # a smaller function often touches no stack at all, and keeps no frame even with /Oy-
+_FRAME_STARTS = (b"\x55\x8b\xec", b"\x8b\xff\x55\x8b\xec")  # push ebp; mov ebp, esp (after 2005's mov edi, edi)
+_HANDLER_FRAME = b"\x64\xa1\x00\x00\x00\x00"  # mov eax, fs:[0]: an exception handler's, which keeps ebp anyway
+_HANDLER_BYTES = 48  # how far into a function its handler's frame is set up
+
+
+def flags_file(root: Path, version: str) -> Path:
+    return root / "config" / version / "file_flags.json"
+
+
+def file_flags(root: Path, version: str) -> dict[str, list[str]]:
+    """{source file: flags} for the files built with more flags than the project's (tools/configure.py reads it)."""
+    try:
+        return json.loads(flags_file(root, version).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def set_file_flags(root: Path, version: str, source: str, flags: list[str]) -> None:
+    """Build `source` with `flags` on top of the project's (none: no line)."""
+    found = file_flags(root, version)
+    found.pop(source, None)
+    if flags:
+        found[source] = list(flags)
+    _write_compilers(flags_file(root, version), found)
+
+
+def keeps_frames(pe: PE, functions: list[Function]) -> bool | None:
+    """Whether most of these functions keep an ebp frame though no exception handler needs one (their code was
+    built with /Oy-); None when none of them says (all small, or all with a handler)."""
+    told = []
+    for f in functions:
+        head = pe.read(f.addr, min(f.size, _HANDLER_BYTES))
+        if f.size >= FRAME_MIN_BYTES and _HANDLER_FRAME not in head:
+            told.append(head.startswith(_FRAME_STARTS))
+    return sum(told) >= FRAME_SHARE * len(told) if told else None
+
+
+def frame_flags(pe: PE, groups: dict[str, list[Function]], skip: set[int] = frozenset(),
+                source=lambda unit: f"src/auto/{unit}.cpp") -> dict[str, list[str]]:
+    """{source file: [/Oy-]} for the units whose functions keep an ebp frame (keeps_frames); a unit whose own
+    functions don't say follows the whole program's. `skip`: functions no C makes (exception-handling stubs)."""
+    every = keeps_frames(pe, [f for fns in groups.values() for f in fns if f.addr not in skip])
+    out = {}
+    for unit, fns in groups.items():
+        own = keeps_frames(pe, [f for f in fns if f.addr not in skip])
+        if own or own is None and every:
+            out[source(unit)] = [FRAME_FLAG]
+    return out
+
+
+def set_frame_flags(root: Path, version: str, keep: set[str] = frozenset()) -> int | None:
+    """A project made before decompdecomp read frames gets /Oy- for the files that keep them (frame_flags), except
+    `keep`'s (files with matched code: their C matches with the flags they have). Returns how many files got it;
+    None without the user's copy of the program."""
+    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    if not (root / info["exe"]).is_file():
+        return None
+    _, info, pe, functions = _project_functions(root, version)
+    stubs = {fn["addr"] for fns in info["units"].values() for fn in fns if fn.get("generated")}
+    groups: dict[str, list[Function]] = {}
+    for f in functions:
+        groups.setdefault(f.unit, []).append(f)
+    found = file_flags(root, version)
+    wanted = {s: v for s, v in frame_flags(pe, groups, stubs, lambda unit: _source(root, unit)).items()
+              if s not in keep and s not in found}
+    if wanted:  # (none: no file of it, which a step that changed nothing would leave behind)
+        _write_compilers(flags_file(root, version), {**found, **wanted})
+    return len(wanted)
+
+
 # ---------------------------------------------------------------------------------------------------- the project
 
 
@@ -1084,9 +1161,10 @@ def write_tools(root: Path, version: str) -> list[str]:
         if not dest.exists() or dest.read_text(encoding="utf-8") != text:
             dest.write_text(text, encoding="utf-8")
             changed.append(f"tools/{src.name}")
-    if changed and not (compilers := compilers_file(root, version)).exists():
-        compilers.write_text("{}\n", encoding="utf-8")
-        changed.append(compilers.relative_to(root).as_posix())
+    for kept in (compilers_file(root, version), flags_file(root, version)):  # (configure.py's build reads them)
+        if changed and not kept.exists():
+            kept.write_text("{}\n", encoding="utf-8")
+            changed.append(kept.relative_to(root).as_posix())
     return changed
 
 
@@ -1360,6 +1438,11 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
         "units": {u: [_entry(pe, f) for f in fns] for u, fns in groups.items()},
     }, indent=1), encoding="utf-8")
     compilers_file(root, version).write_text("{}\n", encoding="utf-8")  # (every file with the project's own, so far)
+    frames = frame_flags(pe, groups, stubs)
+    _write_compilers(flags_file(root, version), frames)
+    if frames:
+        log(f"{len(frames)} of {len(groups)} source files keep an ebp frame in most of their functions: they build "
+            f"with {FRAME_FLAG} (Visual C++ keeps the frame pointer)")
     if stubs := mark_exception_stubs(root, version):
         log(f"{stubs} of them are exception-handling code Visual C++ makes from the function they belong to: set aside")
     for u, fns in groups.items():
@@ -1379,7 +1462,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 4,  # (WindowsPC.ANALYSIS: nothing to repair, its stubs set aside, its pieces joined)
+        "analysis": 5,  # (WindowsPC.ANALYSIS: nothing to repair, its stubs set aside, its pieces joined, its frames read)
         "tools": tools_version(),
         "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],

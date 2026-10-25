@@ -484,8 +484,8 @@ class CompilerMixin:
         """A function's C (its best attempt, or `source`) built with the variants of its compiler's flags
         (flag_variants), each judged like an attempt and recorded nowhere: when the C looks right but won't match,
         the flags are often what's wrong, and agents tried them one compile at a time."""
-        if self.fork_slug(slug):
-            raise NetworkError("a fork builds with its project's own compilers and flags")
+        if self.fork_slug(slug):  # where the project lets each file have its own flags (PC), the fork engine's
+            return self.forks.search_flags(agent, slug, function, compiler, source)
         proj = self._project(slug)
         cfg = self.cfg(proj)
         fn = self._function(function, slug)

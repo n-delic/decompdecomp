@@ -5,7 +5,8 @@
 
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
-macOS): each file with its own version when config/VERSION/file_compilers.json names one. objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
+macOS): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
+config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
 Made by decompdecomp.
 """
 
@@ -36,6 +37,7 @@ args = parser.parse_args()
 VERSION = args.version
 CONFIG = Path("config") / VERSION / "functions.json"
 FILE_COMPILERS = CONFIG.parent / "file_compilers.json"  # {"src/auto/text_00401000.cpp": "7.1"}: files built with another
+FILE_FLAGS = CONFIG.parent / "file_flags.json"  # {"src/auto/text_00401000.cpp": ["/Oy-"]}: files built with more flags
 BUILD = Path("build") / VERSION
 
 
@@ -66,6 +68,10 @@ def file_compilers() -> dict[str, str]:
     return json.loads(FILE_COMPILERS.read_text(encoding="utf-8")) if FILE_COMPILERS.exists() else {}
 
 
+def file_flags() -> dict[str, list[str]]:
+    return json.loads(FILE_FLAGS.read_text(encoding="utf-8")) if FILE_FLAGS.exists() else {}
+
+
 def files(top: str, suffixes: tuple[str, ...]) -> list[Path]:
     return sorted(p for p in Path(top).rglob("*") if p.suffix.lower() in suffixes)
 
@@ -93,18 +99,19 @@ def main() -> None:
         targets = [str(BUILD / "target" / f"{u}.obj") for u in units]
         n.build(targets, "delink", [str(CONFIG), "tools/delink.py"])
         objs = []
-        versions = file_compilers()
+        versions, more = file_compilers(), file_flags()
         for src in files("src", (".c", ".cpp")):
             obj = BUILD / src.with_suffix(".obj")
             cl, include = msvc(versions.get(src.as_posix(), MSVC_VERSION))
             n.build(str(obj), "cl", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/names.py"],
-                    variables={"cl": q([cl]).replace("$", "$$"), "include": q([include]).replace("$", "$$")})
+                    variables={"cl": q([cl]).replace("$", "$$"), "include": q([include]).replace("$", "$$"),
+                               "cflags": q(more.get(src.as_posix(), [])).replace("$", "$$")})
             objs.append(str(obj))
         n.build("all_source", "phony", objs)
         n.build("prepare", "phony", [*targets, *objs])
         n.build("build.ninja", "configure", ["tools/configure.py", str(CONFIG), *headers,
                                              *[str(s) for s in files("src", (".c", ".cpp"))],
-                                             *([str(FILE_COMPILERS)] if FILE_COMPILERS.exists() else [])])
+                                             *[str(p) for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()]])
         n.default(["prepare"])
 
     objdiff = {

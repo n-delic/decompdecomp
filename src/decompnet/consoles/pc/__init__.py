@@ -11,6 +11,10 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json).
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
+- drafts.py: what autopilot tries where m2c can't read x86: exact drafts of the tiny shapes Visual C++ makes, read from
+  the code, and Ghidra's drafts made into C++ that compiles in the project (also in briefs, the background drafter and
+  redraft). Each file may be built with more flags (file_flags: /Oy- where its functions keep an ebp frame, found by
+  the import: scratch.frame_flags), which search_flags tries.
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -52,9 +56,11 @@ class WindowsPC(Console):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
     # every function's last instruction whole (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
-    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub. Its build tools
-    # have a version of their own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
-    ANALYSIS = 4
+    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub; 5 the files whose
+    # functions keep an ebp frame built with /Oy- (scratch.set_frame_flags), but for files with matched code. Its
+    # build tools have a version of their own (the manifest's "tools": scratch.tools_version), so each change to them
+    # reaches it
+    ANALYSIS = 5
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
@@ -134,13 +140,20 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        def frames(fp):  # (files with matched code keep their flags: that C matches with them)
+            done = {scratch._source(fp.root, r["unit"]) for r in net.store.all(
+                "SELECT DISTINCT unit FROM functions WHERE project_id=? AND status='matched'", net.project_row(slug)["id"])}
+            n = scratch.set_frame_flags(fp.root, version, keep=done)
+            return (f"{n} source files whose functions keep an ebp frame build with {scratch.FRAME_FLAG} now (Visual "
+                    "C++ keeps the frame pointer), as the game's were" if n else None)
+
         def tools(fp):  # (no source file changes: agents' C stays as it is)
             changed = scratch.write_tools(fp.root, version)
             return (f"its build has the fixes decompdecomp's has had since the project was made ({', '.join(changed)})"
                     if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
-        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
+        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (frames, True)}
         kept = {}
         for level, (step, fix) in steps.items():
             if manifest.get("analysis", 1) < level:
@@ -197,6 +210,34 @@ class WindowsPC(Console):
                                   manifest.get("compiler", f"MSVC/{scratch.MSVC_DEFAULT}"))
         return scratch.compilers_file(fp.root, manifest["version"]).relative_to(fp.root).as_posix()
 
+    def file_flags(self, fp, source: str) -> list[str] | None:
+        from . import scratch
+
+        version = (fp.manifest or {}).get("version")
+        if not version or not scratch.flags_file(fp.root, version).exists():  # older tools: no flags of its own yet
+            return None
+        return scratch.file_flags(fp.root, version).get(source, [])
+
+    def set_file_flags(self, fp, source: str, flags: list[str]) -> str:
+        from . import scratch
+
+        version = (fp.manifest or {})["version"]
+        scratch.set_file_flags(fp.root, version, source, flags)
+        return scratch.flags_file(fp.root, version).relative_to(fp.root).as_posix()
+
+    # What search_flags tries on a file: the frame pointer kept or not (/Oy-: about half of a 2010 game's code keeps
+    # it), optimised for size (/O1: some of a game's libraries were), and inlining only what's marked inline (/Ob1)
+    FLAG_TOGGLES = (("/Oy-",), ("/O1",), ("/Ob1",), ("/O1", "/Oy-"))
+
+    def flag_variants(self, flags: list[str]) -> list[list[str]]:
+        out = [list(flags)]
+        for toggle in self.FLAG_TOGGLES:
+            new = [f for f in flags if f not in toggle] if all(f in flags for f in toggle) else \
+                [*flags, *(f for f in toggle if f not in flags)]
+            if new not in out:
+                out.append(new)
+        return out
+
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         from . import scratch
 
@@ -223,6 +264,32 @@ class WindowsPC(Console):
         from . import rtti
 
         return rtti.for_project(fp.root, fp.manifest or {})
+
+    # Autopilot's drafts: Ghidra's made compilable, and exact ones for the tiny shapes Visual C++ makes (drafts.py)
+    own_drafts = True
+    own_tools = frozenset({"redraft", "search_flags"})
+
+    def prepare_drafts(self, fp) -> str | None:
+        from .drafts import GHIDRA_H, GHIDRA_HEADER
+
+        path = fp.root / "include" / GHIDRA_HEADER
+        if path.exists():
+            return None
+        path.write_text(GHIDRA_H, encoding="utf-8")
+        return path.relative_to(fp.root).as_posix()
+
+    def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
+        from . import drafts, scratch
+
+        entry = _entries(fp).get(symbol)
+        code = entry and scratch.data_bytes(fp.root, fp.manifest or {}, entry["addr"], entry["size"])
+        return drafts.exact(code, entry["addr"], entry["relocs"], known) if code else []
+
+    def compilable_draft(self, fp, symbol: str, draft: str, known: str = "") -> tuple[str, str] | None:
+        from . import drafts
+
+        entries = _entries(fp)
+        return drafts.compilable(draft, symbol, {f"func_{e['addr']:08X}": n for n, e in entries.items()}, known)
 
     # The game's names are its addresses (func_0041B470, D_0066DDA4): objdiff pairs a function with the original's by
     # the symbol tools/names.py gives it, and the report keeps that symbol. A real name is kept by address in
@@ -280,6 +347,23 @@ def _functions_json(fp, version: str) -> dict:
         return json.loads((fp.root / "config" / version / "functions.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+_ENTRIES: dict[str, tuple[int, dict]] = {}  # functions.json's path -> (its mtime, its functions by name)
+
+
+def _entries(fp) -> dict[str, dict]:
+    """Every function of the project's functions.json by its name, read once per change of the file (autopilot asks
+    for each function's: a big game's file is megabytes)."""
+    path = fp.root / "config" / (fp.manifest or {}).get("version", "") / "functions.json"
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return {}
+    if (kept := _ENTRIES.get(str(path))) is None or kept[0] != mtime:
+        info = _functions_json(fp, (fp.manifest or {})["version"])
+        kept = _ENTRIES[str(path)] = (mtime, {fn["name"]: fn for fns in info.get("units", {}).values() for fn in fns})
+    return kept[1]
 
 
 def _address_key(name: str) -> str | None:

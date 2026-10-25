@@ -253,6 +253,19 @@ class Console:
         that says so, relative to the project (to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
 
+    def file_flags(self, fp, source: str) -> list[str] | None:
+        """The flags a source file is built with on top of the project's, where each file can have its own (PC:
+        /Oy-), else None: search_flags tries their variants (flag_variants) there."""
+        return None
+
+    def set_file_flags(self, fp, source: str, flags: list[str]) -> str:
+        """Build a source file with `flags` on top of the project's; returns the file that says so (to commit)."""
+        raise RomError(f"{self.name} projects set their flags in their own build")
+
+    def flag_variants(self, flags: list[str]) -> list[list[str]]:
+        """A source file's flags (first) and the variants of them search_flags tries."""
+        return [flags]
+
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a
         project whose files each have a compiler."""
@@ -288,6 +301,26 @@ class Console:
     def m2c_target(self, compiler: str = "") -> str:
         """m2c's target for drafts of code `compiler` built, without the language; "" when m2c can't read it."""
         return self.m2c
+
+    # Drafts of its own, where m2c can't read the code (PC: consoles/pc/drafts.py): autopilot, the background drafter
+    # and redraft use these in a game started from scratch
+    own_drafts = False
+    own_tools: frozenset[str] = frozenset()  # tools of ROM projects its games started from scratch have too
+
+    def prepare_drafts(self, fp) -> str | None:
+        """What its drafts need in the project (a header of the draft decompiler's types), written when it's missing:
+        the path written, for a commit, or None."""
+        return None
+
+    def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
+        """C for a function of one of the tiny shapes its compiler makes from a line of C, read from its code, as
+        [(prelude, definition)]: autopilot tries them first. `known`: the header and file's text."""
+        return []
+
+    def compilable_draft(self, fp, symbol: str, draft: str, known: str = "") -> tuple[str, str] | None:
+        """A machine draft (Ghidra's) as C that compiles in the function's source file, (prelude, definition); None
+        when it can't be."""
+        return None
 
     def installable_compilers(self) -> list[str]:
         """Its compilers the app installs itself, one toolchain each, that can run here (ROM mode's: "install them

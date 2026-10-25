@@ -342,10 +342,19 @@ ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary",
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
 
-def tool_names(fork: bool) -> list[str]:
-    """The tools that make sense for a project: forks and ROM projects share the core loop."""
-    skip = ROM_ONLY if fork else FORK_ONLY
+def tool_names(fork: bool, console=None) -> list[str]:
+    """The tools that make sense for a project: forks and ROM projects share the core loop. A game started from
+    scratch in project mode has those of ROM projects its console makes work there too (Console.own_tools: PC's
+    redraft and search_flags)."""
+    skip = ROM_ONLY - (console.own_tools if console is not None else frozenset()) if fork else FORK_ONLY
     return [n for n in HANDLERS if n not in skip]
+
+
+def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
+    """tool_names for a project (None: no project yet)."""
+    fork = bool(slug and net.fork_slug(slug))
+    cfg = net.cfg(net._project(slug)) if fork else {}
+    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -493,7 +502,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def redraft(ctx: Context, function: str, context: str) -> str:
         """m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
         you worked out) added to the shared header's; yours replace the header's where they declare the same
-        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped."""
+        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped.
+        PC games: Ghidra's draft made compilable again with them (a class declaring the function, a callee's
+        prototype)."""
         return await run(ctx, "redraft", function=function, context=context)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -538,7 +549,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "") -> str:
         """The function's C (its best attempt, or source) built with each of its compiler's flag variants
         (optimisation levels, small data, code-shape options), judged and ranked. For C that looks right but won't
-        match: the flags may be what's wrong. compiler: another one to try instead of the project's."""
+        match: the flags may be what's wrong. compiler: another one to try instead of the project's. PC games: the
+        function's source file's flags (/Oy- keeps the frame pointer, /O1, /Ob1); one that matches stays the file's."""
         return await run(ctx, "search_flags", function=function, compiler=compiler, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
