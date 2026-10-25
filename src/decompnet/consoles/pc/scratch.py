@@ -1070,6 +1070,59 @@ def name_import_thunks(root: Path, version: str, keep: set[str] = frozenset()) -
     return marked
 
 
+def function_extent(root: Path, version: str, name: str) -> tuple[int, int] | None:
+    """(address, size) of a function of the project by its symbol, or None."""
+    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
+    return next(((fn["addr"], fn["size"]) for fns in info["units"].values() for fn in fns if fn["name"] == name), None)
+
+
+def _reads_as_code(md, code: bytes) -> bool:
+    """Whether bytes read as a function's code: instructions to the end (less padding), the last one a return or a
+    jump, as a function's last instruction is."""
+    body = code.rstrip(PADDING)
+    last = None
+    for ins in _disasm(md, body, 0):
+        last = ins
+    return last is not None and last.address + last.size == len(body) and last.mnemonic in ("ret", "retf", "jmp")
+
+
+def cut_function(root: Path, version: str, name: str, at: int, keep: set[str] = frozenset(), why: str = "") -> str:
+    """End `name` at `at`, what agents agreed (report_boundary): the rest becomes a function of its own, at `at`
+    (`_func_<address>`), open to agents when it reads as code (the analysis merged two functions), else set aside
+    with `why` (data, leftovers). Not a matched function (`keep`), nor one a matched function refers to inside it, nor
+    only padding cut off (Visual C++ puts it in the function's own section: its C makes it). Returns what changed,
+    as a sentence."""
+    path, info, pe, functions = _project_functions(root, version)
+    k = next((k for k, f in enumerate(functions) if f.name == name), None)
+    if k is None:
+        raise ForkError(f"{name} isn't one of the game's functions")
+    f = functions[k]
+    if not f.addr < at < f.addr + f.size:
+        raise ForkError(f"0x{at:08X} isn't inside {name} (0x{f.addr:08X}, {f.size} bytes)")
+    if name in keep:
+        raise ForkError(f"{name} is matched: its end is proven")
+    if any(r[2] in (name, f"_D_{at:08X}") for g in functions if g.name in keep for r in g.relocs):
+        raise ForkError(f"a matched function refers to {name} as it is, so it can't be cut")
+    rest = pe.read(at, f.addr + f.size - at)
+    if not rest.strip(PADDING):
+        raise ForkError(f"what follows 0x{at:08X} is padding Visual C++ puts in the function's own section: it's "
+                        f"part of {name}")
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    md.detail = True
+    if not any(ins.address + ins.size == at - f.addr for ins in _disasm(md, pe.read(f.addr, at - f.addr), 0)):
+        raise ForkError(f"0x{at:08X} isn't where one of {name}'s instructions ends")
+    functions = _cut_functions(path, info, pe, functions, {k: [f.addr, at]}, {})
+    tail = functions[k + 1]
+    code = _reads_as_code(md, rest)
+    if not code:
+        info = json.loads(path.read_text(encoding="utf-8"))
+        for fn in (fn for fns in info["units"].values() for fn in fns if fn["addr"] == at):
+            fn["generated"] = f"not code (cut off {name} by agents): {why}" if why else f"not code (cut off {name})"
+        path.write_text(json.dumps(info, indent=1), encoding="utf-8")
+    return (f"{name} ends at 0x{at:08X}; the {f.addr + f.size - at} bytes after it are {tail.name}, "
+            + ("a function of its own" if code else "set aside as not code"))
+
+
 def _source(root: Path, unit: str) -> str:
     """A unit's source file, as configure.py's source_of names it: .cpp, or .c in projects made before C++."""
     cpp = Path("src") / "auto" / f"{unit}.cpp"

@@ -248,6 +248,18 @@ class Console:
         functions (`keep`)."""
         raise RomError(f"{self.name} projects can't join functions yet: the agents' agreement is kept for when they can")
 
+    def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
+        """(address, size) of a function by its symbol, in a project the console made: where report_boundary's `end`
+        falls. None where it can't tell (a fork's functions are its project's own)."""
+        return None
+
+    def cut_function(self, fp, symbol: str, at: int, keep: set[str], why: str = "") -> str:
+        """End a function at address `at` in the project's config (agents agreed it runs on past its end:
+        ForkEngine.report_boundary, which checks the rebuild); the rest becomes a function of its own, set aside when
+        it isn't code (`why`: what agents said it is). Returns what changed, as a sentence. Not for matched functions
+        (`keep`)."""
+        raise RomError(f"{self.name} projects can't cut functions yet: the agents' agreement is kept for when they can")
+
     def set_file_compiler(self, fp, source: str, compiler: str) -> str:
         """Make the project build a source file with `compiler` (file_compiler says whether it can); returns the file
         that says so, relative to the project (to commit)."""

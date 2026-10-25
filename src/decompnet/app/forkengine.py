@@ -2850,13 +2850,8 @@ class ForkEngine:
         refused = (cfg.get("joins_refused") or {}).get(key)
         if refused:
             return f"Joining {first['name']} and {last['name']} was tried, and refused: {refused}. Work on them as they are."
-        with self.net.store.tx() as db:
-            meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (first["id"],)).fetchone()["meta"] or "{}")
-            said = meta.setdefault("joins", {}).setdefault(last["name"], {})
-            said[agent.name] = {"model": model_of(agent.name), "why": reason.strip()[:2000], "t": time.time()}
-            db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(meta), first["id"]))
-            self.net._event(db, proj["id"], agent.id, "join", f"{first['name']} + {last['name']}: {reason.strip()[:200]}")
-        models = {v["model"] for v in said.values()}
+        said, models = self._vote(agent, proj, first, "joins", last["name"], reason, "join",
+                                  f"{first['name']} + {last['name']}")
         if len(said) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
             return (f"Your proposal is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
                     f"models): {first['name']} and {last['name']} are joined once enough agree and the game still "
@@ -2885,6 +2880,82 @@ class ForkEngine:
                               f"Agents ({', '.join(sorted(said))}) found this was cut by the analysis, and decompdecomp "
                               f"joined it: {done}. It's the whole function now, whatever older notes say.",
                               first["name"])
+        except NetworkError:
+            pass
+        return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."
+
+    def _vote(self, agent: Agent, proj, fn, kind: str, key: str, reason: str, event: str, what: str):
+        """An agent's say on a change to the project's functions (`kind`: joins, boundaries; `key`: which change),
+        kept in the function's meta; returns everyone's say on it and their models."""
+        with self.net.store.tx() as db:
+            meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fn["id"],)).fetchone()["meta"] or "{}")
+            said = meta.setdefault(kind, {}).setdefault(key, {})
+            said[agent.name] = {"model": model_of(agent.name), "why": reason.strip()[:2000], "t": time.time()}
+            db.execute("UPDATE functions SET meta=? WHERE id=?", (json.dumps(meta), fn["id"]))
+            self.net._event(db, proj["id"], agent.id, event, f"{what}: {reason.strip()[:200]}")
+        return said, {v["model"] for v in said.values()}
+
+    def report_boundary(self, agent: Agent, slug: str, function: str, end: str, reason: str) -> str:
+        """An agent says a function runs on past its end: into data or leftovers, or into another function the
+        analysis merged with it. Once NOT_C_AGENTS agents of NOT_C_MODELS models say it of the same address, the
+        console cuts it there (Console.cut_function: the rest a function of its own, set aside when it isn't code),
+        checked as a join is (reanalyse: the game rebuilt byte for byte, else taken back), never a matched function;
+        a cut that doesn't hold is remembered. ROM projects ask the user instead (engine.request_boundary): there the
+        rest is always set aside, and the user sees the words it leaves out; here the rebuild check stands behind it."""
+        if not reason.strip():
+            raise NetworkError("say what follows the end (data, leftovers, another function) and how you can tell")
+        proj, fp, cfg = self.get(slug)
+        if slug in self.net.links:
+            raise NetworkError("in a room, the host's project is the one to cut functions in: say it in a note")
+        console = consoles.get(cfg.get("platform"))
+        fn = self._fn(slug, function)
+        symbol = self._meta(fn).get("symbol") or fn["name"]
+        extent = console.function_extent(fp, symbol)
+        if extent is None:
+            raise NetworkError("this project's functions are its own build's: report_boundary works where decompdecomp "
+                               "made the project (a PC game started from scratch)")
+        if fn["status"] == "matched":
+            raise NetworkError(f"{fn['name']} is matched: its end is proven")
+        start, size = extent
+        text = str(end).strip().lower()
+        try:
+            at = start + int(text[1:], 16) if text.startswith("+") else int(text, 16)
+        except ValueError:
+            at = None
+        if at is None or not start < at < start + size:
+            raise NetworkError(f"`end` is where {fn['name']} really ends: an address inside it (0x{start:08X} to "
+                               f"0x{start + size:08X}) or an offset into it (+0x20)")
+        key = f"0x{at:08X}"
+        refused = (cfg.get("boundaries_refused") or {}).get(f"{symbol}@{key}")
+        if refused:
+            return f"Ending {fn['name']} at {key} was tried, and refused: {refused}. Work on it as it is."
+        said, models = self._vote(agent, proj, fn, "boundaries", key, reason, "boundary", f"{fn['name']} ends at {key}")
+        if len(said) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
+            return (f"Your report is counted ({len(said)} of {NOT_C_AGENTS} agents, {len(models)} of {NOT_C_MODELS} "
+                    f"models): {fn['name']} ends at {key} once enough agree and the game still builds byte for byte. "
+                    "Meanwhile, release it or work on with its current size.")
+        matched = {r["name"] for r in self.net.store.all("SELECT name FROM functions WHERE project_id=? AND "
+                                                         "status='matched'", proj["id"])}
+        why = None
+        what = "; ".join(dict.fromkeys(v["why"][:200] for v in said.values()))
+
+        def step(fp):
+            nonlocal why
+            try:
+                return console.cut_function(fp, symbol, at, matched, what)
+            except (RomError, ForkError) as e:
+                why = str(e)
+                raise ForkError(why) from None
+        done = self.reanalyse(slug, step, log=lambda *_: None)
+        if not done:
+            why = why or "the game no longer rebuilt byte for byte with it"
+            self.net._update_cfg(slug, lambda c: c.setdefault("boundaries_refused", {}).update({f"{symbol}@{key}": why}))
+            return f"{len(said)} agents agreed, but ending {fn['name']} at {key} was refused: {why}."
+        self.net.joined(fn["name"], slug)  # (its code changed: what set it aside was about the whole)
+        try:
+            self.net.add_note(self.net.local_agent("decompdecomp")[0], slug,
+                              f"Agents ({', '.join(sorted(said))}) found it ran on past its end, and decompdecomp cut "
+                              f"it: {done}. It's the whole function now, whatever older notes say.", fn["name"])
         except NetworkError:
             pass
         return f"With yours, {len(said)} agents of {len(models)} models agree: {done}. The game still builds byte for byte."

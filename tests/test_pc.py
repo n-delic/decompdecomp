@@ -1472,3 +1472,79 @@ def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(t
     assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+def _registered(tmp_path, monkeypatch, program: bytes, rows: list[dict], slug: str = "p", net=None):
+    """A hand-made PC project (_project: a source file per function) as the app has it: registered, measured from
+    its functions.json (no compiler: nothing matches), its targets and rebuild check the delinked objects'."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles.pc import WindowsPC
+    from decompnet.forks.project import Unit
+
+    root = _project(tmp_path / slug, program, rows)
+    (root / "objdiff.json").write_text(json.dumps({"units": []}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({
+        "created": "from scratch", "platform": "pc", "version": "game", "compiler": "MSVC/6.0",
+        "game": {"path": "orig/game.exe"}, "analysis": consoles.get("pc").ANALYSIS, "tools": scratch_pe.tools_version()}))
+    (root / ".gitignore").write_text("orig/\nbuild/\n")
+    for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "-A"],
+                ["git", "-c", "user.name=t", "-c", "user.email=t@t.invalid", "commit", "-q", "-m", "start"]):
+        subprocess.run(cmd, cwd=root, check=True, capture_output=True)
+    net = net or RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    net.forks._register(slug, slug.upper(), "fork", root, {"kind": "fork", "origin": "scratch", "version": "game",
+                                                            "platform": "pc", "ready": True}, "x")
+
+    def units(fp) -> dict:
+        return json.loads((fp.root / "config" / "game" / "functions.json").read_text())["units"]
+    monkeypatch.setattr(ForkProject, "report", lambda self: {"units": [
+        {"name": u, "functions": [{"name": fn["name"], "size": str(fn["size"]), "fuzzy_match_percent": 0.0} for fn in fns]}
+        for u, fns in units(self).items()]})
+    monkeypatch.setattr(ForkProject, "units", lambda self: [
+        Unit(u, self.root / "build" / "game" / "target" / f"{u}.obj", None, f"src/auto/{u}.cpp", False, None)
+        for u in units(self)])
+    monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
+    monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: (
+        _delink(fp.root), scratch_pe.check_code(fp.root, version, log=log))[1])
+    net.forks.sync(slug, log=lambda *_: None)
+    return net, root
+
+
+# Ghidra took two functions for one (0x401000), and a function with data after its return for all code (0x401020)
+MERGED = FRAME_RET * 2 + b"\x90" * 14 + FRAME_RET + bytes(range(1, 8)) + FRAME_RET
+MERGED_ROWS = [_row(0x401000, 0x401012), _row(0x401020, 0x401030), _row(0x401030, 0x401039)]
+
+
+def test_agents_of_two_models_end_a_function_where_it_really_ends(tmp_path, monkeypatch):
+    """report_boundary on PC: three agents of two models say where a function ends; the rest becomes a function of
+    its own (code: open to agents; data: set aside), checked by the rebuild, with a note; one that can't hold is
+    refused and remembered."""
+    net, root = _registered(tmp_path, monkeypatch, MERGED, MERGED_ROWS)
+    say = lambda who, fn, end, why="a second function starts there: push ebp": net.request_boundary(  # noqa: E731
+        net.local_agent(who)[0], "p", fn, end, why)
+    for end in ("+0x30", "0x00401000", "hello"):
+        with pytest.raises(NetworkError, match="an address inside it"):
+            say("claude-opus-5-5-1", "_func_00401000", end)
+    assert "1 of 3 agents" in say("opencode-beam-free-1", "_func_00401000", "+9")
+    assert "1 of 2 models" in say("opencode-beam-free-2", "_func_00401000", "0x00401009")  # (the same address)
+    said = say("claude-sonnet-5-5-1", "_func_00401000", "+9")
+    assert said.startswith("With yours, 3 agents of 2 models agree: _func_00401000 ends at 0x00401009; the 23 bytes "
+                           "after it are _func_00401009, a function of its own"), said
+    rows = {r["name"]: r for r in net.store.all("SELECT * FROM functions WHERE project_id=?", net.project_row("p")["id"])}
+    assert rows["_func_00401000"]["size"] == 9 and rows["_func_00401009"]["status"] == "open"
+    assert json.loads((root / ".decomp.wtf.json").read_text())["rebuild"]["identical"]
+    assert "decompdecomp cut it" in net.store.one("SELECT text FROM notes WHERE function_id=?",
+                                                  rows["_func_00401000"]["id"])["text"]
+    data = "data after its return: 01 02 03 04 isn't code"
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2", "claude-sonnet-5-5-1"):
+        said = say(who, "_func_00401020", "+9", data)
+    assert said.endswith("_func_00401029, set aside as not code. The game still builds byte for byte."), said
+    tail = net._function("_func_00401029", "p")
+    assert tail["status"] == "asm" and data in json.loads(tail["meta"])["asm_code"]
+    for who in ("opencode-beam-free-1", "opencode-beam-free-2"):  # cutting off the padding Visual C++ puts there
+        say(who, "_func_00401009", "+9", "nops")
+    assert "refused: what follows 0x00401012 is padding" in say("claude-sonnet-5-5-1", "_func_00401009", "+9", "nops")
+    assert "was tried, and refused" in say("claude-opus-5-5-1", "_func_00401009", "+9", "nops")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
+    with pytest.raises(NetworkError, match="its end is proven"):
+        say("claude-opus-5-5-1", "_func_00401030", "+3")

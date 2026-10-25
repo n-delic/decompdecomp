@@ -177,6 +177,17 @@ class WindowsPC(Console):
 
         return scratch.join_functions(fp.root, (fp.manifest or {})["version"], first, last, keep=keep)
 
+    def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        return scratch.function_extent(fp.root, manifest["version"], symbol) if "version" in manifest else None
+
+    def cut_function(self, fp, symbol: str, at: int, keep: set[str], why: str = "") -> str:
+        from . import scratch
+
+        return scratch.cut_function(fp.root, (fp.manifest or {})["version"], symbol, at, keep=keep, why=why)
+
     splits_sources = True  # a source file is a unit of functions.json (scratch.split_unit)
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:

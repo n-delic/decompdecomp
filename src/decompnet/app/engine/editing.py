@@ -76,7 +76,10 @@ class EditMixin:
     def request_boundary(self, agent: Agent, slug: str, function: str, end: str, reason: str) -> str:
         """An agent's report that a function really ends earlier: what follows is alignment padding, linker leftovers
         or data, not code anyone wrote. Changing the function list is the user's call, so it waits for them on the
-        project page (resolve_boundary); approved, the function is cut there and the rest set aside."""
+        project page (resolve_boundary); approved, the function is cut there and the rest set aside. A project
+        decompdecomp made (PC) cuts it once agents agree instead (ForkEngine.report_boundary)."""
+        if (fork := self.fork_slug(slug)):
+            return self.forks.report_boundary(agent, fork, function, end, reason)
         self._rom_only(slug, "report_boundary")
         if self._link(slug) is not None:
             raise NetworkError("in a team room the host's project decides where functions end: tell the host (add_note)")

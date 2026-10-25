@@ -386,6 +386,12 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                           s(old=st("current name", True), new=st("new name", True), message=st("why"))),
         "split_function": ("Split a merged function at an address.",
                            s(function=st("function", True), at=st("address like 0x80001234", True), new_name=st("name"))),
+        "report_boundary": ("Report that a function really ends earlier: what follows is padding, leftovers or data "
+                            "(PC projects: or another function merged with it). ROM: the user approves; PC: agents of "
+                            "two models agree and the game still builds byte for byte.",
+                            s(function=st("function", True), end=st("where it really ends: an address (PC: or +offset)",
+                                                                     True),
+                              reason=st("what follows and how you can tell", True))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "

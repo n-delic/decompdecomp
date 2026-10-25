@@ -31,7 +31,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
@@ -60,7 +60,8 @@ Where to start on a gap:
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names".
-- **Function-end reports** cut MIPS functions (`engine._cut`).
+- **Function-end reports** cut MIPS functions (`engine._cut`) and, in project mode, a console's own
+  (`Console.cut_function`: PC's functions.json). DS and GameCube projects need theirs.
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
   (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
@@ -70,6 +71,13 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC: function-end reports.** Ghidra sometimes runs a function on into the data after its return, or
+  into the next function. `report_boundary` works on PC projects: once three agents of two models give the same
+  end (an address, or an offset into the function), the function ends there and the rest becomes a function of its
+  own, open to agents when it reads as code and set aside with what agents said when it doesn't
+  (`scratch.cut_function`). As a join is, it's kept only when the game's code still rebuilds byte for byte, never
+  touches a matched function, and one that doesn't hold is remembered. Cutting off only the padding Visual C++ puts
+  in the function's own section is refused. ROM projects still ask the user. API helpers have the tool now too.
 - **Windows PC: import thunks named and set aside.** A call to a DLL's function declared without
   `__declspec(dllimport)` goes to a `jmp [__imp__Name]` the linker adds. Ghidra marks those as thunks and the
   import left them out, so their bytes became one function with the code before them, and calls to them read as
