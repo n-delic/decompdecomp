@@ -12,7 +12,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   (name_import_thunks). Projects made before get what the import learnt since when the app starts (on_start,
   ANALYSIS).
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
-  and split_file divides one (split_source: a unit of functions.json).
+  and split_file divides one (split_source: a unit of functions.json). The game's own DLLs beside the .exe are
+  programs of the project too (find_modules; a game given as its folder: program_in), each in a folder of src/auto/.
 - rtti.py: the C++ classes the program's run-time type information names, those of its code built without it (from
   the vtables constructors store), their fields and the struct layouts of every function's pointers, read by
   arch/x86_fields.py (get_class, guess_struct, drafts as `Class::method`).
@@ -76,6 +77,12 @@ class WindowsPC(Console):
     def upload_name(self, data: bytes) -> str:
         return "game.exe"
 
+    def program_in(self, folder: Path) -> Path | None:
+        """A PC game is a folder: its .exe, and the DLLs of its own create takes along (scratch.find_modules)."""
+        from .scratch import program_in
+
+        return program_in(folder)
+
     def default_compiler(self, info: dict, splat_guess: str) -> str:
         return ""  # the program's Rich header says which Visual C++ built it (scratch.guess_compiler)
 
@@ -116,7 +123,8 @@ class WindowsPC(Console):
                                                           manifest.get("tools") == scratch.tools_version()):
             return
         version = manifest["version"]
-        if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file():
+        if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file() or \
+                scratch.missing(fp.root, version):  # (the game's DLLs too: each step reads every program)
             return
 
         def matched() -> set[str]:  # not into or out of a matched function: its C would no longer be the whole one
@@ -177,8 +185,9 @@ class WindowsPC(Console):
                     pass
 
     def reimport(self, net, slug: str, game: Path, log=print) -> str | None:
-        """Ghidra's analysis again, read by this decompdecomp's rules (scratch.reanalyse_program), through
-        forkengine.reanalyse: kept only when the program's code still rebuilds byte for byte."""
+        """Ghidra's analysis again, read by this decompdecomp's rules (scratch.reanalyse_program), of the program and
+        each of the game's DLLs in the project, through forkengine.reanalyse: kept only when every program's code
+        still rebuilds byte for byte."""
         import hashlib
 
         from ...forks import ghidra
@@ -189,8 +198,14 @@ class WindowsPC(Console):
         if hashlib.sha1(game.read_bytes()).hexdigest() != manifest.get("game", {}).get("sha1", ""):
             raise NetworkError("that isn't this project's program (its SHA-1 differs): choose the same .exe, or start "
                                "a new project for another one")
+        if scratch.missing(fp.root, manifest["version"]):
+            raise NetworkError("the project is missing the game's DLLs it was made with (in orig/): put your copies "
+                               "there, then reimport")
         log(f"analysing {game.name} with Ghidra again (a big game takes a few minutes)")
-        found = ghidra.functions(game)
+        found = {"": ghidra.functions(game)}
+        for m in _functions_json(fp, manifest["version"]).get("modules", []):
+            log(f"analysing {m['exe'].removeprefix('orig/')} with Ghidra again")
+            found[m["name"]] = scratch.module_rows(ghidra, fp.root / m["exe"], m["image_base"] - m["preferred_base"])
         matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND "
                                                      "status='matched'", net.project_row(slug)["id"])}
         return net.forks.reanalyse(slug, lambda fp: scratch.reanalyse_program(fp.root, manifest["version"], found,
@@ -255,12 +270,17 @@ class WindowsPC(Console):
 
     def program_compilers(self, fp) -> list[tuple[str, int, str, bool]]:
         """The Rich header's compilers: a game of about 2000 counts files of five Visual C++ 6.0 builds (its own
-        code, MFC's, the C runtime's), a later one 6.0's and 7.1's."""
+        code, MFC's, the C runtime's), a later one 6.0's and 7.1's. The game's DLLs' headers count too."""
         from . import scratch
 
         manifest = fp.manifest or {}
         path = fp.root / manifest.get("game", {}).get("path", f"orig/{manifest.get('version')}.exe")
-        return scratch.program_compilers(path.read_bytes()) if path.is_file() else []
+        paths = [path, *(fp.root / m["exe"] for m in _functions_json(fp, manifest.get("version", "")).get("modules", []))]
+        counted: dict[str, list] = {}
+        for found in (scratch.program_compilers(p.read_bytes()) for p in paths if p.is_file()):
+            for compiler, n, name, installed in found:
+                counted.setdefault(name, [compiler, 0, name, installed])[1] += n
+        return sorted((tuple(row) for row in counted.values()), key=lambda row: -row[1])
 
     def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
         from . import scratch

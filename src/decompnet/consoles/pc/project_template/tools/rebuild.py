@@ -11,10 +11,14 @@ in from the project's own symbols: every function's address (functions.json), da
 the same bytes, at the address the game's code reads it from. The rest of the program (its headers, data, imports
 and resources) is your copy's: only the code is decompiled so far, and the program is rebuilt at the addresses the
 game has, which is what lets it come out identical (a linker would have to place every object, library and resource
-exactly as the original's did). Writes build/<version>/<program>.exe and rebuild.json (which functions came from C);
-exits with 1 when the program isn't your copy byte for byte. Standard library only. Made by decompdecomp.
+exactly as the original's did). The game's own DLLs (functions.json's "modules") are rebuilt the same way, each from
+its own source files and against its own copy: at the address the project gives it, then moved back to its own by its
+base relocations. Writes build/<version>/<program>.exe (and each DLL where it is in orig/) and rebuild.json (which
+functions came from C); exits with 1 when a program isn't your copy byte for byte. Standard library only. Made by
+decompdecomp.
 """
 
+import importlib.util
 import json
 import re
 import struct
@@ -200,15 +204,39 @@ def _same_constant(program: Program, sec: dict, symbols: list, number: int, star
     return bytes(game[:len(data)]) == bytes(data)
 
 
+def _delink():
+    """tools/delink.py, beside this: the project's programs and how a DLL is moved (rebase)."""
+    spec = importlib.util.spec_from_file_location("delink", Path(__file__).with_name("delink.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def rebuild(config: Path, build: Path, root: Path = Path(".")) -> dict:
-    """Rebuild the program (build/<program>.exe) and compare it with your copy: {"identical", "c" (the functions from
-    C), "differ" (what doesn't come out as your copy's), "functions", "bytes" (of code), "size", "output"}."""
+    """Rebuild every program of the project (build/<program>.exe, and each DLL) and compare each with your copy:
+    {"identical", "c" (the functions from C), "differ" (what doesn't come out as your copy's), "functions", "bytes"
+    (of code), "size", "output"} for all of them (the .exe's output and size), and the same for each program, by its
+    source files' folder ("" for the .exe), in "programs"."""
     info = json.loads((root / config).read_text(encoding="utf-8"))
-    exe = (root / info["exe"]).read_bytes()
+    delink = _delink()
+    each = {name: _rebuild_program(info, root, build, name, path, base, delink)
+            for name, (path, _, base) in delink.programs(info).items()}
+    report = {"identical": all(r["identical"] for r in each.values()),
+              **{key: sorted(n for r in each.values() for n in r[key]) for key in ("c", "differ")},
+              **{key: sum(r[key] for r in each.values()) for key in ("functions", "bytes")},
+              "size": each[""]["size"], "output": each[""]["output"], "programs": each}
+    (root / build / "rebuild.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    return report
+
+
+def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str, base: int | None, delink) -> dict:
+    """One program rebuilt from its source files (a DLL's: those in its folder) and compared with your copy of it."""
+    original = (root / path).read_bytes()
+    exe = original if base is None else delink.rebase(original, base)  # (at the address the project gives it)
     program = Program(info, exe)
     sizes = {fn["name"]: fn["size"] for fns in info["units"].values() for fn in fns}
     out, placed, differ, c = bytearray(exe), [], [], []
-    for unit in info["units"]:
+    for unit in (u for u in info["units"] if delink.module(u) == folder):
         target = root / build / "target" / f"{unit}.obj"
         if not target.is_file():
             differ.append(f"{unit} (no object: the build didn't make it)")
@@ -232,21 +260,28 @@ def rebuild(config: Path, build: Path, root: Path = Path(".")) -> dict:
             placed.append((start, len(code), name))
     placed.sort()
     differ += [f"{b[2]} (overlaps {a[2]})" for a, b in zip(placed, placed[1:]) if b[0] < a[0] + a[1]]
-    output = root / build / Path(info["exe"]).name
+    where = Path(path)
+    output = root / build / (where.relative_to("orig") if where.parts[0] == "orig" else where.name)
     output.parent.mkdir(parents=True, exist_ok=True)
+    if base is not None:  # back at its own address, as your copy is
+        out = bytearray(delink.rebase(bytes(out), struct.unpack_from("<I", original, _image_base_at(original))[0]))
     output.write_bytes(out)
-    report = {"identical": not differ and out == exe, "c": sorted(c),
-              "differ": differ, "functions": len(placed), "bytes": sum(n for _, n, _ in placed), "size": len(out),
-              "output": output.relative_to(root).as_posix()}
-    (root / build / "rebuild.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
-    return report
+    return {"identical": not differ and out == original, "c": sorted(c),
+            "differ": differ, "functions": len(placed), "bytes": sum(n for _, n, _ in placed), "size": len(out),
+            "output": output.relative_to(root).as_posix()}
+
+
+def _image_base_at(exe: bytes) -> int:
+    """Where a program's header says the address it prefers (its optional header's image base)."""
+    return struct.unpack_from("<I", exe, 0x3C)[0] + 24 + 28
 
 
 def main() -> None:
     report = rebuild(Path(sys.argv[1]), Path(sys.argv[2]))
     if report["identical"]:
-        print(f"identical: {report['output']} is your copy byte for byte ({len(report['c']):,} of its "
-              f"{report['functions']:,} functions from C)")
+        programs = ", ".join(r["output"] for r in report["programs"].values())
+        print(f"identical: {programs} {'is' if len(report['programs']) == 1 else 'are'} your copy byte for byte "
+              f"({len(report['c']):,} of {report['functions']:,} functions from C)")
         return
     shown = ", ".join(report["differ"][:SHOWN]) + ("…" if len(report["differ"]) > SHOWN else "")
     sys.exit(f"not identical: {len(report['differ'])} functions differ from your copy: {shown}")

@@ -42,7 +42,7 @@ def real_names(info: dict) -> dict[bytes, bytes]:
 def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
     """func_XXXXXXXX / D_XXXXXXXX (upper case address) a symbol stands for: by the address in its name, or by a real
     name, as C (`_UpdateTown`, `_UpdateTown@8`, `@UpdateTown@8`) or C++ (`?UpdateTown@@YAXH@Z`, a method's
-    `?UpdateTown@Town@@QAEXH@Z`) spells it; a constructor or destructor by its C++ name (`??1CFoo@@QAE@XZ`:
+    `?UpdateTown@Town@@QAEXH@Z`, named Town::UpdateTown or UpdateTown) spells it; a constructor or destructor by its C++ name (`??1CFoo@@QAE@XZ`:
     CFoo::~CFoo)."""
     if name.startswith(b"."):
         return None
@@ -53,11 +53,11 @@ def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
     if name[:3] in (b"??0", b"??1"):  # a constructor, a destructor: by its class, outer scopes first (A::CFoo::~CFoo)
         scopes = name[3:].split(b"@@", 1)[0].split(b"@")[::-1]
         word = b"::".join(scopes) + b"::" + b"~" * (name[2:3] == b"1") + scopes[-1]
-    elif name.startswith(b"?"):  # a method by its class too (Town::Update, as the game's debug information names it)
-        scopes = name[1:].split(b"@@", 1)[0].split(b"@")
-        word = scopes[0]
-        if len(scopes) > 1 and b"::".join(scopes[::-1]) in real:
-            return real[b"::".join(scopes[::-1])]
+    elif name.startswith(b"?"):  # a method by its class too (Town::Update: debug information, a DLL's exports)
+        word, _, rest = name[1:].partition(b"@")
+        scopes = [] if rest.startswith(b"@") else rest.split(b"@@", 1)[0].split(b"@")[::-1]
+        if scopes and (key := real.get(b"::".join([*scopes, word]))) is not None:
+            return key
     else:
         word = (name[1:] if name[:1] in (b"_", b"@") else name).split(b"@", 1)[0]
     return real.get(word)

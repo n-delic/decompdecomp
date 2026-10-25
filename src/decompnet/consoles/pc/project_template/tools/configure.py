@@ -106,10 +106,14 @@ def main() -> None:
         n.build("prepare", "phony", [*targets, *objs])
         # the whole program, from what src/ compiles to and the delinked functions (not the default: a build for
         # objdiff needs only the objects)
-        program = str(BUILD / Path(info["exe"]).name)
+        # (each program where rebuild.py writes it: the game's DLLs too, functions.json's "modules")
+        exes = [info["exe"], *(m["exe"] for m in info.get("modules", []))]
+        programs = [str(BUILD / (Path(exe).relative_to("orig") if Path(exe).parts[0] == "orig" else Path(exe).name))
+                    for exe in exes]
         n.rule("rebuild", f"{PY} tools/rebuild.py {CONFIG} {BUILD}")
-        n.build(program, "rebuild", [*targets, *objs], implicit=[str(CONFIG), info["exe"], "tools/rebuild.py"])
-        n.build("rebuild", "phony", [program])
+        n.build(programs, "rebuild", [*targets, *objs],
+                implicit=[str(CONFIG), *exes, "tools/rebuild.py", "tools/delink.py"])
+        n.build("rebuild", "phony", programs)
         n.build("build.ninja", "configure", ["tools/configure.py", str(CONFIG), *headers,
                                              *[str(s) for s in files("src", (".c", ".cpp"))],
                                              *([str(FILE_COMPILERS)] if FILE_COMPILERS.exists() else [])])

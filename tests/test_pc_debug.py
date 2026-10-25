@@ -242,6 +242,15 @@ def test_the_linkers_map_names_functions_and_their_object_files(tmp_path):
     assert debuginfo.find(game, game.read_bytes(), log=said.append) is None and "another build" in said[0]
 
 
+def test_a_moved_dlls_map_names_its_functions_where_the_project_has_them():
+    """A DLL the project moved (another program has its address) is read at its new address: its map's addresses,
+    the linker's preferred ones, move with it."""
+    info = debuginfo.from_map(MAP, 0x6ADD4D25, image_base=0x10400000)
+    assert {n.address: n.name for n in info.named}[0x10401010] == "Thing::Update"
+    assert 0x10401000 in info.units and 0x401000 not in info.units
+    assert {n.address for n in debuginfo.from_map(MAP, 0x6ADD4D25, image_base=0x400000).named} >= {0x401000}
+
+
 def _coff_symbols(function=0x10, datum=4) -> tuple[bytes, int]:
     """.file thing.c, then a function and a datum (their values); the long name in the string table."""
     def symbol(name: bytes, value: int, section: int, kind: int, storage: int, aux: int = 0) -> bytes:

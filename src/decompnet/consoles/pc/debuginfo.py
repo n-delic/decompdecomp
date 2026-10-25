@@ -403,17 +403,22 @@ def _types_and_prototypes(info: DebugInfo, found: pdbfile.Pdb, types: _Types, pr
 # ------------------------------------------------------------------------------------------------------ map, COFF
 
 
-def from_map(text: str, timestamp: int) -> DebugInfo | None:
-    """Names and object files from the linker's map, or None when it's another build's (its timestamp) or no map."""
+def from_map(text: str, timestamp: int, image_base: int | None = None) -> DebugInfo | None:
+    """Names and object files from the linker's map, or None when it's another build's (its timestamp) or no map.
+    `image_base`: where the program is now (a DLL the project moved), when it isn't the address the map's linker
+    preferred."""
     stamp = re.search(r"Timestamp is ([0-9a-fA-F]{8})", text)
     if stamp is None or int(stamp.group(1), 16) != timestamp:
         return None
+    preferred = re.search(r"Preferred load address is ([0-9a-fA-F]{8})", text)
+    moved = image_base - int(preferred.group(1), 16) if image_base is not None and preferred else 0
     info, used = DebugInfo(), set()
     seen = set()
     for m in re.finditer(r"^\s*[0-9a-fA-F]{4}:[0-9a-fA-F]{8}\s+(\S+)\s+([0-9a-fA-F]{8})\s+(f\s+)?(?:i\s+)?(\S+)\s*$",
                          text, re.M):
         symbol, at, function, obj = m.group(1), int(m.group(2), 16), bool(m.group(3)), m.group(4)
         name = plain_name(symbol)
+        at += moved if at else 0
         if not at or at in seen or name is None:
             continue
         seen.add(at)
@@ -495,7 +500,7 @@ def find(game: Path, data: bytes, reserved: set[str] = frozenset(), log=print) -
         return Found(from_pdb(found, pe.image_base, reserved), f"{path.name} ({found.kind})")
     path = _beside(game, game.with_suffix(".map").name)
     if path is not None:
-        info = from_map(path.read_text(encoding="latin-1", errors="replace"), pe.timestamp)
+        info = from_map(path.read_text(encoding="latin-1", errors="replace"), pe.timestamp, pe.image_base)
         if info is not None:
             return Found(info, path.name)
         log(f"{path.name} is the linker's map of another build of the game (its timestamp isn't the program's): "

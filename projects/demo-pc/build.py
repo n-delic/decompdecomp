@@ -21,6 +21,13 @@ own symbols (consoles/pc/debuginfo.py), and the demo is a game without them unle
 --pdb builds it as a game that shipped its program database: compiled with /Zi, linked with /DEBUG (a PDB 2.0, as
 Visual C++ 6.0 wrote them). Only 6.0's: under wibo 1.2.0, 7.1's linker stops at lstrcmpiA with /DEBUG, and 2005's and
 later compilers at NdrClientCall2 with /Zi (their PDB server), so MSF 7.00 PDBs are tests/test_pc_debug.py's own.
+
+    uv run python projects/demo-pc/build.py dll    ->  build/dll/demoquest.exe and build/dll/demoquest.dll
+
+Demo Quest as a game with a DLL of its own beside its program: the same code compiled again by Visual C++ 2010 SP1 and
+linked as a DLL that exports some of its functions by name, at 0x400000, the program's own address. So the import
+moves it by its base relocations, as Windows does when two programs want one address, and builds its files with
+the Visual C++ its Rich header names, not the program's (tests/test_pc.py).
 """
 
 from __future__ import annotations
@@ -36,9 +43,12 @@ from decompnet import toolchains
 from decompnet.consoles.pc.scratch import compiler_pack
 
 HERE = Path(__file__).resolve().parent
-VERSION = sys.argv[1] if len(sys.argv) > 1 else "6.0"
-PDB = "--pdb" in sys.argv[2:]
-BUILD = HERE / "build" / ("pdb" if PDB else "" if VERSION == "6.0" else VERSION)
+DLL = "dll" in sys.argv[1:]
+PDB = "--pdb" in sys.argv[1:]
+VERSION = next((a for a in sys.argv[1:] if a not in ("dll", "--pdb")), "6.0")
+BUILD = HERE / "build" / ("dll" if DLL else "pdb" if PDB else "" if VERSION == "6.0" else VERSION)
+EXPORTS = ("player_take_damage", "entity_default_hp", "clamp_s32")  # what the DLL exports, by their own names
+DLL_VERSION = "10.0SP1"
 GAME = HERE.parent / "demo-n64" / "original"
 CFLAGS = ["/nologo", "/c", "/O2", "/Gd", "/W0"]
 
@@ -74,6 +84,16 @@ def main() -> None:
         run([*wibo, next(p for p in (cl / "CL.EXE", cl / "cl.exe") if p.exists()), *CFLAGS, *debug[0], src])
     run([*wibo, msvc / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF",
          *debug[1], "/MAP:symbols.map", "/OUT:demoquest.exe", "pcmain.obj", "game.obj"])
+    if DLL:
+        objs = BUILD / "dll_objs"  # (a folder without a program of its own: the import looks in it, and finds .obj)
+        objs.mkdir(exist_ok=True)
+        dll_cl = toolchains.require(compiler_pack(DLL_VERSION)) / DLL_VERSION / "Bin"
+        for src in ("game.c", "pcmain.c"):
+            run([*wibo, next(p for p in (dll_cl / "CL.EXE", dll_cl / "cl.exe") if p.exists()), *CFLAGS,
+                 f"/Fo{objs.name}/{Path(src).stem}.obj", src])
+        run([*wibo, msvc / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/DLL", "/NOENTRY", "/BASE:0x400000", "/OPT:NOREF",
+             *(f"/EXPORT:{name}" for name in EXPORTS), "/MAP:demoquest_dll.map", "/OUT:demoquest.dll",
+             f"{objs.name}/pcmain.obj", f"{objs.name}/game.obj"])
     write_key()
     print(f"built {(BUILD / 'demoquest.exe').relative_to(HERE)} ({(BUILD / 'demoquest.exe').stat().st_size} bytes)")
 
