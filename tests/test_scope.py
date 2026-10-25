@@ -74,7 +74,11 @@ def test_polishing_takes_the_games_own_code_and_leaves_set_aside_library_code(tm
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)
     other, _ = net.local_agent("claude-sonnet-5-5-2")
-    assert "lib_a" not in net.readability.claim(other, slug)
+    said = net.readability.claim(other, slug)
+    assert "lib_a" not in said
+    # game_a, held, is all that's left: told to stop, the other helper left for good, and nobody took game_a if its
+    # holder's claim ran out (#89)
+    assert "Nothing to take right now" in said and "game_a (" in said and "Stop here" not in said
 
 
 def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, monkeypatch):
@@ -95,8 +99,135 @@ def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, 
     assert m._left(slug) == 0  # nothing left to decompile
     assert m._left(slug, "readable") == 2  # game_a and game_b to polish (not lib_a: library code, set aside)
     net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
-    net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub: nothing to explain
+    net.store.conn.execute("UPDATE functions SET n_insns=4 WHERE name='game_b'")  # a stub too: it comes last, not never
+    assert m._left(slug, "readable") == 1
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_b'")
+    assert m._left(slug, "readable") == 1  # the file to tidy now
+    with net.store.tx() as db:
+        net._event(db, net._project(slug)["id"], None, "tidied", "game")
     assert m._left(slug, "readable") == 0
+
+
+def test_polishing_takes_small_functions_last_and_leaves_one_it_keeps_failing_on(tmp_path, monkeypatch):
+    """A floor of 8 instructions left 15 of a small Xbox game's 33 functions with address names: small ones come last
+    now, not never. And biggest first, one no rewrite kept matching was handed out again and again, to every helper:
+    after POLISH_TRIES tries since it was last readable it's left, and helpers stop once only such functions remain."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=2 WHERE name='game_a'")  # a getter: 8 bytes
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    proj = net._project(slug)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert readable.Readability(net).left(proj) == 2
+    for _ in range(readable.POLISH_TRIES):  # game_b, the bigger, first: given up on each time
+        assert "MAKE READABLE: game_b" in net.readability.claim(agent, slug)
+        net.release(agent, "game_b", "", slug)
+    assert net.readability.left(proj) == 1
+    assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)  # then the small one
+    net.release(agent, "game_a", "", slug)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
+    assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
+    # made readable since (by hand), then its flag reset: it has its tries again
+    with net.store.tx() as db:
+        net._event(db, proj["id"], agent.id, "readable", "game_b")
+    assert net.readability.left(proj) == 1 and "game_b" in net.readability.claim(agent, slug)
+
+
+def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tmp_path, monkeypatch):
+    """A ceiling of 400 instructions left a game's biggest functions unpolished for good ("they wait"): they come after
+    the functions people read most, smallest of them first, and their brief asks for names and comments in place."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute(f"UPDATE functions SET n_insns={readable.BIG_INSNS + 100} WHERE name='game_a'")
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    first = net.readability.claim(agent, slug)
+    assert "MAKE READABLE: game_b" in first and "big function" not in first
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_b'")
+    net.release(agent, "game_b", "", slug)
+    second = net.readability.claim(agent, slug)
+    assert "MAKE READABLE: game_a" in second and "it's a big function" in second
+
+
+def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkeypatch):
+    """Polishing one function at a time left an Xbox game's types as the first guesses were, declared again in three
+    files, among duplicate and unused declarations, and two getters misnamed for want of reading the strings they
+    returned. Once a file's functions are readable, it's handed out to tidy, one helper at a time, until tidy_done."""
+    from decompnet.app import readable, tools
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16, status='matched' WHERE name='game_b'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    proj = net._project(slug)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    other, _ = net.local_agent("claude-sonnet-5-5-2")
+    brief = net.readability.claim(agent, slug)
+    assert "read_data a global before you name it" in brief and "style the names around them" in brief
+    net.release(agent, brief.split()[2], "", slug)
+    brief = net.readability.claim(other, slug)
+    assert "TIDY" not in brief  # a function of the file isn't readable yet
+    net.release(other, brief.split()[2], "", slug)
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name IN ('game_a', 'game_b')")
+    assert net.readability.left(proj) == 1  # the file
+    # what the globals it declares hold comes with it: two getters of class-name strings were named "static data"
+    (root / "src").mkdir()
+    (root / "src" / "game.c").write_text('extern int g_shape_static_data;\nextern float k_ratio;\nextern "C" void f(void);\n'
+                                         "extern int D_00403000[4];\nint get(void);\n")
+    held = {"g_shape_static_data": 'D_00402000 (.rdata+0x0, 32 bytes)\n  +0x000: 43 69 72\n'
+                                   'as f32: 4.46528e+30, 1.49939e-43\nas a string: "Circle"',  # (text reads as floats too)
+            "k_ratio": "D_00402010 (.rdata+0x10, 32 bytes)\n  +0x000: 00 00 80 3f\nas f32: 1",
+            "D_00403000": "D_00403000 (.bss+0x0, 32 bytes): uninitialized data (.bss), zeros at start-up."}
+
+    def read_data(agent, slug, what, length=64):
+        if what not in held:
+            raise NetworkError(f"no data {what}")
+        return held[what]
+    monkeypatch.setattr(net.forks, "read_data", read_data)
+    job = net.readability.claim(agent, slug)
+    assert job.startswith("TIDY A FILE: game (src/game.c)") and 'tidy_done("game"' in job
+    assert '   g_shape_static_data: as a string: "Circle"' in job and "   k_ratio: as f32: 1" in job
+    assert "   D_00403000: uninitialized data (.bss)" in job and "   f:" not in job
+    assert net.readability.claim(agent, slug) == job  # it holds it
+    said = net.readability.claim(other, slug)  # one file, one helper; but come back, don't stop (#89)
+    assert "Nothing to take right now" in said and "the file game (" in said and "Stop here" not in said
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(other, slug, "game", "everything")
+    with pytest.raises(NetworkError, match="summary"):
+        net.readability.tidy_done(agent, slug, "game", " ")
+    # a claim that ran out is no claim: the file is the next helper's to tidy, not the late one's to mark tidy (#89)
+    net.readability._tidying[(proj["id"], "game")] = (agent.id, time.time() - 1)
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(agent, slug, "game", "late")
+    assert net.readability.claim(other, slug) == job
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(agent, slug, "game", "late")
+    assert net.readability.tidy_done(other, slug, "game", "Particle in include/particle.h").startswith("✅")
+    assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
+    kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind LIKE 'tid%' ORDER BY id")]
+    assert kinds == ["tidy", "tidy", "tidied", "tidy_summary"]
+    # a file no helper finishes is left after its tries, as a function is
+    net.store.conn.execute("DELETE FROM events WHERE kind LIKE 'tid%'")
+    for _ in range(readable.POLISH_TRIES):
+        assert net.readability.claim(agent, slug).startswith("TIDY A FILE")
+        net.readability._tidying.clear()  # (its claim ran out)
+    assert net.readability.left(proj) == 0
+    assert "tidy_done" in tools.tool_names(fork=True) and "tidy_done" not in tools.tool_names(fork=False)
 
 
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):
@@ -318,3 +449,29 @@ def test_the_settings_route_analyses_what_the_import_left_out(client, monkeypatc
     assert j["state"] == "done", j
     assert ran == [slug] and j["result"]["unanalysed"] is None and j["result"]["scope"] == "game"
     assert _statuses(net)["lib_b"] == "asm"  # brought in, and set aside: the project covers the game's own code
+
+
+def test_re_measuring_builds_what_changed_first(tmp_path, monkeypatch):
+    """A measure reads build/ as it is: an Xbox game rolled back with git outside decompdecomp measured its broken build
+    again and again (27 of 33) until it was built by hand. Re-measure builds first, and a unit whose source doesn't
+    build doesn't count what its last object matched. Making the project doesn't build here (its import does that)."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    units = [Unit("game", None, root / "build" / "game.o", "src/game.c", False, None), *UNITS[1:]]
+    monkeypatch.setattr(ForkProject, "units", lambda self: units)
+    builds = []
+
+    def build_all(self, log=lambda *_: None, failed=None):
+        builds.append(1)
+        if failed is not None and len(builds) > 1:  # the second time, game.c doesn't compile
+            failed.append("build/game.o")
+        return True, ""
+    monkeypatch.setattr(ForkProject, "build_all", build_all)
+    net.forks.check(slug, log=lambda *_: None)
+    assert builds == [] and _sums(net) == (2, 1)
+    net.forks.check(slug, log=lambda *_: None, build=True)
+    assert builds == [1] and _sums(net) == (2, 1)
+    net.forks.check(slug, log=lambda *_: None, build=True)
+    assert builds == [1, 1] and _statuses(net)["game_a"] != "matched"

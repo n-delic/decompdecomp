@@ -420,6 +420,10 @@ function eventHtml(ev) {
     case "claim": return `${who} started ${fnLink(d)}`;
     case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
     case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
+    // a source file tidied once its functions are polished (app/readable.py: its types, names and declarations)
+    case "tidy": return `${who} started tidying ${esc(d)} ${POLISH_TAG}`;
+    case "tidied": return `<span class="ok">✎</span> ${who} tidied ${esc(d)} ${POLISH_TAG}`;
+    case "tidy_summary": return `${who}: ${esc(d)} ${POLISH_TAG}`;
     case "match": return `<span class="ok">✓</span> ${who} matched ${fnLink(d)}`;
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;
