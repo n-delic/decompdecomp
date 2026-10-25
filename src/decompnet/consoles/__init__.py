@@ -271,7 +271,14 @@ class Console:
     def classes(self, fp):
         """The C++ classes the console reads from a project's program (classes.Classes, with the names agents know
         its functions by in `labels` and `symbols`), for get_class, briefs and drafts as `Class::method`; None where
-        it reads none (PC: the program's run-time type information, consoles/pc/rtti.py)."""
+        it reads none (PC: the program's run-time type information and the vtables its constructors store,
+        consoles/pc/rtti.py)."""
+        return None
+
+    def structs(self, fp):
+        """The struct layouts guessed from a project's code (structs.Structs, with the names agents know its
+        functions by in `labels` and `symbols`), for guess_struct and briefs; None where it reads none (PC: the
+        program's functions by its processor's Arch.field_accesses, consoles/pc/rtti.py)."""
         return None
 
     # for agents

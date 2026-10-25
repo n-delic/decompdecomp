@@ -10,7 +10,9 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json).
-- rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
+- rtti.py: the C++ classes the program's run-time type information names, those of its code built without it (from
+  the vtables constructors store), their fields and the struct layouts of every function's pointers, read by
+  arch/x86_fields.py (get_class, guess_struct, drafts as `Class::method`).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
 
@@ -223,6 +225,11 @@ class WindowsPC(Console):
         from . import rtti
 
         return rtti.for_project(fp.root, fp.manifest or {})
+
+    def structs(self, fp):
+        from . import rtti
+
+        return rtti.structs_for_project(fp.root, fp.manifest or {})
 
     # The game's names are its addresses (func_0041B470, D_0066DDA4): objdiff pairs a function with the original's by
     # the symbol tools/names.py gives it, and the report keeps that symbol. A real name is kept by address in

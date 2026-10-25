@@ -32,11 +32,13 @@ Matching tips
   stores say (lwc1: float, lh: s16, a word used as an address: a pointer); the names are yours to give.
 <!-- end -->
 <!-- only: x86 -->
-  In PC projects started from scratch, a program built with run-time type information (RTTI) keeps its classes'
-  own names: `get_class()` lists them, and `get_class(function)` shows a virtual function's class, its base
-  classes, its constructors and destructors and its virtual functions by slot. A method's machine draft is
-  written as `Class::func_<address>(...)` with `this`. The fields aren't read yet: take them from the offsets
-  the functions use through `this`.
+  In PC projects started from scratch, `get_class()` lists the program's classes: by their own names where it was
+  built with run-time type information (RTTI), else `Class_<vtable address>` (found from the vtables constructors
+  store). `get_class(function)` shows a virtual function's class, its base classes, its constructors and
+  destructors, every field its functions touch through `this` (offset, type, which functions; its bases' too) and
+  its virtual functions by slot, and `get_function` says which fields the function uses. A method's machine draft
+  is written as `Class::func_<address>(...)` with `this`. Field types are what the instructions say (fld or movss:
+  float, movsx word: s16, a word used as an address: a pointer); the names are yours to give.
 <!-- end -->
 - Member initialisation order in constructors follows declaration order in the class, not the
   initialiser list order.

@@ -320,7 +320,7 @@ uv run pytest              # the tests
 | `src/decompnet/consoles/` | A folder per console (`n64/`, `ps1/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |
-| `src/decompnet/classes.py` | C++ classes found in MIPS code: vtables, base classes, fields. |
+| `src/decompnet/classes.py` | C++ classes found in MIPS and x86 code: vtables, base classes, fields. |
 | `src/decompnet/compilermap.py` | The compiler map: which compiler built each part of a MIPS game. |
 | `src/decompnet/toolchains.py` | The pinned compilers and tools. |
 | `packaging/linux/` | `build.sh` makes the `.deb`, the `.rpm` and the AppImage; `.github/workflows/release.yml` runs it for each `v*` tag. |

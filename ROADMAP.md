@@ -23,7 +23,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
 | Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | — | — | — |
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI) | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
@@ -36,8 +36,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | named by RTTI; no fields yet | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
 | Twins across your games | ✓ | ✓ | ✓ | — | — | — | — |
 | Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -52,18 +52,21 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
-  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). A PC
-  program built with RTTI has its classes named already (`consoles/pc/rtti.py`, a `Console.classes` part); its
-  fields need x86's `Arch.field_accesses`.
+  mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
+  has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
+  `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
 - **Windows PC**: autopilot needs drafts that compile (Ghidra's output doesn't, as it is); the export needs a linker
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
   would need the mangled signature in "names".
 - **Function-end reports** cut MIPS functions (`engine._cut`).
-- **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
-  `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
-  (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`).
+- **Struct layouts** read MIPS and x86 loads and stores (`arch/mips_fields.py`, `arch/x86_fields.py`); another
+  processor adds its reader as its `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's
+  fifth to eighth arguments (t0-t3), and a pointer into the middle of a struct handed to a callee (`&this->pos`). On
+  x86: an element of a global array reached as `[index + address]` (every address the code names is a global of its
+  own, `D_<address>`, so the array's fields past the first aren't the element's type), edx's __fastcall argument,
+  and the sign of a field the code only or's and tests.
 - **Twins across games** and **restoring a save** work on ROM projects (`app/twins.py`, `app/saves.py`). In project
   mode a project's matched C is its git repository; what's missing there is matching identical code across your
   games (their objects, not a ROM, hold it) and opening a save's best attempts in a new copy of the project.
@@ -119,7 +122,20 @@ Where to start on a gap:
   of a virtual function, and Ghidra's draft of a method reads `Class::func_<address>(...)` with `this`. Methods
   written that way match, and a renamed one still does. A 2008-era game: 1,522 classes, 3,517 methods drafted as
   `Class::method`; a 2014 rebuild of a 2004 game: 557 classes, 2,940; a game of about 2000 built without `/GR`:
-  only the 34 classes of its MFC library. Fields aren't read from x86 code yet.
+  only the 34 classes of its MFC library. Their fields, and the classes of code built without `/GR`: next item.
+- **Struct layouts and class fields on Windows PC.** x86 has its reader of what each function does with pointers
+  (`arch/x86_fields.py`): `this` in ecx, the arguments on the stack (through esp, followed across pushes, calls and
+  `__chkstk`, or an ebp frame), the words loaded from them, globals. `guess_struct` and the brief's layout lines
+  work on PC projects as on MIPS games (a struct through `this`, arg0-arg3, what a function returns, a global), and
+  `get_class` shows each class's fields (offset, type, which functions use them), merged across its methods, with its
+  bases' inherited. Classes of code built without RTTI come from the vtables its constructors store, named
+  `Class_<vtable address>` until the vtable gets a real name. The demo's entity struct comes out field for field
+  (bar one written only as an array element); a C runtime's FILE comes out as FILE is. A game of about 2000 built
+  without `/GR`: 458 classes (424 from its code), 4,917 of its 11,696 functions with a layout for an argument; a 2001
+  game without RTTI: 38 classes (every vtable its code stores), 2,544 of 4,793; a 2008-era game: 1,980 classes (458
+  of code built without RTTI), 15,632 of 20,863; a 2014 rebuild of a 2004 game: 593 classes, 11,664 of 24,784, its
+  entity classes' position, matrix and model index where the community's headers have them. Reading a game takes 5
+  to 15 seconds, once per change to the program or its functions' extents (a rename reads only the names again).
 - **Constructors and destructors on Windows PC.** A Visual C++ game's small exception-using functions are often
   constructors and destructors, and a class's two are at two addresses: named after an address, only one paired, and
   a destructor written so (`func_004D9DD0::~func_004D9DD0`) was refused outright. An agent now writes
@@ -416,12 +432,11 @@ class and the parameter types, so carrying them over gives agents real signature
 constants they use, spread the pairs through the call graph, and let the user approve the names in bulk (as boundary
 reports are approved now). Names only: matching is unaffected. It also names the classes `get_class` finds.
 
-### C++ classes for PowerPC and x86
+### C++ classes for PowerPC
 
-The class recovery reads MIPS today; Windows PC programs built with RTTI have their classes, vtables, bases and
-constructors named from it (done). Left: the fields of PC classes (MSVC: `this` in ecx), the classes of PC programs
-built without RTTI (from the vtables constructors store, as on MIPS), and GameCube and Wii (CodeWarrior: the vtable
-pointer often isn't at offset 0), with their own instruction readers, in fork mode.
+The class recovery reads MIPS and x86 (Windows PC: RTTI's names, the classes of code built without it, and their
+fields: done). Left: GameCube and Wii (CodeWarrior: the vtable pointer often isn't at offset 0), with a PowerPC
+reader (`Arch.field_accesses`), in fork mode.
 
 ### A modding-ready check for the export
 

@@ -24,7 +24,7 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import arch, classes, consoles, similarity, toolchains
+from .. import arch, classes, consoles, similarity, structs, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
 from ..forks.objdiff import ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
@@ -2184,7 +2184,7 @@ class ForkEngine:
             if seed:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
-        lines += self._class_brief(fp, cfg, fn)
+        lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         try:
@@ -2290,6 +2290,12 @@ class ForkEngine:
         return classes.brief_lines(found, addr, self._class_label(found)) if addr is not None else []
 
     @staticmethod
+    def _struct_label(found: structs.Structs):
+        """A function's or global's name as agents know it: a global without a real name is D_<address>, as the
+        project's sources name it."""
+        return lambda addr: found.labels.get(addr, f"D_{addr:08X}")
+
+    @staticmethod
     def _class_label(found: classes.Classes):
         return lambda addr: found.labels.get(addr, f"0x{addr:08X}")
 
@@ -2313,7 +2319,7 @@ class ForkEngine:
             return draft
 
     def get_class(self, slug: str, what: str = "") -> str:
-        """get_class in a project: the classes the console reads from its program (PC: RTTI), by class name, vtable
+        """get_class in a project: the classes the console reads from its program (PC: RTTI and code), by name, vtable
         address or one of their functions (as the report, func_<address> or a real name spells it)."""
         _, fp, cfg = self.get(slug)
         found = self._classes(fp, cfg)
@@ -2337,6 +2343,58 @@ class ForkEngine:
             raise NetworkError(f"`{what}` isn't a class, a vtable, or a virtual function, constructor or destructor of "
                                f"one of the {len(found.by_vtable)} classes found in this game: get_class() lists them")
         return "\n\n".join(classes.describe(c, found, label, focus=addr) for c in hits[:3])
+
+    def _structs(self, fp: ForkProject, cfg: dict) -> structs.Structs | None:
+        """The struct layouts the console guesses from the project's code (Console.structs), or None."""
+        try:
+            return consoles.get(cfg.get("platform")).structs(fp)
+        except Exception:  # a reading of the program: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("guessing struct layouts failed")
+            return None
+
+    def guess_struct(self, slug: str, function: str, argument: str = "arg0") -> str:
+        """guess_struct in a project: the layout behind one of a function's pointers (`this`, arg0-arg3 on the
+        stack, what it returns, or a global by its D_<address>), as layouts.guess_text says it."""
+        from .engine import layouts
+
+        _, fp, cfg = self.get(slug)
+        found = self._structs(fp, cfg)
+        if found is None:
+            raise NetworkError(f"{layouts.where_read()}, not this project's")
+        name = function.strip()
+        addr = found.symbols.get(name)  # (the report's symbol, func_<address> or a real name)
+        if addr is None:
+            fn = self._fn(slug, function)
+            name, addr = fn["name"], found.symbols.get(self._meta(fn).get("symbol") or fn["name"])
+        if addr is None:
+            raise NetworkError(f"{name} isn't one of the functions read from the program")
+        base, path, n = layouts.parse_argument(argument)
+        if n == structs.RETURN:
+            key, what = (structs.RETURN, addr), "what it returns"
+        elif n is not None:
+            key, what = (structs.ARGUMENT, addr, n), structs.argument_name(n)
+        else:
+            m = re.fullmatch(r"_?(?:D_|0x)?([0-9A-Fa-f]{8})", base)
+            at = int(m.group(1), 16) if m else next((a for a, name in found.labels.items() if name == base), None)
+            if at is None:
+                raise NetworkError(f"`{argument}`: say this, arg0 to arg3, return, or a global's name or D_<address> "
+                                   "(and +0x14 to follow the pointer at 0x14)")
+            key, what = (structs.GLOBAL, at), f"the global {self._struct_label(found)(at)}"
+        label = self._struct_label(found)
+        return "\n".join(layouts.guess_text(found, key, path, what, name, argument, label,
+                                             "declare what holds in a header the project's sources include"))
+
+    def _struct_brief(self, fp: ForkProject, cfg: dict, fn) -> list[str]:
+        """get_function's lines on the function's pointer arguments' likely layouts (layouts.brief_lines)."""
+        from .engine import layouts
+
+        found = self._structs(fp, cfg)
+        addr = found.symbols.get(self._meta(fn).get("symbol") or fn["name"]) if found else None
+        try:
+            return layouts.brief_lines(found, addr, fn["name"], self._struct_label(found)) if addr is not None else []
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("guessing struct layouts failed")
+            return []
 
     def claim(self, agent: Agent, slug: str, function: str | None = None, strategy: str = "easiest") -> str:
         if (link := self.net.links.get(slug)) is not None:

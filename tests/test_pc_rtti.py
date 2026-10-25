@@ -1,7 +1,8 @@
-"""C++ classes from a Visual C++ program's run-time type information (consoles/pc/rtti.py), what agents read about
-them (get_class, the brief's lines) and Ghidra's drafts of their methods as `Class::method` (arch/x86.py). The
-program is made by hand here: two classes, one deriving from the other and from a second, nested base, so no
-compiler or game is needed."""
+"""C++ classes from a Visual C++ program's run-time type information (consoles/pc/rtti.py) and from its code (the
+vtables constructors store, the fields their methods use), what agents read about them (get_class, the brief's
+lines, guess_struct) and Ghidra's drafts of their methods as `Class::method` (arch/x86.py). The program is made by
+hand here: two classes, one deriving from the other and from a second, nested base, so no compiler or game is
+needed."""
 
 import json
 import struct
@@ -48,8 +49,12 @@ def _sections() -> dict[int, bytearray]:
     _put(text, TEXT, DERIVED_CTOR, b"\x56\x8B\xF1\xE8" + struct.pack("<i", BASE_CTOR - (DERIVED_CTOR + 8))
          + b"\xC7\x06" + _words(VT_DERIVED) + b"\xC7\x46\x08" + _words(VT_DERIVED_8) + b"\x5E\xC3")
     _put(text, TEXT, LOCAL_USER, b"\xC7\x45\xF8" + _words(VT_DERIVED) + b"\xC3")  # mov [ebp-8], ...: a local object
-    for f in (BASE_F, BASE_G, DERIVED_G, DERIVED_H, DERIVED_SECOND, INNER_F):
+    for f in (BASE_F, DERIVED_SECOND, INNER_F):
         _put(text, TEXT, f, b"\xC3")
+    # the fields their methods use through `this` (ecx): Base's u32 at +4, Derived's s16 at +0x10 and float at +0xC
+    _put(text, TEXT, BASE_G, b"\x8B\x41\x04\xC3")  # mov eax, [ecx+4]; ret
+    _put(text, TEXT, DERIVED_G, b"\x0F\xBF\x41\x10")  # movsx eax, word ptr [ecx+0x10]
+    _put(text, TEXT, DERIVED_H, b"\xD9\x41\x0C\xC3")  # fld dword ptr [ecx+0xc]; ret
     for td, name in ((TD_BASE, b"Base"), (TD_DERIVED, b"Derived"), (TD_INNER, b"Inner@Outer")):
         _put(data, DATA, td, _words(TYPE_INFO_VTABLE, 0) + b".?AV" + name + b"@@\0")
     for bcd, td in ((BCD_BASE, TD_BASE), (BCD_DERIVED, TD_DERIVED), (BCD_INNER, TD_INNER)):
@@ -99,6 +104,16 @@ RELOCS = {  # as functions.json keeps them: (offset, type, symbol, addend)
 }
 
 
+SIZES = {BASE_CTOR: 0x10, DERIVED_CTOR: 0x20, BASE_F: 4, BASE_G: 4, DERIVED_G: 4, DERIVED_H: 4, LOCAL_USER: 8,
+         DERIVED_SECOND: 4, INNER_F: 4}
+
+
+def _functions(name=lambda a: f"@func_{a:08X}@8") -> list[dict]:
+    """The functions as functions.json keeps them."""
+    return [{"name": name(a), "addr": a, "offset": a - TEXT + 0x400, "size": size, "relocs": RELOCS.get(a, [])}
+            for a, size in SIZES.items()]
+
+
 def test_rtti_names_each_class_its_vtables_bases_and_constructors():
     found = rtti.recover(scratch.read_pe(_exe()), relocs=RELOCS)
     assert set(found.by_vtable) == {VT_BASE, VT_DERIVED, VT_INNER}
@@ -127,6 +142,17 @@ def test_a_program_without_rtti_has_no_classes():
     found = rtti.recover(pe)
     assert not found.by_vtable
     assert classes.listing(found, hex) == "No C++ classes found in the program's run-time type information."
+    # its code still has them: the vtables its constructors store into `this` (named by address), the base class a
+    # constructor calls with the same `this`, a second base's vtable stored further in, the fields of their methods
+    rtti.read_code(pe, _functions(), found)
+    assert set(found.by_vtable) == {VT_BASE, VT_DERIVED, VT_DERIVED_8}  # (Inner's vtable no function stores)
+    base, derived = found.by_vtable[VT_BASE], found.by_vtable[VT_DERIVED]
+    assert found.names[VT_DERIVED] == f"Class_{VT_DERIVED:08X}" and found.found_from == rtti.STORED
+    assert derived.slots == [BASE_F, DERIVED_G, DERIVED_H] and derived.parent == VT_BASE and derived.others == {8: VT_DERIVED_8}
+    assert base.ctors == {BASE_CTOR} and derived.ctors == {DERIVED_CTOR}
+    assert {o: f.ctype() for o, f in base.fields.items()} == {4: "u32"}
+    assert {o: f.ctype() for o, f in derived.fields.items()} == {4: "u32", 8: "u32", 0xC: "float", 0x10: "s16"}
+    assert found.find(DERIVED_H) == [derived] and found.find(LOCAL_USER) == []
 
 
 def test_decorated_class_names_read_as_cpp_writes_them():
@@ -180,9 +206,7 @@ def _project(tmp_path):
     (root / "orig").mkdir(parents=True)
     (root / "orig" / "game.exe").write_bytes(_exe())
     (root / "config" / "game").mkdir(parents=True)
-    starts = [BASE_CTOR, DERIVED_CTOR, BASE_F, BASE_G, DERIVED_G, DERIVED_H, LOCAL_USER, DERIVED_SECOND, INNER_F]
-    units = {"text_00401000": [{"name": f"@func_{a:08X}@8", "addr": a, "offset": a - TEXT + 0x400, "size": 4,
-                                "relocs": RELOCS.get(a, [])} for a in starts]}
+    units = {"text_00401000": _functions()}
     (root / "config" / "game" / "functions.json").write_text(json.dumps(
         {"exe": "orig/game.exe", "units": units, "names": {f"func_{DERIVED_H:08X}": "Grow"}}))
     (root / ".decomp.wtf.json").write_text(json.dumps({"platform": "pc", "version": "game",
@@ -200,7 +224,7 @@ def test_get_class_in_a_pc_project_names_classes_and_their_methods(tmp_path):
     assert "get_class" in tools.tool_names(fork=True)  # PC projects are forks
     listing = net.get_class("game", "")
     assert listing.startswith("3 classes, found from the program's run-time type information")
-    assert f"- Derived (0x{VT_DERIVED:08X}): 3 virtual functions, base Base" in listing
+    assert f"- Derived (0x{VT_DERIVED:08X}): 3 virtual functions, 4 fields seen, at least 0x12 bytes, base Base" in listing
     # by class name, by func_<address>, by the report's symbol, by a real name: the class, the function marked
     for what in ("Derived", f"func_{DERIVED_G:08X}", f"@func_{DERIVED_G:08X}@8"):
         text = net.get_class("game", what)
@@ -209,12 +233,15 @@ def test_get_class_in_a_pc_project_names_classes_and_their_methods(tmp_path):
     text = net.get_class("game", "Grow")
     assert "2 (+0x8): Grow, new ← this function" in text and "base classes (every one, the direct base first): " \
         "Base, Outer::Inner" in text and f"stored by (constructors, destructors): func_{DERIVED_CTOR:08X}" in text
-    assert "a second vtable at +0x8: Derived's vtable at +0x8" in text and "aren't read from this processor's" in text
+    assert "a second vtable at +0x8: Derived's vtable at +0x8" in text
+    # its fields, from its methods' code, and its base's (Derived objects have them too)
+    assert "  +0x0C: float, 1 function (Grow) ← this function" in text and "  +0x00: vtable pointer" in text
+    assert f"  +0x04: u32, 1 function (func_{BASE_G:08X}) (also in Base)" in text
     # the brief's lines, and the draft as a method (by the name agents write it with)
     fp = ForkProject(root)
     fn = {"name": f"@func_{DERIVED_H:08X}@8", "meta": json.dumps({"symbol": f"@func_{DERIVED_H:08X}@8"})}
     assert net.forks._class_brief(fp, cfg, fn)[2] == "- slot 2 of Derived (3 virtual functions, base class Base); " \
-                                                     "vtable pointer at +0x0"
+                                                     "vtable pointer at +0x0; this function uses +0xC float"
     draft = GHIDRA_DRAFT.replace("_func_00401038_4", f"func_{DERIVED_H:08X}")
     assert "undefined4 Derived::Grow(byte param_1)" in net.forks._method_draft(fp, cfg, fn, draft)
     other = {"name": "@func_00409999@8", "meta": None}
@@ -226,5 +253,27 @@ def test_get_class_says_where_it_reads_classes_on_a_console_without_them(tmp_pat
     with net.store.tx() as db:
         db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps({**cfg, "platform": "gc"}),))
     assert consoles.get("gc").classes(ForkProject(root)) is None
-    with pytest.raises(NetworkError, match="run-time type information of PC programs"):
+    with pytest.raises(NetworkError, match="and PC programs'"):
         net.get_class("game", "")
+    with pytest.raises(NetworkError, match="guess_struct reads MIPS, x86 code for now, not this project's"):
+        net.guess_struct("game", f"@func_{DERIVED_H:08X}@8", "this")
+
+
+def test_guess_struct_in_a_pc_project_reads_this_and_the_stack(tmp_path):
+    net, root, cfg = _project(tmp_path)
+    assert "guess_struct" in tools.tool_names(fork=True)
+    text = net.guess_struct("game", "Grow", "this")
+    assert text.startswith("Likely layout of this of Grow: S_Grow_this, from the loads and stores of 1 function.") and "/* 0x0C */ f32 unk_0C; /* 1 function */" in text, text
+    assert "No loads or stores through arg0" in net.guess_struct("game", "Grow", "arg0")
+    with pytest.raises(NetworkError, match="say this, arg0 to arg3"):
+        net.guess_struct("game", "Grow", "nowhere")
+    fn = {"name": f"@func_{DERIVED_H:08X}@8", "meta": json.dumps({"symbol": f"@func_{DERIVED_H:08X}@8"})}
+    assert net.forks._struct_brief(ForkProject(root), cfg, fn)[1:] == [
+        '### Likely struct layouts (from loads and stores across the game; guess_struct("@func_0040103C@8", "arg0") '
+        'has one as C)', "- this: S_Grow_this, +0xC f32 (1 function)"]
+    # a rename reads the names again, not the code (what the functions do is most of the time a big game takes)
+    facts = next(iter(rtti._FACTS.values()))
+    config = root / "config" / "game" / "functions.json"
+    config.write_text(config.read_text().replace('"Grow"', '"Bigger"'))
+    assert "Likely layout of this of Bigger: S_Bigger_this" in net.guess_struct("game", "Bigger", "this")
+    assert next(iter(rtti._FACTS.values())) is facts
