@@ -2071,6 +2071,18 @@ def test_a_projects_dlls_are_delinked_at_their_addresses_and_rebuild_byte_for_by
     assert not scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
 
 
+def test_a_dlls_thunk_for_an_import_the_program_has_too_goes_by_its_address():
+    """The .exe and a DLL both call RtlUnwind through a thunk of their own, each analysed as _RtlUnwind@16: one symbol
+    for two addresses would rebuild every call to it at one of them (a Visual C++ 6.0 game with a DLL of its own). The
+    later program's thunk goes by its address, and its calls with it."""
+    F = scratch_pe.Function
+    thunk, caller = F(0x10001000, 6, "_RtlUnwind@16"), F(0x10001010, 9, "_func_10001010", [(1, 20, "_RtlUnwind@16", 0)])
+    taken = {"_RtlUnwind@16", "_func_00401000"}
+    scratch_pe.own_symbols([thunk, caller], taken)
+    assert (thunk.name, caller.relocs) == ("_func_10001000@16", [(1, 20, "_func_10001000@16", 0)])
+    assert {"_func_10001000@16", "_func_10001010"} <= taken
+
+
 def test_a_moved_dll_is_rebuilt_at_its_own_address_and_reanalysed_on_its_own(tmp_path):
     """`ninja rebuild` writes each DLL where orig/ has it, back at the address its header prefers, byte for byte the
     user's copy (the project moved it); Reimport analyses each program again by itself: a DLL's new analysis changes

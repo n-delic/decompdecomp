@@ -250,9 +250,12 @@ def _rebuild_program(info: dict, root: Path, build: Path, folder: str, path: str
             if code is None:
                 differ.append(f"{name} (refers to a symbol that names no address)")
                 continue
+            off = program.offset(start)
+            if off is None:  # (not in the program's file: uninitialised, or another program's address)
+                differ.append(f"{name} (not in {Path(path).name})")
+                continue
             if code != program.read(start, len(code)):
                 differ.append(name)
-            off = program.offset(start)
             out[off:off + len(code)] = code
             if name in own:
                 out[off:off + len(own[name])] = own[name]

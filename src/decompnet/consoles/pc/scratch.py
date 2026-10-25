@@ -1449,7 +1449,9 @@ def reanalyse_program(root: Path, version: str, found: dict[str, list[dict]], ke
         pe = pes[program]
         fresh = analyse(pe, rows)
         stubs = exception_stubs(pe, [(f.addr, f.size) for f in fresh])
-        new += merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
+        fresh = merge_pieces(pe, fresh, keep={f.name for f in fresh if f.addr in stubs}, log=lambda *_: None)[0]
+        own_symbols(fresh, {f.name for f in old if unit_module(f.unit) != program} | {f.name for f in new})
+        new += fresh
     new = sorted([f for f in new if not any(f.addr < k.addr + k.size and k.addr < f.addr + f.size for k in kept)]
                  + kept, key=lambda f: f.addr)
     if [(f.addr, f.size, f.name) for f in new] == [(f.addr, f.size, f.name) for f in old]:
@@ -1939,6 +1941,20 @@ def _program_units(pe: PE, found: list[dict], log, sources: dict[int, str] | Non
     return units(functions, pe, sources)
 
 
+def own_symbols(functions: list[Function], taken: set[str]) -> None:
+    """A program's functions whose symbols another program of the project has (the .exe's and a DLL's import thunks
+    for one import: _RtlUnwind@16) go by their address instead, as other functions do, and so do the calls to them:
+    a symbol names one address in the project (rebuild.py, names.py). `taken` gets this program's symbols."""
+    renamed = {}
+    for f in functions:
+        if f.name in taken:
+            new = re.sub(r"^([_@]?)[^@]+", rf"\g<1>func_{f.addr:08X}", f.name, count=1)
+            renamed[f.name], f.name = new, new
+        taken.add(f.name)
+    for f in functions if renamed else ():
+        f.relocs = [(off, kind, renamed.get(name, name), addend) for off, kind, name, addend in f.relocs]
+
+
 def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
     """Ghidra's functions of one of the game's DLLs, at the address the project gives it (`moved` from the one its
     header prefers, where Ghidra reads it). Its own names (its exports, its debug information) go to "names"
@@ -1998,6 +2014,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     debugs = [debug.info] if debug is not None else []
     real = debug_names(debug.info, [f for fns in groups.values() for f in fns]) if debug is not None else {}
     taken = {re.sub(r"^[_@]|@\d+$", "", f.name) for fns in groups.values() for f in fns} | set(real.values())
+    symbols = {f.name for fns in groups.values() for f in fns}
     for m in modules:
         pes[m.name] = m.pe
         moved = m.pe.image_base - m.preferred
@@ -2012,6 +2029,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
             debugs.append(found_debug.info)
         made = {f"{m.name}/{u}": fns for u, fns in _program_units(
             m.pe, rows, log, found_debug.info.units if found_debug is not None else None).items()}
+        own_symbols([f for fns in made.values() for f in fns], symbols)
         groups.update(made)
         starts = {f.addr for fns in made.values() for f in fns}
         names = list(debug_names(found_debug.info, [f for fns in made.values() for f in fns]).items()) \
