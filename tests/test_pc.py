@@ -1499,9 +1499,11 @@ def _registered(tmp_path, monkeypatch, program: bytes, rows: list[dict], slug: s
     monkeypatch.setattr(ForkProject, "report", lambda self: {"units": [
         {"name": u, "functions": [{"name": fn["name"], "size": str(fn["size"]), "fuzzy_match_percent": 0.0} for fn in fns]}
         for u, fns in units(self).items()]})
-    monkeypatch.setattr(ForkProject, "units", lambda self: [
-        Unit(u, self.root / "build" / "game" / "target" / f"{u}.obj", None, f"src/auto/{u}.cpp", False, None)
-        for u in units(self)])
+    unit = lambda self, u: Unit(u, self.root / "build" / "game" / "target" / f"{u}.obj", None,  # noqa: E731
+                                f"src/auto/{u}.cpp", False, None)
+    monkeypatch.setattr(ForkProject, "units", lambda self: [unit(self, u) for u in units(self)])
+    monkeypatch.setattr(ForkProject, "unit", lambda self, u: unit(self, u) if u in units(self) else
+                        (_ for _ in ()).throw(ForkError(f"no unit {u!r}")))
     monkeypatch.setattr(ForkProject, "setup_commands", lambda self, version: [])
     monkeypatch.setattr(WindowsPC, "check_rebuild", lambda self, fp, version, log=print: (
         _delink(fp.root), scratch_pe.check_code(fp.root, version, log=log))[1])
@@ -1548,3 +1550,175 @@ def test_agents_of_two_models_end_a_function_where_it_really_ends(tmp_path, monk
         db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401030'")
     with pytest.raises(NetworkError, match="its end is proven"):
         say("claude-opus-5-5-1", "_func_00401030", "+3")
+
+
+def _calls(at: int, target: int, count: int = 6) -> bytes:
+    """A function at `at` with a frame that calls `target` `count` times: push ebp; mov ebp, esp; call...; pop; ret."""
+    code = bytearray(PUSH_FRAME)
+    for _ in range(count):
+        code += b"\xe8" + struct.pack("<i", target - (at + len(code) + 5))
+    return bytes(code + bytes.fromhex("5dc3"))
+
+
+# the same function (it calls its neighbour six times) in two programs, at other addresses, calling other addresses
+GAME_A = _calls(0x401000, 0x401030).ljust(0x30, b"\x90") + FRAME_RET
+GAME_B = FRAME_RET.ljust(0x10, b"\x90") + _calls(0x401010, 0x401040).ljust(0x30, b"\x90") + FRAME_RET
+ROWS_A = [_row(0x401000, 0x401023), _row(0x401030, 0x401039)]
+ROWS_B = [_row(0x401000, 0x401009), _row(0x401010, 0x401033), _row(0x401040, 0x401049)]
+
+
+def test_a_pc_projects_targets_have_twins_by_their_masked_code():
+    """A PC project's targets are COFF objects, which twins read as nothing (pyelftools): no function of a PC game
+    had a twin, in it or across games. Identical code with other addresses is one fingerprint; its relocations name
+    what C writes (func_00401030, not _func_00401030)."""
+    from decompnet.app import twins
+
+    prints = []
+    for program, rows in ((GAME_A, ROWS_A), (GAME_B, ROWS_B)):
+        pe = scratch_pe.read_pe(_tiny_exe(program))
+        entries = [scratch_pe._entry(pe, f) for f in scratch_pe.analyse(pe, rows)]
+        prints.append(twins.object_prints(_template_tool("delink").coff(entries, _tiny_exe(program))))
+    a, b = prints[0]["_func_00401000"], prints[1]["_func_00401010"]
+    assert a.key == b.key and a.key != prints[1]["_func_00401000"].key
+    assert (a.name, a.refs[0], b.refs[0]) == ("func_00401000", "func_00401030", "func_00401040")
+    assert twins.renames(a, b, a.name, b.name) == {"func_00401000": "func_00401010", "func_00401030": "func_00401040"}
+
+
+def test_code_matched_in_one_pc_game_is_tried_on_its_twin_in_another(tmp_path, monkeypatch):
+    """Twins across your games, in project mode: a function matched in one PC project, identical in another (a C
+    runtime both link), is tried there with that project's names; the judge decides. Only where both files are
+    built with the same Visual C++."""
+    from decompnet.app.forkengine import ForkEngine
+
+    net, root_a = _registered(tmp_path, monkeypatch, GAME_A, ROWS_A, slug="a")
+    _, root_b = _registered(tmp_path, monkeypatch, GAME_B, ROWS_B, slug="b", net=net)
+    (root_a / "src" / "auto" / "text_00401000.cpp").write_text(
+        '#include "common.h"\nvoid func_00401030(void);\n\nvoid func_00401000(void) {\n'
+        + "    func_00401030();\n" * 6 + "}\n")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='_func_00401000' AND project_id=?",
+                   (net.project_row("a")["id"],))
+    tried = []
+    monkeypatch.setattr(ForkEngine, "attempt", lambda self, agent, slug, function, source, keep=True, **kw: (
+        tried.append((slug, function, source)), {"matched": True, "score": 0})[1])
+    scratch_pe.compilers_file(root_a, "game").write_text("{}")  # (both built with the project's own, 6.0)
+    scratch_pe.compilers_file(root_b, "game").write_text(json.dumps({"src/auto/text_00401010.cpp": "7.1"}))
+    assert net.twins.across_games("b") == 0 and not tried  # (another Visual C++ builds that file)
+    scratch_pe.compilers_file(root_b, "game").write_text("{}")
+    assert net.twins.across_games("b") == 1
+    (slug, function, source), = tried
+    assert (slug, function) == ("b", "_func_00401010")
+    assert source.endswith("void func_00401040(void);\nvoid func_00401010(void) {\n" + "    func_00401040();\n" * 6 + "}\n")
+    assert "identical to _func_00401000 in A (matched)" in source
+
+
+FIVE = FRAME_RET.ljust(0x10, b"\x90") * 5  # five functions, a source file each (_project), 6.0 the project's compiler
+FIVE_ROWS = [_row(0x401000 + 0x10 * k, 0x401009 + 0x10 * k) for k in range(5)]
+
+
+def _file_compiler_project(tmp_path, monkeypatch, scores: dict[tuple[str, str], tuple[dict, dict]]):
+    """A PC project of five files whose builds are `scores` ((file, compiler) -> its functions' match % with the
+    file's own compiler and with that one), its Rich header naming 6.0 and 7.1, proven changes applying by
+    themselves, and every file switch recorded instead of built."""
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.consoles.pc import WindowsPC
+
+    net, root = _registered(tmp_path, monkeypatch, FIVE, FIVE_ROWS)
+    scratch_pe.compilers_file(root, "game").write_text("{}")
+    net.filecompilers.background = False
+    net.set_auto_adjust("p", True)
+    monkeypatch.setattr(WindowsPC, "program_compilers", lambda self, fp: [
+        ("MSVC/6.0", 148, "Visual C++ 6.0 SP5 (build 8966)", True), ("MSVC/7.1", 30, "Visual C++ .NET 2003 (7.1, build 3077)", True)])
+    monkeypatch.setattr(ForkEngine, "file_scores", lambda self, slug, source, compiler: scores.get(
+        (source.removeprefix("src/auto/text_").removesuffix(".cpp"), compiler), ({}, {})))
+    switched = []
+    monkeypatch.setattr(ForkEngine, "set_compiler_ranges", lambda self, slug, ranges, compiler: switched.append(
+        (ranges, compiler)) or "switched")
+    return net, root, switched
+
+
+def _only_with(name: str, compiler: str = "MSVC/7.1", own: float = 50.0) -> dict:
+    return {(name[-8:], compiler): ({f"_func_{name[-8:]}": own}, {f"_func_{name[-8:]}": 100.0})}
+
+
+def test_the_survey_confirms_another_visual_cpp_and_its_neighbouring_file_applies_it(tmp_path, monkeypatch):
+    """The compiler map on PC: the Rich header's compilers, the survey building each file with them (a function that
+    matches with 7.1 and not with its file's 6.0 confirms 7.1), the map's run becoming a suggestion, and the range
+    check applying it once the next file confirms it too, stopping at a file whose match needs 6.0."""
+    scores = {**_only_with("00401020"), **_only_with("00401030"),
+              ("00401010", "MSVC/7.1"): ({"_func_00401010": 100.0}, {"_func_00401010": 60.0})}  # needs its 6.0
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    text = net.compiler_map_text("p")
+    assert "Visual C++ 6.0 SP5 (build 8966): 148 files; Visual C++ .NET 2003 (7.1, build 3077): 30 files" in text
+    assert "not run yet" in text
+    assert net.filecompilers.survey("p")["tried"] == 0  # (no C for any function yet: nothing to build)
+    with net.store.tx() as db:  # agents' attempts
+        db.execute("UPDATE functions SET best_source='int f(void);' WHERE project_id=?", (net.project_row("p")["id"],))
+    # (only the first file's builds this time: the survey goes on where it stopped)
+    assert net.filecompilers.survey("p", limit=3)["confirmed"] == 1
+    survey = net.cfg(net.project_row("p"))["file_survey"]
+    assert survey["confirmed"] == {"_func_00401020": "MSVC/7.1"}
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and check["origin"] == "src/auto/text_00401020.cpp"
+    assert check["evidence"]["src/auto/text_00401010.cpp"] == "refuted"
+    assert check["evidence"]["src/auto/text_00401030.cpp"] == "confirmed"
+    assert switched == [([[0x401020, 0x401040]], "MSVC/7.1")]
+    (suggestion,) = net.cfg(net.project_row("p"))["suggestions"]
+    assert suggestion["status"] == "applied" and suggestion["ranges"] == [[0x401020, 0x401040]]
+    text = net.compiler_map_text("p")
+    assert "1 functions confirmed in 3 files" in text and "#1 0x401020-0x401030 Visual C++ 7.1: confirmed by" in text
+    answer = net.compiler_answer("p")
+    assert answer["checks"][0]["status"] == "confirmed" and answer["survey"]["confirmed"] == 1
+
+
+def test_a_suggested_file_compiler_both_neighbours_refute_is_a_quirk(tmp_path, monkeypatch):
+    """An agent's suggestion for a file whose function matches with 7.1, between two files whose matches need 6.0:
+    dismissed, with a note on the function to find C that matches with its file's compiler."""
+    refutes = lambda name: {(name, "MSVC/7.1"): ({f"_func_{name}": 100.0}, {})}  # noqa: E731  (doesn't build with it)
+    scores = {**_only_with("00401020"), **refutes("00401010"), **refutes("00401030")}
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, scores)
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    said = net.suggest(agent, "p", "7.1 built this file", compiler="MSVC/7.1", function="_func_00401020")
+    assert said.startswith("Suggested. Range check #1 started")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "quirk" and not switched
+    assert net.cfg(net.project_row("p"))["suggestions"][0]["status"] == "dismissed"
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401020", "p")["id"])
+    assert "Range check #1" in note["text"] and "matches with Visual C++ 7.1" in note["text"]
+
+
+def test_a_neighbouring_file_nobody_can_tell_yet_goes_to_an_agent(tmp_path, monkeypatch):
+    """Where no file settles a check, the nearest file without evidence is the next agent's task (first in line, a
+    note saying to try_compiler); a try_compiler that switches it confirms the check."""
+    net, root, switched = _file_compiler_project(tmp_path, monkeypatch, _only_with("00401020"))
+    agent = net.local_agent("claude-sonnet-5-5-1")[0]
+    net.suggest(agent, "p", "7.1 built these", compiler="MSVC/7.1", ranges="0x401020-0x401030")
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "checking" and check["said"].startswith("checking: _func_00401010 in src/auto/text_00401010")
+    assert net.cfg(net.project_row("p"))["priority"] == ["_func_00401010"]
+    note = net.store.one("SELECT text FROM notes WHERE function_id=?", net._function("_func_00401010", "p")["id"])
+    assert 'try_compiler("_func_00401010", "MSVC/7.1")' in note["text"]
+    net.filecompilers.tried("p", "src/auto/text_00401010.cpp", "MSVC/7.1")  # (what try_compiler's switch says)
+    (check,) = net.cfg(net.project_row("p"))["file_checks"]
+    assert check["status"] == "confirmed" and switched == [([[0x401010, 0x401030]], "MSVC/7.1")]
+    assert net.cfg(net.project_row("p"))["priority"] == []
+
+
+@needs_tools
+def test_a_file_built_with_another_visual_cpp_keeps_its_own_and_says_which_matches_need_it(pc):
+    """The survey's and range checks' evidence, built for real: the file holding player_take_damage (matched with
+    6.0, otherwise with 7.1) built with 7.1 refutes 7.1 for it, and the file is its own compiler's again after."""
+    net, slug = pc
+    root = Path(net.project_row(slug)["root"])
+    name = next(r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",
+                                                 net.project_row(slug)["id"]) if f"{_map()['_player_take_damage']:08X}" in r["name"])
+    meta = json.loads(net._function(name, slug)["meta"])
+    source, name = meta["source"], meta["symbol"]  # (the report's name: the row's can have a ' after it)
+    before = scratch_pe.file_compilers(root, "demoquest")
+    mine, theirs = net.forks.file_scores(slug, source, "MSVC/7.1")
+    assert mine[name] == 100 and theirs.get(name, 0) < 100
+    assert net.filecompilers.verdict(slug, source, "MSVC/7.1") == "refuted"
+    assert scratch_pe.file_compilers(root, "demoquest") == before
+    assert net.forks.file_scores(slug, source, "MSVC/6.0")[0][name] == 100  # (built with its own again)
+    # the demo's Rich header names 6.0 only, and every file is 6.0's again (the test before): nothing else to try
+    assert "the survey has no other compiler to try" in net.compiler_map_text(slug)

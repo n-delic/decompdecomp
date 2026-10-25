@@ -41,6 +41,7 @@ from decompnet.hostenv import NO_WINDOW
 
 from ... import toolchains
 from ...arch import x86 as x86_arch
+from ...coffobj import sections as _coff_sections
 from ...forks.project import ForkError, ForkProject
 
 UNIT_BYTES = 0x1000
@@ -430,6 +431,28 @@ def describe(data: bytes) -> Build:
         wrapper = "Denuvo"
     return Build(MACHINES.get(machine_id, f"machine type {machine_id:#x}"), version, number, whole,
                  sum(files.values()), wrapper)
+
+
+def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
+    """The Visual C++ builds the Rich header says compiled the program's files: (the packs' version that builds them,
+    as the console names it, how many files, "Visual C++ 6.0 SP5 (build 8966)", whether its pack is installed),
+    most files first."""
+    files: dict[tuple[str, int], int] = {}
+    for product, number, n in rich_builds(data):
+        for version, compilers, glued in RICH_COMPILERS:
+            if product in compilers or product in glued:
+                if version == "14":
+                    version = next(v for first, v in VC14_BUILDS if number >= first)
+                files[version, number] = files.get((version, number), 0) + n
+    out = []
+    for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
+        built = Build(X86, version, number)
+        try:
+            installed = toolchains.installed(compiler_pack(built.pack_version)) is not None
+        except ForkError:
+            installed = False
+        out.append((f"MSVC/{built.pack_version}", n, built.compiler, installed))
+    return out
 
 
 def game_info(path: Path) -> dict:
@@ -1380,39 +1403,7 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
     return "\n".join(out)
 
 
-# a COFF object (tools/delink.py writes them): its header, section headers, symbols and relocations
-COFF_HEADER = "<HHIIIHH"  # machine, sections, time, symbol table at, symbols, optional header bytes, flags
-COFF_HEADER_BYTES, COFF_SECTION_BYTES, COFF_SYMBOL_BYTES, COFF_RELOC_BYTES = 20, 40, 18, 10
 CODE_SHOWN = 5  # functions a rebuild that differs names
-
-
-def _coff_sections(obj: bytes) -> list[tuple[str, bytes, list[tuple[int, str, int, int]]]]:
-    """Each section of a COFF object as (its function's symbol, its bytes, its relocations as (offset, symbol,
-    section of a local label or 0, the label's value)), as tools/delink.py writes them: a section per function, its
-    symbol the first one defined in it."""
-    _, count, _, table, symbols, _, _ = struct.unpack_from(COFF_HEADER, obj, 0)
-    strings = table + COFF_SYMBOL_BYTES * symbols
-    syms, k = [], 0
-    while k < symbols:
-        raw, value, section, _, _, aux = struct.unpack_from("<8sIhHBB", obj, table + COFF_SYMBOL_BYTES * k)
-        if raw[:4] == b"\0\0\0\0":
-            at = strings + struct.unpack_from("<I", raw, 4)[0]
-            raw = obj[at:obj.index(b"\0", at)]
-        syms.append((raw.rstrip(b"\0").decode("latin-1"), value, section))
-        syms.extend([("", 0, 0)] * aux)
-        k += 1 + aux
-    out = []
-    for i in range(count):
-        _, _, _, size, data, relocs, _, nrelocs, _, _ = struct.unpack_from(
-            "<8sIIIIIIHHI", obj, COFF_HEADER_BYTES + COFF_SECTION_BYTES * i)
-        owner = next((name for name, value, section in syms if section == i + 1 and not name.startswith("$")), "")
-        rel = []
-        for r in range(nrelocs):
-            off, index, kind = struct.unpack_from("<IIH", obj, relocs + COFF_RELOC_BYTES * r)
-            name, value, section = syms[index]
-            rel.append((off, kind, name, section, value))
-        out.append((owner, obj[data:data + size], rel))
-    return out
 
 
 def check_code(root: Path, version: str, log=print) -> dict:

@@ -34,8 +34,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | — | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | — | — | — |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
 | C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | named by RTTI; no fields yet | — | — |
 | Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | — | — | — |
 | The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | — | — | — |
@@ -71,6 +71,20 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC: the compiler map, the judge's survey and range checks, over source files.** A PC game mixes
+  Visual C++ versions (a 2010 game's Rich header counts files of 2010 SP1, 6.0, 7.0 and 2008), and each source file
+  can have its own, but nothing measured which. `compiler_map` now works where a project's files each have a compiler
+  (`app/filecompilers.py`): what the program's Rich header says built it (`Console.program_compilers`), matches by
+  compiler, and the survey, which builds each file with agents' C with every compiler the program names
+  (`ForkEngine.file_scores`, the file keeping its own): a function that matches with another and not its file's
+  confirms it. The map spreads confirmations over neighbouring files (compilermap.build, a file for a function),
+  and a run becomes a suggestion; a suggested compiler for a stretch of files, an agent's or the map's, applies only
+  after a second file confirms it, walking out from the first and stopping at a file whose matches need its own
+  (`rangecheck.evaluate`); refuted on both sides it's a quirk, with a note; a file nobody can tell goes to an agent.
+  The Settings answer shows the survey and checks. On the demo, the file holding a function matched with 6.0
+  refutes 7.1, built for real, and keeps 6.0; a Visual C++ 6.0 game's header names five 6.0 builds, so its survey
+  has nothing else to try. DS has the code path (its files each have a CodeWarrior) but no Rich header and wasn't
+  run.
 - **Windows PC: function-end reports.** Ghidra sometimes runs a function on into the data after its return, or
   into the next function. `report_boundary` works on PC projects: once three agents of two models give the same
   end (an address, or an offset into the function), the function ends there and the rest becomes a function of its

@@ -34,8 +34,8 @@ from ..project import compiler_for
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
 _MACHINE = {"EM_PPC": ("ppc", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
-_CACHE_VERSION = 4  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
-# system instructions
+_CACHE_VERSION = 5  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
+# system instructions, 5 COFF objects (PC) and the C names of their symbols
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
 # same source gives the same result): every agent start's pass would otherwise redo hundreds of compiles (Mario
 # Party 6: about 900, 15 minutes beside the agents). After a while it's tried again: a header can have changed.
@@ -59,6 +59,7 @@ class Print:
     size: int
     addrs: list[int] = field(default_factory=list)  # ROM projects: the address each relocation fills in
     asm: str = ""  # why no compiler makes this code (asm_reason: consoles/, arch/), or ""
+    name: str = ""  # how C writes the function's own name, where its symbol isn't that (Visual C++'s _f@8: f)
 
 
 def _mask(code: bytearray, relocs: list[tuple[int, int]], arch: str, order: str) -> None:
@@ -77,11 +78,34 @@ def _key(code: bytes, layout: list[tuple[int, int]]) -> str:
     return digest.hexdigest()
 
 
+def coff_prints(data: bytes) -> dict[str, Print]:
+    """object_prints for a COFF object (a PC project's targets: a section per function), its names as C writes them
+    (coffobj.c_name: `_func_0041B470@8` is func_0041B470), so a twin's code is renamed where its C says them; a jump
+    table's own labels by their place in the function, the same in every twin."""
+    from .. import coffobj
+
+    out: dict[str, Print] = {}
+    for owner, raw, relocs in coffobj.sections(data):
+        if not owner:
+            continue
+        code = bytearray(raw)
+        _mask(code, [(off, kind) for off, kind, *_ in relocs], "x86", "little")
+        refs = [f"$L+{value:X}" if section else coffobj.c_name(name) for _, _, name, section, value in relocs]
+        out[owner] = Print(_key(bytes(code), [(off, kind) for off, kind, *_ in relocs]), refs, len(raw),
+                           name=coffobj.c_name(owner))
+    return out
+
+
 def object_prints(data: bytes) -> dict[str, Print]:
     """Fingerprints of every function an object file defines, by symbol, with whether its code is hand-written
     assembly where its processor tells that without its console's facts (PowerPC: arch/)."""
     from elftools.elf.elffile import ELFFile
     from elftools.elf.relocation import RelocationSection
+
+    from .. import coffobj
+
+    if coffobj.is_coff(data):
+        return coff_prints(data)
 
     elf = ELFFile(BytesIO(data))
     arch_id, order = _MACHINE.get(elf["e_machine"], ("", None))
@@ -220,6 +244,15 @@ def apply(source: str, names: dict[str, str]) -> str:
     return pattern.sub(lambda m: names[m.group(1)], source)
 
 
+def _file_compiler(console, fp, fn) -> str | None:
+    """The compiler a project builds a function's source file with, where each file has its own (None: its build's)."""
+    try:
+        source = fp.unit(fn["unit"]).source
+    except Exception:  # noqa: BLE001  a unit the project no longer has: no compiler to compare
+        return None
+    return console.file_compiler(fp, source) if source else None
+
+
 @dataclass
 class Job:
     state: str = "running"
@@ -299,14 +332,14 @@ class Twins:
                     prints = object_prints(unit.target.read_bytes())
                 except Exception:  # an object pyelftools can't read: no twins for it
                     prints = {}
-                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm] for k, p in prints.items()}}
+                entry = {"mtime": mtime, "prints": {k: [p.key, p.refs, p.size, p.asm, p.name] for k, p in prints.items()}}
                 cache[uname] = entry
                 changed = True
             for r in urows:
                 sym = json.loads(r["meta"] or "{}").get("symbol") or r["name"].split("@")[0]
                 p = entry["prints"].get(sym)
                 if p:
-                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3] if len(p) > 3 else "")
+                    out[r["id"]] = Print(p[0], p[1], p[2], asm=p[3], name=p[4])
         if changed:
             try:
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -500,7 +533,7 @@ class Twins:
     @staticmethod
     def _fork_names(pa: Print, pb: Print, a, b) -> dict[str, str] | None:
         meta_a, meta_b = json.loads(a["meta"] or "{}"), json.loads(b["meta"] or "{}")
-        return renames(pa, pb, meta_a.get("symbol") or a["name"], meta_b.get("symbol") or b["name"])
+        return renames(pa, pb, pa.name or meta_a.get("symbol") or a["name"], pb.name or meta_b.get("symbol") or b["name"])
 
     # ------------------------------------------------------------------ the work
 
@@ -548,7 +581,8 @@ class Twins:
         compiler. Same kind of processor, same compiler and flags, code identical once addresses are masked; the
         names swapped as each game's relocations say; the judge decides. Returns how many matched."""
         proj = self.net.project_row(slug)
-        if not self.net.is_rom(proj) or slug in self.net.links:
+        fork = bool(self.net.fork_slug(slug))
+        if not (fork or self.net.is_rom(proj)) or slug in self.net.links:
             return 0
         cfg = self.net.cfg(proj)
         mine = self.prints(proj)
@@ -563,7 +597,16 @@ class Twins:
         matched = 0
         for other in self.net.store.all("SELECT * FROM projects WHERE id != ? AND arch=? AND big_endian=?",
                                         proj["id"], proj["arch"], proj["big_endian"]):
-            if (job is not None and job.stop.is_set()) or not self.net.is_rom(other):
+            if job is not None and job.stop.is_set():
+                continue
+            if fork:  # (a project's arch column is empty: its console says its processor)
+                if self.net.fork_slug(other["slug"]) and other["slug"] not in self.net.links:
+                    try:
+                        matched += self._across_projects(agent, proj, other, wanted, mine, job)
+                    except Exception:  # another project that can't be read now (moved, half set up): never in the way
+                        log.exception("twins: %s from %s", slug, other["slug"])
+                continue
+            if not self.net.is_rom(other):
                 continue
             theirs, other_cfg = self.prints(other), self.net.cfg(other)
             syms_a, syms_b = self.net.symbols(other["id"]), self.net.symbols(proj["id"])
@@ -589,6 +632,46 @@ class Twins:
                         with self.net.store.tx() as db:
                             db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
                                        "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), why))
+        return matched
+
+    def _across_projects(self, agent, proj, other, wanted: dict[str, list[int]], mine: dict[int, Print],
+                         job: Job | None) -> int:
+        """across_games between two projects in project mode (PC: two games sharing the C runtime): their target
+        objects' code identical once relocations are masked, built by the same compiler (each file's,
+        Console.file_compiler), the other's definition taken from its source file with this one's names
+        (ForkEngine.twin_source), judged in this project. Returns how many matched."""
+        from .. import consoles
+
+        _, fp_b, cfg_b = self.net.forks.get(proj["slug"])
+        _, fp_a, cfg_a = self.net.forks.get(other["slug"])
+        con_a, con_b = consoles.of(cfg_a), consoles.of(cfg_b)
+        if con_a.arch != con_b.arch:
+            return 0
+        theirs = self.prints(other)
+        matched = 0
+        for a in self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", other["id"]):
+            pa = theirs.get(a["id"])
+            for b_id in (wanted.get(pa.key, []) if pa is not None else []):
+                if job is not None and job.stop.is_set():
+                    return matched
+                b = self.net.store.one("SELECT * FROM functions WHERE id=? AND status='open'", b_id)
+                if b is None or _file_compiler(con_a, fp_a, a) != _file_compiler(con_b, fp_b, b):
+                    continue
+                names = self._fork_names(pa, mine[b_id], a, b)
+                try:
+                    source = self.net.forks.twin_source(proj, a, b, names, theirs=other) if names is not None else None
+                except (NetworkError, OSError, ValueError):
+                    source = None
+                if not source or self._missed(b_id, source):
+                    continue
+                outcome, why = self._attempt_twin(agent, proj, a, b, source, origin=f" in {other['name']}", theirs=True)
+                if outcome == "match":
+                    matched += 1
+                    log.info("twins: %s matched from %s in %s", b["name"], a["name"], other["slug"])
+                elif outcome == "miss":
+                    with self.net.store.tx() as db:
+                        db.execute("INSERT OR REPLACE INTO twin_misses(function_id, source_hash, project_id, at, why) "
+                                   "VALUES(?,?,?,?,?)", (b_id, self._miss_key(source), proj["id"], time.time(), why))
         return matched
 
     def _try_pair(self, agent, proj, a, b) -> str:
@@ -625,10 +708,15 @@ class Twins:
             return (lines[0] if lines else "it didn't build")[:WHY_CHARS]
         return (res.get("text") or "").splitlines()[0][:WHY_CHARS] if res.get("text") else f"score {res.get('score')}"
 
-    def _attempt_twin(self, agent, proj, a, b, source: str, origin: str = "") -> tuple[str, str]:
+    def _attempt_twin(self, agent, proj, a, b, source: str, origin: str = "", theirs: bool = False) -> tuple[str, str]:
+        """match | miss | skip for a's code made into b's (`source`). `theirs`: a is another project's, so the tries
+        that take more from a's file (its types, includes, declarations) don't apply: twin_source took its
+        declarations already."""
         note = f"/* identical to {a['name']}{origin} (matched), with its names changed by decompdecomp */\n"
         try:
-            if self.net.fork_slug(proj["slug"]):
+            if theirs:
+                res = self.net.forks.attempt(agent, proj["slug"], b["name"], note + source, keep=False)
+            elif self.net.fork_slug(proj["slug"]):
                 forks, slug, src, prelude = self.net.forks, proj["slug"], source, ""
                 res = forks.attempt(agent, slug, b["name"], note + src, keep=False)
                 if res.get("score") is None and (types := forks.twin_types(proj, a, b, src)):  # a type a's file has

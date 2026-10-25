@@ -221,6 +221,15 @@ class WindowsPC(Console):
         manifest = fp.manifest or {}
         return scratch.file_ranges(fp.root, manifest["version"]) if "version" in manifest else {}
 
+    def program_compilers(self, fp) -> list[tuple[str, int, str, bool]]:
+        """The Rich header's compilers: a game of about 2000 counts files of five Visual C++ 6.0 builds (its own
+        code, MFC's, the C runtime's), a later one 6.0's and 7.1's."""
+        from . import scratch
+
+        manifest = fp.manifest or {}
+        path = fp.root / manifest.get("game", {}).get("path", f"orig/{manifest.get('version')}.exe")
+        return scratch.program_compilers(path.read_bytes()) if path.is_file() else []
+
     def set_own_compiler(self, fp, compiler: str, sources: list[str]) -> list[str]:
         from . import scratch
 

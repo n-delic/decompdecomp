@@ -1777,18 +1777,21 @@ class ForkEngine:
                 todo += [p for p in (fp.root / inc, fp.root / "src" / inc, path.parent / inc) if p.is_file()][:1]
         return None
 
-    def twin_source(self, proj, a, b, names: dict[str, str], includes: bool = False) -> str | None:
+    def twin_source(self, proj, a, b, names: dict[str, str], includes: bool = False, theirs=None) -> str | None:
         """a's matched definition, from its source file, written for its twin b: names swapped (see app/twins.py),
         with the includes and declarations it relies on from a's file that b's file doesn't have (compile_and_diff
-        places those in b's file). None for a definition in assembly (then b is assembly too)."""
+        places those in b's file). None for a definition in assembly (then b is assembly too). `theirs`: a is that
+        project's (twins across games): its declarations come along, never its includes (its headers aren't b's)."""
         from . import twins
 
         fp = ForkProject(Path(proj["root"]))
-        ua, ub = fp.unit(a["unit"]), fp.unit(b["unit"])
+        fa = ForkProject(Path(theirs["root"])) if theirs is not None else fp
+        ua, ub = fa.unit(a["unit"]), fp.unit(b["unit"])
         if not ua.source or not ub.source:
             return None
+        includes = includes and theirs is None
         try:
-            text_a = (fp.root / ua.source).read_text(errors="replace", encoding="utf-8")
+            text_a = (fa.root / ua.source).read_text(errors="replace", encoding="utf-8")
             text_b = (fp.root / ub.source).read_text(errors="replace", encoding="utf-8") if (fp.root / ub.source).exists() else ""
         except OSError:
             return None
@@ -2150,6 +2153,7 @@ class ForkEngine:
             lines.append(f"source file: {unit.source}")
             if own := consoles.get(cfg.get("platform")).file_compiler(fp, unit.source):
                 lines.append(f"this file's compiler: {own} (try_compiler(\"{fn['name']}\", \"all\") tries the others)")
+                lines += self.net.filecompilers.brief(proj["slug"], fn, unit.source)
             p = fp.root / unit.source
             src_text = p.read_text(errors="replace", encoding="utf-8") if p.exists() else None
         else:
@@ -2725,6 +2729,7 @@ class ForkEngine:
                             self.net.bump_generation(proj["id"])  # (earlier compiles of the file aren't repeats)
                             self._commit(proj, fp, rel, f"Build {unit.source} with {c}\n\n{fn['name']} matches with "
                                                         f"it (found by {agent.name} with decompdecomp).")
+                            self.net.filecompilers.tried(slug, unit.source, c)  # (the range checks around it)
                             return f"{c}: {res['text']}\n{unit.source} is built with {c} from now on."
                         if res.get("broken"):  # the file's other functions need its own compiler
                             res["text"] = (f"the file's matched {', '.join(res['broken'][:8])} no longer match with it. "
@@ -3383,8 +3388,20 @@ class ForkEngine:
         if found is None:
             raise NetworkError("this project's own build sets its compilers")
         own, parts = found
-        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": False, "elsewhere": [],
-                "elsewhere_count": 0, "checking": False, "survey": {}, "checks": [],
+        files = self.net.filecompilers
+        elsewhere = [r for r in files.build(slug).runs if r.differs()]
+        survey, state = cfg.get("file_survey") or {}, files.surveys.get(slug) or {}
+        checks = cfg.get("file_checks") or []
+        return {"compiler": consoles.compiler_name(own), "flags": "", "mips": True, "unit": "source file",
+                "elsewhere": [{"start": r.start, "end": r.end, "compiler": consoles.compiler_name(r.label[0]),
+                               "functions": r.functions, "confirmed": r.confirmed} for r in elsewhere[:12]],
+                "elsewhere_count": len(elsewhere),
+                "checking": state.get("state") == "running" or any(c["status"] == "checking" for c in checks),
+                "survey": {"state": state.get("state"), "tried": len(survey.get("tried", {})),
+                           "confirmed": len(survey.get("confirmed", {})), "running_tried": state.get("tried", 0),
+                           "t": survey.get("t")},
+                "checks": [{"id": c["id"], "audit": False, "status": c["status"], "said": c.get("said") or "",
+                            "ranges": c["spans"], "compiler": consoles.compiler_name(c["toolchain"])} for c in checks],
                 "parts": [{"start": p["start"], "end": p["end"], "compiler": p["name"], "flags": "", "file": p["file"],
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}
@@ -3439,6 +3456,40 @@ class ForkEngine:
                                               f"settings; {len(stayed)} source files keep the compiler they had.")
         self.net._update_cfg(slug, lambda c: c.update(compiler=compiler))
         return {"switched": len(sources) - len(stayed), "stayed": stayed[:20]}
+
+    def file_scores(self, slug: str, source: str, compiler: str) -> tuple[dict[str, float], dict[str, float]]:
+        """Every function of a source file, its match % built with the file's own compiler and with `compiler`, the
+        file keeping its own: the evidence of the compiler map's survey and range checks (app/filecompilers.py). The
+        second is empty when the file doesn't build with it."""
+        proj, fp, cfg = self.get(slug)
+        console = consoles.get(cfg.get("platform"))
+        own = console.file_compiler(fp, source)
+        units = fp.units_for(source)
+        if own is None or not units:
+            raise NetworkError(f"{source} isn't a source file whose compiler this project lets you choose")
+        text = (fp.root / source).read_text(errors="replace", encoding="utf-8")
+        with self._tree(proj).exclusive(), self._units_locked(proj, [u.name for u in units]):
+            before: dict[str, float] = {}
+            for u in units:
+                before.update(self._baseline(proj, fp, u, text)[0] or {})
+            if compiler == own:
+                return before, before
+            after: dict[str, float] = {}
+            try:
+                with self._build_locks[proj["id"]]:  # (a build reads the map)
+                    console.set_file_compiler(fp, source, compiler)
+                for u in units:
+                    if self._build_unit(proj, fp, u)[0]:
+                        try:
+                            after.update(fp.diff(u, None).unit_scores)
+                        except (ObjdiffError, ForkError):
+                            pass
+            finally:
+                with self._build_locks[proj["id"]]:
+                    console.set_file_compiler(fp, source, own)
+                for u in units:
+                    self._build_unit(proj, fp, u)  # the file's objects are its own compiler's again
+        return before, after
 
     def set_file_compiler_by_hand(self, slug: str, source: str, compiler: str) -> None:
         """The user's choice of a source file's compiler (the project's Settings), kept only when every function of

@@ -265,6 +265,12 @@ class Console:
         that says so, relative to the project (to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
 
+    def program_compilers(self, fp) -> list[tuple[str, int, str, bool]]:
+        """What the game's program itself says built it, where its files each have a compiler: (one of `compilers`
+        to build them with, how many of its files, in words, whether it's installed), most files first; [] where it
+        doesn't say. The compiler map shows it, and its survey tries these (app/filecompilers.py)."""
+        return []
+
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a
         project whose files each have a compiler."""
