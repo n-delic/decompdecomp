@@ -175,7 +175,30 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       const info = identifyHead(h, { name: "game.exe", size: 0x400 });
       return [[...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join(""), info.pack, packOf(info)];
     }),
-    // the import offers every compiler of the game's console this computer lacks (both PlayStations' for a disc)
+    // a PSP's UMD image and programs are told apart from the PS2's; what can't be read yet says what to do instead
+    psp: (() => {
+      const head = (writes) => {
+        const h = new Uint8Array(0x9400), dv = new DataView(h.buffer);
+        writes.forEach(([at, v]) => (typeof v === "string" ? [...v].forEach((c, i) => (h[at + i] = c.charCodeAt(0))) : dv.setUint32(at, v, true)));
+        return h;
+      };
+      const iso = { name: "game.iso", size: 0x9400 }, elf = (type, flags) => head([[0, "\x7fELF"], [5, "\x01"], [16, type], [18, "\x08"], [36, flags]]);
+      const umd = head([[0x8001, "CD001"], [0x8008, "PSP GAME                        "]]);
+      const ps2 = head([[0x8001, "CD001"], [0x8008, "PLAYSTATION                     "]]);
+      const cso = head([[0, "CISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
+      const zso = head([[0, "ZISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
+      const gcCiso = head([[0, "CISO"], [4, 0x200000], [8, 0x00010101]]);
+      const pbp = head([[0, "\0PBP"]]);
+      const platform = (h, f = iso) => identifyHead(h, f)?.platform ?? null;
+      return {
+        platforms: [platform(umd), platform(ps2), platform(gcCiso), platform(cso, { name: "game.cso", size: 0x9400 }),
+                    platform(elf(0xffa0, 0x10a23001)), platform(elf(2, 0x10a23001)), platform(elf(2, 0x20924001))],
+        said: [notSupported(zso, { name: "game.bin", size: 0x9400 }), notSupported(pbp, { name: "EBOOT.PBP", size: 0x9400 })],
+        cso: identifyHead(cso, { name: "game.cso", size: 0x9400 })?.order ?? null,
+        name: platformName("playstation"),
+      };
+    })(),
+    // the import offers every compiler of the game's console this computer lacks (every PlayStation's for a disc not read yet)
     missing: (() => {
       const before = S.st;
       S.st = { consoles: [{ id: "ps", aliases: [], installable: ["gcc-2.7.2-psx", "gcc-2.6.3-psx"] },

@@ -63,3 +63,20 @@ def test_a_derived_class_its_base_and_their_fields():
 
 def test_code_without_vtables_has_no_classes():
     assert not classes.recover([(BDTOR, code(JR_RA, NOP), [])], read, big_endian=False).by_vtable
+
+
+def test_each_compilers_vtable_layout_is_read():
+    """Where a vtable's functions are depends on the compiler (classes._LAYOUTS). A PSP game's GCC 3.3.3 stores the
+    address of the first virtual function (the Itanium ABI), and SN's SNC keeps an entry of 8 bytes per function after
+    8 bytes of zeros: read CodeWarrior's way, the first lost its two destructors and the second had no class at all."""
+    store = [i(0x0F, 0, T0, 0x30), i(0x09, T0, T0, 0x0000), i(0x2B, A0, T0, 0), JR_RA, NOP]
+    ctor = [(CTOR, code(*store), [[4, LO16, BASE_VT]])]
+    gcc3 = {BASE_VT - 8: struct.pack("<7I", 0, 0x200000, BDTOR, DDTOR, BGET, DNEW, 0)}
+    snc = {BASE_VT: struct.pack("<9I", 0, 0, 0, BDTOR, 0, BGET, 0, DNEW, 0)}
+    for data, header, stride in ((gcc3, 0, 4), (snc, 12, 8)):
+        def read_it(addr, n, data=data):
+            return next((blob[addr - s:addr - s + n] for s, blob in data.items() if s <= addr < s + len(blob)), None)
+        cls = classes.recover([*ctor, *FUNCTIONS[1:]], read_it, big_endian=False).by_vtable[BASE_VT]
+        assert (cls.header, cls.stride) == (header, stride)
+        assert cls.slots == ([BDTOR, DDTOR, BGET, DNEW] if stride == 4 else [BDTOR, BGET, DNEW])
+        assert f"2 (+0x{header + 2 * stride:X}): " in classes.describe(cls, classes.Classes({BASE_VT: cls}), hex)

@@ -228,6 +228,233 @@ url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-
 sha256 = "d021f7d02ab63da770c13dc246637276141321ca08221ee2333a7acadf82482b"
 platforms = ["linux-x86_64"]
 
+# PlayStation Portable. Every CodeWarrior build below writes the same note into what it compiles ("MW MIPS C Compiler
+# (3.0.0)"): only its code tells them apart. They build at -O3: a PSP game with debug symbols matches there, and -O2
+# leaves the delay slot of every return empty, which its code never does.
+["psp-gcc-1.3.1"]
+cplusplus = true
+name = "PSP GCC 3.3.3 (SDK 1.3.1)"
+platform = "PSP"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompme/compilers release 'compilers'"
+description = "The GCC 3.3.3 (allegrex 2.2.1) from Sony's PSP SDK 1.3.1, with its Allegrex assembler and linker."
+requires = ["runtime-i386"]
+cc = ["{tc}/bin/psp-gcc", "-c"]
+flags = ["-O2", "-G0"]
+[["psp-gcc-1.3.1".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/psp-gcc-1.3.1.tar.gz"
+sha256 = "788b6d2c0ed920da6b1e5a350d23dd7ea05820526e23f9b5b967b3b238ea2e2e"
+platforms = ["linux-x86_64"]
+
+["psp-gcc-1.7.1"]
+cplusplus = true
+name = "PSP GCC 3.3.3 (SDK 1.7.1)"
+platform = "PSP"
+arch = "mipsel"
+license = "GPL-2.0"
+source = "decompme/compilers release 'compilers'"
+description = "The GCC 3.3.3 (allegrex 2.2.2) from Sony's later PSP SDK 1.7.1 (its archive has no assembler: SDK 1.3.1's assembles its code)."
+requires = ["runtime-i386", "psp-gcc-1.3.1"]  # its archive has no assembler: 1.3.1's psp-as assembles its code
+cc = ["{tc}/psp/bin/gcc", "-c", "-B", "{tc}/lib/gcc-lib/psp/3.3.3+allegrex-2.2.2-psp-1.7.1/", "-B", "{tc:psp-gcc-1.3.1}/psp/bin/"]
+flags = ["-O2", "-G0"]
+[["psp-gcc-1.7.1".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/psp-gcc-1.7.1.tar.gz"
+sha256 = "55d4267b1d74855157501d5fd61ed31b68d961a737306b5831b582a2d58f3484"
+platforms = ["linux-x86_64"]
+
+["pspsnc-1.2.7503"]
+cplusplus = true
+name = "SN Systems SNC for PSP 1.2.7503"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "SN Systems' SNC compiler for PSP, from ProDG. Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/pspsnc.exe", "-c", "-td=.", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O2"]  # its levels are -O0 to -O5 (-O3 builds as -O2, -O5 as -O4) and it refuses -Os; small data is GCC's -G
+[["pspsnc-1.2.7503".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/pspsnc_1.2.7503.0.tar.gz"
+sha256 = "0d10a4b387e45b62369eea21b6693fc5517335033bf65e65aa7b543a916f4d6d"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b121"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b121)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 121 (2004-09). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b121".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_121.tar.gz"
+sha256 = "44836bb4d19fbe216b55fbd638420c000f7dd373c84493de0e732e85f81656af"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b134"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b134)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 134 (2004-11). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b134".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_134.tar.gz"
+sha256 = "a4a00c2450ee2b6f7be29fc73470446994fcf2b1b1003b8ac34568f3358e1c99"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b139"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b139)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 139 (2004-12). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b139".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_139.tar.gz"
+sha256 = "932bae1cdd95df8e1c593af14c19c90c21ad8e2662d6cc5e537269543d8bdd8f"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b147"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b147)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 147 (2005). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b147".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_147.tar.gz"
+sha256 = "7b9c917d50f804617eb50897cb5b68e1f287f6f676f28078c04a9054b2e4586e"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b151"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b151)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 151 (2005). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b151".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_151.tar.gz"
+sha256 = "168ee268ebd9a9dc756886c90b4fdd577b13b57ecad025c8b7d98acf47d3f76f"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b180"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b180)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 180 (2005-06). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b180".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_180.tar.gz"
+sha256 = "2d4ff76e4e5c9bd938dbc627e4219583d6119bc4af30548df43e06221ab7b32b"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b192"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b192)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 192 (2005-08). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b192".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_192.tar.gz"
+sha256 = "e68e0a281f90e0c5a96cd04defe01eabfad4b5592807bba983495fa07c1d55b3"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b201"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b201)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 201 (2005). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b201".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_201.tar.gz"
+sha256 = "1bf4b06615f56e6ca5b78287e8fab5c7737f5cd5766d1df052829d737928dbc8"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b205"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b205)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 205 (2005-12). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b205".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_205.tar.gz"
+sha256 = "ace61d4641fcdff55c08b7560c95915b20243f0f18023c3d4ce99fe37c5cdb00"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b210"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b210)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 210 (2006-03). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b210".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_210.tar.gz"
+sha256 = "a8a0bf3a0ec3545f6578717516aad0f262a40dd1538a6e462b77efc29e79a969"
+platforms = ["linux-x86_64"]
+
+["mwccpsp-3.0.1-b219"]
+cplusplus = true
+name = "CodeWarrior for PSP 3.0.1 (b219)"
+platform = "PSP"
+arch = "mipsel"
+license = "proprietary"
+source = "decompme/compilers release 'compilers'"
+description = "Metrowerks' PSP compiler, build 219 (2006-08). Proprietary; a Windows program, run through wibo."
+requires = ["wibo"]
+cmd = ["{tc:wibo}/wibo", "{tc}/mwccpsp.exe", "-c", "{flags}", "-nostdinc", "-gccinc", "-stderr", "-I{include}", "{src}", "-o", "{obj}"]
+flags = ["-O3"]
+[["mwccpsp-3.0.1-b219".parts]]
+url = "https://github.com/decompme/compilers/releases/download/compilers/mwccpsp_3.0.1_219.tar.gz"
+sha256 = "81a2a8664d779901f6fa2f298b663b4b0feeb1d7f6613fd14531f51e66926d78"
+platforms = ["linux-x86_64"]
+
 ["ido-7.1"]
 name = "IDO 7.1 (static recompilation)"
 platform = "N64"

@@ -1308,7 +1308,7 @@ class ForkEngine:
                 raise NetworkError(f"nothing was changed: {e}") from None
             fp.build_all()
             rep = fp.report()
-            paths = [str(p.relative_to(fp.root)) for p in [*saved, *made]]
+            paths = [p.relative_to(fp.root).as_posix() for p in [*saved, *made]]
             n = sum(item[4] for item in plan["split"])
             self._commit_paths(proj, fp, paths, f"Give code without a source file one ({len(made)} files, {n} functions)\n\n"
                                "Each stretch of code no file covered gets a file of its own, so it can be decompiled; "
@@ -1624,7 +1624,7 @@ class ForkEngine:
                                "project_id=? AND (name=? OR json_extract(meta, '$.symbol')=?)",
                                (new, new, proj["id"], old, old))
                 self.net._event(db, proj["id"], agent.id if agent else None, "rename", f"{old} → {new}")
-            self._commit_paths(proj, fp, [str(p.relative_to(fp.root)) for p in saved],
+            self._commit_paths(proj, fp, [p.relative_to(fp.root).as_posix() for p in saved],
                                f"Rename {old} to {new}\n\n{message.strip() or 'Named'} by "
                                f"{agent.name if agent else 'decompdecomp'} with decompdecomp; the game still builds as it "
                                "did and every match still matches.")
@@ -2729,7 +2729,7 @@ class ForkEngine:
                     for p, t in renamed.items():
                         p.write_text(t, encoding="utf-8")
 
-            committed = [unit.source, *(str(p.relative_to(fp.root)) for p in renamed)]
+            committed = [unit.source, *(p.relative_to(fp.root).as_posix() for p in renamed)]
             _rewrite(path, after)
 
             def remembered(text: str, score: int | None, kept: bool = True) -> str:

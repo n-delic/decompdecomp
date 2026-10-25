@@ -178,7 +178,8 @@ def find(disc, boot: str, main: tuple[int, int], ram: tuple[int, int] = RAM) -> 
 
 def add_to_config(config: Path, workdir: Path, image: str, found: list[tuple[str, bytes, int, int]], log=print) -> str:
     """The overlays `find` found, each appended to a working copy of the program's image, as a code segment of its
-    own at the address it's loaded at, in splat's config. Returns the image splat reads."""
+    own at the address it's loaded at, in splat's config. An overlay may say its sections (a fifth item: (offset,
+    splat's kind) each, code first); else all of it from its code's start is code. Returns the image splat reads."""
     import hashlib
 
     import yaml
@@ -187,14 +188,26 @@ def add_to_config(config: Path, workdir: Path, image: str, found: list[tuple[str
     cfg = yaml.safe_load(config.read_text(encoding="utf-8"))
     segs = list(cfg["segments"])
     if segs and isinstance(segs[-1], list) and len(segs[-1]) == 1:
-        segs.pop()  # the image's old end: the overlays go after it (its padding entries stay: split._starts_by_address)
-    for name, code, vram, code_at in found:
+        # the image's old end: the overlays go after it, its padding a segment of padding (as split._starts_by_address
+        # writes them). Dropped, the program's last section ran on over that padding into the addresses its .bss starts
+        # at, and the export's link found the .bss's first symbols defined twice
+        segs[-1] = [segs[-1][0], "pad"]
+    for name, code, vram, code_at, *sections in found:
         data += bytes(-len(data) % 0x10 + 0x10)
         start = len(data)
         data += code
-        subs = [[start, "data", f"ovl_{name}_header"]] if code_at else []  # what comes before its code: a header
-        segs.append({"name": f"ovl_{name}", "type": "code", "start": start, "vram": vram,
-                     "subsegments": subs + [[start + code_at, "c", f"ovl_{name}"]]})
+        if sections:  # its sections, as (offset, splat's kind): a PSP module's code, read-only data and data
+            parts = sections[0]
+            subs = [] if parts and parts[0][0] == 0 else [[start, "data", f"ovl_{name}/000000"]]
+            first_code = next((at for at, kind in parts if kind == "c"), None)
+            for at, kind in parts:  # its functions under the overlay's name, as an overlay's all-code segment has them
+                label = f"ovl_{name}" if at == first_code else f"ovl_{name}_{at:06X}" if kind == "c" else \
+                    f"ovl_{name}/{at:06X}"
+                subs.append([start + at, kind, label])
+        else:
+            subs = [[start, "data", f"ovl_{name}_header"]] if code_at else []  # what comes before its code: a header
+            subs.append([start + code_at, "c", f"ovl_{name}"])
+        segs.append({"name": f"ovl_{name}", "type": "code", "start": start, "vram": vram, "subsegments": subs})
     data += bytes(-len(data) % 0x10)
     segs.append([len(data)])
     out = f"{Path(image).stem}.overlays{Path(image).suffix}"

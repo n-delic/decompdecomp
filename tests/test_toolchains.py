@@ -139,7 +139,7 @@ def test_keep_takes_only_what_a_build_needs_and_merges_folders(tmp_path):
     dest.mkdir()
     toolchains._extract(archive, dest, "msvc1000-abc", {"VC/bin": "Bin", "Microsoft SDKs/Windows/v7.0A/Include":
                                                         "Include", "VC/include": "Include"})
-    assert sorted(str(p.relative_to(dest)) for p in dest.rglob("*") if p.is_file()) == [
+    assert sorted(p.relative_to(dest).as_posix() for p in dest.rglob("*") if p.is_file()) == [
         "Bin/cl.exe", "Include/stdio.h", "Include/windows.h"]
     # one file of a zip, into a folder that's already there (2010's Bin gets the redistributable's msvcp100.dll)
     with zipfile.ZipFile(tmp_path / "bundle.zip", "w") as z:

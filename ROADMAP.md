@@ -15,41 +15,41 @@ Each feature and the platforms it covers today. A — is a gap: pick one up (the
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS1 | PS2 | GameCube · Wii | Windows PC | DS | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta | beta | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
-| Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
-| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS; the compiler of each object file | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
-| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
-| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
-| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Status | recommended | beta | beta | beta | beta | beta | beta | the project's own |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ | ✓ | ✓ | fork by address |
+| Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Pieces of functions joined to their function | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
+| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
+| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
+| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
+| Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
@@ -91,6 +91,28 @@ Where to start on a gap:
 
 ## Recently done
 
+- **PSP.** A UMD image (read in place, also as a CSO) or the game's program, with its title and product code from
+  PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
+  import stubs are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID
+  list, 2,491 functions in 91 libraries (on a PSP game with debug symbols it names 268 of its 274 stubs, all as the
+  game's own symbols do; a NID it doesn't know keeps `<library>_<NID>`). The disc's other PRX modules come with it,
+  each a segment laid out after the main program (that game: 28 modules, 9,508 more functions to decompile, 36,002
+  more stubs set aside), their functions matching with CodeWarrior 3.0.1 too. The game's own debug symbols come with
+  it: the symbol table and
+  CodeWarrior's DWARF 1 (source files, prototypes, types, also for CodeWarrior PS2 games). Diffs read the Allegrex's
+  VFPU and its own instructions through rabbitizer. Compilers: CodeWarrior for PSP 3.0.1 (11 builds), the PSP SDK's
+  GCC 3.3.3 (1.3.1 and 1.7.1) and SN's pspsnc (known by its code, which moves registers with `or`: the demo built with
+  it imports, matches at -O2 -G8 and rebuilds byte for byte). On a PSP game with debug symbols: 2,465 functions, 2,458
+  named, CodeWarrior 3.0.1 matching its functions byte for byte. Every row of the table was then tried on the PSP
+  demo and that game: autopilot matched 251 of the game's 1,968 open functions from drafts and twins 19 more, and its
+  export with those 270 in C rebuilds byte for byte, from a fresh clone too. What that turned up is fixed for every
+  console: the permuter now reads autopilot's drafts, get_class reads GCC 3's and SNC's vtables, SNC's C++ names
+  match, a save keeps what was set aside, the export keeps switch cases in their function and links branches into
+  other functions. Small data is read from each program's code, not its gp value (every module's info has one): that
+  game keeps none, and the compiler test's drafts of 60 of its functions match 23 with it off against 12. Its export
+  with all 28 modules (47,975 functions, 491 in C) rebuilds byte for byte in two minutes, from a fresh clone in four:
+  the assembly between C functions is assembled a run at a time (1,216 objects; one per function kept ld busy for
+  over 40 minutes), and 8-byte data as words (GNU as moved a module's doubles).
 - **Autopilot on Windows PC.** Autopilot didn't run on PC: its free matches come from drafts that compile, and
   Ghidra's didn't (undefined4, in_ECX, a method's `this` dropped). Now it tries, for each function, exact drafts of the
   tiny shapes Visual C++ makes from a line or two of C, read straight from the code (getters, setters, constants, a
@@ -416,7 +438,8 @@ Where to start on a gap:
   drafted as `Class::method`. On GTA San Andreas, 37 of 40 sampled drafts read the header (none did before).
 - **Flag search** (`search_flags`, MIPS): each flag of the compiler changed once, up to 12 builds.
 - **PS2 debug symbols** (#3): names and sizes from the symbol table; from STABS the source files as units,
-  prototypes, parameters and locals in the brief, every type and global in the header. Big headers: the brief
+  prototypes, parameters and locals in the brief, every type and global in the header; the same from the DWARF 1
+  CodeWarrior writes (.debug, .line), with the line each function starts on. Big headers: the brief
   carries only the declarations the function uses.
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
@@ -478,6 +501,23 @@ and newer are out of scope for now.
   convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
   functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and
   matches.
+
+### PSP: encrypted programs, ZSO images, imported names
+Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
+carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned, checksummed decrypter installed
+from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
+now). Also: a module's own $gp isn't the judge's (one per project: a module that keeps small data where the main
+program doesn't gets its own flags, but its $gp-relative data is named from the main program's $gp), its imported
+variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no SN-built game was at hand: the
+readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some games were built with isn't
+archived (3.0.1 matches small functions;
+bigger ones unverified).
+
+### PSP drafts: the Allegrex's own instructions
+m2c has no Allegrex target: the EE's reads PSP code, and knows `seb`, `seh` and `madd` but not `min`, `max`, `ext` or
+`ins`, which PSP GCC emits from plain C. Drafts have `M2C_ERROR(unknown instruction)` there, and those functions
+rarely match from autopilot (the guide tells agents what each one is). Rewriting them for m2c before it reads the
+code (`min` as `slt` and `movn`, outside delay slots) would give those drafts their arithmetic back.
 
 ### Windows distribution
 

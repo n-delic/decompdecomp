@@ -1,11 +1,13 @@
 """MIPS (N64, PlayStation 2): what decompdecomp knows about the processor itself, whatever the console.
 
-- the relocations a match ignores the bits of, and how capstone reads its code;
+- the relocations a match ignores the bits of, and how capstone reads its code; the PSP's Allegrex (a console's
+  `cpu_variant`), whose VFPU and min/max/clz/clo capstone reads as other instructions, is read by rabbitizer
+  instead (allegrex_lines);
 - code no compiler makes (asm_reason): coprocessor 0 (the system: mfc0, mtc0, rfe, eret) or a console's coprocessor 2
   (the PS2's VU0: ctc2, mtc2, lwc2, cop2 commands), which C compilers never emit (C that drives VU0 does it with
-  inline asm, which decompdecomp doesn't take); a system call (a kernel entry stub); code that ends without a return
-  or a jump and so runs on into the next function (an extra entry point into hand-written code: the splitter cut it
-  off); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
+  inline asm, which decompdecomp doesn't take), or the Allegrex's VFPU; a system call (a kernel entry stub); code
+  that ends without a return or a jump and so runs on into the next function (an extra entry point into hand-written
+  code: the splitter cut it off); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
   code gets its arguments in a0-a3);
 - where a stretch of code is loaded (place): its calls are absolute, so they say it. The N64's code segments that
   load later (consoles/n64/code.py) and the PS2's overlays (consoles/ps2/overlays.py) are both found this way.
@@ -76,6 +78,42 @@ EABI_ARGUMENTS = {8, 9, 10, 11}  # t0-t3: arguments too under the EABI
 SCAN_BLOCK = 0x400  # code is looked for in blocks of this many bytes; a function's start is at most two before
 GP = 28  # the register $gp
 GP_SEARCH_BYTES = 0x400  # how far after the entry point start-up code sets $gp
+
+
+ALLEGREX = "allegrex"  # Console.cpu_variant of the PSP's processor
+# the Allegrex's VFPU (vector unit) instructions, by opcode: COP2 (mfv, mtv, bvf...), the VFPU0-7 groups (vadd,
+# vmul, vcmp, vmov, vpfxs, vmmul, vnop...) and its loads and stores (lv.s, lv.q, lvl.q, sv.s, sv.q, svl.q). On other
+# MIPS several of these are ordinary compiled code (daddiu, ld, sd), so they only mean the VFPU on an Allegrex.
+VFPU_OPCODES = frozenset({COP2, 0x18, 0x19, 0x1B, 0x32, 0x34, 0x35, 0x36, 0x37, 0x3A, 0x3C, 0x3D, 0x3E, 0x3F})
+SPECIAL3, EXT, INS, BSHFL = 0x1F, 0x00, 0x04, 0x20  # the Allegrex's ext, ins, seb/seh/wsbh/bitrev (the EE's sq)
+
+
+def allegrex_lines(code: bytes, big_endian: bool) -> list[tuple[int, str, str]]:
+    """An Allegrex function's (offset, mnemonic, operands), decoded by rabbitizer: capstone reads its VFPU words,
+    min/max and clz/clo as other instructions (lv.q as bbit032, vadd.s as daddi, max as dadd), so a PSP diff would
+    show other instructions than the game has. Branches read `.L<offset>` and jumps their target, as scoring's capstone path
+    writes them, so a change of position alone never shows as a difference."""
+    import rabbitizer
+
+    order = "big" if big_endian else "little"
+    out = []
+    for at in range(0, len(code) - 3, 4):
+        word = int.from_bytes(code[at:at + 4], order)
+        ins = rabbitizer.Instruction(word, 0, rabbitizer.InstrCategory.R4000ALLEGREX)
+        imm = (f".L{at + ins.getBranchOffsetGeneric():x}" if ins.isBranch()
+               else f"{jump_target(word, 0):#x}" if ins.isJumpWithAddress() else None)
+        mnemonic, _, operands = ins.disassemble(immOverride=imm).partition(" ")
+        if mnemonic == ".word":  # a word it can't read: rabbitizer adds a comment, the word alone compares
+            operands = f"{word:#010x}"
+        out.append((at, mnemonic, operands.strip()))
+    return out
+
+
+def rabbitizer_category(cpu: str = ""):
+    """rabbitizer's reading of a console's processor (Console.cpu_variant): the Allegrex's, or plain MIPS."""
+    import rabbitizer
+
+    return rabbitizer.InstrCategory.R4000ALLEGREX if cpu == ALLEGREX else rabbitizer.InstrCategory.CPU
 
 
 def is_frame(word: int) -> bool:
@@ -192,9 +230,13 @@ def _mips_branch(w: int) -> bool:
     return _mips_transfer(w) or op == REGIMM or op in BRANCHES or (op in (COP1, COP2) and rs == BC1)
 
 
-def _mips_uses(w: int) -> tuple[set[int], set[int]] | None:
-    """(general registers read, written) by one MIPS instruction, None when not known (no verdict)."""
+def _mips_uses(w: int, cpu: str = "") -> tuple[set[int], set[int]] | None:
+    """(general registers read, written) by one MIPS instruction, None when not known (no verdict). `cpu`: the
+    Allegrex's SPECIAL3 is ext/ins/seb, which write rt or rd (read as the EE's sq, ext would seem to read its
+    destination before setting it)."""
     op, rs, rt, rd, f = fields(w)
+    if cpu == ALLEGREX and op == SPECIAL3:
+        return {EXT: ({rs}, {rt}), INS: ({rs, rt}, {rt}), BSHFL: ({rt}, {rd})}.get(f)
     if op == SPECIAL:
         if f in (0, 2, 3):  # sll, srl, sra (sll zero = nop)
             return ({rt}, {rd})
@@ -254,10 +296,27 @@ def raw_cop2(text: str, big_endian: bool) -> str:
     return _ASM_LINE.sub(one, text)
 
 
-def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str = "") -> str | None:
+# a spimdisasm data line of 8 bytes: `/* rom vram bytes */ .double 0.5` (or .dword), the bytes in the file's order
+_EIGHT_BYTES = re.compile(r"^(\s*/\* [0-9A-Fa-f]+ [0-9A-Fa-f]{8} ([0-9A-Fa-f]{16}) \*/\s*)\.d(?:ouble|word)\b.*$", re.M)
+
+
+def raw_doubles(text: str, big_endian: bool) -> str:
+    """8-byte data (.double, .dword) in spimdisasm's assembly as the two words it is: GNU as aligns those to 8 bytes
+    from the start of their file, and a data file can start 4 bytes past such an address (a PSP game's module whose
+    .data starts at 0x08E27724: every double in it was assembled 4 bytes late, and its export differed from there)."""
+    order = "big" if big_endian else "little"
+
+    def one(m: re.Match) -> str:
+        raw = bytes.fromhex(m[2])
+        return f"{m[1]}.word 0x{int.from_bytes(raw[:4], order):08X}, 0x{int.from_bytes(raw[4:], order):08X}"
+    return _EIGHT_BYTES.sub(one, text)
+
+
+def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str = "", cpu: str = "") -> str | None:
     """Why this MIPS function (its code, from the entry) can't come from a compiler, or None. The console says what
     its compilers do: `eabi`, eight integer arguments (a0-a3 and t0-t3, the PS2's EABI) instead of four; `cop2`, what
-    coprocessor 2 is when C reaches it only through inline asm ("VU0" on the PS2), "" when it isn't there."""
+    coprocessor 2 is when C reaches it only through inline asm ("VU0" on the PS2), "" when it isn't there; `cpu`, its
+    processor's variant (Console.cpu_variant: ALLEGREX, whose VFPU spans more opcodes than coprocessor 2's)."""
     order = "big" if big_endian else "little"
     words = [int.from_bytes(code[at:at + 4], order) for at in range(0, len(code) - 3, 4)]
     if not words:
@@ -269,6 +328,9 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
                     "it (the PS2's libkernl stubs: addiu v1, n; syscall; jr ra)")
         if op == COP0:
             return "uses coprocessor 0 (the system's: mfc0, mtc0, rfe, eret): no C compiler emits it"
+        if cpu == ALLEGREX and op in VFPU_OPCODES:
+            return ("uses the VFPU (the PSP's vector unit: lv.q, vadd, vmmul...): hand-written assembly or inline "
+                    "asm, which decompdecomp doesn't take")
         if cop2 and (op == COP2 or op in COP2_MEMORY):
             return f"uses {cop2} (coprocessor 2): C reaches it only through inline asm"
     body = list(words)
@@ -282,7 +344,7 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     args = "a0-a3 and t0-t3" if eabi else "a0-a3"
     written: set[int] = {0}
     for i, w in enumerate(words[:64]):
-        uses = _mips_uses(w)
+        uses = _mips_uses(w, cpu)
         if uses is None:
             return None
         if (early := sorted((uses[0] - written) & temps)):
@@ -290,7 +352,7 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
             return f"reads {name} before setting it: compiled code gets its arguments in {args}"
         written |= uses[1]
         if _mips_branch(w) and i + 1 < len(words):  # the first block ends with the branch's delay slot
-            slot = _mips_uses(words[i + 1])
+            slot = _mips_uses(words[i + 1], cpu)
             if slot is not None and (early := sorted((slot[0] - written) & temps)):
                 name = names.get(early[0], f"t{early[0] - 8}")
                 return f"reads {name} before setting it: compiled code gets its arguments in {args}"

@@ -101,8 +101,23 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
 
 
 def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):
-    """A PS-X EXE is the PS1's; a disc image could be either PlayStation's until the server reads its SYSTEM.CNF."""
-    assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1 or 2", None]
+    """A PS-X EXE is the PS1's; a disc image could be any PlayStation's until the server reads it."""
+    assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1, 2 or PSP", None]
+
+
+def test_the_drop_zone_tells_psp_games_from_the_ps2s_and_says_what_to_do_with_what_it_cant_read(gui):
+    """A PSP's UMD image starts like a PS2 disc and its programs are MIPS ELFs like the PS2's, and a .cso starts with
+    CISO like a compressed GameCube disc: the drop zone reads further, so a PSP game isn't taken for another
+    console's. A .cso is a PlayStation disc whose console the server reads inside it; a .zso or an EBOOT.PBP (not
+    readable yet) says what to drop instead."""
+    psp = gui["checks"]["psp"]
+    # a UMD image, a PS2 disc, a GameCube CISO, a .cso, a PRX module, an Allegrex program, a PS2 program
+    assert psp["platforms"] == ["psp", "playstation", "gcwii", "playstation", "psp", "psp", "ps2"]
+    assert psp["cso"] == "CSO disc image"
+    zso, pbp = psp["said"]
+    assert "ZSO" in zso and "decompress it to .iso" in zso
+    assert "EBOOT.PBP" in pbp and "encrypted" in pbp and ".iso" in pbp
+    assert psp["name"] == "PlayStation 1, 2 or PSP"
 
 
 def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
@@ -133,7 +148,7 @@ def test_polish_is_offered_once_half_the_games_own_code_matches(gui):
 
 def test_the_import_offers_every_compiler_of_the_games_console(gui):
     """The import's compiler test can only try what's installed: a game linked by CodeWarrior was guessed right only
-    because its GCC was there. The import offers the console's missing compilers, both PlayStations' for a disc."""
+    because its GCC was there. The import offers the console's missing compilers, every PlayStation's for a disc."""
     assert gui["checks"]["missing"] == [["ee-gcc-2.96", "mwcps2-3.0.1"], 3, 0]
 
 

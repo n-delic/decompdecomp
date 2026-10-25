@@ -17,9 +17,10 @@ each the function alone plus whatever the randomizer added beside it (a helper i
 is open, so a header is parsed once per C a turn starts from: a second for a header of 300 KB.
 
 decomp-permuter reads C through pycparser, which knows neither comments nor the preprocessor: comments go, and so
-do the header's preprocessor lines (as for m2c's context, seeds.py). Its macros stay undefined here, which is fine
-while the code only names them (GRAVITY): the compiler still gets the header whole. A source with macro calls of
-its own doesn't parse, and the permuter falls back to its simple rewrites (permuter.py).
+do the header's preprocessor lines (as for m2c's context, seeds.py), and the source's, which each variant gets back
+at its top. Macros stay undefined here, which is fine while the code only names them (GRAVITY) or calls them like
+a function: the compiler still gets them. A macro call pycparser can't read as C (a type as an argument) doesn't
+parse, and the permuter falls back to its simple rewrites (permuter.py).
 
 The walk is decomp-permuter's own: a variant is the last one rewritten once more (KEEP of the time) or the source
 rewritten afresh, so variants drift a few rewrites away from the source and come back.
@@ -54,7 +55,12 @@ def main() -> int:
 
     def variants(job: dict):
         name, count = job["function"], int(job["count"])
-        unit = f"{plain_c(job['header'], directives=False)}\ntypedef int {SOURCE_STARTS};\n{plain_c(job['source'])}\n"
+        # the source's own preprocessor lines (autopilot's drafts start with m2c's macros, seeds.M2C_MACROS) go too,
+        # and back in front of each variant for the compiler: kept in, no draft ever parsed (#ifndef M2C_DEFINES)
+        source = plain_c(job["source"])
+        directives = "".join(line + "\n" for line in source.splitlines() if line.lstrip().startswith("#"))
+        unit = (f"{plain_c(job['header'], directives=False)}\ntypedef int {SOURCE_STARTS};\n"
+                f"{plain_c(source, directives=False)}\n")
         rng = random.Random(job["seed"])
         try:
             weights = get_default_randomization_weights(job.get("family") or "base")
@@ -85,7 +91,7 @@ def main() -> int:
                 continue
             if variant not in seen:
                 seen.add(variant)
-                yield {"variant": variant}
+                yield {"variant": directives + variant}
 
     for line in sys.stdin:
         if line.strip():

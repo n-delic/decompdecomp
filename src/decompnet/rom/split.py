@@ -203,14 +203,15 @@ SHT_PROGBITS, SHT_STRTAB = 1, 3
 SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR = 1, 2, 4
 
 
-def _readable_for_splat(program: Path) -> bytes | None:
+def _readable_for_splat(program: Path, as_ps2: bool = False) -> bytes | None:
     """A program splat and objcopy can lay out, for the while they do (the caller puts the user's bytes back): its
-    section headers made from its program headers when it has none (_with_section_headers), and a section falsely
-    marked MIPS_REGINFO hidden (_without_false_reginfo). Returns the program's bytes as they were, or None when
-    nothing needed changing."""
+    section headers made from its program headers when it has none (_with_section_headers), a section falsely
+    marked MIPS_REGINFO hidden (_without_false_reginfo), and with `as_ps2` its flags saying the R5900
+    (_as_r5900). Returns the program's bytes as they were, or None when nothing needed changing."""
     data = program.read_bytes()
     fixed = _with_section_headers(data) or data
     fixed = _without_false_reginfo(fixed) or fixed
+    fixed = _as_r5900(fixed) if as_ps2 else fixed
     if fixed is data:
         return None
     program.write_bytes(fixed)
@@ -250,6 +251,22 @@ def _with_section_headers(data: bytes) -> bytes | None:
     struct.pack_into("<I", out, 32, len(out))  # e_shoff
     struct.pack_into("<HHH", out, 46, SECTION_HEADER, len(heads), len(heads) - 1)  # e_shentsize, e_shnum, e_shstrndx
     return bytes(out + b"".join(heads))
+
+
+EF_MIPS_MACH, EF_MIPS_MACH_5900 = 0x00FF0000, 0x00920000  # e_flags' machine variant, and the PS2's
+
+
+def _as_r5900(data: bytes) -> bytes:
+    """splat's create_config reads an ELF program only when its flags say the PS2's R5900; another console's MIPS
+    program laid out the same way (the PSP's, once consoles/psp/prx.py fixed it) passes for one while it reads it, and
+    its config then names that console's platform (Console.splat_platform)."""
+    flags, = struct.unpack_from("<I", data, 36)
+    return data[:36] + struct.pack("<I", (flags & ~EF_MIPS_MACH) | EF_MIPS_MACH_5900) + data[40:]
+
+
+def _set_platform(config: Path, platform: str) -> None:
+    text = config.read_text(encoding="utf-8")
+    config.write_text(re.sub(r"^(\s*platform:\s*)\w+", rf"\g<1>{platform}", text, count=1, flags=re.M), encoding="utf-8")
 
 
 def _without_false_reginfo(data: bytes) -> bytes | None:
@@ -378,19 +395,23 @@ def _starts_by_address(program: Path, image: Path, config: Path) -> None:
 def _patch_config(path: Path) -> tuple[str, str, int]:
     """Disassemble code segments as one C file per segment, so every function gets its own .s file,
     and keep empty functions as asm too (we want every function to be a target).
-    Returns (compiler guess, platform, gp value)."""
+    Returns (compiler guess, platform, gp value). A segment's second code section (a PSP program's import stubs
+    after its .text) is a C file of its own: under the segment's name it found the first's C file there already and
+    filed its functions as matched, so none of them became a target."""
     text = path.read_text(encoding="utf-8")
     compiler = (re.search(r"^\s*compiler:\s*(\w+)", text, re.M) or [None, "KMC"])[1]
     platform = (re.search(r"^\s*platform:\s*(\w+)", text, re.M) or [None, "n64"])[1]
     gp = re.search(r"^\s*gp_value:\s*(0x[0-9A-Fa-f]+)", text, re.M)
-    out, segment = [], None
+    out, segment, files = [], None, 0
     for line in text.splitlines():
         m = re.match(r"^\s*- name:\s*(\S+)", line)
         if m:
-            segment = m.group(1)
+            segment, files = m.group(1), 0
         m = re.match(r"^(\s*- \[)(0x[0-9A-Fa-f]+), asm(?:, [^\]]*)?\]\s*(#.*)?$", line)
         if m and segment:
-            line = f"{m.group(1)}{m.group(2)}, c, {segment}]"
+            name = segment if not files else f"{segment}_{int(m.group(2), 16):06X}"
+            line = f"{m.group(1)}{m.group(2)}, c, {name}]"
+            files += 1
         out.append(line)
     text = "\n".join(out) + "\n"
     extra = "  disassemble_all: True\n  auto_decompile_empty_functions: False\n"
@@ -531,7 +552,8 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
         toolchains.ensure("binutils-mips", log=lambda *_: None)
         objcopy = toolchains.binary("binutils-mips").parent / "mips-ps2-decompals-objcopy"
         args[1:1] = ["--objcopy", str(objcopy)]
-    original = _readable_for_splat(workdir / rom_name) if objcopy else None
+    platform = console.splat_platform if console is not None else ""
+    original = _readable_for_splat(workdir / rom_name, as_ps2=bool(platform)) if objcopy else None
     try:
         out = _splat(args, workdir, log)
     finally:
@@ -541,6 +563,8 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     if not configs:
         raise RomError("splat did not produce a config for this ROM")
     config = configs[0]
+    if objcopy and platform:
+        _set_platform(config, platform)
     image = (yaml.safe_load(config.read_text(encoding="utf-8")).get("options") or {}).get("target_path") or rom_name
     if objcopy:
         _drop_leading_gap(workdir / rom_name, workdir / image, config)

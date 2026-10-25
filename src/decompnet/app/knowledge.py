@@ -24,7 +24,7 @@ SAME_IDEA_RATIO = 0.6  # word overlap above which a new proposal is probably one
 MAX_TEXT = 600
 SHOWN_IN_PROMPT = 2500  # characters of accepted knowledge in a session's prompt
 OPEN_SHOWN = 8  # open proposals an agent is shown, newest first
-COMPILER_TALK = re.compile(r"\b(compil(er|ed)|toolchain|flags?|gcc|ido|mwcc|codewarrior|mwcps2|msvc)\b|(^|\s)-[OG]\d",
+COMPILER_TALK = re.compile(r"\b(compil(er|ed)|toolchain|flags?|gcc|ido|mwcc|codewarrior|mwcps2|mwccpsp|snc|msvc)\b|(^|\s)-[OG]\d",
                            re.I)
 
 SCHEMA = (

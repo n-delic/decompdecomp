@@ -30,7 +30,8 @@ def parse_ranges(text: str) -> list[list[int]]:
 
 
 _AUTO_TOKEN = re.compile(r"\b(?:func|D|B|jtbl|RO|STR|FLT|DBL)_[0-9A-F]{8}\b")
-_ADDRESS = re.compile(r"^(?:0x)?([0-9A-Fa-f]{8})$")
+# 0x80001234 or 80001234; with 0x, fewer digits too (0x8804454, 0x100000: PSP and PS2 addresses as hex() writes them)
+_ADDRESS = re.compile(r"^(?:0x(?=[0-9A-Fa-f]{1,8}$)|(?=[0-9A-Fa-f]{8}$))([0-9A-Fa-f]+)$")
 
 GP_NOTE = """
 /* This game keeps small globals (8 bytes or less) in $gp-relative small data. Declare those here WITHOUT

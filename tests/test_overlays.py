@@ -58,7 +58,8 @@ def test_overlays_keep_the_programs_padding(tmp_path):
     out = overlays.add_to_config(config, tmp_path, "game.rom", [("battle", _overlay(OVERLAY_AT, 4), OVERLAY_AT, 0)],
                                  log=lambda *_: None)
     written = yaml.safe_load(config.read_text())["segments"]
-    assert written[:3] == segments[:3] and written[3]["name"] == "ovl_battle"
+    assert written[:3] == segments[:3] and written[4]["name"] == "ovl_battle"
+    assert written[3] == [0x30, "pad"]  # the program's end: what follows up to the overlay is padding, not its data
     assert written[-1] == [len((tmp_path / out).read_bytes())] and [0x30] not in written  # one end: the new one
 
 
