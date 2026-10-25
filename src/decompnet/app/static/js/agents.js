@@ -43,6 +43,7 @@ const FEED_KEEP = 400;  // lines of each helper's log kept here (the app keeps a
 const ACTIVITY_ROWS = 300;  // lines "What's happening" keeps: older ones scroll away
 const SAID_SHOWN = 1600, THOUGHT_SHOWN = 1200;  // characters of a helper's message and thought its log shows
 const MAX_PER_SESSION = 20;  // functions a helper takes in one session, at most
+const MAX_AT_ONCE = 8;
 const hhmm = (t) => clock(t).slice(0, 5);
 const sentence = (text) => (text ? text[0].toUpperCase() + text.slice(1) : "");
 
@@ -128,8 +129,7 @@ $("stopAll").onclick = async () => {
 };
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
-const LZ = { kind: null, model: "", count: 1, per: null, effort: "", task: "" };
-const ALL_MODELS = "__all_models";
+const LZ = { kind: null, model: "", models: [], count: 1, per: null, effort: "", task: "" };
 const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
 // an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
@@ -144,7 +144,8 @@ function launcherInit() {
   // can break it)
   const first = S.st.agents.find((a) => a.recommended) || S.st.agents[0];
   LZ.kind = known ? known.id : first ? first.id : null;
-  LZ.model = known ? (l.model || "") : "";
+  LZ.model = known && l.model !== "__all_models" ? (l.model || "") : "";
+  LZ.models = known && Array.isArray(l.models) ? l.models.map(String) : [];
   LZ.count = l.count || 1;
   const eps = S.st.settings.endpoints || [];
   LZ.eps = (l.endpoints || []).filter((id) => eps.some((e) => e.id === id));
@@ -153,51 +154,53 @@ function launcherInit() {
 function modelOptions(a) {
   const recent = (S.st.settings.recent_models || {})[a.id] || [];
   const opts = [{ id: "", name: a.default_model ? `Default · ${a.default_model}` : "Default", note: "" }];
-  for (const m of a.models || []) opts.push(m);
-  for (const r of recent) if (!opts.some((o) => o.id === r)) opts.push({ id: r, name: r, note: "used before" });
-  if ((a.models || []).length) opts.push({ id: ALL_MODELS, name: "All Models", note: "" });
+  for (const r of recent) if (!opts.some((o) => o.id === r) && !(a.models || []).some((m) => m.id === r)) {
+    opts.push({ id: r, name: r, note: "used before" });
+  }
   return opts;
+}
+function selectableModels(a) {
+  return a.models || [];
 }
 function modelName(a, model) {
   if (!model) return "";
-  if (model === ALL_MODELS) return "All Models";
   const m = (a.models || []).find((x) => x.id === model);
   return m ? m.name : model;
 }
-function launchLabel(a, model, count) {
+function launchLabel(a, model, count, models = []) {
   if (a.uses_endpoints) {
     const picked = (S.st.settings.endpoints || []).filter((e) => (LZ.eps || []).includes(e.id));
     const eff = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
     if (picked.length > 1) return `Start ${count} across ${picked.length} endpoints${eff}`;
     return `Start ${picked[0] ? picked[0].name : "API model"}${eff}${count > 1 ? ` × ${count}` : ""}`;
   }
-  if (model === ALL_MODELS) {
-    const models = (a.models || []).length;
+  if (models.length) {
+    const total = models.length * count;
     const effort = effortOf(a) ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : "";
-    return `Start all ${models} ${models === 1 ? "model" : "models"}${effort} × ${count} = ${models * count} agents`;
+    return `Start ${models.length} ${models.length === 1 ? "model" : "models"}${effort} × ${count} = ${total} ${total === 1 ? "agent" : "agents"}`;
   }
   return `Start ${a.name}${model ? ` · ${modelName(a, model)}` : ""}${effortOf(a) && model ? ` · ${EFFORT_NAMES[effortOf(a)] || effortOf(a)}` : ""}${count > 1 ? ` × ${count}` : ""}`;
 }
 
-async function startAgents(a, model, count, btn, extra = {}) {
+async function startAgents(a, model, count, btn, extra = {}, models = []) {
   if (btn) btn.disabled = true;
   try {
     const options = { ...extra };
-    const allModels = model === ALL_MODELS;
-    if (model && !a.uses_endpoints && !allModels) options.model = withEffort(a, model);
-    if (allModels) options.all_models = true;
-    if (a.uses_endpoints && effortOf(a)) options.effort = effortOf(a);  // its model is the endpoint's
-    else if (effortOf(a) && !model) throw new Error("pick a model to set its effort");
+    if (models.length) options.models = models;
+    else if (model && !a.uses_endpoints) options.model = withEffort(a, model);
+    if ((a.uses_endpoints || models.length) && effortOf(a)) options.effort = effortOf(a);
+    else if (effortOf(a) && !model && !models.length) throw new Error("pick a model to set its effort");
     if (LZ.per) options.per_session = LZ.per;
     if (LZ.task) options.task = LZ.task;
     await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
-    S.st.settings.launcher = { kind: a.id, model: model || "", count };
-    if (model && model !== ALL_MODELS && !a.uses_endpoints) {
+    S.st.settings.launcher = { kind: a.id, model: model || "", models, count };
+    if (model && !a.uses_endpoints) {
       const rec = (S.st.settings.recent_models ||= {});
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
     hideLaunch();
-    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)} ${count > 1 ? `× ${count} are` : "is"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
+    const total = models.length ? models.length * count : count;
+    toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
   } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
@@ -236,11 +239,16 @@ function renderLauncher(box, compact = true) {
       : `<div class="lz-fields">${endpointFields({ provider: "deepseek" }, compact)}</div>${eps.length ? `<p class="muted small"><button type="button" class="link-btn" data-act="pick-ep">Back to your endpoints</button></p>` : ""}`;
     body = why + body + (eps.length && !LZ.adding ? effortField(a) : "");
   } else {
-    const opts = modelOptions(a);
+    const opts = modelOptions(a), available = selectableModels(a);
     const known = opts.some((o) => o.id === LZ.model);
-    body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${known && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
-        <option value="__other" ${known ? "" : "selected"}>Another model…</option></select></label>
-      <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${known ? "" : esc(LZ.model)}" ${known ? "hidden" : ""}>
+    const custom = !known && !!LZ.model;
+    LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
+    body = `${available.length ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""} ${LZ.model ? "disabled" : ""}>
+        <span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
+      <span class="muted small" data-model-limit>Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} at this session count (maximum ${MAX_AT_ONCE} helpers total).</span></div>` : ""}
+      <label class="field"><span>Or use one model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${!custom && o.id === LZ.model ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}
+        <option value="__other" ${custom ? "selected" : ""}>Another model…</option></select></label>
+      <input data-f="custom" class="mono lz-custom" placeholder="model name, as ${esc(a.name)} calls it" value="${custom ? esc(LZ.model) : ""}" ${custom ? "" : "hidden"}>
       ${effortField(a)}`;
   }
   const ready = a.installed;
@@ -255,20 +263,53 @@ function renderLauncher(box, compact = true) {
         <div class="field"><span>How many</span><span class="stepper"><button type="button" data-step="-1">−</button><output>${LZ.count}</output><button type="button" data-step="1">+</button></span></div>
         <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
         <span class="grow"></span>
-        <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count))}</button></div>
+        <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count, LZ.models))}</button></div>
         <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
   wireCopies(box);
   const rerender = () => renderLauncher(box, compact);
   box.querySelectorAll("[data-task]").forEach((b) => { b.onclick = () => { LZ.task = b.dataset.task; rerender(); }; });
-  box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => { LZ.kind = b.dataset.k; LZ.model = (S.st.settings.launcher || {}).kind === LZ.kind ? S.st.settings.launcher.model || "" : ""; rerender(); }; });
+  box.querySelectorAll(".lz-kind").forEach((b) => { b.onclick = () => {
+    LZ.kind = b.dataset.k;
+    const saved = S.st.settings.launcher || {};
+    LZ.model = saved.kind === LZ.kind && saved.model !== "__all_models" ? saved.model || "" : "";
+    LZ.models = saved.kind === LZ.kind && Array.isArray(saved.models) ? saved.models.map(String) : [];
+    rerender();
+  }; });
   const sel = box.querySelector('select[data-f="model"]'), custom = box.querySelector('[data-f="custom"]');
-  const label = () => { const btn = box.querySelector('[data-act="start"]'); if (btn) btn.textContent = launchLabel(a, LZ.model, LZ.count); };
-  if (sel) sel.onchange = () => { if (sel.value === "__other") { custom.hidden = false; custom.focus(); LZ.model = custom.value.trim(); } else { custom.hidden = true; LZ.model = sel.value; } label(); };
+  const label = () => {
+    const btn = box.querySelector('[data-act="start"]');
+    if (btn) {
+      const total = LZ.models.length * LZ.count;
+      btn.textContent = launchLabel(a, LZ.model, LZ.count, LZ.models);
+      btn.disabled = total > MAX_AT_ONCE;
+    }
+    const limit = box.querySelector("[data-model-limit]");
+    if (limit) limit.textContent = `Select up to ${Math.floor(MAX_AT_ONCE / LZ.count)} at this session count (maximum ${MAX_AT_ONCE} helpers total).`;
+    box.querySelectorAll("[data-model-choice]").forEach((c) => { c.disabled = !!LZ.model; });
+  };
+  label();
+  if (sel) sel.onchange = () => {
+    LZ.models = [];
+    if (sel.value === "__other") { custom.hidden = false; custom.focus(); LZ.model = custom.value.trim(); }
+    else { custom.hidden = true; LZ.model = sel.value; }
+    label();
+  };
   if (custom) custom.oninput = () => { LZ.model = custom.value.trim(); label(); };
+  box.querySelectorAll("[data-model-choice]").forEach((c) => {
+    c.onchange = () => {
+      LZ.models = [...box.querySelectorAll("[data-model-choice]:checked")].map((x) => x.dataset.modelChoice);
+      if (LZ.models.length) {
+        LZ.model = "";
+        if (sel) sel.value = "";
+        if (custom) { custom.value = ""; custom.hidden = true; }
+      }
+      label();
+    };
+  });
   const eff = box.querySelector('[data-f="effort"]');
   if (eff) eff.onchange = () => { LZ.effort = eff.value; label(); };
-  box.querySelectorAll("[data-step]").forEach((b) => { b.onclick = () => { LZ.count = Math.max(1, Math.min(8, LZ.count + Number(b.dataset.step))); box.querySelector(".stepper output").textContent = LZ.count; label(); }; });
+  box.querySelectorAll("[data-step]").forEach((b) => { b.onclick = () => { LZ.count = Math.max(1, Math.min(MAX_AT_ONCE, LZ.count + Number(b.dataset.step))); box.querySelector(".stepper output").textContent = LZ.count; label(); }; });
   const per = box.querySelector('[data-f="per"]');
   if (per) per.onchange = () => { LZ.per = Math.max(1, Math.min(MAX_PER_SESSION, Number(per.value) || S.st.settings.per_session)); };
   wireEndpointFields(box);
@@ -308,7 +349,7 @@ function renderLauncher(box, compact = true) {
       if (!(LZ.eps || []).length) return toast("Tick an endpoint to start on.", "err");
       return startAgents(a, "", LZ.count, go, { endpoints: LZ.eps });
     }
-    startAgents(a, LZ.model, LZ.count, go);
+    startAgents(a, LZ.model, LZ.count, go, {}, LZ.models);
   };
 }
 

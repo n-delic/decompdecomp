@@ -220,10 +220,13 @@ def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypa
     assert started == [{"model": "opus", "task": "readable", "per_session": agents.PER_SESSION}]
 
 
-def test_all_models_starts_the_selected_count_for_each_available_model(tmp_path, monkeypatch):
-    """All Models multiplies the selected count by the detected model list, rather than the one-start cap."""
+def test_selected_models_start_only_the_chosen_models_within_the_helper_limit(tmp_path, monkeypatch):
+    """Starting multiple models uses only the explicit selection and keeps the total at MAX_AT_ONCE."""
     from .test_loading import tiny_game
 
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "launcher": {"kind": "claude", "model": "opus", "count": 1},
+    }))
     net = RomNetwork(tmp_path / "decomp.db", tmp_path)
     tiny_game(net)
     mcp, manager, security, _ = build(net, tmp_path, PORT, SECRET)
@@ -239,16 +242,32 @@ def test_all_models_starts_the_selected_count_for_each_available_model(tmp_path,
     monkeypatch.setattr(manager, "start", start)
     client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
                         base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+    over_limit = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "count": 5,
+        "options": {"models": ["sonnet", "opus"], "effort": "high"},
+    })
+    assert over_limit.status_code == 400
+    assert started == []
+
+    unavailable = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
+        "kind": "claude", "slug": "game", "options": {"models": ["retired-model"]},
+    })
+    assert unavailable.status_code == 400
+    assert started == []
+
     response = client.post("/api/agents/start", headers={"X-Decomp": "1"}, json={
-        "kind": "claude", "slug": "game", "count": 2, "options": {"all_models": True},
+        "kind": "claude", "slug": "game", "count": 2,
+        "options": {"models": ["sonnet", "haiku"], "effort": "high"},
     })
 
     assert response.status_code == 200, response.text
-    assert response.json()["started"] == [f"{model}-{i}" for model in ("sonnet", "opus", "haiku") for i in range(2)]
+    assert response.json()["started"] == [f"{model}#high-{i}" for model in ("sonnet", "haiku") for i in range(2)]
     assert started == [
-        ("claude", "game", 2, {"model": model, "per_session": agents.PER_SESSION})
-        for model in ("sonnet", "opus", "haiku")
+        ("claude", "game", 2, {"model": f"{model}#high", "effort": "high", "per_session": agents.PER_SESSION})
+        for model in ("sonnet", "haiku")
     ]
+    saved = json.loads((tmp_path / "settings.json").read_text())["launcher"]
+    assert saved["model"] == "" and saved["models"] == ["sonnet", "haiku"]
 
 
 def test_settings_never_echo_the_api_key(app):
