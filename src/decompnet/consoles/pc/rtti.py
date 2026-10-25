@@ -261,8 +261,10 @@ def _constructors(pe, out: classes.Classes, relocs: dict[int, list], owner: dict
 
 def for_project(root: Path, manifest: dict) -> classes.Classes | None:
     """A PC project's classes, with its functions' names (functions.json: func_0041B470, or the real name
-    rename_symbol gave it), read again when the program or functions.json changes. None without either."""
-    from .scratch import read_pe
+    rename_symbol gave it), read again when the program or functions.json changes. None without either. The game's
+    DLLs (functions.json's "modules") have RTTI of their own, read the same way: at the addresses the project gives
+    them, no two programs share one."""
+    from .scratch import programs
 
     try:
         config = root / "config" / manifest["version"] / "functions.json"
@@ -275,7 +277,21 @@ def for_project(root: Path, manifest: dict) -> classes.Classes | None:
         real = info.get("names") or {}
         functions = [fn for fns in info["units"].values() for fn in fns]
         labels = {fn["addr"]: real.get(f"func_{fn['addr']:08X}", f"func_{fn['addr']:08X}") for fn in functions}
-        found = recover(read_pe(exe.read_bytes()), labels, {fn["addr"]: fn["relocs"] for fn in functions})
+        relocs = {fn["addr"]: fn["relocs"] for fn in functions}
+        try:
+            pes = programs(root, info)
+        except OSError:  # a DLL of the game's not in the project (yet)
+            return None
+        found = None
+        for pe in pes.values():
+            one = recover(pe, labels, relocs)
+            if found is None:
+                found = one
+                continue
+            found.by_vtable.update(one.by_vtable)
+            found.names.update(one.names)
+            for addr, roles in one.roles.items():
+                found.roles[addr].extend(roles)
         for fn in functions:  # every way a function is spelled: the report's symbol, func_<address>, its real name
             for name in (fn["name"], f"func_{fn['addr']:08X}", labels[fn["addr"]]):
                 found.symbols[name] = fn["addr"]

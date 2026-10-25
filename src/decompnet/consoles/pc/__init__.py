@@ -9,7 +9,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   back together from those objects (check_code). Visual C++'s exception-handling stubs are set aside
   (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
-  and split_file divides one (split_source: a unit of functions.json).
+  and split_file divides one (split_source: a unit of functions.json). The game's own DLLs beside the .exe are
+  programs of the project too (find_modules; a game given as its folder: program_in), each in a folder of src/auto/.
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
 - project_template/: what that project starts as (tools/configure.py writes its ninja build).
 - guides/x86.md: what agents read about x86 and matching Visual C++'s code.
@@ -65,6 +66,12 @@ class WindowsPC(Console):
     def upload_name(self, data: bytes) -> str:
         return "game.exe"
 
+    def program_in(self, folder: Path) -> Path | None:
+        """A PC game is a folder: its .exe, and the DLLs of its own create takes along (scratch.find_modules)."""
+        from .scratch import program_in
+
+        return program_in(folder)
+
     def default_compiler(self, info: dict, splat_guess: str) -> str:
         return ""  # the program's Rich header says which Visual C++ built it (scratch.guess_compiler)
 
@@ -105,7 +112,8 @@ class WindowsPC(Console):
                                                           manifest.get("tools") == scratch.tools_version()):
             return
         version = manifest["version"]
-        if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file():
+        if not (fp.root / manifest.get("game", {}).get("path", f"orig/{version}.exe")).is_file() or \
+                scratch.missing(fp.root, version):  # (the game's DLLs too: each step reads every program)
             return
 
         def matched() -> set[str]:  # not into or out of a matched function: its C would no longer be the whole one

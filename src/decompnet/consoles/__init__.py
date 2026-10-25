@@ -123,6 +123,11 @@ class Console:
         """PROJECT mode: what a game sent as bytes is called on disk."""
         return "game.bin"
 
+    def program_in(self, folder: Path) -> Path | None:
+        """The game's file in a folder the user pointed at, when this console's games are folders (a PC game's .exe
+        and its DLLs); None: not one of its games."""
+        return None
+
     # ROM mode
 
     def read_game(self, file: bytes | Path, name: str = "") -> Picked:
@@ -308,7 +313,8 @@ class Console:
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
-                "sets_aside": self.mode == PROJECT and self.sets_aside}
+                "sets_aside": self.mode == PROJECT and self.sets_aside,
+                "games_in_folders": type(self).program_in is not Console.program_in}  # (a dropped file comes alone)
 
 
 def _registry() -> list[Console]:
@@ -363,6 +369,15 @@ def identify(file: bytes | Path) -> Console:
     supported = ", ".join(f"{c.name} ({c.layout})" for c in startable())
     raise RomError(f"this isn't a game file decompdecomp can start from scratch: it reads {supported}. For other "
                    "consoles, continue a public decomp")
+
+
+def game_in(folder: Path) -> Path:
+    """The game's file in a folder the user pointed at (Console.program_in), or a RomError saying there's none."""
+    found = next((path for console in startable() if (path := console.program_in(folder)) is not None), None)
+    if found is None:
+        raise RomError(f"{folder} holds no game file decompdecomp starts from a folder (a Windows game's .exe): "
+                       "pick the game's file itself")
+    return found
 
 
 def compiler(compiler_id: str) -> tuple[Console, Compiler] | None:

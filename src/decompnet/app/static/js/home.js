@@ -68,7 +68,12 @@ drop.addEventListener("click", (e) => { if (!$("dropIdle").hidden && !e.target.c
 drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !$("dropIdle").hidden && e.target === drop) { e.preventDefault(); $("file").click(); } });
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]); });
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  // a folder doesn't come through the browser: the path dialog reads it where it is (a PC game's .exe and its DLLs)
+  if (e.dataTransfer.items?.[0]?.webkitGetAsEntry?.()?.isDirectory) return askPath("That's a folder: give its path here, and decompdecomp reads the game from it where it is.");
+  if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
+});
 $("file").addEventListener("change", () => { if ($("file").files[0]) pickFile($("file").files[0]); });
 $("own").addEventListener("change", updateAnalyse);
 $("cancelPick").onclick = resetDrop;
@@ -215,6 +220,10 @@ async function pickFile(file) {
   $("romStatus").innerHTML = level === "recommended"
     ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod. ${TRY_AND_TELL}`
     : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works, and needs more games tried on it. ${TRY_AND_TELL}`;
+  if (consoleOf(p)?.games_in_folders) {  // a dropped .exe comes alone: its path brings the game's own DLLs along
+    $("romStatus").insertAdjacentHTML("beforeend", ` A dropped file comes alone: for the game's own DLLs too, <button class="link-btn" type="button" id="romByPath">use its path</button> (its folder, or the .exe) instead.`);
+    $("romByPath").onclick = (e) => { e.stopPropagation(); resetDrop(); askPath(); };
+  }
   setupCompilers(info);
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = false;
@@ -362,12 +371,12 @@ $("analyse").onclick = async () => {
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
   runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}`, body, title, picked.name);
 };
-$("pathPick").onclick = (e) => {
-  e.stopPropagation();
+$("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
+function askPath(why = "") {
   // the game isn't known yet: the scope question shows when any platform's import recognises library code
   const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
-  const body = dialog("Use a file on this computer", `<p class="muted">For big disc images: decompdecomp reads the file where it is instead of copying it through the browser.</p>
-    <label class="field"><span>Path to the game file</span><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"></label>
+  const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out).</p>
+    <label class="field"><span>Path to the game file, or a Windows game's folder</span><span class="pick-row"><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="ppPath" data-title="Your copy of the game">File…</button><button class="ghost small-btn" type="button" data-pick="folder" data-for="ppPath" data-title="The game's folder">Folder…</button></span></label>
     ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
       <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
       <option value="program">The whole program: every function is decompiled and counted</option></select></label>` : ""}
@@ -381,7 +390,7 @@ $("pathPick").onclick = (e) => {
     closeDialog();
     runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`, undefined, "Analysing your game…");
   };
-};
+}
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");
 
 /* A "Choose…" button beside a path: the system's own chooser (app/picker.py) fills it in. Typing still works. */

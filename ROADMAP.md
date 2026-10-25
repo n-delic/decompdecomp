@@ -59,7 +59,11 @@ Where to start on a gap:
   story (the project is delinked COFF objects). Only games built with Visual C++ 6.0 to 2010 can match so far: Newer
   Windows games, below, is the plan for 2012 to 2015 and 64-bit. A class's constructors are one real name
   (`CFoo::CFoo`), so of two at two addresses (a copy constructor) only one can be written as a constructor: names.py
-  would need the mangled signature in "names".
+  would need the mangled signature in "names". A game's own DLLs come along when its folder or .exe is given by
+  path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project made before can't take its
+  DLLs in yet (PC has no reimport), a project restored or cloned asks only for the .exe (`ForkProject.needs` names
+  one file: the DLLs go in `orig/` by hand, as its README says), and a game whose .exe can't start (Visual C++
+  2017 and newer) can't start from its DLLs either.
 - **Function-end reports** cut MIPS functions (`engine._cut`).
 - **Struct layouts** read MIPS loads and stores (`arch/mips_fields.py`); another processor adds its reader as its
   `Arch.field_accesses`, and structs.py does the rest. Still open on MIPS: the PS2's fifth to eighth arguments
@@ -70,6 +74,18 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in DLLs
+  of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by path,
+  a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
+  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its
+  export table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per
+  source file), its calls into other programs through its import table. DLLs are relocatable and many prefer
+  0x10000000: the first keeps its address, a later one that would overlap is moved by its base relocations, as
+  Windows moves it (delink.py does the same at build time), so func_/D_<address> stay names no two programs share.
+  The rebuild check puts each program's code back together against that program. Left out, each with why in the
+  import's log: the C runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins,
+  ones the import can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py`
+  (find_modules), `Console.program_in` (a game that is a folder).
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
   user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each

@@ -129,6 +129,11 @@ def test_a_real_name_stands_for_its_address_however_c_or_cpp_spells_it():
     assert names.address_of(b"_func_00402000@4", real) == b"func_00402000"  # an address still says it
     for other in (b"?UpdateTownHall@@YAXXZ", b"_memcpy", b"??0Town@@QAE@XZ", b".text"):
         assert names.address_of(other, real) is None, other
+    # a method named with its class (a DLL exports start of two classes): Town::start is the class's, not Mill's
+    real = names.real_names({"names": {"func_00401000": "Town::start", "func_00402000": "Game::UI::start"}})
+    assert names.address_of(b"?start@Town@@QAEXXZ", real) == b"func_00401000"
+    assert names.address_of(b"?start@UI@Game@@QAEXXZ", real) == b"func_00402000"
+    assert names.address_of(b"?start@Mill@@QAEXXZ", real) is None
 
 
 def test_a_constructor_or_destructor_stands_for_the_address_its_class_names():
@@ -1414,3 +1419,261 @@ def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(t
     assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+# ---------------------------------------------------------------------------------------------------- the game's DLLs
+YEAR = 365 * 24 * 3600
+BUILT = 1_017_000_000  # (2002: a build's time)
+
+
+def _tiny_program(code: bytes, base: int, *, dll: bool = True, timestamp: int = BUILT, exports: dict | None = None,
+                  relocs: tuple[int, ...] = (), stripped: bool = False) -> bytes:
+    """A 32-bit Windows program (a DLL by default) whose .text, at base + 0x1000, is `code`; its export table
+    (`exports`: offset in .text -> name, or a forwarder's "dll.name" as the value of a negative offset) and base
+    relocations (`relocs`: offsets in .text of the addresses in it) in sections of their own."""
+    text_rva, edata_rva, reloc_rva, raw = 0x1000, 0x2000, 0x3000, 0x200
+    edata = bytearray(40)
+    named = sorted((exports or {}).items(), key=lambda kv: kv[1])
+    functions = edata_rva + 40
+    names_at = functions + 4 * len(named)
+    ordinals = names_at + 4 * len(named)
+    strings = ordinals + 2 * len(named)
+    struct.pack_into("<IIHHIIIIIII", edata, 0, 0, 0, 0, 0, 0, 1, len(named), len(named), functions, names_at, ordinals)
+    table, pointers, numbers, text = bytearray(), bytearray(), bytearray(), bytearray()
+    for k, (offset, name) in enumerate(named):
+        name, forward = (name, None) if offset >= 0 else (name.split(".")[1], name)
+        target = text_rva + offset if forward is None else strings + len(text)
+        if forward is not None:
+            text += forward.encode() + b"\0"
+        table += struct.pack("<I", target)
+        numbers += struct.pack("<H", k)
+        pointers += struct.pack("<I", strings + len(text))
+        text += name.encode() + b"\0"
+    edata += table + pointers + numbers + text
+    block = struct.pack("<II", text_rva, 8 + 2 * len(relocs) + 2 * (len(relocs) % 2)) + b"".join(
+        struct.pack("<H", 0x3000 | r) for r in relocs) + b"\0\0" * (len(relocs) % 2)
+    bodies = [code, bytes(edata), block]
+    head = bytearray(raw)
+    head[:2], head[0x3C:0x40] = b"MZ", struct.pack("<I", 0x40)
+    flags = 0x0102 | (0x2000 if dll else 0) | (0x0001 if stripped else 0)
+    struct.pack_into("<4sHHIIIHH", head, 0x40, b"PE\0\0", 0x14C, 3, timestamp, 0, 0, 0xE0, flags)
+    opt = 0x58
+    struct.pack_into("<H", head, opt, 0x10B)
+    struct.pack_into("<I", head, opt + 16, text_rva)
+    struct.pack_into("<I", head, opt + 28, base)
+    struct.pack_into("<I", head, opt + 56, 0x4000)
+    struct.pack_into("<II", head, opt + 96, edata_rva if named else 0, len(edata) if named else 0)
+    struct.pack_into("<II", head, opt + 136, reloc_rva if relocs else 0, len(block) if relocs else 0)
+    out, at = bytearray(), raw
+    for k, (name, rva, body, kind) in enumerate(zip((b".text", b".edata", b".reloc"), (text_rva, edata_rva, reloc_rva),
+                                                   bodies, (0x60000020, 0x40000040, 0x42000040))):
+        size = -(-len(body) // raw) * raw
+        struct.pack_into("<8sIIIIIIHHI", head, opt + 0xE0 + 40 * k, name, len(body), rva, size, at, 0, 0, 0, 0, kind)
+        out += body.ljust(size, b"\0")
+        at += size
+    return bytes(head) + bytes(out)
+
+
+# 0x10001000 reads the word at 0x10001010 (its own data: mov eax, [0x10001010]; ret), 0x10001010 returns the address
+# of 0x10001000 (mov eax, 0x10001000; ret): both relocated, so moving the DLL changes both
+DLL_CODE = bytes.fromhex("a110100010c3").ljust(0x10, b"\x90") + bytes.fromhex("b800100010c3").ljust(0x10, b"\x90")
+DLL_RELOCS = (0x1, 0x11)
+
+
+def _game_folder(tmp_path: Path) -> Path:
+    """A game's folder: its program, two DLLs of its own that both want 0x10000000, and the others' DLLs games carry."""
+    top = tmp_path / "game"
+    (top / "data").mkdir(parents=True)
+    exe = _tiny_program(bytes.fromhex("33c0c3"), 0x400000, dll=False)
+    (top / "game.exe").write_bytes(exe)
+    engine = _tiny_program(DLL_CODE, 0x10000000, exports={0: "_Engine_Init@4", 0x10: "Engine_Data"}, relocs=DLL_RELOCS)
+    (top / "engine.dll").write_bytes(engine)
+    (top / "data" / "logic.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, exports={0: "Engine_Init"},
+                                                           relocs=DLL_RELOCS))
+    for name in ("msvcr71.dll", "d3d8.dll", "binkw32.dll", "avcodec-53.dll", "drvmgt.dll", "widescreen.asi"):
+        (top / name).write_bytes(engine)
+    (top / "patch.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, relocs=DLL_RELOCS, timestamp=BUILT + 3 * YEAR))
+    (top / "fixed.dll").write_bytes(_tiny_program(DLL_CODE, 0x10000000, stripped=True))
+    (top / "notes.dll").write_bytes(b"not a program")
+    for folder in ("launcher", ".cache", "a/b/c"):  # a program's own folder, a hidden one, one too deep: not looked in
+        (top / folder).mkdir(parents=True)
+        (top / folder / "hook.dll").write_bytes(engine)
+    (top / "launcher" / "launcher.exe").write_bytes(exe)
+    return top
+
+
+def test_the_games_own_dlls_are_found_and_the_others_left_out_with_why(tmp_path):
+    """#12: many games keep much of their code in DLLs of their own. The import takes those beside the .exe (its
+    folder and two below), each at its own address unless the program or a DLL before it has that one; the C
+    runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins and DLLs built long
+    after the program (a mod's) are left out, and the log says which and why."""
+    top = _game_folder(tmp_path)
+    main = scratch_pe.read_pe((top / "game.exe").read_bytes())
+    found, left_out = scratch_pe.find_modules(top / "game.exe", main)
+    assert [(m.rel, m.name, hex(m.pe.image_base), hex(m.preferred)) for m in found] == [
+        ("engine.dll", "engine", "0x10000000", "0x10000000"), ("data/logic.dll", "logic", "0x10010000", "0x10000000")]
+    assert dict(left_out) == {"avcodec-53.dll": scratch_pe.MIDDLEWARE, "binkw32.dll": scratch_pe.MIDDLEWARE,
+                              "d3d8.dll": scratch_pe.STAND_IN,
+                              "drvmgt.dll": scratch_pe.PROTECTION, "fixed.dll": scratch_pe.NO_ROOM,
+                              "msvcr71.dll": scratch_pe.RUNTIME, "notes.dll": scratch_pe.NOT_PROGRAM,
+                              "patch.dll": scratch_pe.LATER, "widescreen.asi": scratch_pe.PLUGIN}
+    lines = scratch_pe.left_out_lines(left_out)
+    assert len(lines) == 8 and any(line.startswith("left out, ASI plugins") and line.endswith("widescreen.asi")
+                                   for line in lines)
+    # moved as Windows moves it: every address its base relocations name, and its header's base
+    logic = found[1].pe
+    assert logic.read(0x10011000, 6) == bytes.fromhex("a110100110c3")
+    assert logic.read(0x10011010, 6) == bytes.fromhex("b800100110c3")
+    assert scratch_pe.rebase(logic.data, 0x10000000) == (top / "data" / "logic.dll").read_bytes()
+    # the names it exports, as C names them
+    assert scratch_pe.exports(found[0].pe) == {0x10001000: "Engine_Init", 0x10001010: "Engine_Data"}
+
+
+def test_a_dlls_exports_are_named_as_c_and_cpp_write_them():
+    for raw, name in (("Init", "Init"), ("_Init@4", "Init"), ("@Mix@8", "Mix"), ("?start@App@@QAEXXZ", "App::start"),
+                      ("?start@UI@Game@@QAEXXZ", "Game::UI::start"), ("?init@@YAXXZ", "init"),
+                      ("??0App@@QAE@XZ", None), ("?f@?$Vec@H@@QAEXXZ", None), ("Init@@", None)):
+        assert scratch_pe.export_name(raw) == name, raw
+
+
+def test_a_forwarded_export_is_another_dlls_code():
+    dll = _tiny_program(DLL_CODE, 0x10000000, exports={0: "Init", -1: "kernel32.Sleep"})
+    assert scratch_pe.exports(scratch_pe.read_pe(dll)) == {0x10001000: "Init"}
+
+
+def test_a_folder_imports_its_biggest_program_decompdecomp_can_start(tmp_path):
+    """Pointing at a game's folder: its .exe is the biggest program decompdecomp can start (a launcher or an
+    uninstaller is smaller; a 64-bit tool can't start), and the GUI knows a PC game's DLLs come with its path, not a
+    dropped file."""
+    top = _game_folder(tmp_path)
+    (top / "setup.exe").write_bytes(_tiny_program(bytes.fromhex("c3"), 0x400000, dll=False)[:0x400])
+    (top / "tool64.exe").write_bytes(_windows_program(machine=0x8664) + bytes(0x10000))
+    assert consoles.game_in(top) == top / "game.exe"
+    with pytest.raises(Exception, match="holds no game file"):
+        consoles.game_in(top / "data")
+    assert consoles.get("pc").describe()["games_in_folders"] and not consoles.get("n64").describe()["games_in_folders"]
+
+
+def test_importing_a_folder_starts_from_its_program(tmp_path, monkeypatch):
+    from decompnet.app.engine import RomNetwork
+
+    top = _game_folder(tmp_path)
+    started = []
+    monkeypatch.setattr(type(consoles.get("pc")), "import_game", lambda self, net, file, **_: started.append(file) or "s")
+    said = []
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
+    assert net.import_rom(top, confirmed=True, log=said.append) == "s"
+    assert started == [top / "game.exe"] and said == ["the game's program in that folder: game.exe"]
+
+
+def _project_with_dlls(tmp_path: Path) -> Path:
+    """A PC project of the game folder's program and its two DLLs, as create writes it (no Ghidra, no compiler), and
+    its objects delinked by the project's own tools/delink.py."""
+    top = _game_folder(tmp_path)
+    root = tmp_path / "proj"
+    main = scratch_pe.read_pe((top / "game.exe").read_bytes())
+    found, _ = scratch_pe.find_modules(top / "game.exe", main)
+    (root / "orig" / "data").mkdir(parents=True)
+    shutil.copy(top / "game.exe", root / "orig" / "game.exe")
+    units = {"text_00401000": [scratch_pe._entry(main, f) for f in scratch_pe.analyse(main, [_row(0x401000, 0x401003)])]}
+    modules = []
+    for m in found:
+        shutil.copy(m.path, root / "orig" / m.rel)
+        base = m.pe.image_base
+        fns = scratch_pe.analyse(m.pe, [_row(base + 0x1000, base + 0x1006), _row(base + 0x1010, base + 0x1016)])
+        units[f"{m.name}/text_{base + 0x1000:08X}"] = [scratch_pe._entry(m.pe, f) for f in fns]
+        modules.append({"name": m.name, "exe": f"orig/{m.rel}", "sha1": hashlib.sha1(m.path.read_bytes()).hexdigest(),
+                        "image_base": base, "preferred_base": m.preferred})
+    info = {"exe": "orig/game.exe", "sha1": hashlib.sha1((top / "game.exe").read_bytes()).hexdigest(),
+            "image_base": 0x400000, "modules": modules, "units": units}
+    (root / "config" / "game").mkdir(parents=True)
+    (root / "config" / "game" / "functions.json").write_text(json.dumps(info))
+    for unit in units:
+        (root / "src" / "auto" / f"{unit}.cpp").parent.mkdir(parents=True, exist_ok=True)
+        (root / "src" / "auto" / f"{unit}.cpp").write_text('#include "common.h"\n')
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    subprocess.run([sys.executable, "tools/delink.py", "config/game/functions.json", "build/game/target"], cwd=root,
+                   check=True)
+    return root
+
+
+def test_a_projects_dlls_are_delinked_at_their_addresses_and_rebuild_byte_for_byte(tmp_path):
+    """Each DLL's functions are cut out of it at the address the project gives it (the moved one moved by delink.py
+    as by the import), refer to its own code and data by func_/D_<address> (no two programs share one), and the
+    rebuild check puts each program's code back together against that program."""
+    root = _project_with_dlls(tmp_path)
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    logic = info["units"]["logic/text_10011000"]
+    assert [fn["name"] for fn in logic] == ["_func_10011000", "_func_10011010"]
+    assert logic[0]["relocs"] == [[1, scratch_pe.DIR32, "_func_10011010", 0]]
+    assert logic[1]["relocs"] == [[1, scratch_pe.DIR32, "_func_10011000", 0]]
+    assert (root / "build" / "game" / "target" / "logic" / "text_10011000.obj").is_file()
+    result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+    assert result["identical"], result
+    assert result["detail"].endswith("by program: game.exe 1, engine.dll 2, logic.dll 2")
+    # an object delinked from the DLL at its preferred address instead differs: the check reads each program
+    coff = _template_tool("delink").coff
+    moved = root / "build" / "game" / "target" / "logic" / "text_10011000.obj"
+    moved.write_bytes(coff([{**logic[0], "relocs": []}], (root / "orig" / "data" / "logic.dll").read_bytes()))
+    assert not scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+
+
+def test_a_dlls_data_functions_and_files_are_its_own(tmp_path):
+    """read_data and the diff's values read the program an address is in; joins stay within one program; a DLL's new
+    source file stays in its folder; its classes come from its own RTTI (none here) without failing."""
+    root = _project_with_dlls(tmp_path)
+    manifest = {"version": "game", "game": {"path": "orig/game.exe"}}
+    assert scratch_pe.data_bytes(root, manifest, 0x10011000, 6) == bytes.fromhex("a110100110c3")
+    assert scratch_pe.data_bytes(root, manifest, 0x401000, 3) == bytes.fromhex("33c0c3")
+    assert "a1 10 10 01 10 c3" in scratch_pe.read_data(root, manifest, "D_10011000", 8)
+    with pytest.raises(ForkError, match="or its DLLs"):
+        scratch_pe.read_data(root, manifest, "D_20000000", 8)
+    with pytest.raises(ForkError, match="two programs"):
+        scratch_pe.join_functions(root, "game", "_func_10001010", "_func_10011000")
+    with pytest.raises(ForkError, match="src/auto/logic/"):
+        scratch_pe.split_unit(root, "game", "src/auto/logic/text_10011000.cpp", "_func_10011010", "src/auto/b.cpp")
+    scratch_pe.split_unit(root, "game", "src/auto/logic/text_10011000.cpp", "_func_10011010", "src/auto/logic/b.cpp")
+    assert "logic/b" in json.loads((root / "config" / "game" / "functions.json").read_text())["units"]
+    assert scratch_pe.mark_exception_stubs(root, "game") == 0
+    from decompnet.consoles.pc import rtti
+
+    assert rtti.for_project(root, manifest).by_vtable == {}
+    (root / "orig" / "engine.dll").unlink()  # a DLL not in the project (yet): what reads every program waits
+    assert scratch_pe.missing(root, "game") == ["orig/engine.dll"] and scratch_pe.mark_exception_stubs(root, "game") is None
+
+
+@needs_tools
+@pytest.mark.skipif(toolchains.installed("msvc2005") is None, reason="the demo's DLL is built with Visual C++ 2010 SP1")
+def test_a_game_folder_brings_its_dll_and_agents_match_the_dlls_functions(tmp_path):
+    """Demo Quest with a DLL of its own (build.py dll), imported from its folder: the DLL is analysed at its own
+    address (moved, as the program has that one), its exports name its functions, its files build with the Visual
+    C++ that built it (2010 SP1; the program: 6.0), the rebuild check passes for each program, and an agent matches
+    a DLL function written under the name the DLL exports it by."""
+    from decompnet.app.engine import RomNetwork
+
+    folder = DEMO / "build" / "dll"
+    if not (folder / "demoquest.dll").exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py"), "dll"], check=True)
+    said = []
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(folder, confirmed=True, log=said.append)
+    ov = net.overview(slug)
+    assert ov["ready"] and ov["rebuild"]["identical"], ov["rebuild"]
+    assert re.search(r"by program: demoquest\.exe \d+, demoquest\.dll \d+$", ov["rebuild"]["detail"])
+    assert any("the game's own DLLs beside demoquest.exe: demoquest.dll" in line for line in said)
+    assert any("moved by its base relocations" in line for line in said)
+    root = Path(net.project_row(slug)["root"])
+    info = json.loads((root / "config" / "demoquest" / "functions.json").read_text())
+    (dll,) = info["modules"]
+    assert dll["preferred_base"] == 0x400000 and dll["image_base"] > 0x400000
+    clamp = next(key for key, real in info["names"].items() if real == "clamp_s32")
+    assert int(clamp[5:], 16) > dll["image_base"]
+    dll_units = [unit for unit in info["units"] if int(unit[-8:], 16) >= dll["image_base"]]
+    assert dll_units and all(unit.startswith("demoquest/") for unit in dll_units)
+    assert scratch_pe.file_compilers(root, "demoquest") == {f"src/auto/{unit}.cpp": "10.0SP1" for unit in dll_units}
+    agent, _ = net.local_agent("pc-agent")
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", header, "the game's types").startswith("✅")
+    symbol = next(fn["name"] for fns in info["units"].values() for fn in fns if fn["name"].endswith(clamp))
+    res = net.attempt(agent, symbol, csource.get(GAME.read_text(), "clamp_s32"), slug)
+    assert res["matched"], res["text"]

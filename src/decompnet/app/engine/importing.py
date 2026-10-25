@@ -37,6 +37,9 @@ class ImportMixin:
         ("game", the default, or "program": forks/project.py SCOPES)."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
+        if isinstance(data, Path) and data.is_dir():  # a game that is a folder (a PC game: its .exe and DLLs)
+            data = consoles.game_in(data)
+            log(f"the game's program in that folder: {data.name}")
         console = consoles.identify(data)
         return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope)
 

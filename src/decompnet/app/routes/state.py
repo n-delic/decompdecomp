@@ -146,8 +146,8 @@ def register(app: App) -> None:
                 return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
             if q.get("path"):
                 game = hostenv.local_path(q["path"])
-                if not game.is_file():
-                    return fail(ValueError(f"no file at {game}"))
+                if not game.exists():  # (a folder too: a PC game's, whose own DLLs come along)
+                    return fail(ValueError(f"no file or folder at {game}"))
                 name = game.name
             else:
                 name = Path(q.get("name") or "game.bin").name
