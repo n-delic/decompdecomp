@@ -53,7 +53,7 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     source.write_text("int sample(void) { return 1; }\n")
     config = root / "config/TEST/functions.json"
     config.parent.mkdir(parents=True)
-    config.write_text(json.dumps({"units": {"sample": {}}}))
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"sample": {}}}))
     (root / "include").mkdir()
     compiler_root = tmp_path / "Compiler & tools $ ü"
     compiler = compiler_root / "6.0/Bin/CL.EXE"
@@ -456,6 +456,38 @@ def test_agents_match_functions(pc):
     net.release(agent, other, "", slug)
     root = Path(net.project_row(slug)["root"])
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
+
+
+@needs_tools
+def test_the_project_rebuilds_the_whole_program_from_its_matched_c(pc, tmp_path):
+    """The rebuildable export on PC is the project itself: `ninja rebuild` puts the whole .exe back together with
+    every matched function from its C, the rebuild check says it's the user's copy byte for byte, and a fresh clone of
+    the project, given the user's copy, builds the same."""
+    net, slug = pc
+    proj = net.project_row(slug)
+    root, version = Path(proj["root"]), "demoquest"
+    agent, _ = net.local_agent("pc-agent")
+    clamp = next(s for s in _map() if re.sub(r"^[_@]|@\d+$", "", s) == "clamp_s32")
+    res = net.attempt(agent, clamp.replace("clamp_s32", _addresses()["clamp_s32"]),
+                      _by_address()(csource.get(GAME.read_text(), "clamp_s32")), slug)
+    assert res["matched"], res["text"]
+    matched = {r["name"] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",
+                                                proj["id"])}
+    result = net.forks.check_rom(slug, log=lambda *_: None)
+    assert result["identical"] and result["what"] == "The game's program, rebuilt from the project,", result
+    from_c = set(json.loads((root / "build" / version / "rebuild.json").read_text())["c"])
+    assert matched and matched <= from_c, matched - from_c
+    assert net.overview(slug)["rebuild"]["identical"]
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(root), str(clone)], check=True)
+    (clone / "orig").mkdir()
+    shutil.copyfile(root / "orig" / f"{version}.exe", clone / "orig" / f"{version}.exe")
+    fp = ForkProject(clone)
+    for cmd in ([sys.executable, "tools/configure.py", version, *scratch_pe.tool_args()], ["ninja", "rebuild"]):
+        ok, out = fp.run(cmd, log=lambda *_: None)
+        assert ok, out
+    assert (clone / "build" / version / f"{version}.exe").read_bytes() == (root / "orig" / f"{version}.exe").read_bytes()
+    assert set(json.loads((clone / "build" / version / "rebuild.json").read_text())["c"]) == from_c
 
 
 NEWER = ["8.0SP1", "9.0", "9.0SP1", "10.0", "10.0SP1"]  # the msvc2005 pack
@@ -895,8 +927,9 @@ def test_a_project_made_before_gets_its_pieces_joined_and_still_rebuilds(tmp_pat
     assert units["text_00401000"][0]["size"] == 0x20
     _delink(root)
     assert scratch_pe.check_code(root, "game", log=lambda *_: None) == {
-        "identical": True, "detail": "identical: the code of its 2 functions (37 bytes)",
-        "what": "The game's code, rebuilt from its delinked functions,"}
+        "identical": True, "detail": "identical: the whole program (549 bytes); its 2 functions (37 bytes of code), "
+                                     "0 of them from C", "what": "The game's program, rebuilt from the project,"}
+    assert (root / "build" / "game" / "game.exe").read_bytes() == (root / "orig" / "game.exe").read_bytes()
 
 
 def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
@@ -911,6 +944,67 @@ def test_the_rebuild_check_finds_a_function_delinked_wrong(tmp_path):
     target.write_bytes(coff([{**owner, "size": owner["size"] + 1}], exe))  # cut one byte too long
     result = scratch_pe.check_code(root, "game", log=lambda *_: None)
     assert not result["identical"] and "_func_0040100F (overlaps _func_00401000)" in result["detail"]
+
+
+def _compiled(code: bytes, name: str, relocs: list[tuple[int, int, int]], data: bytes = b"") -> bytes:
+    """An object as Visual C++ compiles one: .text holding the function `name` (symbol 0), .data holding `data` (a
+    string, $SG1: symbol 1), and the code's relocations as (offset, symbol, type)."""
+    text_at = 20 + 40 * 2
+    rel_at = text_at + len(code)
+    data_at = rel_at + 10 * len(relocs)
+    table_at = data_at + len(data)
+    strings = bytearray(4)
+    table = b""
+    for sym, value, section, typ, cls in ((name, 0, 1, 0x20, 2), ("$SG1", 0, 2, 0, 3)):
+        raw = sym.encode()
+        field = raw.ljust(8, b"\0") if len(raw) <= 8 else struct.pack("<II", 0, len(strings))
+        strings += b"" if len(raw) <= 8 else raw + b"\0"
+        table += struct.pack("<8sIhHBB", field, value, section, typ, cls, 0)
+    struct.pack_into("<I", strings, 0, len(strings))
+    return (struct.pack("<HHIIIHH", 0x14C, 2, 0, table_at, 2, 0, 0)
+            + struct.pack("<8sIIIIIIHHI", b".text", 0, 0, len(code), text_at, rel_at, 0, len(relocs), 0, 0x60500020)
+            + struct.pack("<8sIIIIIIHHI", b".data", 0, 0, len(data), data_at, 0, 0, 0, 0, 0xC0300040)
+            + code + b"".join(struct.pack("<IIH", *r) for r in relocs) + data + table + bytes(strings))
+
+
+def test_the_project_rebuilds_the_program_with_each_function_from_its_c_where_that_is_the_games_code(tmp_path):
+    """The rebuildable export on PC: tools/rebuild.py puts the whole program back together, each function from what
+    src/ compiles to where that is the game's code once its relocations are filled in (its own string where the game
+    has the same bytes), else from the function delinked from the user's copy; a best attempt that doesn't match, or
+    calls another function, stays the game's bytes, and the program is the user's copy either way."""
+    root = _project(tmp_path, PROGRAM, ROWS)
+    exe, compiled = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "src" / "auto"
+    compiled.mkdir(parents=True)
+    info = json.loads((root / "config" / "game" / "functions.json").read_text())
+    coff = _template_tool("delink").coff
+    for unit, fns in info["units"].items():  # (C that compiles to each function: its own object, as delinked)
+        (compiled / f"{unit}.obj").write_bytes(coff(fns, exe))
+
+    def built() -> list[str]:
+        result = scratch_pe.check_code(root, "game", log=lambda *_: None)
+        assert result["identical"], result
+        assert (root / "build" / "game" / "game.exe").read_bytes() == exe
+        return json.loads((root / "build" / "game" / "rebuild.json").read_text())["c"]
+    assert built() == ["_func_00401000", "_func_0040100F", "_func_00401020"]
+    owner = info["units"]["text_00401000"][0]
+    (compiled / "text_00401000.obj").write_bytes(coff([{**owner, "relocs": [[9, scratch_pe.REL32, "_func_0040100F", 0]]}],
+                                                      exe))  # calls another function
+    assert built() == ["_func_0040100F", "_func_00401020"]
+    wrong = bytearray(exe)
+    wrong[scratch_pe.read_pe(exe).offset(0x401020) + 1] ^= 1  # another instruction
+    (compiled / "text_00401020.obj").write_bytes(coff(info["units"]["text_00401020"], bytes(wrong)))
+    assert built() == ["_func_0040100F"]
+    # a string of its own: used where the game's code reads it from, when the game has the same bytes there
+    load = bytes.fromhex("b810104000c3")  # mov eax, 0x401010; ret
+    program = load.ljust(0x10, b"\x90") + b"hi\0"
+    root = _project(tmp_path / "string", program, [_row(0x401000, 0x401006)])
+    exe, compiled = (root / "orig" / "game.exe").read_bytes(), root / "build" / "game" / "src" / "auto"
+    compiled.mkdir(parents=True)
+    code = bytes.fromhex("b800000000c3")
+    (compiled / "text_00401000.obj").write_bytes(_compiled(code, "_func_00401000", [(1, 1, scratch_pe.DIR32)], b"hi\0"))
+    assert built() == ["_func_00401000"]
+    (compiled / "text_00401000.obj").write_bytes(_compiled(code, "_func_00401000", [(1, 1, scratch_pe.DIR32)], b"ho\0"))
+    assert built() == []
 
 
 def test_agents_join_two_functions_by_their_names(tmp_path):
@@ -1046,6 +1140,10 @@ def test_a_project_made_before_gets_its_import_thunks_cut_out_named_and_set_asid
     assert names.address_of(b"_RtlUnwind@16", names.real_names(info)) == b"func_00401010"
     assert consoles.get("pc").generated_functions(ForkProject(root), "game")["_closesocket"].startswith("an import")
     _delink(root)
+    rebuild = _template_tool("rebuild")  # (the tiny program has no import table: the rebuild reads SLOTS too)
+    monkeypatch.setattr(rebuild.Program, "_imports", lambda self, exe, at, base: {
+        f"__imp__{name}": slot for slot, name in SLOTS.items()})
+    monkeypatch.setattr(scratch_pe, "_template_tool", lambda name: rebuild)
     assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
     assert scratch_pe.name_import_thunks(root, "game") == 0  # (done)
 

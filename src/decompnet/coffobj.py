@@ -1,7 +1,7 @@
 """COFF objects, as Visual C++ writes them and as a PC project's tools/delink.py cuts the game's functions into: a
-section per function (/Gy), its symbol the first one defined in it, relocations by symbol. The rebuild check
-(consoles/pc/scratch.check_code) puts a program's code back together from them; twins (app/twins.py) fingerprint
-their functions. Standard library only.
+section per function (/Gy), its symbol the first one defined in it, relocations by symbol. Twins (app/twins.py)
+fingerprint their functions; the rebuild check reads them with the project's own tools/rebuild.py, which a project
+runs without decompdecomp. Standard library only.
 """
 
 from __future__ import annotations

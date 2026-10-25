@@ -14,12 +14,14 @@ does the delinking itself:
 - the exception-handling stubs Visual C++ makes (its `.text$x` code, at the end of the program's code) are set aside:
   functions.json says why (`generated`), and no C of their own makes them (exception_stubs);
 - the pieces Ghidra cut off functions (a lone epilogue, a catch block) are joined back to them (merge_pieces), never
-  a stub; check_code puts the program's code back together from the delinked functions, the rebuild check.
+  a stub.
 
 The project (tools/configure.py, tools/delink.py) cuts the functions out of the user's copy into COFF objects at
 build time, one per source file (src/auto/text_<address>.cpp, about 4 KiB of functions each), and compiles src/ with
 MSVC through wibo. A program built without relocations (most games before 2005) has every address fixed, which is
-what this reads; there's no relink of the whole .exe yet, so files aren't linked into the game as on GameCube.
+what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together from the project, each function
+at its address from its C where that compiles to the game's code, else from the delinked objects, the rest your
+copy's, and compares it with the user's copy: the project's rebuild check (check_code) and its export.
 """
 
 from __future__ import annotations
@@ -41,7 +43,6 @@ from decompnet.hostenv import NO_WINDOW
 
 from ... import toolchains
 from ...arch import x86 as x86_arch
-from ...coffobj import sections as _coff_sections
 from ...forks.project import ForkError, ForkProject
 from . import debuginfo
 
@@ -648,7 +649,6 @@ def _thunk_symbol(name: str, row: dict | None = None) -> str:
 
 CALL = 0xE8  # the opcode before a rel32 call's target
 JMP_REL32, TWO_BYTE_OPCODE, JCC_REL32 = 0xE9, 0x0F, range(0x80, 0x90)  # the other near rel32 jumps' opcodes
-_DATA_SYMBOL = re.compile(r"_D_([0-9A-F]{8})")  # data by its address, as analyse names it
 MAX_INSTRUCTION_BYTES = 15
 
 
@@ -1533,56 +1533,37 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
 CODE_SHOWN = 5  # functions a rebuild that differs names
 
 
+def _template_tool(name: str):
+    """One of the template's build tools (tools/<name>.py), as a module: the rebuild check runs the template's
+    rebuild.py, so a project made before it was written is checked the same way."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(f"pc_tools_{name}", TEMPLATE / "tools" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def check_code(root: Path, version: str, log=print) -> dict:
-    """The rebuild check of a PC project: the program's code rebuilt from the build's delinked objects (each function
-    placed at its address, every relocation filled in with the address its symbol names) compared with the user's
-    copy, byte for byte: {"identical", "detail", "what"}. There's no relink of the whole .exe yet, so this is what a
-    change to the project's functions (a join) is checked against: a function cut too long or too short, or a
-    relocation to the wrong place, comes out different."""
-    info = json.loads((root / "config" / version / "functions.json").read_text(encoding="utf-8"))
-    pe = read_pe((root / info["exe"]).read_bytes())
-    where = {fn["name"]: fn["addr"] for fns in info["units"].values() for fn in fns}
-    where.update({f"__imp__{name}": slot for slot, name in pe.imports.items()})
-    placed, differ = [], []
-    for unit in info["units"]:
-        obj = root / "build" / version / "target" / f"{unit}.obj"
-        if not obj.is_file():
-            differ.append(f"{unit} (no object: the build didn't make it)")
-            continue
-        sections = _coff_sections(obj.read_bytes())
-        starts = [where.get(name) for name, _, _ in sections]
-        for (name, data, relocs), start in zip(sections, starts):
-            if start is None:
-                differ.append(f"{name} (not in functions.json)")
-                continue
-            code = bytearray(data)
-            for off, kind, symbol, section, value in relocs:
-                data_name = _DATA_SYMBOL.fullmatch(symbol)
-                if section > 0:  # a label in its own object ($L, a jump table's entry)
-                    target = None if starts[section - 1] is None else starts[section - 1] + value
-                else:
-                    target = where.get(symbol, int(data_name.group(1), 16) if data_name else None)
-                if target is None:
-                    differ.append(f"{name} (refers to {symbol}, which names no address)")
-                    break
-                inline = struct.unpack_from("<i", code, off)[0]
-                address = target + inline - (start + off + 4 if kind == REL32 else 0)
-                struct.pack_into("<I", code, off, address & 0xFFFFFFFF)
-            else:
-                if bytes(code) != pe.read(start, len(code)):
-                    differ.append(name)
-                placed.append((start, len(code), name))
-    placed.sort()
-    differ += [f"{b[2]} (overlaps {a[2]})" for a, b in zip(placed, placed[1:]) if b[0] < a[0] + a[1]]
-    if differ:
+    """The rebuild check of a PC project: the whole program rebuilt from the project (tools/rebuild.py: every
+    function's code at its address, from what src/ compiles to where that is the game's code, else from the delinked
+    objects, each relocation filled in with the address its symbol names), compared with the user's copy, byte for
+    byte: {"identical", "detail", "what"}. A change to the project's functions (a join) is checked against it too: a
+    function cut too long or too short, or a relocation to the wrong place, comes out different."""
+    report = _template_tool("rebuild").rebuild(Path("config") / version / "functions.json", Path("build") / version,
+                                               root)
+    if report["differ"] or not report["identical"]:
+        differ = report["differ"] or ["the program (outside its functions)"]
         detail = (f"{len(differ)} functions rebuilt from the delinked objects differ from your copy: "
                   f"{', '.join(differ[:CODE_SHOWN])}{'…' if len(differ) > CODE_SHOWN else ''}")
         log(f"note: {detail}")
         return {"identical": False, "detail": detail}
-    covered = sum(size for _, size, _ in placed)
-    log(f"the game's code rebuilt from its {len(placed):,} delinked functions is your copy's, byte for byte")
-    return {"identical": True, "detail": f"identical: the code of its {len(placed):,} functions ({covered:,} bytes)",
-            "what": "The game's code, rebuilt from its delinked functions,"}
+    c, n = len(report["c"]), report["functions"]
+    log(f"the game's program rebuilt from the project ({report['output']}, {c:,} of its {n:,} functions from C) is "
+        "your copy, byte for byte")
+    return {"identical": True, "detail": f"identical: the whole program ({report['size']:,} bytes); its {n:,} "
+                                         f"functions ({report['bytes']:,} bytes of code), {c:,} of them from C",
+            "what": "The game's program, rebuilt from the project,"}
 
 
 def _run(cmd: list[str], root: Path, what: str, log) -> None:
@@ -1700,6 +1681,8 @@ copy of its program and compared with what `src/` compiles to, function by funct
 1. Put your own copy of the game's program here as `orig/{version}.exe` (never commit it).
 2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`.
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
+4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
+   where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.
 
 Compiler: Visual C++ {compiler} (change `MSVC_VERSION` and `CL_FLAGS` in tools/configure.py if the game was built
 with another version or other flags; `config/{version}/file_compilers.json` names the files built with another
