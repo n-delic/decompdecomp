@@ -7,7 +7,8 @@ the game is a Windows program: decompdecomp runs on Linux, and so do the compile
   which also says (with its sections) whether decompdecomp can start it at all: 64-bit, Visual C++ 2017 and newer,
   mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check puts the program's code
   back together from those objects (check_code). Visual C++'s exception-handling stubs are set aside
-  (exception_stubs). Projects made before get what the import learnt since when the app starts (on_start, ANALYSIS).
+  (exception_stubs), and so are the import thunks, named after their imports (name_import_thunks). Projects made
+  before get what the import learnt since when the app starts (on_start, ANALYSIS).
   Each source file can have its own Visual C++ (file_compiler, set_file_compiler: config/<version>/file_compilers.json)
   and split_file divides one (split_source: a unit of functions.json).
 - rtti.py: the C++ classes the program's run-time type information names (get_class, drafts as `Class::method`).
@@ -52,9 +53,10 @@ class WindowsPC(Console):
     # 1 (or none: every project made before 2) Ghidra's functions as it found them; 2 no jump table's entries
     # relocated twice (scratch.drop_repeated_relocations), no far call relocated (drop_far_call_relocations) and
     # every function's last instruction whole (complete_last_instructions); 3 Visual C++'s exception-handling stubs set aside (scratch.mark_exception_stubs);
-    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub. Its build tools
+    # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub; 5 the import thunks
+    # functions of their own, named after their imports and set aside (scratch.name_import_thunks). Its build tools
     # have a version of their own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
-    ANALYSIS = 4
+    ANALYSIS = 5
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""
@@ -134,13 +136,18 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        def thunks(fp):
+            n = scratch.name_import_thunks(fp.root, version, keep=matched())
+            return (f"{n} functions are import thunks the linker adds for calls to DLLs' functions: named after the "
+                    "function each calls, and set aside" if n else None)
+
         def tools(fp):  # (no source file changes: agents' C stays as it is)
             changed = scratch.write_tools(fp.root, version)
             return (f"its build has the fixes decompdecomp's has had since the project was made ({', '.join(changed)})"
                     if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
-        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False)}
+        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (thunks, False)}
         kept = {}
         for level, (step, fix) in steps.items():
             if manifest.get("analysis", 1) < level:

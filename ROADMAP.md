@@ -30,7 +30,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Pieces of functions joined to their function | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | — | — | — |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | — | ✓ import thunks | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | — | — | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | the project's build | the project's build | the project's build | the project's build |
@@ -70,6 +70,15 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Windows PC: import thunks named and set aside.** A call to a DLL's function declared without
+  `__declspec(dllimport)` goes to a `jmp [__imp__Name]` the linker adds. Ghidra marks those as thunks and the
+  import left them out, so their bytes became one function with the code before them, and calls to them read as
+  calls into its middle (`_D_0062F7A6`). Each is a function of its own now, named after its import (`_RtlUnwind@16`
+  where Ghidra knows the import's arguments), set aside with why, and its import's name is its real name, so a
+  caller's brief and draft read `RtlUnwind(...)` and C that declares it either way pairs with it
+  (`scratch.name_import_thunks`). Projects made before get it at start, never touching a run a matched function
+  calls into. On a Visual C++ 6.0 game: 22 thunks (WinSock, DirectX, Video for Windows, KERNEL32), 21 of them cut
+  out of two functions of an older project, whose code still rebuilds byte for byte.
 - **Windows PC games of 2005 to 2012 build with their own Visual C++.** A game built with Visual C++ 2005 or later
   imported but built with 7.1, so nothing of it could match. The `msvc2005` pack (proprietary, installed after the
   user accepts it) has 2005, 2005 SP1, 2008, 2008 SP1, 2010 and 2010 SP1, from the decomp community's archives, and each

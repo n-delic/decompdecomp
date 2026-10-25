@@ -992,6 +992,64 @@ def test_each_pc_source_file_can_have_its_own_visual_cpp(tmp_path):
     assert first not in scratch_pe.file_compilers(root, "game")
 
 
+# a function that calls an import through its thunk, the thunks (RtlUnwind's, closesocket's), then a function that
+# calls the second thunk; the import address table's slots are at the end of the code
+SLOTS = {0x401F00: "RtlUnwind", 0x401F04: "closesocket"}
+CALLS_THUNKS = (bytes.fromhex("e80b000000c3").ljust(0x10, b"\x90")  # call 0x401010; ret
+                + bytes.fromhex("ff25001f4000") + bytes.fromhex("ff25041f4000").ljust(0xA, b"\x90")
+                + bytes.fromhex("e8f1ffffffc3"))  # call 0x401016; ret
+
+
+def test_import_thunks_are_functions_of_their_own_named_after_their_imports(monkeypatch):
+    """Ghidra marks the linker's `jmp [__imp__Name]` thunks as thunks, which analyse used to leave out: their bytes
+    went to the function before them, and calls to the second one were calls into its middle (_D_00401016)."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    pe = scratch_pe.read_pe(_tiny_exe(CALLS_THUNKS))
+    assert scratch_pe.import_thunk(pe, 0x401010) == "RtlUnwind" and scratch_pe.import_thunk(pe, 0x401000) is None
+    rows = [_row(0x401000, 0x401006), {**_row(0x401010, 0x401016), "name": "RtlUnwind", "thunk": True,
+                                        "convention": "__stdcall", "purge": 16},
+            {**_row(0x401016, 0x40101C), "name": "closesocket", "thunk": True, "purge": 2147483647},
+            _row(0x401020, 0x401026)]
+    found = scratch_pe.analyse(pe, rows)
+    assert [(f.name, f.size) for f in found] == [("_func_00401000", 0x10), ("_RtlUnwind@16", 6),
+                                                 ("_closesocket", 0xA), ("_func_00401020", 6)]
+    assert found[0].relocs == [(1, scratch_pe.REL32, "_RtlUnwind@16", 0)]
+    assert found[1].relocs == [(2, scratch_pe.DIR32, "__imp__RtlUnwind", 0)]
+    assert found[3].relocs == [(1, scratch_pe.REL32, "_closesocket", 0)]
+
+
+def test_a_project_made_before_gets_its_import_thunks_cut_out_named_and_set_aside(tmp_path, monkeypatch):
+    """The thunks a project made before took for one function (found in a gap) become functions of their own, the
+    caller of the second calls it by name, functions.json sets them aside and names them as their imports (so C
+    declaring `__stdcall RtlUnwind` pairs with them), and the code still rebuilds byte for byte."""
+    monkeypatch.setattr(scratch_pe, "_imports", lambda pe, opt: dict(SLOTS))
+    rows = [_row(0x401000, 0x401006), _row(0x401020, 0x401026)]
+    root = _project(tmp_path, CALLS_THUNKS, rows)
+    config = root / "config" / "game" / "functions.json"
+    before = config.read_text()
+    units = json.loads(before)["units"]
+    assert [(fns[0]["name"], fns[0]["size"]) for fns in units.values()][1] == ("_func_00401010", 0x10)
+    assert units["text_00401020"][0]["relocs"] == [[1, scratch_pe.REL32, "_D_00401016", 0]]
+    # a matched function calling into the run: its C names it as it is, so the run stays
+    assert scratch_pe.name_import_thunks(root, "game", keep={"_func_00401020"}) == 0
+    assert config.read_text() == before
+    assert scratch_pe.name_import_thunks(root, "game") == 2
+    info = json.loads(config.read_text())
+    entries = {fn["name"]: fn for fns in info["units"].values() for fn in fns}
+    assert {n: (fn["size"], fn.get("generated", "")[:41]) for n, fn in entries.items()} == {
+        "_func_00401000": (0x10, ""), "_RtlUnwind": (6, "an import thunk the linker adds for calls"),
+        "_closesocket": (0xA, "an import thunk the linker adds for calls"), "_func_00401020": (6, "")}
+    assert entries["_func_00401000"]["relocs"] == [[1, scratch_pe.REL32, "_RtlUnwind", 0]]
+    assert entries["_func_00401020"]["relocs"] == [[1, scratch_pe.REL32, "_closesocket", 0]]
+    assert info["names"] == {"func_00401010": "RtlUnwind", "func_00401016": "closesocket"}
+    names = _template_tool("names")
+    assert names.address_of(b"_RtlUnwind@16", names.real_names(info)) == b"func_00401010"
+    assert consoles.get("pc").generated_functions(ForkProject(root), "game")["_closesocket"].startswith("an import")
+    _delink(root)
+    assert scratch_pe.check_code(root, "game", log=lambda *_: None)["identical"]
+    assert scratch_pe.name_import_thunks(root, "game") == 0  # (done)
+
+
 def test_only_the_frame_helpers_shapes_set_a_frame():
     from decompnet.arch import x86
 
