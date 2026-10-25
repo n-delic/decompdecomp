@@ -393,8 +393,8 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                       s(what=st("vtable address, or a virtual function / constructor"))),
         "guess_struct": ("The likely struct behind a function's pointer, as C with offsets, from every function the same "
                          "pointer reaches; where else it flows; the type matched code already uses.",
-                         s(function=st("function", True), argument=st("arg0-arg3, return, or a global; +0x14 follows "
-                                                                       "the pointer at 0x14"))),
+                         s(function=st("function", True), argument=st("arg0-arg3, this (PC), return, or a global; "
+                                                                       "+0x14 follows the pointer at 0x14"))),
         "redraft": ("m2c's draft of a function made again with your declarations (a struct, a prototype) added to "
                     "the shared header's, which they replace where they declare the same names. Recorded nowhere.",
                     s(function=st("function", True), context=st("C declarations", True))),

@@ -1414,3 +1414,22 @@ def test_build_tools_that_break_the_rebuild_are_taken_back_and_not_tried_again(t
     assert json.loads((root / ".decomp.wtf.json").read_text())["tools"] == scratch_pe.tools_version()
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (tried for this version: not again)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == 1
+
+
+@needs_tools
+def test_the_guess_for_the_demos_struct_is_the_struct_its_source_has(pc):
+    """guess_struct reads Visual C++'s code: entity_update_physics's argument (on the stack) is the demo's Entity,
+    field for field, from the functions that share it, as on MIPS (tests/test_structs.py). Two differences: the flags
+    at +2 are only or'd and tested, which say nothing of their sign, and +0x18 (hp) is written only as an element of
+    the global array, `[index + address]`, which isn't read as the array's type yet."""
+    net, slug = pc
+    syms = _map()
+    name = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == "entity_update_physics")
+    name = name.replace("entity_update_physics", f"func_{syms[name]:08X}")
+    text = net.guess_struct(slug, name, "arg0")
+    guessed = {int(offset, 16): ctype for offset, ctype in re.findall(r"/\* 0x([0-9A-F]+) \*/ (\w+) unk_", text)}
+    assert guessed == {0x00: "s16", 0x02: "s16", 0x04: "s32", 0x08: "s32", 0x0C: "s32", 0x10: "s32", 0x14: "s16",
+                       0x16: "s16"}, text
+    assert f"The same type: the global D_{syms['_g_entities']:08X}" in text  # the array entity_update's loop walks
+    brief = net.get_function(name, slug)
+    assert "### Likely struct layouts" in brief and f"- arg0: S_D_{syms['_g_entities']:08X}, +0x0 s16" in brief

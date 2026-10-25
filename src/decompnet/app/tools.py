@@ -337,7 +337,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
 }
 
 ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary",
-            "guess_struct", "redraft",
+            "redraft",
             "compiler_map", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
 
@@ -498,19 +498,20 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:
-        """C++ classes found in the game (MIPS games' code; PC programs' run-time type information, which has the
-        classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
+        """C++ classes found in the game (MIPS games' and PC programs' code; a PC program's run-time type
+        information has the classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
         fields (offset, type, which functions use them) and virtual functions by slot; nothing lists them all. A
         layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:
-        """The likely struct behind a function's pointer (ROM projects, MIPS), as C with offsets: from the loads and
-        stores of every function the same pointer reaches, with how many agree on each field, where else the type
-        flows, and the type matched code already uses for it. argument: arg0-arg3, return, or a global; add +0x14
-        to follow the pointer at 0x14. The game's own type when its debug information has one. Put what you confirm
-        into context.h with edit_context."""
+        """The likely struct behind a function's pointer (MIPS games, PC programs), as C with offsets: from the loads
+        and stores of every function the same pointer reaches, with how many agree on each field, where else the
+        type flows, and the type matched code already uses for it. argument: arg0-arg3 (PC: on the stack), `this`
+        (PC: ecx), return, or a global; add +0x14 to follow the pointer at 0x14. The game's own type when its debug
+        information has one. Put what you confirm into context.h with edit_context (a project's header with
+        edit_file)."""
         return await run(ctx, "guess_struct", function=function, argument=argument)
 
     @mcp.tool(meta=ALWAYS_LOAD)

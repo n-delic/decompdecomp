@@ -176,7 +176,8 @@ def test_a_header_gives_a_types_definition():
 
 ENTITY = {0x00: "s16", 0x02: "u16", 0x04: "s32", 0x08: "s32", 0x0C: "s32", 0x10: "s32", 0x14: "s16", 0x16: "s16",
           0x18: "s32"}
-MIPS_DEMOS = [c for c in consoles.startable() if c.demo and arch.STRUCTS in c.features]
+MIPS_DEMOS = [c for c in consoles.startable() if c.demo and arch.STRUCTS in c.features and c.mode == consoles.ROM]
+# (PC's demo: tests/test_pc.py, test_the_guess_for_the_demos_struct_is_the_struct_its_source_has)
 DEMO_SOURCE = Path(__file__).resolve().parent.parent / "projects" / "demo-n64" / "original" / "game.c"
 DEMO_DEFINES = "#define GRAVITY 2\n#define MAX_FALL_SPEED 24\n#define FLOOR_Y 448\n#define ENTITY_FLAG_GROUNDED 0x2\n"
 
