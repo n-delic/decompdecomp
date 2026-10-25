@@ -74,7 +74,11 @@ def test_polishing_takes_the_games_own_code_and_leaves_set_aside_library_code(tm
     agent, _ = net.local_agent("claude-sonnet-5-5-1")
     assert "MAKE READABLE: game_a" in net.readability.claim(agent, slug)
     other, _ = net.local_agent("claude-sonnet-5-5-2")
-    assert "lib_a" not in net.readability.claim(other, slug)
+    said = net.readability.claim(other, slug)
+    assert "lib_a" not in said
+    # game_a, held, is all that's left: told to stop, the other helper left for good, and nobody took game_a if its
+    # holder's claim ran out (#89)
+    assert "Nothing to take right now" in said and "game_a (" in said and "Stop here" not in said
 
 
 def test_polishing_helpers_carry_on_once_nothing_is_left_to_decompile(tmp_path, monkeypatch):
@@ -200,15 +204,23 @@ def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkey
     assert '   g_shape_static_data: as a string: "Circle"' in job and "   k_ratio: as f32: 1" in job
     assert "   D_00403000: uninitialized data (.bss)" in job and "   f:" not in job
     assert net.readability.claim(agent, slug) == job  # it holds it
-    assert "Stop here" in net.readability.claim(other, slug)  # one file, one helper
+    said = net.readability.claim(other, slug)  # one file, one helper; but come back, don't stop (#89)
+    assert "Nothing to take right now" in said and "the file game (" in said and "Stop here" not in said
     with pytest.raises(NetworkError, match="aren't tidying"):
         net.readability.tidy_done(other, slug, "game", "everything")
     with pytest.raises(NetworkError, match="summary"):
         net.readability.tidy_done(agent, slug, "game", " ")
-    assert net.readability.tidy_done(agent, slug, "game", "Particle in include/particle.h").startswith("✅")
+    # a claim that ran out is no claim: the file is the next helper's to tidy, not the late one's to mark tidy (#89)
+    net.readability._tidying[(proj["id"], "game")] = (agent.id, time.time() - 1)
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(agent, slug, "game", "late")
+    assert net.readability.claim(other, slug) == job
+    with pytest.raises(NetworkError, match="aren't tidying"):
+        net.readability.tidy_done(agent, slug, "game", "late")
+    assert net.readability.tidy_done(other, slug, "game", "Particle in include/particle.h").startswith("✅")
     assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
     kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind LIKE 'tid%' ORDER BY id")]
-    assert kinds == ["tidy", "tidied", "tidy_summary"]
+    assert kinds == ["tidy", "tidy", "tidied", "tidy_summary"]
     # a file no helper finishes is left after its tries, as a function is
     net.store.conn.execute("DELETE FROM events WHERE kind LIKE 'tid%'")
     for _ in range(readable.POLISH_TRIES):

@@ -158,12 +158,15 @@ class Readability:
         """An agent's tidy of a file, done: recorded with what it changed (its edits were kept by edit_file only while
         every match held, so the file still matches)."""
         proj = self.net._project(slug)
-        held = self._tidying.get((proj["id"], unit))
-        if held is None or held[0] != agent.id:
-            raise NetworkError(f"you aren't tidying {unit}: claim_readable gives you a file to tidy")
         if not summary.strip():
             raise NetworkError("say what you changed in the summary, in a sentence or two")
-        del self._tidying[(proj["id"], unit)]
+        # under the lock and only while the claim lasts: a helper whose claim had run out could mark tidy a file
+        # _tidy_job had given to another helper since, whose edits then landed in a file already counted tidy (#89)
+        with self._tidy_lock:
+            held = self._tidying.get((proj["id"], unit))
+            if held is None or held[0] != agent.id or held[1] <= time.time():
+                raise NetworkError(f"you aren't tidying {unit}: claim_readable gives you a file to tidy")
+            del self._tidying[(proj["id"], unit)]
         with self.net.store.tx() as db:
             self.net._event(db, proj["id"], agent.id, "tidied", unit)
             self.net._event(db, proj["id"], agent.id, "tidy_summary", f"{unit}: {summary.strip()[:500]}")
@@ -193,6 +196,8 @@ class Readability:
         if fn is None:
             if fork and (job := self._tidy_job(agent, proj)) is not None:  # every function done: the files next
                 return job
+            if self.left(proj):  # what's left is held by other helpers
+                return self._held_by_others(proj)
             return ("Every matched function is readable already (or was tried "
                     f"{POLISH_TRIES} times without staying matched), and every file tidy. 🎉 Stop here: nothing is "
                     "left to polish.")
@@ -218,6 +223,28 @@ class Readability:
                    "(one slip anywhere in it and the rewrite is refused).\n" if fn["n_insns"] > BIG_INSNS else "") +
                 f"Then make_readable(\"{fn['name']}\", source). It's judged again: it must still match byte for byte, or "
                 "it's refused and the matching C stays.")
+
+    def _held_by_others(self, proj) -> str:
+        """claim's answer when everything left to polish is held by other helpers: come back later, not stop. Told to
+        stop, a helper left for good, and a function or file whose holder's claim then ran out had nobody to take it
+        (#89)."""
+        now = time.time()
+        held = [(r["name"], r["agent"], r["expires_at"]) for r in self.net.store.all(
+            "SELECT f.name, a.name AS agent, c.expires_at FROM claims c "
+            f"JOIN (SELECT id, name FROM functions WHERE project_id=? AND {TODO}) f ON f.id=c.function_id "
+            "LEFT JOIN agents a ON a.id=c.agent_id", proj["id"], proj["id"])]
+        with self._tidy_lock:
+            files = [(u, who, until) for (pid, u), (who, until) in self._tidying.items()
+                     if pid == proj["id"] and until > now]
+        for unit, who, until in files:
+            row = self.net.store.one("SELECT name FROM agents WHERE id=?", who)
+            held.append((f"the file {unit}", row["name"] if row else None, until))
+        held.sort(key=lambda h: h[2])
+        shown = ", ".join(f"{name} ({who or '?'}, {max(0, int(until - now)) // 60} min left)"
+                          for name, who, until in held[:10])
+        return (f"Nothing to take right now: what's left to polish is held by other helpers: {shown}"
+                f"{', ...' if len(held) > 10 else ''}. Each is free again when its helper finishes it or its claim "
+                "runs out: call claim_readable again later. Don't stop.")
 
     def submit(self, agent: Agent, slug: str, function: str, source: str) -> str:
         """An agent's readable rewrite of a matched function: kept only when it still matches byte for byte."""
