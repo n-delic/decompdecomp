@@ -469,10 +469,14 @@ class Manager:
             for statement in SCHEMA:
                 db.execute(statement)
             if "task" not in {r[1] for r in db.execute("PRAGMA table_info(helper_sessions)")}:
-                # sessions from before it was kept: their helper's task, while its record is there
+                # sessions from before it was kept: their helper's task now, while its record is there (a name used
+                # for polishing, then reused for decompiling, counts its polishing as decompiling until it ages out of
+                # SPIN_WINDOW). Options that aren't JSON count as none, as _restore reads them: json_extract of them
+                # stopped the app from starting
                 db.execute("ALTER TABLE helper_sessions ADD COLUMN task TEXT NOT NULL DEFAULT ''")
-                db.execute("UPDATE helper_sessions SET task=COALESCE((SELECT json_extract(h.options, '$.task') "
-                           "FROM helpers h WHERE h.id=helper_sessions.helper_id), '')")
+                db.execute("UPDATE helper_sessions SET task=COALESCE((SELECT CASE WHEN json_valid(h.options) THEN "
+                           "json_extract(h.options, '$.task') END FROM helpers h "
+                           "WHERE h.id=helper_sessions.helper_id), '')")
         self._restore()
         self.refresh_detected()
 

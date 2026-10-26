@@ -767,14 +767,16 @@ def test_polishing_sessions_dont_make_a_model_look_like_its_spinning(tmp_path, q
         db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
         db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state) VALUES "
                    "(1, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\", \"task\": \"readable\"}', "
-                   "'stopped'), (2, 'game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\"}', 'stopped')")
-        for helper, model, usd, compiles, matches in ((1, "sonnet", 20.0, 1282, 0), (2, "opus", 104.4, 650, 10)):
+                   "'stopped'), (2, 'game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\"}', 'stopped'), "
+                   "(4, 'game', 'claude', 'haiku', 'claude-haiku-1', 'h', '', 'stopped')")  # options no JSON: none
+        for helper, model, usd, compiles, matches in ((1, "sonnet", 20.0, 1282, 0), (2, "opus", 104.4, 650, 10),
+                                                      (4, "haiku", 1.0, 10, 0)):
             db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, compiles, "
                        "matches) VALUES(?, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (helper, model, now - 3600, usd,
                                                                                    compiles, matches))
     m = agents.Manager(net, tmp_path, URL)
     assert {r["model"]: r["task"] for r in net.store.all("SELECT model, task FROM helper_sessions")} == \
-        {"sonnet": "readable", "opus": ""}
+        {"sonnet": "readable", "opus": "", "haiku": ""}
     rows = {r["model"]: r for r in m.costs("game")}
     assert rows["sonnet"]["advice"] == "" and rows["sonnet"]["compiles"] == 1282  # still in what it spent
     # a decompiling helper of the same model, spinning: that one counts
