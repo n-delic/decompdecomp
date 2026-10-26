@@ -127,6 +127,12 @@ def comment_above(text: str, start: int) -> int:
     return at
 
 
+def marker_above(text: str, at: int) -> int:
+    """Where the reccmp annotation on the line right above `at` (a line's start) begins, or `at` without one."""
+    prev = text.rfind("\n", 0, at - 1) + 1 if at > 0 else 0
+    return prev if at > 0 and _MARKER.match(text[prev:at].strip()) else at
+
+
 def get(text: str, name: str) -> str | None:
     span = find(text, name)
     return text[span[0]:span[1]] if span else None

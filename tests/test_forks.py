@@ -120,6 +120,11 @@ def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marke
     # only reccmp's words are markers: a comment with `// NOTE:` in it was dropped
     text = "// Sums them.\n// NOTE: wraps at 65521.\nint f(void) { return 0; }\n"
     assert csource.comment_above(text, text.index("int")) == 0
+    # the annotation right above the comment (a parked definition's, carried with it: ForkEngine._attempt)
+    text = "int g;\n// FUNCTION: 0x00401000 (NONMATCHING: frame size)\n// Adds.\nint add(int a, int b) { return a + b; }\n"
+    lo = csource.comment_above(text, text.index("int add"))
+    assert text[csource.marker_above(text, lo):lo].startswith("// FUNCTION: 0x00401000")
+    assert csource.marker_above(text, text.index("// FUNCTION")) == text.index("// FUNCTION")  # none above it
 
 
 def test_a_wrapper_is_taken_with_the_comment_inside_it():
