@@ -52,7 +52,16 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         """Quit means quit: the window, every helper with everything it started, then the server."""
         window.close_app()
         manager.shutdown()
+        flush_progress()
         os._exit(0)
+
+    def flush_progress() -> None:
+        """Try every final save and leave a clear log entry when the user's progress folder is blocked."""
+        try:
+            for slug, error in net.progress.flush().items():
+                jobs.logger.error("could not save %s before exit: %s", slug, error)
+        except Exception:  # shutdown must continue even if the progress store itself is damaged
+            jobs.logger.exception("could not flush progress before exit")
     window.WINDOW = window.Window(home, f"http://127.0.0.1:{port}/", secret, window_ended)
     settings = Settings(home / "settings.json")
     if hostenv.in_old_windows_install() and (settings.data.get("auto_update") or settings.data.get("check_updates", True)):
@@ -145,6 +154,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
         manager.shutdown()
+        flush_progress()
 
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use

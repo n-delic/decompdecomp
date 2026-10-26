@@ -40,6 +40,9 @@ CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(project_id, status,
 CREATE INDEX IF NOT EXISTS idx_attempts_fn ON attempts(function_id);
 CREATE INDEX IF NOT EXISTS idx_events_time ON events(created_at);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS progress_state(
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  disk TEXT NOT NULL, projected TEXT NOT NULL, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS symbols(
   project_id INTEGER NOT NULL, name TEXT NOT NULL, address INTEGER NOT NULL, size INTEGER NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'data', preview TEXT, PRIMARY KEY(project_id, name));

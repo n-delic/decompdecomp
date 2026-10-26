@@ -325,6 +325,8 @@ def test_decomp_permuter_brings_a_near_miss_back_to_a_match(game, name, written,
     source = csource.get((GAME / "game.c").read_text(), name)
     if net._function(name, slug)["status"] != "matched":
         assert net.attempt(agent, name, source, slug)["matched"]
+    (saves.default_folder(net, slug) / "src" / f"{name}.c").unlink()
+    net.progress.sync(slug, force=True)
     fn = net._function(name, slug)
     variant = source.replace(written, near)
     score = net.try_quietly(agent, net.project_row(slug), {**fn, "status": "open"}, variant)["score"]

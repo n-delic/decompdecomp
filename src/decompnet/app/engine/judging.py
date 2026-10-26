@@ -139,9 +139,9 @@ class JudgeMixin:
             return self._attempt(agent, function, source, project)
 
     def _record(self, fn, *args, **kwargs):
-        with self.progress.lock:
+        slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
+        with self.progress._project_lock(slug):
             if not self.progress.applying:
-                slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
             return super()._record(fn, *args, **kwargs)

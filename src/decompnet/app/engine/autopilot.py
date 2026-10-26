@@ -164,30 +164,32 @@ class AutopilotMixin:
             db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fid, agent.id, now, now + 300))
         try:
             self._seed_for(fn, proj)  # the readable draft, for the agents that come after
-            ctx = self._context(proj["id"], fn["unit"])
-            _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
-            own = compiler_for(self.cfg(proj), fn["vram"])
-            data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context, data_asm, valid=True)
-            if not draft:
-                return "fail"
-            # (its compiler named in it: the same draft is worth judging again with another compiler)
-            source = (f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
-                      f"{seeds.M2C_MACROS}\n{draft}\n")
-            if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
-                              "AND source=?", fid, agent.id, ctx["version"], source):
-                return "skip"
-            result = self._compile(proj, ctx["header"], source, fn)
-            if not result.ok:
-                return "fail"
-            cand, verdict, _ = self._evaluate(fn, proj, result.obj)
-            if cand is None:
-                return "fail"
-            d = scoring.diff(self._target_obj(fn, proj), cand)
-            if verdict is not None:
-                d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-            self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
-            return "match" if d.bytes_match else "near" if d.percent >= 90 else "far"
+            with self.progress.judging(proj["slug"]):
+                ctx = self._context(proj["id"], fn["unit"])
+                _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
+                own = compiler_for(self.cfg(proj), fn["vram"])
+                data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
+                draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context,
+                                                data_asm, valid=True)
+                if not draft:
+                    return "fail"
+                # (its compiler named in it: the same draft is worth judging again with another compiler)
+                source = (f"/* machine draft (m2c) for {toolchain} {' '.join(own.get('flags', []))}, tried by autopilot */\n"
+                          f"{seeds.M2C_MACROS}\n{draft}\n")
+                if self.store.one("SELECT 1 FROM attempts WHERE function_id=? AND agent_id=? AND context_version=? "
+                                  "AND source=?", fid, agent.id, ctx["version"], source):
+                    return "skip"
+                result = self._compile(proj, ctx["header"], source, fn)
+                if not result.ok:
+                    return "fail"
+                cand, verdict, _ = self._evaluate(fn, proj, result.obj)
+                if cand is None:
+                    return "fail"
+                d = scoring.diff(self._target_obj(fn, proj), cand)
+                if verdict is not None:
+                    d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
+                self._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match)
+                return "match" if d.bytes_match else "near" if d.percent >= 90 else "far"
         finally:
             with self.store.tx() as db:
                 db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fid, agent.id))

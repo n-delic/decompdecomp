@@ -44,8 +44,9 @@ async function showHome() {
     const meta = p.kind === "fork"
       ? `${p.origin === "scratch" ? "from scratch" : "public decomp"}${p.version ? " · " + esc(p.version) : ""}${p.ready ? "" : " · needs setup"}`
       : `${esc(p.rom?.game_code || "")}${p.rom?.region ? " · " + esc(p.rom.region) : ""} · ${esc(p.compiler?.name || "")}`;
+    if (p.progress_error) a.title = p.progress_error;
     a.innerHTML = `<div class="cc-top"><span class="plat">${esc(p.platform_name || "?")}</span><span class="grow"></span><span class="meta">${esc(since(p.last_activity))}</span><span class="swatch pc-${colourOf(p.slug)}" aria-hidden="true"></span></div>
-      <div><h4>${esc(p.title)}</h4><p class="meta">${meta}</p></div>
+      <div><h4>${esc(p.title)}</h4><p class="meta ${p.progress_error ? "err-text" : ""}">${p.progress_error ? "Progress needs attention: " + esc(p.progress_error) : meta}</p></div>
       <div class="meter"><i></i></div><p class="meta"><b>${pctNum(pct)}%</b> of code · ${(p.matched || 0).toLocaleString()} / ${cFunctions(p).toLocaleString()} functions</p>`;
     box.append(a);
     requestAnimationFrame(() => { a.querySelector(".meter i").style.width = pct + "%"; });

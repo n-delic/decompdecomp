@@ -138,9 +138,10 @@ What changed on the way:
 ## Moving to another computer
 
 decompdecomp saves the work on each N64, PlayStation and PlayStation 2 project as plain files in the project's `progress/`
-folder, every few minutes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
-so you can keep it in a git repository. GameCube, Wii and PC projects and community decomps are git repositories
-already: push them.
+folder as work changes: matched C, best attempts, headers, names, notes and settings. It never contains the game,
+so you can keep it in a git repository. You can edit these files or pull another contributor's changes into
+`progress/`; decompdecomp reads them on the next project action and checks the saved functions again. GameCube, Wii
+and PC projects and community decomps are git repositories already: push them.
 
 The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a

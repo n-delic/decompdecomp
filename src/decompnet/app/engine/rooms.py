@@ -20,6 +20,14 @@ class RoomMixin:
 
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: changed below
+        old_link = cfg.get("link") or {}
+        same_room = old_link.get("room") == info.get("room") and (
+            str(old_link.get("url") or "").rstrip("/") == str(info.get("url") or "").rstrip("/"))
+        queued = old_link.get("saved_progress") if same_room else None
+        info = dict(info)
+        info.pop("saved_progress", None)
+        if queued:
+            info["saved_progress"] = queued
         cfg["link"] = info
         with self.store.tx() as db:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))

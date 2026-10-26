@@ -132,7 +132,7 @@ class Readability:
 
     def _readable(self, proj, fn, agent: Agent, source: str) -> str:
         """A rewrite that still matches: it's the function's C now, and the function counts as readable."""
-        with self.net.progress.lock, self.net.store.tx() as db:
+        with self.net.progress._project_lock(proj["slug"]), self.net.store.tx() as db:
             self.net.progress.check_result()
             db.execute("UPDATE functions SET matched_source=?, best_source=?, readable=1 WHERE id=?",
                        (source, source, fn["id"]))

@@ -336,6 +336,10 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
+READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
+                       "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
+                       "find_similar", "guide", "read_file", "search_code", "file_status"})
+
 ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
             "guess_struct", "redraft",
             "compiler_map", "search_flags"}
@@ -360,10 +364,11 @@ def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
 
 
 def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> str:
-    """Every helper sees pulled changes before acting, and its completed work is on disk before it gets an answer."""
+    """Every helper sees pulled changes before acting; only tools that write work need a second synchronization."""
     net.progress.sync(slug, force=True)
     result = HANDLERS[name](net, agent, slug, **_named(net, agent, slug, args))
-    net.progress.sync(slug, force=True)
+    if name not in READ_ONLY:
+        net.progress.sync(slug, force=True)
     return result
 
 

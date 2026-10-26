@@ -3,6 +3,7 @@
 import json
 import shutil
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -31,6 +32,8 @@ def project(tmp_path, monkeypatch):
 
     def attempt(agent, name, source, slug):
         judged.append((name, source))
+        if source == "compile error":
+            return {"matched": False}
         matched = "good" in source and "broken" not in net._context(pid)["header"]
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status=?,matched_source=?,best_source=?,best_score=? "
@@ -109,6 +112,17 @@ def test_a_restart_reads_progress_before_writing_stale_database_sources(project)
     assert net._function("f", "game")["matched_source"] == "good contribution"
 
 
+def test_a_restart_publishes_a_newer_database_match_over_its_old_saved_snapshot(project):
+    net, folder, _ = project
+    agent, _ = net.local_agent("helper")
+    net._record(net._function("f", "game"), agent, 0, "new database match", 1, matched=True)
+    assert not (folder / "src/f.c").exists()
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    assert (folder / "src/f.c").read_text() == "new database match\n"
+    assert net._function("f", "game")["matched_source"] == "new database match"
+
+
 def test_cleared_settings_and_deleted_notes_are_authoritative(project):
     net, folder, _ = project
     agent, _ = net.local_agent("helper")
@@ -119,6 +133,84 @@ def test_cleared_settings_and_deleted_notes_are_authoritative(project):
     net.progress.sync("game", force=True)
     assert net.instructions("game") == ""
     assert not net.store.all("SELECT * FROM notes")
+
+
+def test_external_and_local_manifest_fields_merge_without_losing_global_notes(project):
+    net, folder, _ = project
+    agent, _ = net.local_agent("helper")
+    net.add_note(agent, "game", "local note")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["instructions"] = "external instructions"
+    data["notes"] = [{"function": None, "text": "external note", "by": "friend"}]
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert net.instructions("game") == "external instructions"
+    notes = {row["text"] for row in net.store.all("SELECT text FROM notes")}
+    assert notes == {"local note", "external note"}
+
+
+def test_legacy_layout_without_status_does_not_rejudge_unchanged_matches(project):
+    net, folder, judged = project
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good source\n", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    count = len(judged)
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["saved_at"] = time.time() - 10
+    for entry in data["layout"]:
+        entry.pop("status", None)
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    with net.store.tx() as db:
+        db.execute("DELETE FROM progress_state WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    assert len(judged) == count
+    assert net._function("f", "game")["status"] == "matched"
+
+
+def test_first_legacy_save_keeps_a_database_match_newer_than_saved_at(project):
+    net, folder, judged = project
+    (folder / "src").mkdir()
+    (folder / "src/g.c").write_text("good external contribution\n", encoding="utf-8")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='newer match',matched_at=? WHERE name='f'",
+                   (time.time(),))
+        db.execute("DELETE FROM progress_state WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["matched_source"] == "newer match"
+    assert (folder / "src/f.c").read_text() == "newer match\n"
+    assert net._function("g", "game")["matched_source"] == "good external contribution\n"
+    assert judged == [("g", "good external contribution\n")]
+
+
+def test_an_invalid_merged_rename_does_not_write_the_manifest(project):
+    net, folder, _ = project
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good code", encoding="utf-8")
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.instructions','local instructions') WHERE slug='game'")
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data["layout"][0]["name"] = "renamed"
+    path = folder / saves.MANIFEST
+    path.write_text(json.dumps(data), encoding="utf-8")
+    before = path.read_bytes()
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    assert path.read_bytes() == before
+
+
+def test_a_failed_edited_match_keeps_the_last_match_as_a_best_backup(project):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='known match',matched_at=1 WHERE name='f'")
+    net.progress.sync("game", force=True)
+    path = folder / "src/f.c"
+    path.write_text("compile error", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    fn = net._function("f", "game")
+    assert fn["status"] == "open" and fn["best_source"] == "known match"
+    assert path.read_text() == "compile error"
 
 
 def test_local_work_without_events_is_written_and_unrelated_files_survive(project):
@@ -151,6 +243,126 @@ def test_unresolved_git_operations_do_not_overwrite_progress(project, bad):
     with pytest.raises(NetworkError):
         net.progress.sync("game", force=True)
     assert (path.read_bytes() if path.exists() else None) == before
+
+
+@pytest.mark.parametrize("field,value", [
+    ("symbols", [{"name": "bad-name", "address": 4, "size": 1, "kind": "func"}]),
+    ("notes", [{"function": None, "text": 1, "by": "friend"}]),
+    ("knowledge", [False]),
+])
+def test_malformed_manifest_metadata_is_rejected_before_applying(project, field, value):
+    net, folder, _ = project
+    manifest(folder, **{field: value})
+    path = folder / saves.MANIFEST
+    before = path.read_bytes()
+    with pytest.raises(NetworkError, match="Fix progress/decompdecomp.json"):
+        net.progress.sync("game", force=True)
+    assert path.read_bytes() == before
+
+
+def test_unchanged_progress_sync_skips_rendering(project, monkeypatch):
+    net, _, _ = project
+    monkeypatch.setattr(saves, "_render", lambda *args, **kwargs: pytest.fail("rendered an unchanged project"))
+    assert not net.progress.sync("game", force=True)
+
+
+def test_removing_and_reusing_a_project_id_drops_its_saved_sync_baseline(project, tmp_path):
+    net, _, _ = project
+    old_id = net._project("game")["id"]
+    assert net.store.one("SELECT 1 FROM progress_state WHERE project_id=?", old_id)
+    assert net.remove_project("game") == 2
+    root = tmp_path / "replacement"
+    root.mkdir()
+    with net.store.tx() as db:
+        project_id = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Replacement',?,?)",
+                                (str(root), json.dumps({"kind": "rom", "platform": "n64",
+                                                        "rom": {"sha1": "demo"}}))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')",
+                   (project_id,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'new_function',4096,4,1,'open','')", (project_id,))
+    assert project_id == old_id
+    net.progress.sync("game", force=True)
+    assert (root / "progress" / saves.MANIFEST).exists()
+
+
+def test_restoring_the_same_linked_save_returns_fresh_counts_when_sync_is_a_noop(project, monkeypatch):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='known match',best_source='known match',"
+                   "best_score=0 WHERE name='f'")
+        db.execute("UPDATE functions SET best_source='best attempt',best_score=10 WHERE name='g'")
+    net.progress.sync("game", force=True)
+    console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
+    monkeypatch.setattr(net, "import_rom", lambda *args, **kwargs: "game")
+    result = saves.restore(net, str(folder), Path("unused-own-game.bin"), log=lambda *_: None)
+    assert result == {"slug": "game", "matched": 1, "best": 1, "lost": []}
+    assert net.progress.results.get("game") is None
+
+
+def test_restore_waiting_for_project_lock_does_not_hold_the_registry_lock(project, monkeypatch):
+    net, folder, _ = project
+    console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
+    def import_with_rebuild(*_args, **_kwargs):
+        with net.progress.rebuilding("game"):
+            pass
+        return "game"
+
+    monkeypatch.setattr(net, "import_rom", import_with_rebuild)
+    original = net.progress._project_lock
+    requested = threading.Event()
+    acquired_registry = threading.Event()
+    errors = []
+
+    def observed_lock(slug):
+        if threading.current_thread().name == "restore-probe":
+            requested.set()
+        return original(slug)
+
+    monkeypatch.setattr(net.progress, "_project_lock", observed_lock)
+    project_lock = original("game")
+
+    def restore():
+        try:
+            saves.restore(net, str(folder), Path("unused-own-game.bin"), log=lambda *_: None)
+        except Exception as error:  # returned to the main test thread for assertion
+            errors.append(error)
+
+    def probe_registry_lock():
+        with net.progress.lock:
+            acquired_registry.set()
+
+    project_lock.acquire()
+    worker = threading.Thread(target=restore, name="restore-probe")
+    probe = threading.Thread(target=probe_registry_lock, name="registry-lock-probe")
+    worker.start()
+    try:
+        assert requested.wait(5)
+        probe.start()
+        registry_was_available = acquired_registry.wait(1)
+    finally:
+        project_lock.release()
+    worker.join(timeout=5)
+    if probe.ident is not None:
+        probe.join(timeout=5)
+    assert registry_was_available
+    assert not worker.is_alive() and (probe.ident is None or not probe.is_alive())
+    assert not errors
+
+
+def test_restore_rejects_instructions_only_existing_project_work(project, tmp_path, monkeypatch):
+    net, folder, _ = project
+    stale = tmp_path / "stale-save"
+    shutil.copytree(folder, stale)
+    net.set_instructions("game", "new local instructions")
+    console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
+    monkeypatch.setattr(net, "import_rom", lambda *args, **kwargs: pytest.fail("imported over existing work"))
+    with pytest.raises(NetworkError, match="already open"):
+        saves.restore(net, str(stale), Path("unused-own-game.bin"), log=lambda *_: None)
+    assert net.instructions("game") == "new local instructions"
 
 
 def test_an_opened_checkout_remains_the_live_folder(project, tmp_path):
@@ -192,6 +404,39 @@ def test_a_compile_started_before_a_pull_cannot_overwrite_it(project):
     assert net._function("f", "game")["matched_source"] == "good PR"
 
 
+@pytest.mark.parametrize("worker", ["autopilot", "permuter"])
+def test_background_compile_discards_results_if_progress_changes(worker, project, monkeypatch):
+    net, folder, _ = project
+    from decompnet.scoring import DiffResult
+
+    proj = net.project_row("game")
+    fn = net._function("f", "game")
+    agent, _ = net.local_agent(worker)
+
+    def compile_with_pull(*_args):
+        manifest(folder, instructions="changed during compile")
+        net.progress.sync("game", force=True)
+        return SimpleNamespace(ok=True, obj=object(), log="")
+
+    monkeypatch.setattr(net, "_compile", compile_with_pull)
+    monkeypatch.setattr(net, "_evaluate", lambda *_: (object(), None, []))
+    monkeypatch.setattr(net, "_target_obj", lambda *_: object())
+    monkeypatch.setattr("decompnet.scoring.diff", lambda *_: DiffResult(1, 1, [], False))
+    if worker == "autopilot":
+        from decompnet.app.engine import autopilot
+
+        monkeypatch.setattr(net, "_seed_for", lambda *_: None)
+        monkeypatch.setattr(net, "_draft_plan", lambda *_args, **_kwargs: (None, "gcc", None))
+        monkeypatch.setattr(net, "_asm_text", lambda *_: "asm")
+        monkeypatch.setattr(autopilot.seeds, "generate_from_asm", lambda *_args, **_kwargs: "draft")
+        monkeypatch.setattr(autopilot, "compiler_for", lambda *_: {"flags": []})
+        with pytest.raises(NetworkError, match="changed while this attempt compiled"):
+            net._autopilot_one(agent, proj, fn["id"])
+    else:
+        with pytest.raises(NetworkError, match="changed while this attempt compiled"):
+            net.permuter._score(agent, proj, fn, "draft", 10, None)
+
+
 def test_a_best_attempt_can_be_edited_and_deleted(project):
     net, folder, _ = project
     (folder / "best").mkdir()
@@ -229,13 +474,41 @@ def test_opening_a_save_keeps_its_checkout_connected(project, tmp_path, monkeypa
     (checkout / "src/f.c").write_text("good contribution", encoding="utf-8")
     console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
     monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
-    monkeypatch.setattr(net, "import_rom", lambda *args, **kwargs: "game")
     monkeypatch.setattr(saves, "fetch", lambda *args: checkout)
     source = "https://example.org/progress.git" if remote else str(checkout)
+    if remote:
+        net = RomNetwork(tmp_path / "remote.db", tmp_path)
+        root = tmp_path / "remote-game"
+        root.mkdir()
+        monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+
+        def import_remote(*_args, **_kwargs):
+            config = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}
+            with net.store.tx() as db:
+                pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                                 (str(root), json.dumps(config))).lastrowid
+                db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                           "VALUES(?,1,'',0,'')", (pid,))
+                for name, address in (("f", 4096), ("g", 4100)):
+                    db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                               "VALUES(?,?,?,4,1,'open','')", (pid, name, address))
+            return "game"
+
+        def attempt(_agent, name, body, _slug):
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET status='matched',matched_source=?,best_source=?,best_score=0 "
+                           "WHERE name=?", (body, body, name))
+            return {"matched": True}
+
+        monkeypatch.setattr(net, "import_rom", import_remote)
+        monkeypatch.setattr(net, "attempt", attempt)
+    else:
+        net._update_cfg("game", lambda cfg: cfg.__setitem__("progress_folder", str(checkout)))
+        monkeypatch.setattr(net, "import_rom", lambda *args, **kwargs: "game")
     result = saves.restore(net, source, tmp_path / "own-game", log=lambda _: None)
     assert result == {"slug": "game", "matched": 1, "best": 0, "lost": []}
     live = saves.default_folder(net, "game")
-    assert live == (folder if remote else checkout)
+    assert live == (root / "progress" if remote else checkout)
     assert (live / ".git/config").read_text() == "original repository"
     manifest(live, instructions="next pull")
     net.progress.sync("game", force=True)
@@ -293,6 +566,28 @@ def test_an_edit_arriving_during_a_save_is_read_on_the_next_pass(project, monkey
     net.progress.sync("game", force=True)
     net.progress.sync("game", force=True)
     assert net._function("f", "game")["matched_source"] == "good concurrent PR"
+
+
+def test_a_file_edit_between_acknowledgment_and_signature_is_read_next_time(project, monkeypatch):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.instructions','local setting') WHERE slug='game'")
+    progress = net.progress
+    original = progress._signature
+    calls = 0
+
+    def signature(path):
+        nonlocal calls
+        calls += 1
+        if calls == 2:  # after _read acknowledged the files, before the cache signature is stored
+            (path / "src").mkdir(exist_ok=True)
+            (path / "src/f.c").write_text("good late contributor edit", encoding="utf-8")
+        return original(path)
+
+    monkeypatch.setattr(progress, "_signature", signature)
+    assert progress.sync("game", force=True)
+    assert progress.sync("game", force=True)
+    assert net._function("f", "game")["matched_source"] == "good late contributor edit"
 
 
 def test_polishing_started_before_a_pull_cannot_replace_the_contribution(project):

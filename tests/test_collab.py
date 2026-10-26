@@ -2,21 +2,18 @@
 
 import json
 import re
-import shutil
+from contextlib import contextmanager
 
 import pytest
 from starlette.testclient import TestClient
 
-from decompnet import toolchains
 from decompnet.app import collab
 from decompnet.app.engine import RomNetwork
+from decompnet.app.engine.rooms import RoomMixin
 from decompnet.network import NetworkError
 
 from .test_app_engine import CLAMP, DAMAGE
 from .test_rom import built  # noqa: F401
-
-pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
-                                reason="needs gcc-2.7.2-kmc")
 
 
 @pytest.fixture(scope="module")
@@ -93,7 +90,7 @@ def test_host_work_reaches_the_guest(room):
     assert guest.overview(gslug)["room"]["role"] == "guest"
 
 
-def test_join_shares_stronger_saved_progress(built, tmp_path):  # noqa: F811
+def test_join_shares_stronger_saved_progress(built, tmp_path, monkeypatch):  # noqa: F811
     host_home = tmp_path / "host"
     host_home.mkdir()
     host = RomNetwork(host_home / "d.db", host_home)
@@ -113,13 +110,179 @@ def test_join_shares_stronger_saved_progress(built, tmp_path):  # noqa: F811
     best = guest.attempt(agent, "func_800007F4", "s32 func_800007F4(s32 v) { return v + 1; }", gslug)
     assert best["score"] and not best["matched"]
 
+    share = collab._share_saved_progress
+
+    def transient_failure(*_args, **_kwargs):
+        raise NetworkError("the room's host isn't reachable right now")
+
+    monkeypatch.setattr(collab, "_share_saved_progress", transient_failure)
     joined = collab.join_room(guest, link, "bea", built, log=lambda *_: None, client=client, start=False)
 
     assert joined == gslug
+    assert guest.links[gslug].saved_progress
+    assert "saved_progress" in json.loads(guest.project_row(gslug)["config"])["link"]
+    assert host._function("func_800007D0", slug)["status"] != "matched"
+    monkeypatch.setattr(collab, "_share_saved_progress", share)
+    guest.links[gslug].sync()
     assert host._function("func_800007D0", slug)["status"] == "matched"
     received = host._function("func_800007F4", slug)
     assert received["best_score"] == best["score"]
     assert "v + 1" in received["best_source"]
+
+
+def test_saved_progress_waits_through_restart_and_retries_transient_failure(built, tmp_path, monkeypatch):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path, approve=True)
+    link_text = f"http://192.168.1.20:6481/join/{code}#room={slug}"
+    guest, gslug = _guest(tmp_path, "sam", link_text, built, client)
+    original = guest.links[gslug]
+    candidates = [{"name": "func_800007F4", "vram": 0x800007F4, "size": 12, "status": "matched",
+                   "matched_source": ABS, "best_score": None, "best_source": None}]
+    original.saved_progress = (candidates, False)
+    original._save_saved_progress()
+
+    restarted = RomNetwork(tmp_path / "sam.db", tmp_path / "sam")
+    info = json.loads(restarted.project_row(gslug)["config"])["link"]
+    info.pop("saved_progress")
+    link = restarted.link_project(gslug, info, client=client, start=False)
+    assert link.saved_progress == (candidates, False)
+    link._req = lambda *_args, **_kwargs: {"e": 0, "a": 0, "behind": 0, "events": []}
+    link.apply = lambda _state: None
+    calls = 0
+
+    def share(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise NetworkError("the room's host isn't reachable right now")
+
+    monkeypatch.setattr(collab, "_share_saved_progress", share)
+    with pytest.raises(NetworkError, match="isn't reachable"):
+        link.sync()
+    assert link.saved_progress == (candidates, False)
+    assert json.loads(restarted.project_row(gslug)["config"])["link"]["saved_progress"]["candidates"] == candidates
+
+    link.sync()
+    assert calls == 2 and link.saved_progress is None
+    assert "saved_progress" not in json.loads(restarted.project_row(gslug)["config"])["link"]
+
+
+def test_saved_progress_retry_preserves_fork_mode(monkeypatch):
+    candidate = {"name": "matched_fn", "status": "matched", "matched_source": "int matched_fn(void) { return 1; }"}
+    config = {"link": {"room": "room", "saved_progress": {"candidates": [candidate], "best_comparable": False}}}
+
+    class Store:
+        @contextmanager
+        def tx(self):
+            class DB:
+                def execute(_self, _query, params):
+                    updated = json.loads(params[0])
+                    config.clear()
+                    config.update(updated)
+
+            yield DB()
+
+    class Net:
+        store = Store()
+
+        def project_row(self, _slug):
+            return {"id": 1, "config": json.dumps(config)}
+
+        def fork_slug(self, _slug):
+            return "fork"
+
+    link = collab.Link(Net(), "project", "http://host", "room", "token", "member", client=object())
+    link._req = lambda *_args, **_kwargs: {"e": 0, "a": 0, "behind": 0, "events": []}
+    link.apply = lambda _state: None
+    calls = []
+
+    def share(_net, _slug, _link, _candidates, *, fork, **_kwargs):
+        calls.append(fork)
+        if len(calls) == 1:
+            raise NetworkError("temporary host failure")
+
+    monkeypatch.setattr(collab, "_share_saved_progress", share)
+    with pytest.raises(NetworkError, match="temporary host failure"):
+        link.sync()
+    assert config["link"]["saved_progress"]["candidates"] == [candidate]
+
+    link.sync()
+    assert calls == [True, True]
+    assert "saved_progress" not in config["link"]
+
+
+def test_link_refresh_keeps_saved_progress_only_in_the_same_room(monkeypatch):
+    queued = {"candidates": [{"name": "saved_fn"}], "best_comparable": False}
+    config = {"link": {"url": "http://host-a", "room": "room-a", "saved_progress": queued}}
+
+    class Store:
+        @contextmanager
+        def tx(self):
+            class DB:
+                def execute(_self, _query, params):
+                    updated = json.loads(params[0])
+                    config.clear()
+                    config.update(updated)
+
+            yield DB()
+
+    class Net(RoomMixin):
+        store = Store()
+        links = {}
+
+        def _project(self, _slug):
+            return {"id": 1, "config": json.dumps(config)}
+
+    class StubLink:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+    monkeypatch.setattr(collab, "Link", StubLink)
+    net = Net()
+    net.link_project("project", {"url": "http://host", "room": "room-a", "token": "t", "member": "m",
+                                  "saved_progress": queued}, start=False)
+    assert "saved_progress" not in config["link"]  # a different host with the same room slug is not this room
+
+    config["link"] = {"url": "http://host-a", "room": "room-a", "saved_progress": queued}
+    net.link_project("project", {"url": "http://host-a", "room": "room-a", "token": "t", "member": "m"}, start=False)
+    assert config["link"]["saved_progress"] == queued
+
+    net.link_project("project", {"url": "http://host-a", "room": "room-b", "token": "t", "member": "m"}, start=False)
+    assert "saved_progress" not in config["link"]
+
+
+def test_saved_fork_progress_excludes_projects_linked_to_another_room(monkeypatch):
+    projects = {
+        "local": {"identity": "same-game"},
+        "same-room": {"identity": "same-game", "link": {"url": "http://host", "room": "target"}},
+        "other-room": {"identity": "same-game", "link": {"url": "http://other", "room": "other"}},
+        "same-slug-other-host": {"identity": "same-game", "link": {"url": "http://other", "room": "target"}},
+        "different-game": {"identity": "different-game"},
+    }
+    rows = {
+        "local": [{"name": "local_fn", "status": "matched"}],
+        "same-room": [{"name": "room_fn", "status": "matched"}],
+        "other-room": [{"name": "other_fn", "status": "matched"}],
+        "same-slug-other-host": [{"name": "other_host_fn", "status": "matched"}],
+        "different-game": [{"name": "unrelated_fn", "status": "matched"}],
+    }
+
+    class Store:
+        def all(self, query, project_id=None):
+            if "SELECT slug, config FROM projects" in query:
+                return [{"slug": slug, "config": json.dumps(config)} for slug, config in projects.items()]
+            return rows[next(slug for slug, pid in ids.items() if pid == project_id)]
+
+    ids = {slug: index for index, slug in enumerate(projects, 1)}
+
+    class Net:
+        store = Store()
+
+        def project_row(self, slug):
+            return {"id": ids[slug]}
+
+    monkeypatch.setattr(collab.forkroom, "project_identity", lambda config: config["identity"])
+    candidates = collab._saved_progress(Net(), identity="same-game", room="target", url="http://host")
+    assert {candidate["name"] for candidate in candidates} == {"local_fn", "room_fn"}
 
 
 def test_guest_edits_go_through_the_host(room):

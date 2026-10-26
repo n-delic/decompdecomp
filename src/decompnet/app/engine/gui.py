@@ -122,7 +122,8 @@ class GuiMixin:
                 "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
                                                 proj["id"])["t"],
                 "room": (self._room_info(slug) or {}).get("role"),
-                "autopilot": (self.autopilot_status(slug) or {}).get("state")} | about
+                "autopilot": (self.autopilot_status(slug) or {}).get("state"),
+                "progress_error": self.progress.errors.get(slug)} | about
 
     def _room_info(self, slug: str) -> dict | None:
         if slug in self.links:

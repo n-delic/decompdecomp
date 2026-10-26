@@ -74,8 +74,14 @@ def register(app: App) -> None:
                 out.append(net.summary(p["slug"]) | {"working": running.get(p["slug"], 0)})
             except Exception as e:  # noqa: BLE001
                 jobs.logger.warning("project %s can't be read: %s", p["slug"], e, exc_info=not isinstance(e, NetworkError))
-                out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
-                            "broken": job_error(e, jobs.log_path)})
+                progress_error = net.progress.errors.get(p["slug"])
+                if progress_error:
+                    out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                                "kind": "rom", "platform_short": "?", "functions": 0, "matched": 0,
+                                "progress_error": progress_error})
+                else:
+                    out.append({"slug": p["slug"], "title": p["name"] or p["slug"], "working": 0,
+                                "broken": job_error(e, jobs.log_path)})
         return out
 
     @mcp.custom_route("/api/projects", methods=["GET"])
