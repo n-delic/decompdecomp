@@ -112,6 +112,12 @@ def registry() -> dict[str, Toolchain]:
     return {tid: Toolchain(id=tid, **spec) for tid, spec in _registry_data().items()}
 
 
+def known(tid: str) -> bool:
+    """Whether the registry has this toolchain id. A project's config can name one it doesn't: the project was made
+    with another tool (#118: a Windows project named a 64-bit Visual C++ one), and it must still open."""
+    return tid in _registry_data()
+
+
 def get(tid: str) -> Toolchain:
     reg = registry()
     if tid not in reg:

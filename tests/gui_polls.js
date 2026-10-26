@@ -241,6 +241,20 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     // Polish is offered once half the game's own code matches: set-aside functions count on neither side
     polish: [{ functions: 274, set_aside: 241, matched: 33 }, { functions: 274, set_aside: 0, matched: 33 },
              { functions: 5, set_aside: 5, matched: 0 }, null].map(polishOffered),
+    // #118: a project from another tool names a compiler decompdecomp doesn't have: the banner says so, instead of
+    // taking it for a compiler with no build for this computer
+    unknownCompiler: (() => {
+      const before = S.ov, original = document.getElementById;
+      const notice = { hidden: null, className: null, innerHTML: "", _html: null, _working: false };
+      document.getElementById = (id) => (id === "compilerNotice" ? notice : original(id));
+      S.ov = { slug: "a", kind: "rom", matched: 0, compiler: { toolchain: "msvcxx-x86_64", name: "msvcxx-x86_64",
+        flags: ["/O2"], installed: false, supported: false, known: false, missing: [] } };
+      renderCompilerNotice(S.ov);
+      const said = { hidden: notice.hidden, className: notice.className, text: String(notice.innerHTML).replace(/<[^>]+>/g, "") };
+      document.getElementById = original;
+      S.ov = before;
+      return said;
+    })(),
     autopilot: burstLines([
       { id: 1, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_1", created_at: 100 },
       { id: 2, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_2", created_at: 101 },

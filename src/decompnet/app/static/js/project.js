@@ -336,6 +336,13 @@ function renderCompilerNotice(ov) {
   const missing = ov.compiler.missing || [];
   if (ov.kind === "fork" || (ov.compiler.installed && (!missing.length || ov.matched))) { n.hidden = true; return; }
   n.hidden = false;
+  // #118: the project came from another tool and names a compiler decompdecomp doesn't have: it opens, and says so
+  // here instead of pretending the compiler has no build for this computer
+  if (ov.compiler.known === false) {
+    n.className = "notice bad";
+    setHtml(n, `<span><b>${esc(ov.compiler.name)}</b> isn't a compiler decompdecomp has (this project was made with another tool). Pick one in this project's Settings.</span>`);
+    return;
+  }
   if (!ov.compiler.supported) {
     n.className = "notice bad";
     n.innerHTML = ov.compiler.why
