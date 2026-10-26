@@ -769,11 +769,12 @@ def test_polishing_sessions_dont_make_a_model_look_like_its_spinning(tmp_path, q
                    "(1, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\", \"task\": \"readable\"}', "
                    "'stopped'), (2, 'game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\"}', 'stopped'), "
                    "(4, 'game', 'claude', 'haiku', 'claude-haiku-1', 'h', '', 'stopped')")  # options no JSON: none
-        for helper, model, usd, compiles, matches in ((1, "sonnet", 20.0, 1282, 0), (2, "opus", 104.4, 650, 10),
-                                                      (4, "haiku", 1.0, 10, 0)):
+        for helper, model, agent, usd, compiles, matches in (
+                (1, "sonnet", "claude-sonnet-1", 20.0, 1282, 0), (2, "opus", "claude-opus-1", 104.4, 650, 10),
+                (4, "haiku", "claude-haiku-1", 1.0, 10, 0)):
             db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, usd, compiles, "
-                       "matches) VALUES(?, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (helper, model, now - 3600, usd,
-                                                                                   compiles, matches))
+                       "matches) VALUES(?, 'game', 'claude', ?, ?, ?, ?, ?, ?)", (helper, model, agent, now - 3600, usd,
+                                                                                  compiles, matches))
     m = agents.Manager(net, tmp_path, URL)
     assert {r["model"]: r["task"] for r in net.store.all("SELECT model, task FROM helper_sessions")} == \
         {"sonnet": "readable", "opus": "", "haiku": ""}
@@ -785,6 +786,60 @@ def test_polishing_sessions_dont_make_a_model_look_like_its_spinning(tmp_path, q
                    "VALUES(3, 'game', 'claude', 'sonnet', 'b', ?, 900, 0)", (now - 60,))
     said = {r["model"]: r for r in m.costs("game")}["sonnet"]["advice"]
     assert said.startswith("In the last day sonnet's helpers here made 900 compiles for no matches")
+
+
+def test_a_session_says_the_task_its_helper_was_started_with(tmp_path, quiet):
+    """The advice reads the task each session wrote when it began: a polishing helper's sessions say readable, a
+    decompiling helper's say nothing. Every session inserted by hand, a _session_begin that wrote "" passed."""
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    for name, options, task in (("claude-opus-1", {"model": "opus", "task": "readable"}, "readable"),
+                                ("claude-opus-2", {"model": "opus"}, "")):
+        s = m._record("game", "claude", name, "opus", options)
+        row = m._session_begin(s)
+        assert net.store.one("SELECT task FROM helper_sessions WHERE id=?", row)["task"] == task
+    assert [r["task"] for r in net.store.all("SELECT task FROM helper_sessions ORDER BY id")] == ["readable", ""]
+
+
+def test_a_reused_helper_id_doesnt_give_an_old_session_another_helpers_task(tmp_path, quiet):
+    """helpers.id has no AUTOINCREMENT, so a removed helper's id goes to the next helper: matching an old session by
+    id alone made a sonnet session stand as a new polishing helper's, hiding the sonnet helper's spinning. A session
+    matches its helper by id, project and name."""
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helpers(id, project, kind, model, name, label, options, state) VALUES "
+                   "(1, 'game', 'claude', 'haiku', 'claude-haiku-1', 'h', '{\"model\": \"haiku\"}', 'stopped'), "
+                   "(2, 'game', 'claude', 'sonnet', 'claude-sonnet-1', 's', '{\"model\": \"sonnet\"}', 'stopped')")
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(2, 'game', 'claude', 'sonnet', 'claude-sonnet-1', ?, 900, 0)", (now - 3600,))
+        db.execute("DELETE FROM helpers WHERE id=2")  # its record is removed
+        rid = db.execute("INSERT INTO helpers(project, kind, model, name, label, options, state) VALUES "
+                         "('game', 'claude', 'opus', 'claude-opus-1', 'o', '{\"model\": \"opus\", \"task\": "
+                         "\"readable\"}', 'stopped')").lastrowid
+        assert rid == 2  # SQLite gives the removed helper's id to the new polishing helper
+    m = agents.Manager(net, tmp_path, URL)
+    assert net.store.one("SELECT task FROM helper_sessions WHERE model='sonnet'")["task"] == ""
+    said = {r["model"]: r for r in m.costs("game")}["sonnet"]["advice"]
+    assert said.startswith("In the last day sonnet's helpers here made 900 compiles for no matches")
+
+
+def test_a_session_whose_helper_is_gone_has_no_task_to_take(tmp_path, quiet):
+    """A session from before tasks were kept whose helper's record was removed has none to take: it stays blank, so
+    it counts as decompiling rather than borrowing another helper's task."""
+    net = _game(tmp_path)
+    now = time.time()
+    with net.store.tx() as db:
+        db.execute(agents.SCHEMA[0])  # helpers
+        db.execute("DROP TABLE IF EXISTS helper_sessions")
+        db.execute(agents.SCHEMA[1].replace(", task TEXT NOT NULL DEFAULT ''", ""))  # before sessions kept their task
+        db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, compiles, matches) "
+                   "VALUES(7, 'game', 'claude', 'sonnet', 'claude-sonnet-1', ?, 900, 0)", (now - 3600,))
+    agents.Manager(net, tmp_path, URL)
+    assert net.store.one("SELECT task FROM helper_sessions")["task"] == ""
 
 
 def test_codex_and_api_helpers_take_an_effort_too(tmp_path, monkeypatch):
