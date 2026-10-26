@@ -1176,14 +1176,16 @@ class Network:
                 f"claim_function(function=\"{rows[0]['name']}\") takes one next.")
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
-                compiled: bool | None = None, via: str = "agent"):
+                compiled: bool | None = None, via: str = "agent", best: bool = True):
+        """An attempt. `best`: False for one whose code can't stay in the source (it breaks matched neighbours), so
+        it never becomes the best that briefs offer and a release puts back."""
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         with self.store.tx() as db:
             db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at,via) "
                        "VALUES(?,?,?,?,?,?,?,?)", (fn["id"], agent.id, score, compiled, ctx_version, source, now, via))
             db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fn["id"],))
-            if score is not None:
+            if score is not None and best:
                 db.execute("UPDATE functions SET best_score=?, best_source=?, best_agent_id=? "
                            "WHERE id=? AND status='open' AND (best_score IS NULL OR best_score > ?)",
                            (score, source, agent.id, fn["id"], score))

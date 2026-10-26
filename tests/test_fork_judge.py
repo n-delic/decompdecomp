@@ -241,3 +241,48 @@ def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkey
     monkeypatch.setattr(objdiff, "_run", lambda args, cwd, timeout: json.dumps(answer))
     d = objdiff.diff(tmp_path / "t.o", tmp_path / "b.o", "f", tmp_path)
     assert d.match_percent is None and not d.matched
+
+
+def test_a_change_that_breaks_a_neighbour_still_says_how_close_the_function_came(tmp_path):
+    """Where a function's code changes how a neighbour compiles (inlined into it, or whole-program optimisation
+    choosing registers across functions), a draft short of exact breaks the matched neighbour and is undone. The
+    function's own result used to go with it, so an x86 game's agents parked drafts behind #if flags and rebuilt by
+    hand to measure them. Its score and diff now come back, recorded as an attempt, never as the best (a release
+    writes the best into the file)."""
+    import sys
+
+    repo = tmp_path / "upstream"
+    (repo / "src").mkdir(parents=True)
+    (repo / "expected").mkdir()
+    base = "inline int base(int x) {\n    return x * 3 + 1;\n}\n"  # GNU89 inline: emitted, and inlined into twice
+    twice = "int twice(int x) {\n    return base(x) * 2;\n}\n"
+    command = write_compiler(repo, ["-G0", "-mips3", "-mgp32", "-mfp32", "-O2"])
+    (repo / "ref.c").write_text(base + "\n" + twice)
+    subprocess.run([sys.executable, "compile.py", "ref.c", "expected/lit.o"], cwd=repo, check=True)
+    (repo / "ref.c").unlink()
+    (repo / "src" / "lit.c").write_text(base + "\n" + twice)
+    (repo / "build.ninja").write_text(f"rule cc\n  command = {command} $in $out\nbuild build/lit.o: cc src/lit.c\n")
+    (repo / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": "lit", "target_path": "expected/lit.o", "base_path": "build/lit.o",
+         "metadata": {"source_path": "src/lit.c", "complete": False}}]}))
+    (repo / ".gitignore").write_text("build/\n")
+    _run(repo, "git", "init", "-q", "-b", "main")
+    _run(repo, "git", "add", "-A")
+    _run(repo, "git", "commit", "-q", "-m", "initial")
+    (tmp_path / "work").mkdir()
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
+    slug = net.forks.clone(str(repo), name="Inlined", platform="n64", log=lambda *_: None)
+    net.forks.get(slug)[1].build_all()
+    net.forks.check(slug, log=lambda *_: None)
+    agent, _ = net.local_agent("agent-1")
+    assert _status(net, slug, "twice") == "matched" and _status(net, slug, "base") == "matched"
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    before = path.read_text()
+    out = net.compile_and_diff(agent, "base", base.replace("x * 3 + 1", "x * 5 + 1"), slug)
+    assert out.startswith("❌ REJECTED") and "twice" in out, out
+    assert "base itself came out at" in out and "score" in out and "TARGET" in out, out  # its own result and diff
+    assert path.read_text() == before and _status(net, slug, "twice") == "matched"
+    fn = net._function("base", slug)
+    last = net.store.one("SELECT score, compiled FROM attempts WHERE function_id=? ORDER BY id DESC LIMIT 1", fn["id"])
+    assert last["compiled"] and last["score"] and last["score"] > 0
+    assert fn["best_source"] is None or "x * 5" not in fn["best_source"]
