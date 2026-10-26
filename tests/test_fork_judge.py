@@ -331,3 +331,25 @@ def test_a_parked_draft_beside_the_builds_own_definition_leaves_the_draft_and_re
     text = path.read_text()
     assert ("#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#else\n" + SCALE + "#endif\n") in text, text
     assert "x / 1.1" not in text
+
+
+def test_a_run_of_tries_builds_each_once_and_the_file_once_at_its_end(fork, monkeypatch):
+    """The permuter's tries aren't kept: each built its variant and then the file it put back. On an x86 game's LTCG
+    units a build is a ~5 s link, so half the permuter's time went to the rebuild. In a run (trial_run), a try that
+    isn't kept only puts its file back; the unit is built once at the end, as its file is."""
+    net, slug, agent = fork
+    builds = []
+    build = net.forks._build_unit
+    monkeypatch.setattr(net.forks, "_build_unit", lambda *a, **k: builds.append(1) or build(*a, **k))
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    before = path.read_text()
+    with net.forks.trial_run(net.project_row(slug), "lit"):
+        for constant in ("1.2", "1.3", "1.4"):
+            res = net.forks.attempt(agent, slug, "scale", SCALE.replace("1.1", constant), keep=False)
+            assert res["score"] and not res["matched"], res["text"]
+        inside = len(builds)
+    assert inside <= 4 and len(builds) == inside + 1  # (a baseline at most, then one build a try; one at the end)
+    assert path.read_text() == before
+    proj, fp, _ = net.forks.get(slug)
+    assert fp.diff(fp.unit("lit"), None).unit_scores.get("offset") == 100  # the object is the file's again
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")

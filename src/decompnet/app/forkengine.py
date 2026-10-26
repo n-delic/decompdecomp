@@ -481,6 +481,8 @@ class ForkEngine:
         # (project id, unit) -> (sha1 of its source, base object mtime, {function: match %}): what objdiff said
         # the last time it measured the unit, so a compile doesn't need a second objdiff run to know the baseline
         self._scores: dict[tuple[int, str], tuple[str, int | None, dict]] = {}
+        # (project id, unit) -> whether its object is a try's now, for the units in a run of tries (trial_run)
+        self._trials: dict[tuple[int, str], bool] = {}
         self._index: dict[int, dict] = {}  # project id -> {unit: {"mtime", "order", "ops"}}
         self._indexing: set[int] = set()
         self._index_dirty: set[int] = set()  # projects whose index has entries index.json doesn't have yet
@@ -558,6 +560,33 @@ class ForkEngine:
         with self._build_locks[proj["id"]]:
             return fp.build_all(failed=failed)
 
+    @contextmanager
+    def trial_run(self, proj, unit_name: str):
+        """A run of tries at one unit's functions that aren't kept (the permuter's turn): the unit is held for the run,
+        and a try that isn't kept puts its file back without building it again, as the next try builds anyway. The
+        unit is built once at the end. On an LTCG unit a build is a whole-unit link of about 5 s, and every try
+        built twice: half the permuter's time went to rebuilding the file it had just put back. (A unit linked
+        into the game takes the tree alone for each try: such tries rebuild as before.)"""
+        fp = ForkProject(Path(proj["root"]))
+        try:
+            unit = fp.unit(unit_name)
+        except ForkError:
+            yield
+            return
+        if unit.complete and fp.linkable():
+            yield
+            return
+        key = (proj["id"], unit_name)
+        with self._tree(proj).shared(), self._unit_lock(proj, unit_name):
+            self._trials[key] = False
+            try:
+                yield
+            finally:
+                if self._trials.pop(key, False):  # the object is the last try's: the file's own again
+                    hit = self._scores.get(key)
+                    if self._build_unit(proj, fp, unit)[0] and hit and unit.base is not None and unit.base.exists():
+                        self._scores[key] = (hit[0], unit.base.stat().st_mtime_ns, hit[2])
+
     def _keep_scores(self, proj, unit, text: str, scores: dict) -> None:
         mtime = unit.base.stat().st_mtime_ns if unit.base is not None and unit.base.exists() else None
         self._scores[(proj["id"], unit.name)] = (hashlib.sha1(text.encode()).hexdigest(), mtime, dict(scores))
@@ -571,8 +600,8 @@ class ForkEngine:
         the file doesn't build or objdiff can't measure it."""
         hit = self._scores.get((proj["id"], unit.name))
         if (hit and unit.base is not None and unit.base.exists() and hit[0] == hashlib.sha1(text.encode()).hexdigest()
-                and hit[1] == unit.base.stat().st_mtime_ns):
-            return hit[2], True
+                and (hit[1] == unit.base.stat().st_mtime_ns or self._trials.get((proj["id"], unit.name)))):
+            return hit[2], True  # (in a run of tries the object is the last try's: the text's scores are these)
         ok, _ = self._build_unit(proj, fp, unit)  # the object may be older than the file
         if not ok or unit.base is None or not unit.base.exists():
             return None, False
@@ -3000,6 +3029,9 @@ class ForkEngine:
             def undo() -> None:
                 _rewrite(path, before)
                 unname()
+                if (proj["id"], unit.name) in self._trials and scores is not None and not renamed:
+                    self._trials[(proj["id"], unit.name)] = True  # (a run of tries: built once, at its end)
+                    return
                 if self._build_unit(proj, fp, unit)[0] and scores is not None:
                     self._keep_scores(proj, unit, before, scores)
 

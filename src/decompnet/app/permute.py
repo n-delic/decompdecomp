@@ -29,6 +29,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import wait
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -256,7 +257,10 @@ class Permuter:
         fork = self.net.fork_slug(proj["slug"])
         rng = random.Random(f"{fn['id']}-{fn['permuted']}")
         gen = None
+        held = ExitStack()
         try:
+            if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
+                held.enter_context(self.net.forks.trial_run(proj, fn["unit"]))
             if available():
                 # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
                 header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
@@ -310,6 +314,7 @@ class Permuter:
         finally:
             if gen is not None:
                 gen.close()
+            held.close()  # (the unit built again as its file is)
             st.holding(fn["name"], False)
             self._let_go(agent, fn)
 

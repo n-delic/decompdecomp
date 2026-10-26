@@ -104,6 +104,44 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
 
 
+def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
+    """Each variant of a project's function built its unit twice, the second time to put the file back: a turn is
+    one run of tries (ForkEngine.trial_run), the unit built once at its end, before the function is let go."""
+    from contextlib import contextmanager
+
+    events = []
+
+    class Forks:
+        @contextmanager
+        def trial_run(self, proj, unit):
+            events.append(("run", unit))
+            yield
+            events.append(("end", unit))
+
+        def permuter_header(self, fork, name):
+            return HEADER
+
+    class ForkNet(FakeNet):
+        forks = Forks()
+
+        def fork_slug(self, slug):
+            return slug
+
+    class Recording(ScriptedPermuter):
+        def _score(self, agent, proj, fn, source, best, fork):
+            events.append(("judge", source))
+            return super()._score(agent, proj, fn, source, best, fork)
+
+        def _let_go(self, agent, fn):
+            events.append(("let go", fn["name"]))
+            super()._let_go(agent, fn)
+
+    net = ForkNet()
+    batches(monkeypatch, ["far", "same"])
+    Recording(net, {"same": 0})._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert events == [("run", ""), ("judge", "far"), ("judge", "same"), ("end", ""), ("let go", "f")]
+
+
 def test_the_generator_gets_the_header_as_c(monkeypatch):
     """GTA San Andreas's header keeps its classes in an `#ifdef __cplusplus` block, which pycparser can't read: the
     generator gets the header a C compiler sees."""
