@@ -117,6 +117,27 @@ def _tool(name: str) -> str | None:
     return next((str(d / exe) for d in _tool_dirs() if (d / exe).exists()), None)
 
 
+# #97: a public dtk project hashes the files it was built from, and some of those (a main.dol made from an ELF,
+# a .rel module) aren't on the retail disc. dtk stops at the hash; say what it means and what the user can do.
+_HASH_MISMATCH = re.compile(r"Hash mismatch: expected ([0-9a-fA-F]+)(?:\.{3}|…)?, but was ([0-9a-fA-F]+)", re.I)
+_DTK_OBJECT = re.compile(r"While (?:loading|processing) object '([^']+)'")
+
+
+def _hash_mismatch(tail: str) -> str | None:
+    """What dtk's file hash mismatch means for the user, or None when this failure isn't one."""
+    m = _HASH_MISMATCH.search(tail)
+    if m is None:
+        return None
+    objects = _DTK_OBJECT.findall(tail[:m.start()])  # the file just before the hash: the one dtk was loading
+    if not objects:
+        return None
+    obj, (expected, got) = objects[-1], m.groups()
+    return (f"your copy's {obj} isn't the one this project was built against (the project expects hash "
+            f"{expected[:8]}..., yours is {got[:8]}...). Your dump is likely fine: some projects are set up from "
+            "files that aren't on the retail disc (check the project's README for which file and where it comes "
+            "from). Or start the game from your own copy instead: choose New project → Open a game file.")
+
+
 class ForkProject:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -397,6 +418,9 @@ class ForkProject:
         for cmd in self.setup_commands(version):
             ok, tail = self.run(cmd, log=log)
             if not ok and cmd[0] != "make":  # a Makefile build often fails on purpose until things match
+                mismatch = _hash_mismatch(tail)
+                if mismatch:  # #97: a dtk project built from a file that isn't on the retail disc
+                    raise ForkError(f"{mismatch}\n{tail}")
                 raise ForkError(f"setup step failed: {' '.join(cmd)}\n{tail}")
         if (self.root / "objdiff.json").exists() and self._all_source():
             log("compiling every source file, so objdiff can measure each one (some work in progress may not compile)")
