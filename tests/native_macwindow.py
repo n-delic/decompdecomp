@@ -99,7 +99,7 @@ def evaluate(script, callback):
 
 def tick(_timer):
     try:
-        assert time.monotonic() < deadline, "native app load/close timed out"
+        assert time.monotonic() < deadline, f"native app load/close timed out in phase {state['phase']}"
         if state["busy"]:
             return
         phase = state["phase"]
@@ -128,14 +128,18 @@ def tick(_timer):
             assert "native-mac-test-secret" not in external[0]
             state["phase"] = 21
             state["requests_before"] = len(headers)
-            evaluate('var a=document.createElement("a");a.href="/";a.target="_blank";a.click();true',
+            evaluate('window.nativeBeforeReload=true;'
+                     'var a=document.createElement("a");a.href="/";a.target="_blank";a.click();true',
                      lambda _: None)
         elif phase == 21:
             if len(headers) <= state["requests_before"]:
                 return
             state["phase"] = 22
-            evaluate('Boolean(typeof S !== "undefined" && S.st)',
-                     lambda loaded: state.update(phase=3) if loaded else failures.append("internal new tab lost app page"))
+            # A request reaching the server doesn't mean WebKit has initialized the new page yet (Intel CI).
+            # Keep polling until it is ready, and don't accept the old document while navigation is pending.
+            evaluate('Boolean(!window.nativeBeforeReload && typeof S !== "undefined" && S.st '
+                     '&& typeof decompClose === "function")',
+                     lambda loaded: state.update(phase=3 if loaded else 21))
         elif phase == 22:
             return
         elif phase == 3:
