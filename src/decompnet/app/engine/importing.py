@@ -29,6 +29,31 @@ DEBUG_TYPES_FILE = "debug_types.h"
 HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
 
 
+def pair_old_functions(rows, functions) -> dict:
+    """The old function each new one continues, by the new one's name. By address first (see above), and a game's
+    overlay can put a second function at an address the main code has one at: each old function pairs once, the one
+    with the same name first. Paired by address alone the second twin was left unpaired, and its name (held by the
+    old twin that the first took) was inserted again: UNIQUE constraint failed."""
+    by_vram: dict = {}
+    for r in rows:
+        if r["vram"] is not None:
+            by_vram.setdefault(r["vram"], []).append(r)
+    by_name = {r["name"]: r for r in rows}
+    paired_ids: set = set()
+    paired: dict = {}
+    for fn in functions:
+        here = [r for r in by_vram.get(fn.vram, ()) if r["id"] not in paired_ids]
+        old = next((r for r in here if r["name"] == fn.name), None) or (here[0] if here else None)
+        if old is None:
+            old = by_name.get(fn.name)
+            if old is not None and old["id"] in paired_ids:
+                old = None
+        if old is not None:
+            paired[fn.name] = old
+            paired_ids.add(old["id"])
+    return paired
+
+
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
                    confirmed: bool = False, name: str = "", log=print, scope: str | None = None) -> str:
@@ -205,13 +230,7 @@ class ImportMixin:
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # by address first: a function renamed since (rename_symbol, polishing) has its old name nowhere
                     # in the new split, and paired by name it lost its matched C
-                    by_vram = {r["vram"]: r for r in rows if r["vram"] is not None}
-                    by_name = {r["name"]: r for r in rows}
-                    old_functions = {}
-                    for fn in res.functions:
-                        old = by_vram.get(fn.vram) or by_name.get(fn.name)
-                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
-                            old_functions[fn.name] = old
+                    old_functions = pair_old_functions(rows, res.functions)
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
                     # the names agents gave (functions and data), by address: matched C calls them by those names
