@@ -72,11 +72,6 @@ def test_discontinuous_body_keeps_span_and_reads_later_block():
     assert fn.relocs == [(5, 2, 'D_0000100A', -4)]
 
 
-def test_relocations_are_not_pruned_by_decoding_padding():
-    fn = scratch.Function(0x1000, 5, 'demo', [(1, 2, 'external', -4)])
-    scratch.prune_unit_relocs(image(bytes.fromhex('e800000000')), [fn])
-    assert fn.relocs == [(1, 2, 'external', -4)]
-
 
 @pytest.mark.parametrize('reloc', [(-1, 2, 'external', -4), (3, 2, 'external', -4), (1, 99, 'external', 0)])
 def test_invalid_relocation_bounds_fail_instead_of_corrupting_neighbors(reloc):
@@ -109,9 +104,9 @@ def test_generated_project_requires_relocation_identity(tmp_path):
 
 
 def test_objdiff_rejects_wrong_call_and_accepts_same_call_with_strict_options(tmp_path):
-    exe = toolchains.binary('objdiff-cli')
-    if not exe.exists():
+    if toolchains.installed('objdiff-cli') is None:
         pytest.skip('pinned objdiff is not installed here')
+    exe = toolchains.binary('objdiff-cli')
     code = bytes.fromhex('e800000000c3')
     target, base = tmp_path / 'target.o', tmp_path / 'base.o'
     target.write_bytes(object_for(code, [(1, 2, 'correct', -4)]))
@@ -250,7 +245,6 @@ def test_console_detection_and_draft_types_are_integrated(tmp_path):
 
 
 def test_compiler_comes_only_from_the_pinned_registry(monkeypatch, tmp_path):
-    monkeypatch.setenv('DECOMP_PS4_CLANG', str(tmp_path/'unverified-clang'))
     monkeypatch.setattr(toolchains, 'installed', lambda *a, **kw: None)
     assert scratch.clang_path() is None
     spec = toolchains.get('clang-5.0.2')
@@ -377,3 +371,74 @@ def test_ps4_permuting_uses_a_supported_weight_set():
     from decompnet.app.permute import weight_family
 
     assert weight_family({'platform': 'ps4'}, None, True) == 'base'
+
+
+@pytest.mark.parametrize('sce_type,standard_type', [(0xfe10, 2), (0xfe04, 3)])
+def test_ghidra_receives_a_standard_header_and_original_stays_unchanged(tmp_path, monkeypatch, sce_type, standard_type):
+    import struct
+
+    from decompnet.forks import ghidra
+
+    game = tmp_path / 'eboot.elf'
+    data = bytearray(make_elf(b'\xc3'))
+    struct.pack_into('<H', data, 16, sce_type)
+    game.write_bytes(data)
+    seen = []
+
+    def functions(path):
+        seen.append(path)
+        normalized = path.read_bytes()
+        assert int.from_bytes(normalized[16:18], 'little') == standard_type
+        assert normalized[:16] + normalized[18:] == data[:16] + data[18:]
+        return [{'entry': 0x1000, 'end': 0x1001}]
+    monkeypatch.setattr(ghidra, 'functions', functions)
+    found = scratch.ghidra_functions(game, scratch.read_elf(bytes(data)))
+    assert scratch.analyse(scratch.read_elf(bytes(data)), found)[0].size == 1
+    assert game.read_bytes() == data
+    assert seen[0] != game and not seen[0].exists()
+
+
+def test_overlap_is_trimmed_and_logged_without_losing_other_functions():
+    said = []
+    rows = [{'entry': 0x1000, 'end': 0x1005}, {'entry': 0x1002, 'end': 0x1004}]
+    functions = scratch.analyse(image(b'\xc3'*6), rows, log=said.append)
+    assert [(f.addr, f.size) for f in functions] == [(0x1000, 2), (0x1002, 2)]
+    assert any('trimming overlapping' in line for line in said)
+    rows[0]['ranges'] = [[0x1000, 0x1005]]
+    assert scratch.analyse(image(b'\xc3'*6), rows, log=said.append)[0].size == 2
+
+
+def test_map_names_are_used_consistently_in_call_relocations():
+    rows = [{'entry': 0x1000, 'end': 0x1005, 'source': 'map', 'name': 'caller'},
+            {'entry': 0x1005, 'end': 0x1006, 'source': 'map', 'name': 'callee'}]
+    functions = scratch.analyse(image(bytes.fromhex('e800000000c3')), rows)
+    assert [f.name for f in functions] == ['caller', 'callee']
+    assert functions[0].relocs == [(1, 2, 'callee', -4)]
+    rows[1]['name'] = 'caller'
+    assert scratch.analyse(image(bytes.fromhex('e800000000c3')), rows)[1].name == 'func_00001005'
+    rows[0]['name'] = 'not a C identifier'
+    assert scratch.analyse(image(bytes.fromhex('e800000000c3')), rows)[0].name == 'func_00001000'
+
+
+def test_uploaded_eboot_has_a_stable_title(tmp_path):
+    game = tmp_path / 'a1b2c3d4' / 'eboot.elf'
+    game.parent.mkdir()
+    game.write_bytes(make_elf(b'\xc3'))
+    assert scratch.game_info(game)['title'] == 'PS4 game'
+
+
+@pytest.mark.parametrize('sce_type', [0xfe10, 0xfe04])
+def test_stock_ghidra_finds_functions_without_a_sidecar(tmp_path, sce_type):
+    import struct
+
+    from decompnet.forks import ghidra
+
+    if not ghidra.available():
+        pytest.skip('needs pinned Ghidra and its JDK')
+    game = tmp_path / 'eboot.elf'
+    data = bytearray(make_elf(bytes.fromhex('554889e589f85dc3')))
+    struct.pack_into('<H', data, 16, sce_type)
+    game.write_bytes(data)
+    functions = scratch.ghidra_functions(game, scratch.read_elf(bytes(data)))
+    assert any(row['entry'] == 0x1000 for row in functions)
+    assert game.read_bytes() == data

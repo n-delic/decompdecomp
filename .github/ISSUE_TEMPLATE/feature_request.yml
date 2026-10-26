@@ -1,0 +1,46 @@
+name: Feature request
+description: Something decompdecomp could do, or do better
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      description: The consoles it's for (labels the issue). Leave it empty when it's for every console.
+      multiple: true
+      options:
+        - N64
+        - PS1
+        - PS2
+        - GameCube
+        - Wii
+        - Windows PC
+        - DS
+        - A public decomp
+        - A console decompdecomp doesn't have yet
+  - type: dropdown
+    id: system
+    attributes:
+      label: Your system
+      description: Only when it's about decompdecomp on one system (labels the issue).
+      options:
+        - Linux
+        - Windows
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you were doing, and what got in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+    validations:
+      required: true
+  - type: textarea
+    id: else
+    attributes:
+      label: Anything else
+      description: Alternatives you thought of, screenshots, a public decomp that does it.

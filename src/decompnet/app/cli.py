@@ -319,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
     ii.add_argument("--repo", default="n-delic/decompdecomp")
     args = ap.parse_args(argv)
     __import__("decompnet").utf8_output()
+    __import__("decompnet.limits").limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
             "install-info": install_info}.get(args.cmd, run)(args)
 

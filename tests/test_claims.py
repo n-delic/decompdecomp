@@ -183,6 +183,35 @@ def test_functions_given_up_on_go_to_the_strongest_model_at_work(tmp_path):
     assert net.claim_row(other, "game", None, "easiest")["name"] == "hard"
 
 
+def test_once_every_function_was_given_up_on_a_weak_model_keeps_the_less_tried_half(tmp_path):
+    """On an Xbox game every one of 1,146 open functions had been given up on 5 or more times, so the weak model fell
+    back to the whole queue: 3,183 claims for 10 matches in a night. The line moves to the median instead."""
+    import time
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    strong, _ = net.local_agent("claude-opus-1")
+    weak, _ = net.local_agent("claude-haiku-1")
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES(?,?,?,?,?,?,?)",
+                         ("game", "Game", "", "x86", 0, str(tmp_path), json.dumps({"kind": "rom"}))).lastrowid
+        # the smallest is the most given up on: "easiest" would hand it to the weak model first
+        for name, n, abandons in [("worst", 4, 25), ("bad", 10, 13), ("less", 40, 6), ("least", 60, 5)]:
+            db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,abandons) VALUES(?,?,?,?,?,?,?)",
+                       (pid, name, n * 4, n, "open", "a", abandons))
+        for agent, won in ((strong, 15), (weak, 1)):
+            for i in range(20):
+                db.execute("INSERT INTO events(project_id,agent_id,kind,detail,created_at) VALUES(?,?,?,?,?)",
+                           (pid, agent.id, "claim", f"old_{agent.id}_{i}", time.time()))
+            for i in range(won):
+                db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,matched_agent_id) "
+                           "VALUES(?,?,?,?,?,?,?)", (pid, f"won_{agent.id}_{i}", 40, 10, "matched", "a", agent.id))
+    assert net.claim_row(weak, "game", None, "easiest")["name"] == "less"  # median 6: "worst" and "bad" aren't its
+    assert net.claim_row(strong, "game", None, "easiest")["name"] == "worst"  # the most given up on, first
+    net.release(weak, "less", "", "game")
+    other, _ = net.local_agent("claude-haiku-2")
+    assert net.claim_row(other, "game", None, "easiest")["name"] == "least"
+
+
 def _one_function_game(tmp_path, name="piece"):
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     with net.store.tx() as db:

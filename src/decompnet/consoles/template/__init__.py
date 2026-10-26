@@ -59,7 +59,7 @@ class Example(Console):
     # Also, as this console needs them (each is explained on Console):
     # default_compiler, default_flags, add_code, find_gp, debug_info, debug_brief, after_import, on_start,
     # asm_reason, up_front_guide, m2c_target; PROJECT mode: create_project, game_info, tool_args, identity,
-    # check_rebuild, read_data, upload_name.
+    # check_rebuild, read_data, upload_name, generated_functions, debug_of.
 
 
 EXAMPLE = Example()

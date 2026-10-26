@@ -84,11 +84,12 @@ def register(app: App) -> None:
             raise ValueError("choose a game file to reimport")
         proj = net.project_row(slug)
         cfg = json.loads(proj["config"])
-        if cfg.get("kind") != "rom":
-            raise NetworkError("only ROM projects can be reimported")
+        fork = bool(net.fork_slug(slug))
+        if cfg.get("kind") != "rom" and not (fork and net.forks.overview(slug).get("reimports")):
+            raise NetworkError("only ROM projects and PC projects started from scratch can be reimported")
         if slug in net.rooms or slug in net.links:
             raise NetworkError("leave the shared room before reimporting this game")
-        if consoles.identify(path).id != net.console(proj).id:
+        if consoles.identify(path).id != consoles.of(cfg).id:
             raise NetworkError("choose a game for the same console as this project")
         if net.surveys.get(slug, {}).get("state") == "running":
             raise NetworkError("wait for the compiler survey to finish before reimporting this game")
@@ -96,6 +97,8 @@ def register(app: App) -> None:
         net.stop_autopilot(slug)
         net.twins.stop(slug)
         net.permuter.stop(slug)
+        if fork:  # (its own analysis again: Console.reimport)
+            return {"job": jobs.start("reimport", lambda log: net.forks.reimport(slug, path, log=log))}
         return {"job": jobs.start(
             "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log))}
 

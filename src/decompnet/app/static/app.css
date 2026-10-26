@@ -322,6 +322,8 @@ a.ghost, a.primary { text-decoration: none; }
 .notice { background: var(--work-bg); color: var(--ink); border: 1px solid color-mix(in srgb, var(--work) 35%, transparent); }
 .notice.room { background: var(--bg-alt); border-color: var(--line); }
 .notice.bad { background: var(--miss-bg); border-color: color-mix(in srgb, var(--miss) 35%, transparent); }
+#modelAdvice { display: grid; gap: 6px; margin: 0 0 12px; }  /* one sentence a model, stacked */
+#modelAdvice p { margin: 0; }
 .autopilot { margin-top: 14px; display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); }
 .autopilot.on { border-color: color-mix(in srgb, var(--match) 40%, var(--line)); background: color-mix(in srgb, var(--match-bg) 30%, var(--panel)); }
 .ap-icon { width: 10px; height: 10px; border-radius: var(--r-sm); background: var(--faint); flex: none; }

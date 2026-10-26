@@ -4,7 +4,9 @@ function by any name an agent uses for it, and the identities of the agents that
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import secrets
 import threading
 from pathlib import Path
@@ -52,6 +54,8 @@ class Core(Network):
         self.permuter = Permuter(self)
         from ..rangecheck import RangeChecks
         self.rangechecks = RangeChecks(self)
+        from ..filecompilers import FileCompilers
+        self.filecompilers = FileCompilers(self)
         from ..knowledge import Knowledge
         self.knowledge = Knowledge(self)
         from ..readable import Readability
@@ -275,6 +279,13 @@ class Core(Network):
     def local_agent(self, name: str) -> tuple[Agent, str]:
         """An agent identity for one runner on this machine (created on first use)."""
         row = self.store.one("SELECT id FROM agents WHERE name=?", name)
+        # Saves can credit room members (@name) or older helpers with long names. Those labels aren't valid
+        # new runner names; keep existing identities, and give new ones a stable name without merging credits.
+        if row is None and (not name or len(name) > 40 or not all(c.isalnum() or c in "-_." for c in name)):
+            suffix = hashlib.sha256(name.encode("utf-8")).hexdigest()[:12]
+            label = re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-._") or "restored"
+            name = f"{label[:27]}-{suffix}"
+            row = self.store.one("SELECT id FROM agents WHERE name=?", name)
         if row is not None:
             token = "dn_" + secrets.token_urlsafe(24)
             with self.store.tx() as db:

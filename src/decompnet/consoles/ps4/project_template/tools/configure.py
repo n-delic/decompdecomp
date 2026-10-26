@@ -77,31 +77,30 @@ def main() -> None:
     units = json.loads(CONFIG.read_text(encoding="utf-8"))["units"]
     headers = [str(p) for p in files("include", (".h", ".hpp"))]
     ninja_text = io.StringIO()  # the writer goes to memory, then one atomic rename
-    if True:
-        n = ninja_syntax.Writer(ninja_text)
-        n.rule("delink", f"{PY} tools/delink.py {CONFIG} {BUILD / 'target'}", restat=True)
-        compiler = [PYTHON, "tools/compile.py", "--compiler", str(CLANG), "--include", "include",
-                    "--config", str(CONFIG)]
-        n.rule("cc", q(compiler).replace("$", "$$") + " --output $out --source $in -- "
-               + q(CL_FLAGS).replace("$", "$$") + " $cflags")
-        n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
+    n = ninja_syntax.Writer(ninja_text)
+    n.rule("delink", f"{PY} tools/delink.py {CONFIG} {BUILD / 'target'}", restat=True)
+    compiler = [PYTHON, "tools/compile.py", "--compiler", str(CLANG), "--include", "include",
+                "--config", str(CONFIG)]
+    n.rule("cc", q(compiler).replace("$", "$$") + " --output $out --source $in -- "
+           + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+    n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
 
-        targets = [str(BUILD / "target" / f"{u}.o") for u in units]
-        n.build(targets, "delink", [str(CONFIG), "tools/delink.py"])
-        objs = []
-        for src in files("src", (".c", ".cpp")):
-            obj = BUILD / src.with_suffix(".o")
-            # Binding uses target symbols: its object must exist before the
-            # compiler's post-processing, including the first parallel build.
-            target = BUILD / "target" / f"{src.stem}.o"
-            binding = [str(target)] if src.parent.as_posix() == "src/auto" and src.stem in units else []
-            n.build(str(obj), "cc", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/bind.py", *binding])
-            objs.append(str(obj))
-        n.build("all_source", "phony", objs)
-        n.build("prepare", "phony", [*targets, *objs])
-        n.build("build.ninja", "configure", ["tools/configure.py", "tools/compiler_flags.py", str(CONFIG), *headers,
-                                             *[str(s) for s in files("src", (".c", ".cpp"))]])
-        n.default(["prepare"])
+    targets = [str(BUILD / "target" / f"{u}.o") for u in units]
+    n.build(targets, "delink", [str(CONFIG), "tools/delink.py"])
+    objs = []
+    for src in files("src", (".c", ".cpp")):
+        obj = BUILD / src.with_suffix(".o")
+        # Binding uses target symbols: its object must exist before the
+        # compiler's post-processing, including the first parallel build.
+        target = BUILD / "target" / f"{src.stem}.o"
+        binding = [str(target)] if src.parent.as_posix() == "src/auto" and src.stem in units else []
+        n.build(str(obj), "cc", str(src), implicit=[*headers, str(CONFIG), "tools/compile.py", "tools/bind.py", *binding])
+        objs.append(str(obj))
+    n.build("all_source", "phony", objs)
+    n.build("prepare", "phony", [*targets, *objs])
+    n.build("build.ninja", "configure", ["tools/configure.py", "tools/compiler_flags.py", str(CONFIG), *headers,
+                                         *[str(s) for s in files("src", (".c", ".cpp"))]])
+    n.default(["prepare"])
     write_atomic(Path("build.ninja"), ninja_text.getvalue())
 
     objdiff = {

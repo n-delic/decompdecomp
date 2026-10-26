@@ -5,7 +5,9 @@
   (stabs.py): the source files (they become the project's units), each function's prototype with its parameters'
   names and types and where its locals live, global variables' types, and every struct, union, enum, typedef and
   class with its fields' offsets, written as C for the shared header (cheader.py).
-- DWARF (.debug from CodeWarrior, .debug_info from later GCCs) is recognised and said in the import log, not read.
+- .debug and .line, the DWARF 1 CodeWarrior writes with -g (dwarf1.py; its PS2 and PSP compilers alike): the same,
+  in the same shapes, and the line each function starts on.
+- DWARF 2 or later (.debug_info, from later GCCs) is recognised and said in the import log, not read.
 
 The import calls read() before splitting, then gives each function its unit and the brief its debug lines.
 """
@@ -20,13 +22,13 @@ from io import BytesIO
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 
-from . import mdebug, stabs, symtab
+from . import dwarf1, mdebug, stabs, symtab
 from .cheader import Header
 
 SMALL_DATA = (".sdata", ".sbss", ".scommon", ".lit4", ".lit8")  # where $gp-relative globals live
 SMALL_DATUM_BYTES = 8  # -G8, PS2 games' setting: globals this small are read through $gp
 GP_REACH = 0x8000  # a $gp-relative load reaches 32 KiB either side
-DWARF_SECTIONS = {".debug": "DWARF 1", ".debug_info": "DWARF 2 or later"}
+UNREAD_SECTIONS = {".debug_info": "DWARF 2 or later"}
 
 
 @dataclass
@@ -41,6 +43,27 @@ class DebugInfo:
 
     def symbol_addrs(self) -> list[str]:
         return symtab.symbol_addrs(self.named)
+
+    def merge(self, other: DebugInfo) -> DebugInfo:
+        """Another program's names, functions and source files added (a PSP game's module, split with its main
+        program): a name this one has already gets the other's address after it, as a repeated name in one program
+        does (symtab.read). Its types stay out: the header is this program's, and the same type twice won't
+        compile."""
+        names = {n.name for n in self.named}
+        addresses = {n.address for n in self.named}
+        for n in other.named:
+            if n.address in addresses:
+                continue
+            if n.name in names:
+                n.name = f"{n.name}_{n.address:08X}"
+            names.add(n.name)
+            self.named.append(n)
+        self.named.sort(key=lambda n: n.address)
+        self.units = {**other.units, **self.units}
+        self.functions = {**other.functions, **self.functions}
+        self.sources = sorted({*self.sources, *other.sources})
+        self.unread = sorted({*self.unread, *other.unread})
+        return self
 
     def summary(self) -> str:
         """What the import log says: "debug symbols: 3,412 functions named, 812 types, 64 source files"."""
@@ -82,7 +105,7 @@ def _small(named: symtab.Named, gp: int | None) -> bool:
 
 def _dwarf(elf: ELFFile) -> list[str]:
     found = []
-    for section, kind in DWARF_SECTIONS.items():
+    for section, kind in UNREAD_SECTIONS.items():
         if elf.get_section_by_name(section) is not None:
             found.append(f"{kind} ({section})")
     return found
@@ -96,14 +119,17 @@ def read(data: bytes, reserved: set[str] = frozenset()) -> DebugInfo | None:
         info = DebugInfo(named=symtab.read(elf), unread=_dwarf(elf))
         section = elf.get_section_by_name(".mdebug")
         files = mdebug.read(data, section["sh_offset"], section["sh_size"]) if section is not None else []
+        debug, line = (s.data() if s is not None else b"" for s in map(elf.get_section_by_name, (".debug", ".line")))
         gp = _gp(elf)
     except (ELFError, ValueError, KeyError):
         return None
-    if files:
-        try:
+    try:
+        if files:
             _read_stabs(info, files, reserved, gp)
-        except Exception:  # a heuristic over the game's own data: never stands between the user and the import
-            logging.getLogger("decompdecomp").exception("reading the program's STABS failed")
+        elif debug:
+            _read_dwarf1(info, dwarf1.read(debug, line, elf.little_endian), reserved, gp)
+    except Exception:  # a heuristic over the game's own data: never stands between the user and the import
+        logging.getLogger("decompdecomp").exception("reading the program's debug information failed")
     if not info.named and not info.sources and not info.unread:
         return None
     return info
@@ -116,6 +142,22 @@ def _read_stabs(info: DebugInfo, files: list[mdebug.SourceFile], reserved: set[s
         for _, address in f.procedures():
             info.units.setdefault(address, short[f.name])
     info.sources = sorted({short[f.name] for f in files if f.procedures()})
+    _describe(info, sources, reserved, gp)
+
+
+def _read_dwarf1(info: DebugInfo, sources: list[stabs.SourceInfo], reserved: set[str], gp: int | None) -> None:
+    """A unit per source file with functions: CodeWarrior also writes compile units of only types and data."""
+    short = _short_names([source.name for source in sources])
+    for source in sources:
+        source.name = short[source.name]
+        for function in source.functions:
+            info.units.setdefault(function.address, source.name)
+    info.sources = sorted({source.name for source in sources if source.functions})
+    _describe(info, sources, reserved, gp)
+
+
+def _describe(info: DebugInfo, sources: list[stabs.SourceInfo], reserved: set[str], gp: int | None) -> None:
+    """The header, and each function's prototype and variables, from either reader's source files."""
     header = Header(sources, reserved)
     info.types = len(header.entities)
     by_address = {n.address: n for n in info.named}
@@ -136,16 +178,19 @@ def _read_stabs(info: DebugInfo, files: list[mdebug.SourceFile], reserved: set[s
             info.functions[function.address] = {
                 "source": source.name,
                 "prototype": header.prototype(function, name),
-                "params": [f"{p.name} in {p.where}" for p in function.params],
-                "locals": [f"{header.variable(v)} ({v.where})" for v in function.locals],
-            }
+                "params": [f"{p.name} in {p.where}" for p in function.params if p.where],
+                "locals": [f"{header.variable(v)} ({v.where})" if v.where else header.variable(v)
+                           for v in function.locals],
+            } | ({"line": function.line} if function.line else {})
     info.header = header.text(variables)
 
 
-def brief_lines(debug: dict) -> list[str]:
-    """What a function's brief says from the game's debug information (kept in the function's meta at import)."""
+def brief_lines(debug: dict, header: str = "context.h") -> list[str]:
+    """What a function's brief says from the game's debug information (kept in the function's meta at import);
+    `header`: where the game's types are (a PC project's are in include/debug_types.h)."""
     lines = ["", "### From the game's debug information",
-             f"source file {debug['source']}; its types are in context.h already",
+             f"source file {debug['source']}" + (f", from line {debug['line']}" if debug.get("line") else "")
+             + f"; its types are in {header} already",
              f"prototype: {debug['prototype']};"]
     if debug.get("params"):
         lines.append("parameters live in: " + ", ".join(debug["params"]))

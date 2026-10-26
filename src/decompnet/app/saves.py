@@ -28,11 +28,13 @@ from ..hostenv import NO_WINDOW, stop_process_tree
 from ..network import NetworkError
 from ..rom.symbols import AUTO_NAME
 from ..scoring import percent_text
+from . import save_readme
 
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
 AUTOSAVE_SECONDS = 300
+SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # a set-aside function's meta that says why (network.set_aside)
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -55,7 +57,7 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-                         "best_agent_id, readable FROM functions WHERE project_id=? ORDER BY vram", pid)
+                         "best_agent_id, readable, meta FROM functions WHERE project_id=? ORDER BY vram", pid)
     for sub in ("src", "best", "include"):
         shutil.rmtree(folder / sub, ignore_errors=True)
         (folder / sub).mkdir(parents=True, exist_ok=True)
@@ -87,13 +89,20 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
         "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
                                                     pid) if not AUTO_NAME.match(r["name"])],
         "notes": notes,
+        # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
+        # (the import sets aside again what it finds by itself)
+        "set_aside": [{"name": r["name"], "vram": r["vram"],
+                       **{k: v for k, v in json.loads(r["meta"] or "{}").items() if k in SET_ASIDE_META}}
+                      for r in rows if r["status"] == "asm"],
     }
     (folder / MANIFEST).write_text(json.dumps(manifest, indent=1) + "\n", encoding="utf-8")
     matched = sum(1 for f in functions.values() if "matched_by" in f)
     compiler = cfg.get("compiler") or {}
     compiler_name = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
     compiler_name = compiler_name or "not recorded"
-    (folder / "README.md").write_text(f"""# {proj['name']}: decompdecomp progress
+    details = (f"- **Game:** {proj['name']}\n- **Platform:** {cfg.get('platform') or 'not recorded'}\n"
+               f"- **Compiler:** {compiler_name}")
+    readme = f"""# {proj['name']}: decompdecomp progress
 
 This is a saved decompilation project created with [decompdecomp](https://github.com/n-delic/decompdecomp).
 AI agents were used during the decompilation; their C attempts were kept only when decompdecomp's byte-for-byte
@@ -101,9 +110,7 @@ judge accepted them as matches.
 
 ## Project details
 
-- **Game:** {proj['name']}
-- **Platform:** {cfg.get('platform') or 'not recorded'}
-- **Compiler:** {compiler_name}
+{save_readme.block('details', details)}
 - **Progress:** {matched} matching function(s), {len(functions) - matched} best attempt(s)
 
 ## What's in this folder
@@ -126,7 +133,8 @@ README.md             this file
 Open decompdecomp, choose **New project → Open a saved project**, then pick this folder (or paste its git
 repository's address) and your own copy of the game. decompdecomp checks it's the same game and judges every saved
 function again: a match counts because it matches, not because a file says so.
-""", encoding="utf-8")
+"""
+    save_readme.update(net, proj, folder, readme, len(functions) - matched, details)
     return {"folder": str(folder), "matched": matched, "best": len(functions) - matched}
 
 
@@ -146,15 +154,16 @@ def _save_best(net, proj, folder: Path) -> dict:
             f"/* {r['name']}: the closest attempt so far, {percent_text(pct)} match, by "
             f"{names.get(r['best_agent_id'], '?')}; it belongs in {source} */\n\n" + r["best_source"].strip() + "\n",
             encoding="utf-8")
-    (folder / "README.md").write_text(f"""# {proj['name']}: the closest attempts so far
+    readme = f"""# {proj['name']}: the closest attempts so far
 
 Saved by [decompdecomp](https://github.com/n-delic/decompdecomp). Each file in `best/` is the closest C an agent wrote
-for a function of the game that doesn't match byte for byte yet ({len(rows)} of them): its comment says how close,
+for a function of the game that doesn't match byte for byte yet: its comment says how close,
 who wrote it and which source file it belongs in. They compile, but they're not the original's code.
 
 The matched functions aren't here: they're in the project's own source files (and its git history), where every
 match was judged byte for byte. No game data is in this folder.
-""", encoding="utf-8")
+"""
+    save_readme.update(net, proj, folder, readme, len(rows))
     return {"folder": str(folder), "matched": 0, "best": len(rows)}
 
 
@@ -252,6 +261,14 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
             net.add_note(net.local_agent(note["by"] or "restored")[0], slug, note["text"], note["function"])
         except NetworkError:
             continue  # its function is gone (a split the layout couldn't make again)
+    with net.store.tx() as db:
+        for item in manifest.get("set_aside") or []:
+            row = db.execute("SELECT id, meta FROM functions WHERE project_id=? AND vram=? AND status='open'",
+                             (pid, item["vram"])).fetchone()
+            if row is not None:
+                why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
+                db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
+                           (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
     by_vram = {r["vram"]: r["name"] for r in net.store.all("SELECT vram, name FROM functions WHERE project_id=?", pid)}
     saved = manifest.get("functions") or {}
     matched, lost, best = 0, [], 0

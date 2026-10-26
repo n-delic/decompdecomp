@@ -67,6 +67,22 @@ def test_the_comment_above_a_definition_is_its_own_up_to_a_blank_line_or_a_marke
     assert text[csource.comment_above(text, add):add] == "// Adds them.\n/* Both\n   ints. */\n"
     assert csource.comment_above(text, sub) == sub
     assert csource.comment_above("int f(void) { return 0; }\n", 0) == 0
+    # only reccmp's words are markers: a comment with `// NOTE:` in it was dropped
+    text = "// Sums them.\n// NOTE: wraps at 65521.\nint f(void) { return 0; }\n"
+    assert csource.comment_above(text, text.index("int")) == 0
+
+
+def test_a_wrapper_is_taken_with_the_comment_inside_it():
+    """A polish writes `#pragma push`, the comment, then the definition: the next rewrite's wrapper stopped at the
+    comment and left the file's push behind, never popped."""
+    from decompnet.app.forkengine import _pragmas_around
+
+    text = "int g;\n#pragma push\n#pragma opt 0\n// Adds.\nint f(void) { return 1; }\n#pragma pop\nint h;\n"
+    lo, hi = csource.find(text, "f")
+    assert text[slice(*_pragmas_around(text, lo, hi))] == text[text.index("#pragma push"):text.index("int h")]
+    plain = "int g;\n// Adds.\nint f(void) { return 1; }\n"
+    lo, hi = csource.find(plain, "f")
+    assert _pragmas_around(plain, lo, hi)[0] == lo  # no wrapper: the comment isn't taken
 
 
 @needs_tools
@@ -206,6 +222,33 @@ def test_csource_finds_definitions_and_stubs():
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
 
 
+def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
+    """A PC game's function written as a class named after it: its constructor was found, its destructor wasn't (an
+    agent's func_004D9DD0::~func_004D9DD0 was refused: "send the complete definition of _func_004D9DD0"). C files
+    (every other console's) find what they found before."""
+    from decompnet.app.forkengine import ForkEngine
+
+    names = ForkEngine._names({"symbol": "_func_004D9DD0"}, {"name": "_func_004D9DD0"})
+    dtor = "struct func_004D9DD0 { ~func_004D9DD0(); };\nfunc_004D9DD0::~func_004D9DD0() {\n    func_005F10E0();\n}\n"
+    assert ForkEngine._find(None, dtor, names)[0] == "func_004D9DD0::~func_004D9DD0"
+    ctor = "func_004D9DD0::func_004D9DD0(int x) {\n}\n"
+    assert ForkEngine._find(None, ctor, names)[1] == (0, len(ctor))
+    # a function with a C++ name (a fork's) is found by it, not by a destructor of the same plain name
+    names = ForkEngine._names({"symbol": "??0Foo@@QAE@XZ", "demangled": "Foo::Foo(void)"}, {"name": "??0Foo@@QAE@XZ"})
+    assert not any("~" in n for n in names)
+    assert ForkEngine._find(None, "Foo::~Foo() {\n}\n", names) == (None, None)
+    # C: a definition, not a call or a prototype, and nothing of C reads as a destructor
+    c = "int g(void);\nint f(int a) {\n    return ~g() + a;\n}\n"
+    names = ForkEngine._names({"symbol": "f"}, {"name": "f"})
+    assert names == ["f", "f::~f"] and ForkEngine._find(None, c, names) == ("f", (13, len(c)))
+    assert csource.find(c, "g") is None
+    # the one constructor or destructor a source defines names an unnamed PC function (ForkEngine._attempt)
+    assert csource.structor("struct CFoo { CFoo(); ~CFoo(); };\nCFoo::~CFoo() {\n}\n") == "CFoo::~CFoo"
+    assert csource.structor("A::CFoo::CFoo(int x) : y(x) {\n}\n") == "A::CFoo::CFoo"
+    assert csource.structor("CFoo::CFoo() {}\nCFoo::~CFoo() {}\n") is None  # two: which one is the function?
+    assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
+
+
 def test_clone_rejects_odd_sources(tmp_path):
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     for bad in ("file:///etc", "https://evil.example/x/y", "--upload-pack=x", str(tmp_path)):
@@ -220,6 +263,33 @@ def test_find_similar(fork):
     assert "index covers" in out or "Functions that look like" in out
 
 
+@needs_tools
+def test_the_look_alike_index_is_written_only_when_something_new_is_indexed(fork):
+    # every sync ends an indexing pass; a GameCube game's 11 MB index.json rewritten on each one wrote 50 MB/s
+    from decompnet.forks.project import STATE
+    net, slug, _ = fork
+    proj, fp, _ = net.forks.get(slug)
+    for unit in fp.units():
+        net.forks._unit_index(proj, fp, unit, save=False)
+    net.forks._save_index(proj, fp)
+    path = fp.root / STATE / "index.json"
+    assert json.loads(path.read_text())
+    net.forks._index.pop(proj["id"])  # as after a restart: the index comes back from index.json
+    net.forks._index_of(proj, fp)
+    path.unlink()
+    for unit in fp.units():  # all known already: nothing to write
+        net.forks._unit_index(proj, fp, unit)
+    net.forks._save_index(proj, fp)
+    assert not path.exists()
+    # a compile measures its unit again (the same target): nothing new either
+    from decompnet.app.forkengine import objdiff_diff
+    unit = next(u for u in fp.units() if net.forks._unit_index(proj, fp, u, save=False))
+    symbol = net.forks._unit_index(proj, fp, unit, save=False)["order"][0]
+    net.forks._remember(proj, fp, unit, objdiff_diff(fp, unit, symbol, target_only=True))
+    net.forks._save_index(proj, fp)
+    assert not path.exists()
+
+
 def test_similarity_ranks_copies_first():
     from decompnet import similarity
 
@@ -227,6 +297,52 @@ def test_similarity_ranks_copies_first():
     cands = {"copy": list(a), "tweaked": a[:4] + ["sltu"] + a[5:], "other": ["lui", "ori", "jal", "nop"] * 3}
     ranked = similarity.rank(a, cands, top=3)
     assert [n for n, _ in ranked][:2] == ["copy", "tweaked"] and ranked[0][1] == 1.0
+
+
+def test_a_source_is_rewritten_from_its_first_change_only(tmp_path, monkeypatch):
+    # a compile writes the agent's version of a dtk unit (up to a megabyte) and an undo writes the original back
+    import os
+
+    from decompnet.app import forkengine
+    head = "".join(f"void f{i}(void) {{ }}\n" for i in range(2000))  # ~40 KB the edit doesn't touch
+    before, after = head + "int g(void) { return 1; }\n", head + "int g(void) { return 2; }\nint h;\n"
+    written = []
+
+    class Spy:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+
+        def __getattr__(self, name):
+            return getattr(self.f, name)
+
+        def write(self, data):
+            written.append(len(data))
+            return self.f.write(data)
+    monkeypatch.setattr(forkengine, "open", lambda *a, **k: Spy(open(*a, **k)), raising=False)
+    for linesep in ("\n", "\r\n"):  # what text mode writes on Linux and macOS, and on Windows
+        monkeypatch.setattr(os, "linesep", linesep)
+        p = tmp_path / f"unit{len(linesep)}.c"
+        p.write_bytes(before.replace("\n", linesep).encode())
+        for text in (after, before, before[:100], "", before):  # an edit, its undo, shorter, empty, longer again
+            written.clear()
+            forkengine._rewrite(p, text)
+            assert p.read_bytes() == text.replace("\n", linesep).encode()
+        written.clear()
+        forkengine._rewrite(p, after)
+        assert p.read_bytes() == after.replace("\n", linesep).encode()
+        assert 0 < sum(written) < 8192 < len(head)  # only the block with the change, and what follows it
+        os.utime(p, (1, 1))
+        written.clear()
+        forkengine._rewrite(p, after)  # the same text: nothing written, but a build still sees it as new
+        assert not written and p.stat().st_mtime > 1
+    forkengine._rewrite(tmp_path / "new.c", "int x;\n")
+    assert (tmp_path / "new.c").read_text() == "int x;\n"
 
 
 @pytest.mark.skipif(toolchains.installed("m2c") is None, reason="needs m2c")
@@ -642,3 +758,14 @@ def test_a_match_that_is_lost_gets_its_score_back_so_the_queue_doesnt_say_it_is_
     # and the reopen is in the events, with what measured it and how much it scored
     events = [(r["kind"], r["detail"]) for r in store.all("SELECT kind, detail FROM events")]
     assert events == [("reopen", "F (unit diff before a compile: 52.70%)")]
+
+
+@needs_tools
+def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
+    # SQLite writes a row's pages even when an UPDATE sets the same values: 34,000 functions on every sync
+    net, slug, _ = fork
+    net.forks.sync(slug, log=lambda *_: None)
+    before = net.store.conn.total_changes
+    net.forks.sync(slug, log=lambda *_: None)
+    functions = net.store.one("SELECT COUNT(*) n FROM functions")["n"]
+    assert net.store.conn.total_changes - before < functions

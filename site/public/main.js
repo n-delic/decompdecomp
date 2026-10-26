@@ -15,6 +15,19 @@
       }
     });
   };
+  // the current version, read from the installer this site serves: packaging/release.sh bumps it there, so a release
+  // needs no edit here. Stays hidden if it can't be read.
+  fetch("install.sh").then((r) => (r.ok ? r.text() : "")).then((text) => {
+    const version = (text.match(/^VERSION="([^"]+)"/m) || [])[1];
+    if (!version) return;
+    document.querySelectorAll("[data-version]").forEach((el) => {
+      const a = el.querySelector("a");
+      a.textContent = `version ${version}`;
+      a.href = `https://github.com/n-delic/decompdecomp/releases/tag/v${version}`;
+      el.hidden = false;
+    });
+  }).catch(() => {});
+
   const picker = document.querySelector(".platforms");
   picker.addEventListener("change", (e) => show(e.target.value));
   show(picker.querySelector("input:checked").value);

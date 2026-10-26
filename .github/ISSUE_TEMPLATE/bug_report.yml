@@ -1,0 +1,74 @@
+name: Bug report
+description: Something in decompdecomp doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No game data, please: no ROMs, discs or executables, and no code, assembly or assets from a game (that includes
+        the C your agents matched). The game's name is fine. The app's **Report a problem** copies a report with your
+        version and system: paste it under "What happened".
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      description: The console of the project it happened in (labels the issue). Leave it empty when it's not about one.
+      multiple: true
+      options:
+        - N64
+        - PS1
+        - PS2
+        - GameCube
+        - Wii
+        - Windows PC
+        - DS
+        - A public decomp
+        - A console decompdecomp doesn't have yet
+  - type: dropdown
+    id: system
+    attributes:
+      label: Your system
+      description: Labels the issue.
+      options:
+        - Linux
+        - Windows
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Bottom left of the app, or `decomp update --check`.
+      placeholder: 1.0.6-alpha.3
+    validations:
+      required: true
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler
+      description: The compiler the project uses, if you know it.
+  - type: textarea
+    id: did
+    attributes:
+      label: What you did
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: With the error text, or the app's report.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The log around it
+      description: If it helps. `~/Decomp/.decomp/logs/decomp.log`; read it first and cut out any code or assembly.
+      render: text

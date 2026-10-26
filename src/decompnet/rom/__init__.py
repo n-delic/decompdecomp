@@ -22,3 +22,4 @@ class Picked:
     info: dict  # what its header says: title, game_code, region, size, sha1, compiler_guess...
     big_endian: bool
     overlays: list = field(default_factory=list)  # (name, bytes, load address, code offset): code in other files
+    programs: list = field(default_factory=list)  # other programs whose own names count too: a PSP game's modules

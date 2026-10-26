@@ -8,6 +8,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="AGPL-3.0 license" src="https://img.shields.io/badge/license-AGPL--3.0-157a49?style=flat-square"></a>
   <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-15140f?style=flat-square">
+  <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
   <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
@@ -30,14 +31,14 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Install
 
-decompdecomp runs on **Linux and Windows 10/11**, on a 64-bit Intel or AMD PC. On Linux, install it with one command. The installer also gets
+decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets
 the free compilers and keeps decompdecomp up to date:
 
 ```
 curl -fsSL https://decomp.ndelic.com/install.sh | bash
 ```
 
-Or install a package from the [releases](https://github.com/n-delic/decompdecomp/releases):
+Linux packages are available from the [releases](https://github.com/n-delic/decompdecomp/releases):
 
 ```
 sudo apt install ./decompdecomp_*_amd64.deb        # Debian, Ubuntu, Pop!_OS, Mint
@@ -66,15 +67,61 @@ brings back a window closed while helpers work. Free tools use Windows builds wh
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
-> CodeWarrior for PS2, KMC GCC for N64) exist only for Linux, so decompdecomp runs them inside WSL 2. Without it,
+> CodeWarrior for PS2, KMC GCC for N64) use their Linux builds through WSL 2 on Windows. Without it,
 > every compile of such a game fails. Set it up before you import one: run `wsl --install` in an administrator
 > PowerShell, restart if asked, then open Ubuntu once to finish its setup.
 >
 > GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't need WSL: their compilers run on
 > Windows itself.
+
 PS4 projects currently need the Linux app on x86-64 (including inside WSL 2), a decrypted `eboot.elf`,
 and the pinned public Clang 5.0.2 available in Compilers & tools. No Sony SDK or game files are included.
-macOS isn't supported in this version.
+
+### macOS (Intel and Apple Silicon)
+
+Install the current source branch, or clone the repository and install the checkout:
+
+```sh
+curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main
+# Alternatively, install a local checkout:
+git clone https://github.com/n-delic/decompdecomp.git
+cd decompdecomp
+bash site/public/install.sh
+```
+
+The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets the free tools, and creates
+`~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
+toolchains live in `~/Library/Application Support/decompnet/toolchains`. Intel Macs also need Xcode Command Line
+Tools (`xcode-select --install`) to build the pinned modern MIPS binutils on their first N64 export; upstream only
+publishes those tools for Apple Silicon. Finder launches preserve the PATH
+from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
+changing their locations. This is a source install; there is no signed DMG or macOS release bundle yet.
+
+**Apple Silicon:** the app, WebKit window and modern tools run natively. The pinned N64 KMC-compatible
+GCC 2.7.2 and binutils 2.6 archives contain Intel programs, so install Apple's Rosetta runtime before setup:
+
+```sh
+softwareupdate --install-rosetta
+```
+
+Read and accept Apple's license if you agree, then rerun `decomp setup`. No proprietary game compiler is
+installed automatically. IDO still needs your explicit license acceptance in Compilers & tools.
+
+| Mac capability | Availability |
+| --- | --- |
+| N64 ROM import, compile, match and export | KMC GCC via Rosetta on Apple Silicon; directly on Intel |
+| Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
+| m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
+| Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
+| Linux-only PS1/PS2 period compilers | Unavailable on macOS; use a supported Linux host |
+| Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
+
+For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
+On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
+WKWebView against a fresh app, including authentication, external links and close confirmation.
+The homemade N64 demo tests need `brew install llvm lld`, with `$(brew --prefix llvm)/bin` and
+`$(brew --prefix lld)/bin` on PATH, plus the free tools from `decomp setup`.
+
 
 ## Start
 
@@ -172,10 +219,11 @@ game's code is its rights holder's: keep it to yourself.
 | PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
 | PlayStation 4 (decrypted ELF, Linux x86-64) | Beta |
+| PSP | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
-| Game Boy Advance, 3DS, PSP, Switch, Xbox, Xbox 360 | Community decomps only |
+| Game Boy Advance, 3DS, Switch, Xbox, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
 [tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes

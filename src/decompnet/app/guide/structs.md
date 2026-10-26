@@ -1,6 +1,7 @@
 # Working out structs
 
-0. ROM projects on MIPS (N64, PS2): `guess_struct(function, "arg0")` has done steps 1-3 for you, over every
+0. MIPS games (N64, PS2) and PC programs: `guess_struct(function, "arg0")` (PC: `"this"` for ecx, arg0-arg3 on
+   the stack) has done steps 1-3 for you, over every
    function the same pointer reaches, with how many functions agree on each field. Check its fields against
    your function's assembly. A field "also read as" another type can be a union, a copy, or two structs
    taken for one. If it says matched code already names the type, use that type.

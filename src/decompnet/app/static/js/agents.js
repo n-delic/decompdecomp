@@ -66,6 +66,10 @@ async function renderCosts(force = false) {
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
   setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
+  // a model spinning here lately (agents.py spin_advice): advice to weigh, above the helpers it's about
+  const advice = rows.filter((r) => r.advice).map((r) => r.advice);
+  $("modelAdvice").hidden = !advice.length;
+  setHtml($("modelAdvice"), advice.map((a) => `<p>${esc(a)}</p>`).join(""));
 }
 
 function renderSessions(sessions) {
@@ -416,6 +420,10 @@ function eventHtml(ev) {
     case "claim": return `${who} started ${fnLink(d)}`;
     case "polish": return `${who} started polishing ${fnLink(d)} ${POLISH_TAG}`;
     case "readable": return `<span class="ok">✎</span> ${who} polished ${fnLink(d)} ${POLISH_TAG}`;
+    // a source file tidied once its functions are polished (app/readable.py: its types, names and declarations)
+    case "tidy": return `${who} started tidying ${esc(d)} ${POLISH_TAG}`;
+    case "tidied": return `<span class="ok">✎</span> ${who} tidied ${esc(d)} ${POLISH_TAG}`;
+    case "tidy_summary": return `${who}: ${esc(d)} ${POLISH_TAG}`;
     case "match": return `<span class="ok">✓</span> ${who} matched ${fnLink(d)}`;
     case "link": return `<span class="ok">🔗</span> ${esc(d)} is linked: the game builds from its C, byte for byte`;
     case "release": return `${who} set ${fnLink(d)} aside, with notes for the next agent`;

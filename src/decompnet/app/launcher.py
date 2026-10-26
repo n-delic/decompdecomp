@@ -1,4 +1,4 @@
-"""Add decompdecomp to the Linux apps menu, or the Windows Start menu and desktop, opening its own window.
+"""Add decompdecomp to the Linux apps menu, macOS Finder, or Windows Start menu and desktop.
 
 The entry is named like the .deb's and the .rpm's (decompdecomp.desktop), so a desktop shows one decompdecomp even
 when a package is installed too: the user's own entry takes the place of the system's. The entry older versions made
@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import base64
 import os
+import plistlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -57,6 +59,23 @@ def install_launcher() -> str:
     from its checkout."""
     if edition.DEV:
         return "a development copy gets no launcher: run it with `uv run decomp` in the checkout"
+    if sys.platform == "darwin":
+        bundle = Path.home() / "Applications" / "decompdecomp.app" / "Contents"
+        executable = bundle / "MacOS" / "decompdecomp"
+        resources = bundle / "Resources"
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        resources.mkdir(parents=True, exist_ok=True)
+        # Finder doesn't read the user's shell profile. Preserve this interpreter and discover uv explicitly.
+        executable.write_text("#!/bin/sh\nexport PATH=" + shlex.quote(os.environ.get("PATH", "/usr/bin:/bin"))
+                              + "\nexec " + shlex.quote(sys.executable)
+                              + " -m decompnet.app.cli \"$@\"\n", encoding="utf-8")
+        executable.chmod(0o755)
+        with (bundle / "Info.plist").open("wb") as stream:
+            plistlib.dump({"CFBundleName": "decompdecomp", "CFBundleDisplayName": "decompdecomp",
+                          "CFBundleIdentifier": "com.ndelic.decompdecomp", "CFBundlePackageType": "APPL",
+                          "CFBundleExecutable": "decompdecomp", "LSMinimumSystemVersion": "12.0",
+                          "NSHighResolutionCapable": True}, stream)
+        return f"added decompdecomp to Finder ({bundle.parent})"
     if sys.platform == "win32":
         desktop = _windows_folder(0x10)  # CSIDL_DESKTOPDIRECTORY
         programs = _windows_folder(0x02)  # CSIDL_PROGRAMS: the current user's Start menu

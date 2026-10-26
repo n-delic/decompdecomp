@@ -26,6 +26,7 @@ def fake_window(tmp_path, monkeypatch):
     monkeypatch.setattr(window, "WINDOW_PROGRAM", program)
     monkeypatch.setattr(window, "SYSTEM_PYTHON", sys.executable)
     monkeypatch.setattr(window, "IS_WINDOWS", False)
+    monkeypatch.setattr(window, "IS_MACOS", False)
     monkeypatch.setattr(window, "missing", functools.cache(lambda: None))  # (open() asks it to look again)
     monkeypatch.delenv("DECOMP_WINDOW", raising=False)
     log = tmp_path / "said.txt"
@@ -79,6 +80,7 @@ def test_without_webkitgtk_it_says_what_to_install(monkeypatch):
     """No browser to fall back to: the user is told the packages, with their distribution's command."""
     window.missing.cache_clear()
     monkeypatch.setattr(window, "IS_WINDOWS", False)
+    monkeypatch.setattr(window, "IS_MACOS", False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(window, "SYSTEM_PYTHON", "/bin/false")
     monkeypatch.setattr(window, "_distro_family", lambda: "fedora")
@@ -95,6 +97,7 @@ def test_with_no_desktop_it_says_so_instead_of_vanishing(monkeypatch):
     """Started over ssh, the app exited without a word: the window had nowhere to open."""
     window.missing.cache_clear()
     monkeypatch.setattr(window, "IS_WINDOWS", False)
+    monkeypatch.setattr(window, "IS_MACOS", False)
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     try:

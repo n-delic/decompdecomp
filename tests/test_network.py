@@ -12,7 +12,7 @@ from .solutions import SOLUTIONS, WRONG_CLAMP
 
 DEMO = Path(__file__).resolve().parent.parent / "projects" / "demo"
 # projects/demo is a toy x86-64 game built with the computer's own gcc into ELF objects: Linux only
-HOST_GCC = sys.platform != "win32" and shutil.which("gcc") is not None
+HOST_GCC = sys.platform == "linux" and shutil.which("gcc") is not None
 needs_host_gcc = pytest.mark.skipif(not HOST_GCC, reason="projects/demo needs a Linux gcc (x86-64 ELF)")
 
 

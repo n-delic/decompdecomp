@@ -46,6 +46,9 @@ GC_DEFAULT, WII_DEFAULT = GAMECUBE.usual, WII.usual
 REL_EMPTY = "REL/empty.c"
 DISC_MAGIC = {b"RVZ\x01": "rvz", b"WIA\x01": "wia", b"WBFS": "wbfs", b"CISO": "ciso"}
 GCZ_MAGIC = 0xB10BC001
+# a PSP .cso starts with CISO too, then its header's own size (0x18, or 0 from older tools) where a GameCube or Wii
+# CISO has its block size (2 MiB by default): not a disc dtk reads
+PSP_CISO_HEADER_SIZES = (0, 0x18)
 # a disc's header (boot.bin): a magic word says which console's disc it is
 GC_DISC_MAGIC, GC_MAGIC_AT = 0xC2339F3D, 0x1C
 WII_DISC_MAGIC, WII_MAGIC_AT = 0x5D1C9EA3, 0x18
@@ -141,7 +144,8 @@ def disc_kind(head: bytes) -> str | None:
         return "gc"
     if len(head) >= WII_MAGIC_AT + 4 and struct.unpack_from(">I", head, WII_MAGIC_AT)[0] == WII_DISC_MAGIC:
         return "wii"
-    if head[:4] in DISC_MAGIC or (len(head) >= 4 and struct.unpack("<I", head[:4])[0] == GCZ_MAGIC):
+    psp_ciso = head[:4] == b"CISO" and len(head) >= 8 and struct.unpack_from("<I", head, 4)[0] in PSP_CISO_HEADER_SIZES
+    if (head[:4] in DISC_MAGIC and not psp_ciso) or (len(head) >= 4 and struct.unpack("<I", head[:4])[0] == GCZ_MAGIC):
         return "packed"
     return None
 

@@ -50,7 +50,10 @@ def find_uv() -> str | None:
     if found:
         return found
     name = "uv.exe" if sys.platform == "win32" else "uv"
-    for folder in (Path.home() / ".local" / "bin", Path.home() / ".cargo" / "bin"):
+    folders = [Path.home() / ".local" / "bin", Path.home() / ".cargo" / "bin"]
+    if sys.platform == "darwin":
+        folders += [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
+    for folder in folders:
         if (folder / name).is_file():
             return str(folder / name)
     return None
@@ -111,7 +114,7 @@ def stop_process_tree(proc: subprocess.Popen) -> None:
 def open_folder(path: Path) -> str | None:
     """Show a folder in the user's file manager. Returns why it couldn't, or None."""
     try:
-        opener = "explorer.exe" if sys.platform == "win32" else "xdg-open"
+        opener = {"win32": "explorer.exe", "darwin": "open"}.get(sys.platform, "xdg-open")
         subprocess.Popen([opener, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError:

@@ -68,8 +68,20 @@ drop.addEventListener("click", (e) => { if (!$("dropIdle").hidden && !e.target.c
 drop.addEventListener("keydown", (e) => { if ((e.key === "Enter" || e.key === " ") && !$("dropIdle").hidden && e.target === drop) { e.preventDefault(); $("file").click(); } });
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]); });
-$("file").addEventListener("change", () => { if ($("file").files[0]) pickFile($("file").files[0]); });
+drop.addEventListener("drop", (e) => {
+  e.preventDefault(); drop.classList.remove("over");
+  // a folder doesn't come through the browser: the path dialog reads it where it is (a PC game's .exe and its DLLs)
+  if (e.dataTransfer.items?.[0]?.webkitGetAsEntry?.()?.isDirectory) return askPath("That's a folder: give its path here, and decompdecomp reads the game from it where it is.");
+  pickFiles(e.dataTransfer.files);
+});
+$("file").addEventListener("change", () => pickFiles($("file").files));
+/* A game with its PC debug symbols or PS4 function map. */
+const DEBUG_FILE = /\.(pdb|map)$|(?:^|\.)functions\.jsonl$/i;
+function pickFiles(list) {
+  const files = [...list], debug = files.filter((f) => DEBUG_FILE.test(f.name));
+  const game = files.find((f) => !debug.includes(f)) || files[0];
+  if (game) pickFile(game, debug.filter((f) => f !== game));
+}
 $("own").addEventListener("change", updateAnalyse);
 $("cancelPick").onclick = resetDrop;
 
@@ -101,17 +113,62 @@ function parseRom(buf) {
 }
 
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
-const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1 or 2" }[p] || consoleOf(p)?.name || "");
+const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1, 2 or PSP" }[p] || consoleOf(p)?.name || "");
 /* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
 const CW_PACK = {
   mwcc: { title: "CodeWarrior", text: "Install CodeWarrior, the compilers GameCube and Wii games were built with (about 80 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
-const packOf = (p) => CW_PACK[consoleOf(p)?.packs[0]] ? consoleOf(p).packs[0] : "mwcc";
+// the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
+const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
+
+/* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
+   short. A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's. Its Rich header
+   counts the files each tool built (product id << 16 | build, XORed with its key): the compiler whose build is also
+   the linker's built the game's own code, else the version that built the most files; without a Rich header, the
+   linker's version says. (tests/test_pc_debug.py keeps these ids scratch.RICH_COMPILERS' and RICH_LINKERS'.) */
+const RICH_COMPILERS = {  // version -> its compilers' product ids (whole-program ones too), as [from, to) ranges
+  "6.0": [[0x0a, 0x0c], [0x15, 0x19], [0x23, 0x25], [0x30, 0x36]], "7.0": [[0x1c, 0x1e], [0x39, 0x3b], [0x2b, 0x2d], [0x41, 0x45]],
+  "7.1": [[0x4c, 0x56], [0x5f, 0x69]], "8.0": [[0x6d, 0x77], [0x82, 0x83]], "9.0": [[0x83, 0x87], [0x89, 0x90]],
+  "10.0": [[0xaa, 0xac], [0xbc, 0xbe], [0xae, 0xb5], [0xc0, 0xc7]], "11.0": [[0xce, 0xd0], [0xd2, 0xd9]],
+  "12.0": [[0xe0, 0xe2], [0xf2, 0xf4], [0xe4, 0xeb], [0xf6, 0xfd]], "14": [[0x104, 0x106], [0x108, 0x10f]],
+};
+const RICH_LINKERS = [0x04, 0x13, 0x1e, 0x20, 0x25, 0x28, 0x3c, 0x3d, 0x47, 0x56, 0x5a, 0x78, 0x91, 0x9d, 0xba, 0xcc,
+  0xde, 0xf0, 0x102];
+function pcPack(head, pe) {
+  const word = (at) => new DataView(head.buffer).getUint32(at, true);
+  const find = (bytes, from, to, back) => {
+    for (let at = back ? to - 4 : from; back ? at >= from : at <= to - 4; at += back ? -1 : 1)
+      if (bytes.every((b, i) => head[at + i] === b)) return at;
+    return -1;
+  };
+  const end = find([0x52, 0x69, 0x63, 0x68], 0x80, pe, false);  // "Rich", then its key
+  const start = end > 0 ? find([..."DanS"].map((c, i) => c.charCodeAt(0) ^ head[end + 4 + i]), 0, end, true) : -1;
+  const files = new Map(), linkers = new Set();  // "version build" -> files it compiled; the linkers' builds
+  for (let at = start + 16; start >= 0 && at + 8 <= end; at += 8) {
+    const comp = (word(at) ^ word(end + 4)) >>> 0, count = (word(at + 4) ^ word(end + 4)) >>> 0;
+    const product = comp >>> 16, build = comp & 0xffff;
+    if (RICH_LINKERS.includes(product)) linkers.add(build);
+    const version = Object.keys(RICH_COMPILERS).find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    if (version) files.set(`${version} ${build}`, (files.get(`${version} ${build}`) || 0) + count);
+  }
+  const most = (counts) => [...counts].reduce((best, kv) => (kv[1] > best[1] ? kv : best))[0];
+  let version;
+  if (!files.size) version = String(head[pe + 24 + 2]);  // the linker's major version: 6, 7, 8, 9, 10...
+  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1]))) version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1])));
+  else {
+    const byVersion = new Map();
+    for (const [k, n] of files) byVersion.set(k.split(" ")[0], (byVersion.get(k.split(" ")[0]) || 0) + n);
+    version = most(byVersion);
+  }
+  return parseFloat(version) >= 8 ? "msvc2005" : "msvc";  // (newer than 2010: the closest the packs have, 2010)
+}
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
 
 /* A DS ROM (consoles/nds/scratch.is_nds): the header's own CRC-16 is right and the ARM9 program sits in main RAM. */
@@ -126,6 +183,15 @@ function isNds(head, dv) {
   return crc === dv.getUint16(0x15e, true) && off >= 0x200 && ram >= 0x02000000 && ram < 0x02400000 && entry >= ram && entry < ram + size;
 }
 
+/* A .cso (a compressed UMD or PlayStation disc; a .zso is its LZ4 kind): its CISO header starts with its own size
+   (0x18, or 0 from older tools) where a GameCube or Wii CISO has its block size, 2 MiB by default
+   (consoles/ps2/cso.py and consoles/gc_wii/scratch.py tell them apart the same way). */
+const PSP_CISO_HEADER_SIZES = [0, 0x18];
+const isPspCiso = (head, magic = "CISO") => head.length >= 8 && String.fromCharCode(...head.slice(0, 4)) === magic
+  && PSP_CISO_HEADER_SIZES.includes(new DataView(head.buffer).getUint32(4, true));
+// a PSP's ELF: a PRX module by its type, or a program whose flags name the Allegrex (a PS2's name the R5900)
+const ELF_TYPE_PSP_PRX = 0xffa0, ELF_MACH_BITS = 0x00ff0000, ELF_MACH_ALLEGREX = 0x00a20000;
+
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
@@ -135,12 +201,22 @@ function identifyHead(head, file) {
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true) };
+    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+  if (head.length >= 64 && text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 1
+      && [0xfe10, 0xfe04].includes(dv.getUint16(16, true)) && dv.getUint16(18, true) === 62)
+    return { ...base, platform: "ps4", order: "decrypted Orbis ELF", entry: Number(dv.getBigUint64(24, true)) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
-  // which PlayStation a disc is for, its SYSTEM.CNF says (the server reads it)
+  // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
+  // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
+  if (text(0x8001, 0x8006) === "CD001" && ascii(0x8008, 0x8028) === "PSP GAME") return { ...base, platform: "psp", order: "UMD disc image" };
   if (text(0x8001, 0x8006) === "CD001" || text(0x9319, 0x931e) === "CD001" || text(0x9311, 0x9316) === "CD001") return { ...base, platform: "playstation", order: "disc image" };
   if (text(0, 8) === "MComprHD") return { ...base, platform: "playstation", order: "CHD disc image" };
-  if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) return { ...base, platform: "ps2", order: "ELF program", entry: dv.getUint32(24, true) };
+  // which PlayStation's disc a CSO holds is inside its compressed blocks: the server reads them
+  if (isPspCiso(head)) return { ...base, platform: "playstation", order: "CSO disc image" };
+  if (text(0, 4) === "\x7fELF" && head[5] === 1 && dv.getUint16(18, true) === 8) {
+    const prx = dv.getUint16(16, true) === ELF_TYPE_PSP_PRX, psp = prx || (dv.getUint32(36, true) & ELF_MACH_BITS) === ELF_MACH_ALLEGREX;
+    return { ...base, platform: psp ? "psp" : "ps2", order: prx ? "PRX module" : "ELF program", entry: dv.getUint32(24, true) };
+  }
   if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   const packed = { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
@@ -163,7 +239,13 @@ function identifyHead(head, file) {
 function notSupported(head, file) {
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
   const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toLowerCase() || "";
-  if (text(0, 2) === "MZ") return "That's a 64-bit or non-x86 Windows program (or a DOS one). decompdecomp starts PC games from their 32-bit x86 .exe.";
+  if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
+    const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
+    const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
+    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2012 to 2015 compilers (see the roadmap, Newer Windows games).";
+    if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
+    return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
+  }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
   if (ext === "gba") return "Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
   if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
@@ -173,14 +255,16 @@ function notSupported(head, file) {
   if (ext === "cue") return "That's the .cue sheet: pick the .bin file next to it (the track with the game's data, usually Track 1).";
   if (["zip", "7z", "rar"].includes(ext)) return "That's an archive: unpack it first, then drop the game file inside.";
   if (ext === "apk") return "Android apps aren't supported yet.";
-  if (ext === "pbp" || ext === "cso") return "That's a PSP file. PSP games aren't supported yet.";
+  if (isPspCiso(head, "ZISO") || ext === "zso") return "That's a ZSO image (LZ4-compressed), which decompdecomp can't read yet: decompress it to .iso first (maxcso --decompress does that), then drop the .iso.";
+  if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
+  if (text(0, 4) === "~PSP") return "That's an encrypted PSP program. Decrypt it first and drop the decrypted .elf or .prx, or drop the game's UMD image (.iso).";
   return null;
 }
 // 1.0.3 rewrote most of the app: every platform is being tested again, and reports are how a platform moves up
 const TRY_AND_TELL = `This version is new, so <a href="https://github.com/n-delic/decompdecomp/issues" target="_blank" rel="noopener">tell us how it goes</a> on your game.`;
 const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (yet). For other platforms, continue a public decomp.";
 
-async function pickFile(file) {
+async function pickFile(file, extras = []) {
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
   let info = identifyHead(head, file), buf = file;
   if (!info) {
@@ -191,7 +275,9 @@ async function pickFile(file) {
       return toast(esc(NOT_A_GAME), "err");
     }
   }
-  picked = { buf, info, name: file.name };
+  // Send only the sidecars this console reads beside its uploaded program.
+  picked = { buf, info, name: file.name, extras: extras.filter((f) => info.platform === "win32" ? /\.(pdb|map)$/i.test(f.name)
+    : info.platform === "ps4" && /(?:^|\.)functions\.jsonl$/i.test(f.name)) };
   if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
@@ -201,7 +287,7 @@ async function pickFile(file) {
        ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
     : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
        info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
-       ["Project", consoleOf(p)?.layout || ""]];
+       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Function maps / debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
   $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
   const level = platformStatus(p);
   $("romStatus").hidden = !level;
@@ -209,6 +295,10 @@ async function pickFile(file) {
   $("romStatus").innerHTML = level === "recommended"
     ? `<b>★ Recommended platform.</b> The most tested path to a full decomp you can port and mod. ${TRY_AND_TELL}`
     : `<b>Beta.</b> ${esc(platformName(p) || "This platform")} works, and needs more games tried on it. ${TRY_AND_TELL}`;
+  if (consoleOf(p)?.games_in_folders) {  // a dropped .exe comes alone: its path brings the game's own DLLs along
+    $("romStatus").insertAdjacentHTML("beforeend", ` A dropped file comes alone: for the game's own DLLs too, <button class="link-btn" type="button" id="romByPath">use its path</button> (its folder, or the .exe) instead.`);
+    $("romByPath").onclick = (e) => { e.stopPropagation(); resetDrop(); askPath(); };
+  }
   setupCompilers(info);
   $("dropIdle").hidden = true;
   $("dropPicked").hidden = false;
@@ -241,16 +331,17 @@ function setupCompilers(info) {
   const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
   select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
-  const pack = packOf(p);
+  const pack = packOf(info);
   note.hidden = false;
   note.textContent = CW_PACK[pack].note;
   $("mwText").textContent = CW_PACK[pack].text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
 
-/* The compilers of a game's console (both PlayStations' for a disc not read yet) this computer doesn't have. */
+/* The compilers of a game's console this computer doesn't have (every PlayStation's for a disc not read yet: a CHD
+   can be a PSP game's too). */
 function missingCompilers(p) {
-  const cons = p === "playstation" ? ["ps", "ps2"].map(consoleOf) : [consoleOf(p)];
+  const cons = p === "playstation" ? ["ps", "ps2", "psp"].map(consoleOf) : [consoleOf(p)];
   const tcs = S.st?.toolchains || [];
   return cons.filter(Boolean).flatMap((c) => c.installable || []).map((id) => tcs.find((t) => t.id === id)).filter((t) => t && !t.installed);
 }
@@ -336,7 +427,7 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
-  const id = packOf(picked?.info.platform);
+  const id = packOf(picked?.info);
   $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
   const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
@@ -349,19 +440,21 @@ $("analyse").onclick = async () => {
   const title = `Analysing ${picked.info.title}…`;
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
-    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info.platform)].title, e, $("jobLog").textContent); return; }
+    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
   }
-  const body = picked.buf instanceof Blob ? picked.buf : new Blob([picked.buf]);
+  // the debug files go after the game in the same upload; the server cuts them off and puts them beside it
+  const body = new Blob([picked.buf, ...picked.extras]);
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}`, body, title, picked.name);
+  const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
 };
-$("pathPick").onclick = (e) => {
-  e.stopPropagation();
+$("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
+function askPath(why = "") {
   // the game isn't known yet: the scope question shows when any platform's import recognises library code
   const asks = (S.st?.consoles || []).some((c) => c.sets_aside);
-  const body = dialog("Use a file on this computer", `<p class="muted">For big disc images: decompdecomp reads the file where it is instead of copying it through the browser.</p>
-    <label class="field"><span>Path to the game file</span><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"></label>
+  const body = dialog("Use a file or folder on this computer", `${why ? `<p>${esc(why)}</p>` : ""}<p class="muted">For big disc images, and for a Windows game with DLLs of its own: decompdecomp reads the game where it is instead of copying it through the browser. A Windows game's folder, or its .exe, brings the game's own DLLs along (the import says which it found, and which it left out).</p>
+    <label class="field"><span>Path to the game file, or a Windows game's folder</span><span class="pick-row"><input id="ppPath" class="mono" placeholder="/home/me/games/my-game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="ppPath" data-title="Your copy of the game">File…</button><button class="ghost small-btn" type="button" data-pick="folder" data-for="ppPath" data-title="The game's folder">Folder…</button></span></label>
     ${asks ? `<label class="field"><span>What should this project cover? (where decompdecomp recognises library code)</span><select id="ppScope">
       <option value="game" selected>The game's own code: library and middleware code it recognises is left out of agents' work and progress</option>
       <option value="program">The whole program: every function is decompiled and counted</option></select></label>` : ""}
@@ -375,7 +468,7 @@ $("pathPick").onclick = (e) => {
     closeDialog();
     runImport(`confirmed=1&path=${encodeURIComponent(path)}${scope ? `&scope=${scope}` : ""}`, undefined, "Analysing your game…");
   };
-};
+}
 $("demoBtn").onclick = () => runImport("demo=1", undefined, "Opening Demo Quest 64…");
 
 /* A "Choose…" button beside a path: the system's own chooser (app/picker.py) fills it in. Typing still works. */

@@ -88,6 +88,46 @@ def test_an_empty_section_below_the_code_does_not_shift_the_split(tmp_path, empt
         assert image == made and config.read_text().startswith("sha1: 0000")
 
 
+def test_code_above_the_bss_is_split_where_the_image_keeps_it(tmp_path):
+    """A PS2 game keeps its engine at 0x01000000, above its .bss: splat's config placed it by its offset in the file,
+    which in objcopy's image (laid out by address) is the .bss's zeros, and 3.5 MB of engine split as three
+    "functions" of nops. Its segment starts where the image keeps it, and the config ends where the image does. What
+    lies between the program's bytes and the engine is padding, and the .bss ends where it really does: either one
+    left to a segment ran its addresses over the next segment's, and splat stopped on the game's own names there."""
+    import yaml
+
+    from decompnet.rom import split
+
+    if toolchains.installed("binutils-mips") is None:
+        pytest.skip("needs binutils-mips")
+    bin_dir = toolchains.binary("binutils-mips").parent
+    tools = {name: bin_dir / f"mips-ps2-decompals-{name}" for name in ("as", "ld", "objcopy")}
+    (tmp_path / "a.s").write_text(".set noreorder\n.section main,\"awx\",@progbits\n  jr $ra\n  nop\n"
+                                  ".section .bss,\"aw\",@nobits\n  .space 0x100000\n"
+                                  ".section far,\"awx\",@progbits\n  addiu $v0, $zero, 7\n  jr $ra\n  nop\n")
+    subprocess.run([tools["as"], "-EL", "-march=r5900", "-o", tmp_path / "a.o", tmp_path / "a.s"], check=True)
+    (tmp_path / "a.ld").write_text("SECTIONS { main 0x100000 : { *(main) } .bss 0x101000 : { *(.bss) } "
+                                   "far 0x1000000 : { *(far) } /DISCARD/ : { *(.MIPS.abiflags) } }\n")  # (splat refuses it)
+    program, image, config = tmp_path / "game.elf", tmp_path / "game.elf.rom", tmp_path / "game.elf.yaml"
+    subprocess.run([tools["ld"], "-EL", "-T", tmp_path / "a.ld", "-o", program, tmp_path / "a.o"], check=True)
+    split._splat(["create_config", "--objcopy", str(tools["objcopy"]), program.name], tmp_path, log=lambda *_: None)
+    far = bytes.fromhex("07000224" "0800e003" "00000000")  # addiu $v0, $zero, 7; jr $ra; nop
+
+    def far_start():
+        segments = yaml.safe_load(config.read_text())["segments"]
+        return next(s["start"] for s in segments if isinstance(s, dict) and s["vram"] == 0x1000000)
+    flat = image.read_bytes()
+    assert flat[far_start():far_start() + len(far)] != far  # what the import ran into
+    split._starts_by_address(program, image, config)
+    assert flat[far_start():far_start() + len(far)] == far
+    segments = yaml.safe_load(config.read_text())["segments"]
+    assert segments[-1] == [len(flat)]
+    main_code = 8  # jr $ra; nop
+    assert [0x000000 + main_code, "pad"] in segments  # the program's 8 bytes, then nothing up to the engine
+    cod = next(s for s in segments if isinstance(s, dict) and s["vram"] == 0x100000)
+    assert 0x100000 + main_code + cod["bss_size"] == 0x101000 + 0x100000  # the .bss ends where it does, gap and all
+
+
 def test_a_tail_call_to_a_function_named_l_is_not_a_label():
     """A PS2 game with symbols tail-calls `LoadBTF`: read as a local label (.L + hex), the import stopped on it."""
     from pathlib import Path
@@ -144,6 +184,7 @@ def test_install_all_brings_every_compiler_then_tests_them(monkeypatch):
     from decompnet.app.engine import RomNetwork
 
     ps2 = consoles.get("ps2")
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "linux-x86_64")
     have = {"ee-gcc-2.96"}
     monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: {} if tid in have else None)
     monkeypatch.setattr(toolchains, "install", lambda tid, accept_license=False, log=None: have.add(tid))

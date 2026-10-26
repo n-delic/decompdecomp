@@ -91,6 +91,17 @@ def test_a_file_no_console_reads_says_which_ones_do():
         consoles.identify(bytes(4096))
 
 
+def test_a_psp_cso_is_not_taken_for_a_gamecube_disc():
+    """Both start with CISO: a GameCube/Wii CISO goes on with its block size, a PSP .cso with its header's size."""
+    from decompnet.consoles.gc_wii import scratch
+
+    gc_ciso = b"CISO" + struct.pack("<I", 0x200000) + b"\x01\x01\x00" + bytes(0x100)
+    psp_cso = b"CISO" + struct.pack("<IQIBB", 0x18, 0x4000000, 0x800, 1, 0) + bytes(0x100)
+    assert scratch.disc_kind(gc_ciso) == "packed"
+    assert scratch.disc_kind(psp_cso) is None
+    assert consoles.identify(gc_ciso) is consoles.get("gc")
+
+
 def test_mips_code_in_a_forks_object_isnt_judged_without_its_console():
     """A fork's objects don't say their console, and which registers carry arguments depends on it (the PS2's EABI
     passes them in t0-t3): a MIPS function there isn't set aside as hand-written, though its console would."""
@@ -122,13 +133,14 @@ def _missing(console) -> list[str]:
 
     def there(tool: str) -> bool:
         try:
-            return toolchains.installed(tool) is not None or not toolchains.get(tool).supported
+            toolchains.get(tool)
+            return toolchains.installed(tool) is not None
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
     missing = [t for t in console.demo_tools if not there(t)]
-    # Only demos built with zlib need its downloaded sources; the PC and PS4
-    # fixtures use the shareable game source alone.
-    if console.demo in {"demo-n64", "demo-rom", "demo-ps1", "demo-ps2", "demo-gc", "demo-ds"} and not ZLIB.exists():
+    # Read the demo's own prerequisites, including consoles added after this test.
+    build = ROOT / "projects" / getattr(console, "demo", "") / "build.py"
+    if build.is_file() and "zlib-n64" in build.read_text() and not ZLIB.exists():
         missing.append("zlib (projects/zlib-n64/prepare.py)")
     return missing
 
@@ -162,7 +174,8 @@ def _function(net, slug: str, symbols: dict, name: str) -> tuple[str, str]:
     address = next(a for s, a in symbols.items() if re.sub(r"^[_@]|@\d+$", "", s) == name)
     pid = net.project_row(slug)["id"]
     row = net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", pid, address) or next(
-        r for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid) if f"{address:08x}" in r["name"].lower())
+        r for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid) if f"{address:08x}" in r["name"].lower()
+        or re.sub(r"^[_@]|@\d+$", "", r["name"]) == name)
     plain = re.sub(r"^[_@]|@\d+$", "", row["name"])  # (a PC function's name says its calling convention)
     return row["name"], csource.get(DEMO_GAME.read_text(), name).replace(f"{name}(", f"{plain}(", 1)
 

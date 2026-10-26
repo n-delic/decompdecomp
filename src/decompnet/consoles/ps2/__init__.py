@@ -3,9 +3,10 @@ kernel's calls, ROM mode.
 
 - elf.py: the game's program (an ELF, e.g. SLUS_200.00) and which compiler its code looks built with.
 - disc.py, chd.py: the disc image the program comes on (ISO 9660 as .iso or raw .bin, or a CHD), read in place.
+- cso.py: CSO images (a disc deflated block by block), read in place, also for the PSP's and the PS1's discs.
 - overlays.py: code the game keeps in other files of its disc, placed at the address it's loaded at.
 - syscalls.py: names for the kernel's call stubs (FlushCache, CreateThread...), from the number each one loads.
-- symtab.py, mdebug.py, stabs.py, cheader.py, debuginfo.py: a game's own debug symbols, when it shipped with them
+- symtab.py, mdebug.py, stabs.py, dwarf1.py, cheader.py, debuginfo.py: a game's own debug symbols, when it shipped with them
   (#3): names, source files, prototypes and types, read from its symbol table and its STABS (in .mdebug).
 - guides/ps2.md: what agents read about matching PS2 code.
 
@@ -59,24 +60,25 @@ class PlayStation2(Console):
     as_flags = ("-EL", "-march=r5900", "-mabi=eabi")
 
     def sniff(self, head: bytes, file) -> bool:
-        from . import chd, disc, elf
+        from . import chd, cso, disc, elf
 
-        return elf.is_mips_elf(head) or chd.is_chd(head) or disc.is_disc(head)
+        return elf.is_mips_elf(head) or chd.is_chd(head) or cso.is_cso(head) or disc.is_disc(head)
 
     def read_game(self, file, name: str = "") -> Picked:
         """The program: an ELF the user picked, or the one a disc image names (with the disc's overlays)."""
-        from . import chd, disc, elf
+        from . import chd, cso, disc, elf
 
         if isinstance(file, (str, Path)):
             path = Path(file)
             name = name or path.name
             with open(path, "rb") as f:
                 head = f.read(8)
-            if chd.is_chd(head):  # a compressed disc image: read in place, a hunk at a time
-                with chd.Chd(path) as image:
+            if chd.is_chd(head) or cso.is_cso(head):  # a compressed disc image: read in place, a piece at a time
+                with chd.Chd(path) if chd.is_chd(head) else cso.Cso(path) as image:
                     if disc.is_disc(image):
                         return self._from_disc(image)
-                raise RomError("this CHD doesn't hold a PlayStation 2 disc this app can read")
+                raise RomError(f"this {'CHD' if chd.is_chd(head) else 'CSO'} doesn't hold a PlayStation 2 disc this "
+                               "app can read")
             if path.stat().st_size <= SMALL:
                 return self.read_game(path.read_bytes(), name)
             with open(path, "rb") as f:
@@ -86,6 +88,9 @@ class PlayStation2(Console):
         if elf.is_mips_elf(file):
             program, info = elf.read_elf(bytes(file), name)
             return Picked(self.id, program, "game.elf", info, False)
+        if cso.is_cso(bytes(file[:8])):
+            with cso.Cso(file) as image:
+                return self._from_disc(image)
         if disc.is_disc(file):
             return self._from_disc(file)
         raise RomError("this isn't a PlayStation 2 program (an ELF such as SLUS_200.00) or disc image")

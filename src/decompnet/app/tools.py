@@ -98,6 +98,9 @@ functions, then stop:
    it's judged again and must still match byte for byte, or it's refused and the matching C stays. Refused? Undo
    your last change and try a smaller one.
 
+Once every function in a source file is readable, claim_readable may give you the file to tidy instead (TIDY A
+FILE): follow its list with edit_file and rename_symbol, then tidy_done. A file counts as one of your {count}.
+
 Write C people would write. Be brief in your messages: work, don't narrate.
 """
 
@@ -317,6 +320,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
     "make_readable": lambda net, agent, slug, function, source: net.readability.submit(agent, slug, function, source),
+    "tidy_done": lambda net, agent, slug, unit, summary: net.readability.tidy_done(agent, slug, unit, summary),
     "suggest": lambda net, agent, slug, text, compiler="", flags="", function="", ranges="", source="":
         net.suggest(agent, slug, text, compiler, flags, function or None, ranges, source),
     "try_compiler": lambda net, agent, slug, function, compiler, flags="", source="":
@@ -336,16 +340,25 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
 }
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
-            "guess_struct", "redraft",
-            "compiler_map", "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions"}
+ROM_ONLY = {"get_context", "edit_context", "split_function",
+            "redraft",
+            "search_flags"}
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done"}
 
 
-def tool_names(fork: bool) -> list[str]:
-    """The tools that make sense for a project: forks and ROM projects share the core loop."""
-    skip = ROM_ONLY if fork else FORK_ONLY
+def tool_names(fork: bool, console=None) -> list[str]:
+    """The tools that make sense for a project: forks and ROM projects share the core loop. A game started from
+    scratch in project mode has those of ROM projects its console makes work there too (Console.own_tools: PC's
+    redraft and search_flags)."""
+    skip = ROM_ONLY - (console.own_tools if console is not None else frozenset()) if fork else FORK_ONLY
     return [n for n in HANDLERS if n not in skip]
+
+
+def project_tools(net: RomNetwork, slug: str | None) -> list[str]:
+    """tool_names for a project (None: no project yet)."""
+    fork = bool(slug and net.fork_slug(slug))
+    cfg = net.cfg(net._project(slug)) if fork else {}
+    return tool_names(fork, consoles.of(cfg) if cfg.get("origin") == "scratch" else None)
 
 
 def _named(net: RomNetwork, agent: Agent, slug: str, args: dict) -> dict:
@@ -478,9 +491,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def report_boundary(ctx: Context, function: str, end: str, reason: str) -> str:
-        """Report that a function really ends earlier: the words after `end` are alignment padding, linker
-        leftovers or data, not code anyone wrote, so no C can match the whole thing. The user approves it on the
-        project page; then the function ends at `end` and the rest is set aside. Say how you can tell."""
+        """Report that a function really ends earlier: what follows `end` is alignment padding, linker leftovers
+        or data, not code anyone wrote (or, in a PC project, another function the analysis merged with it), so no C
+        can match the whole thing. ROM projects: the user approves it on the project page; then the function ends at
+        `end` (an address) and the rest is set aside. PC projects: once agents of two models agree, the function is
+        cut at `end` (an address, or an offset into it: +0x20) and the rest is a function of its own, set aside
+        when it isn't code, kept only if the game still builds byte for byte. Say how you can tell."""
         return await run(ctx, "report_boundary", function=function, end=end, reason=reason)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -493,33 +509,38 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def redraft(ctx: Context, function: str, context: str) -> str:
         """m2c's machine draft of a function made again with your declarations (a struct, a prototype, an extern
         you worked out) added to the shared header's; yours replace the header's where they declare the same
-        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped."""
+        names. Returns the new draft, recorded nowhere: try it with compile_and_diff, and edit_context what helped.
+        PC games: Ghidra's draft made compilable again with them (a class declaring the function, a callee's
+        prototype)."""
         return await run(ctx, "redraft", function=function, context=context)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:
-        """C++ classes found in the game's code (ROM projects): give a vtable address or a virtual function,
-        constructor or destructor for its class's fields (offset, type, which functions use them) and virtual
-        functions by slot; nothing lists them all. A layout to write the class from: the judge still decides."""
+        """C++ classes found in the game (MIPS games' and PC programs' code; a PC program's run-time type
+        information has the classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
+        fields (offset, type, which functions use them) and virtual functions by slot; nothing lists them all. A
+        layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def guess_struct(ctx: Context, function: str, argument: str = "arg0") -> str:
-        """The likely struct behind a function's pointer (ROM projects, MIPS), as C with offsets: from the loads and
-        stores of every function the same pointer reaches, with how many agree on each field, where else the type
-        flows, and the type matched code already uses for it. argument: arg0-arg3, return, or a global; add +0x14
-        to follow the pointer at 0x14. The game's own type when its debug information has one. Put what you confirm
-        into context.h with edit_context."""
+        """The likely struct behind a function's pointer (MIPS games, PC programs), as C with offsets: from the loads
+        and stores of every function the same pointer reaches, with how many agree on each field, where else the
+        type flows, and the type matched code already uses for it. argument: arg0-arg3 (PC: on the stack), `this`
+        (PC: ecx), return, or a global; add +0x14 to follow the pointer at 0x14. The game's own type when its debug
+        information has one. Put what you confirm into context.h with edit_context (a project's header with
+        edit_file)."""
         return await run(ctx, "guess_struct", function=function, argument=argument)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def compiler_map(ctx: Context, survey: bool = False, check_ranges: bool = False) -> str:
-        """Which compiler built each part of the game (ROM projects, MIPS): where the code looks built by another
-        compiler than the one its address builds with today, from matches, habits that rule compilers out, and the
-        judge. survey=true also starts the judge's survey in the background: agents' C for unmatched functions built
-        with each compiler the project uses; what it confirms becomes a suggestion. A suggested range is tested on
-        its neighbours before it applies (range checks, listed here); check_ranges=true looks at the applied ranges
-        again the same way (a report: nothing changes by itself)."""
+        """Which compiler built each part of the game (ROM projects, MIPS; projects whose source files each have a
+        compiler, PC and DS: over their files, with what the program itself says built it): where the code looks
+        built by another compiler than the one it builds with today, from matches, habits that rule compilers out,
+        and the judge. survey=true also starts the judge's survey in the background: agents' C for unmatched
+        functions built with each compiler the project uses; what it confirms becomes a suggestion. A suggested range
+        is tested on its neighbours before it applies (range checks, listed here); check_ranges=true looks at the
+        applied ranges (projects: the open checks) again the same way."""
         return await run(ctx, "compiler_map", survey=survey, check_ranges=check_ranges)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -537,7 +558,8 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     async def search_flags(ctx: Context, function: str, compiler: str = "", source: str = "") -> str:
         """The function's C (its best attempt, or source) built with each of its compiler's flag variants
         (optimisation levels, small data, code-shape options), judged and ranked. For C that looks right but won't
-        match: the flags may be what's wrong. compiler: another one to try instead of the project's."""
+        match: the flags may be what's wrong. compiler: another one to try instead of the project's. PC games: the
+        function's source file's flags (/Oy- keeps the frame pointer, /O1, /Ob1); one that matches stays the file's."""
         return await run(ctx, "search_flags", function=function, compiler=compiler, source=source)
 
     @mcp.tool(meta=ALWAYS_LOAD)
@@ -551,6 +573,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         """A readable rewrite of a matched function (names, types, a comment). Kept only if it still matches byte
         for byte; otherwise the matching C stays."""
         return await run(ctx, "make_readable", function=function, source=source)
+
+    @mcp.tool(meta=ALWAYS_LOAD)
+    async def tidy_done(ctx: Context, unit: str, summary: str) -> str:
+        """The source file claim_readable gave you to tidy is done (its types, names and declarations): say what you
+        changed in a sentence or two."""
+        return await run(ctx, "tidy_done", unit=unit, summary=summary)
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:

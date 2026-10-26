@@ -32,6 +32,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -135,6 +136,15 @@ SCHEMA = (
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
 )
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents report, as `usage` items say it
+# A model spinning on a project: in the last SPIN_WINDOW its helpers compiled at least SPIN_COMPILES times, and either
+# matched once per SPIN_ALONE compiles or worse, or needed SPIN_RATIO times the compiles a match of another model at
+# work there (one with SPIN_MATCHES matches or more). On an Xbox game in one night: one model's 462 sessions
+# compiled 5,741 times for 10 matches ($138), another's 22 compiled 1,184 times for 26 ($199).
+SPIN_WINDOW = 24 * 3600
+SPIN_COMPILES = 200
+SPIN_ALONE = 200
+SPIN_RATIO = 4
+SPIN_MATCHES = 3
 
 
 # what an agent CLI says when nobody signed in to it (Claude Code: "Not logged in · Please run /login")
@@ -347,9 +357,56 @@ class Session:
                 "feed": [f for f in self.feed if f["seq"] > since]}
 
 
+def spin_advice(recent: list[dict]) -> dict[tuple[str, str], str]:
+    """A sentence for each model spinning on a project (SPIN_*), by (kind, model): what its helpers got for their
+    compiles lately and what a stronger model might do, for the user to weigh, not an order. `recent`: costs' rows
+    (kind, model, usd, compiles, matches) for the last SPIN_WINDOW."""
+    def name(r):
+        return r["model"] or r["kind"]
+
+    def per_match(r):
+        return (r["compiles"] or 0) / r["matches"] if r["matches"] else None
+
+    def money(r):
+        return f", ${r['usd'] / r['matches']:,.2f} a match" if r["usd"] and r["matches"] else ""
+
+    proven = [r for r in recent if (r["matches"] or 0) >= SPIN_MATCHES]
+    best = min(proven, key=per_match, default=None)
+    out = {}
+    for r in recent:
+        compiles, matches = r["compiles"] or 0, r["matches"] or 0
+        if compiles < SPIN_COMPILES or r is best:
+            continue
+        mine = compiles / matches if matches else float("inf")
+        if best is not None and mine >= SPIN_RATIO * per_match(best):
+            cheaper = bool(r["usd"] and best["usd"] and (not matches or r["usd"] / matches > best["usd"] / best["matches"]))
+            out[(r["kind"], r["model"])] = (
+                f"In the last day {name(r)}'s helpers here made {compiles:,} compiles for "
+                f"{matches or 'no'} match{'es' * (matches != 1)}{money(r)}; {name(best)}'s needed about "
+                f"{per_match(best):,.0f} compiles a match{money(best)}. What's left of this game may be past what "
+                f"{name(r)} does well: {name(best)} could get further{', for less' if cheaper else ''}. You might "
+                f"give {name(r)} fewer helpers here.")
+        elif mine >= SPIN_ALONE:
+            out[(r["kind"], r["model"])] = (
+                f"In the last day {name(r)}'s helpers here made {compiles:,} compiles for "
+                f"{matches or 'no'} match{'es' * (matches != 1)}{money(r)}. What's left of this game may be past what "
+                f"{name(r)} does well: a stronger model could get further.")
+    return out
+
+
 def _proc_start(pid: int) -> int | None:
     """When a process started (clock ticks since boot): with its pid, it tells that process from a later one that
     got the same pid."""
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                from datetime import datetime
+
+                return int(datetime.strptime(result.stdout.strip(), "%a %b %d %H:%M:%S %Y").timestamp())
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        return None
     try:
         return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[STAT_STARTTIME_INDEX])
     except (OSError, ValueError, IndexError):
@@ -444,7 +501,7 @@ class Manager:
             if s.kind not in {a.id for a in agents.AGENTS}:
                 continue
             if s.state in LIVE:
-                if r["pid"] and _proc_start(r["pid"]) == r["pid_start"]:  # still running: the app crashed
+                if r["pid"] and r["pid_start"] is not None and _proc_start(r["pid"]) == r["pid_start"]:
                     crashed.add(r["pid"])
                 s.state, s.stopped_by, s.until = "stopped", BY_QUIT, None
                 s.why = "decompdecomp closed while it worked"
@@ -637,11 +694,16 @@ class Manager:
 
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
-        more of. Cheapest per match first; models with no match last."""
-        rows = self.net.store.all(
-            "SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS matches, "
-            "SUM(compiles) AS compiles FROM helper_sessions WHERE project=? GROUP BY kind, model", slug)
-        out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0} for r in rows]
+        more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets
+        `advice` (spin_advice)."""
+        query = ("SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS "
+                 "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? "
+                 "GROUP BY kind, model")
+        rows = self.net.store.all(query, slug, 0)
+        recent = [dict(r) for r in self.net.store.all(query, slug, time.time() - SPIN_WINDOW)]
+        advice = spin_advice(recent)
+        out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
+                          "advice": advice.get((r["kind"], r["model"]), "")} for r in rows]
         # a model without a price (the API helper counts only tokens) isn't free: priced models by dollars a match,
         # then the rest by tokens a match, then those that matched nothing
         return sorted(out, key=lambda r: (r["matches"] == 0, r["usd"] == 0,
@@ -671,6 +733,22 @@ class Manager:
 
     def _strays(self) -> set[int]:
         """Process groups of processes this app's helpers started, found by HELPER_ENV in their environment."""
+        if sys.platform == "darwin":
+            try:
+                processes = subprocess.run(["ps", "eww", "-axo", "pid=,pgid=,command="], capture_output=True,
+                                           text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                return set()
+            if processes.returncode:
+                return set()
+            mark = f"{HELPER_ENV}={self.home}"
+            groups = set()
+            for line in processes.stdout.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit() and int(parts[0]) != os.getpid():
+                    if mark + " " in parts[2] or parts[2].endswith(mark):
+                        groups.add(int(parts[1]))
+            return groups
         # Linux exposes child environments through /proc. On Windows there is no equivalent filesystem, so there
         # are no stray groups to recover here; the live sessions are still stopped through their Popen handles.
         if not PROCFS.is_dir():

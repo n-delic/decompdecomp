@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ...rom import RomError
+from ...forks.project import ForkError
 from .. import BETA, PROJECT, Compiler, Console
 
 # the EBoot's e_type: Sony's own ELF types, outside the standard ones
@@ -64,7 +64,7 @@ class PS4(Console):
 
         clang = scratch.clang_path()
         if clang is None:
-            raise RomError("no clang 5.0.2 for PS4 matching: install the pinned "
+            raise ForkError("no clang 5.0.2 for PS4 matching: install the pinned "
                            "build, then try again")
         return ["--clang", str(clang)]
 

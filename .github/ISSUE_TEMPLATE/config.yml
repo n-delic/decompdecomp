@@ -1,0 +1,2 @@
+# Issues come through the forms, so each one is labelled (labels.yml adds the console's and the system's)
+blank_issues_enabled: false

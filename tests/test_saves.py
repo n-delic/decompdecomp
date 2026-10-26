@@ -15,6 +15,34 @@ from .test_app_engine import CLAMP
 from .test_rom import ROM, built  # noqa: F401  (fixture that builds the demo ROM)
 
 
+def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, monkeypatch):
+    """A room credit starts with @; opening its save used runner-name validation and aborted restoration."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')",
+                         (str(tmp_path),)).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+    (tmp_path / "best").mkdir()
+    (tmp_path / "best" / "f.c").write_text("void f(void) {}")
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    judged = []
+
+    def attempt(agent, name, source, slug):
+        judged.append((agent.id, name, source, slug))
+        return {"matched": False}
+
+    monkeypatch.setattr(net, "attempt", attempt)
+    author = "@alex.claude-opus-1"
+    manifest = {"notes": [{"by": author, "text": "Try an unsigned comparison.", "function": "f"}],
+                "functions": {"f": {"vram": 4096, "best_by": author}}}
+    result = saves._apply(net, "game", tmp_path, manifest, lambda *_: None)
+    agent, _ = net.local_agent(author)
+    assert result == {"matched": 0, "best": 1, "lost": []}
+    assert judged == [(agent.id, "f", "void f(void) {}", "game")]
+    assert net.store.one("SELECT agent_id FROM notes WHERE text=?", "Try an unsigned comparison.")["agent_id"] == agent.id
+
+
 @pytest.fixture
 def worked(built, tmp_path):  # noqa: F811
     """The demo game with some work done: a split, a match, a rename, a best attempt, a note, settings."""

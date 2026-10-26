@@ -5,9 +5,9 @@ the loader segments. Delinked objects retain each function's original byte span 
 
 - `read_elf` / `ELF`: the file's PT_LOAD segments, entry point, address→offset.
 - `map_functions`: the functions of the game, from a `functions.jsonl` map next to the file (what the reverse
-  engineering map produced: {"a": text offset hex, "s": size, "n": name, "i": import NIDs}),
+  engineering map produced: {"a": text offset hex, "end": exclusive end hex, "n": name}),
   else from Ghidra's analysis.
-- `analyse`: each function's extent, symbol (`func_00000320`, data `D_0009866D0`) and relocations, read with
+- `analyse`: each function's extent, symbol (`func_00000320`, data `D_00002000`) and relocations, read with
   capstone: calls and jumps to other functions, rip-relative data addresses, absolute immediates in the image.
 - `units`: source files, runs of about 4 KiB of neighbouring functions.
 - `create`: the project itself (project_template/), built once with the pinned clang.
@@ -24,6 +24,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -59,7 +60,7 @@ ERROR_TAIL = 1500
 
 TYPES_H = """/* Basic types for this decompilation (x86-64, clang 5.0.2, written in C). Agents add structs and prototypes here
  * or in new headers next to it. The game's functions are func_<address> and its data D_<address>: write them with
- * those names, as C, and the build gives them the original's symbols. Data: `extern int D_9866D0;`. */
+ * those names, as C, and the build gives them the original's symbols. Data: `extern int D_00002000;`. */
 #ifndef COMMON_H
 #define COMMON_H
 
@@ -180,7 +181,7 @@ def game_info(path: Path) -> dict:
     data = path.read_bytes()
     elf = read_elf(data)
     stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game"
-    title = path.stem if path.stem.lower() != "eboot" else (path.parent.name or path.stem)
+    title = path.stem if path.stem.lower() != "eboot" else "PS4 game"
     return {"platform": "ps4", "id": stem, "title": title, "region": "PS4",
             "sha1": hashlib.sha1(data).hexdigest(), "entry": elf.entry, "e_type": elf.e_type,
             "segments": len(elf.segments),
@@ -196,7 +197,6 @@ class Function:
     size: int
     name: str
     relocs: list[tuple[int, int, str | None, int]] = field(default_factory=list)  # (offset, type, symbol, addend)
-
 
 
 
@@ -243,7 +243,7 @@ def map_functions(game: Path, text: Segment, data: bytes | None = None, *, log=p
                 padding += 1
                 continue
             out.append({"entry": text.va + start, "end": text.va + start + size,
-                        "name": row.get("n") or "", "source": "map", "imports": row.get("i") or [],
+                        "name": row.get("n") or "", "source": "map",
                         "ranges": [[text.va + (int(a, 16) if isinstance(a, str) else int(a)),
                                     text.va + (int(b, 16) if isinstance(b, str) else int(b))]
                                    for a, b in row.get("ranges", [])]})
@@ -258,7 +258,7 @@ def _symbol_for(addr: int, names: dict[int, str]) -> str:
     return names.get(addr) or f"D_{addr:08X}"
 
 
-def analyse(elf: ELF, found: list[dict]) -> list[Function]:
+def analyse(elf: ELF, found: list[dict], *, log=print) -> list[Function]:
     """Every function's extent, name and relocations, from the map's (or Ghidra's) function list."""
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
     md.detail = True
@@ -272,6 +272,13 @@ def analyse(elf: ELF, found: list[dict]) -> list[Function]:
     # Alignment-only map entries do not delimit another function's body.
     boundaries = [s for s in starts if not is_padding(elf.read(s, int(rows[s].get("end") or s + 1) - s))]
     names = {s: f"func_{s:08X}" for s in starts}
+    used = set(names.values())
+    for start in starts:
+        name = rows[start].get("name", "") if rows[start].get("source") == "map" else ""
+        if isinstance(name, str) and name and _IDENT.fullmatch(name) and name not in used:
+            used.discard(names[start])
+            names[start] = name
+            used.add(name)
     out = []
     for start in starts:
         next_index = bisect.bisect_right(boundaries, start)
@@ -283,12 +290,16 @@ def analyse(elf: ELF, found: list[dict]) -> list[Function]:
         if body_ranges:
             # Ghidra includes shared tails belonging to earlier/later functions. Keep the
             # entry's local extent; references to those other bodies remain relocations.
-            local = [[max(lo, start), hi] for lo, hi in body_ranges if hi > start and lo < limit]
-            if not local or any(hi > limit for lo, hi in local):
-                raise ForkError(f"overlapping function ownership at 0x{start:X}; review its body ranges")
+            local = [[max(lo, start), min(hi, limit)] for lo, hi in body_ranges if hi > start and lo < limit]
+            if not local:
+                log(f"skipping function 0x{start:X}: no body at its entry")
+                continue
+            if any(hi > limit for lo, hi in body_ranges if hi > start and lo < limit):
+                log(f"trimming overlapping body at 0x{start:X} to 0x{limit:X}")
             end = max(hi for lo, hi in local)
         elif end > limit:
-            raise ForkError(f"overlapping function extent at 0x{start:X}; export explicit body ranges")
+            log(f"trimming overlapping function at 0x{start:X} to 0x{limit:X}")
+            end = limit
         if end <= start or end > file_end:
             raise ForkError(f"invalid function extent at 0x{start:X}: end 0x{end:X}")
         fn = Function(start, end - start, names[start])
@@ -347,15 +358,6 @@ def analyse(elf: ELF, found: list[dict]) -> list[Function]:
 
 
 
-def prune_unit_relocs(elf: ELF, functions: list[Function]) -> None:
-    """Compatibility hook: operand relocations must never be dropped based on a unit-wide decode.
-
-    A unit can contain padding or data between functions. Decoding through those bytes may
-    make a genuine operand look like an instruction start; silently dropping it loses its target.
-    """
-    return None
-
-
 GAP_BYTES = 0x400  # a hole this big between functions means another region of code, not padding
 
 
@@ -397,7 +399,7 @@ def read_data(root: Path, manifest: dict, name: str, length: int = READ_DEFAULT_
     """The bytes at a D_<address> of the user's copy, the addresses its words point to, and a string or floats."""
     m = re.fullmatch(r"_?D_([0-9A-Fa-f]{6,8})|(?:0x)?([0-9A-Fa-f]{6,8})", name)
     if m is None:
-        raise ForkError(f"`{name}` isn't data by address: PS4 data is named D_<address> (D_9866D0)")
+        raise ForkError(f"`{name}` isn't data by address: PS4 data is named D_<address> (D_00002000)")
     addr = int(m.group(1) or m.group(2), 16)
     elf = _program(root, manifest)
     seg = elf.segment_at(addr)
@@ -459,6 +461,21 @@ def _run(cmd: list[str], root: Path, what: str, log) -> None:
         raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
 
+def ghidra_functions(game: Path, elf: ELF) -> list[dict]:
+    """Stock Ghidra needs a standard ELF type; only its disposable input is changed (#92)."""
+    from ...forks import ghidra
+    from . import ET_SCE_DYNEXEC, ET_SCE_EXEC
+
+    if elf.e_type not in (ET_SCE_EXEC, ET_SCE_DYNEXEC):
+        return ghidra.functions(game)
+    with tempfile.TemporaryDirectory(prefix="decomp-ps4-") as tmp:
+        target = Path(tmp) / game.name
+        data = bytearray(elf.data)
+        struct.pack_into("<H", data, 16, 3 if elf.e_type == ET_SCE_DYNEXEC else 2)
+        target.write_bytes(data)
+        return ghidra.functions(target)
+
+
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
     """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game."""
     from ...forks import ghidra
@@ -484,15 +501,13 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
             raise ForkError("no functions.jsonl map beside the game and no Ghidra to find them: put one there "
                             "({\"a\": offset hex, \"end\": exclusive end hex, \"n\": name} per line) or install Ghidra in Setup")
         log(f"analysing {game.name} with Ghidra (finds every function; a big game takes a few minutes)")
-        found = ghidra.functions(game)
+        found = ghidra_functions(game, elf)
         if not found:
             raise ForkError("neither a function map nor Ghidra found functions in this program")
-    functions = analyse(elf, found)
+    functions = analyse(elf, found, log=log)
     if not functions:
         raise ForkError("the function map gave no function in this program's code")
     groups = units(functions, elf)
-    for fns in groups.values():
-        prune_unit_relocs(elf, fns)
     log(f"{len(functions)} functions in {len(groups)} source files")
 
     shutil.copytree(TEMPLATE, root)

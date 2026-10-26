@@ -238,13 +238,21 @@ def test_the_symbol_table_names_functions_and_data_as_c_names():
     assert info.summary() == "debug symbols: 6 functions named" and info.header == ""
 
 
-def test_dwarf_is_recognised_and_said_to_be_unread():
-    """CodeWarrior's PS2 compiler writes DWARF 1 (.debug); it's not read yet, and the import log says so."""
-    table, strings = _symbols([("main", 0x100000, 8, STB_GLOBAL, STT_FUNC, 1)])
-    data = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0),
-                 (".debug", SHT_PROGBITS, 0, 0, bytes(8), 0), (".symtab", SHT_SYMTAB, 0, 0, table, 4),
-                 (".strtab", SHT_STRTAB, 0, 0, strings, 0)])
-    assert debuginfo.read(data).summary() == "debug symbols: 1 function named, DWARF 1 (.debug) not read yet"
+def test_a_name_too_long_for_a_file_gets_a_short_file_name():
+    """splat writes each function to a file named after it and refuses a name over 253 bytes: a PS2 game's mangled
+    C++ name stopped it, and the import went on without any of the game's names. That name gets its address's
+    file name; the others stay as they were."""
+    long = "__Q24Game7Network" + "Zt9allocator1ZQ24Game7Network6Packet" * 8
+    named = [symtab.Named("init", 0x100000, 0x10, True, ".text"), symtab.Named(long, 0x120000, 0x164, True, ".text"),
+             symtab.Named("_vt_" + long, 0x130000, 0x20, False, ".data")]
+    assert len(long.encode()) > symtab.SPLAT_FILENAME_BYTES
+    assert symtab.symbol_addrs(named) == [
+        "init = 0x00100000; // type:func size:0x10",
+        f"{long} = 0x00120000; // type:func size:0x164 filename:func_00120000",
+        f"_vt_{long} = 0x00130000; // size:0x20 filename:D_00130000"]
+
+
+def test_a_program_without_debug_information_has_none():
     assert debuginfo.read(_elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0x100000, bytes(8), 0)])) is None
 
 

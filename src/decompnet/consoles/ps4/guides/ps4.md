@@ -13,8 +13,13 @@ currently runs on Linux x86-64; Windows users can run the Linux app in WSL 2.
 An adjacent `eboot.functions.jsonl` or `functions.jsonl` can supply functions.
 Each line has `a` and `end`: hexadecimal offsets relative to the first executable
 segment, with `end` exclusive. Optional `ranges` lists body intervals as numeric
-offsets relative to that segment. `n` is an optional original name. Body address
+offsets relative to that segment. `n` is an optional C identifier. Invalid or duplicate names use `func_<address>` instead. Body address
 counts are not sizes: old maps with only `s` fall back to Ghidra.
+
+Drop or select the executable and its map together. When opening by path, keep the map
+beside the executable. Uploaded `eboot.elf` files use the title "PS4 game"; rename
+the project after importing. Overlapping bodies are trimmed to the next function
+and reported in the import log.
 
 Without an explicit map, install Ghidra and its required JDK in Setup. Analysis
 supplies function extents and body ranges. Check suspicious boundaries before

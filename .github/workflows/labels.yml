@@ -1,0 +1,59 @@
+# Every issue and pull request gets its labels, and every pull request's branch is named for what it does:
+# - an issue from the forms: the console's and the system's labels, from its answers (the form adds bug/enhancement);
+# - a pull request: its branch must start with feat/, fix/, refactor/, ... (most come from agents, and branches named
+#   anything made the list hard to read), and that prefix labels it.
+# pull_request_target, so pull requests from forks can be labelled too: nothing here checks out or runs their code.
+name: labels
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  branch-name:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: The branch is named feat/..., fix/..., refactor/..., ...
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if ! [[ "$BRANCH" =~ ^(feat|fix|refactor|perf|docs|test|ci|build|chore|revert)/[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "::error::Branch '$BRANCH' isn't named for what it does. Use <type>/<short-name-in-kebab-case>, the type one of feat, fix, refactor, perf, docs, test, ci, build, chore, revert (e.g. fix/ps2-long-symbol-names). Rename it with: git branch -m <new> && git push -u origin <new>, then open the pull request again from it."
+            exit 1
+          fi
+  label:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const labels = new Set();
+            if (context.eventName === 'issues') {
+              // a form's answer is the paragraph under its "### <label>" heading
+              const body = context.payload.issue.body || '';
+              const answer = (q) => (body.split(`### ${q}`)[1] || '').split('###')[0].trim();
+              const consoles = {
+                'N64': 'n64', 'PS1': 'psx', 'PS2': 'ps2', 'GameCube': 'gc', 'Wii': 'wii', 'Windows PC': 'pc',
+                'DS': 'ds', "A console decompdecomp doesn't have yet": 'new-console',
+              };
+              for (const c of answer('Console').split(',')) if (consoles[c.trim()]) labels.add(consoles[c.trim()]);
+              const systems = { 'Linux': 'linux', 'Windows': 'windows' };
+              const system = systems[answer('Your system')];
+              if (system) labels.add(system);
+            } else {
+              const types = { feat: 'enhancement', fix: 'bug', perf: 'enhancement', docs: 'documentation' };
+              const type = types[context.payload.pull_request.head.ref.split('/')[0]];
+              if (type) labels.add(type);
+            }
+            if (labels.size) {
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: context.issue.number, labels: [...labels],
+              });
+            }

@@ -85,6 +85,7 @@ class Function:
     size: int = 0
     params: list[Variable] = field(default_factory=list)
     locals: list[Variable] = field(default_factory=list)
+    line: int = 0  # the source line it starts on, when the debug information says (DWARF 1's .line)
 
 
 @dataclass
