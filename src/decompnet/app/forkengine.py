@@ -2989,12 +2989,33 @@ class ForkEngine:
             broken = sorted(n for n in protected if n and (d.unit_scores.get(n) or 0) < 100)
             if broken:
                 undo()
-                if quiet is None:
-                    self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": remembered(f"❌ REJECTED and undone: your change breaks matched function(s) "
-                                           f"{', '.join(broken[:8])}. Check you replaced the right definition "
-                                           "(overloads?) and didn't change shared code.", None),
-                        "score": None, "matched": False, "broken": broken}
+                # the function's own result still counts: where whole-program optimisation (or inlining) makes a
+                # function's code change how its neighbours compile, a draft short of exact breaks them, and without
+                # its score an x86 game's agents parked drafts behind #if flags and rebuilt by hand to measure them
+                own = None
+                if d.match_percent is not None:
+                    own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
+                if quiet is None:  # an attempt, never the best: release puts the best back in the file
+                    self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
+                names = ", ".join(broken[:8])
+                if own is None:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}. Check you "
+                            "replaced the right definition (overloads?) and didn't change shared code.")
+                elif d.matched:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}, though "
+                            f"{fn['name']} itself matches. What changed them is how it's declared or what else you "
+                            "sent (its calling convention, static or inline, a shared declaration): check you "
+                            "replaced the right definition (overloads?).")
+                else:
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}. {fn['name']} "
+                            f"itself came out at {percent_text(d.match_percent)} (score {own}): recorded as an "
+                            f"attempt, not kept in {unit.source}. If they changed only because of how {fn['name']} "
+                            "compiles into them (inlined, or whole-program optimisation choosing registers across "
+                            f"functions), they match again once {fn['name']} matches exactly: work from the diff "
+                            "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
+                            f"shared code.\n{d.render()}")
+                return {"text": remembered(text, own), "score": None, "held_score": own, "matched": False,
+                        "broken": broken}
             if linked and d.matched and not (ok := self._verify(proj, fp))[0]:
                 undo()
                 if quiet is None:
