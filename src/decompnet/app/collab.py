@@ -662,12 +662,11 @@ class Link:
         if st.get("context"):
             net.apply_remote_context(slug, st["context"]["header"], st["context"]["version"])
             self.cursor["v"] = st["context"]["version"]
-        for m in st.get("matched") or []:
-            net.apply_remote_match(slug, m["vram"], m["matched_source"], m["agent"] or "host")
-        for b in st.get("best") or []:
-            net.apply_remote_best(slug, b["vram"], b["score"], b["source"])
-        for n in st.get("notes") or []:
-            net.apply_remote_note(slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"])
+        _in_batches(net, st.get("matched") or [], lambda m: net.apply_remote_match(
+            slug, m["vram"], m["matched_source"], m["agent"] or "host"))
+        _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"]))
+        _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
+            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"]))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
@@ -819,6 +818,19 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
                             "host_title": hello["title"], "head": info.get("head", "")}, client=client, start=start)
     log(f"joined {hello['title']} again as {joined['name']}")
     return slug
+
+
+def _in_batches(net, items: list, apply_one, size: int = 500) -> None:
+    """What the host sent, a few hundred at a time: each batch is one commit, and the database isn't held for a whole
+    room's worth at once. If a batch fails it is all undone (the next sync does it again)."""
+    for at in range(0, len(items), size):
+        try:
+            with net.store.tx():
+                for item in items[at:at + size]:
+                    apply_one(item)
+        except BaseException:
+            net._remote_ids.clear()  # (a member made in the batch that was undone)
+            raise
 
 
 def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: httpx.Client | None = None,

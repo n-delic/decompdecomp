@@ -214,3 +214,27 @@ def test_the_guide_gives_the_compile_budget_compile_and_diff_keeps():
     assert network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST
     fn = {"n_insns": 100}
     assert f"move on after {network.stall_budget(100)} compiles in a row" in network.move_on_brief(fn)
+
+
+def test_a_transaction_inside_another_joins_it(tmp_path):
+    """The room's sync saves hundreds of the host's matches and notes in one transaction: each function that saves
+    one opens its own, which used to be an error and now commits (or rolls back) with the outer one."""
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "s.db")
+    with store.tx() as db:
+        db.execute("INSERT INTO settings(key, value) VALUES('a', '1')")
+        with store.tx() as inner:
+            inner.execute("INSERT INTO settings(key, value) VALUES('b', '2')")
+        assert store.one("SELECT 1 FROM settings WHERE key='b'")  # seen from inside, not yet committed
+    assert store.one("SELECT COUNT(*) AS n FROM settings WHERE key IN ('a', 'b')")["n"] == 2
+    with pytest.raises(RuntimeError):
+        with store.tx() as db:
+            db.execute("INSERT INTO settings(key, value) VALUES('c', '3')")
+            with store.tx() as inner:
+                inner.execute("INSERT INTO settings(key, value) VALUES('d', '4')")
+            raise RuntimeError
+    assert store.one("SELECT 1 FROM settings WHERE key IN ('c', 'd')") is None  # both rolled back together
+    with store.tx() as db:  # and the next transaction starts clean
+        db.execute("INSERT INTO settings(key, value) VALUES('e', '5')")
+    assert store.one("SELECT 1 FROM settings WHERE key='e'")
