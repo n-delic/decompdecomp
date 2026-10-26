@@ -2421,8 +2421,8 @@ class ForkEngine:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
             if hidden := self._hidden(fp, src_text, span[0]):
                 lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {unit.source}), which the build leaves "
-                             "out: the state above is not this code's. Move it out of that block with edit_file before "
-                             "compiling.")
+                             "out: the state above is not this code's. compile_and_diff compiles yours where the build "
+                             "sees it, without that copy; kept, the function is visible from then on.")
         else:
             lines += ["", f"### Not in {unit.source or 'the source'} yet: compile_and_diff adds it at the end."]
         if fn["best_source"] and fn["status"] != "matched":
@@ -2916,11 +2916,18 @@ class ForkEngine:
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
             hit, old_span = self._find(before, names)
-            if old_span and (hidden := self._hidden(fp, before, old_span[0])):
-                raise NetworkError(f"{fn['name']}'s definition in {unit.source} is inside `{hidden[1]}` (line "
-                                   f"{hidden[0]}), which the build leaves out: a compile there would be judged on "
-                                   "other code. Move the definition out of that block with edit_file, then compile "
-                                   "again.")
+            base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
+            if old_span and self._hidden(fp, before, old_span[0]):
+                # parked in an #if branch the build leaves out: written there, the compile was judged on other code,
+                # and moved out with edit_file it was refused when it broke a matched neighbour (where whole-program
+                # optimisation couples them), so an agent could do nothing with it. It goes where the build sees it,
+                # without the parked copy: kept, the function is visible from then on; else the file is undone. Its
+                # annotation (`// FUNCTION: 0x...`, often with the notes of earlier tries) comes along, and its
+                # comment too unless the agent sent one
+                lo = csource.comment_above(before, old_span[0])
+                mark = csource.marker_above(before, lo)
+                carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
+                base, old_span = before[:mark] + before[old_span[1]:], None
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
@@ -2935,7 +2942,10 @@ class ForkEngine:
                     lo = wrapped
                 after = before[:lo] + pre + kept + code.rstrip("\n") + "\n" + post + before[hi:]
             else:
-                after = self._insert_in_order(proj, fp, unit, fn, before, pre + code.rstrip("\n") + "\n" + post)
+                placed = pre + carried + code.rstrip("\n") + "\n" + post
+                after = self._insert_in_order(proj, fp, unit, fn, base, placed)
+                if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
+                    after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
             after = _with_includes(after, includes, prelude)
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
