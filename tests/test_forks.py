@@ -980,3 +980,59 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     assert not ok and [Path(t).as_posix() for t in failed] == ["build/b/part.o"]  # the step, not the object
     assert fp.failed_units(failed) == {"b"}
     assert fp.failed_units([]) == set()
+
+
+def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
+    """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines; the brief showed them as
+    current and every compile wrote into them, judged on other code. A test of a macro that may be defined (the
+    compiler's own, one the build passes) hides nothing: only what is certain is said."""
+    text = ("int a(void) { return 0; }\n"
+            "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked\n"
+            "int b(void) { return 1; }\n"
+            "#elif defined(_M_IX86)\n"
+            "int c(void) { return 2; }\n"
+            "#else\n"
+            "int d(void) { return 3; }\n"
+            "#endif\n"
+            "#ifndef DRAFTS\n"
+            "int e(void) { return 4; }\n"
+            "#endif\n"
+            "#if 0\n"
+            "/* #endif */ int f(void) { return 5; }\n"
+            "#endif\n"
+            "#if VERSION >= 2\n"
+            "int g(void) { return 6; }\n"
+            "#endif\n")
+    at = {n: text.index(f"int {n}(") for n in "abcdefg"}
+    undefined = {"DRAFTS", "MORE_DRAFTS"}
+    assert csource.condition_names(text, at["d"]) == {"DRAFTS", "MORE_DRAFTS", "_M_IX86"}
+    hidden = {n: csource.hidden_by(text, at[n], undefined) for n in at}
+    assert hidden["b"] == (2, "#if defined(DRAFTS) || defined(MORE_DRAFTS) // parked")
+    assert hidden["a"] is None and hidden["e"] is None
+    assert hidden["c"] is None and hidden["d"] is None  # _M_IX86 may be defined: either branch may be built
+    assert hidden["f"] == (12, "#if 0")  # an #endif in a comment ends nothing
+    assert hidden["g"] is None  # a comparison can't be told
+    assert csource.hidden_by(text, at["b"], {"DRAFTS"}) is None  # MORE_DRAFTS may be defined
+    # with every macro known, each branch is told: the #elif's is out, the #else's is built
+    assert csource.hidden_by(text, at["c"], undefined | {"_M_IX86"}) == (4, "#elif defined(_M_IX86)")
+    assert csource.hidden_by(text, at["d"], undefined | {"_M_IX86"}) is None
+
+
+def test_a_macro_counts_as_never_defined_only_when_nothing_could_define_it(tmp_path):
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "include").mkdir()
+    (tmp_path / "build").mkdir()
+    (tmp_path / "src" / "a.c").write_text("#ifdef PARKED\nint f(void) { return 1; }\n#endif\n#if HAS_SOUND\n#endif\n")
+    (tmp_path / "include" / "cfg.h").write_text("#define HAS_SOUND 1\n")
+    (tmp_path / "build.ninja").write_text("cflags = -DFROM_BUILD /DFROM_MSVC\n")
+    (tmp_path / "build" / "flags.txt").write_text("#define PARKED\n")  # build output isn't the project's
+    fp = ForkProject(tmp_path)
+    names = {"PARKED", "HAS_SOUND", "FROM_BUILD", "FROM_MSVC", "_WIN32", "mips", "WIN32"}
+    assert fp.never_defined(names) == {"PARKED"}
+    text = (tmp_path / "src" / "a.c").read_text()
+    assert ForkEngine._hidden(fp, text, text.index("int f")) == (1, "#ifdef PARKED")
+    (tmp_path / "include" / "cfg.h").write_text("#define PARKED\n")
+    assert ForkEngine._hidden(fp, text, text.index("int f")) is None

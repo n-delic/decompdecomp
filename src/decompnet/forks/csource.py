@@ -139,3 +139,124 @@ def replace(text: str, name: str, code: str) -> str:
     if span is None:
         return text.rstrip("\n") + "\n\n" + code
     return text[:span[0]] + code + text[span[1]:]
+
+
+# ---- which `#if` branch the build leaves out
+# An x86 game's agents kept drafts inside `#if defined(SOME_FLAG)` blocks no build defines: the brief showed them as
+# the function's current source, every compile replaced them there, and the judge scored other code.
+
+_CONDITIONAL = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b(.*)$", re.M)
+_COND_TOKEN = re.compile(r"\s*(defined\b|[A-Za-z_]\w*|\d+[uUlL]*|&&|\|\||!|\(|\))")
+_IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+
+
+def _conditionals(text: str, pos: int):
+    """(line number, directive, its condition) of each conditional line above `pos`, comments left out."""
+    clean = _blank(text[:pos])
+    for m in _CONDITIONAL.finditer(clean):
+        yield clean.count("\n", 0, m.start()) + 1, m.group(1), m.group(2).strip()
+
+
+def condition_names(text: str, pos: int) -> set[str]:
+    """The macros the conditional lines above `pos` test (what hidden_by needs to know about)."""
+    return {n for _, kind, cond in _conditionals(text, pos) if kind not in ("else", "endif")
+            for n in _IDENTIFIER.findall(cond) if n != "defined"}
+
+
+def _either(a: bool | None, b: bool | None) -> bool | None:
+    return True if a or b else None if a is None or b is None else False
+
+
+def _both(a: bool | None, b: bool | None) -> bool | None:
+    return False if a is False or b is False else None if a is None or b is None else True
+
+
+def _negated(a: bool | None) -> bool | None:
+    return None if a is None else not a
+
+
+def _condition(cond: str, undefined: set[str]) -> bool | None:
+    """An #if's condition: True, False, or None when it can't be told (a macro that may be defined, arithmetic)."""
+    tokens, at = [], 0
+    while at < len(cond):
+        m = _COND_TOKEN.match(cond, at)
+        if not m:
+            return None if cond[at:].strip() else _parse(tokens, undefined)
+        tokens.append(m.group(1))
+        at = m.end()
+    return _parse(tokens, undefined)
+
+
+def _parse(tokens: list[str], undefined: set[str]) -> bool | None:
+    pos = 0
+
+    def take(t: str) -> bool:
+        nonlocal pos
+        if pos < len(tokens) and tokens[pos] == t:
+            pos += 1
+            return True
+        return False
+
+    def atom() -> bool | None:
+        nonlocal pos
+        if take("!"):
+            return _negated(atom())
+        if take("("):
+            v = either()
+            return v if take(")") else None
+        if pos >= len(tokens):
+            return None
+        tok = tokens[pos]
+        pos += 1
+        if tok == "defined":
+            paren = take("(")
+            if pos >= len(tokens) or not _IDENTIFIER.fullmatch(tokens[pos]):
+                return None
+            name = tokens[pos]
+            pos += 1
+            if paren and not take(")"):
+                return None
+            return False if name in undefined else None
+        if tok[0].isdigit():
+            return int(tok.rstrip("uUlL")) != 0
+        return False if tok in undefined else None  # a defined macro's value isn't known
+
+    def both() -> bool | None:
+        v = atom()
+        while take("&&"):
+            v = _both(v, atom())
+        return v
+
+    def either() -> bool | None:
+        v = both()
+        while take("||"):
+            v = _either(v, both())
+        return v
+
+    value = either()
+    return value if pos == len(tokens) else None
+
+
+def hidden_by(text: str, pos: int, undefined: set[str]) -> tuple[int, str] | None:
+    """(line number, the directive) of the conditional branch that leaves the code at `pos` out of the build, or None
+    when it's compiled or that can't be told. `undefined`: the macros known never to be defined (ForkProject.
+    never_defined); any other macro, the compiler's own included, could be, so a test of one hides nothing."""
+    stack: list[list] = []  # per open #if: [line, directive, this branch's value, whether a branch before was taken]
+    lines = text.splitlines()
+    for n, kind, cond in _conditionals(text, pos):
+        if kind in ("if", "ifdef", "ifndef"):
+            v = (_condition(cond, undefined) if kind == "if" else
+                 (False if cond in undefined else None) if kind == "ifdef" else (True if cond in undefined else None))
+            stack.append([n, v, v])
+        elif kind == "elif" and stack:
+            taken = stack[-1][2]
+            v = _both(_negated(taken), _condition(cond, undefined))
+            stack[-1] = [n, v, _either(taken, v)]
+        elif kind == "else" and stack:
+            stack[-1] = [n, _negated(stack[-1][2]), True]
+        elif kind == "endif" and stack:
+            stack.pop()
+    for n, value, _ in stack:
+        if value is False:
+            return n, lines[n - 1].strip()
+    return None

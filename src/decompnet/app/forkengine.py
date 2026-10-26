@@ -39,7 +39,7 @@ from ..forks import (
     unresolved,
 )
 from ..forks.objdiff import MappingConflict, ObjdiffError
-from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
+from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
 from ..hostenv import NO_WINDOW
 from ..network import (
     GAME_CODE,
@@ -2081,6 +2081,16 @@ class ForkEngine:
                 return n, span
         return None, None
 
+    @staticmethod
+    def _hidden(fp: ForkProject, text: str, at: int) -> tuple[int, str] | None:
+        """(line, directive) of the `#if` branch that leaves the code at `at` of a source out of the build. The search
+        for definitions (a second or so in a big project) runs only when the code would be hidden with every macro
+        that may be the project's own undefined: knowing more macros undefined only ever hides more."""
+        names = {n for n in csource.condition_names(text, at) if project_macro(n)}
+        if csource.hidden_by(text, at, names) is None:
+            return None
+        return csource.hidden_by(text, at, fp.never_defined(names))
+
     def _held(self, proj, unit: str, text: str | None = None) -> set[str]:
         """Functions of a unit whose source is still the very text judged to load the wrong constants: objdiff's
         progress rules count them, decompdecomp doesn't (see forks/literals.py)."""
@@ -2409,6 +2419,10 @@ class ForkEngine:
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
         if span:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
+            if hidden := self._hidden(fp, src_text, span[0]):
+                lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {unit.source}), which the build leaves "
+                             "out: the state above is not this code's. Move it out of that block with edit_file before "
+                             "compiling.")
         else:
             lines += ["", f"### Not in {unit.source or 'the source'} yet: compile_and_diff adds it at the end."]
         if fn["best_source"] and fn["status"] != "matched":
@@ -2902,6 +2916,11 @@ class ForkEngine:
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = fn["status"] == "matched"
             hit, old_span = self._find(before, names)
+            if old_span and (hidden := self._hidden(fp, before, old_span[0])):
+                raise NetworkError(f"{fn['name']}'s definition in {unit.source} is inside `{hidden[1]}` (line "
+                                   f"{hidden[0]}), which the build leaves out: a compile there would be judged on "
+                                   "other code. Move the definition out of that block with edit_file, then compile "
+                                   "again.")
             pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
             if old_span:
                 lo, hi = old_span
