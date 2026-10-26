@@ -58,6 +58,12 @@ def _hash(code: str) -> str:
     return hashlib.sha256(code.encode()).hexdigest()
 
 
+def _check_name(name: str) -> None:
+    """The host's rule too: a name it will refuse is caught before a join does any slow work."""
+    if not NAME.match(name or ""):
+        raise NetworkError("pick a name of up to 24 letters, digits, - or _")
+
+
 # ---------------------------------------------------------------------------------------------- host
 
 class Room:
@@ -182,8 +188,7 @@ class Room:
 
     def join(self, name: str, sha1: str) -> tuple[str, str]:
         """New member: (token, the name they got; a taken name gets a number)."""
-        if not NAME.match(name or ""):
-            raise NetworkError("pick a name of up to 24 letters, digits, - or _")
+        _check_name(name)
         cfg = self.cfg
         want = forkroom.project_identity(cfg)
         if want and sha1 != want:
@@ -191,14 +196,33 @@ class Room:
                     else f"{self.proj['name']}, {cfg.get('version') or 'the same version'}")
             raise NetworkError("that isn't the same game: everyone in a room needs their own copy of exactly this "
                                f"game ({what}, same version)")
-        base, n = name, 2
-        while self.net.store.one("SELECT 1 FROM agents WHERE lower(name)=lower(?)", name):
-            name, n = f"{base}{n}", n + 1
         token = "dn_" + secrets.token_urlsafe(24)
         waiting = self.settings["approve"]
         with self.net.store.tx() as db:
-            db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
-                       (name, None, hash_token(token), time.time(), self.origin + (":pending" if waiting else "")))
+            # #80: a join that stopped after the host registered it (an import failed, or the app quit) left its
+            # member behind with a token nobody kept. The next join with that name takes the empty member over
+            # instead of becoming "name2". Only a member of this room that never connected and has no work of its
+            # own is reused; a connected, removed or declined one keeps its place, and the name gets a number.
+            reuse = db.execute(
+                "SELECT id, name FROM agents WHERE lower(name)=lower(?) AND owner IS NULL AND last_seen IS NULL "
+                "AND origin IN (?, ?)", (name, self.origin, self.origin + ":pending")).fetchone()
+            if reuse is not None and (
+                    db.execute("SELECT 1 FROM agents WHERE origin=? AND owner=?", (self.origin, reuse["name"])).fetchone()
+                    or db.execute("SELECT 1 FROM functions WHERE matched_agent_id=?", (reuse["id"],)).fetchone()):
+                reuse = None
+            base, n = name, 2
+            if reuse is not None:
+                name = reuse["name"]
+            else:
+                while db.execute("SELECT 1 FROM agents WHERE lower(name)=lower(?)", (name,)).fetchone():
+                    name, n = f"{base}{n}", n + 1
+            if reuse is not None:
+                db.execute("UPDATE agents SET token_hash=?, created_at=?, origin=? WHERE id=?",
+                           (hash_token(token), time.time(),
+                            self.origin + (":pending" if waiting else ""), reuse["id"]))
+            else:
+                db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
+                           (name, None, hash_token(token), time.time(), self.origin + (":pending" if waiting else "")))
             if waiting:
                 self.net._event(db, self.proj["id"], None, "collab", f"{name} asks to join")
             else:
@@ -812,6 +836,8 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
     joined = r.json()
     if r.status_code != 200:
         raise NetworkError(joined.get("error", "couldn't join"))
+    if joined["name"].lower() != name.lower():
+        log(f"the name {name} was taken in this room: you're {joined['name']}")
     old = net.links.pop(slug, None)
     if old is not None:
         old.stop()
@@ -823,7 +849,7 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
 
 def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: httpx.Client | None = None,
               start: bool = True) -> str:
-    """Guest: check the invite, check the ROM is the same game, join, import it locally, link. Returns the slug.
+    """Guest: check the invite, check the ROM is the same game, import it locally, join, link. Returns the slug.
     If this game is already linked to that room here, reconnect instead (no ROM needed). `rom`: the game's bytes or
     the file (a GameCube or Wii disc is gigabytes: never read whole)."""
     from .. import consoles
@@ -835,6 +861,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         return reconnect(net, slug, link, log=log, client=client, start=start)
     if not rom:
         raise NetworkError("pick your own copy of the game to join")
+    _check_name(name)  # the host would refuse it after the import: catch it before the slow split
     if hello.get("kind") == "fork":
         return _join_fork(net, http, url, code, hello, name, rom, log, client, start)
     if isinstance(rom, Path):
@@ -844,12 +871,24 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         raise NetworkError(f"this ROM isn't the same as the host's: the room is for {hello['title']} "
                            f"({hello['game_code']}, {hello['region']}), and every member needs their own copy of exactly that version")
     log(f"joining {hello['title']} ({hello['functions']} functions, {hello['matched']} matched)")
-    r = http.post(f"{url}/collab/join?room={hello['room']}", json={"invite": code, "name": name, "sha1": hello["sha1"]})
-    joined = r.json()
-    if r.status_code != 200:
-        raise NetworkError(joined.get("error", "couldn't join"))
+    # #80: import before joining, so a join the host refuses (a bad name) or a guest that quits while the game is
+    # split never leaves a member behind on the host. An import that was already there stays if the join fails.
+    before = {p["slug"] for p in net.store.all("SELECT slug FROM projects")}
     slug = net.import_rom(rom, toolchain=hello["compiler"]["toolchain"], flags=hello["compiler"]["flags"],
                           confirmed=True, log=log)
+    try:
+        r = http.post(f"{url}/collab/join?room={hello['room']}", json={"invite": code, "name": name, "sha1": hello["sha1"]})
+        joined = r.json()
+        if r.status_code != 200:
+            raise NetworkError(joined.get("error", "couldn't join"))
+    except Exception:
+        if slug not in before:  # the project was imported for this join and won't be linked now
+            root = net.project_row(slug)["root"]
+            net.remove_project(slug)
+            shutil.rmtree(root, ignore_errors=True)
+        raise
+    if joined["name"].lower() != name.lower():
+        log(f"the name {name} was taken in this room: you're {joined['name']}")
     net.link_project(slug, {"url": url, "room": hello["room"], "token": joined["token"], "member": joined["name"],
                             "host_title": hello["title"]}, client=client, start=start)
     log(f"linked as {joined['name']}: your agents now work with the room")
@@ -864,6 +903,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
 
     from .. import consoles
 
+    _check_name(name)  # the host would refuse it after the download: catch it before any of the work
     tmp = None
     if not isinstance(game, Path):
         tmp = tempfile.NamedTemporaryFile(prefix="decomp-join-", suffix=".game", delete=False)
@@ -881,6 +921,8 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         joined = r.json()
         if r.status_code != 200:
             raise NetworkError(joined.get("error", "couldn't join"))
+        if joined["name"].lower() != name.lower():
+            log(f"the name {name} was taken in this room: you're {joined['name']}")
         headers = {"authorization": f"Bearer {joined['token']}", "x-room": hello["room"]}
         if joined.get("waiting"):  # the host's files come only to members it let in
             log("waiting for the host to let you in")

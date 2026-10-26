@@ -168,6 +168,152 @@ def _guest(tmp_path, name, link, built, client):  # noqa: F811
     return g, collab.join_room(g, link, name, built, log=lambda *_: None, client=client, start=False)
 
 
+def test_a_join_that_never_connected_takes_over_its_empty_member(built, tmp_path):  # noqa: F811
+    """#80: a join that stopped while splitting the game left its member on the host, and the retry got the next
+    number. A member of this room that never connected is taken over by the same name again."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    old_token, old_name = room.join("tiredunc", sha1)
+    assert old_name == "tiredunc"
+    answer = client.post(f"/collab/join?room={slug}", json={"invite": code, "name": "TiredUnc", "sha1": sha1})
+    assert answer.status_code == 200
+    joined = answer.json()
+    assert joined["name"] == "tiredunc" and joined["token"] != old_token
+    old = client.get(f"/collab/whoami?room={slug}", headers={"authorization": f"Bearer {old_token}"})
+    assert old.status_code == 400  # the lost token was retired
+    new = client.get(f"/collab/whoami?room={slug}", headers={"authorization": f"Bearer {joined['token']}"})
+    assert new.status_code == 200 and new.json()["name"] == "tiredunc"
+    assert [m["name"] for m in room._members_now()] == ["tiredunc"]
+
+
+def test_a_member_that_has_connected_still_gets_a_number(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    token, _ = room.join("kim", sha1)
+    assert client.get(f"/collab/whoami?room={slug}", headers={"authorization": f"Bearer {token}"}).status_code == 200
+    joined = client.post(f"/collab/join?room={slug}", json={"invite": code, "name": "kim", "sha1": sha1}).json()
+    assert joined["name"] == "kim2"
+    assert [m["name"] for m in room._members_now()] == ["kim", "kim2"]
+
+
+@pytest.mark.parametrize("left", ["removed", "declined"])
+def test_a_member_that_left_the_room_still_gets_a_number(built, tmp_path, left):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path, approve=left == "declined")
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    token, _ = room.join("kim", sha1)
+    if left == "removed":
+        room.remove("kim")
+    else:
+        room.approve("kim", False)
+    joined = client.post(f"/collab/join?room={slug}", json={"invite": code, "name": "kim", "sha1": sha1}).json()
+    assert joined["name"] == "kim2" and joined["token"] != token
+
+
+def test_a_taken_over_member_waits_for_the_host_again(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path, approve=True)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    old_token, _ = room.join("kim", sha1)
+    assert [p["name"] for p in room.pending()] == ["kim"]
+    answer = client.post(f"/collab/join?room={slug}", json={"invite": code, "name": "kim", "sha1": sha1})
+    assert answer.status_code == 200
+    joined = answer.json()
+    assert joined["name"] == "kim" and joined["waiting"] is True and joined["token"] != old_token
+    assert [p["name"] for p in room.pending()] == ["kim"]  # one member, still waiting
+    waiting = client.get(f"/collab/whoami?room={slug}", headers={"authorization": f"Bearer {joined['token']}"})
+    assert waiting.status_code == 400 and waiting.json()["error"] == collab.WAITING
+    room.approve("kim")
+    assert client.get(f"/collab/whoami?room={slug}",
+                      headers={"authorization": f"Bearer {joined['token']}"}).status_code == 200
+    assert [m["name"] for m in room._members_now()] == ["kim"]
+
+
+def test_join_room_checks_the_name_before_importing(built, tmp_path, monkeypatch):  # noqa: F811
+    """#80: a name the host refuses shouldn't cost a full split first (a typo waited out the import, then lost it)."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g = RomNetwork(tmp_path / "refused.db", tmp_path / "refused")
+    imported = []
+    monkeypatch.setattr(g, "import_rom", lambda *args, **kwargs: imported.append(1))
+    with pytest.raises(NetworkError, match="24 letters"):
+        collab.join_room(g, f"http://192.168.1.20:6481/join/{code}#room={slug}", "a b", built,
+                         log=lambda *_: None, client=client, start=False)
+    assert imported == []  # no split was started
+    assert g.store.all("SELECT slug FROM projects") == []  # no project was left behind
+    assert [m["name"] for m in room._members_now()] == []  # nor a member on the host
+
+
+def test_join_room_removes_the_import_when_the_host_refuses_the_join(built, tmp_path, monkeypatch):  # noqa: F811
+    """#80: the guest imports first now, so another refusal from the host must remove what it just imported."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    g = RomNetwork(tmp_path / "refused.db", tmp_path / "refused")
+    imported = []
+    real = g.import_rom
+
+    def record(*args, **kwargs):
+        imported.append(real(*args, **kwargs))
+        return imported[-1]
+
+    def refuse(name, sha1):
+        raise NetworkError("the host said no")
+
+    monkeypatch.setattr(g, "import_rom", record)
+    monkeypatch.setattr(room, "join", refuse)
+    with pytest.raises(NetworkError, match="host said no"):
+        collab.join_room(g, f"http://192.168.1.20:6481/join/{code}#room={slug}", "kim", built,
+                         log=lambda *_: None, client=client, start=False)
+    assert imported  # the game was split before the host was asked...
+    assert g.store.all("SELECT slug FROM projects") == []  # ...and the refused join left no project...
+    assert not (g.workspace / imported[0]).exists()  # ...or its folder behind
+    assert [m["name"] for m in room._members_now()] == []  # ...nor a member on the host
+
+
+def test_join_room_says_when_the_room_gave_the_name_a_number(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    token, _ = room.join("kim", sha1)
+    client.get(f"/collab/whoami?room={slug}", headers={"authorization": f"Bearer {token}"})  # kim has been here
+    g = RomNetwork(tmp_path / "again.db", tmp_path / "again")
+    said = []
+    gslug = collab.join_room(g, f"http://192.168.1.20:6481/join/{code}#room={slug}", "kim", built,
+                             log=said.append, client=client, start=False)
+    assert g.links[gslug].member == "kim2"
+    assert any("name kim was taken in this room" in line and "kim2" in line for line in said), said
+
+
+def test_join_room_does_not_say_the_name_was_taken_when_only_the_case_changed(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    sha1 = json.loads(host.project_row(slug)["config"])["rom"]["sha1"]
+    room.join("tiredunc", sha1)  # an empty member left by a join that stopped before its project was linked
+    g = RomNetwork(tmp_path / "case.db", tmp_path / "case")
+    said = []
+    gslug = collab.join_room(g, f"http://192.168.1.20:6481/join/{code}#room={slug}", "TiredUnc", built,
+                             log=said.append, client=client, start=False)
+    assert g.links[gslug].member == "tiredunc"
+    assert not any("taken in this room" in line for line in said), said
+
+
+def test_a_fork_join_checks_the_name_before_asking_the_host():  # noqa: F811
+    calls = []
+
+    class NoHost:
+        def post(self, *args, **kwargs):
+            calls.append(1)
+            raise AssertionError("posted a refused name")
+
+    with pytest.raises(NetworkError, match="24 letters"):
+        collab._join_fork(object(), NoHost(), "url", "code", {}, "a b", b"", lambda *_: None, None, False)
+    assert calls == []
+
+
+def test_reconnect_says_when_the_room_gave_the_name_a_number(built, tmp_path):  # noqa: F811
+    host, slug, room, code, client = _host(built, tmp_path)
+    link = f"http://192.168.1.20:6481/join/{code}#room={slug}"
+    g, gslug = _guest(tmp_path, "kim", link, built, client)
+    room.remove("kim")  # the host no longer knows kim's token: joining again has to ask for the name
+    said = []
+    collab.reconnect(g, gslug, link, log=said.append, client=client, start=False)
+    assert any("name kim was taken in this room" in line and "kim2" in line for line in said), said
+
+
 def test_public_rooms_need_no_invite_code(built, tmp_path):  # noqa: F811
     host, slug, room, code, client = _host(built, tmp_path, visibility="public")
     g, gslug = _guest(tmp_path, "pub", f"http://192.168.1.20:6481/join/open#room={slug}", built, client)
