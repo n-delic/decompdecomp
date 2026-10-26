@@ -166,7 +166,8 @@ async function loadStats() {
 function workingAgents() {
   const running = S.sessions.filter((s) => ["starting", "working", "waiting"].includes(s.state));
   const own = new Set(S.sessions.map((s) => s.agent));
-  const outside = [...new Set(S.claims.filter((c) => !own.has(c.agent) && c.agent !== AUTO).map((c) => c.agent))];
+  const outside = [...new Set(S.claims.filter((c) => c.agent && !own.has(c.agent)
+    && !APP_WORKERS.has(c.agent.replace(/^@/, ""))).map((c) => c.agent))];
   return { running, outside, n: running.length + outside.length };
 }
 

@@ -86,6 +86,24 @@ def test_the_autopilots_run_and_its_summary_are_one_notification(gui):
     assert agent == "claude-1 matched func_3" and alone.startswith("Autopilot: 0 of 1")
 
 
+def test_stopped_helpers_claims_do_not_read_as_agents_working(gui):
+    """#99: the permuter claims a function for half an hour and its claim outlives the helper and a restart, so the
+    header still said "1 agent working" with every helper stopped. The app's own workers (the permuter, the
+    autopilot, decompdecomp, and a room host's) aren't agents anyone started; another computer's helper still is."""
+    agents = gui["checks"]["agents"]
+    assert agents["ownOnly"] == agents["nameless"] == 0
+    assert agents["outside"] == 1
+
+
+def test_a_helper_going_between_waiting_and_working_does_not_reorder_the_rows(gui):
+    """#99: with four API helpers on one project the rows jumped every time one went from waiting to working (or
+    back), so following one agent with the eye was impossible. Live helpers keep their name order; only starting or
+    stopping one moves it, and decompiling helpers still come before polishing ones."""
+    agents = gui["checks"]["agents"]
+    assert agents["flipped"] == agents["again"] == ["alpha", "beta"]
+    assert agents["rows"] == ["working-one", "stopped-one", "polishing", "paused-one"]
+
+
 def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui):
     """Searching "ma" listed every function of the segment "main". A ROM's segment counts only when no name or address
     has the text; a fork's source file is shown in the list, so it always counts there."""
