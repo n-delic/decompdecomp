@@ -913,3 +913,37 @@ def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_cha
     parts()
     parts()
     assert len(asked) == 3
+
+
+def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
+    """A unit built in steps (here a part compiled, then linked into the unit's object) reports only the step that
+    failed: ninja never tries the object. Counted by the object alone, an x86 game's header edits that broke a step
+    were kept as breaking nothing, and the next compile there was told the file had been broken before it came."""
+    import sys
+
+    from decompnet.forks.project import ForkProject, _tool
+
+    if _tool("ninja") is None:
+        pytest.skip("needs ninja")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "step.py").write_text(
+        "import shutil, sys\n"
+        "if 'BROKEN' in open(sys.argv[1]).read():\n    sys.exit('error: a broken step')\n"
+        "shutil.copy(sys.argv[1], sys.argv[2])\n")
+    for name, text in (("a", "fine\n"), ("b", "BROKEN\n"), ("c", "fine\n")):
+        (tmp_path / "src" / f"{name}.c").write_text(text)
+    py = sys.executable.replace("\\", "/")
+    rules = f'rule step\n  command = "{py}" step.py $in $out\n'
+    for name in "abc":
+        rules += f"build build/{name}/part.o: step src/{name}.c\nbuild build/{name}.o: step build/{name}/part.o\n"
+    rules += "build all_source: phony build/a.o build/b.o build/c.o\n"
+    (tmp_path / "build.ninja").write_text(rules)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": n, "target_path": f"expected/{n}.o", "base_path": f"build/{n}.o",
+         "metadata": {"source_path": f"src/{n}.c"}} for n in "abc"]}))
+    fp = ForkProject(tmp_path)
+    failed: list[str] = []
+    ok, _ = fp.build_all(failed=failed)
+    assert not ok and [Path(t).as_posix() for t in failed] == ["build/b/part.o"]  # the step, not the object
+    assert fp.failed_units(failed) == {"b"}
+    assert fp.failed_units([]) == set()

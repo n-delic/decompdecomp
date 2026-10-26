@@ -138,6 +138,23 @@ def _hash_mismatch(tail: str) -> str | None:
             "from). Or start the game from your own copy instead: choose New project → Open a game file.")
 
 
+MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
+QUERY_BATCH = 50  # targets per `ninja -t query`
+
+
+def _query_outputs(text: str) -> set[str]:
+    """The targets under "outputs:" in `ninja -t query`'s answer: what each queried target is an input of."""
+    found, section = set(), ""
+    for line in text.splitlines():
+        if not line.startswith(" "):
+            section = ""  # the next queried target
+        elif not line.startswith("    "):
+            section = line.strip().split(":")[0]  # "input", "outputs", "validations"
+        elif section == "outputs":
+            found.add(line.strip())
+    return found
+
+
 class ForkProject:
     def __init__(self, root: Path, platform: str = ""):
         self.root = Path(root)
@@ -688,9 +705,32 @@ class ForkProject:
         return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
 
     def failed_units(self, targets: list[str]) -> set[str]:
-        """Units whose source object is among the build's failed targets."""
-        want = {os.path.normpath(t) for t in targets}
+        """Units whose source object the build couldn't make: it failed, or a step it's made from did. A unit built
+        in steps (objects linked into one, a generated source) reports only the step: `ninja -k 0` never tries what
+        depends on it. Counting the object alone, an x86 game's edits that broke such a step were kept as breaking
+        nothing, and the next agent to compile there was told the file was broken before it came."""
+        want = {os.path.normpath(t) for t in [*targets, *self._made_from(targets)]}
         return {u.name for u in self.units() if u.base is not None and os.path.normpath(os.path.relpath(u.base, self.root)) in want}
+
+    def _made_from(self, targets: list[str]) -> set[str]:
+        """Everything the build makes from these targets, all the way up (ninja's `-t query`; other builds: nothing)."""
+        make = self.objdiff_config().get("custom_make") or "make"
+        if not targets or not (make == "ninja" or Path(make).name.startswith("ninja")):
+            return set()
+        tool = _tool(make) or make
+        found: set[str] = set()
+        todo = list(dict.fromkeys(targets))
+        while todo and len(found) < MADE_FROM_MAX:
+            batch, todo = todo[:QUERY_BATCH], todo[QUERY_BATCH:]
+            try:
+                out = subprocess.run([tool, "-t", "query", *batch], cwd=self.root, capture_output=True, text=True,
+                                     errors="replace", encoding="utf-8", timeout=60, creationflags=NO_WINDOW).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                break
+            for t in _query_outputs(out) - found:
+                found.add(t)
+                todo.append(t)
+        return found
 
     def _all_source(self) -> bool:
         """dtk-template's `all_source`: every unit's source object, including units the game's link doesn't use yet
