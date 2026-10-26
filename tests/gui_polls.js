@@ -140,7 +140,65 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return [identifyHead(head(0, "PS-X EXE"), file).platform, identifyHead(head(0x9319, "CD001"), file).platform,
               platformName("playstation"), notSupported(head(0, "PS-X EXE"), file)];
     })(),
-    // the import offers every compiler of the game's console this computer lacks (both PlayStations' for a disc)
+    // Windows programs the PC console can't start: a 64-bit one, one for another processor, a DOS one
+    windows: [0x8664, 0xaa64, 0x14c, null].map((machine) => {
+      const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
+      h.set([0x4d, 0x5a]);
+      if (machine !== null) { dv.setUint32(0x3c, 0x80, true); h.set([0x50, 0x45, 0, 0], 0x80); dv.setUint16(0x84, machine, true); }
+      if (machine === 0x14c) dv.setUint16(0x98, 0x10b, true);
+      const file = { name: "game.exe", size: 0x200 };
+      return [identifyHead(h, file)?.platform ?? null, notSupported(h, file)];
+    }),
+    // the Visual C++ pack a dropped program asks for, from its Rich header or linker version: [head as hex, pack, what
+    // the drop says]. tests/test_gui.py asks scratch.describe about the same bytes
+    pcPack: [[[0xab, 40219, 503], [0xaa, 40219, 171], [0x30, 9044, 121], [0x9d, 40219, 1]],
+             [[0x0a, 8047, 169], [0x0b, 8966, 148], [0x0b, 8447, 38], [0x13, 8034, 23]],
+             [[0x5d, 3077, 40], [0x5f, 3077, 300], [0x78, 50727, 1]],  // 2003's code, linked by 2005's linker
+             [[0x6d, 50727, 30], [0x0b, 8168, 10]],  // no linker entry: the version that built the most files
+             [], [[0x01, 0, 5]]].map((rich, k) => {
+      const key = [0x5a, 0x17, 0x3c, 0x91], bytes = [0x4d, 0x5a, ...new Array(0x3e + 0x40).fill(0)];
+      if (rich.length) {
+        const plain = [..."DanS"].map((c) => c.charCodeAt(0)).concat(new Array(12).fill(0));
+        for (const [product, build, count] of rich) {
+          const w = [((product << 16) | build) >>> 0, count];
+          for (const v of w) plain.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, v >>> 24);
+        }
+        bytes.push(...plain.map((b, i) => b ^ key[i % 4]), 0x52, 0x69, 0x63, 0x68, ...key);
+      }
+      while (bytes.length % 8) bytes.push(0);
+      const pe = bytes.length;
+      bytes.push(0x50, 0x45, 0, 0, 0x4c, 0x01, 3, 0, ...new Array(12).fill(0), 0xe0, 0, 0x02, 0x01);
+      bytes.push(0x0b, 0x01, k === 4 ? 9 : 6, 0, ...new Array(0xe0 - 4).fill(0));
+      const h = new Uint8Array(0x400);
+      h.set(bytes);
+      h[0x3c] = pe;
+      const info = identifyHead(h, { name: "game.exe", size: 0x400 });
+      return [[...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join(""), info.pack, packOf(info)];
+    }),
+    // a PSP's UMD image and programs are told apart from the PS2's; what can't be read yet says what to do instead
+    psp: (() => {
+      const head = (writes) => {
+        const h = new Uint8Array(0x9400), dv = new DataView(h.buffer);
+        writes.forEach(([at, v]) => (typeof v === "string" ? [...v].forEach((c, i) => (h[at + i] = c.charCodeAt(0))) : dv.setUint32(at, v, true)));
+        return h;
+      };
+      const iso = { name: "game.iso", size: 0x9400 }, elf = (type, flags) => head([[0, "\x7fELF"], [5, "\x01"], [16, type], [18, "\x08"], [36, flags]]);
+      const umd = head([[0x8001, "CD001"], [0x8008, "PSP GAME                        "]]);
+      const ps2 = head([[0x8001, "CD001"], [0x8008, "PLAYSTATION                     "]]);
+      const cso = head([[0, "CISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
+      const zso = head([[0, "ZISO"], [4, 0x18], [8, 0x4000000], [16, 0x800]]);
+      const gcCiso = head([[0, "CISO"], [4, 0x200000], [8, 0x00010101]]);
+      const pbp = head([[0, "\0PBP"]]);
+      const platform = (h, f = iso) => identifyHead(h, f)?.platform ?? null;
+      return {
+        platforms: [platform(umd), platform(ps2), platform(gcCiso), platform(cso, { name: "game.cso", size: 0x9400 }),
+                    platform(elf(0xffa0, 0x10a23001)), platform(elf(2, 0x10a23001)), platform(elf(2, 0x20924001))],
+        said: [notSupported(zso, { name: "game.bin", size: 0x9400 }), notSupported(pbp, { name: "EBOOT.PBP", size: 0x9400 })],
+        cso: identifyHead(cso, { name: "game.cso", size: 0x9400 })?.order ?? null,
+        name: platformName("playstation"),
+      };
+    })(),
+    // the import offers every compiler of the game's console this computer lacks (every PlayStation's for a disc not read yet)
     missing: (() => {
       const before = S.st;
       S.st = { consoles: [{ id: "ps", aliases: [], installable: ["gcc-2.7.2-psx", "gcc-2.6.3-psx"] },

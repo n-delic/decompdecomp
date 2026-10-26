@@ -34,7 +34,7 @@ from . import save_readme
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
-SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")
+SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -187,6 +187,8 @@ def _render(net, slug: str, folder: Path | None = None) -> tuple[dict[str, str],
         "symbols": [dict(r) for r in net.store.all("SELECT name, address, size, kind FROM symbols WHERE project_id=?",
                                                     pid) if not AUTO_NAME.match(r["name"])],
         "notes": notes,
+        # what's set aside and why: agents' verdicts that no C makes it, the user's, a boundary report's leftover
+        # (the import sets aside again what it finds by itself)
         "set_aside": [{"name": r["name"], "vram": r["vram"],
                        **{k: v for k, v in json.loads(r["meta"] or "{}").items() if k in SET_ASIDE_META}}
                       for r in rows if r["status"] == "asm"],
@@ -474,6 +476,14 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
             net.add_note(net.local_agent(note.get("by") or "restored")[0], slug, note["text"], note.get("function"))
         except NetworkError:
             continue  # its function is gone (a split the layout couldn't make again)
+    with net.store.tx() as db:
+        for item in manifest.get("set_aside") or []:
+            row = db.execute("SELECT id, meta FROM functions WHERE project_id=? AND vram=? AND status='open'",
+                             (pid, item["vram"])).fetchone()
+            if row is not None:
+                why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
+                db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
+                           (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
     by_vram = {r["vram"]: r["name"] for r in net.store.all("SELECT vram, name FROM functions WHERE project_id=?", pid)}
     saved = manifest.get("functions") or {}
     matched, lost, best = 0, [], 0

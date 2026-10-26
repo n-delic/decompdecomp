@@ -26,7 +26,7 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW, find_uv
 
-from . import wsl
+from . import limits, wsl
 
 MANIFEST = ".decompnet-toolchain.json"
 LINUX = "linux-x86_64"
@@ -93,10 +93,11 @@ def current_platform() -> str:
 
 
 def unsupported_cpu() -> str | None:
-    """Why this computer can't run the games' compilers, or None: they're x86 programs, which an ARM computer
-    (a Raspberry Pi, an ARM laptop or server) doesn't run."""
-    machine = current_platform().split("-", 1)[1]
-    if machine == "x86_64":
+    """Supported hosts; Apple Silicon uses native builds or Intel Mac tools through Rosetta.
+    Each tool still checks that its own build is available before installation."""
+    host = current_platform()
+    machine = host.split("-", 1)[1]
+    if machine == "x86_64" or host == "macos-arm64":
         return None
     return (f"decompdecomp needs a 64-bit Intel or AMD PC for now (the games' compilers are x86 programs; this "
             f"computer's processor is {machine})")
@@ -144,10 +145,31 @@ def installed(tid: str, linux: bool | None = None) -> dict | None:
     return json.loads(m.read_text(encoding="utf-8")) if m.exists() else None
 
 
+@functools.cache
+def _intel_mac_runtime_ready() -> bool:
+    try:
+        return subprocess.run(["/usr/bin/arch", "-x86_64", "/usr/bin/true"], capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def runtime_error(tid: str) -> str | None:
+    """Intel-only Mac compiler archives need Apple's translation runtime on Apple Silicon."""
+    if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
+        return None
+    if _intel_mac_runtime_ready():
+        return None
+    _intel_mac_runtime_ready.cache_clear()  # a newly installed Rosetta runtime works on the next compile
+    return (f"{tid} uses Intel macOS binaries and needs Rosetta 2 on Apple Silicon. "
+            "Run `softwareupdate --install-rosetta` in Terminal, accept Apple's license if you agree, then try again.")
+
+
 def require(tid: str, linux: bool | None = None) -> Path:
     """Directory of an installed toolchain, or a clear error telling the operator how to install it."""
     if installed(tid, linux) is None:
         raise ToolchainError(f"toolchain {tid!r} is not installed: install it in decompdecomp, under Compilers & tools")
+    if why := runtime_error(tid):
+        raise ToolchainError(why)
     return path(tid, linux)
 
 
@@ -191,7 +213,17 @@ def _deb_data(deb: Path, out: Path) -> Path:
     raise ToolchainError(f"{deb.name} has no data.tar")
 
 
-def _extract(archive: Path, dest: Path, subdir: str | None) -> None:
+def _extract(archive: Path, dest: Path, subdir: str | None, keep: dict[str, str] | None = None) -> None:
+    """Unpack an archive (or its `subdir`) into `dest`. `keep`: {path in it: where it goes in dest}, and nothing else:
+    a compiler's archive is often a whole install (its IDE, libraries, the C runtime's sources: 700 MB for Visual C++
+    2010) of which a build needs the compiler and headers. Two paths may go to one folder: they're merged."""
+    prefix = f"{subdir.strip('/')}/" if subdir else ""
+    wanted = None if keep is None else [prefix + k.strip("/") for k in keep]
+
+    def take(name: str) -> bool:
+        name = name.rstrip("/")
+        return wanted is None or any(name == w or name.startswith(w + "/") for w in wanted)
+
     with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
         if archive.name.endswith(".deb"):
             with tempfile.TemporaryDirectory(dir=dest.parent) as raw:
@@ -202,6 +234,8 @@ def _extract(archive: Path, dest: Path, subdir: str | None) -> None:
 
             with zipfile.ZipFile(archive) as z:
                 for info in z.infolist():
+                    if not take(info.filename):
+                        continue
                     target = (Path(tmp) / info.filename).resolve()
                     if Path(tmp).resolve() not in target.parents and target != Path(tmp).resolve():
                         raise ToolchainError(f"refusing to extract {info.filename} outside the toolchain folder")
@@ -226,11 +260,20 @@ def _extract(archive: Path, dest: Path, subdir: str | None) -> None:
             # gz/xz in pure Python, so this works on Windows and macOS too. The "data" filter refuses
             # absolute paths, links out of the tree and device files, and drops setuid bits.
             with tarfile.open(archive) as t:
-                t.extractall(tmp, filter="data")
+                t.extractall(tmp, members=[m for m in t.getmembers() if take(m.name)], filter="data")
         src = Path(tmp) / subdir if subdir else Path(tmp)
-        if not src.is_dir():
+        if not src.is_dir() and keep is None:  # (with `keep`, the first path it doesn't have is named)
             raise ToolchainError(f"archive {archive.name} has no {subdir}/")
-        for item in src.iterdir():
+        for path, to in (keep or {}).items():
+            item, target = src / path, dest / to
+            if item.is_dir():
+                shutil.copytree(item, target, dirs_exist_ok=True)
+            elif item.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+            else:
+                raise ToolchainError(f"archive {archive.name} has no {path}")
+        for item in src.iterdir() if keep is None else ():
             target = dest / item.name
             if target.exists():
                 shutil.rmtree(target) if target.is_dir() and not target.is_symlink() else target.unlink()
@@ -242,6 +285,9 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     that's how it runs on this computer)."""
     tc = get(tid)
     linux = tc.via_wsl if linux is None else linux
+    _intel_mac_runtime_ready.cache_clear()  # Rosetta may have been installed since the last setup attempt
+    if why := runtime_error(tid):
+        raise ToolchainError(why)
     if tc.proprietary and not accept_license and (force or installed(tid, linux) is None):
         raise ToolchainError(
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
@@ -289,13 +335,15 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
                 raise ToolchainError(f"checksum mismatch for {part['url']}: expected {part['sha256']}, got {digest}")
             if not part.get("sha256"):
                 log(f"  no pinned checksum in the registry; pinning on first use: sha256 {digest}")
-            if part.get("binary"):  # a plain executable, not an archive
+            if part.get("build") == "mips-binutils":
+                _build_mips_binutils(archive, dest, part.get("subdir"), log)
+            elif part.get("binary"):  # a plain executable, not an archive
                 shutil.copyfile(archive, dest / part["binary"])
                 os.chmod(dest / part["binary"], 0o755)
             else:
                 into = dest / part.get("into", "")  # a pack of several versions: each in its own folder
                 into.mkdir(parents=True, exist_ok=True)
-                _extract(archive, into, part.get("subdir"))
+                _extract(archive, into, part.get("subdir"), part.get("keep"))
                 if part.get("executable"):  # archives that don't record the executable bit
                     for f in dest.rglob("*"):
                         if f.is_file():
@@ -314,6 +362,50 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
     }, indent=2), encoding="utf-8")
     log(f"{tid}: installed at {dest}")
     return dest
+
+
+def _build_mips_binutils(archive: Path, dest: Path, subdir: str | None, log) -> None:
+    """The v0.10 upstream has no Intel Mac archive. Build that same pinned source, never a tool from PATH.
+    Only the host build tools (Xcode's C compiler and make) come from the system; installed MIPS tools stay pinned.
+    """
+    if not shutil.which("make") or not shutil.which("clang"):
+        raise ToolchainError("Building MIPS binutils on Intel macOS needs Xcode Command Line Tools: run `xcode-select --install`, then try again.")
+    with tempfile.TemporaryDirectory(prefix="decomp-binutils-") as tmp:
+        source = Path(tmp) / "source"
+        build = Path(tmp) / "build"
+        source.mkdir()
+        build.mkdir()
+        (build / "gas" / "doc").mkdir(parents=True)  # git sources omit the generated documentation directory
+        _extract(archive, source, subdir)
+        # The git archive includes GDB, unlike a standalone binutils release. Its top-level configure probes
+        # GMP/MPFR whenever gdb/ exists, even with --disable-gdb. We build only the assembler/linker/object tools.
+        shutil.rmtree(source / "gdb", ignore_errors=True)
+        shutil.rmtree(source / "gdbserver", ignore_errors=True)
+        commands = [
+            [str(source / "configure"), "--target=mips", "--disable-gprofng", "--disable-gdb", "--disable-werror",
+             "--disable-nls", "--disable-sim", "--without-zstd", "--with-system-zlib"],
+            ["make", "-j" + str(min(4, os.cpu_count() or 1)), "all-binutils", "all-gas", "all-ld", "MAKEINFO=true"],
+        ]
+        for argv in commands:
+            log("  building pinned MIPS binutils: " + Path(argv[0]).name + " (first install only)")
+            try:
+                res = subprocess.run(limits.capped(argv), cwd=build, capture_output=True, text=True,
+                                     errors="replace", timeout=900, env=dict(os.environ, CC="/usr/bin/clang", MAKEINFO="true"))
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ToolchainError(f"Couldn't build the pinned MIPS tools: {error}. Install Xcode Command Line Tools and try again.") from error
+            if res.returncode:
+                raise ToolchainError("Couldn't build the pinned MIPS tools. Install Xcode Command Line Tools and try again.\n"
+                                     + (res.stdout + res.stderr)[-4000:])
+        outputs = {"as": "gas/as-new", "ld": "ld/ld-new", "objcopy": "binutils/objcopy",
+                   "objdump": "binutils/objdump", "nm": "binutils/nm-new", "ar": "binutils/ar",
+                   "ranlib": "binutils/ranlib", "strip": "binutils/strip-new", "readelf": "binutils/readelf"}
+        for name, binary in outputs.items():
+            target = dest / ("mips-ps2-decompals-" + name)
+            if not (build / binary).is_file():
+                raise ToolchainError(f"The pinned MIPS binutils build did not produce {name} ({binary}). "
+                                     "Check Xcode Command Line Tools and try again.")
+            shutil.copy2(build / binary, target)
+            target.chmod(0o755)
 
 
 def venv_bin(venv: Path, name: str) -> Path:

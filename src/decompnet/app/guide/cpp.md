@@ -7,7 +7,9 @@ definition must have exactly that signature or objdiff won't find it.
   `__sinit_file_cpp` static initialisers.
 - Itanium (Switch Clang, many 3DS/PS2/PS3 compilers): `_ZN7CPlayer6updateEf`; `C1`/`C2` and `D0`/`D1`/`D2`
   are the constructor/destructor variants.
-- MSVC (PC, Xbox): `?update@CPlayer@@QAEXM@Z`.
+- MSVC (PC, Xbox): `?update@CPlayer@@QAEXM@Z`; `??0CPlayer@@QAE@XZ` constructor, `??1CPlayer@@QAE@XZ`
+  destructor, `??_GCPlayer@@UAEPAXI@Z` deleting destructor. A PC game started from scratch names its functions by
+  address instead: guide("x86") says how to write its constructors and destructors.
 The brief shows the demangled name when there is one.
 
 Structure
@@ -29,7 +31,16 @@ Matching tips
   `get_function` says which fields of `this` the function uses. Field types are what the loads and
   stores say (lwc1: float, lh: s16, a word used as an address: a pointer); the names are yours to give.
 <!-- end -->
+<!-- only: x86 -->
+  In PC projects started from scratch, `get_class()` lists the program's classes: by their own names where it was
+  built with run-time type information (RTTI), else `Class_<vtable address>` (found from the vtables constructors
+  store). `get_class(function)` shows a virtual function's class, its base classes, its constructors and
+  destructors, every field its functions touch through `this` (offset, type, which functions; its bases' too) and
+  its virtual functions by slot, and `get_function` says which fields the function uses. A method's machine draft
+  is written as `Class::func_<address>(...)` with `this`. Field types are what the instructions say (fld or movss:
+  float, movsx word: s16, a word used as an address: a pointer); the names are yours to give.
+<!-- end -->
 - Member initialisation order in constructors follows declaration order in the class, not the
   initialiser list order.
 - Inlined base-class constructors show up as stores of the base vtable before the derived one.
-- Exceptions and RTTI are usually off in games; if the target has EH tables, the project says so.
+- Exceptions and RTTI are often off in console games; if the target has EH tables, the project says so.

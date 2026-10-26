@@ -93,7 +93,7 @@ class Api(Agent):
         headers = {"Content-Type": "application/json"}
         if s.options.get("api_key"):
             headers["Authorization"] = f"Bearer {s.options['api_key']}"
-        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)))
+        schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug))
         messages = [{"role": "system", "content": tools.INSTRUCTIONS},
                     {"role": "user", "content": manager.prompt(s)}]
         count = int(s.options.get("per_session", PER_SESSION))
@@ -352,8 +352,9 @@ def context_window(client, base: str, options: dict) -> int:
     return REMOTE_CONTEXT
 
 
-def api_tool_schemas(fork: bool = False) -> list[dict]:
-    """OpenAI-style tool definitions for the built-in agent, from the same tools CLI agents get."""
+def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list[dict]:
+    """OpenAI-style tool definitions for the built-in agent, from the same tools CLI agents get (`names`: the
+    project's, tools.project_tools; else every tool of its kind)."""
     from ..app import tools  # (here: app/tools.py imports this package)
 
     s = lambda **props: {"type": "object", "properties": props, "required": [k for k, v in props.items() if v.pop("req", False)]}
@@ -386,6 +387,12 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                           s(old=st("current name", True), new=st("new name", True), message=st("why"))),
         "split_function": ("Split a merged function at an address.",
                            s(function=st("function", True), at=st("address like 0x80001234", True), new_name=st("name"))),
+        "report_boundary": ("Report that a function really ends earlier: what follows is padding, leftovers or data "
+                            "(PC projects: or another function merged with it). ROM: the user approves; PC: agents of "
+                            "two models agree and the game still builds byte for byte.",
+                            s(function=st("function", True), end=st("where it really ends: an address (PC: or +offset)",
+                                                                     True),
+                              reason=st("what follows and how you can tell", True))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "
@@ -393,8 +400,8 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
                       s(what=st("vtable address, or a virtual function / constructor"))),
         "guess_struct": ("The likely struct behind a function's pointer, as C with offsets, from every function the same "
                          "pointer reaches; where else it flows; the type matched code already uses.",
-                         s(function=st("function", True), argument=st("arg0-arg3, return, or a global; +0x14 follows "
-                                                                       "the pointer at 0x14"))),
+                         s(function=st("function", True), argument=st("arg0-arg3, this (PC), return, or a global; "
+                                                                       "+0x14 follows the pointer at 0x14"))),
         "redraft": ("m2c's draft of a function made again with your declarations (a struct, a prototype) added to "
                     "the shared header's, which they replace where they declare the same names. Recorded nowhere.",
                     s(function=st("function", True), context=st("C declarations", True))),
@@ -450,6 +457,6 @@ def api_tool_schemas(fork: bool = False) -> list[dict]:
         defs["compile_and_diff"] = ("Write one complete function definition into its source file, build it and diff "
                                     "with objdiff. 100% / score 0 = matched.",
                                     s(function=st("function name", True), source=st("the function definition", True)))
-    names = set(tools.tool_names(fork))
+    names = set(tools.tool_names(fork) if names is None else names)
     return [{"type": "function", "function": {"name": n, "description": d, "parameters": p}}
             for n, (d, p) in defs.items() if n in names]

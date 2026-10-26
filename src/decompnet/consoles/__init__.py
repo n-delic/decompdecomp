@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console`
+consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
 console names. A person or an agent working on PS2 support reads consoles/ps2/ and this file, nothing else.
@@ -7,7 +7,7 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1 and PS2.
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2 and PSP.
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
   project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC and DS.
@@ -59,6 +59,7 @@ class Console:
     aliases: tuple[str, ...] = ()  # other ids older configs or public decomps use for it ("win32" for "pc")
     status = PUBLIC  # RECOMMENDED, BETA or PUBLIC
     arch = ""  # its processor, an id in arch/ ("mips")
+    cpu_variant: str = ""  # a variant of it capstone can't decode, read by arch/'s own reader ("allegrex": the PSP's)
     big_endian = False
     mode = ""  # ROM, PROJECT, or "" (only public decomps)
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
@@ -78,6 +79,9 @@ class Console:
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
+    # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
+    # create_config reads ELF programs as PS2 ones: rom/split.py)
+    splat_platform = ""
     image_ext = ".bin"
     asm_preamble = '.include "macro.inc"\n.set noat\n.set noreorder\n.section .text, "ax"\n'
 
@@ -123,6 +127,11 @@ class Console:
         """PROJECT mode: what a game sent as bytes is called on disk."""
         return "game.bin"
 
+    def program_in(self, folder: Path) -> Path | None:
+        """The game's file in a folder the user pointed at, when this console's games are folders (a PC game's .exe
+        and its DLLs); None: not one of its games."""
+        return None
+
     # ROM mode
 
     def read_game(self, file: bytes | Path, name: str = "") -> Picked:
@@ -135,13 +144,21 @@ class Console:
         return by_guess.get(info.get("compiler_guess", ""), self.compilers[0].id if self.compilers else "")
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
-        """A compiler's flags for a game of this console (`gp`: the game's $gp value, 0 when it has none)."""
+        """A compiler's flags for a game of this console (`gp`: the game's $gp value, 0 when it keeps no data
+        $gp-relative: small_gp)."""
         return list(toolchains.get(toolchain).flags)
 
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
         return image
+
+    def export_asm(self, text: str) -> str:
+        """ROM mode's export: a file of spimdisasm's assembly as GNU as reads it. What it can't read as spimdisasm
+        writes it (coprocessor 2's instructions), or would place elsewhere (8-byte data), becomes the raw words it is."""
+        from ..arch.mips import raw_cop2, raw_doubles  # (splat's consoles are MIPS)
+
+        return raw_doubles(raw_cop2(text, self.big_endian), self.big_endian)
 
     def find_gp(self, image: bytes, program: bytes, segments: list) -> int:
         """$gp as the game sets it, when splat didn't say (0: the game keeps no data $gp-relative)."""
@@ -152,8 +169,13 @@ class Console:
         return None
 
     def debug_brief(self, known: dict) -> list[str]:
-        """A function's brief lines from what debug_info knew about it (stored with the function)."""
+        """A function's brief lines from what debug_info (or debug_of) knew about it."""
         return []
+
+    def debug_of(self, fp, version: str, symbol: str) -> dict | None:
+        """PROJECT mode: what the game's own debug information says about a function (its symbol in the report), for
+        its brief (debug_brief's lines); None: nothing (the import found none, or not about this function)."""
+        return None
 
     def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
         """Work a new project gets once (`chosen`: the user picked its compiler)."""
@@ -193,6 +215,14 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def reimport(self, net, slug: str, game: Path, log=print) -> str | None:
+        """A new analysis of a project the console made, from the user's copy (`game`) again, keeping every match,
+        note and name (forkengine.reanalyse): Settings' Reimport. Returns what changed, as a sentence; None: nothing
+        did, or the change was taken back (the project's feed says why)."""
+        raise RomError(f"{self.name} projects can't be reimported yet: their own build sets their functions")
+
+    reimports = False  # reimport is its own (Settings shows Reimport for its projects)
+
     def check_rebuild(self, fp, version: str, log=print) -> dict:
         """Build the project and compare what it makes with the user's copy: {"identical", "detail"}."""
         raise RomError(f"{self.name} projects aren't rebuilt and compared here")
@@ -217,10 +247,19 @@ class Console:
     # rename_symbol's new name is the one objdiff's report gives the function from then on (False: the report keeps
     # the original's symbol, and the real name is real_names')
     renames_in_report = True
+    # an attempt that writes an unnamed function as a C++ constructor or destructor (CFoo::CFoo) gives it that real
+    # name (rename_symbol), which its build pairs with the original's symbol, calls to it included
+    names_structors = False
 
     def real_names(self, fp, version: str) -> dict[str, str]:
         """The report's name of a function (the original's symbol, renames_in_report False) -> the real name
         rename_symbol gave it: how its source spells it now."""
+        return {}
+
+    def generated_functions(self, fp, version: str) -> dict[str, str]:
+        """The report's name of each function the project's analysis found no C of its own makes -> why (PC: Visual
+        C++'s exception-handling stubs, which compiling the function they belong to makes): measuring sets them aside
+        as hand-written assembly is, whatever the project covers, unless the user gave one back to the agents."""
         return {}
 
     def rename_pattern(self, old: str) -> str:
@@ -239,10 +278,41 @@ class Console:
         functions (`keep`)."""
         raise RomError(f"{self.name} projects can't join functions yet: the agents' agreement is kept for when they can")
 
+    def function_extent(self, fp, symbol: str) -> tuple[int, int] | None:
+        """(address, size) of a function by its symbol, in a project the console made: where report_boundary's `end`
+        falls. None where it can't tell (a fork's functions are its project's own)."""
+        return None
+
+    def cut_function(self, fp, symbol: str, at: int, keep: set[str], why: str = "") -> str:
+        """End a function at address `at` in the project's config (agents agreed it runs on past its end:
+        ForkEngine.report_boundary, which checks the rebuild); the rest becomes a function of its own, set aside when
+        it isn't code (`why`: what agents said it is). Returns what changed, as a sentence. Not for matched functions
+        (`keep`)."""
+        raise RomError(f"{self.name} projects can't cut functions yet: the agents' agreement is kept for when they can")
+
     def set_file_compiler(self, fp, source: str, compiler: str) -> str:
         """Make the project build a source file with `compiler` (file_compiler says whether it can); returns the file
         that says so, relative to the project (to commit)."""
         raise RomError(f"{self.name} projects set their compilers in their own build")
+
+    def program_compilers(self, fp) -> list[tuple[str, int, str, bool]]:
+        """What the game's program itself says built it, where its files each have a compiler: (one of `compilers`
+        to build them with, how many of its files, in words, whether it's installed), most files first; [] where it
+        doesn't say. The compiler map shows it, and its survey tries these (app/filecompilers.py)."""
+        return []
+
+    def file_flags(self, fp, source: str) -> list[str] | None:
+        """The flags a source file is built with on top of the project's, where each file can have its own (PC:
+        /Oy-), else None: search_flags tries their variants (flag_variants) there."""
+        return None
+
+    def set_file_flags(self, fp, source: str, flags: list[str]) -> str:
+        """Build a source file with `flags` on top of the project's; returns the file that says so (to commit)."""
+        raise RomError(f"{self.name} projects set their flags in their own build")
+
+    def flag_variants(self, flags: list[str]) -> list[list[str]]:
+        """A source file's flags (first) and the variants of them search_flags tries."""
+        return [flags]
 
     def file_ranges(self, fp) -> dict[str, list[tuple[int, int]]]:
         """Where each source file's code is ({source: [(start, end)]}): the project Settings' address ranges, for a
@@ -259,12 +329,25 @@ class Console:
         None where the project can't tell."""
         return None
 
+    def classes(self, fp):
+        """The C++ classes the console reads from a project's program (classes.Classes, with the names agents know
+        its functions by in `labels` and `symbols`), for get_class, briefs and drafts as `Class::method`; None where
+        it reads none (PC: the program's run-time type information and the vtables its constructors store,
+        consoles/pc/rtti.py)."""
+        return None
+
+    def structs(self, fp):
+        """The struct layouts guessed from a project's code (structs.Structs, with the names agents know its
+        functions by in `labels` and `symbols`), for guess_struct and briefs; None where it reads none (PC: the
+        program's functions by its processor's Arch.field_accesses, consoles/pc/rtti.py)."""
+        return None
+
     # for agents
 
     def asm_reason(self, code: bytes) -> str | None:
         """Why a function's code can't come from a compiler (hand-written assembly), or None."""
         reason = arch.get(self.arch).asm_reason
-        return reason(code, self.big_endian) if reason else None
+        return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
 
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""
@@ -273,6 +356,26 @@ class Console:
     def m2c_target(self, compiler: str = "") -> str:
         """m2c's target for drafts of code `compiler` built, without the language; "" when m2c can't read it."""
         return self.m2c
+
+    # Drafts of its own, where m2c can't read the code (PC: consoles/pc/drafts.py): autopilot, the background drafter
+    # and redraft use these in a game started from scratch
+    own_drafts = False
+    own_tools: frozenset[str] = frozenset()  # tools of ROM projects its games started from scratch have too
+
+    def prepare_drafts(self, fp) -> str | None:
+        """What its drafts need in the project (a header of the draft decompiler's types), written when it's missing:
+        the path written, for a commit, or None."""
+        return None
+
+    def exact_drafts(self, fp, symbol: str, known: str = "") -> list[tuple[str, str]]:
+        """C for a function of one of the tiny shapes its compiler makes from a line of C, read from its code, as
+        [(prelude, definition)]: autopilot tries them first. `known`: the header and file's text."""
+        return []
+
+    def compilable_draft(self, fp, symbol: str, draft: str, known: str = "") -> tuple[str, str] | None:
+        """A machine draft (Ghidra's) as C that compiles in the function's source file, (prelude, definition); None
+        when it can't be."""
+        return None
 
     def installable_compilers(self) -> list[str]:
         """Its compilers the app installs itself, one toolchain each, that can run here (ROM mode's: "install them
@@ -293,7 +396,8 @@ class Console:
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
-                "sets_aside": self.mode == PROJECT and self.sets_aside}
+                "sets_aside": self.mode == PROJECT and self.sets_aside,
+                "games_in_folders": type(self).program_in is not Console.program_in}  # (a dropped file comes alone)
 
 
 def _registry() -> list[Console]:
@@ -303,11 +407,12 @@ def _registry() -> list[Console]:
     from .pc import PC
     from .ps1 import PS1
     from .ps2 import PS2
+    from .psp import PSP
     from .public import PUBLIC_ONLY
 
-    # the order sniff is asked in: a file is the first console's that says it's its own (the PS1 before the PS2,
-    # whose sniff takes any ISO 9660 disc)
-    return [N64, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
+    # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF)
+    return [N64, PSP, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()
@@ -323,6 +428,17 @@ def of(cfg: dict) -> Console:
     """The console of a project, from its settings. ROM projects from before configs named their platform are N64
     ones."""
     return get(cfg.get("platform") or ("n64" if cfg.get("kind") == "rom" else ""))
+
+
+def default_flags(cfg: dict, toolchain: str) -> list[str]:
+    """A compiler's flags for a project's game: its console's, with small data as the game keeps it (small_gp)."""
+    return of(cfg).default_flags(toolchain, small_gp(cfg))
+
+
+def small_gp(cfg: dict) -> int:
+    """The project's $gp when its game keeps data $gp-relative, else 0. The program's own evidence (rom.small_data,
+    read_game's) wins over a $gp it merely has: every PSP module's info gives one, used or not."""
+    return 0 if (cfg.get("rom") or {}).get("small_data") is False else cfg.get("gp") or 0
 
 
 def name(platform: str | None) -> str:
@@ -348,6 +464,15 @@ def identify(file: bytes | Path) -> Console:
     supported = ", ".join(f"{c.name} ({c.layout})" for c in startable())
     raise RomError(f"this isn't a game file decompdecomp can start from scratch: it reads {supported}. For other "
                    "consoles, continue a public decomp")
+
+
+def game_in(folder: Path) -> Path:
+    """The game's file in a folder the user pointed at (Console.program_in), or a RomError saying there's none."""
+    found = next((path for console in startable() if (path := console.program_in(folder)) is not None), None)
+    if found is None:
+        raise RomError(f"{folder} holds no game file decompdecomp starts from a folder (a Windows game's .exe): "
+                       "pick the game's file itself")
+    return found
 
 
 def compiler(compiler_id: str) -> tuple[Console, Compiler] | None:

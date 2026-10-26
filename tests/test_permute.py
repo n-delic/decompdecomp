@@ -176,6 +176,16 @@ def test_workers_yield_the_cpu_to_the_app():
             return kernel.GetThreadPriority(kernel.GetCurrentThread())
         return os.getpriority(os.PRIO_PROCESS, threading.get_native_id())
 
+    if sys.platform == "darwin":
+        import ctypes
+
+        system = ctypes.CDLL(None)
+        system.qos_class_self.restype = ctypes.c_uint
+        app_qos = system.qos_class_self()
+        app_nice = os.getpriority(os.PRIO_PROCESS, 0)
+        assert workers.pool().submit(system.qos_class_self).result() == 0x11
+        assert system.qos_class_self() == app_qos and os.getpriority(os.PRIO_PROCESS, 0) == app_nice
+        return
     app = priority()
     if os.name == "nt":
         assert workers.pool().submit(priority).result() == -1 and priority() == app
@@ -268,6 +278,23 @@ def test_decomp_permuter_writes_variants_of_the_function_alone():
         assert gen.batch({**job, "seed": 2}) != variants  # it answers on after C it couldn't read
     finally:
         gen.close()
+
+
+@needs_tool
+def test_autopilots_drafts_are_permuted_with_their_macros_kept():
+    """A draft autopilot judged starts with m2c's macros (#ifndef M2C_DEFINES): pycparser reads no preprocessor
+    lines, so the near misses autopilot left (a PSP demo's every one) never got decomp-permuter's variants. The
+    lines are read around, and each variant gets them back for the compiler."""
+    from decompnet import seeds
+
+    draft = f"{seeds.M2C_MACROS}\nvoid g(s32);\n\nvoid f(s32 a) {{\n    g(M2C_ERROR(/* unknown instruction */));\n    g(a);\n}}\n"
+    gen = permute.Generator()
+    try:
+        header = HEADER + "typedef signed char s8;\ntypedef short s16;\n"  # (the macros' types use them)
+        variants = gen.batch({"header": header, "source": draft, "function": "f", "family": "gcc", "seed": 1, "count": 5})
+    finally:
+        gen.close()
+    assert variants and all(v.startswith("#ifndef M2C_DEFINES\n#define M2C_DEFINES\n") and " f(" in v for v in variants)
 
 
 def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):

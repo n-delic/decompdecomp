@@ -1,6 +1,7 @@
 """The GUI's own logic, run in node against a stand-in for the page (tests/gui_polls.js): no browser needed."""
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -100,8 +101,33 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
 
 
 def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):
-    """A PS-X EXE is the PS1's; a disc image could be either PlayStation's until the server reads its SYSTEM.CNF."""
-    assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1 or 2", None]
+    """A PS-X EXE is the PS1's; a disc image could be any PlayStation's until the server reads it."""
+    assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1, 2 or PSP", None]
+
+
+def test_the_drop_zone_tells_psp_games_from_the_ps2s_and_says_what_to_do_with_what_it_cant_read(gui):
+    """A PSP's UMD image starts like a PS2 disc and its programs are MIPS ELFs like the PS2's, and a .cso starts with
+    CISO like a compressed GameCube disc: the drop zone reads further, so a PSP game isn't taken for another
+    console's. A .cso is a PlayStation disc whose console the server reads inside it; a .zso or an EBOOT.PBP (not
+    readable yet) says what to drop instead."""
+    psp = gui["checks"]["psp"]
+    # a UMD image, a PS2 disc, a GameCube CISO, a .cso, a PRX module, an Allegrex program, a PS2 program
+    assert psp["platforms"] == ["psp", "playstation", "gcwii", "playstation", "psp", "psp", "ps2"]
+    assert psp["cso"] == "CSO disc image"
+    zso, pbp = psp["said"]
+    assert "ZSO" in zso and "decompress it to .iso" in zso
+    assert "EBOOT.PBP" in pbp and "encrypted" in pbp and ".iso" in pbp
+    assert psp["name"] == "PlayStation 1, 2 or PSP"
+
+
+def test_the_drop_zone_tells_64_bit_arm_and_dos_programs_apart(gui):
+    """It said "a 64-bit or non-x86 Windows program (or a DOS one)" for all three: it says which, and when 64-bit
+    games come, before uploading hundreds of megabytes the import would refuse."""
+    x64, arm, x86, dos = gui["checks"]["windows"]
+    assert x64[0] is None and "64-bit Windows program" in x64[1] and "Newer Windows games" in x64[1]
+    assert arm[0] is None and "ARM" in arm[1]
+    assert x86[0] == "win32"  # a 32-bit x86 one is the PC console's (notSupported is asked only otherwise)
+    assert dos[0] is None and "DOS program" in dos[1]
 
 
 def test_each_computer_in_a_room_has_one_colour_on_every_screen(gui):
@@ -122,5 +148,31 @@ def test_polish_is_offered_once_half_the_games_own_code_matches(gui):
 
 def test_the_import_offers_every_compiler_of_the_games_console(gui):
     """The import's compiler test can only try what's installed: a game linked by CodeWarrior was guessed right only
-    because its GCC was there. The import offers the console's missing compilers, both PlayStations' for a disc."""
+    because its GCC was there. The import offers the console's missing compilers, every PlayStation's for a disc."""
     assert gui["checks"]["missing"] == [["ee-gcc-2.96", "mwcps2-3.0.1"], 3, 0]
+
+
+def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui):
+    """A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's: the drop reads the
+    Rich header (or the linker's version) as the import does, and offers the pack the import will build with."""
+    from decompnet.consoles.pc import scratch
+
+    packs = gui["checks"]["pcPack"]
+    for head, pack, offered in packs:
+        built = scratch.describe(bytes.fromhex(head))
+        assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
+    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc"]
+
+
+def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
+    """home.js reads a dropped program's Rich header for the pack to offer (pcPack): its ids are scratch's."""
+    from decompnet.consoles.pc import scratch
+
+    text = (Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static" / "js" / "home.js").read_text()
+    table = re.search(r"const RICH_COMPILERS = \{(.*?)\};", text, re.S).group(1)
+    js = {v: {i for lo, hi in re.findall(r"\[(0x[0-9a-f]+), (0x[0-9a-f]+)\]", ranges) for i in range(int(lo, 16),
+                                                                                                    int(hi, 16))}
+          for v, ranges in re.findall(r'"([\d.]+)": (\[\[.*?\]\])', table)}
+    assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
+    linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
+    assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS

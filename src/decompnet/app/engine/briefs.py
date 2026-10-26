@@ -147,7 +147,10 @@ class BriefMixin:
     def stale_drafts(self, proj) -> list[int]:
         """Open functions whose machine draft is missing or was made from something that changed since, smallest
         first (claims go smallest first too). The names in each function's assembly are read once per size of it
-        (a split changes it): on GTA San Andreas, reading all 69 MB of its open functions' assembly takes 1.2 s."""
+        (a split changes it): on GTA San Andreas, reading all 69 MB of its open functions' assembly takes 1.2 s.
+        A game started from scratch in project mode: the fork engine's (Ghidra's drafts, PC)."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.stale_drafts(proj)
         names = self._asm_names.setdefault(proj["id"], {})
         rows = self.store.all("SELECT id, size, unit, vram, seed, seed_key FROM functions WHERE project_id=? "
                               "AND status='open' ORDER BY n_insns, vram", proj["id"])
@@ -164,6 +167,8 @@ class BriefMixin:
 
     def draft_mark(self, proj) -> tuple:
         """What drafts are made from, summed up: a new header version, compiler, rename or split changes it."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.draft_mark(proj)
         version = self.store.one("SELECT MAX(version) AS v FROM context_versions WHERE project_id=?", proj["id"])["v"]
         event = self.store.one("SELECT MAX(id) AS e FROM events WHERE project_id=? AND kind IN "
                                "('context', 'compiler', 'rename', 'split', 'sync', 'import')", proj["id"])["e"]
@@ -171,15 +176,19 @@ class BriefMixin:
 
     def can_draft(self, proj) -> bool:
         """Whether this project's functions get machine drafts here: a ROM project, with m2c installed and able to
-        read its code."""
+        read its code, or a game started from scratch on a console with drafts of its own (PC: Ghidra's)."""
+        if self.fork_slug(proj["slug"]):
+            return self.forks.can_draft(proj)
         return (self.is_rom(proj) and seeds.available()
                 and bool(seeds.m2c_target(self.cfg(proj)["compiler"]["toolchain"])))
 
     def redraft(self, project: str | None, function: str, context: str) -> str:
         """m2c's draft of a function made again with declarations an agent worked out (a struct, a prototype) on top
         of the shared header's, replacing the header's where they declare the same names. Recorded nowhere: the agent
-        tries it with compile_and_diff, and shares what helped with edit_context."""
-        self._rom_only(project, "redraft")
+        tries it with compile_and_diff, and shares what helped with edit_context. A PC game: Ghidra's draft made
+        compilable with them (forks.redraft)."""
+        if (fork := self.fork_slug(project)):
+            return self.forks.redraft(fork, function, context)
         proj = self._project(project)
         fn = self._function(function, proj["slug"])
         if not seeds.available():
@@ -274,22 +283,16 @@ class BriefMixin:
         return x["classes"]
 
     def get_class(self, project: str | None, what: str = "") -> str:
-        self._rom_only(project, "get_class")
+        if (fork := self.fork_slug(project)):
+            return self.forks.get_class(fork, what)
         proj = self._project(project)
         found = self.classes(proj)
         if found is None:
-            raise NetworkError("get_class reads MIPS code (PlayStation 2, PlayStation, N64) for now")
+            raise NetworkError(classes.WHERE)
         syms = self.symbols(proj["id"])
-        if not found.by_vtable:
-            return "No C++ classes found: no function stores a vtable (a table of function addresses) into an object."
         what = what.strip()
-        if not what:
-            rows = sorted(found.by_vtable.values(), key=lambda c: (-len(c.slots), c.vtable))
-            return (f"{len(rows)} classes, found from the vtables their constructors store (largest first; "
-                    f"get_class(vtable or function) has one's fields and virtual functions):\n"
-                    + "\n".join(f"- {syms.label(c.vtable)} (0x{c.vtable:08X}): {len(c.slots)} virtual functions, "
-                                 f"{len(c.fields)} fields seen, at least 0x{c.size_seen():X} bytes"
-                                 + (f", base {syms.label(c.parent)}" if c.parent is not None else "") for c in rows[:60]))
+        if not what or not found.by_vtable:
+            return classes.listing(found, syms.label)
         m = _ADDRESS.match(what)
         addr = int(m.group(1), 16) if m else syms.resolve(what)
         if addr is None:
@@ -309,18 +312,7 @@ class BriefMixin:
         except Exception:  # a heuristic: it never stands between an agent and the function
             logging.getLogger("decompdecomp").exception("finding C++ classes failed")
             return []
-        roles = found.roles.get(fn["vram"]) if found else None
-        if not roles:
-            return []
-        syms = self.symbols(proj["id"])
-        lines = ["", "### C++ class (found from the vtables constructors store; get_class has the whole layout)"]
-        for vt, role in roles[:3]:
-            cls = found.by_vtable[vt]
-            used = [f"+0x{o:X} {f.ctype()}" for o, f in sorted(cls.fields.items()) if fn["vram"] in f.users]
-            base = f", base class {syms.label(cls.parent)}" if cls.parent is not None else ""
-            lines.append(f"- {role} of {syms.label(vt)} ({len(cls.slots)} virtual functions{base}); vtable pointer at "
-                         f"+0x{cls.vptr:X}" + (f"; this function uses {', '.join(used[:16])}" if used else ""))
-        return lines
+        return classes.brief_lines(found, fn["vram"], self.symbols(proj["id"]).label)
 
     def _own_class(self, proj, vram: int) -> tuple[classes.Class | None, str]:
         """The class a function is a method of, and what it is there ("virtual function 3"), when the class recovery
@@ -328,19 +320,14 @@ class BriefMixin:
         is in its vtable too, at the same slot). And only a class whose vtable starts like a C++ compiler's (a zero
         in its two header words: the offset, or no type information): a C game's table of functions starts with
         functions."""
-        found = self.classes(proj)
-        roles = found.roles.get(vram, []) if found else []
-        owners = {vt for vt, _ in roles}
-        owners = {vt for vt in owners if found.by_vtable[vt].parent not in owners}
-        if len(owners) != 1:
+        cls, role = classes.owner(self.classes(proj), vram)
+        if cls is None:
             return None, ""
-        cls = found.by_vtable[owners.pop()]
         head = self.reader(proj)(cls.vtable, VTABLE_HEADER_BYTES)
         e = ">" if self.cfg(proj).get("big_endian", True) else "<"
         if head is None or 0 not in struct.unpack(e + "2I", head):
             return None, ""
-        role = next(r for vt, r in roles if vt == cls.vtable)
-        return cls, (f"virtual function {role.split()[-1]}" if role.startswith("slot") else "a constructor or destructor")
+        return cls, role
 
     def _draft_shown(self, fn, proj) -> str:
         """The machine draft as the brief shows it: m2c writes C, `func(void *arg0, ...)`; where the class recovery
@@ -448,8 +435,9 @@ class BriefMixin:
 
     def _rom_ops(self, proj) -> dict[tuple[int, int], list[str]]:
         """(vram, size) -> mnemonics of every function, cached until the game's layout changes (renames keep
-        addresses; splits change sizes). Every brief read every function's code again to find out (50 ms on GTA San
-        Andreas); now that's only after a split or a cut, and only new functions are decoded."""
+        addresses; splits change sizes). Every brief read every function's code again to find out (50 ms on a large
+        PS2 game); now that's only after a split or a cut, and only new functions are decoded."""
+        cpu = self.console(proj).cpu_variant
         layout = self._layout_key(proj)
         known = self._ops.get(proj["id"])
         if known and known[0] == layout:
@@ -461,7 +449,7 @@ class BriefMixin:
             key = (r["vram"], r["size"])
             live.add(key)
             if key not in cache:
-                cache[key] = similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0)
+                cache[key] = similarity.mips_mnemonics(r["target"], bool(proj["big_endian"]), r["vram"] or 0, cpu)
         for key in set(cache) - live:
             del cache[key]
         self._ops[proj["id"]] = (layout, cache)

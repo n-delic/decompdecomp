@@ -29,6 +29,31 @@ DEBUG_TYPES_FILE = "debug_types.h"
 HEADER_CHECK = "int decomp_header_check;"  # a source that needs nothing but the header to compile
 
 
+def pair_old_functions(rows, functions) -> dict:
+    """The old function each new one continues, by the new one's name. By address first (see above), and a game's
+    overlay can put a second function at an address the main code has one at: each old function pairs once, the one
+    with the same name first. Paired by address alone the second twin was left unpaired, and its name (held by the
+    old twin that the first took) was inserted again: UNIQUE constraint failed."""
+    by_vram: dict = {}
+    for r in rows:
+        if r["vram"] is not None:
+            by_vram.setdefault(r["vram"], []).append(r)
+    by_name = {r["name"]: r for r in rows}
+    paired_ids: set = set()
+    paired: dict = {}
+    for fn in functions:
+        here = [r for r in by_vram.get(fn.vram, ()) if r["id"] not in paired_ids]
+        old = next((r for r in here if r["name"] == fn.name), None) or (here[0] if here else None)
+        if old is None:
+            old = by_name.get(fn.name)
+            if old is not None and old["id"] in paired_ids:
+                old = None
+        if old is not None:
+            paired[fn.name] = old
+            paired_ids.add(old["id"])
+    return paired
+
+
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
                    confirmed: bool = False, name: str = "", log=print, scope: str | None = None) -> str:
@@ -37,6 +62,9 @@ class ImportMixin:
         ("game", the default, or "program": forks/project.py SCOPES)."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
+        if isinstance(data, Path) and data.is_dir():  # a game that is a folder (a PC game: its .exe and DLLs)
+            data = consoles.game_in(data)
+            log(f"the game's program in that folder: {data.name}")
         console = consoles.identify(data)
         return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope)
 
@@ -106,6 +134,9 @@ class ImportMixin:
                 + ", ".join(f"{o[0]} at 0x{o[2]:08X}" for o in picked.overlays[:6]) + (", ..." if len(picked.overlays) > 6 else ""))
         # a program that kept its symbols names its functions, and its debug sections give their types (#3)
         debug = console.debug_info(rom, _HEADER_NAMES)
+        for other in picked.programs:  # the disc's other programs, split with it (a PSP game's modules)
+            more = console.debug_info(other, _HEADER_NAMES)
+            debug = more if debug is None else debug.merge(more) if more is not None else debug
         if debug is not None:
             log(debug.summary())
         try:
@@ -127,17 +158,17 @@ class ImportMixin:
 
         chosen = bool(toolchain or flags or reimport is not None)  # a reimport keeps the project's compiler
         toolchain = toolchain or console.default_compiler(info, res.compiler)
-        default_flags = console.default_flags(toolchain, res.gp)
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
             "segments": [vars(s) for s in res.segments],
-            "compiler": {"toolchain": toolchain, "flags": flags or default_flags, "timeout": 20},
+            "compiler": {"toolchain": toolchain, "flags": flags, "timeout": 20},
             "legal": {"basis": "personal-copy", "license": "personal use only",
                       "statement": "imported by the owner of this copy of the game, who confirmed it was legally obtained",
                       "confirmed_at": time.time()},
             "context": {"file": None},
         }
+        cfg["compiler"]["flags"] = flags or console.default_flags(toolchain, consoles.small_gp(cfg))  # (its rom facts)
         if reimport is not None:
             old_cfg = json.loads(reimport["config"])
             for key, value in old_cfg.items():
@@ -147,7 +178,7 @@ class ImportMixin:
             cfg.pop("export", None)
             cfg.pop("autopilot", None)
             cfg.pop("kernel_calls_named", None)
-        header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if res.gp else "")
+        header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
         symbols = SymbolTable()
         for name, addr in res.named.items():
@@ -204,13 +235,7 @@ class ImportMixin:
                     rows = db.execute("SELECT * FROM functions WHERE project_id=?", (pid,)).fetchall()
                     # by address first: a function renamed since (rename_symbol, polishing) has its old name nowhere
                     # in the new split, and paired by name it lost its matched C
-                    by_vram = {r["vram"]: r for r in rows if r["vram"] is not None}
-                    by_name = {r["name"]: r for r in rows}
-                    old_functions = {}
-                    for fn in res.functions:
-                        old = by_vram.get(fn.vram) or by_name.get(fn.name)
-                        if old is not None and old["id"] not in {o["id"] for o in old_functions.values()}:
-                            old_functions[fn.name] = old
+                    old_functions = pair_old_functions(rows, res.functions)
                     paired = {o["id"] for o in old_functions.values()}
                     gone = {r["name"]: r for r in rows if r["id"] not in paired}
                     # the names agents gave (functions and data), by address: matched C calls them by those names
@@ -345,7 +370,7 @@ class ImportMixin:
         types = DEBUG_TYPES_NOTE + debug.header
         toolchain = cfg["compiler"]["toolchain"]
         if toolchains.installed(toolchain) is not None:
-            base = BASE_HEADER.format(title="") + (GP_NOTE if cfg.get("gp") else "")
+            base = BASE_HEADER.format(title="") + (GP_NOTE if consoles.small_gp(cfg) else "")
             if not compile_source(compiler_config(workdir, cfg), base + types, HEADER_CHECK).ok:
                 (workdir / DEBUG_TYPES_FILE).write_text(debug.header, encoding="utf-8")
                 log(f"the game's types don't compile with {consoles.compiler_name(toolchain)}: they're in "
@@ -369,7 +394,6 @@ class ImportMixin:
         proj = self._project(slug)
         cfg = json.loads(proj["config"])  # a copy of its own: the compiler may change below
         current = cfg["compiler"]["toolchain"]
-        console = self.console(proj)
         tcs = [t for t in compilers if toolchains.installed(t) is not None
                and all(toolchains.installed(d) is not None for d in toolchains.get(t).requires)]
         rows = [r for r in self.store.all("SELECT * FROM functions WHERE project_id=? AND n_insns BETWEEN 3 AND 30 "
@@ -389,7 +413,7 @@ class ImportMixin:
 
         def matches(job) -> bool:
             tc, (fn, source) = job
-            settings = {"toolchain": tc, "flags": console.default_flags(tc, cfg.get("gp")), "timeout": 20}
+            settings = {"toolchain": tc, "flags": consoles.default_flags(cfg, tc), "timeout": 20}
             result = compile_source(compiler_config(Path(proj["root"]), {"compiler": settings}), header, source)
             if not result.ok:
                 return False

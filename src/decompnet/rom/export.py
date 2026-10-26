@@ -2,8 +2,8 @@
 
 The tree is a normal decomp project. splat's assembly for every function and all data (with the project's names),
 the matched functions as C, a linker script and a build script that rebuilds the game's image and checks it against
-the original byte for byte. Each function is its own object: a matched one is compiled exactly the way decompdecomp
-verified it, the rest are assembled. Data stays labeled assembly; a matched function's own constants (strings,
+the original byte for byte. A matched function is its own object, compiled exactly the way decompdecomp verified it;
+the rest are assembled, each run of them that follow one another as one object. Data stays labeled assembly; a matched function's own constants (strings,
 jump tables) are mapped onto the game's copy at the addresses the matcher verified, so nothing is duplicated.
 
 Anyone can keep working on it outside decompdecomp: edit src/, run build.py, and the build says whether it still
@@ -63,12 +63,14 @@ def _first_address(path: Path) -> tuple[int | None, int | None]:
 
 
 def _symbol_lines(net, proj) -> list[str]:
-    """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names."""
+    """symbol_addrs.txt entries for every function and every named symbol, so splat writes the project's names. A
+    function's size too: spimdisasm ends a function with a switch at its first return, and the import put the cases
+    back (split.merge_switch_cases: a PSP game's GCC and EE-GCC 3.2 load jump tables that way), so splat must too."""
     syms = net.symbols(proj["id"])
     funcs = {r["vram"]: r for r in net.store.all("SELECT name, vram, size FROM functions WHERE project_id=?", proj["id"])}
     lines = []
     for vram, r in sorted(funcs.items()):
-        lines.append(f"{r['name']} = 0x{vram:08X}; // type:func")
+        lines.append(f"{r['name']} = 0x{vram:08X}; // type:func size:0x{r['size']:X}")
     for s in sorted(syms.by_name.values(), key=lambda s: s.address):
         if s.address in funcs or AUTO_NAME.match(s.name):
             continue
@@ -142,11 +144,9 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
     (out / "include" / "common.h").write_text(header, encoding="utf-8")
     for u in units:
         (out / "include" / f"common_{u}.h").write_text(net._context(proj["id"], u)["header"], encoding="utf-8")
-    from ..arch.mips import raw_cop2  # (splat's consoles are MIPS)
-
     for path in (out / "asm").glob("**/*.s"):  # what GNU as can't read as spimdisasm writes it, as raw words
         text = path.read_text(encoding="utf-8")
-        if (raw := raw_cop2(text, console.big_endian)) != text:
+        if (raw := console.export_asm(text)) != text:
             path.write_text(raw, encoding="utf-8")
     functions = []
     for path in sorted((out / "asm" / "nonmatchings").glob("**/*.s")):
@@ -256,6 +256,13 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             for m in re.finditer(r"^\s*(\w+)\s*=\s*(0x[0-9A-Fa-f]+)\s*;", p.read_text(encoding="utf-8"), re.M):
                 if m.group(1) not in defined:
                     absolute.setdefault(m.group(1), int(m.group(2), 16))
+    # automatic names matched C uses that no symbol has (a twin's data, D_088EA738): the judge reads their address
+    # from the name (SymbolTable.resolve), and so does the link
+    for f in functions:
+        if f["kind"] == "c":
+            for word in set(re.findall(r"\b[A-Za-z]\w*_[0-9A-Fa-f]{1,8}\b", rows[f["vram"]]["matched_source"])):
+                if (m := AUTO_NAME.match(word)) and word not in defined:
+                    absolute.setdefault(word, int(m.group(1), 16))
     fn_json = []
     for f in functions:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
@@ -332,7 +339,7 @@ A matching decompilation of {title} for the {console_name}, started with [decomp
 | `include/common.h` | Types, structs and prototypes worked out so far. |
 | `game.ld` | Places every function and data block at its original address. |
 | `build.json`, `build.py` | How each file is built, and the build. |
-| `objdiff.json` | Per-function units for [objdiff](https://github.com/encounter/objdiff). |
+| `objdiff.json` | Per-function units for [objdiff](https://github.com/encounter/objdiff) (`python3 build.py targets` makes their targets). |
 
 Keep going with any tool: write a function in C under `src/`, add it to `build.json` (see the existing entries),
 run `build.py`. When it says *identical*, the function matches. This is the base for ports and mods: once

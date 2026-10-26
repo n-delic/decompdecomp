@@ -7,8 +7,10 @@ The game's functions and data are known by address: func_0041B470, D_0066DDA4. W
 a class's method (`void Town::func_0041B470(int)`), MSVC mangles the name (`?func_0041B470@Town@@QAEXH@Z`); this
 renames every symbol whose name holds func_<address> or D_<address> to the name the original's object gives it
 (`@func_0041B470@8`, `_D_0066DDA4`), in the object itself. A real name the project gave one (functions.json's
-"names", kept by decompdecomp's rename_symbol: func_0041B470 -> UpdateTown) counts as its address too, written in C
-or C++. Other names are left as they are. Standard library only. Made by decompdecomp.
+"names", kept by decompdecomp's rename_symbol or read from the game's debug information: func_0041B470 ->
+UpdateTown, or a method's Town::Update) counts as its address too, written in C or C++. So is a constructor's or
+destructor's (`CFoo::CFoo`, `CFoo::~CFoo`, which decompdecomp gives a function an agent writes as one):
+`??0CFoo@@QAE@XZ` and `??1CFoo@@QAE@XZ` pair with it, and so do calls to them. Other names are left as they are. Standard library only. Made by decompdecomp.
 """
 
 import json
@@ -40,15 +42,22 @@ def real_names(info: dict) -> dict[bytes, bytes]:
 def address_of(name: bytes, real: dict[bytes, bytes]) -> bytes | None:
     """func_XXXXXXXX / D_XXXXXXXX (upper case address) a symbol stands for: by the address in its name, or by a real
     name, as C (`_UpdateTown`, `_UpdateTown@8`, `@UpdateTown@8`) or C++ (`?UpdateTown@@YAXH@Z`, a method's
-    `?UpdateTown@Town@@QAEXH@Z`) spells it."""
+    `?UpdateTown@Town@@QAEXH@Z`, named Town::UpdateTown or UpdateTown) spells it; a constructor or destructor by its C++ name (`??1CFoo@@QAE@XZ`:
+    CFoo::~CFoo)."""
     if name.startswith(b"."):
         return None
     if m := REF.search(name):
         return m.group(1) + b"_" + m.group(2).upper()
     if not real:
         return None
-    if name.startswith(b"?"):
-        word = name[1:].split(b"@", 1)[0]
+    if name[:3] in (b"??0", b"??1"):  # a constructor, a destructor: by its class, outer scopes first (A::CFoo::~CFoo)
+        scopes = name[3:].split(b"@@", 1)[0].split(b"@")[::-1]
+        word = b"::".join(scopes) + b"::" + b"~" * (name[2:3] == b"1") + scopes[-1]
+    elif name.startswith(b"?"):  # a method by its class too (Town::Update: debug information, a DLL's exports)
+        word, _, rest = name[1:].partition(b"@")
+        scopes = [] if rest.startswith(b"@") else rest.split(b"@@", 1)[0].split(b"@")[::-1]
+        if scopes and (key := real.get(b"::".join([*scopes, word]))) is not None:
+            return key
     else:
         word = (name[1:] if name[:1] in (b"_", b"@") else name).split(b"@", 1)[0]
     return real.get(word)

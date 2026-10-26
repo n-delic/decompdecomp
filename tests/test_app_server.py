@@ -647,6 +647,7 @@ def test_paths_are_picked_in_the_systems_own_chooser(app, tmp_path, monkeypatch)
     from decompnet.app import picker, window
 
     monkeypatch.setattr(window, "IS_WINDOWS", False)
+    monkeypatch.setattr(window, "IS_MACOS", False)
     monkeypatch.setattr(window, "SYSTEM_PYTHON", str(tmp_path / "python3"))
     monkeypatch.setattr(picker.subprocess, "run", lambda argv, **kwargs:
                         subprocess.CompletedProcess(argv, 0 if argv[3] == "folder" else 1,

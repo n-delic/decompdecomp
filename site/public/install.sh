@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# decompdecomp installer for Linux. Windows and macOS aren't supported in this version.
+# decompdecomp installer for Linux and macOS (Intel and Apple Silicon).
 #
 #   curl -fsSL https://decomp.ndelic.com/install.sh | bash
 #
 # decompdecomp installs on this computer, with uv:
 #   1. installs uv, Astral's Python tool manager, if you don't have it (asks first)
 #   2. installs decompdecomp (open source, AGPL-3.0) with uv, in its own environment
-#   3. checks for what its window needs from your system (GTK and WebKitGTK 4.1), and offers to install it
+#   3. on Linux, checks for GTK and WebKitGTK 4.1 and offers to install them
 #   4. downloads the free compilers and the m2c draft decompiler (pinned and checksum-verified)
 #   5. adds decompdecomp to your apps menu (replacing an older .deb or .rpm of it) and opens it
 #
@@ -21,7 +21,7 @@
 # The same through the environment: DECOMP_SOURCE=..., DECOMP_BRANCH=<name>.
 set -euo pipefail
 
-VERSION="1.0.6-alpha.3"
+VERSION="1.0.7-alpha.1"
 REPO="n-delic/decompdecomp"
 START=1
 SOURCE="${DECOMP_SOURCE:-}"
@@ -57,16 +57,21 @@ if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     CHECKOUT="$(cd "$SCRIPT_DIR/../.." && pwd)"
   fi
 fi
-[ -n "$SOURCE" ] || SOURCE="${CHECKOUT:-release}"
-
 bold "decompdecomp setup"
 OS="$(uname -s)"
 case "$OS" in
-  Linux) ;;
-  *) fail "decompdecomp runs on Linux, on x86-64 PCs (the games' compilers are x86 programs). Windows and macOS aren't supported in this version; a Linux virtual machine works." ;;
+  Linux|Darwin) ;;
+  *) fail "This installer supports Linux x86-64 and macOS Intel/Apple Silicon. Use the Windows installer on Windows." ;;
 esac
+if [ -z "$SOURCE" ]; then
+  if [ -n "$CHECKOUT" ]; then SOURCE="$CHECKOUT"
+  elif [ "$OS" = Darwin ]; then SOURCE=branch:main
+  else SOURCE=release
+  fi
+fi
 case "$(uname -m)" in
   x86_64|amd64) ;;
+  arm64) [ "$OS" = Darwin ] || fail "ARM is supported on macOS only" ;;
   *) fail "decompdecomp needs a 64-bit Intel or AMD PC for now: the games' compilers are x86 programs, and this computer's processor is $(uname -m)" ;;
 esac
 command -v curl >/dev/null || fail "curl is required"
@@ -103,8 +108,15 @@ resolve_branch() {  # the branch's newest commit, installed from GitHub's archiv
   fi
 }
 
-# ------------------------------------------------------------------------------------------- on this Linux
-for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do [ -x "$d/uv" ] && export PATH="$d:$PATH"; done
+# ------------------------------------------------------------------------------------------- on this host
+for d in "$HOME/.local/bin" "$HOME/.cargo/bin"; do
+  [ -x "$d/uv" ] && export PATH="$d:$PATH"
+done
+if [ "$OS" = Darwin ] && ! command -v uv >/dev/null; then
+  for d in /opt/homebrew/bin /usr/local/bin; do
+    [ -x "$d/uv" ] && export PATH="$d:$PATH"
+  done
+fi
 if ! command -v uv >/dev/null; then
   ask "decompdecomp is installed with uv (Astral's Python tool manager). Install uv now?" || fail "uv is needed: https://docs.astral.sh/uv/"
   curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -133,7 +145,7 @@ uv tool update-shell >/dev/null 2>&1 || true
 "$BIN/decomp" install-info --channel "$CHANNEL" --branch "$BRANCH" --commit "$COMMIT" --repo "$REPO" >/dev/null
 
 # the window: GTK and WebKitGTK 4.1 with their Python bindings, from the system (no browser involved)
-if ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")' 2>/dev/null; then
+if [ "$OS" = Linux ] && ! /usr/bin/python3 -c 'import gi; gi.require_version("Gtk", "3.0"); gi.require_version("WebKit2", "4.1")' 2>/dev/null; then
   . /etc/os-release 2>/dev/null || true
   case " ${ID:-} ${ID_LIKE:-} " in
     *" debian "*|*" ubuntu "*) WINDOW_PACKAGES="sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-webkit2-4.1" ;;
@@ -156,7 +168,7 @@ step "downloading the compilers and tools"
 "$BIN/decomp" stop >/dev/null 2>&1 || true
 
 # one decompdecomp at a time: an older .deb or .rpm of it would be a second one in the apps menu and on PATH
-if [ -d /opt/decompdecomp ]; then
+if [ "$OS" = Linux ] && [ -d /opt/decompdecomp ]; then
   if command -v dpkg >/dev/null && dpkg -s decompdecomp >/dev/null 2>&1; then REMOVE="sudo apt remove -y decompdecomp"
   elif command -v rpm >/dev/null && rpm -q decompdecomp >/dev/null 2>&1; then REMOVE="sudo dnf remove -y decompdecomp"
   else REMOVE=""; fi
@@ -170,7 +182,7 @@ fi
 bold "Done."
 echo "  Start it any time from your apps menu, or with: decomp"
 if [ "$START" = 1 ]; then
-  if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  if [ "$OS" = Darwin ] || [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     nohup "$BIN/decomp" >/dev/null 2>&1 &
     echo "  Opening decompdecomp…"
   else

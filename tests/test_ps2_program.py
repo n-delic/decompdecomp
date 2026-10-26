@@ -184,6 +184,7 @@ def test_install_all_brings_every_compiler_then_tests_them(monkeypatch):
     from decompnet.app.engine import RomNetwork
 
     ps2 = consoles.get("ps2")
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "linux-x86_64")
     have = {"ee-gcc-2.96"}
     monkeypatch.setattr(toolchains, "installed", lambda tid, linux=None: {} if tid in have else None)
     monkeypatch.setattr(toolchains, "install", lambda tid, accept_license=False, log=None: have.add(tid))

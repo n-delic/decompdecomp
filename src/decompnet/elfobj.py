@@ -52,6 +52,7 @@ class FunctionObj:
     big_endian: bool
     code: bytes
     relocs: list[Reloc] = field(default_factory=list)
+    cpu: str = ""  # its processor's variant when capstone can't read it (Console.cpu_variant: "allegrex"), else ""
 
     def normalized(self) -> bytes:
         return mask_relocs(self.code, self.relocs, self.arch, self.big_endian)
@@ -276,12 +277,16 @@ def extract_function(data: bytes, name: str) -> FunctionObj | None:
 
 
 _GCC2_MANGLED = re.compile(r"([A-Za-z_]\w*?)__(?:[FQCtH]|\d)")  # GCC 2.9x: Update__4CPedi, func_00123456__Fi
+# SN's SNC (PSP): __0, what the name is (f a method, F a function), then each identifier after a letter that says its
+# length, A-Z 0 to 25 and a-z 26 to 51: __0fEMathNfunc_08804388iii. shortcut: longer identifiers aren't read; they'd
+# need SNC's spelling of them
+_SNC_LENGTHS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 
 def unmangle(data: bytes, known) -> bytes:
     """A compiled object with its C++ names turned back into the game's own, so a function written as a class's
     method (`void CPed::func_00123456(int)`) is judged as, and calls, the game's func_00123456: GCC 2.9x's
-    `func_00123456__4CPedi`, GCC 3's `_ZN4CPed13func_00123456Ei`. `known(name)` says whether a name is one of the
+    `func_00123456__4CPedi`, GCC 3's `_ZN4CPed13func_00123456Ei`, SNC's `__0fECPedNfunc_00123456i`. `known(name)` says whether a name is one of the
     game's. The new name is shorter, so it's written over the old one in the string table. GCC 2.9x's special names
     (_$_4CPed, a destructor; _vt$4CPed, a vtable) are the game's with _ for $ (consoles/ps2/symtab.py), as long."""
     if b"__" not in data and b"_Z" not in data and b"$" not in data:
@@ -313,6 +318,13 @@ def unmangle(data: bytes, known) -> bytes:
                 if known(name[i:i + n]):
                     new = name[i:i + n]
                 i += n
+        elif name.startswith("__0"):
+            i = 4
+            while i < len(name) and new is None:
+                n = _SNC_LENGTHS.find(name[i])
+                if n > 0 and known(name[i + 1:i + 1 + n]):
+                    new = name[i + 1:i + 1 + n]
+                i += 1 + max(n, 0)
         if new:
             at = base + sym["st_name"]
             out[at:at + len(new) + 1] = new.encode() + b"\0"

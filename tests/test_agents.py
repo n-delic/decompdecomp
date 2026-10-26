@@ -559,6 +559,9 @@ def test_quitting_ends_everything_a_helper_started(tmp_path):
             from .test_platform import _alive
 
             return _alive(pid)
+        if sys.platform == "darwin":
+            status = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True)
+            return status.returncode == 0 and not status.stdout.strip().startswith("Z")
         try:
             return open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[0] != "Z"
         except OSError:

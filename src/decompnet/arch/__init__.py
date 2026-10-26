@@ -13,11 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import arm, mips, mips_fields, ppc, x86
+from . import arm, mips, mips_fields, ppc, x86, x86_fields
 
-# What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS today):
+# What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS, and some
+# x86):
 COMPILER_MAP = "compiler_map"  # which compiler built each part of a game, from its habits (compilermap.py)
-CLASSES = "classes"  # C++ classes from the vtables constructors store (classes.py)
+CLASSES = "classes"  # C++ classes from the vtables constructors store (classes.py; x86: from field_accesses' facts)
 BOUNDARIES = "boundaries"  # cutting a function where an agent says it really ends (engine/editing.py, rom/split.py)
 STRUCTS = "structs"  # struct layouts from the loads and stores through pointers (structs.py, Arch.field_accesses)
 
@@ -39,13 +40,21 @@ class Arch:
     # the float constants a diff row's instruction loads from data by address: text -> [(address, "f" | "d")], so
     # the diff can show their values (forkengine)
     float_operands: Callable[[str], list[tuple[int, str]]] | None = None
+    # a decompiler's draft of a method shown as `Class::method`, with `this` (x86: Ghidra's, `this` in ecx):
+    # (draft, function's address name, class, name, role, found from) -> the draft, or None (forkengine)
+    method_draft: Callable[..., str | None] | None = None
+    # variants of it capstone can't decode (Console.cpu_variant) -> their own reader: (code, big_endian) ->
+    # [(offset, mnemonic, operands)], for scoring's diffs (MIPS: the PSP's Allegrex, read by rabbitizer)
+    variants: dict[str, Callable[[bytes, bool], list[tuple[int, str, str]]]] = field(default_factory=dict)
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
-         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts),
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
+         variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
-    Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, float_operands=x86.float_operands),
+    Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
+         field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
     Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason),
     Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason),

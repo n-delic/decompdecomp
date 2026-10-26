@@ -2,7 +2,7 @@
 
 import sys
 
-__version__ = "1.0.6-alpha.3"
+__version__ = "1.0.7-alpha.1"
 
 
 def utf8_output() -> None:
@@ -12,4 +12,3 @@ def utf8_output() -> None:
         for stream in (sys.stdout, sys.stderr):
             if stream is not None and not stream.isatty():
                 stream.reconfigure(encoding="utf-8", errors="replace")
-

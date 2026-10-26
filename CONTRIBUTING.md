@@ -166,7 +166,7 @@ A console works in one of two modes:
    | `create_project(root, game, compiler)`, `game_info(game)` | PROJECT: makes the project; says which game a file is. |
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |
    | `identity(path)`, `check_rebuild(fp, version)`, `read_data(fp, name, length)`, `upload_name(data)` | PROJECT: rooms' game check, the rebuild check, data the objects lack, an upload's file name. |
-   | `file_compiler(fp, source)`, `set_file_compiler(fp, source, compiler)` | PROJECT: a compiler per source file, when the project's build allows it: then `try_compiler` switches it (DS). |
+   | `file_compiler(fp, source)`, `set_file_compiler(fp, source, compiler)` | PROJECT: a compiler per source file, when the project's build allows it: then `try_compiler` switches it (DS, Windows PC). |
    | `asm_reason(code)` | Why a function can't come from a compiler. The processor's check, with this console's facts. |
    | `up_front_guide(compiler)`, `m2c_target(compiler)` | The guide for a compiler's code; m2c's target for it. |
 
@@ -180,7 +180,8 @@ A console works in one of two modes:
    | `split_source(fp, version, source, at, new)`, `splits_sources` | `split_file`: a source file divided where a new one starts (a library's code, a second compiler). |
    | `join_functions(fp, first, last, keep)` | `join_functions`: a function the analysis cut in pieces made whole, once agents agree. |
    | `file_compiler`, `set_file_compiler` | `try_compiler`, when its build lets each source file have its own compiler. |
-   | its processor's `piece` and `jumps` (`arch/arm.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
+   | `generated_functions(fp, version)` | Code its analysis knows no C of its own makes (Visual C++'s exception-handling stubs, `consoles/pc/scratch.py`) set aside when the project is measured, with why. |
+   | its processor's `piece` and `jumps` (`arch/arm.py`; x86: `piece`, `arch/x86.py`) | Pieces found and joined without agents, in `on_start` (see `consoles/nds/recover.py`, `consoles/pc/scratch.py`), when a tool finds its functions (ds-decomp, Ghidra) and can cut them. |
 
 5. **Its compilers.** One pinned entry each in `toolchains.toml` (see "Adding a compiler" below).
 6. **Its processor**, if `arch/` hasn't got it: add `arch/<name>.py` (relocation masks, capstone's mode, and
@@ -199,20 +200,25 @@ A console works in one of two modes:
 
 ### Adding a compiler to a console
 
-Example: PC has Visual C++ 6.0, 7.0 and 7.1, and you want Visual C++ 2005 (8.0).
+Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
 
-1. **Pin it** in `src/decompnet/toolchains.toml`. A new part of the `msvc` pack (or a pack of its own) with its
-   `url`, its `sha256` (`sha256sum` of the archive) and `into = "8.0"`. Take it from where the decomp community
-   keeps it; never from the vendor's site with someone's account.
+1. **Pin it** in `src/decompnet/toolchains.toml`. A new part of a pack (`msvc2005`, or a pack of its own, as
+   2012-2013 would be) with its `url`, its `sha256` (`sha256sum` of the archive) and `into = "11.0"`. An archive
+   that's a whole install takes only its compiler and headers with `keep` (see `msvc2005`). Take it from where the
+   decomp community keeps it; never from the vendor's site with someone's account.
 2. **Proprietary means opt-in.** Its entry says `license = "proprietary"`. The app installs it only after the user
    accepts its licence in Setup. Never download it in code, a test or CI: public CI can't have it, and its tests
    skip there.
 3. **How it runs on Linux.** Windows compilers run through wibo (a pinned tool); check that the new `cl.exe` runs
-   there. A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
+   there. wibo stops at the first Windows function it doesn't have and names it (2010's compiler needed
+   `msvcp100.dll` beside it; 2005's and later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
 4. **The console lists it**: `consoles/pc/__init__.py`, `MSVC_VERSIONS`. A ROM console's compilers are its
    `compilers` tuple: `Compiler(id, name, built, guess)` (see `consoles/ps2/__init__.py`).
-5. **Which game used it.** PC reads the program's Rich header: add 8.0's build numbers to `RICH_BUILDS` in
-   `consoles/pc/scratch.py`. A PS2 program's `.comment` note says its GCC: `_GCC` in `consoles/ps2/elf.py`, and the
+5. **Which game used it.** PC reads the program's Rich header: `RICH_COMPILERS` in `consoles/pc/scratch.py`
+   already knows every Visual C++ version's product ids, and `RELEASES` the builds of its updates. `RICH_BUILDS`
+   gives each compiler of the packs by the build its `cl.exe` says: once 11.0's is there, a game built with that
+   build builds with it (another build of 11.0 with the closest), and `Build.cannot_match` stops saying it can't
+   match. A PS2 program's `.comment` note says its GCC: `_GCC` in `consoles/ps2/elf.py`, and the
    compiler's `guess` names it.
 6. **Its flags.** The defaults are the toolchain's `flags`, and the console's `default_flags` adjusts them (the PS2's
    small data). PC projects write theirs in `project_template/tools/configure.py` (`CL_FLAGS`; from 8.0 on, `/GX`
@@ -220,7 +226,8 @@ Example: PC has Visual C++ 6.0, 7.0 and 7.1, and you want Visual C++ 2005 (8.0).
 7. **MIPS only**: `search_flags` tries flags by compiler family (`FLAG_FAMILIES` in `app/engine/compilers.py`), and
    the compiler map tells compilers apart by their habits (`compilermap.py`, `quirks`). Add the new family there.
 8. **Prove it builds matching code**: build the demo with it (`projects/demo-ps2/build.py <toolchain>` does this
-   for the PS2's compilers) and add it to that console's test (`OTHER_COMPILERS` in `tests/test_ps2.py`), skipped
+   for the PS2's compilers, `projects/demo-pc/build.py <version>` for Visual C++) and add it to that console's test
+   (`OTHER_COMPILERS` in `tests/test_ps2.py`, `NEWER` in `tests/test_pc.py`), skipped
    when it isn't installed: `pytest.mark.skipif(toolchains.installed(...) is None, reason="needs ...")`.
 9. **Say it**: the compiler in ROADMAP.md, README.md and docs/GUIDE.md where they list the console's compilers.
 

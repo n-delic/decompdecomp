@@ -54,6 +54,8 @@ class Core(Network):
         self.permuter = Permuter(self)
         from ..rangecheck import RangeChecks
         self.rangechecks = RangeChecks(self)
+        from ..filecompilers import FileCompilers
+        self.filecompilers = FileCompilers(self)
         from ..knowledge import Knowledge
         self.knowledge = Knowledge(self)
         from ..readable import Readability

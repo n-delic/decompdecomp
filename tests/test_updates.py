@@ -19,6 +19,7 @@ from decompnet.app import updates
 def data_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "data"))
+    monkeypatch.setattr(updates, "info_file", lambda: tmp_path / "data" / "install.json")
     return tmp_path / "data"
 
 

@@ -13,15 +13,18 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+from collections import defaultdict
 from importlib import resources
 from pathlib import Path
 
 from .. import toolchains
 from ..hostenv import NO_WINDOW
-from ..limits import capped
+from ..limits import capped, default_cap, killed_for_memory
 from .project import ForkError
 
 JAVA_NEEDED = 21  # what the pinned Ghidra needs
+HEAP_DEFAULT = 2 << 30  # analyzeHeadless's own Java heap (MAXMEM_DEFAULT)
 
 
 def java_home() -> Path | None:
@@ -35,11 +38,16 @@ def available() -> bool:
     return toolchains.installed("ghidra") is not None and (home is None or toolchains.installed("jdk") is not None)
 
 
-def _env() -> dict | None:
-    home = java_home()
-    if home is None:
-        return None
-    return dict(os.environ, JAVA_HOME=str(home), PATH=os.pathsep.join([str(home / "bin"), os.environ.get("PATH", "")]))
+def _env() -> dict:
+    """Ghidra's environment: its JDK (java_home), and a Java heap of half its memory cap (limits.capped), not
+    analyzeHeadless's fixed 2 GB, so a bigger game's analysis has room; the other half is for the decompiler
+    processes its analysis starts. A heap the user set (GHIDRA_MAXMEM, GHIDRA_HEADLESS_MAXMEM) stays."""
+    env = dict(os.environ)
+    if not {"GHIDRA_MAXMEM", "GHIDRA_HEADLESS_MAXMEM"} & env.keys():
+        env["GHIDRA_HEADLESS_MAXMEM"] = f"{max(HEAP_DEFAULT, default_cap() // 2) >> 20}M"
+    if (home := java_home()) is not None:
+        env.update(JAVA_HOME=str(home), PATH=os.pathsep.join([str(home / "bin"), env.get("PATH", "")]))
+    return env
 
 
 def _headless() -> Path:
@@ -62,7 +70,8 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
         argv = [str(_headless()), tmp, "decompwtf", "-import", str(target), "-scriptPath", str(scripts),
                 "-postScript", script, str(out), "-deleteProject", *([] if analyse else ["-noanalysis"])]
         try:
-            res = subprocess.run(capped(argv), capture_output=True, text=True, timeout=timeout, env=_env(),
+            # (stop_all: a decompiler process killed at the cap is Ghidra's to replace, not the end of the analysis)
+            res = subprocess.run(capped(argv, stop_all=False), capture_output=True, text=True, timeout=timeout, env=_env(),
                                  encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         except subprocess.TimeoutExpired:
             return []
@@ -70,6 +79,11 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
             raise ForkError(f"Ghidra couldn't start: {e}") from e
         if not out.exists():
             said = [ln for ln in (res.stdout + res.stderr).splitlines() if ln.strip()]
+            if killed_for_memory(res.returncode) or any("java.lang.OutOfMemoryError" in ln for ln in said):
+                raise ForkError(f"Ghidra ran out of memory analysing {binary.name}: it needed more than the "
+                                f"{default_cap() / (1 << 30):.0f} GB decompdecomp lets one tool use (half this computer's "
+                                "memory, at most 8 GB), so it was stopped before it could slow down or freeze your "
+                                "computer. A computer with more memory may import it.")
             why = next((ln for ln in said if "ERROR" in ln), said[-1] if said else f"exit status {res.returncode}")
             if "JDK" in why:
                 why += f" (Ghidra needs {toolchains.JDK_HINT})"
@@ -84,21 +98,30 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
         return rows
 
 
+# The background drafter asks for every function of a PC game, a source file's object at a time, on the workers
+# every project shares: one Ghidra per object (the functions of one ask for it together), and a few at once (each
+# starts a Java of its own, with a heap of half the memory cap)
+_RUNS = threading.Semaphore(2)
+_OBJECTS: dict[str, threading.Lock] = defaultdict(threading.Lock)
+
+
 def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[str, str]:
     """name -> decompiled C for every function in an object file (cached by the object's content)."""
     key = hashlib.sha1(obj.read_bytes()).hexdigest()[:16]
     cache = cache_dir / f"{obj.stem}-{key}.json"
-    if cache.exists():
-        return json.loads(cache.read_text(encoding="utf-8"))
-    if not available():
-        return {}
-    try:
-        result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
-    except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
-        return {}
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(result), encoding="utf-8")
-    return result
+    with _OBJECTS[str(cache)]:
+        if cache.exists():
+            return json.loads(cache.read_text(encoding="utf-8"))
+        if not available():
+            return {}
+        try:
+            with _RUNS:
+                result = {row["name"]: row["c"] for row in _run_script(obj, "DecompWtfExport.java", timeout)}
+        except ForkError:  # a draft is optional: none this time, and nothing cached, so it's tried again
+            return {}
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(result), encoding="utf-8")
+        return result
 
 
 def functions(program: Path, timeout: float = 3600) -> list[dict]:

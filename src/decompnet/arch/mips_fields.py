@@ -9,7 +9,8 @@ instruction overwrites it or a call clobbers it. A register holds a pointer (a s
   store through it says it is one;
 - the pointers in a0-a3 at each call, read after the call's delay slot (where compilers often set a0), what v0
   holds at each return, and pointers stored into fields;
-- the stack: a pointer spilled to the frame and loaded back is still the same pointer;
+- the stack: a pointer spilled to the frame and loaded back is still the same pointer, and a register the epilogue
+  gives back its caller's value keeps what it held for the code after the return;
 - walks: an argument moved along by a constant inside a loop (memset, strcpy, an array's loop) is a walk;
 - indexing: a pointer plus a register that isn't one (`addu s0, s1, v0`: an array's base and an index, as PSY-Q's
   GCC 2.7.2 walks an array of structs where EE-GCC moves a pointer along) points at an element, read as the first.
@@ -116,6 +117,7 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
     loops = _loops(words)
     regs: dict[int, tuple[tuple, int]] = {r: ((ARGUMENT, n), 0) for n, r in enumerate(ARGUMENT_REGISTERS)}
     stack: dict[int, tuple[tuple, int]] = {}
+    saved: dict[int, int] = {}  # a stack slot -> the register the function saved its caller's value of there
     out = Facts()
     due: tuple[int, int, str] | None = None  # (delay slot, call's instruction, "call" / "tail" / "return")
     callee = None
@@ -126,6 +128,7 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
         rtype, addr = at_word.get(k, (None, 0))
         global_ref = rtype in (R_MIPS_LO16, R_MIPS_GPREL16)
         value = None
+        restore = False
         if op in LOADS or op in STORES:
             size, kind = LOADS.get(op) or STORES[op]
             place = None  # (term, offset) the instruction reads or writes
@@ -146,22 +149,30 @@ def read_facts(vram: int, code: bytes, relocs: list, big_endian: bool, datum: Ca
                         stack[imm] = regs[rt]
                     else:
                         stack.pop(imm, None)
+                        saved.setdefault(imm, rt)
                 elif op in GPR_LOADS:
                     value = stack.get(imm)
+                    # the caller's value back, before a return: the code after the return in address order is
+                    # reached from before it, with what the register held (GCC 3.3, the PSP's, puts a loop's
+                    # epilogue between its step and its body)
+                    restore = value is None and saved.get(imm) == rt
         elif op in (ADDIU, DADDIU, ORI) and global_ref:  # a global's address
             value = global_at(addr)
         elif op in (ADDIU, DADDIU) and rs in regs:
             term, delta = regs[rs]
             value = (term, delta + imm)
-            if rt == rs and any(first <= k <= last for first, last in loops):
+            if rt == rs and any(first <= k <= last + 1 for first, last in loops):  # (the branch's delay slot too)
                 out.walked.add(term)
+                # still at the same place of the next element: GCC 3.3 (the PSP's) lays a loop's step out before
+                # its body, so in address order the calls with the element came after it, a struct's size off
+                value = (term, delta)
         elif op == SPECIAL and funct in MOVES and ZERO in (rs, rt):
             value = regs.get(rt if rs == ZERO else rs)
         elif op == SPECIAL and funct == ADDU and (rs in regs) != (rt in regs):  # a base and an index
             term, delta = regs[rs] if rs in regs else regs[rt]
             value = (term, delta)  # not a walk: p->items[i] indexes a struct the callers share (loops are caught above)
         target = _destination(w)
-        if target and target != ZERO:
+        if target and target != ZERO and not restore:
             regs.pop(target, None)
             if value is not None:
                 regs[target] = value

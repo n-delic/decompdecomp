@@ -90,3 +90,34 @@ def test_unpaired_instructions_do_not_supply_a_perfect_match(monkeypatch, tmp_pa
     result = _diff(monkeypatch, tmp_path, _function(instructions=[_instruction(), _instruction()]), _function())
     assert result.match_percent == 0.0
     assert not result.matched
+
+
+def _reference(name: str, index: int) -> dict:
+    return {"instruction": {"formatted": f"push {name}", "size": 5, "relocation": {"target_symbol": index}}}
+
+
+def test_visual_cpp_exception_labels_are_not_reported_as_renamed_references(monkeypatch, tmp_path):
+    """A Visual C++ function with a local object's destructor pushes its handler, a label of its own object ($L278),
+    where the delinked original names the handler's stub (_func_006450E8). objdiff counts that as a match, and the
+    code links with its own handler: telling the agent to use the original's name asked for something impossible."""
+    pushes = [_reference("_func_006450E8", 1), _reference("_func_0041B470", 2)]
+    left = {"symbols": [_function(instructions=pushes, match_percent=100.0),
+                        {"name": "_func_006450E8"}, {"name": "_func_0041B470"}]}
+    right = {"symbols": [_function(instructions=[_reference("$L278", 1), _reference("_Helper", 2)],
+                                   match_percent=100.0), {"name": "$L278"}, {"name": "_Helper"}]}
+    monkeypatch.setattr(objdiff, "_run", lambda *args, **kwargs: json.dumps({"left": left, "right": right}))
+    result = objdiff.diff(None, None, "demo_function", cwd=tmp_path)
+    assert result.matched
+    assert result.renamed == [("_func_0041B470", "_Helper")]  # a real name the game links by is still reported
+
+
+def test_a_function_its_unit_also_calls_keeps_its_score(monkeypatch, tmp_path):
+    """A PC game's delinked object lists a function a second time, as an extern, when another function of the same
+    object calls it: the unit's scores took that entry, said a matched destructor wasn't in the build, and reopened
+    it after its deleting destructor matched."""
+    extern = {"name": "demo_function", "kind": "SYMBOL_FUNCTION", "flags": {"global": True}}
+    data = {"left": {"symbols": [_function(match_percent=100.0), extern]},
+            "right": {"symbols": [_function(match_percent=100.0)]}}
+    monkeypatch.setattr(objdiff, "_run", lambda *args, **kwargs: json.dumps(data))
+    result = objdiff.diff(None, None, None, cwd=tmp_path)
+    assert result.unit_scores == {"demo_function": 100.0} and result.order == ["demo_function"]

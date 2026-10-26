@@ -32,6 +32,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -396,6 +397,16 @@ def spin_advice(recent: list[dict]) -> dict[tuple[str, str], str]:
 def _proc_start(pid: int) -> int | None:
     """When a process started (clock ticks since boot): with its pid, it tells that process from a later one that
     got the same pid."""
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart="], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                from datetime import datetime
+
+                return int(datetime.strptime(result.stdout.strip(), "%a %b %d %H:%M:%S %Y").timestamp())
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        return None
     try:
         return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[STAT_STARTTIME_INDEX])
     except (OSError, ValueError, IndexError):
@@ -490,7 +501,7 @@ class Manager:
             if s.kind not in {a.id for a in agents.AGENTS}:
                 continue
             if s.state in LIVE:
-                if r["pid"] and _proc_start(r["pid"]) == r["pid_start"]:  # still running: the app crashed
+                if r["pid"] and r["pid_start"] is not None and _proc_start(r["pid"]) == r["pid_start"]:
                     crashed.add(r["pid"])
                 s.state, s.stopped_by, s.until = "stopped", BY_QUIT, None
                 s.why = "decompdecomp closed while it worked"
@@ -722,6 +733,22 @@ class Manager:
 
     def _strays(self) -> set[int]:
         """Process groups of processes this app's helpers started, found by HELPER_ENV in their environment."""
+        if sys.platform == "darwin":
+            try:
+                processes = subprocess.run(["ps", "eww", "-axo", "pid=,pgid=,command="], capture_output=True,
+                                           text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired):
+                return set()
+            if processes.returncode:
+                return set()
+            mark = f"{HELPER_ENV}={self.home}"
+            groups = set()
+            for line in processes.stdout.splitlines():
+                parts = line.split(None, 2)
+                if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit() and int(parts[0]) != os.getpid():
+                    if mark + " " in parts[2] or parts[2].endswith(mark):
+                        groups.add(int(parts[1]))
+            return groups
         # Linux exposes child environments through /proc. On Windows there is no equivalent filesystem, so there
         # are no stray groups to recover here; the live sessions are still stopped through their Popen handles.
         if not PROCFS.is_dir():
