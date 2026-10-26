@@ -162,6 +162,11 @@ def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
     assert "MAKE READABLE: game_a" in said
     held = net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id")
     assert [r["name"] for r in held] == ["game_a"]
+    # made readable (or set aside) while held, after one try: let go too, without being called tried out
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name='game_a'")
+    said = net.readability.claim(agent, slug)
+    assert "You held" not in said and "Stop here" in said
+    assert net.store.all("SELECT * FROM claims") == []
 
 
 def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tmp_path, monkeypatch):

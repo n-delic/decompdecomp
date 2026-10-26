@@ -43,11 +43,12 @@ ORDER = (f"boost DESC, CASE WHEN n_insns > {BIG_INSNS} THEN 1 WHEN n_insns < {SM
 POLISH_TRIES = 3  # a function taken up this often since it was last made readable, and still not readable, is skipped
 # what polishing takes (claim) and what a polishing helper's session counts as left (agents.Manager._left): the game's
 # own matched code that isn't readable yet and isn't given up on: one no rewrite kept matching was handed out again
-# and again, to every helper, being the biggest. (? : the project's id, twice)
-TODO = (f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ("
-        "SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='polish' AND p.id > COALESCE((SELECT MAX(r.id) "
-        "FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' AND r.detail=p.detail), 0) "
-        f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES})")
+# and again, to every helper, being the biggest. (TODO and GIVEN_UP each take one ?, the project's id, after the
+# caller's own)
+GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='polish' AND p.id > COALESCE((SELECT "
+            "MAX(r.id) FROM events r WHERE r.project_id=p.project_id AND r.kind='readable' AND r.detail=p.detail), 0) "
+            f"GROUP BY p.detail HAVING COUNT(*) >= {POLISH_TRIES}")
+TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ({GIVEN_UP})"
 
 
 TIDY = """\
@@ -191,9 +192,10 @@ class Readability:
                 # an Xbox game, as only a new claim counted
                 if db.execute(f"SELECT 1 FROM functions WHERE id=? AND {TODO}", (fn["id"], proj["id"])).fetchone():
                     self.net._event(db, proj["id"], agent.id, "polish", fn["name"])
-                else:
+                else:  # its tries are up, or it was set aside or made readable while held: the next one
                     db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
-                    left, fn = fn["name"], None
+                    tried = db.execute(f"SELECT 1 WHERE ? IN ({GIVEN_UP})", (fn["name"], proj["id"])).fetchone()
+                    left, fn = fn["name"] if tried else None, None
             if fn is None:
                 # in ORDER. The game's own code: an Xbox game's matched SDK functions, set aside, would have been
                 # polished with its 33
