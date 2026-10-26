@@ -63,6 +63,21 @@ def test_proposals_waiting_for_a_second_model_are_offered_to_agents(net):
     assert "waiting for a second model" in text and "menu screen" in text
 
 
+def test_the_user_can_be_the_second_opinion(net):
+    """On an x86 game worked by one model only, 55 proposals waited for a second model that never came: the user
+    gives a checked one to agents (the panel offers it on proposals too), or rejects it."""
+    opus = agent(net, "claude-opus-5.5-1")
+    said = net.knowledge.share(opus, "game", "Matrix products are copied back through a named temporary")
+    assert "once the user gives it to agents" in said
+    kid = int(said.split("#")[1].split(".")[0])
+    other = int(net.knowledge.share(opus, "game", "Screens set up the fader before Init").split("#")[1].split(".")[0])
+    net.knowledge.decide("game", kid, accept=True)
+    net.knowledge.decide("game", other, accept=False)
+    text = net.knowledge.for_prompt("game")
+    assert "named temporary" in text and "checked by the user" in text and "fader" not in text
+    assert [it["id"] for it in net.knowledge.listing("game")["items"]] == [kid]
+
+
 def test_add_note_without_a_function_is_an_error_not_knowledge(net):
     """#25: a helper probing tool names called add_note with only text, and its "test" appeared as a project-wide
     knowledge proposal. A note is for one function; project-wide knowledge goes through share_knowledge."""
