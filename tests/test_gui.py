@@ -100,6 +100,15 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
 
 
+def test_an_unknown_compiler_says_the_project_was_made_with_another_tool(gui):
+    """#118: a project from another tool names a compiler decompdecomp doesn't have. The banner called it a compiler
+    with no build for this computer; it says what it is and where to pick one decompdecomp has."""
+    said = gui["checks"]["unknownCompiler"]
+    assert said["hidden"] is False and said["className"] == "notice bad"
+    assert "msvcxx-x86_64 isn't a compiler decompdecomp has" in said["text"] and "another tool" in said["text"]
+    assert "Settings" in said["text"] and "no build for this computer" not in said["text"]
+
+
 def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):
     """A PS-X EXE is the PS1's; a disc image could be any PlayStation's until the server reads it."""
     assert gui["checks"]["dropped"] == ["ps", "playstation", "PlayStation 1, 2 or PSP", None]

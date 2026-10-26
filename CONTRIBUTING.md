@@ -318,6 +318,7 @@ An agent is one of two sorts:
 
 ## Pull requests
 
+- Talk it over first in `#contributors` on the [Discord](https://discord.gg/hhEm3zZagB), or in an issue.
 - Work on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). CI fails a pull request from any other branch, and labels it by the prefix.
 - A change to a console or a feature says which of the app's features you ran on it and how (AGENTS.md, "Check
   every feature on the console you touch"); reviewers check the same list.

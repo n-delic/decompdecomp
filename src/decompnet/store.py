@@ -93,6 +93,12 @@ class Store:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
+        # the room looks a function up by its address for every match, best attempt and note the host sends: without
+        # this each lookup read every function's assembly and sources (89 ms for 18,800 functions; now 0.02)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_vram ON functions(project_id, vram)")
+        # a note the host sends is saved only when this function doesn't have it already: that look-up read every
+        # note saved so far (3 ms each at 7,000 notes, so 60,000 incoming notes took over three minutes; now 0.01)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")
         # a function's events of one kind (polishing's tries on it: app/readable.py), without reading a game's whole feed
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_detail ON events(project_id, kind, detail)")
         # the progress the GUI asks for every second (totals, the map's "anything new?"), answered from this narrow

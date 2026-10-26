@@ -40,11 +40,11 @@ jobs:
               const body = context.payload.issue.body || '';
               const answer = (q) => (body.split(`### ${q}`)[1] || '').split('###')[0].trim();
               const consoles = {
-                'N64': 'n64', 'PS1': 'psx', 'PS2': 'ps2', 'GameCube': 'gc', 'Wii': 'wii', 'Windows PC': 'pc',
+                'N64': 'n64', 'PS1': 'psx', 'PS2': 'ps2', 'PSP': 'psp', 'GameCube': 'gc', 'Wii': 'wii', 'Windows PC': 'pc',
                 'DS': 'ds', "A console decompdecomp doesn't have yet": 'new-console',
               };
               for (const c of answer('Console').split(',')) if (consoles[c.trim()]) labels.add(consoles[c.trim()]);
-              const systems = { 'Linux': 'linux', 'Windows': 'windows' };
+              const systems = { 'Linux': 'linux', 'Windows': 'windows', 'macOS': 'macos' };
               const system = systems[answer('Your system')];
               if (system) labels.add(system);
             } else {

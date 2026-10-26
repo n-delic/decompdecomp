@@ -77,7 +77,10 @@ function renderSessions(sessions) {
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
   const running = sessions.filter((s) => LIVE.includes(s.state));
+  const paused = sessions.filter((s) => s.state === "paused");
   $("stopAll").hidden = running.length < 2;
+  $("removePaused").hidden = paused.length === 0;
+  $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
   const sorted = [...sessions].sort((a, b) => (a.task === "readable") - (b.task === "readable")
     || STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
@@ -125,6 +128,19 @@ $("stopAll").onclick = async () => {
   await api("/api/agents/stop", { method: "POST", body: { slug: S.slug } }).catch((e) => toast(esc(e.message), "err"));
   toast("Stopping every agent on this project.");
   poll(false);
+};
+$("removePaused").onclick = async () => {
+  const button = $("removePaused");
+  button.disabled = true;
+  try {
+    const { removed } = await api("/api/agents/stop", { method: "POST", body: { slug: S.slug, remove_paused: true } });
+    toast(`Removed ${plural(removed, "paused agent")}.`);
+    poll(false);
+  } catch (e) {
+    toast(esc(e.message), "err");
+  } finally {
+    button.disabled = false;
+  }
 };
 
 /* ------------------------------------------------------------------ the launcher: agent, model, how many */
@@ -587,4 +603,3 @@ function addThoughts(sessions, first) {
   }
   if (first) renderLog();
 }
-
