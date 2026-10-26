@@ -228,6 +228,26 @@ def test_lines_the_file_already_has_may_come_along(fork):
     assert "struct Gain" in str(e.value) and "edit_file" in str(e.value)
 
 
+def test_a_definition_the_build_leaves_out_is_said_and_never_compiled_into(fork):
+    """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines: the brief showed one as
+    the function's source, and each compile replaced it there, judged on other code (13 functions, about 18 KB)."""
+    from decompnet.network import NetworkError
+
+    net, slug, agent = fork
+    path = Path(net.project_row(slug)["root"]) / "src" / "lit.c"
+    parked = "#ifdef PARKED_DRAFTS\n" + SCALE.replace("1.1", "1.2") + "#endif\n"
+    path.write_text(path.read_text() + "\n" + parked)
+    brief = net.claim(agent, slug, "scale")
+    assert "inside `#ifdef PARKED_DRAFTS`" in brief and "leaves out" in brief, brief
+    before = path.read_text()
+    with pytest.raises(NetworkError, match="inside `#ifdef PARKED_DRAFTS`.*edit_file"):
+        net.compile_and_diff(agent, "scale", SCALE, slug)
+    assert path.read_text() == before  # nothing written, nothing built
+    out = net.forks.edit_file(agent, slug, "src/lit.c", parked, "", "drop the parked scale")
+    assert out.startswith("✅"), out
+    assert net.compile_and_diff(agent, "scale", SCALE, slug).startswith("✅ MATCH")
+
+
 def test_a_function_only_declared_in_the_build_is_not_built_yet(tmp_path, monkeypatch):
     """objdiff lists an extern the source calls on the build's side, with no size and no code: read as built, that
     was a "100% match", and a DS game's agents were told so of a function no file defined, again and again."""

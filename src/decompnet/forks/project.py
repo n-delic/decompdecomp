@@ -140,6 +140,20 @@ def _hash_mismatch(tail: str) -> str | None:
 
 MADE_FROM_MAX = 2000  # targets followed up from a build's failures (failed_units): a few levels in practice
 QUERY_BATCH = 50  # targets per `ninja -t query`
+# never_defined: macros compilers define themselves without a leading underscore (IDO's, on SGI and N64 code;
+# Windows projects' own WIN32), where the project's files may never mention them
+PREDEFINED = {"LANGUAGE_C", "LANGUAGE_ASSEMBLY", "MIPSEB", "MIPSEL", "R3000", "R4000", "WIN32", "WIN64"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".cp", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}
+BUILD_SUFFIXES = {".py", ".ninja", ".mk", ".json", ".toml", ".yml", ".yaml", ".cmake", ".sh", ".bat", ".ps1", ".lcf", ".ld"}
+BUILD_FILES = {"Makefile", "makefile", "GNUmakefile", "CMakeLists.txt"}
+NOT_SEARCHED = {".git", "build", "orig", "extract", "node_modules", STATE}
+SEARCH_MAX = 16 << 20  # bigger files aren't sources or build files
+
+
+def project_macro(name: str) -> bool:
+    """Whether a macro may be the project's own rather than the compiler's: those start with "_", have lowercase
+    letters (`mips`, `unix`) or are known ones (PREDEFINED)."""
+    return not name.startswith("_") and name == name.upper() and name not in PREDEFINED
 
 
 def _query_outputs(text: str) -> set[str]:
@@ -711,6 +725,34 @@ class ForkProject:
         nothing, and the next agent to compile there was told the file was broken before it came."""
         want = {os.path.normpath(t) for t in [*targets, *self._made_from(targets)]}
         return {u.name for u in self.units() if u.base is not None and os.path.normpath(os.path.relpath(u.base, self.root)) in want}
+
+    def never_defined(self, names: set[str]) -> set[str]:
+        """Which of these macros no build of the project can define: not the compiler's own (a name that starts with
+        "_" or has a lowercase letter, or one compilers are known to predefine), not #defined in any of its sources,
+        and named in none of its build files (a -D, a configure script). What csource.hidden_by goes by."""
+        left = {n for n in names if project_macro(n)}
+        if not left:
+            return set()
+        # (after -D or /D too: `/DNAME` has no word boundary before the name)
+        words = re.compile(r"(?:\b|(?<=[-/]D))(" + "|".join(map(re.escape, sorted(left))) + r")\b")
+        defines = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(" + "|".join(map(re.escape, sorted(left))) + r")\b", re.M)
+        for d, dirs, files in os.walk(self.root):
+            dirs[:] = [x for x in dirs if x not in NOT_SEARCHED]
+            for f in files:
+                p = Path(d) / f
+                source = p.suffix.lower() in SOURCE_SUFFIXES
+                if not source and p.suffix.lower() not in BUILD_SUFFIXES and f not in BUILD_FILES:
+                    continue
+                try:
+                    if p.stat().st_size > SEARCH_MAX:
+                        continue
+                    text = p.read_text(errors="replace", encoding="utf-8")
+                except OSError:
+                    continue
+                left -= set((defines if source else words).findall(text))
+                if not left:
+                    return set()
+        return left
 
     def _made_from(self, targets: list[str]) -> set[str]:
         """Everything the build makes from these targets, all the way up (ninja's `-t query`; other builds: nothing)."""
