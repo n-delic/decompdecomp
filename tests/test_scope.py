@@ -158,7 +158,8 @@ def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
         said = net.readability.claim(agent, slug)
         assert said.startswith("MAKE READABLE: game_b")
     said = net.readability.claim(agent, slug)
-    assert said.startswith(f"You held game_b, tried {readable.POLISH_TRIES} times")
+    assert said.startswith(f"You held game_b; it was tried {readable.POLISH_TRIES} times without a rewrite that kept it "
+                           "matching")
     assert "MAKE READABLE: game_a" in said
     held = net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id")
     assert [r["name"] for r in held] == ["game_a"]
@@ -167,6 +168,29 @@ def test_a_held_function_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
     said = net.readability.claim(agent, slug)
     assert "You held" not in said and "Stop here" in said
     assert net.store.all("SELECT * FROM claims") == []
+
+
+def test_a_held_function_set_aside_while_held_is_let_go_without_a_try_line(tmp_path, monkeypatch):
+    """Set aside while a helper holds it, a matched function leaves TODO, so the claim is let go for the next one: its
+    tries aren't up, so the helper isn't told it was tried out (that line is for one that had its POLISH_TRIES)."""
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=50, status='matched' WHERE name='game_b'")
+    net.store.conn.execute("UPDATE functions SET n_insns=20 WHERE name='game_a'")
+    monkeypatch.setattr(type(net.forks), "_current_source", lambda self, fp, fn, comment=False: None)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert "MAKE READABLE: game_b" in net.readability.claim(agent, slug)  # one try
+    # set aside as library code while held (objdiff finds it in the project's set_aside.json: matched, meta set_aside)
+    net.store.conn.execute("UPDATE functions SET meta=? WHERE name='game_b'", (json.dumps({"set_aside": True}),))
+    said = net.readability.claim(agent, slug)
+    assert "You held" not in said and "MAKE READABLE: game_a" in said
+    held = net.store.all("SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id")
+    assert [r["name"] for r in held] == ["game_a"]
+    assert net.store.one("SELECT COUNT(*) AS n FROM claims c JOIN functions f ON f.id=c.function_id "
+                         "WHERE f.name='game_b'")["n"] == 0
 
 
 def test_polishing_takes_big_functions_after_the_others_with_a_brief_to_match(tmp_path, monkeypatch):
@@ -250,7 +274,8 @@ def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkey
     assert net.readability.tidy_done(other, slug, "game", "Particle in include/particle.h").startswith("✅")
     assert net.readability.left(proj) == 0 and "Stop here" in net.readability.claim(agent, slug)
     kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind LIKE 'tid%' ORDER BY id")]
-    assert kinds == ["tidy", "tidy", "tidied", "tidy_summary"]
+    # the second claim of a held file is a try too (#108): one tidy for each of the three hand-outs
+    assert kinds == ["tidy", "tidy", "tidy", "tidied", "tidy_summary"]
     # a file no helper finishes is left after its tries, as a function is
     net.store.conn.execute("DELETE FROM events WHERE kind LIKE 'tid%'")
     for _ in range(readable.POLISH_TRIES):
@@ -258,6 +283,32 @@ def test_a_file_whose_functions_are_all_readable_is_tidied_next(tmp_path, monkey
         net.readability._tidying.clear()  # (its claim ran out)
     assert net.readability.left(proj) == 0
     assert "tidy_done" in tools.tool_names(fork=True) and "tidy_done" not in tools.tool_names(fork=False)
+
+
+def test_a_held_file_taken_up_again_counts_as_a_try(tmp_path, monkeypatch):
+    """A helper that never finished one file got it back at every claim with no try against it, so a file it kept
+    failing to tidy never left and left() never reached 0: taking a held file up again counts as a try too, and after
+    POLISH_TRIES it's let go, as a function is."""
+    from decompnet.app import readable
+
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    root.mkdir(parents=True)
+    slug = _project(net, root, monkeypatch)
+    net.forks.sync(slug, log=lambda *_: None)
+    net.store.conn.execute("UPDATE functions SET n_insns=16, status='matched' WHERE name='game_b'")
+    net.store.conn.execute("UPDATE functions SET readable=1 WHERE name IN ('game_a', 'game_b')")
+    proj = net._project(slug)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    assert net.readability.left(proj) == 1  # the file
+    for _ in range(readable.POLISH_TRIES):  # never cleared: each claim_readable gives the same helper its file back
+        assert net.readability.claim(agent, slug).startswith("TIDY A FILE: game")
+    said = net.readability.claim(agent, slug)
+    assert said.startswith(f"You held game; it was tried {readable.POLISH_TRIES} times without being tidied")
+    assert "TIDY A FILE" not in said and "Stop here" in said
+    assert net.readability.left(proj) == 0 and net.readability._tidying == {}
+    kinds = [r["kind"] for r in net.store.all("SELECT kind FROM events WHERE kind='tidy'")]
+    assert len(kinds) == readable.POLISH_TRIES
 
 
 def test_a_manifest_without_a_scope_covers_the_games_own_code_and_the_scope_round_trips(tmp_path):

@@ -51,6 +51,12 @@ GIVEN_UP = ("SELECT p.detail FROM events p WHERE p.project_id=? AND p.kind='poli
 TODO = f"status='matched' AND readable=0 AND {GAME_CODE} AND name NOT IN ({GIVEN_UP})"
 
 
+def _left_as_it_is(name: str, without: str) -> str:
+    """What a helper is told of a function or file it held that has had its tries: POLISH_TRIES counts every helper's
+    tries, not this one's, so it says it was tried rather than you tried it (#108)."""
+    return f"You held {name}; it was tried {POLISH_TRIES} times without {without}, so it's left as it is now.\n\n"
+
+
 TIDY = """\
 TIDY A FILE: {unit} ({source}). Every function of the game's in it is readable now; the file around them isn't
 yet. Make it read like code a person wrote, one edit_file at a time: each edit must build and keep every match, or
@@ -92,6 +98,13 @@ class Readability:
             f"HAVING COUNT(*) >= {POLISH_TRIES}) ORDER BY n DESC, unit", proj["id"], proj["id"], proj["id"])
         return [r["unit"] for r in rows]
 
+    def _file_given_up(self, proj, unit: str) -> bool:
+        """Whether a file was handed out POLISH_TRIES times without being tidied (rather than tidied while held)."""
+        row = self.net.store.one(
+            "SELECT SUM(kind='tidy') AS tried, SUM(kind='tidied') AS tidied FROM events "
+            "WHERE project_id=? AND detail=? AND kind IN ('tidy', 'tidied')", proj["id"], unit)
+        return (row["tried"] or 0) >= POLISH_TRIES and not row["tidied"]
+
     def _matching_c(self, proj, fn) -> str:
         """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
         if self.net.is_rom(proj):
@@ -111,24 +124,35 @@ class Readability:
         return self.net.store.one(f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND {TODO}",
                                   proj["id"], proj["id"])["n"] + len(self._untidy(proj))
 
-    def _tidy_job(self, agent: Agent, proj) -> str | None:
-        """A file to tidy for this agent (the one it holds, or the next nobody does), or None."""
+    def _tidy_job(self, agent: Agent, proj) -> tuple[str | None, str | None]:
+        """A file to tidy for this agent (the one it holds, or the next nobody does), and the file it held that was let
+        go, if any."""
         now = time.time()
+        left = None
         with self._tidy_lock:
             self._tidying = {k: v for k, v in self._tidying.items() if v[1] > now}
             mine = next((u for (pid, u), (who, _) in self._tidying.items() if pid == proj["id"] and who == agent.id),
                         None)
+            untidy = self._untidy(proj)
+            if mine is not None and mine not in untidy:
+                # its tries are up, or it was tidied while held: the next file, as a function given up on or made
+                # readable while held is let go (#108)
+                del self._tidying[(proj["id"], mine)]
+                left = mine if self._file_given_up(proj, mine) else None
+                mine = None
             if mine is None:
                 held = {u for (pid, u) in self._tidying if pid == proj["id"]}
-                mine = next((u for u in self._untidy(proj) if u not in held), None)
+                mine = next((u for u in untidy if u not in held), None)
                 if mine is None:
-                    return None
-                with self.net.store.tx() as db:
-                    self.net._event(db, proj["id"], agent.id, "tidy", mine)
+                    return None, left
+            # taking a held file up again is a try too: one a helper never finished got it back every claim without a
+            # try against it, so it never left and left() never reached 0, as a function did before #108
+            with self.net.store.tx() as db:
+                self.net._event(db, proj["id"], agent.id, "tidy", mine)
             self._tidying[(proj["id"], mine)] = (agent.id, now + CLAIM_SECONDS)
         fp = ForkProject(Path(proj["root"]))
         source = next((u.source for u in fp.units() if u.name == mine), None) or mine
-        return TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source))
+        return TIDY.format(unit=mine, source=source, data=self._data_held(agent, proj, fp, source)), left
 
     def _data_held(self, agent: Agent, proj, fp: ForkProject, source: str) -> str:
         """What the globals a source file declares hold in the original (read_data's summary of each), for its tidy
@@ -205,11 +229,14 @@ class Readability:
                 if fn is not None:
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + CLAIM_SECONDS))
                     self.net._event(db, proj["id"], agent.id, "polish", fn["name"])  # not "claim": the feed and routing tell them apart
-        given_up = (f"You held {left}, tried {POLISH_TRIES} times without a rewrite that kept it matching: it's left as "
-                    "it is now.\n\n") if left else ""
+        given_up = _left_as_it_is(left, "a rewrite that kept it matching") if left else ""
         if fn is None:
-            if fork and (job := self._tidy_job(agent, proj)) is not None:  # every function done: the files next
-                return given_up + job
+            if fork:  # every function done: the files next
+                job, file_left = self._tidy_job(agent, proj)
+                if file_left:
+                    given_up += _left_as_it_is(file_left, "being tidied")
+                if job is not None:
+                    return given_up + job
             if self.left(proj):  # what's left is held by other helpers
                 return given_up + self._held_by_others(proj)
             return (given_up + "Every matched function is readable already (or was tried "
