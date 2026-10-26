@@ -2997,17 +2997,17 @@ class ForkEngine:
                     own = max(1, len(d.literals)) if d.literals else scaled(d.match_percent, fn["n_insns"])
                 if quiet is None:  # an attempt, never the best: release puts the best back in the file
                     self.net._record(fn, agent, own, code, 0, compiled=True, best=False)
-                names = ", ".join(broken[:8])
+                listed = ", ".join(broken[:8])
                 if own is None:
-                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}. Check you "
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. Check you "
                             "replaced the right definition (overloads?) and didn't change shared code.")
                 elif d.matched:
-                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}, though "
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}, though "
                             f"{fn['name']} itself matches. What changed them is how it's declared or what else you "
                             "sent (its calling convention, static or inline, a shared declaration): check you "
                             "replaced the right definition (overloads?).")
                 else:
-                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {names}. {fn['name']} "
+                    text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. {fn['name']} "
                             f"itself came out at {percent_text(d.match_percent)} (score {own}): recorded as an "
                             f"attempt, not kept in {unit.source}. If they changed only because of how {fn['name']} "
                             "compiles into them (inlined, or whole-program optimisation choosing registers across "
