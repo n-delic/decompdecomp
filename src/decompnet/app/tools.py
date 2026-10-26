@@ -344,9 +344,7 @@ READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context
                        "guess_struct", "compiler_map", "list_functions", "search_flags", "search_notes",
                        "find_similar", "guide", "read_file", "search_code", "file_status"})
 
-ROM_ONLY = {"get_context", "edit_context", "split_function", "report_boundary", "get_class",
-            "guess_struct", "redraft",
-            "compiler_map", "search_flags"}
+ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
 FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done"}
 
 

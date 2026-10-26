@@ -39,8 +39,11 @@ def test_a_running_compiler_stops_without_waiting_for_its_timeout(tmp_path, monk
 
 
 def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, monkeypatch):
+    (tmp_path / "include").mkdir()
+    (tmp_path / "include/common.h").write_text("/* shared header */\n")
     (tmp_path / saves.MANIFEST).write_text(json.dumps({
-        "format": saves.FORMAT, "game": {"sha1": "same"},
+        "format": saves.FORMAT, "game": {"sha1": "same"}, "headers": {"": "common.h"},
+        "layout": [], "functions": {},
     }))
     monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
         read_game=lambda *_: SimpleNamespace(info={"sha1": "same"})))
@@ -56,7 +59,8 @@ def test_restore_import_uses_the_same_cancellation_scope_as_judging(tmp_path, mo
         raise RuntimeError("cancelled at import")
 
     with pytest.raises(RuntimeError, match="cancelled at import"):
-        saves.restore(SimpleNamespace(import_rom=importing), str(tmp_path), tmp_path / "game", log)
+        net = SimpleNamespace(import_rom=importing, store=SimpleNamespace(all=lambda *_: []))
+        saves.restore(net, str(tmp_path), tmp_path / "game", log)
     assert checks
     assert compiler._CANCEL_CHECK.get() is None
 
