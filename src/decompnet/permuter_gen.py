@@ -79,13 +79,42 @@ def msvc_as_c(text: str) -> str:
     return _NOTHING.sub("", _INLINE.sub("inline", text))
 
 
-class Restorer:
-    """The source as pycparser reads it, and each variant back in MSVC's words: `__int64` as its stand-in, and the
-    calling conventions and `__declspec`s noted with the name each was on and put back in front of it (the first
-    time a variant names it: its declaration, as the source's order is kept). One the randomizer moved or lost costs
-    a compile or a worse score, never a wrong match: the judge scores what the compiler makes of the variant."""
+# C++ in a function's own C, each as a name or a call pycparser reads, and back (Restorer): `A::B` and `A::~A`, a
+# template's arguments (`RawAt<float>(p, 4)`, `static_cast<int>(x)`), a reference (`const T &a`), a local built by
+# its constructor (`T t(a, b);`) and a temporary (`T(a, b)`)
+_SCOPE, _DTOR = "__DDq__", "DDdtor_"
+_QUALIFIED = re.compile(r"(?<![\w:])((?:[A-Za-z_]\w*::)+~?[A-Za-z_]\w*)")
+_TEMPLATE_ARGS = r"(?:[\w\s*&,:]|<[\w\s*&,:]*>)*"
+_TEMPLATE_ID = re.compile(rf"\b([A-Za-z_]\w*)\s*<({_TEMPLATE_ARGS})>(?=\s*[(:])")
+_TEMPLATE_BACK = re.compile(r"\bDDt(\d+)_\w*")
+_CONST_METHOD = re.compile(r"\)\s*const(\s*)(?=\{)")
+C_TYPE_WORDS = frozenset("void char short int long float double signed unsigned _Bool".split())
 
-    def __init__(self, source: str):
+
+def _body_depths(text: str) -> list[int]:
+    """The brace depth at each character of `text` (comments and strings already gone, plain_c)."""
+    depths, depth = [], 0
+    for ch in text:
+        if ch == "}":
+            depth -= 1
+        depths.append(depth)
+        if ch == "{":
+            depth += 1
+    return depths
+
+
+class Restorer:
+    """The source as pycparser reads it, and each variant back as the source wrote it.
+
+    MSVC's words: `__int64` as its stand-in, and the calling conventions and `__declspec`s noted with the name each
+    was on and put back in front of it (the first time a variant names it: its declaration, as the source's order is
+    kept). C++ (most of an x86 game's near misses are methods): what pycparser can't read becomes a name or a call it
+    can (`_SCOPE`, `DDt<n>_`, `DDref_`, `DDctor`, `DDnew_`), which the randomizer moves about like any other, and goes
+    back as it was; `types` are the names the header has for types, which tell `T t(a);` from a call. Anything the
+    randomizer moved or lost costs a compile or a worse score, never a wrong match: the judge scores what the
+    compiler makes of the variant."""
+
+    def __init__(self, source: str, types=frozenset()):
         self.placed: list[tuple[str, str, bool]] = []  # (the words, the name, right before it rather than its line)
         for m in _CALLCONV.finditer(source):
             self.placed.append((m.group(0), m.group(2), True))
@@ -94,9 +123,59 @@ class Restorer:
         found = _INLINE.search(source)
         self.inline = found.group(0) if found else None
         self.suffixes = bool(_MSVC_SUFFIX.search(source))
-        self.source = _EXTERN_C_AT.sub("", msvc_as_c(source))
+        self.templates: list[str] = []
+        self.const_methods: list[str] = []
+        self.source = self._cxx_as_c(_EXTERN_C_AT.sub("", msvc_as_c(source)), set(types) | C_TYPE_WORDS)
+
+    def name(self, function: str) -> str:
+        """`function` as the source pycparser reads names it (`A::f`: A__DDq__f)."""
+        return function.replace("::", _SCOPE).replace("~", _DTOR)
+
+    def _cxx_as_c(self, text: str, types: set[str]) -> str:
+        def template(m: re.Match) -> str:
+            self.templates.append(m.group(0))
+            return f"DDt{len(self.templates) - 1}_{m.group(1)}"
+
+        text = _TEMPLATE_ID.sub(template, text)
+        for m in re.finditer(rf"((?:[A-Za-z_]\w*::)*~?[A-Za-z_]\w*)\s*\([^{{;]*?{_CONST_METHOD.pattern}", text):
+            self.const_methods.append(self.name(m.group(1)))
+        text = _CONST_METHOD.sub(r")\1", text)
+        text = _QUALIFIED.sub(lambda m: self.name(m.group(1)), text)
+        typed = "|".join(sorted(map(re.escape, types), key=len, reverse=True))
+        # a reference, where only a declaration can have it: after a type, before the name it declares
+        text = re.sub(rf"\b((?:{typed})\s*(?:\bconst\b\s*)?)&\s*([A-Za-z_]\w*)(?=\s*[,)=;\[])", r"\1*DDref_\2", text)
+        depths = _body_depths(text)
+        out, last = [], 0
+        # in a body: `T t(args);` builds a local, `T(args)` is a temporary (sizeof(T), (T *) and `T x` aren't these)
+        for m in re.finditer(rf"(?<![\w.>])({typed})(\s+[A-Za-z_]\w*)?\s*\(", text):
+            if depths[m.start()] < 1 or m.group(1) in C_TYPE_WORDS and not m.group(2):
+                continue
+            head = text[max(0, m.start() - 1):m.start()].strip()
+            if m.group(2) and head not in ("", ";", "{", "}"):
+                continue
+            out.append(text[last:m.start()])
+            out.append(f"{m.group(1)}{m.group(2)} = DDctor(" if m.group(2) else f"DDnew_{m.group(1)}(")
+            last = m.end()
+        return "".join(out) + text[last:]
+
+    def _cxx_back(self, variant: str) -> str:
+        variant = re.sub(r"\b([A-Za-z_]\w*)\s*=\s*DDctor\(", r"\1(", variant)
+        variant = re.sub(r"\bDDnew_(\w+?)\(", r"\1(", variant)
+        variant = re.sub(r"\*\s*DDref_(\w+)", r"&\1", variant)
+        for name in self.const_methods:
+            m = re.search(rf"\b{re.escape(name)}\s*\(", variant)
+            if m:
+                depth, i = 0, m.end() - 1
+                for i in range(m.end() - 1, len(variant)):
+                    depth += {"(": 1, ")": -1}.get(variant[i], 0)
+                    if depth == 0:
+                        break
+                variant = f"{variant[:i + 1]} const{variant[i + 1:]}"
+        variant = variant.replace(_SCOPE, "::").replace(_DTOR, "~")
+        return _TEMPLATE_BACK.sub(lambda m: self.templates[int(m.group(1))], variant)
 
     def restore(self, variant: str) -> str:
+        variant = self._cxx_back(variant)
         variant = _STAND_IN.sub(lambda m: f"{'unsigned ' if m.group(1) else ''}__int{m.group(2)}", variant)
         if self.suffixes:
             variant = _C_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).lower()}i64", variant)
@@ -241,6 +320,14 @@ _CAST = re.compile(r"\(\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)+\)")  # (D3DMA
 EXPANSIONS = 8
 
 
+def declared_types(text: str) -> set[str]:
+    """The names `text` (the header as read, with its typedefs) has for types: tags and typedef names."""
+    typedefs = re.findall(r"\btypedef\b[^;{]*?\b([A-Za-z_]\w*)\s*(?:\[[^\]]*\]\s*)*;", text)
+    typedefs += re.findall(r"\btypedef\b[^;{]*\(\s*\*\s*([A-Za-z_]\w*)\s*\)", text)
+    typedefs += re.findall(r"\}\s*([A-Za-z_]\w*)\s*;", text)  # typedef struct {...} T;
+    return {name for _, name in _TAG.findall(text)} | set(typedefs)
+
+
 def _outside_braces(text: str) -> str:
     out, depth = [], 0
     for ch in text:
@@ -316,10 +403,13 @@ def main() -> int:
         # and back in front of each variant for the compiler: kept in, no draft ever parsed (#ifndef M2C_DEFINES)
         source = plain_c(job["source"])
         directives = "".join(line + "\n" for line in source.splitlines() if line.lstrip().startswith("#"))
-        msvc = Restorer(plain_c(source, directives=False))
         header = cxx_as_c(msvc_as_c(plain_c(expand_macros(plain_c(job["header"])), directives=False)))
+        own = plain_c(source, directives=False)
+        types = declared_types(f"{STAND_INS}{type_names(header, msvc_as_c(own))}{header}")
+        msvc = Restorer(own, types)
         unit = (f"{STAND_INS}{type_names(header, msvc.source)}{header}\ntypedef int {SOURCE_STARTS};\n"
                 f"{msvc.source}\n")
+        name = msvc.name(name)
         rng = random.Random(job["seed"])
         try:
             weights = get_default_randomization_weights(job.get("family") or "base")
