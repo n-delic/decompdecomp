@@ -121,6 +121,9 @@ def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
         def permuter_header(self, fork, name):
             return HEADER
 
+        def permuter_name(self, fork, name, source):
+            return name
+
     class ForkNet(FakeNet):
         forks = Forks()
 
@@ -140,6 +143,24 @@ def test_a_projects_turn_judges_its_variants_in_one_run_of_tries(monkeypatch):
     batches(monkeypatch, ["far", "same"])
     Recording(net, {"same": 0})._permute(AGENT, net.project_row("game"), net.function(), State())
     assert events == [("run", ""), ("judge", "far"), ("judge", "same"), ("end", ""), ("let go", "f")]
+
+
+def test_decomp_permuter_looks_a_function_up_by_the_name_its_c_has(monkeypatch):
+    """A PC or Xbox game's function is its mangled symbol, which no C spells: every turn ended with "Function
+    ?Update@@YAXH@Z not found in base.c". The generator gets the name the definition has (ForkEngine._names)."""
+    import json as _json
+
+    from decompnet.app.forkengine import ForkEngine
+
+    class Engine:
+        _meta, _names, _find = staticmethod(ForkEngine._meta), staticmethod(ForkEngine._names), ForkEngine._find
+
+        def _fn(self, slug, name):
+            return {"name": name, "meta": _json.dumps({"symbol": name, "demangled": "void __cdecl Update(int)"})}
+
+    source = "// FUNCTION: 0x1000\nvoid Update(int n)\n{\n    g = n;\n}\n"
+    assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", source) == "Update"
+    assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", "int x;\n") == "?Update@@YAXH@Z"
 
 
 def test_the_generator_gets_the_header_as_c(monkeypatch):
