@@ -25,6 +25,7 @@ import json
 import logging
 import queue
 import random
+import re
 import subprocess
 import threading
 import time
@@ -33,7 +34,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .. import consoles, scoring, seeds, toolchains
+from .. import consoles, permuter_gen, scoring, seeds, toolchains
 from ..hostenv import NO_WINDOW
 from ..network import NetworkError
 from ..permuter import mutate
@@ -55,6 +56,7 @@ REWRITE_MISSES = 200  # simple rewrites in a row that change nothing: none appli
 MAX_INSNS = 400  # bigger near misses are left to agents: one variant takes too long to judge
 IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks again
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
+_NAME = re.compile(r"[A-Za-z_]\w*")
 HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
 _EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
@@ -72,6 +74,16 @@ def weight_family(cfg: dict, vram: int | None, fork: bool) -> str:
 
 def available() -> bool:
     return toolchains.installed(TOOL) is not None
+
+
+def permuter_header(header: str, source: str) -> str:
+    """The part of `header` the function's C uses (seeds.HeaderIndex), which is all decomp-permuter has to read.
+    One construct pycparser can't read anywhere in the header stopped it on every function: an x86 game's headers
+    are C++ with MSVC's words, thousands of lines of them, where one function needs a few dozen declarations.
+    MSVC's words go first (permuter_gen.msvc_as_c): `struct __declspec(align(16)) CVec4` was a struct named
+    `__declspec` to the reader, so the vector type every near miss used was left out."""
+    index = seeds.HeaderIndex(permuter_gen.msvc_as_c(header))
+    return "\n".join(d.text for d in index.used(_NAME.findall(source)))
 
 
 def generator_argv() -> list[str]:
@@ -263,8 +275,9 @@ class Permuter:
                 held.enter_context(self.net.forks.trial_run(proj, fn["unit"]))
             if available():
                 # (as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole header)
-                header = seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
-                                      self.net._context(proj["id"], fn["unit"])["header"])
+                header = permuter_header(seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
+                                                      self.net._context(proj["id"], fn["unit"])["header"]),
+                                         fn["best_source"])
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
                 try:
                     gen = Generator()
