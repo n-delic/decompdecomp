@@ -426,6 +426,43 @@ def test_msvcs_words_go_back_into_each_variant():
                                   "{\n  unsigned __int64 t = a + 0x10ui64;\n  return t + cb(1);\n}\n")
 
 
+def test_a_methods_cxx_goes_back_into_each_variant():
+    """Most of an x86 game's near misses are methods: `A::f`, templates, references, a local built by its
+    constructor and a temporary each become C pycparser reads, and go back as they were in every variant."""
+    from decompnet.permuter_gen import Restorer
+
+    source = ("bool Widget::Moved(const Vec2 &to, int n) const\n{\n    Vec2 d(to.x - pos.x, 0.0f);\n"
+              "    float *f = &RawAt<float>(this, 0x10);\n    *f = Base::Scale(Vec2(1.0f, 2.0f), n);\n"
+              "    return d.x != 0.0f && m_state == Widget::STATE_IDLE;\n}\n")
+    r = Restorer(source, {"Vec2", "Widget"})
+    assert "::" not in r.source and "<" not in r.source.replace("< ", "") and "&to" not in r.source
+    assert r.name("Widget::Moved") == "Widget__DDq__Moved" and "Vec2 d = DDctor(" in r.source
+    assert "DDnew_Vec2(1.0f, 2.0f)" in r.source and "const Vec2 *DDref_to" in r.source
+    assert r.restore(r.source) == source
+
+
+def test_cxx_that_isnt_a_constructor_is_left_alone():
+    from decompnet.permuter_gen import Restorer
+
+    source = "int f(Vec2 *v, int a)\n{\n    int n = sizeof(Vec2) + g(a) + (a & 3);\n    return (Vec2 *) v != 0;\n}\n"
+    assert Restorer(source, {"Vec2"}).source == source
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_method():
+    job = {"header": CXX_HEADER, "family": "base", "seed": 1, "count": 8, "function": "Widget::Count",
+           "source": "int Widget::Count(const Vec2 &at) const\n{\n    Vec2 d(at.x, pos.y);\n    int n = 0;\n"
+                     "    for (Widget *w = this; w; w = w->next) n += w->mode;\n    return n + (int) d.x;\n}\n"}
+    gen = permute.Generator()
+    try:
+        job["header"] = permute.permuter_header(job["header"], job["source"])
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all(" Widget::Count(const Vec2 &at) const\n" in v and "Vec2 d(" in v and "DD" not in v
+                            for v in variants)
+
+
 @needs_tool
 def test_decomp_permuter_reads_a_c_function_among_cxx_headers():
     job = {"header": CXX_HEADER + "typedef unsigned __int64 Id;\n",
