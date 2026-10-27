@@ -20,7 +20,10 @@ decomp-permuter reads C through pycparser, which knows neither comments nor the 
 do the header's preprocessor lines (as for m2c's context, seeds.py), and the source's, which each variant gets back
 at its top. Macros stay undefined here, which is fine while the code only names them (GRAVITY) or calls them like
 a function: the compiler still gets them. A macro call pycparser can't read as C (a type as an argument) doesn't
-parse, and the permuter falls back to its simple rewrites (permuter.py).
+parse, and the permuter falls back to its simple rewrites (permuter.py). The header's object-like macros are put in
+where it uses them, MSVC's words are rewritten (`msvc_as_c`; in the source, `Restorer` puts them back in each
+variant), and a header written for C++ is read as the C of its types (`cxx_as_c`, `type_names`). C++ in the
+function itself (a method, a constructor call, a template) still isn't read.
 
 The walk is decomp-permuter's own: a variant is the last one rewritten once more (KEEP of the time) or the source
 rewritten afresh, so variants drift a few rewrites away from the source and come back.
@@ -45,6 +48,260 @@ def plain_c(text: str, directives: bool = True) -> str:
     return text if directives else "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
+# ---------------------------------------------------------------- MSVC's words, and a C++ header read as C
+# pycparser reads C99. A PC or Xbox game's code is MSVC's: `__int64`, calling conventions and `__declspec` in C, and
+# headers written for C++. An x86 game's shared header had `typedef unsigned __int64 ...;`, so decomp-permuter read
+# not one of its near misses (October 2026: 126 of 127 turns fell back to the simple rewrites).
+
+INT_TYPES = {"8": "char", "16": "short", "32": "int", "64": "long long"}
+# __intN as a stand-in type name: a variant keeps the stand-in, which goes back to MSVC's words (an old MSVC has no
+# `long long`)
+STAND_INS = "".join(f"typedef {t} DD_int{n};\ntypedef unsigned {t} DD_uint{n};\n" for n, t in INT_TYPES.items())
+_MSVC_INT = re.compile(r"\b(?:(unsigned)\s+|signed\s+)?__int(8|16|32|64)\b")
+_MSVC_SUFFIX = re.compile(r"\b(\d[0-9A-Fa-fxX]*?)(u?)i64\b", re.I)  # 0x...ui64: C's ULL
+_C_SUFFIX = re.compile(r"\b(\d[0-9A-Fa-fxX]*?)(u?)ll\b", re.I)
+_STAND_IN = re.compile(r"\bDD_(u?)int(8|16|32|64)\b")
+_DECLSPEC = r"__declspec\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
+_CALLCONV = re.compile(r"\b(?:_{1,2}(?:cdecl|stdcall|fastcall|thiscall|clrcall|vectorcall)|WINAPI|CALLBACK|APIENTRY)"
+                       r"\b(?=(\s*(?:\*\s*)*)([A-Za-z_]\w*))")
+_DECLSPEC_AT = re.compile(rf"\b{_DECLSPEC}\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=\[{{,])")
+_EXTERN_C_AT = re.compile(r"\bextern\s+\"C\"\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=\[,])")
+_INLINE = re.compile(r"\b__(?:force)?inline\b")
+_NOTHING = re.compile(rf"\b(?:__w64|__unaligned|__ptr32|__ptr64|__restrict|{_DECLSPEC})\s*|\b(?:_{{1,2}}(?:cdecl|stdcall"
+                      r"|fastcall|thiscall|clrcall|vectorcall)|WINAPI|CALLBACK|APIENTRY)\b\s*")
+
+
+def msvc_as_c(text: str) -> str:
+    """`text` with MSVC's words that pycparser can't read rewritten as C it reads, for good: the header, which the
+    permuter reads but never writes."""
+    text = _MSVC_INT.sub(lambda m: f"DD_{'u' if m.group(1) else ''}int{m.group(2)}", text)
+    text = _MSVC_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).upper()}LL", text)
+    return _NOTHING.sub("", _INLINE.sub("inline", text))
+
+
+class Restorer:
+    """The source as pycparser reads it, and each variant back in MSVC's words: `__int64` as its stand-in, and the
+    calling conventions and `__declspec`s noted with the name each was on and put back in front of it (the first
+    time a variant names it: its declaration, as the source's order is kept). One the randomizer moved or lost costs
+    a compile or a worse score, never a wrong match: the judge scores what the compiler makes of the variant."""
+
+    def __init__(self, source: str):
+        self.placed: list[tuple[str, str, bool]] = []  # (the words, the name, right before it rather than its line)
+        for m in _CALLCONV.finditer(source):
+            self.placed.append((m.group(0), m.group(2), True))
+        for m in [*_DECLSPEC_AT.finditer(source), *_EXTERN_C_AT.finditer(source)]:
+            self.placed.append((m.group(0).strip(), m.group(1), False))
+        found = _INLINE.search(source)
+        self.inline = found.group(0) if found else None
+        self.suffixes = bool(_MSVC_SUFFIX.search(source))
+        self.source = _EXTERN_C_AT.sub("", msvc_as_c(source))
+
+    def restore(self, variant: str) -> str:
+        variant = _STAND_IN.sub(lambda m: f"{'unsigned ' if m.group(1) else ''}__int{m.group(2)}", variant)
+        if self.suffixes:
+            variant = _C_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).lower()}i64", variant)
+        if self.inline:
+            variant = re.sub(r"\binline\b", self.inline, variant)
+        for words, name, before in self.placed:
+            m = re.search(rf"(?:\*\s*)*\b{re.escape(name)}\b", variant)
+            if not m:
+                continue
+            at = m.start()
+            if not before:  # a __declspec: in front of its declaration, or of a struct's name (its alignment)
+                line = variant.rfind("\n", 0, at) + 1
+                lead = variant[line:at]
+                if not re.search(r"\b(?:struct|union|class)\s+$", lead):
+                    at = line + len(lead) - len(lead.lstrip())
+            variant = f"{variant[:at]}{words} {variant[at:]}"
+        return variant
+
+
+_ACCESS = re.compile(r"\b(?:public|private|protected)\s*:(?!:)")
+_DROPPED_WORDS = re.compile(r"\b(?:explicit|mutable|virtual)\b\s*|\bextern\s+\"C(?:\+\+)?\"\s*(?!\{)")
+_TAG = re.compile(r"\b(struct|union|class|enum)\s+([A-Za-z_]\w*)")
+_DEFAULT_ARG = re.compile(r"\s*=\s*(?:[^,()]|\([^()]*\))+(?=[,)])")
+_REFERENCE = re.compile(r"(?<=[\w*>\s])&(?=\s*(?:const\b\s*)?[A-Za-z_)\[,])")
+CXX_TYPES = {"bool": "_Bool", "wchar_t": "unsigned short"}
+
+
+def _segments(text: str):
+    """`text`'s declarations at its top level, in order, each (head, body): body is what's between the braces of a
+    function's, namespace's or `extern "C"`'s block (the head then ends before it), else None and head is the whole
+    declaration with its `;` (a struct's braces in it)."""
+    i, start, depth = 0, 0, 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif ch == ";" and depth == 0:
+            yield text[start:i + 1], None
+            start = i + 1
+        elif ch == "{" and depth == 0:
+            close, level = i, 0
+            for close in range(i, len(text)):
+                level += {"{": 1, "}": -1}.get(text[close], 0)
+                if level == 0:
+                    break
+            head = text[start:i]
+            block = re.search(r"\)\s*(?:const\s*)?(?::[^{]*)?$", head) and not re.search(r"\b(?:struct|union|class|enum)\b[^()]*$", head)
+            if block or re.match(r"\s*(?:namespace\b|extern\s+\"C)", head):
+                yield head, text[i + 1:close]
+                start = i = close + 1
+                continue
+            i = close  # a struct, union, enum or initializer: its declaration goes on to its `;`
+        i += 1
+    if text[start:].strip():
+        yield text[start:], None
+
+
+_DIRECT_INIT = re.compile(r"\w\s*\(\s*[-+&\"'.\d]")  # a constructor's arguments, not parameters
+
+
+def _without_initializer(head: str) -> str:
+    """A declaration without its initial value (`= CVec2(48.0f, 192.0f)` is C++; the permuter needs the type only),
+    when the `=` comes before any brace of its own (an enum's or struct's values stay)."""
+    depth = 0
+    for i, ch in enumerate(head):
+        if ch in "([{":
+            if ch == "{":
+                return head
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == "=" and depth == 0:
+            return head[:i].rstrip() + ";"
+    return head
+
+
+def _member_function(member: str) -> bool:
+    """A struct member that is a function (a C++ method, constructor or operator), not a pointer to one."""
+    m = re.search(r"\(", member)
+    return bool(m) and not re.match(r"\s*\*", member[m.end():]) or bool(re.search(r"\boperator\b", member))
+
+
+def _struct_as_c(head: str) -> str:
+    """A declaration with a struct (or class) in it, as C: its members only, with no base classes or methods."""
+    open_ = head.find("{")
+    close = head.rfind("}")
+    if open_ < 0 or close < open_:
+        return head
+    before = re.sub(r"(\b(?:struct|union|class)\s+\w+)\s*:[^{]*$", r"\1 ", head[:open_])
+    members = []
+    for member, body in _segments(_ACCESS.sub("", head[open_ + 1:close])):
+        if body is not None or not member.strip() or _member_function(member):
+            continue
+        if re.match(r"\s*(?:static|typedef|friend|using|template)\b", member):
+            continue
+        members.append(_struct_as_c(member) if "{" in member else member)
+    return f"{before}{{{''.join(members)}\n}}{head[close + 1:]}"
+
+
+def cxx_as_c(header: str) -> str:
+    """A header written for C++ as decomp-permuter can read it, for its types alone: a class is a struct of its
+    data members (no methods, base classes or access words), every struct, union and enum is a type by its own name
+    as in C++, references are pointers, and what C has no form for (templates, out-of-class members, operators)
+    is left out. The permuter never writes the header, so this only has to parse."""
+    out = []
+
+    def walk(text: str) -> None:
+        for head, body in _segments(_DROPPED_WORDS.sub("", text)):
+            stripped = head.strip()
+            if re.match(r"(?:namespace\b|extern\s+\"C)", stripped):
+                walk(body or "")
+            elif re.match(r"(?:template|using|namespace)\b", stripped) or (
+                    "{" not in head and ("::" in head or re.search(r"\boperator\b", head))):
+                continue
+            elif body is not None:  # a function defined here: its prototype is all the permuter needs
+                out.append(_DEFAULT_ARG.sub("", re.sub(r"\)\s*(?:const\s*)?:[^{]*$", ")", head)).rstrip() + ";")
+            else:
+                head = _without_initializer(head)
+                if _DIRECT_INIT.search(head) and "{" not in head:  # C++'s `T g(1.0f, 2.0f);`
+                    continue
+                if "{" in head:
+                    out.append(_struct_as_c(head))
+                else:
+                    out.append(_DEFAULT_ARG.sub("", head) if "(" in head else head)
+
+    walk(header)
+    return _REFERENCE.sub("*", re.sub(r"\bclass\b", "struct", "\n".join(out)))
+
+
+_OBJECT_MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)(?![\w(])[ \t]*(.*)$", re.M)
+_C_WORDS = frozenset("""auto break case char const continue default do double else enum extern float for goto if
+inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile
+while _Bool _Complex""".split())
+# an undeclared name where only a type can be: before a declarator, at the start of a declaration or a parameter
+_TYPE_SPOT = re.compile(r"(?:^|(?<=[;{}(,])|\b(?:const|volatile|static|extern|inline|register)\b)\s*([A-Za-z_]\w*)\b"
+                        r"(?=\s*(?:(?:\*\s*|\bconst\b\s*)*[A-Za-z_]\w*\s*[;,()\[=:]|\(\s*\*))", re.M)
+_PARAMETERS = re.compile(r"\w\s*\(([^()]*)\)\s*[;{]")  # a prototype's
+_UNNAMED = re.compile(r"^\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)*$")  # f(size_t)
+_CAST = re.compile(r"\(\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)+\)")  # (D3DMATRIX *)
+EXPANSIONS = 8
+
+
+def _outside_braces(text: str) -> str:
+    out, depth = [], 0
+    for ch in text:
+        depth += {"{": 1, "}": -1}.get(ch, 0)
+        out.append(ch if depth == 0 or ch == "{" and depth == 1 else " " if ch != "\n" else ch)
+    return "".join(out)  # rounds of macro expansion: a macro naming a macro, a few deep
+
+
+def expand_macros(header: str) -> str:
+    """The header with its object-like macros (`#define MATCH_VOLATILE volatile`) put in where they're used, as a
+    preprocessor would: pycparser has none, and a macro in a declaration (a member's qualifier, a list of methods)
+    stopped it. Function-like ones stay as they are; the last definition of a name wins (both branches of a
+    conditional are kept, seeds.c_only)."""
+    macros = {name: value.strip() for name, value in _OBJECT_MACRO.findall(header)}
+    if not macros:
+        return header
+    word = re.compile(r"\b(" + "|".join(map(re.escape, sorted(macros, key=len, reverse=True))) + r")\b")
+    lines = []
+    for line in header.splitlines():
+        if not line.lstrip().startswith("#"):
+            for _ in range(EXPANSIONS):
+                expanded = word.sub(lambda m: macros[m.group(1)], line)
+                if expanded == line:
+                    break
+                line = expanded
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def type_names(header: str, source: str) -> str:
+    """Typedefs for the names C++ has as types and C doesn't: each struct, union and enum by its own name (unless
+    something else is called that, a variable, a function or C's own typedef of it), and `bool`; and for the types
+    the header names but never declares, which a system header the permuter isn't given does (`HANDLE`,
+    `__m128`): to be read, a type only has to be one."""
+    text = f"{header}\n{source}"
+    untyped = re.sub(r"\btypedef\b[^;{]*;", "", text)  # (a typedef of it may come after its first use: still a type)
+
+    def taken(name: str) -> bool:  # something other than a type is called this (C++'s `T(...)` and `sizeof(T)` are
+        # the type: only the header's functions count)
+        return bool(re.search(rf"(?<!struct )(?<!union )(?<!enum )(?<!class )\b{name}\s*[;=\[]", untyped)
+                    or re.search(rf"\b{name}\s*\(", header))
+
+    out = [f"typedef {c} {w};\n" for w, c in CXX_TYPES.items()
+           if re.search(rf"\b{w}\b", text) and not re.search(rf"\btypedef\b[^;]*\b{w}\s*;", header)]
+    named = set(CXX_TYPES)
+    for kind, name in dict.fromkeys(_TAG.findall(text)):
+        named.add(name)
+        if not taken(name):
+            out.append(f"typedef {kind.replace('class', 'struct')} {name} {name};\n")
+    # where only a type can be: the header's declarations, the source's outside its functions' bodies (inside, `a * b`
+    # can be a product), and casts
+    declared = f"{header}\n{_outside_braces(source)}"
+    unnamed = [m.group(1) for params in _PARAMETERS.findall(declared) for m in map(_UNNAMED.match, params.split(","))
+               if m]
+    for name in dict.fromkeys([*_TYPE_SPOT.findall(declared), *unnamed, *_CAST.findall(text)]):
+        if name not in _C_WORDS and name not in named and not taken(name):
+            named.add(name)
+            out.append(f"typedef int {name};\n")
+    return "".join(out)
+
+
 def main() -> int:
     sys.path.insert(0, sys.argv[1])  # decomp-permuter's folder: its `src` package and its own copy of pycparser
     from perm_pycparser import c_ast
@@ -59,8 +316,10 @@ def main() -> int:
         # and back in front of each variant for the compiler: kept in, no draft ever parsed (#ifndef M2C_DEFINES)
         source = plain_c(job["source"])
         directives = "".join(line + "\n" for line in source.splitlines() if line.lstrip().startswith("#"))
-        unit = (f"{plain_c(job['header'], directives=False)}\ntypedef int {SOURCE_STARTS};\n"
-                f"{plain_c(source, directives=False)}\n")
+        msvc = Restorer(plain_c(source, directives=False))
+        header = cxx_as_c(msvc_as_c(plain_c(expand_macros(plain_c(job["header"])), directives=False)))
+        unit = (f"{STAND_INS}{type_names(header, msvc.source)}{header}\ntypedef int {SOURCE_STARTS};\n"
+                f"{msvc.source}\n")
         rng = random.Random(job["seed"])
         try:
             weights = get_default_randomization_weights(job.get("family") or "base")
@@ -91,7 +350,7 @@ def main() -> int:
                 continue
             if variant not in seen:
                 seen.add(variant)
-                yield {"variant": directives + variant}
+                yield {"variant": directives + msvc.restore(variant)}
 
     for line in sys.stdin:
         if line.strip():

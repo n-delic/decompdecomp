@@ -98,7 +98,7 @@ def test_variants_come_in_batches_from_the_first_and_the_best_c_in_turn(monkeypa
     st = State()
     p._permute(AGENT, net.project_row("game"), net.function(), st)
     assert [j["source"] for j in jobs] == [SOURCE, "closer", SOURCE]
-    assert jobs[0]["header"] == HEADER and jobs[0]["function"] == "f" and jobs[0]["family"] == "gcc"
+    assert jobs[0]["header"] == "typedef int s32;" and jobs[0]["function"] == "f" and jobs[0]["family"] == "gcc"
     assert p.judged == ["broken", "far", "closer", "far too", "same"]
     assert (st.variants, st.improved, st.matched, st.tried, st.current) == (5, 2, 1, 1, "")
     assert net.store.one("SELECT COUNT(*) AS n FROM claims")["n"] == 0
@@ -150,7 +150,21 @@ def test_the_generator_gets_the_header_as_c(monkeypatch):
                                                          "#endif\n", "version": 1}
     jobs = batches(monkeypatch, [])
     ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), net.function(), State())
-    assert jobs[0]["header"].rstrip() == HEADER.rstrip() and "class" not in jobs[0]["header"]
+    assert "typedef int s32;" in jobs[0]["header"] and "class" not in jobs[0]["header"]
+
+
+def test_the_generator_gets_the_part_of_the_header_the_function_uses():
+    """An x86 game's headers are thousands of lines of C++ with MSVC's words, and one line pycparser couldn't read
+    anywhere in them stopped decomp-permuter on every function. It gets the declarations the function needs, read
+    after MSVC's words go: `struct __declspec(align(16)) Vec4` used to be a struct named `__declspec`."""
+    header = ("typedef unsigned __int64 Id;\n"
+              "struct __declspec(align(16)) Vec4 { float x, y, z, w; };\n"
+              "struct Unused { int a; };\nclass Widget { public: void Draw(); int n; };\n"
+              "void Scale(Vec4 *v, float s);\n")
+    source = "void f(Vec4 *v, Id id) { Scale(v, 2.0f); }\n"
+    part = permute.permuter_header(header, source)
+    assert "struct Vec4 {" in part and "DD_uint64 Id" in part and "Scale" in part
+    assert "Unused" not in part and "Widget" not in part and "__declspec" not in part
 
 
 def test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites(monkeypatch):
@@ -334,6 +348,75 @@ def test_autopilots_drafts_are_permuted_with_their_macros_kept():
     finally:
         gen.close()
     assert variants and all(v.startswith("#ifndef M2C_DEFINES\n#define M2C_DEFINES\n") and " f(" in v for v in variants)
+
+
+CXX_HEADER = """#define QUALIFIER volatile
+#define METHODS public: void Slot0(int arg); void Release();
+struct Vec2 { float x, y; Vec2() {} Vec2(float ax, float ay) : x(ax), y(ay) {}
+    Vec2 operator+(const Vec2 &o) const { Vec2 r; r.x = x + o.x; return r; } };
+class Base { public: virtual ~Base(); int id; };
+class Widget : public Base {
+    METHODS
+public:
+    static int s_count;
+    Vec2 pos;
+    Widget *next;
+    QUALIFIER int mode;
+    HANDLE file;
+    int (*callback)(Widget *w);
+    bool Visible() const { return mode != 0; }
+};
+inline Vec2 Add(const Vec2 &a, const Vec2 &b) { return a + b; }
+extern "C" int __stdcall Open(const char *, size_t);
+static Vec2 s_origin = Vec2(1.0f, 2.0f);
+Vec2 g_corner(0.5f, 0.5f);
+template <class T> T Max(T a, T b) { return a > b ? a : b; }
+"""
+
+
+def test_a_cxx_header_is_read_as_the_c_of_its_types():
+    """What pycparser can't read of a header written for C++ is left out or rewritten, so a C function among the
+    classes gets decomp-permuter's variants: classes as structs of their data, methods and base classes gone, every
+    tag a type by its own name, references as pointers, macros put in, the types of system headers declared."""
+    from decompnet import permuter_gen as g
+
+    header = g.cxx_as_c(g.msvc_as_c(g.plain_c(g.expand_macros(g.plain_c(CXX_HEADER)), directives=False)))
+    assert "class" not in header and "Slot0" not in header and "Visible" not in header and "operator" not in header
+    assert "volatile int mode;" in header and "int (*callback)(Widget *w);" in header and "s_count" not in header
+    assert "Vec2 Add(const Vec2 *a, const Vec2 *b);" in header and "s_origin;" in header and "g_corner" not in header
+    assert "Max" not in header and "Open(const char *, size_t);" in header
+    names = g.type_names(header, "bool f(Widget *w) { return w->mode; }")
+    for line in ("typedef struct Widget Widget;", "typedef struct Vec2 Vec2;", "typedef int HANDLE;",
+                 "typedef int size_t;", "typedef _Bool bool;"):
+        assert line in names
+
+
+def test_msvcs_words_go_back_into_each_variant():
+    """`__int64` has a stand-in type pycparser reads (an old MSVC has no `long long`), and a calling convention, a
+    `__declspec` or `extern "C"` goes back in front of the name it was on: a variant compiles as the source did."""
+    from decompnet.permuter_gen import Restorer
+
+    source = ('extern "C" unsigned __int64 __fastcall Mix(__int64 a, int (__stdcall *cb)(int)) {\n'
+              "    return a + 0x10ui64 + cb(1);\n}\n")
+    r = Restorer(source)
+    assert "__" not in r.source.replace("DD_", "") and "extern" not in r.source and "0x10ULL" in r.source
+    variant = "DD_uint64 Mix(DD_int64 a, int (*cb)(int))\n{\n  DD_uint64 t = a + 0x10ULL;\n  return t + cb(1);\n}\n"
+    assert r.restore(variant) == ('extern "C" unsigned __int64 __fastcall Mix(__int64 a, int (__stdcall *cb)(int))\n'
+                                  "{\n  unsigned __int64 t = a + 0x10ui64;\n  return t + cb(1);\n}\n")
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_c_function_among_cxx_headers():
+    job = {"header": CXX_HEADER + "typedef unsigned __int64 Id;\n",
+           "source": "int __fastcall Count(Widget *w, Id id) {\n    int n = 0;\n    while (w) { n += w->mode; w = w->next; }\n"
+                     "    return n + (int) id;\n}\n", "function": "Count", "family": "base", "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        job["header"] = permute.permuter_header(job["header"], job["source"])
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all("int __fastcall Count(Widget *w, Id id)" in v for v in variants)
 
 
 def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):
