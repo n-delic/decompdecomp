@@ -158,7 +158,7 @@ def test_decomp_permuter_looks_a_function_up_by_the_name_its_c_has(monkeypatch):
         def _fn(self, slug, name):
             return {"name": name, "meta": _json.dumps({"symbol": name, "demangled": "void __cdecl Update(int)"})}
 
-    source = "// FUNCTION: 0x1000\nvoid Update(int n)\n{\n    g = n;\n}\n"
+    source = "void Update(int n)\n{\n    g = n;\n}\n"
     assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", source) == "Update"
     assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", "int x;\n") == "?Update@@YAXH@Z"
 
@@ -406,6 +406,8 @@ def test_a_cxx_header_is_read_as_the_c_of_its_types():
     assert "volatile int mode;" in header and "int (*callback)(Widget *w);" in header and "s_count" not in header
     assert "Vec2 Add(const Vec2 *a, const Vec2 *b);" in header and "s_origin;" in header and "g_corner" not in header
     assert "Max" not in header and "Open(const char *, size_t);" in header
+    assert "typedef int PDWORD;" in g.type_names(header, "void f(int *p) { Use((PDWORD) &p); }")
+    assert "n;" not in g.type_names(header, "int f(int n) { return (n) + 1; }")
     names = g.type_names(header, "bool f(Widget *w) { return w->mode; }")
     for line in ("typedef struct Widget Widget;", "typedef struct Vec2 Vec2;", "typedef int HANDLE;",
                  "typedef int size_t;", "typedef _Bool bool;"):
@@ -424,6 +426,9 @@ def test_msvcs_words_go_back_into_each_variant():
     variant = "DD_uint64 Mix(DD_int64 a, int (*cb)(int))\n{\n  DD_uint64 t = a + 0x10ULL;\n  return t + cb(1);\n}\n"
     assert r.restore(variant) == ('extern "C" unsigned __int64 __fastcall Mix(__int64 a, int (__stdcall *cb)(int))\n'
                                   "{\n  unsigned __int64 t = a + 0x10ui64;\n  return t + cb(1);\n}\n")
+    # a function returning a pointer has its convention after the `*`
+    r = Restorer("Vec *__stdcall Make(int n)\n{\n    return 0;\n}\n")
+    assert r.restore(r.source) == "Vec *__stdcall Make(int n)\n{\n    return 0;\n}\n"
 
 
 def test_a_methods_cxx_goes_back_into_each_variant():
