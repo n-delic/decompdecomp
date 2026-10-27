@@ -65,6 +65,7 @@ _DECLSPEC = r"__declspec\s*\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\)"
 _CALLCONV = re.compile(r"\b(?:_{1,2}(?:cdecl|stdcall|fastcall|thiscall|clrcall|vectorcall)|WINAPI|CALLBACK|APIENTRY)"
                        r"\b(?=(\s*(?:\*\s*)*)([A-Za-z_]\w*))")
 _DECLSPEC_AT = re.compile(rf"\b{_DECLSPEC}\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=\[{{,])")
+_STARS = r"(?:\*\s*)*"
 _EXTERN_C_AT = re.compile(r"\bextern\s+\"C\"\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=\[,])")
 _INLINE = re.compile(r"\b__(?:force)?inline\b")
 _NOTHING = re.compile(rf"\b(?:__w64|__unaligned|__ptr32|__ptr64|__restrict|{_DECLSPEC})\s*|\b(?:_{{1,2}}(?:cdecl|stdcall"
@@ -115,11 +116,12 @@ class Restorer:
     compiler makes of the variant."""
 
     def __init__(self, source: str, types=frozenset()):
-        self.placed: list[tuple[str, str, bool]] = []  # (the words, the name, right before it rather than its line)
-        for m in _CALLCONV.finditer(source):
-            self.placed.append((m.group(0), m.group(2), True))
+        # (the words, the name, where: right before the "name", before the "stars" of a pointer to it, on its "line")
+        self.placed: list[tuple[str, str, str]] = []
+        for m in _CALLCONV.finditer(source):  # (before a pointer's `*` only where it was: `T *__stdcall f(` returns one)
+            self.placed.append((m.group(0), m.group(2), "stars" if "*" in m.group(1) else "name"))
         for m in [*_DECLSPEC_AT.finditer(source), *_EXTERN_C_AT.finditer(source)]:
-            self.placed.append((m.group(0).strip(), m.group(1), False))
+            self.placed.append((m.group(0).strip(), m.group(1), "line"))
         found = _INLINE.search(source)
         self.inline = found.group(0) if found else None
         self.suffixes = bool(_MSVC_SUFFIX.search(source))
@@ -181,12 +183,12 @@ class Restorer:
             variant = _C_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).lower()}i64", variant)
         if self.inline:
             variant = re.sub(r"\binline\b", self.inline, variant)
-        for words, name, before in self.placed:
-            m = re.search(rf"(?:\*\s*)*\b{re.escape(name)}\b", variant)
+        for words, name, where in self.placed:
+            m = re.search(rf"{_STARS if where == 'stars' else ''}\b{re.escape(name)}\b", variant)
             if not m:
                 continue
             at = m.start()
-            if not before:  # a __declspec: in front of its declaration, or of a struct's name (its alignment)
+            if where == "line":  # a __declspec: in front of its declaration, or of a struct's name (its alignment)
                 line = variant.rfind("\n", 0, at) + 1
                 lead = variant[line:at]
                 if not re.search(r"\b(?:struct|union|class)\s+$", lead):
@@ -317,6 +319,7 @@ _TYPE_SPOT = re.compile(r"(?:^|(?<=[;{}(,])|\b(?:const|volatile|static|extern|in
 _PARAMETERS = re.compile(r"\w\s*\(([^()]*)\)\s*[;{]")  # a prototype's
 _UNNAMED = re.compile(r"^\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)*$")  # f(size_t)
 _CAST = re.compile(r"\(\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)+\)")  # (D3DMATRIX *)
+_BARE_CAST = re.compile(r"\(\s*([A-Za-z_]\w*)\s*\)\s*(?=[A-Za-z_&(]|\d)")
 EXPANSIONS = 8
 
 
@@ -382,7 +385,10 @@ def type_names(header: str, source: str) -> str:
     declared = f"{header}\n{_outside_braces(source)}"
     unnamed = [m.group(1) for params in _PARAMETERS.findall(declared) for m in map(_UNNAMED.match, params.split(","))
                if m]
-    for name in dict.fromkeys([*_TYPE_SPOT.findall(declared), *unnamed, *_CAST.findall(text)]):
+    # `(PDWORD) x`: a name only ever in parentheses before an operand is a type (one used otherwise may be a variable)
+    bare = [n for n in _BARE_CAST.findall(text) if len(re.findall(rf"\b{n}\b", text)) == len(
+        re.findall(rf"\(\s*{n}\s*\)", text))]
+    for name in dict.fromkeys([*_TYPE_SPOT.findall(declared), *unnamed, *_CAST.findall(text), *bare]):
         if name not in _C_WORDS and name not in named and not taken(name):
             named.add(name)
             out.append(f"typedef int {name};\n")
