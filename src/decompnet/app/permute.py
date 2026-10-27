@@ -279,6 +279,7 @@ class Permuter:
                                                       self.net._context(proj["id"], fn["unit"])["header"]),
                                          fn["best_source"])
                 family = weight_family(self.net.cfg(proj), fn["vram"], bool(fork))
+                name = self.net.forks.permuter_name(fork, fn["name"], fn["best_source"]) if fork else fn["name"]
                 try:
                     gen = Generator()
                 except OSError as e:  # its environment is broken: the simple rewrites still work
@@ -294,7 +295,7 @@ class Permuter:
                     # the demo ROM (at 45); taking turns, every one matched within 12 s
                     base = best_src if batches % 2 else start_src
                     batches += 1
-                    batch = gen.batch({"header": header, "source": base, "function": fn["name"], "family": family,
+                    batch = gen.batch({"header": header, "source": base, "function": name, "family": family,
                                        "seed": rng.randrange(MAX_SEED), "count": BATCH})
                     if batch is None:  # C it can't read: the simple rewrites can still try
                         gen.close()

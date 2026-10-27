@@ -2365,6 +2365,14 @@ class ForkEngine:
 
     DATA_LISTED = 12  # data symbols a brief describes
 
+    def permuter_name(self, slug: str, function: str, source: str) -> str:
+        """The name the function's definition has in `source`, which decomp-permuter looks it up by: a PC or Xbox
+        game's function is its mangled symbol (`?Update@@YAXH@Z`), which no C spells, so every turn on one ended
+        with "Function ... not found in base.c". The symbol itself when no spelling of it (_names) is defined."""
+        fn = self._fn(slug, function)
+        names = [n for n in self._names(self._meta(fn), fn) if re.fullmatch(r"[\w:~]+", n)]
+        return self._find(source, names)[0] or function
+
     def permuter_header(self, slug: str, function: str) -> str:
         """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
         the file's own declarations. It got none, so it refused every DS function ("Syntax error in base.c": `u16`
