@@ -166,7 +166,8 @@ async function loadStats() {
 function workingAgents() {
   const running = S.sessions.filter((s) => ["starting", "working", "waiting"].includes(s.state));
   const own = new Set(S.sessions.map((s) => s.agent));
-  const outside = [...new Set(S.claims.filter((c) => !own.has(c.agent) && c.agent !== AUTO).map((c) => c.agent))];
+  const outside = [...new Set(S.claims.filter((c) => c.agent && !own.has(c.agent)
+    && !APP_WORKERS.has(c.agent.replace(/^@/, ""))).map((c) => c.agent))];
   return { running, outside, n: running.length + outside.length };
 }
 
@@ -336,6 +337,13 @@ function renderCompilerNotice(ov) {
   const missing = ov.compiler.missing || [];
   if (ov.kind === "fork" || (ov.compiler.installed && (!missing.length || ov.matched))) { n.hidden = true; return; }
   n.hidden = false;
+  // #118: the project came from another tool and names a compiler decompdecomp doesn't have: it opens, and says so
+  // here instead of pretending the compiler has no build for this computer
+  if (ov.compiler.known === false) {
+    n.className = "notice bad";
+    setHtml(n, `<span><b>${esc(ov.compiler.name)}</b> isn't a compiler decompdecomp has (this project was made with another tool). Pick one in this project's Settings.</span>`);
+    return;
+  }
   if (!ov.compiler.supported) {
     n.className = "notice bad";
     n.innerHTML = ov.compiler.why

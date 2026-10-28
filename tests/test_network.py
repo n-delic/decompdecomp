@@ -214,3 +214,23 @@ def test_the_guide_gives_the_compile_budget_compile_and_diff_keeps():
     assert network.stall_budget(1000) == network.STALL_BUDGET_BIGGEST
     fn = {"n_insns": 100}
     assert f"move on after {network.stall_budget(100)} compiles in a row" in network.move_on_brief(fn)
+
+
+def test_a_function_is_found_by_its_address_from_an_index(tmp_path):
+    """The room looks up a function by address for every match the host sends. Without an index each lookup read
+    every function's assembly: 89 ms for 18,800 functions, hours for a room that has to catch up."""
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "s.db")
+    plan = store.all("EXPLAIN QUERY PLAN SELECT id, status FROM functions WHERE project_id=? AND vram=?", 1, 0x100000)
+    assert "idx_functions_vram" in " ".join(str(r[3]) for r in plan)
+
+
+def test_a_note_is_found_by_its_function_and_text_from_an_index(tmp_path):
+    """A room's host sends every note it has, and each is saved only when the function doesn't have it: without an
+    index that look-up read every note saved so far, 3 ms each at 7,000 notes."""
+    from decompnet.store import Store
+
+    store = Store(tmp_path / "s.db")
+    plan = store.all("EXPLAIN QUERY PLAN SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", 1, "x", 5)
+    assert "idx_notes_lookup" in " ".join(str(r[3]) for r in plan)

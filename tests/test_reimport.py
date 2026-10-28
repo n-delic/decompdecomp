@@ -154,3 +154,24 @@ def test_reimport_still_blocks_projects_with_an_active_room(tmp_path):
     net.rooms["game"] = object()
     with pytest.raises(NetworkError, match="leave the shared room"):
         net.import_split(console, Picked("n64", b"rom", "game.z64", {}, True), reimport_slug="game")
+
+
+def test_reimport_pairs_the_two_functions_an_overlay_puts_at_one_address():
+    """A game's overlay loads at the same address as main code, so two functions can share one. Paired by address
+    alone, the second was left unpaired and its name (held by the old twin) was inserted again."""
+    from types import SimpleNamespace
+
+    from decompnet.app.engine.importing import pair_old_functions
+
+    old = [{"id": 1, "name": "func_00100000", "vram": 0x100000},
+           {"id": 2, "name": "ovl_ntgui2_func_00100000", "vram": 0x100000},
+           {"id": 3, "name": "agents_name", "vram": 0x200000}]
+    new = [SimpleNamespace(name="ovl_ntgui2_func_00100000", vram=0x100000),
+           SimpleNamespace(name="func_00100000", vram=0x100000),
+           SimpleNamespace(name="func_00200000", vram=0x200000),
+           SimpleNamespace(name="func_00300000", vram=0x300000)]
+    paired = pair_old_functions(old, new)
+    assert paired["func_00100000"]["id"] == 1 and paired["ovl_ntgui2_func_00100000"]["id"] == 2
+    assert paired["func_00200000"]["id"] == 3  # renamed since: still paired by its address
+    assert "func_00300000" not in paired  # new in this split
+    assert len({o["id"] for o in paired.values()}) == len(paired)  # each old function pairs once

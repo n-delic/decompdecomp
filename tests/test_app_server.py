@@ -220,6 +220,26 @@ def test_helpers_started_to_polish_matched_code_get_that_task(tmp_path, monkeypa
     assert started == [{"model": "opus", "task": "readable", "per_session": agents.PER_SESSION}]
 
 
+def test_remove_paused_removes_only_paused_helpers_on_the_project(app, monkeypatch):
+    from types import SimpleNamespace
+
+    client, _, manager = app
+    monkeypatch.setattr(manager, "sessions", {
+        "paused-here": SimpleNamespace(id="paused-here", slug="game", state="paused"),
+        "working-here": SimpleNamespace(id="working-here", slug="game", state="working"),
+        "paused-elsewhere": SimpleNamespace(id="paused-elsewhere", slug="other", state="paused"),
+    })
+    removed = []
+    monkeypatch.setattr(manager, "remove", lambda sid: removed.append(sid))
+
+    response = client.post("/api/agents/stop", json={"slug": "game", "remove_paused": True},
+                           headers={"X-Decomp": "1"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "removed": 1}
+    assert removed == ["paused-here"]
+
+
 def test_settings_never_echo_the_api_key(app):
     client, _, _ = app
     out = client.post("/api/settings", json={"api": {"provider": "deepseek", "api_key": "sk-abcdef123456"}},

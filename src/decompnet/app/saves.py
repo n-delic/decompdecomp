@@ -237,7 +237,19 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log) -> dict:
     def setup(cfg):
         if manifest.get("compiler") and toolchains.installed(manifest["compiler"].get("toolchain") or "") is not None:
             cfg["compiler"] = manifest["compiler"]
-        cfg["compiler_ranges"] = manifest.get("compiler_ranges") or cfg.get("compiler_ranges") or []
+        ranges = manifest.get("compiler_ranges") or cfg.get("compiler_ranges") or []
+        # a save can come from a computer whose project used a compiler decompdecomp doesn't have: keeping that range
+        # would make every function in it fail to compile with the registry's "unknown toolchain" error (#118)
+        kept, gone = [], []
+        for r in ranges:
+            if toolchains.known(str(r.get("toolchain") or "")):
+                kept.append(r)
+            else:
+                gone.append(r)
+        if gone:
+            log("left out saved compiler ranges whose compiler decompdecomp doesn't have: " + ", ".join(
+                f"0x{int(r.get('start') or 0):X}-0x{int(r.get('end') or 0):X} {r.get('toolchain')}" for r in gone))
+        cfg["compiler_ranges"] = kept
         cfg["instructions"] = manifest.get("instructions") or cfg.get("instructions") or ""
         cfg["knowledge_auto"] = bool(manifest.get("knowledge_auto"))
     net._update_cfg(slug, setup)

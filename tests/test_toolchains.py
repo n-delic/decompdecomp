@@ -28,6 +28,15 @@ def test_registry_is_pinned_and_labelled():
     assert reg["ee-gcc-2.96"].requires == ["runtime-i386"]
 
 
+def test_an_unknown_toolchain_id_is_known_to_be_missing():
+    """#118: a project from another tool names a compiler decompdecomp doesn't have. Opening or listing the project
+    asks the registry whether it has the id (known), instead of get() raising at it."""
+    assert toolchains.known("gcc-2.7.2-kmc") and toolchains.known("m2c")
+    assert not toolchains.known("msvcxx-x86_64")
+    with pytest.raises(toolchains.ToolchainError, match="unknown toolchain"):
+        toolchains.get("msvcxx-x86_64")
+
+
 def test_proprietary_toolchains_need_explicit_acceptance(tc_root):
     with pytest.raises(toolchains.ToolchainError, match="--accept-license"):
         toolchains.install("ido-7.1", log=lambda *_: None)

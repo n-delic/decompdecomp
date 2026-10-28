@@ -77,17 +77,22 @@ class GuiMixin:
         cfg = self.cfg(proj)
         agg = self.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
                              f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
-        tc = toolchains.get(cfg["compiler"]["toolchain"])
+        # a project made with a compiler decompdecomp doesn't have still opens: the page says so, and its Settings
+        # let the user pick one that's here (#118)
+        compiler_id = cfg["compiler"]["toolchain"]
+        tc = toolchains.get(compiler_id) if toolchains.known(compiler_id) else None
         console = self.console(proj)
         return {
             "slug": proj["slug"], "title": proj["name"], "description": proj["description"],
             **console.project_facts(),
             "compilers": [c.id for c in console.compilers],
             "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")},
-            "compiler": {"toolchain": tc.id, "name": consoles.compiler_name(tc.id), "flags": cfg["compiler"]["flags"],
-                         "installed": toolchains.installed(tc.id) is not None, "proprietary": tc.proprietary,
-                         "supported": tc.supported,
-                         "why": None if tc.supported else toolchains.unsupported_cpu(),
+            "compiler": {"toolchain": compiler_id, "name": consoles.compiler_name(compiler_id),
+                         "flags": cfg["compiler"]["flags"],
+                         "installed": tc is not None and toolchains.installed(tc.id) is not None,
+                         "proprietary": bool(tc and tc.proprietary),
+                         "supported": bool(tc and tc.supported), "known": tc is not None,
+                         "why": None if tc is None or tc.supported else toolchains.unsupported_cpu(),
                          "missing": [{"id": t, "name": consoles.compiler_name(t), "proprietary": toolchains.get(t).proprietary}
                                      for t in console.installable_compilers() if toolchains.installed(t) is None]},
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
