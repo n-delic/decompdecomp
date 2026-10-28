@@ -1,0 +1,9 @@
+{
+  "$schema": "../site/node_modules/wrangler/config-schema.json",
+  "name": "decompdecomp-discord",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-09",
+  // Secrets, set with `npx wrangler secret put <NAME>`: DISCORD_PUBLIC_KEY (the Discord app's public key) and
+  // GITHUB_TOKEN (a fine-grained token with Issues: read and write on this repository only)
+  "vars": { "GITHUB_REPO": "n-delic/decompdecomp" }
+}

@@ -99,7 +99,7 @@ def evaluate(script, callback):
 
 def tick(_timer):
     try:
-        assert time.monotonic() < deadline, "native app load/close timed out"
+        assert time.monotonic() < deadline, f"native app load/close timed out in phase {state['phase']}"
         if state["busy"]:
             return
         phase = state["phase"]
@@ -128,16 +128,21 @@ def tick(_timer):
             assert "native-mac-test-secret" not in external[0]
             state["phase"] = 21
             state["requests_before"] = len(headers)
-            evaluate('var a=document.createElement("a");a.href="/";a.target="_blank";a.click();true',
+            evaluate('window.nativeBeforeReload=true;'
+                     'var a=document.createElement("a");a.href="/";a.target="_blank";a.click();true',
                      lambda _: None)
         elif phase == 21:
             if len(headers) <= state["requests_before"]:
                 return
+            # The first request isn't a loaded page; it can even be the old page's poll, so phase 22 waits
+            # until the new document (nativeBeforeReload is gone) has fetched /api/state.
             state["phase"] = 22
-            evaluate('Boolean(typeof S !== "undefined" && S.st)',
-                     lambda loaded: state.update(phase=3) if loaded else failures.append("internal new tab lost app page"))
         elif phase == 22:
-            return
+            def loaded(value):
+                if value:
+                    state["phase"] = 3
+            evaluate('Boolean(!window.nativeBeforeReload && typeof S !== "undefined" && S.st '
+                     '&& typeof decompClose === "function")', loaded)
         elif phase == 3:
             state["phase"] = 31
             evaluate('window.decompClose=()=>"wait"; true', lambda _: None)

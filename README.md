@@ -88,9 +88,10 @@ bash site/public/install.sh
 
 The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets the free tools, and creates
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
-toolchains live in `~/Library/Application Support/decompnet/toolchains`. Intel Macs also need Xcode Command Line
-Tools (`xcode-select --install`) to build the pinned modern MIPS binutils on their first N64 export; upstream only
-publishes those tools for Apple Silicon. Finder launches preserve the PATH
+toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
+(`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
+build PS1 GCC 2.6.3 from pinned source on first use. The ready-made 2.7.2 and 2.8.1 compiler binaries are for
+Apple Silicon. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
 changing their locations. This is a source install; there is no signed DMG or macOS release bundle yet.
 
@@ -107,6 +108,7 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Mac capability | Availability |
 | --- | --- |
 | N64 ROM import, compile, match and export | KMC GCC via Rosetta on Apple Silicon; directly on Intel |
+| PS1 GCC 2.6.3, 2.7.2 and 2.8.1, with maspsx | All three run natively on Apple Silicon; GCC 2.6.3 builds from pinned source on both Mac architectures |
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |

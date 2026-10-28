@@ -241,6 +241,20 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     // Polish is offered once half the game's own code matches: set-aside functions count on neither side
     polish: [{ functions: 274, set_aside: 241, matched: 33 }, { functions: 274, set_aside: 0, matched: 33 },
              { functions: 5, set_aside: 5, matched: 0 }, null].map(polishOffered),
+    // #118: a project from another tool names a compiler decompdecomp doesn't have: the banner says so, instead of
+    // taking it for a compiler with no build for this computer
+    unknownCompiler: (() => {
+      const before = S.ov, original = document.getElementById;
+      const notice = { hidden: null, className: null, innerHTML: "", _html: null, _working: false };
+      document.getElementById = (id) => (id === "compilerNotice" ? notice : original(id));
+      S.ov = { slug: "a", kind: "rom", matched: 0, compiler: { toolchain: "msvcxx-x86_64", name: "msvcxx-x86_64",
+        flags: ["/O2"], installed: false, supported: false, known: false, missing: [] } };
+      renderCompilerNotice(S.ov);
+      const said = { hidden: notice.hidden, className: notice.className, text: String(notice.innerHTML).replace(/<[^>]+>/g, "") };
+      document.getElementById = original;
+      S.ov = before;
+      return said;
+    })(),
     autopilot: burstLines([
       { id: 1, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_1", created_at: 100 },
       { id: 2, slug: "a", project: "Demo", kind: "match", agent: "autopilot", detail: "func_2", created_at: 101 },
@@ -248,6 +262,26 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       { id: 4, slug: "a", project: "Demo", kind: "match", agent: "claude-1", detail: "func_3", created_at: 103 },
       { id: 5, slug: "a", project: "Demo", kind: "autopilot", agent: "", detail: "0 of 1 functions matched from machine drafts", created_at: 104 },
     ]).map((g) => noteHtml(g).replace(/<[^>]+>/g, "")),
+    // #99: the app's own workers' claims outlive a stopped helper (the permuter's by half an hour) and one helper
+    // going between waiting and working mustn't swap the rows
+    agents: (() => {
+      const was = { sessions: S.sessions, claims: S.claims };
+      const claim = (agent) => ({ name: "func_1", agent });
+      S.sessions = [];
+      S.claims = ["permuter", "@permuter", "decompdecomp", "@autopilot"].map(claim);
+      const ownOnly = workingAgents().n;
+      S.claims = [claim("alex.claude-1")];
+      const outside = workingAgents().n;
+      S.claims = [claim(null), claim(undefined)];
+      const nameless = workingAgents().n;
+      const at = (label, state, task = "decompile") => ({ id: label, label, state, task });
+      const flip = (first, second) => [at("alpha", first), at("beta", second)].sort(sessionOrder).map((s) => s.label);
+      const flipped = flip("waiting", "working"), again = flip("working", "waiting");
+      const rows = [at("stopped-one", "stopped"), at("working-one", "working"), at("polishing", "waiting", "readable"),
+                    at("paused-one", "paused", "readable")].sort(sessionOrder).map((s) => s.label);
+      S.sessions = was.sessions; S.claims = was.claims;
+      return { ownOnly, outside, nameless, flipped, again, rows };
+    })(),
   })`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

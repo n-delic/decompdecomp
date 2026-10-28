@@ -449,7 +449,10 @@ Where to start on a gap:
   native open/save panels, downloads, Edit/Reload/Quit menus and the page's close confirmation. A uv source
   installer creates a Finder app in `~/Applications`. Intel and Apple Silicon CI exercise portable regressions
   and the hidden native window. KMC GCC/binutils require Rosetta on Apple Silicon; unavailable Linux-only
-  compilers remain unavailable. Mac workers use per-thread QoS so they don't lower the whole app's priority.
+  compilers remain unavailable. PS1 GCC 2.6.3 builds natively from pinned source on Intel and Apple Silicon Macs
+  with Xcode Command Line Tools; GCC 2.7.2 and 2.8.1 use pinned native Apple Silicon builds with maspsx. The
+  assembler helper uses the app's Python rather than Apple's older system Python. Mac workers use per-thread QoS
+  so they don't lower the whole app's priority.
 - **Linux packages**: a `.deb`, an `.rpm` and an AppImage with their own Python, built for each release.
 - **Windows native app**: a WebView2 window, Start menu and desktop shortcuts, and a native tray icon.
   A custom native caption follows the app's theme, with Windows resizing, snapping and drag-to-restore. Scrollbars
