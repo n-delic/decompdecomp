@@ -110,6 +110,69 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     assert not ok and "Visual C++ 9.9 isn't in" in output, output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows runs every Visual C++ itself")
+def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, monkeypatch):
+    """Visual C++ 2015 and newer go through wine (wibo can't run them), older ones through wibo, file by file. cl.exe
+    reads /home/... as a switch, so every path it's given is Z:\\..., or relative with backslashes; wine runs in the
+    app's prefix with its server kept (wineserver -p); the compiler's messages name the files as the build does. A
+    build given no wine says what a 2017 file needs."""
+    root = tmp_path / "Project with spaces ü"
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    for unit in ("old", "new"):
+        (root / f"src/auto/{unit}.cpp").parent.mkdir(parents=True, exist_ok=True)
+        (root / f"src/auto/{unit}.cpp").write_text("int f(void) { return 1; }\n")
+    config = root / "config/TEST/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"old": {}, "new": {}}}))
+    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/new.cpp": "14.16"}))
+    (root / "include").mkdir()
+    (root / "tools/names.py").write_text("")
+    packs = tmp_path / "Compiler & tools"
+    for version in ("6.0", "14.16"):
+        (packs / version / "Bin").mkdir(parents=True)
+        (packs / version / "Include").mkdir()
+        (packs / version / "Bin" / "cl.exe").write_text("")
+    record, fakes = root / "ran.txt", tmp_path / "fake wine"
+    fakes.mkdir()
+    # wine and wibo write what they were given (and wine its prefix), then the object where /Fo says
+    runner = ('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
+              f'with open({str(record)!r}, "a") as f: f.write(repr([Path(sys.argv[0]).name, os.environ.get("WINEPREFIX"),'
+              ' *sys.argv[1:]]) + "\\n")\n'
+              'out = next(a[3:] for a in sys.argv if a.startswith("/Fo")).replace("\\\\", "/")\n'
+              'Path(out).parent.mkdir(parents=True, exist_ok=True)\nPath(out).write_text("object")\n'
+              'print(sys.argv[-1] + "(1): warning C4100: a message naming the file")\n')
+    for name in ("wine", "wibo", "wineserver"):
+        (fakes / name).write_text(runner if name != "wineserver" else runner.split("out =")[0])
+        (fakes / name).chmod(0o755)
+    prefix = tmp_path / "prefix ü"
+    configure = [sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(packs), "--wibo",
+                 str(fakes / "wibo")]
+    done = subprocess.run(configure, cwd=root, capture_output=True, text=True, timeout=30)
+    assert done.returncode and "Visual C++ 14.16 runs through wine" in done.stderr, done.stderr
+    subprocess.run([*configure, "--wine", str(fakes / "wine"), "--wine-prefix", str(prefix)], check=True,
+                   capture_output=True, timeout=30)
+    ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert ok, output
+    import ast
+
+    ran = [ast.literal_eval(line) for line in record.read_text(encoding="utf-8").splitlines()]
+    # (configure.py looks for CL.EXE first: on a Mac's case-insensitive disk it finds cl.exe by that name)
+    wibo = next(r for r in ran if r[0] == "wibo")
+    assert wibo[1] is None and wibo[2].lower() == str(packs / "6.0/Bin/cl.exe").lower() and "src/auto/old.cpp" in wibo
+    assert ["wineserver", str(prefix), "-p"] in ran
+    wine = next(r for r in ran if r[0] == "wine")
+    assert wine[1] == str(prefix) and wine[2].lower() == str(packs / "14.16/Bin/cl.exe").lower()  # (a Unix path)
+    z = "Z:" + str(packs / "14.16/Include").replace("/", "\\")
+    assert {"/Iinclude", f"/I{z}", "/Fobuild\\TEST\\src\\auto\\new.obj", "src\\auto\\new.cpp"} <= set(wine), wine
+    assert "src/auto/new.cpp(1): warning C4100" in output and "src\\auto" not in output, output
+
+
+def test_a_windows_path_is_what_wine_reads():
+    compile_py = _template_tool("compile")
+    assert compile_py.windows_path("/home/me/Visual C++/Include") == "Z:\\home\\me\\Visual C++\\Include"
+    assert compile_py.windows_path("build/x/y.obj") == "build\\x\\y.obj"
+
+
 def _template_tool(name: str):
     import importlib.util
 
@@ -605,6 +668,55 @@ def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
     assert net.recheck(slug, log=lambda *_: None) == "nothing new"
 
 
+def _wine_ready() -> bool:
+    from decompnet import wine
+
+    return toolchains.installed("msvc2017") is not None and wine.problem() is None
+
+
+@needs_tools
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
+def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path):
+    """Visual C++ 2017's 32-bit and 64-bit compilers as a file's compiler: chosen in Settings while nothing in the file
+    matches (each builds the file: an x86 object, an x64 one), tried by try_compiler with a real score, and refused
+    in Settings once a function of the file matches with another compiler. Off Windows they run through wine, its
+    server stopped first: the services the first wine program starts outlive it, and given the build's output
+    pipe they held it, so the build never ended."""
+    from decompnet import wine
+    from decompnet.app.engine import RomNetwork
+
+    if wine.needed():
+        subprocess.run([wine.server(wine.find()), "-k"], env=wine.environment(), capture_output=True, timeout=60)
+    if not MAP.exists():
+        subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(EXE, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("pc-agent")
+    root = Path(net.project_row(slug)["root"])
+    syms, sub = _map(), _by_address()
+    header = (GAME.parent / "game.h").read_text().split("#define NULL ((void *)0)", 1)[1].rsplit("#endif", 1)[0]
+    assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header + "extern s32 g_settings[6];\n"),
+                               "the game's types").startswith("✅")
+    assert net.forks.split_file(agent, slug, "src/auto/text_00401000.cpp",
+                                f"_func_{syms['_entity_spawn']:08X}").startswith("✅")
+    last = f"src/auto/text_{syms['_entity_spawn']:08X}.cpp"
+    obj = root / "build" / "demoquest" / Path(last).with_suffix(".obj")
+    assert "MSVC/14.16" in net.overview(slug)["compilers"] and "MSVC/14.16-x64" in net.overview(slug)["compilers"]
+    for compiler, machine in (("MSVC/14.16-x64", 0x8664), ("MSVC/14.16", 0x14C), ("MSVC/6.0", 0x14C)):
+        net.forks.set_file_compiler_by_hand(slug, last, compiler)
+        assert scratch_pe.file_compilers(root, "demoquest") == ({} if compiler == "MSVC/6.0" else
+                                                               {last: compiler.removeprefix("MSVC/")})
+        assert struct.unpack_from("<H", obj.read_bytes())[0] == machine, compiler
+    adder = f"_func_{syms['_add_score']:08X}"
+    source = sub(csource.get(GAME.read_text(), "add_score"))
+    said = net.forks.try_compiler(agent, slug, adder, "MSVC/14.16", source=source)  # (2017 compiles it otherwise)
+    assert re.search(r"MSVC/14\.16: [\d.]+% match", said) and "stays with MSVC/6.0" in said, said
+    assert net.attempt(agent, adder, source, slug)["matched"]
+    with pytest.raises(NetworkError, match="stays with MSVC/6.0: .* no longer match"):
+        net.forks.set_file_compiler_by_hand(slug, last, "MSVC/14.16")
+    assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
+
+
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
     """A Windows program's headers, made by hand: the DOS header and `stub` bytes of DOS stub, a Rich header of
     (product id, build, count) entries XORed with its key, the PE header with the linker's version, the sections."""
@@ -674,9 +786,15 @@ def test_every_visual_cpp_the_import_picks_is_in_a_compiler_pack():
     from decompnet.consoles.pc import MSVC_VERSIONS
 
     picked = scratch_pe.RICH_BUILDS.values()
-    # every one but 2005 RTM, whose Rich build is SP1's: it's chosen by file (try_compiler, Settings)
-    assert sorted([*picked, "8.0"]) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
-    assert {scratch_pe.compiler_pack(v) for v in picked} == set(scratch_pe.MSVC_PACKS)
+    # every one but 2005 RTM, whose Rich build is SP1's, and 2017's, whose games aren't imported yet: they're chosen by
+    # file (try_compiler, Settings)
+    by_file = ["8.0", "14.16", "14.16-x64"]
+    assert sorted([*picked, *by_file]) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
+    assert {scratch_pe.compiler_pack(v) for v in [*picked, *by_file]} == set(scratch_pe.MSVC_PACKS)
+    for version in by_file:  # each in its own folder of its pack
+        assert any(part.get("into") == version for part in toolchains.get(scratch_pe.compiler_pack(version)).parts)
+    # a game newer than 2010 still builds with 2010 SP1, the newest a Rich header leads to: not the packs' newest
+    assert scratch_pe.Build(scratch_pe.X86, "12.0", 40629).pack_version == "10.0SP1"
     with pytest.raises(ForkError, match="no Visual C\\+\\+ 5.0"):
         scratch_pe.compiler_pack("5.0")
 
@@ -699,6 +817,22 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
                         else toolchains.registry()[tid])
     assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2005"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc")]
+    # 2017's runs through wine off Windows: the build is told which, and the app's prefix (its server started here);
+    # without wine, the build is as it was, and configure.py says what a file built with 2017 needs
+    from decompnet import wine
+
+    (tmp_path / "toolchains" / "msvc2017").mkdir()
+    (tmp_path / "toolchains" / "msvc2017" / toolchains.MANIFEST).write_text("{}")
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "problem", lambda: None)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(wine, "prepare", lambda log=print, where=None: tmp_path / "prefix")
+    assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2017"),
+                                      "--msvc", str(tmp_path / "toolchains" / "msvc2005"),
+                                      "--msvc", str(tmp_path / "toolchains" / "msvc"),
+                                      "--wine", "/opt/wine/bin/wine", "--wine-prefix", str(tmp_path / "prefix")]
+    monkeypatch.setattr(wine, "problem", lambda: "no wine")
+    assert "--wine" not in scratch_pe.tool_args()
 
 
 def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():

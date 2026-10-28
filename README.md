@@ -234,6 +234,9 @@ game's code is its rights holder's: keep it to yourself.
 from beta to recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
+Visual C++ 2017 runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install yourself (your
+distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases),
+which needs Rosetta 2 on Apple Silicon): the app says so when you install that pack. The older Visual C++ run without it.
 
 ## Questions people ask
 
@@ -309,7 +312,7 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6 and then archived it. Thank you,
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo and the decompals
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals
 compilers. The
 [guide](docs/GUIDE.md#built-on) lists them.
 

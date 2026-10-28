@@ -91,6 +91,16 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Visual C++ 2017 for Windows PC, through wine.** The `msvc2017` pack (proprietary, installed after the user
+  accepts it, 350 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
+  with (10.0.17763), from ojdkbuild's copies of the Build Tools, pinned by sha256. Two compilers, chosen per file in
+  Settings or tried by try_compiler: `MSVC/14.16` (32-bit) and `MSVC/14.16-x64` (64-bit, the 32-bit host's
+  program database DLLs beside it, so it runs by itself). wibo can't run them (under a patched wibo a hello world
+  exited 99 and `#include <windows.h>` failed without a word), so on Linux and macOS they run through wine, which
+  the user installs; the pack says how before downloading (`wine.py`). The app keeps its own prefix beside its
+  toolchains and a wine server running for it (0.2 s a compile instead of 2.7 s), the build passes every path as
+  `Z:\...`, and wine's output goes through a file: the services the first wine program starts outlive it and, given
+  the build's pipe, held the build open for as long as the server ran. The older packs stay on wibo.
 - **PSP.** A UMD image (read in place, also as a CSO) or the game's program, with its title and product code from
   PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
   import stubs are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID
@@ -494,8 +504,9 @@ Where to start on a gap:
 ### Newer Windows games (Visual C++ 2012 to 2015)
 
 PC projects build with Visual C++ 6.0 to 2010 (phases B and C are done: Recently done). The import already tells a
-newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Games built with Visual C++ 2017
-and newer are out of scope for now.
+newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Visual C++ 2017's compilers are
+installed (`msvc2017`, Recently done) and can be chosen per file, but games built with 2017 and newer are still
+refused at import.
 
 - **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules
   tested again (a game rebuilt with 2010 tools: 6,583 stubs found; a 2005 game built without C++ exceptions: none).
@@ -508,6 +519,12 @@ and newer are out of scope for now.
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
   object says nothing about the program's bytes. Find out whether some functions can be judged by compiling their
   file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.
+- **Games built with Visual C++ 2017.** Lift the import's block (`scratch.LAST_IN_SCOPE`), map 2017's Rich builds
+  to the pack (`RICH_BUILDS`: 14.1 build 27027 is `14.16`; the drop's `pcPack` and `_newest_mapped` follow), 32-bit
+  games first, with a demo built by 2017 (its linker under wine). Until 64-bit games come (F), try_compiler's "all"
+  and Settings offer the 64-bit compiler to 32-bit games too, where it can't match: a compiler's target would let
+  them skip it. Under wine, /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses; on Windows the
+  pack is untested.
 - **F, 64-bit.** Read PE32+ programs and delink their relocations (nearly all relative), with the x64 calling
   convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
   functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and

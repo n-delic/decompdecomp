@@ -1,5 +1,7 @@
 """Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010, PROJECT mode. Only
-the game is a Windows program: decompdecomp runs on Linux, and so do the compilers (through wibo).
+the game is a Windows program: decompdecomp runs on Linux and macOS, and so do the compilers (through wibo; Visual
+C++ 2017's, which wibo can't run, through wine: wine.py). Visual C++ 2017 (its 32-bit and 64-bit compilers) can be
+chosen for a source file in Settings; games built with it are next (ROADMAP.md, Newer Windows games).
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
@@ -39,7 +41,10 @@ from ...network import NetworkError
 from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1",  # the `msvc` pack
-                 "MSVC/8.0", "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1"]  # `msvc2005`
+                 "MSVC/8.0", "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1",  # `msvc2005`
+                 "MSVC/14.16", "MSVC/14.16-x64"]  # `msvc2017`: its 32-bit compiler and its 64-bit one
+# what the app calls a version whose number alone doesn't say it: 2017's (Visual Studio's year, and its target)
+MSVC_NAMES = {"14.16": "Visual C++ 14.16 (2017)", "14.16-x64": "Visual C++ 14.16 (2017, 64-bit)"}
 
 
 class WindowsPC(Console):
@@ -51,9 +56,13 @@ class WindowsPC(Console):
     arch = "x86"
     mode = PROJECT
     layout = "Ghidra + objdiff"
-    compilers = tuple(Compiler(v, f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}") for v in MSVC_VERSIONS)
+    compilers = tuple(Compiler(v, MSVC_NAMES.get(v.removeprefix("MSVC/"),
+                                                 f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}"))
+                      for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
              ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 600 MB)"),
+             ("msvc2017", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 350 MB; runs "
+                          "through wine on Linux and macOS, which you install)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
     guides = ("x86", "cpp")
     compiler_guide = "x86"

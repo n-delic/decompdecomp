@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Write build.ninja and objdiff.json for this PC (Windows) decompilation, then run `ninja`.
 
-    python tools/configure.py VERSION --msvc DIR [--msvc DIR ...] [--wibo PATH]
+    python tools/configure.py VERSION --msvc DIR [--msvc DIR ...] [--wibo PATH] [--wine PATH --wine-prefix DIR]
 
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
-macOS): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
+macOS, Visual C++ 2015 and newer through wine, which wibo can't run them on): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
 config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
 `ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks it against your copy.
 Made by decompdecomp.
@@ -33,7 +33,10 @@ parser.add_argument("--msvc", required=True, action="append",
                     help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 10.0SP1/Bin/cl.exe, ...); several: the first "
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
+parser.add_argument("--wine", default="", help="runs Visual C++ 2015 and newer on Linux and macOS")
+parser.add_argument("--wine-prefix", default="", help="the wine prefix they run in (decompdecomp's own)")
 args = parser.parse_args()
+WINE_FROM = 14  # the first Visual C++ wibo can't run (2015 and newer: 14.x), which wine runs
 
 VERSION = args.version
 CONFIG = Path("config") / VERSION / "functions.json"
@@ -65,6 +68,18 @@ def msvc(version: str) -> tuple[str, str]:
     return str(cl), str(home / "Include")
 
 
+def runner(version: str) -> list[str]:
+    """What runs a Visual C++ version's compiler here: nothing on Windows, else wibo, or wine from WINE_FROM on."""
+    if sys.platform == "win32":
+        return []
+    if int(version.split(".")[0]) < WINE_FROM:
+        return ["--wrapper", args.wibo] if args.wibo else []
+    if not args.wine or not args.wine_prefix:
+        sys.exit(f"configure: Visual C++ {version} runs through wine on Linux and macOS, and no --wine was given: "
+                 "install wine (decompdecomp's Compilers & tools says how), then start decompdecomp again")
+    return ["--wine", args.wine, "--wine-prefix", args.wine_prefix]
+
+
 def file_compilers() -> dict[str, str]:
     return json.loads(FILE_COMPILERS.read_text(encoding="utf-8")) if FILE_COMPILERS.exists() else {}
 
@@ -91,11 +106,10 @@ def main() -> None:
         n = ninja_syntax.Writer(f)
         n.rule("delink", f"{PY} tools/delink.py {CONFIG.as_posix()} {(BUILD / 'target').as_posix()}", restat=True)
         compiler = [PYTHON, "tools/compile.py", "--config", CONFIG.as_posix()]
-        if args.wibo and sys.platform != "win32":
-            compiler += ["--wrapper", args.wibo]
         # The runner invokes the compiler and names.py separately: cmd /c misparsed quoted compiler paths.
-        n.rule("cl", q(compiler).replace("$", "$$") + " --compiler $cl --include $include --output $out --source $in -- "
-               + q(CL_FLAGS).replace("$", "$$") + " $cflags")
+        # $runner: what runs the file's compiler (wibo, wine or nothing: runner())
+        n.rule("cl", q(compiler).replace("$", "$$") + " $runner --compiler $cl --include $include --output $out "
+               "--source $in -- " + q(CL_FLAGS).replace("$", "$$") + " $cflags")
         n.rule("configure", f"{PY} tools/configure.py " + q(sys.argv[1:]).replace("$", "$$"), generator=True)
 
         targets = [(BUILD / "target" / f"{u}.obj").as_posix() for u in units]
@@ -105,9 +119,11 @@ def main() -> None:
         for src in files("src", (".c", ".cpp")):
             obj = (BUILD / src.with_suffix(".obj")).as_posix()
             src_posix = src.as_posix()
-            cl, include = msvc(versions.get(src_posix, MSVC_VERSION))
+            version = versions.get(src_posix, MSVC_VERSION)
+            cl, include = msvc(version)
             n.build(obj, "cl", src_posix, implicit=[*headers, CONFIG.as_posix(), "tools/compile.py", "tools/names.py"],
                     variables={"cl": q([cl]).replace("$", "$$"), "include": q([include]).replace("$", "$$"),
+                               "runner": q(runner(version)).replace("$", "$$"),
                                "cflags": q(more.get(src_posix, [])).replace("$", "$$")})
             objs.append(obj)
         n.build("all_source", "phony", objs)

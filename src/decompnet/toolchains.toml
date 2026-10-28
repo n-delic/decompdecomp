@@ -11,6 +11,8 @@
 # Each part lists its host platforms. Windows uses native tools where available, and Linux-only compilers
 # through WSL 2 (wsl.py). A part for wsl-x86_64 replaces the Linux archive there (a .deb Windows can unpack).
 # macOS uses its pinned builds directly; Intel-only parts need Rosetta on Apple Silicon.
+# Windows compilers run natively on Windows and through wibo on Linux and macOS; a pack with `wine = true` (Visual C++
+# 2017, which wibo can't run) goes through wine there instead, which the user installs (wine.py).
 
 [runtime-i386]
 name = "32-bit x86 C runtime (glibc 2.44)"
@@ -905,6 +907,48 @@ url = "https://files.decomp.dev/compilers_20251118.zip"
 sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
 keep = { "X360/16.00.11886.00/msvcp100.dll" = "Bin/msvcp100.dll" }
 into = "10.0SP1"
+
+# Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1: Visual Studio 2017 15.9.7) and the Windows 10 SDK it was
+# used with (10.0.17763), from ojdkbuild's copies of the Build Tools (235,092,441 and 309,898,570 bytes). Laid out as
+# msvc2005's: each version a folder with Bin and one Include, so the project's build finds it the same way. Include is
+# the SDK's shared, um and ucrt with Visual C++'s own on top: both have sal.h and concurrencysal.h, and they differ,
+# so Visual C++'s go in last, as its folder comes first on Visual Studio's include path. Two versions: 14.16 is the
+# 32-bit compiler (Hostx86/x86), 14.16-x64 the 64-bit one (Hostx86/x64), which loads the 32-bit host's program
+# database DLLs (mspdb140, mspdbcore; msobj140 for debug information): they're copied beside it, so it runs by
+# itself under wine and on Windows, where Visual Studio's PATH would otherwise hold Hostx86/x86.
+# wibo can't run these compilers, so on Linux and macOS they run through wine (wine.py), which the user installs.
+[msvc2017]
+name = "Microsoft Visual C++ 2017 (PC)"
+kind = "compiler-pack"
+platform = "PC"
+license = "proprietary"
+source = "ojdkbuild's Visual Studio 2017 Build Tools 14.16 (tools_toolchain_vs2017bt_1416) and Windows 10 SDK 10.0.17763 (tools_toolchain_sdk10_17763)"
+description = "Visual C++ 2017 (14.16), the compiler of Windows games of 2017-2019, with its Windows 10 SDK: a 32-bit and a 64-bit compiler. Windows programs, run through wine on Linux and macOS."
+wine = true
+[[msvc2017.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"  # 10.0.17763
+sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
+subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
+keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
+into = "14.16"
+[[msvc2017.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"  # 19.16.27027.1
+sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
+subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
+keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include" }
+into = "14.16"
+[[msvc2017.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"
+sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
+subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
+keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
+into = "14.16-x64"
+[[msvc2017.parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"
+sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
+subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
+keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/mspdb140.dll" = "Bin/mspdb140.dll", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/mspdbcore.dll" = "Bin/mspdbcore.dll", "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86/msobj140.dll" = "Bin/msobj140.dll" }
+into = "14.16-x64"
 
 [sjiswrap]
 name = "sjiswrap"

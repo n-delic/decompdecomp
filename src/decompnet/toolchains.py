@@ -61,6 +61,7 @@ class Toolchain:
     requires_java: int = 0  # minimum Java version (Ghidra)
     prelude: str = ""  # C put before every file it compiles: works around a compiler's own bugs (see toolchains.toml)
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
+    wine: bool = False  # Windows programs wibo can't run: through wine on Linux and macOS (wine.py)
 
     @property
     def proprietary(self) -> bool:
@@ -161,7 +162,12 @@ def _intel_mac_runtime_ready() -> bool:
 
 
 def runtime_error(tid: str) -> str | None:
-    """Intel-only Mac compiler archives need Apple's translation runtime on Apple Silicon."""
+    """What this computer lacks to run a toolchain, said before it's downloaded: Intel-only Mac compiler archives
+    need Apple's translation runtime on Apple Silicon, and a pack wibo can't run needs wine (off Windows)."""
+    if get(tid).wine:
+        from . import wine
+
+        return wine.problem()
     if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
         return None
     if _intel_mac_runtime_ready():
@@ -376,6 +382,14 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
         "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux,
     }, indent=2), encoding="utf-8")
     log(f"{tid}: installed at {dest}")
+    if tc.wine and not linux:
+        from . import wine
+
+        if wine.needed():  # its prefix now, not in the middle of the first build (wineboot takes up to a minute)
+            try:
+                wine.prepare(log=log)
+            except RuntimeError as error:
+                log(f"  {error}")
     return dest
 
 

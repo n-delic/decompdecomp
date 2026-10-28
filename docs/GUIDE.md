@@ -188,7 +188,7 @@ the game.
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (by file, through wine) | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **GBA · 3DS · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
@@ -217,7 +217,8 @@ different build, which is planned.
   C++ 6.0 to 2010 can match, each with the very build of its compiler the program names (2005 to 2010 come in a
   pack of their own); 2012 to 2015 import but can't match until their compilers come; 64-bit programs,
   programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
-  says why. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them
+  says why. Visual C++ 2017 itself (32- and 64-bit) is a pack of its own, chosen per file in Settings: on Linux and
+  macOS it runs through wine, which you install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them
   when you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the
   project, with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C
   runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long
@@ -239,7 +240,7 @@ of its own project.
 classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
 
 **Proprietary compilers** (IDO, CodeWarrior, Visual C++) install only after you accept them. Heavy tools operate
-with a memory limit.
+with a memory limit. Visual C++ 2017 needs wine on Linux and macOS (installing it says how to get wine).
 
 ## The export
 
@@ -370,5 +371,6 @@ ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https:
 [decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses. The
 [decompals](https://github.com/decompals) period compilers build the code.
 [decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games, and
-[wibo](https://github.com/decompals/wibo) runs the Windows compilers on Linux. Thank you to the decomp community for
+[wibo](https://github.com/decompals/wibo) runs the Windows compilers on Linux, and [wine](https://www.winehq.org/)
+Visual C++ 2017. Thank you to the decomp community for
 these tools. decompdecomp is not related to these projects.
