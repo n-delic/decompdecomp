@@ -24,6 +24,31 @@ def test_a_cut_diff_says_last_diff_shows_the_rest():
     assert "last_diff" not in scoring.render_rows(_rows(5))
 
 
+def test_a_diff_says_what_differs_once_registers_and_order_are_set_aside():
+    """On an Xbox racing game's near misses, more than half had real differences past the 60 rows a diff shows,
+    behind rows that only differed by register; and a quarter differed only by registers and order, which wants
+    another approach than code that's missing."""
+    rows = [("r", f"mov eax, [ecx+{4 * i}]", f"mov edx, [ecx+{4 * i}]") for i in range(80)]
+    rows += [("|", "movaps xmm1, xmm2", "mov edi, edi"), ("<", "nop", ""),  # padding follows from code before it
+             ("i", "movss xmm0, [_D_00412340]", "movss xmm0, [?g_scale@@3MA]   ; target's D_00412340 = 0.5f"),
+             ("i", "mov eax, [esp+0x18]", "mov eax, [esp+0x1c]"), ("|", "jne 0x10d0", "jne 0x10e4")]
+    text = scoring.render_rows(rows)
+    second = text.splitlines()[1]
+    assert second.startswith("Registers, stack slots and order aside, what still differs: the target has "
+                             "`movaps xmm1, xmm2`; yours has `mov edi, edi`.")
+    assert "more rows not shown" in text and "movaps" not in "\n".join(text.splitlines()[2:])  # past the cut
+    # nothing but registers, order, names and stack slots
+    same = [("r", "lw $v0, 0x54($sp)", "lw $v1, 0x58($sp)"), ("o", "addu $a0, $a0, $v0", "move $s0, $a0"),
+            ("o", "move $s0, $a0", "addu $a0, $a0, $v0"), ("i", "lwz r3, 0x10(r1)", "lwz r4, 0x14(r1)")]
+    assert scoring.residue(same) == ([], [])
+    assert "your instructions are the target's" in scoring.render_rows(same)
+    # a frame's size isn't a stack slot: it shows
+    assert scoring.residue([("i", "sub esp, 0xc", "sub esp, 0x10")]) == (["sub esp, 0xc"], ["sub esp, 0x10"])
+    assert scoring.residue_line([(" ", "ret", "ret")]) == ""
+    assert scoring.shape("call ?Foo@@YAXXZ") == scoring.shape("call _func_00011130@8") == "call S"
+    assert scoring.shape("mov ecx, ?g_state@@3UState@@A+0x1946") == scoring.shape("mov edx, _D_0073BACA")
+
+
 def test_last_diff_gives_every_row_of_the_agents_last_compile_without_compiling(tmp_path):
     net, _ = _game(tmp_path, [("f", 200, "open")])
     a, _ = net.local_agent("a")

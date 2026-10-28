@@ -193,13 +193,89 @@ LEGEND = ("markers: r=regalloc s=stack-offset i=operand |=different insn <=missi
           "o=reordered")
 
 
+_NOTE = re.compile(r"\s+;.*$")  # what the judge adds to a row (`; target's D_00412340 = 0.5f`): not code
+# an operand's names: registers, symbols (a C++ one with its ?, @ and $), keywords; and numbers
+_NAME = re.compile(r"(?<![\w$@?.])[$?.]?[A-Za-z_][\w$@?.]*")
+_NUMBER = re.compile(r"(?<![\w$@?.])(?:0x[0-9a-fA-F]+|\d+)(?![\w$@?])")
+_KEYWORDS = {"ptr", "byte", "word", "dword", "qword", "tbyte", "xmmword", "short", "near", "far", "offset", "st",
+             "lo", "hi", "ha", "l", "h", "sda21", "sda2rel", "gp_rel", "got", "call16", "got_disp"}
+_PADDING = {"nop", "int3", "lea R, [R]", "lea R, [R+0x0]"}
+# a memory operand through the stack pointer: x86 [esp+0x18], MIPS 0x54($sp), PowerPC 0x10(r1), ARM [sp, #0x10]
+_STACK_SLOT = re.compile(r"\[[^\]]*\b(?:esp|ebp|rsp|rbp|sp)\b[^\]]*\]|-?(?:0x[0-9a-fA-F]+|\d+)\((?:\$sp|\$fp|r1|sp)\)")
+RESIDUE_SHOWN = 5
+
+
+def shape(text: str) -> str:
+    """An instruction as the residue compares it: register names set aside (R), symbol names too (S: a reference
+    to the same thing under another name is the judge's to check, by address), and a branch's target (J), which moves
+    with the length of the code before it."""
+    t = _NOTE.sub("", text).strip()
+    if not t:
+        return ""
+    mnemonic, _, ops = t.partition(" ")
+    mnemonic = mnemonic.lower()
+
+    def name(m: re.Match) -> str:
+        word = m.group(0)
+        if _REG.match(word.lower()):
+            return "R"
+        return word if word.lower() in _KEYWORDS else "S"
+    # a stack slot's offset follows the frame's layout (the frame's size, `sub esp, 0x10`, stays as it is)
+    ops = _STACK_SLOT.sub(lambda m: _NUMBER.sub("N", m.group(0)), ops.strip())
+    ops = _NAME.sub(name, ops)
+    ops = re.sub(r"\bS\s*[-+]\s*(?:0x[0-9a-fA-F]+|\d+)", "S", ops)  # a symbol and an offset: a place, like a symbol
+    if mnemonic.startswith(("j", "b", "loop")):
+        ops = re.sub(r"(?<![\w$@?])0x[0-9a-fA-F]{3,}$", "J", ops)
+    return f"{mnemonic} {ops}".strip()
+
+
+def residue(rows: list[tuple[str, str, str]]) -> tuple[list[str], list[str]]:
+    """(the target's instructions yours lacks, yours the target lacks) among the differing rows, register and symbol
+    names and order set aside: what a different register allocation or schedule doesn't explain. Each as the row's
+    own text. Padding (`nop`, x86's `lea esi, [esi]`) is left out: it follows from the length of the code before it."""
+    def side(k: int) -> tuple[Counter, dict[str, str]]:
+        found, text = Counter(), {}
+        for row in rows:
+            if row[0] == " " or not (s := shape(row[k + 1])) or s in _PADDING:
+                continue
+            found[s] += 1
+            text.setdefault(s, _NOTE.sub("", row[k + 1]).strip())
+        return found, text
+    (target, ttext), (yours, ytext) = side(0), side(1)
+    return ([ttext[s] for s in (target - yours).elements()], [ytext[s] for s in (yours - target).elements()])
+
+
+def residue_line(rows: list[tuple[str, str, str]]) -> str:
+    """The residue in a line for an agent: on near misses of an Xbox racing game, more than half had real differences
+    past the 60 rows a diff shows, among rows that only differ by register; and a near miss whose rows are all
+    register or order differences wants another approach (declaration order, temporaries) than one missing code."""
+    if not any(m != " " for m, _, _ in rows):
+        return ""
+    target, yours = residue(rows)
+    if not target and not yours:
+        return ("Registers, stack slots and order aside, your instructions are the target's: what differs is which "
+                "registers hold what and in which order values are computed (try the order of statements and "
+                "declarations, temporaries, a variable's type), not what the code does.")
+
+    def listed(items: list[str]) -> str:
+        found = Counter(items)
+        shown = [f"`{s}`" + (f" x{n}" if n > 1 else "") for s, n in found.most_common(RESIDUE_SHOWN)]
+        more = len(found) - RESIDUE_SHOWN
+        return ", ".join(shown) + (f" and {more} more" if more > 0 else "") if shown else "nothing"
+    return (f"Registers, stack slots and order aside, what still differs: the target has {listed(target)}; yours has "
+            f"{listed(yours)}. Start there: the other differing rows are registers and order that follow from it.")
+
+
 def render_rows(rows: list[tuple[str, str, str]], context: int = 2, max_rows: int = 60, run: int = 6,
                 legend: str = LEGEND, more_hint: bool = True) -> str:
     """A diff's rows as text for an agent: the differing lines with `context` lines around them, at most `max_rows`,
-    long equal stretches folded, and a count of each kind of difference. Where rows are cut, it says last_diff shows
-    them all without another compile (`more_hint`)."""
+    long equal stretches folded, and a count of each kind of difference with what's left once registers and order
+    are set aside (residue_line). Where rows are cut, it says last_diff shows them all without another compile
+    (`more_hint`)."""
     counts = Counter(m for m, _, _ in rows if m != " ")
     summary = ", ".join(f"{n} {MARKERS.get(m, m)}" for m, n in counts.most_common())
+    if summary and (left := residue_line(rows)):
+        summary += "\n" + left
     width = min(max((len(t) for _, t, _ in rows), default=10) + 2, 44)
     show = set()
     for i, (m, _, _) in enumerate(rows):
