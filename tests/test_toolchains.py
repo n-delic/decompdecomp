@@ -252,6 +252,55 @@ def test_intel_mac_linker_is_built_from_pinned_source(monkeypatch, tmp_path):
     assert part["build"] == "mips-binutils" and len(part["sha256"]) == 64
 
 
+def test_ghidras_decompiler_is_built_where_its_release_has_none(monkeypatch, tmp_path):
+    """Ghidra's release has its decompiler for Intel Linux and Windows only: on a Mac, Ghidra found the functions but
+    not their calling conventions, so a __fastcall function was imported as __cdecl (_func_00401040 for
+    @mix_score@8). There it's built from the release's own source, for this computer (not its Makefile's Intel Mac)."""
+    from types import SimpleNamespace
+
+    ghidra = tmp_path / "ghidra"
+    (ghidra / "Ghidra" / "Features" / "Decompiler" / "src" / "decompile" / "cpp").mkdir(parents=True)
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        (kwargs["cwd"] / "ghidra_opt").write_bytes(b"native host executable")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(toolchains.shutil, "which", lambda name: "/usr/bin/" + name)
+    monkeypatch.setattr(toolchains.limits, "capped", lambda argv: argv)
+    monkeypatch.setattr(toolchains.subprocess, "run", run)
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
+    built = ghidra / "Ghidra" / "Features" / "Decompiler" / "os" / "mac_arm_64" / "decompile"
+    assert built.read_bytes() == b"native host executable" and built.stat().st_mode & 0o111
+    assert calls[0][0] == "make" and "ghidra_opt" in calls[0] and "ARCH_TYPE=" in calls[0]
+    assert not list((ghidra / "Ghidra" / "Features" / "Decompiler" / "src").rglob("ghidra_opt"))  # built elsewhere
+    toolchains._build_ghidra_decompiler(ghidra, lambda _: None)  # one there already (the release's): kept
+    assert len(calls) == 1
+    ghidra_tc = toolchains.get("ghidra")
+    for plat in ("macos-arm64", "macos-x86_64", "linux-aarch64"):
+        assert [p.get("build") for p in ghidra_tc.parts_for(plat)] == ["ghidra-decompiler"], plat
+    for plat in ("linux-x86_64", "windows-x86_64"):  # the release's own
+        assert [p.get("build") for p in ghidra_tc.parts_for(plat)] == [None], plat
+
+
+def test_a_ghidra_installed_without_its_decompiler_is_installed_again(tc_root, monkeypatch):
+    """A Mac's Ghidra installed before its decompiler was built would go on analysing without it: it isn't installed,
+    so it's installed again (ensure), and the build that comes with it gives the decompiler."""
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
+    where = toolchains.path("ghidra")
+    where.mkdir(parents=True)
+    (where / toolchains.MANIFEST).write_text(json.dumps({"id": "ghidra"}))
+    assert toolchains.installed("ghidra") is None
+    decompiler = toolchains.ghidra_decompiler(where)
+    decompiler.parent.mkdir(parents=True)
+    decompiler.write_bytes(b"")
+    assert toolchains.installed("ghidra") == {"id": "ghidra"}
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "linux-x86_64")
+    decompiler.unlink()
+    assert toolchains.installed("ghidra") == {"id": "ghidra"}  # (the release's own: the archive has it)
+
+
 def test_source_build_failure_reports_the_build_output(monkeypatch, tmp_path):
     from types import SimpleNamespace
 

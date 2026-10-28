@@ -90,7 +90,7 @@ The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets th
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
 toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
 (`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
-build PS1 GCC 2.6.3 from pinned source on first use. The ready-made 2.7.2 and 2.8.1 compiler binaries are for
+build PS1 GCC 2.6.3 from pinned source on first use, and Ghidra's decompiler (PC games) when Ghidra is installed. The ready-made 2.7.2 and 2.8.1 compiler binaries are for
 Apple Silicon. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
 changing their locations. This is a source install; there is no signed DMG or macOS release bundle yet.
