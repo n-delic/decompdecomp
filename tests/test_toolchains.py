@@ -324,3 +324,129 @@ def test_a_process_killed_at_the_cap_stops_its_command_unless_it_copes():
     stopped = subprocess.run(limits.capped([sys.executable, "-c", parent], cap), capture_output=True, text=True,
                              timeout=60)
     assert stopped.returncode != 0 and "carried on" not in stopped.stdout
+
+
+def _archive(tc_root, name: str, files: dict[str, str]) -> tuple[str, str]:
+    """A local .tar.gz of `files` ({path in it: text}): its file:// address and sha256."""
+    archive = tc_root / f"{name}.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        for inside, text in files.items():
+            src = tc_root / "files" / name / inside
+            src.parent.mkdir(parents=True, exist_ok=True)
+            src.write_text(text)
+            t.add(src, arcname=inside)
+    return archive.as_uri(), hashlib.sha256(archive.read_bytes()).hexdigest()
+
+
+def _pack_and_sdk(monkeypatch, tc_root) -> dict:
+    """A compiler pack of two versions that names an SDK of its own in `headers`, as msvc2017 does."""
+    url, sha = _archive(tc_root, "pack", {"bin/cl.exe": "cl", "include/sal.h": "the compiler's"})
+    sdk_url, sdk_sha = _archive(tc_root, "sdk", {"um/windows.h": "windows", "shared/sal.h": "the SDK's"})
+    reg = {"sdk": toolchains.Toolchain(id="sdk", name="SDK", license="proprietary", source="test", parts=[
+               {"url": sdk_url, "sha256": sdk_sha, "keep": {"um": "Include", "shared": "Include"}}]),
+           "pack": toolchains.Toolchain(id="pack", name="Pack", license="proprietary", source="test", headers=["sdk"],
+                                        parts=[{"url": url, "sha256": sha, "keep": {"bin": "Bin", "include": "Include"},
+                                                "into": version} for version in ("1.0", "1.0-x64")])}
+    monkeypatch.setattr(toolchains, "registry", lambda: reg)
+    return reg
+
+
+def test_a_pack_installs_the_sdk_it_names_once_and_each_version_says_where_it_is(tc_root, monkeypatch):
+    """A Windows SDK is a toolchain of its own that packs name in `headers`: installed first, once, and each of the
+    pack's versions says where its headers are, relative to the version's folder (the toolchains' folder can move),
+    searched after the compiler's own Include. Without the SDK the pack isn't installed: it can't build."""
+    reg = _pack_and_sdk(monkeypatch, tc_root)
+    assert reg["pack"].requires == ["sdk"]
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    sdk = toolchains.path("sdk")
+    assert (sdk / "Include" / "windows.h").exists() and toolchains.installed("sdk")["license_accepted"]
+    for version in ("1.0", "1.0-x64"):
+        folder = toolchains.path("pack") / version
+        assert (folder / toolchains.INCLUDES).read_text() == "../../sdk/Include\n"
+        assert (folder / "Include" / "sal.h").read_text() == "the compiler's"  # (the SDK's isn't merged in)
+        assert (folder / "../../sdk/Include/windows.h").resolve() == (sdk / "Include" / "windows.h").resolve()
+    shutil.rmtree(sdk)
+    assert toolchains.installed("pack") is None
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)  # (only the SDK comes back)
+    assert toolchains.installed("pack") is not None and toolchains.installed("sdk") is not None
+
+
+def test_an_install_from_an_entry_that_changed_is_offered_again(tc_root, monkeypatch):
+    """When a pack's entry changes (here: where an archive's folders go), its install isn't the pack any more: it
+    counts as not installed, Compilers & tools says it changed, and installing it again takes the archives already
+    downloaded. A change to its name or description doesn't count."""
+    reg = _pack_and_sdk(monkeypatch, tc_root)
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    m = toolchains.installed("pack")
+    assert m["fingerprint"] == toolchains.fingerprint(reg["pack"])
+    reg["pack"].description = "said another way"
+    assert toolchains.installed("pack") is not None
+    reg["pack"].parts[1]["keep"] = {"bin": "Bin", "include": "Include", "bin/cl.exe": "Bin/cl64.exe"}
+    assert toolchains.installed("pack") is None
+    assert {r["id"]: r["changed"] for r in toolchains.status()} == {"pack": True, "sdk": False}
+    monkeypatch.setattr(toolchains, "_download", lambda *a: pytest.fail("downloaded again"))
+    with pytest.raises(toolchains.ToolchainError, match="--accept-license"):
+        toolchains.install("pack", log=lambda *_: None)  # (proprietary: installing again is accepting again)
+    toolchains.install("pack", accept_license=True, log=lambda *_: None)
+    assert (toolchains.path("pack") / "1.0-x64" / "Bin" / "cl64.exe").exists() and toolchains.installed("pack")
+    assert not any(r["changed"] for r in toolchains.status())
+
+
+def test_an_install_made_before_fingerprints_is_judged_by_its_archives(tc_root):
+    """Installs made before manifests had a fingerprint record their archives: one whose archives are still the
+    entry's is current (and is given the fingerprint), so updating decompdecomp reinstalls nothing that didn't change;
+    one with an archive the entry no longer has isn't. Checked for every toolchain the registry has."""
+    for tc in toolchains.registry().values():
+        for linux in (False, True):
+            parts = tc.linux_parts() if linux else tc.parts_for()
+            if not parts:
+                continue
+            pinned = [{"url": p["url"], "sha256": p.get("sha256") or "f" * 64} for p in parts]
+            pinned += [{"url": p[k], "sha256": p[k.removesuffix("_url") + "_sha256"]}
+                       for p in parts for k in p if k.endswith("_url")]
+            folder = toolchains.path(tc.id, linux)
+            folder.mkdir(parents=True, exist_ok=True)
+            manifest = {"id": tc.id, "parts": pinned, "commit": tc.commit or None, "wsl": linux}
+            (folder / toolchains.MANIFEST).write_text(json.dumps(manifest))
+            assert not toolchains.changed(tc.id, manifest, folder), tc.id
+            assert json.loads((folder / toolchains.MANIFEST).read_text())["fingerprint"] == \
+                toolchains.fingerprint(tc, linux), tc.id
+            assert toolchains.changed(tc.id, {**manifest, "parts": [*pinned, {"url": "https://x/old.tar.gz",
+                                                                            "sha256": "0" * 64}]}), tc.id
+    sdk = toolchains.get("msvc2017")  # an install from before the SDK was a toolchain of its own: install it again
+    old = [{"url": url, "sha256": "0" * 64} for url in ("https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/"
+           "archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz", sdk.parts[0]["url"])]
+    assert toolchains.changed("msvc2017", {"parts": old, "commit": None, "wsl": False})
+
+
+def test_threads_that_all_need_a_free_tool_install_it_once(tc_root, monkeypatch):
+    """When an update changed objdiff's entry, a project's indexing threads each found it not installed and each
+    started downloading it into the same file, and each then found the others' bytes in it (checksum mismatch):
+    one install at a time, and the others find it installed."""
+    import threading
+    import time
+
+    _fake(monkeypatch, tc_root, sha=None)
+    downloads, real = [], toolchains._download
+
+    def slow(url, dest, log):
+        downloads.append(url)
+        time.sleep(0.2)  # (long enough for every thread to ask before the first is done)
+        real(url, dest, log)
+
+    monkeypatch.setattr(toolchains, "_download", slow)
+    errors = []
+
+    def need():
+        try:
+            toolchains.ensure("fake", log=lambda *_: None)
+        except Exception as error:  # noqa: BLE001 (any of them is the failure)
+            errors.append(error)
+
+    threads = [threading.Thread(target=need) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors and len(downloads) == 1 and toolchains.installed("fake") is not None
+    assert not list((toolchains.root() / ".downloads").glob("*.part"))  # (written beside it, then moved whole)

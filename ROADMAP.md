@@ -92,8 +92,13 @@ Where to start on a gap:
 ## Recently done
 
 - **Visual C++ 2017 for Windows PC, through wine.** The `msvc2017` pack (proprietary, installed after the user
-  accepts it, 350 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
-  with (10.0.17763), from ojdkbuild's copies of the Build Tools, pinned by sha256. Two compilers, chosen per file in
+  accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
+  with (10.0.17763), from ojdkbuild's copies of the Build Tools, pinned by sha256. The SDK's headers are a toolchain
+  of their own (`winsdk-10.0.17763`) that the pack names, so a later pack that uses the same SDK shares one copy
+  (each version's folder says where it is: `includes.txt`). An install made from a toolchain's earlier entry (other
+  archives, or its files laid out another way) counts as not installed, and Compilers & tools offers to install
+  it again from the archives already downloaded; installs made before installs recorded their entry are judged by
+  the archives they record. Two compilers, chosen per file in
   Settings or tried by try_compiler: `MSVC/14.16` (32-bit) and `MSVC/14.16-x64` (64-bit, the 32-bit host's
   program database DLLs beside it, so it runs by itself). wibo can't run them (under a patched wibo a hello world
   exited 99 and `#include <windows.h>` failed without a word), so on Linux and macOS they run through wine, which

@@ -15,17 +15,21 @@ def tc_root(tmp_path, monkeypatch):
 
 
 def test_the_2017_pack_is_pinned_and_runs_through_wine():
-    """Your verified downloads, each version a folder with Bin and one Include (msvc2005's layout), the SDK's
-    headers under Visual C++'s own, and the 64-bit compiler with the host's program database DLLs beside it."""
+    """Your verified downloads, each version a folder with Bin and Include (msvc2005's layout), the Windows 10 SDK's
+    headers a toolchain of their own the pack names (shared by packs that use that SDK, one copy on disk), and the
+    64-bit compiler with the host's program database DLLs beside it."""
     tc = toolchains.get("msvc2017")
     assert tc.wine and tc.proprietary and tc.kind == "compiler-pack" and tc.platform == "PC"
     assert all(len(p["sha256"]) == 64 for p in tc.parts)
-    assert [p["into"] for p in tc.parts] == ["14.16", "14.16", "14.16-x64", "14.16-x64"]
-    for version in ("14.16", "14.16-x64"):
-        sdk, vc = (p for p in tc.parts if p["into"] == version)
-        assert "sdk10_17763" in sdk["url"] and set(sdk["keep"].values()) == {"Include"}
-        assert vc["keep"]["VC/Tools/MSVC/14.16.27023/include"] == "Include"  # (after the SDK's: its sal.h wins)
-    x64 = tc.parts[3]["keep"]
+    assert [p["into"] for p in tc.parts] == ["14.16", "14.16-x64"]
+    assert tc.headers == tc.requires == ["winsdk-10.0.17763"]
+    for part in tc.parts:
+        assert part["keep"]["VC/Tools/MSVC/14.16.27023/include"] == "Include" and "sdk10" not in part["url"]
+    sdk = toolchains.get("winsdk-10.0.17763")
+    assert sdk.proprietary and sdk.platform == "PC" and [len(p["sha256"]) for p in sdk.parts] == [64]
+    assert "sdk10_17763" in sdk.parts[0]["url"] and set(sdk.parts[0]["keep"].values()) == {"Include"}
+    assert list(sdk.parts[0]["keep"]) == [f"Include/10.0.17763.0/{d}" for d in ("shared", "um", "ucrt")]
+    x64 = tc.parts[1]["keep"]
     assert x64["VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64"] == "Bin"
     assert {f"Bin/{dll}" for dll in ("mspdb140.dll", "mspdbcore.dll", "msobj140.dll")} <= set(x64.values())
     assert not any(t.wine for tid, t in toolchains.registry().items() if tid != "msvc2017")  # (the rest: wibo)

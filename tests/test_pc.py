@@ -132,6 +132,8 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
         (packs / version / "Bin").mkdir(parents=True)
         (packs / version / "Include").mkdir()
         (packs / version / "Bin" / "cl.exe").write_text("")
+    sdk = tmp_path / "SDK ü" / "Include"  # (2017's headers are a toolchain of their own: its includes.txt says where)
+    (packs / "14.16" / "includes.txt").write_text("../../SDK ü/Include\n")
     record, fakes = root / "ran.txt", tmp_path / "fake wine"
     fakes.mkdir()
     # wine and wibo write what they were given (and wine its prefix), then the object where /Fo says
@@ -147,6 +149,9 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     prefix = tmp_path / "prefix ü"
     configure = [sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(packs), "--wibo",
                  str(fakes / "wibo")]
+    done = subprocess.run(configure, cwd=root, capture_output=True, text=True, timeout=30)
+    assert done.returncode and "Visual C++ 14.16's headers aren't where" in done.stderr, done.stderr
+    sdk.mkdir(parents=True)
     done = subprocess.run(configure, cwd=root, capture_output=True, text=True, timeout=30)
     assert done.returncode and "Visual C++ 14.16 runs through wine" in done.stderr, done.stderr
     subprocess.run([*configure, "--wine", str(fakes / "wine"), "--wine-prefix", str(prefix)], check=True,
@@ -164,6 +169,10 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     assert wine[1] == str(prefix) and wine[2].lower() == str(packs / "14.16/Bin/cl.exe").lower()  # (a Unix path)
     z = "Z:" + str(packs / "14.16/Include").replace("/", "\\")
     assert {"/Iinclude", f"/I{z}", "/Fobuild\\TEST\\src\\auto\\new.obj", "src\\auto\\new.cpp"} <= set(wine), wine
+    # the SDK's headers after the compiler's own (Visual C++'s sal.h wins), the project's before both
+    z_sdk = "Z:" + str(sdk).replace("/", "\\")
+    assert [a for a in wine if a.startswith("/I")] == ["/Iinclude", f"/I{z}", f"/I{z_sdk}"], wine
+    assert [a for a in wibo[2:] if a.startswith("/I")] == ["/Iinclude", "/I" + str(packs / "6.0/Include")]  # (alone)
     assert "src/auto/new.cpp(1): warning C4100" in output and "src\\auto" not in output, output
 
 
@@ -717,6 +726,30 @@ def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path):
     assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
 
 
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
+def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path):
+    """2017's Windows 10 SDK is a toolchain of its own (shared by the packs that use it): a project's file built with
+    14.16 finds windows.h in it, through the folder's includes.txt, with the tools decompdecomp gives the build."""
+    root = tmp_path / "project"
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    (root / "tools/names.py").write_text("")  # (only what the compiler made is under test)
+    (root / "include").mkdir()
+    source = root / "src/auto/text_00401000.cpp"
+    source.parent.mkdir(parents=True)
+    source.write_text("#include <windows.h>\n#include <stdio.h>\n"
+                      "int f(char *s) { sprintf(s, \"%u\", GetTickCount()); return (int)GetCurrentThreadId(); }\n")
+    config = root / "config/TEST/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"text_00401000": {}}}))
+    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/text_00401000.cpp": "14.16"}))
+    subprocess.run([sys.executable, "tools/configure.py", "TEST", *scratch_pe.tool_args()], cwd=root, check=True,
+                   capture_output=True, timeout=60)
+    ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=300)
+    assert ok, output
+    obj = (root / "build/TEST/src/auto/text_00401000.obj").read_bytes()
+    assert struct.unpack_from("<H", obj)[0] == 0x14C and b"__imp__GetTickCount@0" in obj
+
+
 def _windows_program(machine=0x14C, rich=(), sections=(".text", ".rdata", ".data"), linker=(6, 0), stub=0x40):
     """A Windows program's headers, made by hand: the DOS header and `stub` bytes of DOS stub, a Rich header of
     (product id, build, count) entries XORed with its key, the PE header with the linker's version, the sections."""
@@ -823,6 +856,9 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
 
     (tmp_path / "toolchains" / "msvc2017").mkdir()
     (tmp_path / "toolchains" / "msvc2017" / toolchains.MANIFEST).write_text("{}")
+    assert "msvc2017" not in "".join(scratch_pe.tool_args())  # (its SDK isn't installed: it can't build)
+    (tmp_path / "toolchains" / "winsdk-10.0.17763").mkdir()
+    (tmp_path / "toolchains" / "winsdk-10.0.17763" / toolchains.MANIFEST).write_text("{}")
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "problem", lambda: None)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")

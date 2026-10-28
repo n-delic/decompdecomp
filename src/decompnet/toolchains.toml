@@ -908,41 +908,47 @@ sha256 = "69b0d4980a2eccea4ae6e70b486714b5190cb6c75e3bc7b8fb5878a8854d0d1c"
 keep = { "X360/16.00.11886.00/msvcp100.dll" = "Bin/msvcp100.dll" }
 into = "10.0SP1"
 
-# Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1: Visual Studio 2017 15.9.7) and the Windows 10 SDK it was
+# Windows SDKs: the headers Visual C++ 2015 and newer compile Windows programs against, each a toolchain of its own
+# that packs name in `headers`, so packs that use one SDK share one download (and one copy on disk). Its shared, um
+# and ucrt folders merge into one Include; a pack's version folder says where it is (includes.txt) and the build
+# searches it after the compiler's own Include: Visual C++'s sal.h and concurrencysal.h differ from the SDK's and must
+# win (the SDK includes them as <sal.h>, never "sal.h"), as Visual C++'s folder comes first on Visual Studio's include
+# path. Only headers are kept: a decompilation compiles, it doesn't link.
+["winsdk-10.0.17763"]
+name = "Windows 10 SDK 10.0.17763 (headers)"
+kind = "runtime"
+platform = "PC"
+license = "proprietary"
+source = "ojdkbuild's Windows 10 SDK 10.0.17763 (tools_toolchain_sdk10_17763)"
+description = "The Windows headers (windows.h, the C runtime's) that Visual C++ 2017 compiles against, installed with it."
+[["winsdk-10.0.17763".parts]]
+url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"
+sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
+subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
+keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
+
+# Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1: Visual Studio 2017 15.9.7), with the Windows 10 SDK it was
 # used with (10.0.17763), from ojdkbuild's copies of the Build Tools (235,092,441 and 309,898,570 bytes). Laid out as
-# msvc2005's: each version a folder with Bin and one Include, so the project's build finds it the same way. Include is
-# the SDK's shared, um and ucrt with Visual C++'s own on top: both have sal.h and concurrencysal.h, and they differ,
-# so Visual C++'s go in last, as its folder comes first on Visual Studio's include path. Two versions: 14.16 is the
-# 32-bit compiler (Hostx86/x86), 14.16-x64 the 64-bit one (Hostx86/x64), which loads the 32-bit host's program
-# database DLLs (mspdb140, mspdbcore; msobj140 for debug information): they're copied beside it, so it runs by
-# itself under wine and on Windows, where Visual Studio's PATH would otherwise hold Hostx86/x86.
+# msvc2005's: each version a folder with Bin and Include, so the project's build finds it the same way. Two versions:
+# 14.16 is the 32-bit compiler (Hostx86/x86), 14.16-x64 the 64-bit one (Hostx86/x64), which loads the 32-bit host's
+# program database DLLs (mspdb140, mspdbcore; msobj140 for debug information): they're copied beside it, so it runs
+# by itself under wine and on Windows, where Visual Studio's PATH would otherwise hold Hostx86/x86.
 # wibo can't run these compilers, so on Linux and macOS they run through wine (wine.py), which the user installs.
 [msvc2017]
 name = "Microsoft Visual C++ 2017 (PC)"
 kind = "compiler-pack"
 platform = "PC"
 license = "proprietary"
-source = "ojdkbuild's Visual Studio 2017 Build Tools 14.16 (tools_toolchain_vs2017bt_1416) and Windows 10 SDK 10.0.17763 (tools_toolchain_sdk10_17763)"
+source = "ojdkbuild's Visual Studio 2017 Build Tools 14.16 (tools_toolchain_vs2017bt_1416)"
 description = "Visual C++ 2017 (14.16), the compiler of Windows games of 2017-2019, with its Windows 10 SDK: a 32-bit and a 64-bit compiler. Windows programs, run through wine on Linux and macOS."
 wine = true
-[[msvc2017.parts]]
-url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"  # 10.0.17763
-sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
-subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
-keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
-into = "14.16"
+headers = ["winsdk-10.0.17763"]  # the SDK it was used with
 [[msvc2017.parts]]
 url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"  # 19.16.27027.1
 sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
 subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
 keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include" }
 into = "14.16"
-[[msvc2017.parts]]
-url = "https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz"
-sha256 = "849d009ed6ba802168bf6b57b74b6a7f1b3004d37b2037fc7e5f74c73024fdc7"
-subdir = "tools_toolchain_sdk10_17763-a647d1194cd10afdaa52f8056db239b7598fe1dd"
-keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = "Include", "Include/10.0.17763.0/ucrt" = "Include" }
-into = "14.16-x64"
 [[msvc2017.parts]]
 url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"
 sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"

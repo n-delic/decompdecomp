@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import tomllib
 import urllib.request
@@ -30,6 +31,12 @@ from decompnet.hostenv import NO_WINDOW, find_uv
 from . import limits, wsl
 
 MANIFEST = ".decompnet-toolchain.json"
+# in each version's folder of a pack with `headers`: the other Include folders its compiler searches, one per line,
+# relative to the folder (the build reads it: consoles/pc/project_template/tools/configure.py)
+INCLUDES = "includes.txt"
+# what of a toolchain's entry decides what its install holds on disk (its fingerprint, installed()); a part's
+# `platforms` only says which computers take it
+INSTALLED_FROM = ("requires", "git", "commit", "pip_extra")
 LINUX = "linux-x86_64"
 # Parts for WSL: Linux programs packed in a format Windows can unpack (a .deb, not a .zst)
 WSL_PLATFORM = "wsl-x86_64"
@@ -62,6 +69,12 @@ class Toolchain:
     prelude: str = ""  # C put before every file it compiles: works around a compiler's own bugs (see toolchains.toml)
     cplusplus: bool = False  # it compiles C++ too (by the file's extension: .cpp)
     wine: bool = False  # Windows programs wibo can't run: through wine on Linux and macOS (wine.py)
+    # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs
+    # share, downloaded once (installed first, like `requires`; INCLUDES says where in each version's folder)
+    headers: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
 
     @property
     def proprietary(self) -> bool:
@@ -149,8 +162,59 @@ def path(tid: str, linux: bool | None = None) -> Path:
 
 
 def installed(tid: str, linux: bool | None = None) -> dict | None:
+    """The install's manifest, or None when it isn't installed, or was installed from an entry toolchains.toml has
+    changed since (changed()): every caller then offers to install it again, as for one never installed, and a free
+    tool reinstalls by itself (ensure). Archives already downloaded aren't downloaded again (root()/.downloads)."""
+    manifest = _manifest(tid, linux)
+    if manifest is None or changed(tid, manifest, path(tid, linux)):
+        return None
+    tc = registry().get(tid)
+    if tc is not None and any(installed(h, manifest.get("wsl")) is None for h in tc.headers):
+        return None  # (its compilers can't build without the headers: installing it brings them, install())
+    return manifest
+
+
+def _manifest(tid: str, linux: bool | None = None) -> dict | None:
     m = path(tid, linux) / MANIFEST
     return json.loads(m.read_text(encoding="utf-8")) if m.exists() else None
+
+
+def fingerprint(tc: Toolchain, linux: bool = False) -> str:
+    """What an install of this entry holds, as a short hash: its parts (archives, hashes, where each goes) and what
+    else INSTALLED_FROM names. Its name and description don't change an install."""
+    parts = tc.linux_parts() if linux else tc.parts_for()
+    entry = {"parts": [{k: v for k, v in p.items() if k != "platforms"} for p in parts],
+             **{k: getattr(tc, k) for k in INSTALLED_FROM}}
+    return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def changed(tid: str, manifest: dict, where: Path | None = None) -> bool:
+    """Whether toolchains.toml's entry changed since this install: a pack moved its Windows SDK into a toolchain of its
+    own, and an install that kept the SDK inside would have built without the SDK's new folder. An install
+    made before installs recorded their entry's fingerprint is judged by the archives it records; one that still
+    matches is given the fingerprint (in `where`, its folder, when it can be written), so a later change to the entry
+    is seen too."""
+    tc = registry().get(tid)
+    if tc is None:  # (a project names a toolchain decompdecomp doesn't have: known())
+        return False
+    linux = bool(manifest.get("wsl"))
+    now = fingerprint(tc, linux)
+    if "fingerprint" in manifest:
+        return manifest["fingerprint"] != now
+    if "parts" not in manifest:  # (not one install() wrote)
+        return False
+    parts = tc.linux_parts() if linux else tc.parts_for()
+    urls = {p["url"] for p in parts} | {v for p in parts for k, v in p.items() if k.endswith("_url")}
+    had = {(p.get("url"), p.get("sha256")) for p in manifest["parts"]}
+    if {url for url, _ in had} != urls or (manifest.get("commit") or "") != tc.commit or \
+            any(p.get("sha256") and (p["url"], p["sha256"]) not in had for p in parts):
+        return True
+    try:
+        if where is not None:
+            (where / MANIFEST).write_text(json.dumps({**manifest, "fingerprint": now}, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # (a folder it can't write, read-only: judged by its archives again next time)
+    return False
 
 
 @functools.cache
@@ -204,10 +268,17 @@ def _sha256(p: Path) -> str:
 
 
 def _download(url: str, dest: Path, log) -> None:
+    """The file at `url`, written beside `dest` and then moved there whole: another download of it (another
+    program's) never reads half of one, nor writes into it."""
     log(f"  downloading {url}")
     req = urllib.request.Request(url, headers={"User-Agent": "decompnet-toolchain-installer"})
-    with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
+    part = dest.with_name(f"{dest.name}.{os.getpid()}-{threading.get_ident()}.part")
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r, open(part, "wb") as f:
+            shutil.copyfileobj(r, f)
+        os.replace(part, dest)
+    finally:
+        part.unlink(missing_ok=True)
 
 
 def _deb_data(deb: Path, out: Path) -> Path:
@@ -293,9 +364,23 @@ def _extract(archive: Path, dest: Path, subdir: str | None, keep: dict[str, str]
             shutil.move(str(item), target)
 
 
+_INSTALLING = threading.Lock()
+_installs: dict[str, threading.RLock] = {}
+
+
 def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None) -> Path:
     """Install a toolchain (and what it requires). `linux`: its Linux build, to run inside WSL (default: when
-    that's how it runs on this computer)."""
+    that's how it runs on this computer). One install of a toolchain at a time: a free tool's threads that all need
+    it (ensure) install it once, and the others find it installed. When an update changed objdiff's entry, the
+    project's indexing threads each started its download into the same file, and each found the others' bytes in
+    it (checksum mismatch)."""
+    with _INSTALLING:
+        lock = _installs.setdefault(tid, threading.RLock())
+    with lock:
+        return _install(tid, accept_license=accept_license, force=force, log=log, linux=linux)
+
+
+def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | None) -> Path:
     tc = get(tid)
     linux = tc.via_wsl if linux is None else linux
     _intel_mac_runtime_ready.cache_clear()  # Rosetta may have been installed since the last setup attempt
@@ -370,6 +455,10 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
                         if f.is_file():
                             os.chmod(f, 0o755)
             pinned.append({"url": part["url"], "sha256": digest})
+        for into in dict.fromkeys(part.get("into", "") for part in parts) if tc.headers else ():
+            folder = dest / into  # (relative: the toolchains' folder can be moved, DECOMPNET_TOOLCHAINS)
+            lines = [Path(os.path.relpath(path(h, linux) / "Include", folder)).as_posix() for h in tc.headers]
+            (folder / INCLUDES).write_text("".join(f"{line}\n" for line in lines), encoding="utf-8")
         if linux and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")
@@ -380,6 +469,7 @@ def install(tid: str, *, accept_license: bool = False, force: bool = False, log=
         "id": tid, "name": tc.name, "license": tc.license, "source": tc.source,
         "parts": pinned, "commit": tc.commit or None, "installed_at": time.time(),
         "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux,
+        "fingerprint": fingerprint(tc, linux),
     }, indent=2), encoding="utf-8")
     log(f"{tid}: installed at {dest}")
     if tc.wine and not linux:
@@ -684,6 +774,8 @@ def status() -> list[dict]:
         m = installed(tc.id)
         rows.append({"id": tc.id, "name": tc.name, "kind": tc.kind, "platform": tc.platform, "license": tc.license,
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
+                     # installed from an entry that has changed since: Compilers & tools offers to install it again
+                     "changed": m is None and _manifest(tc.id) is not None,
                      "wsl": tc.via_wsl,
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
     return rows

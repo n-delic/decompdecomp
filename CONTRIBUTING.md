@@ -204,8 +204,12 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
 
 1. **Pin it** in `src/decompnet/toolchains.toml`. A new part of a pack (`msvc2005`, or a pack of its own, as
    2012-2013 would be) with its `url`, its `sha256` (`sha256sum` of the archive) and `into = "11.0"`. An archive
-   that's a whole install takes only its compiler and headers with `keep` (see `msvc2005`). Take it from where the
-   decomp community keeps it; never from the vendor's site with someone's account.
+   that's a whole install takes only its compiler and headers with `keep` (see `msvc2005`). A compiler of 2015 and
+   newer compiles against a Windows SDK: that's a toolchain of its own (`winsdk-<version>`) the pack names in
+   `headers`, so packs that use one SDK share it (see `msvc2017`); each version's folder then gets an `includes.txt`
+   the build reads. Take it from where the decomp community keeps it; never from the vendor's site with someone's
+   account. Changing an entry later is safe: an install from the old entry counts as not installed
+   (`toolchains.changed`), and the app offers to install it again.
 2. **Proprietary means opt-in.** Its entry says `license = "proprietary"`. The app installs it only after the user
    accepts its licence in Setup. Never download it in code, a test or CI: public CI can't have it, and its tests
    skip there.

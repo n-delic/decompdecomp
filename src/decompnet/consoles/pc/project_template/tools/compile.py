@@ -40,7 +40,7 @@ def main() -> int:
     """Keep the compiler's arguments intact, and never rename symbols after a failed compile."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", required=True)
-    parser.add_argument("--include", required=True)
+    parser.add_argument("--include", required=True, action="append")  # each searched in turn: Visual C++'s, an SDK's
     parser.add_argument("--config", required=True)
     parser.add_argument("--wrapper", default="")  # wibo
     parser.add_argument("--wine", default="")  # wine, for Visual C++ 2015 and newer (configure.py's WINE_FROM)
@@ -57,8 +57,8 @@ def main() -> int:
         keep_wine_server(args.wine, env)
         path = windows_path
     command = ([args.wine] if args.wine else [args.wrapper] if args.wrapper else []) + [
-        args.compiler, *flags, f"/I{path('include')}", f"/I{path(args.include)}", f"/Fo{path(args.output)}",
-        path(args.source)]
+        args.compiler, *flags, f"/I{path('include')}", *(f"/I{path(d)}" for d in args.include),
+        f"/Fo{path(args.output)}", path(args.source)]
     if args.wine:
         # wine's output to a file, then ours: the services the first wine program after a new server starts
         # (services.exe, winedevice.exe, rpcss.exe...) keep what it was given for as long as the server runs, and
@@ -70,7 +70,7 @@ def main() -> int:
             finally:
                 said.seek(0)
                 text = said.read().decode("utf-8", "replace")
-                for name in (args.source, args.include, args.output):  # (its messages name them as given to it)
+                for name in (args.source, *args.include, args.output):  # (its messages name them as given to it)
                     text = text.replace(windows_path(name), name)
                 sys.stdout.write(text)
                 sys.stdout.flush()
