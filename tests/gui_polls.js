@@ -262,6 +262,26 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       { id: 4, slug: "a", project: "Demo", kind: "match", agent: "claude-1", detail: "func_3", created_at: 103 },
       { id: 5, slug: "a", project: "Demo", kind: "autopilot", agent: "", detail: "0 of 1 functions matched from machine drafts", created_at: 104 },
     ]).map((g) => noteHtml(g).replace(/<[^>]+>/g, "")),
+    // #99: the app's own workers' claims outlive a stopped helper (the permuter's by half an hour) and one helper
+    // going between waiting and working mustn't swap the rows
+    agents: (() => {
+      const was = { sessions: S.sessions, claims: S.claims };
+      const claim = (agent) => ({ name: "func_1", agent });
+      S.sessions = [];
+      S.claims = ["permuter", "@permuter", "decompdecomp", "@autopilot"].map(claim);
+      const ownOnly = workingAgents().n;
+      S.claims = [claim("alex.claude-1")];
+      const outside = workingAgents().n;
+      S.claims = [claim(null), claim(undefined)];
+      const nameless = workingAgents().n;
+      const at = (label, state, task = "decompile") => ({ id: label, label, state, task });
+      const flip = (first, second) => [at("alpha", first), at("beta", second)].sort(sessionOrder).map((s) => s.label);
+      const flipped = flip("waiting", "working"), again = flip("working", "waiting");
+      const rows = [at("stopped-one", "stopped"), at("working-one", "working"), at("polishing", "waiting", "readable"),
+                    at("paused-one", "paused", "readable")].sort(sessionOrder).map((s) => s.label);
+      S.sessions = was.sessions; S.claims = was.claims;
+      return { ownOnly, outside, nameless, flipped, again, rows };
+    })(),
   })`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -38,7 +38,6 @@ function renderNow(claims) {
    waiting (why, until when), stopped (by whom) or paused on an error it can't get past (what to do). Its own last words
    are on its row; everything it said and did is one click in. */
 const LIVE = ["starting", "working", "waiting"];
-const STATE_ORDER = { working: 0, starting: 1, waiting: 2, paused: 3, stopped: 4 };
 const FEED_KEEP = 400;  // lines of each helper's log kept here (the app keeps as many)
 const ACTIVITY_ROWS = 300;  // lines "What's happening" keeps: older ones scroll away
 const SAID_SHOWN = 1600, THOUGHT_SHOWN = 1200;  // characters of a helper's message and thought its log shows
@@ -72,6 +71,13 @@ async function renderCosts(force = false) {
   setHtml($("modelAdvice"), advice.map((a) => `<p>${esc(a)}</p>`).join(""));
 }
 
+/* #99: helpers go between waiting and working all the time (compiling), and the rows swapped under the user's eye:
+   decompiling then polishing, live ones before ended ones, then by name. Only starting or stopping one moves it. */
+function sessionOrder(a, b) {
+  const ended = (s) => (LIVE.includes(s.state) ? 0 : 1);
+  return (a.task === "readable") - (b.task === "readable") || ended(a) - ended(b) || a.label.localeCompare(b.label);
+}
+
 function renderSessions(sessions) {
   renderCosts();
   const box = $("sessions");
@@ -82,8 +88,7 @@ function renderSessions(sessions) {
   $("removePaused").hidden = paused.length === 0;
   $("removePaused").textContent = paused.length ? `Remove paused (${paused.length})` : "Remove paused";
   // decompiling helpers, then polishing ones (task "readable"), each group under its heading when both are at work
-  const sorted = [...sessions].sort((a, b) => (a.task === "readable") - (b.task === "readable")
-    || STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.label.localeCompare(b.label));
+  const sorted = [...sessions].sort(sessionOrder);
   const both = sorted.some((s) => s.task === "readable") && sorted.some((s) => s.task !== "readable");
   const html = sorted.map((s, i) => {
     const group = s.task === "readable" ? "Polishing" : "Decompiling";
@@ -514,6 +519,9 @@ function matchedBy(agent, fn) {
 }
 
 const AUTO = "autopilot";
+/* #99: the app's own workers, not helpers anyone started: their claims outlive a stopped helper (the permuter's by
+   half an hour) and a room host's are named with "@" in front. */
+const APP_WORKERS = new Set([AUTO, "permuter", "decompdecomp"]);
 function autopilotLine(t, first, done) {
   const a = S.apFeed || (S.apFeed = { tried: 0, matched: 0, li: null });
   const html = `<span class="who">autopilot</span> ${done ? esc(done) : `tried ${plural(a.tried, "machine draft")}${a.matched ? ` · <span class="ok">${a.matched} matched</span>` : ""}`}`;

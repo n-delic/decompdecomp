@@ -134,6 +134,8 @@ def tick(_timer):
         elif phase == 21:
             if len(headers) <= state["requests_before"]:
                 return
+            # The first request isn't a loaded page; it can even be the old page's poll, so phase 22 waits
+            # until the new document (nativeBeforeReload is gone) has fetched /api/state.
             state["phase"] = 22
             # A request reaching the server doesn't mean WebKit has initialized the new page yet (Intel CI).
             # Keep polling until it is ready, and don't accept the old document while navigation is pending.
@@ -141,7 +143,11 @@ def tick(_timer):
                      '&& typeof decompClose === "function")',
                      lambda loaded: state.update(phase=3 if loaded else 21))
         elif phase == 22:
-            return
+            def loaded(value):
+                if value:
+                    state["phase"] = 3
+            evaluate('Boolean(!window.nativeBeforeReload && typeof S !== "undefined" && S.st '
+                     '&& typeof decompClose === "function")', loaded)
         elif phase == 3:
             state["phase"] = 31
             evaluate('window.decompClose=()=>"wait"; true', lambda _: None)
