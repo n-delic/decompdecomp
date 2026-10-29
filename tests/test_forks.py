@@ -1036,14 +1036,52 @@ def test_units_built_in_one_run_each_hear_only_their_own_failure(tmp_path, monke
     execute = fp._execute
     monkeypatch.setattr(fp, "_execute", lambda cmd, *a: runs.append(cmd) or execute(cmd, *a))
     results = fp.build_units([fp.unit(n) for n in "abcd"])
-    assert len(runs) == 1 and "-k" in runs[0]  # one run, going on past a failure
-    assert [ok for ok, _ in results] == [True, False, True, False]
+    builds = [c for c in runs if "-n" not in c]
+    assert len(builds) == 1 and "-k" in builds[0]  # one run, going on past a failure
+    assert len([c for c in runs if "-n" in c]) == 1  # (and ninja asked whether the rest are built)
+    assert results == [(True, ""), results[1], (True, ""), results[3]] and not results[1][0] and not results[3][0]
     assert "src/b.c:1: error: a broken step" in results[1][1] and "d.c" not in results[1][1]
     assert "src/d.c:1: error: a broken step" in results[3][1] and "b.c" not in results[3][1]
+    assert results[1][1].count("error: a broken step") == 1
     assert (tmp_path / "build/a.o").is_file() and (tmp_path / "build/c.o").is_file()
     # one unit builds alone, as it always did
     runs.clear()
     assert fp.build_units([fp.unit("b")]) == [fp.build_unit(fp.unit("b"))] and len(runs) == 2
+
+
+def test_a_unit_without_a_failure_of_its_own_is_built_only_when_ninja_says_so(tmp_path, monkeypatch):
+    """A run can stop short of a unit without a failure that names it (the memory cap ends the whole run, a
+    dependency walk cut short): reported built, its old object was judged as its new file's. Ninja is asked; a
+    unit it would still build is built alone, and says what it says."""
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    rules = (f'rule step\n  command = "{py}" step.py $in $out\n'
+             "build build/a/part.o: step src/a.c\nbuild build/a.o: step build/a/part.o\n"
+             "build build/b.o: step src/b.c\n"
+             "build build/c/part.o: step src/c.c\nbuild build/c.o: step build/c/part.o | build/b.o\n")
+    (tmp_path / "build.ninja").write_text(rules)
+    monkeypatch.setattr(fp, "_made_from", lambda targets: set())  # (a walk that found nothing above the step)
+    results = fp.build_units([fp.unit(n) for n in "abc"])
+    assert results[0][0]  # (built alone with c, ninja being unsure of the rest: "no work to do")
+    assert not results[1][0] and "src/b.c:1: error: a broken step" in results[1][1]
+    assert not results[2][0]  # c needs b's object: ninja didn't build it, so it isn't built
+
+
+def test_a_failed_step_that_makes_two_files_is_one_failure_in_the_log(tmp_path):
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    rules = (f'rule step\n  command = "{py}" step.py $in $out\n'
+             "build build/a/part.o: step src/a.c\nbuild build/a.o: step build/a/part.o\n"
+             "build build/b/part.o build/b/part.map: step src/b.c\n"
+             "build build/b.o: step build/b/part.o | build/b/part.map\n")
+    (tmp_path / "build.ninja").write_text(rules)
+    results = fp.build_units([fp.unit(n) for n in "ab"])
+    assert results[0] == (True, "") and not results[1][0]
+    assert results[1][1].count("error: a broken step") == 1
 
 
 def test_a_run_that_stops_before_building_builds_each_unit_alone(tmp_path):
@@ -1113,6 +1151,38 @@ def test_builds_asked_for_during_a_run_go_together_in_the_next():
     t.start()
     t.join(10)
     assert isinstance(got["boom"], OSError) and builds.build("e", run) == (True, "built e")
+    # every unit of a run that raised hears it, each thread with an exception of its own
+    first.clear()
+    release.clear()
+
+    def slow_boom(units):
+        if not first.is_set():
+            first.set()
+            assert release.wait(10)
+            return [(True, "")] * len(units)
+        raise OSError("the build stopped")
+
+    errors = {}
+
+    def ask_boom(u):
+        try:
+            builds.build(u, slow_boom)
+        except OSError as e:
+            errors[u] = e
+
+    threads = [threading.Thread(target=ask_boom, args=(u,)) for u in ("x", "y", "z")]
+    threads[0].start()
+    assert first.wait(10)
+    for t in threads[1:]:
+        t.start()
+    deadline = time.monotonic() + 10
+    while len(builds._queue) < 2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    release.set()
+    for t in threads:
+        t.join(10)
+    assert set(errors) == {"y", "z"} and errors["y"] is not errors["z"]
+    assert errors["y"].__cause__ is errors["z"].__cause__ and str(errors["y"]) == "the build stopped"
 
 
 def test_which_if_branch_leaves_code_out_is_told_only_when_certain():

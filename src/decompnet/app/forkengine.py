@@ -10,6 +10,7 @@ single match.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -244,7 +245,13 @@ class _UnitBuilds:
                     self._running = False
                     self._cond.notify_all()
         if ask.error is not None:
-            raise ask.error
+            # each thread raises a copy of its own: raising the one exception in every thread of the batch writes
+            # each one's frames into its traceback, side by side
+            try:
+                mine = copy.copy(ask.error)
+            except Exception:  # noqa: BLE001 - one that can't be copied is raised as it is
+                raise ask.error from None
+            raise mine.with_traceback(None) from ask.error
         return ask.result
 
 
@@ -608,7 +615,9 @@ class ForkEngine:
     def _build_unit(self, proj, fp: ForkProject, unit) -> tuple[bool, str]:
         """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns: together
         with the others asked for meanwhile, in one run of the build (_UnitBuilds)."""
-        return self._unit_builds[proj["id"]].build(unit, lambda units: self._build_units(proj, fp, units))
+        with self._mlock:  # (one per project: two first builds at once made two, and batched apart)
+            builds = self._unit_builds[proj["id"]]
+        return builds.build(unit, lambda units: self._build_units(proj, fp, units))
 
     def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
         with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
