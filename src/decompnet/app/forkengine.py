@@ -212,6 +212,7 @@ class _UnitBuilds:
         unit: object
         result: tuple[bool, str] | None = None
         error: BaseException | None = None
+        shared: bool = False  # the error is the whole run's, raised in each of its threads
 
     def __init__(self):
         self._cond = threading.Condition()
@@ -236,23 +237,29 @@ class _UnitBuilds:
                 if len(results) != len(batch):
                     raise RuntimeError(f"a build of {len(batch)} units said {len(results)} results")
                 for a, r in zip(batch, results):
-                    a.result = r
+                    if isinstance(r, BaseException):  # its own build raised (build_units): its caller's alone
+                        a.error, a.shared = r, False
+                    else:
+                        a.result = r
             except BaseException as e:  # each of the batch hears it, as a build of its own would have raised it
                 for a in batch:
-                    a.error = e
+                    a.error, a.shared = e, True
             finally:
                 with self._cond:
                     self._running = False
                     self._cond.notify_all()
-        if ask.error is not None:
-            # each thread raises a copy of its own: raising the one exception in every thread of the batch writes
-            # each one's frames into its traceback, side by side
-            try:
-                mine = copy.copy(ask.error)
-            except Exception:  # noqa: BLE001 - one that can't be copied is raised as it is
-                raise ask.error from None
-            raise mine.with_traceback(None) from ask.error
-        return ask.result
+        if ask.error is None:
+            return ask.result
+        if not ask.shared:
+            raise ask.error
+        # each thread raises a copy of its own: raising the one exception in every thread of the batch writes each
+        # one's frames into its traceback, side by side (one that can't be copied still is, but nothing else of it
+        # is changed)
+        try:
+            mine = copy.copy(ask.error)
+        except Exception:  # noqa: BLE001
+            raise ask.error  # noqa: B904
+        raise mine.with_traceback(None) from ask.error
 
 
 def _tail(log: str, lines: int = 14) -> str:

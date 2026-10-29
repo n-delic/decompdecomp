@@ -1034,7 +1034,7 @@ def test_units_built_in_one_run_each_hear_only_their_own_failure(tmp_path, monke
     fp = _steps_project(tmp_path, broken="bd")
     runs = []
     execute = fp._execute
-    monkeypatch.setattr(fp, "_execute", lambda cmd, *a: runs.append(cmd) or execute(cmd, *a))
+    monkeypatch.setattr(fp, "_execute", lambda cmd, *a, **k: runs.append(cmd) or execute(cmd, *a, **k))
     results = fp.build_units([fp.unit(n) for n in "abcd"])
     builds = [c for c in runs if "-n" not in c]
     assert len(builds) == 1 and "-k" in builds[0]  # one run, going on past a failure
@@ -1063,10 +1063,58 @@ def test_a_unit_without_a_failure_of_its_own_is_built_only_when_ninja_says_so(tm
              "build build/c/part.o: step src/c.c\nbuild build/c.o: step build/c/part.o | build/b.o\n")
     (tmp_path / "build.ninja").write_text(rules)
     monkeypatch.setattr(fp, "_made_from", lambda targets: set())  # (a walk that found nothing above the step)
+    alone = []
+    build_unit = fp.build_unit
+    monkeypatch.setattr(fp, "build_unit", lambda u, **k: alone.append(u.name) or build_unit(u, **k))
     results = fp.build_units([fp.unit(n) for n in "abc"])
-    assert results[0][0]  # (built alone with c, ninja being unsure of the rest: "no work to do")
+    assert results[0] == (True, "")  # a is built, ninja says: it isn't built again
     assert not results[1][0] and "src/b.c:1: error: a broken step" in results[1][1]
-    assert not results[2][0]  # c needs b's object: ninja didn't build it, so it isn't built
+    assert not results[2][0] and alone == ["c"]  # c needs b's object: ninja didn't build it, so it isn't built
+    # ninja's progress lines as a user set them, or none (a project's --quiet), don't make a unit built
+    from decompnet.forks.project import _tool
+
+    ninja = [_tool("ninja") or "ninja"]
+    monkeypatch.setenv("NINJA_STATUS", "")
+    assert not fp._no_work([*ninja, "--quiet"], ["build/c.o"])
+    assert fp._no_work(ninja, ["build/a.o"])
+
+
+def test_a_run_ended_by_the_memory_cap_says_nothing_of_its_units(tmp_path, monkeypatch):
+    """The memory cap covers the whole run of several units and kills whichever step is biggest: that step's
+    failure isn't its unit's own, so each unit is built alone; and a unit whose own build then raises gets the
+    exception alone."""
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="b")
+    monkeypatch.setattr(project, "killed_for_memory", lambda code: code not in (0, None))
+    build_unit = fp.build_unit
+
+    def alone(u, **k):
+        if u.name == "c":
+            raise PermissionError("ninja.exe is in use")
+        return build_unit(u, **k)
+
+    monkeypatch.setattr(fp, "build_unit", alone)
+    results = fp.build_units([fp.unit(n) for n in "abc"])
+    assert results[0][0] and not results[1][0] and isinstance(results[2], PermissionError)
+
+
+def test_a_unit_build_that_hangs_with_its_output_open_times_out(tmp_path, monkeypatch):
+    """A compiler stuck under wibo kept a unit's build, and the project's build lock, forever: its output was read
+    to the end before the time limit was looked at."""
+    import sys
+    import time
+
+    from decompnet.forks import project
+
+    fp = _steps_project(tmp_path, broken="")
+    py = sys.executable.replace("\\", "/")
+    (tmp_path / "hang.py").write_text("import time\nprint('compiling', flush=True)\ntime.sleep(20)\n")
+    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{py}" hang.py\nbuild build/a.o: hang src/a.c\n')
+    monkeypatch.setattr(project, "UNIT_SECONDS", 2)
+    started = time.monotonic()
+    assert fp.build_unit(fp.unit("a")) == (False, "timed out")
+    assert time.monotonic() - started < 15
 
 
 def test_a_failed_step_that_makes_two_files_is_one_failure_in_the_log(tmp_path):
@@ -1112,6 +1160,15 @@ def test_builds_asked_for_during_a_run_go_together_in_the_next():
     import time
 
     from decompnet.app.forkengine import _UnitBuilds
+
+    # a unit whose own build raised (build_units puts the exception in its place): its caller alone hears it
+    own = _UnitBuilds()
+    assert own.build("a", lambda units: [(True, "")] if units == ["a"] else None) == (True, "")
+    try:
+        _UnitBuilds().build("b", lambda units: [OSError("b's own")])
+        raise AssertionError("b's error was lost")
+    except OSError as e:
+        assert str(e) == "b's own" and e.__cause__ is None
 
     builds, runs = _UnitBuilds(), []
     first, release = threading.Event(), threading.Event()
