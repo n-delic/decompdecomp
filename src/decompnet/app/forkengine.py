@@ -3101,7 +3101,11 @@ class ForkEngine:
 
             def unname() -> None:
                 """The config as it was: a name left behind would keep another function from being that class's
-                constructor (an agent's wrong address)."""
+                constructor (an agent's wrong address). Nothing renamed (nearly every try): no wait for the build
+                lock, which a run of the project's builds holds; each of the permuter's tries waited for the next
+                run here, writing nothing."""
+                if not renamed:
+                    return
                 with self._build_locks[proj["id"]]:
                     for p, t in renamed.items():
                         p.write_text(t, encoding="utf-8")
