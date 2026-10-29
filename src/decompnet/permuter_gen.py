@@ -322,8 +322,9 @@ _CAST = re.compile(r"\(\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)+\)")  # (D3DMA
 _BARE_CAST = re.compile(r"\(\s*([A-Za-z_]\w*)\s*\)\s*(?=[A-Za-z_&(]|\d)")
 # a local's declaration in a body, at the start of a statement: two names in a row (`BOOL wait;`, `fd_set r = {0};`)
 # are never an expression, nor is `T *p =` (a product isn't assigned to)
-_LOCAL_DECL = re.compile(r"(?:^|(?<=[;{}]))\s*(?:(?:const|volatile|static|register)\s+)*([A-Za-z_]\w*)\s*"
-                         r"(?:(\*[\s*]*)(?:\bconst\b\s*)?([A-Za-z_]\w*)\s*(?==)|([A-Za-z_]\w*)\s*(?=[=;\[,]))", re.M)
+_LOCAL_DECL = re.compile(r"(?:^|(?<=[;{}]))\s*(?:(?:const|volatile|static|register)\s+)*([A-Za-z_]\w*)\b"
+                         r"(?:\s*(\*[\s*]*)(?:\bconst\b\s*)?([A-Za-z_]\w*)\s*(?==)|\s+([A-Za-z_]\w*)\b\s*(?=[=;\[,]))",
+                         re.M)
 _FUNCTION_MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)]*)\)[ \t]*(.*)$", re.M)
 _TYPE_ARG = re.compile(r"\s*(?:(?:const|volatile|unsigned|signed|struct|union|enum)\s+)*([A-Za-z_]\w*)\s*([*\s]*)")
 EXPANSIONS = 8
@@ -386,11 +387,14 @@ def _call_args(text: str, at: int) -> tuple[list[str], int] | None:
 
 def expand_in_source(source: str, definitions: str, types: set[str]) -> str:
     """The function's own C with the macros of `definitions` (the header's and the source's own #defines) put in
-    where pycparser can't read them as they are: every object-like one (`MATCH_VOLATILE bool found` is no
-    declaration until it's `volatile`), and a function-like one called with a type (`F(int, 0x20) = v`,
-    `MP_RAW(bool, 0x62C)`: no call takes a type). A call of values stays a call, for the randomizer to move; the
-    compiler gets the variant's expansion, which is what it would have made of the macro."""
-    objects = {n: v.strip() for n, v in _OBJECT_MACRO.findall(definitions)}
+    where pycparser can't read them as they are: an object-like one that stands for C's own words or nothing
+    (`MATCH_VOLATILE bool found` is no declaration until it's `volatile`), and a function-like one called with a
+    type (`F(int, 0x20) = v`, `MP_RAW(bool, 0x62C)`: no call takes a type). Others read as the names they are and
+    stay (`#define CPlayerCar CPlayerCarRaceView` put in renamed the function's own class, so it wasn't found). A
+    call of values stays a call, for the randomizer to move; the compiler gets the variant's expansion, which is
+    what it would have made of the macro."""
+    objects = {n: v.strip() for n, v in _OBJECT_MACRO.findall(definitions)
+               if all(w in _C_WORDS for w in re.findall(r"\S+", v))}
     functions = {n: ([p.strip() for p in ps.split(",")], body.strip())
                  for n, ps, body in _FUNCTION_MACRO.findall(definitions) if "#" not in body}
     if not objects and not functions:
