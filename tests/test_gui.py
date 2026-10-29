@@ -26,6 +26,13 @@ def test_saved_project_dialog_preserves_state_and_cancels_pending_requests():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_launcher.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 @pytest.fixture(scope="module")
 def gui():
     if NODE is None:
@@ -86,6 +93,24 @@ def test_the_autopilots_run_and_its_summary_are_one_notification(gui):
     assert agent == "claude-1 matched func_3" and alone.startswith("Autopilot: 0 of 1")
 
 
+def test_stopped_helpers_claims_do_not_read_as_agents_working(gui):
+    """#99: the permuter claims a function for half an hour and its claim outlives the helper and a restart, so the
+    header still said "1 agent working" with every helper stopped. The app's own workers (the permuter, the
+    autopilot, decompdecomp, and a room host's) aren't agents anyone started; another computer's helper still is."""
+    agents = gui["checks"]["agents"]
+    assert agents["ownOnly"] == agents["nameless"] == 0
+    assert agents["outside"] == 1
+
+
+def test_a_helper_going_between_waiting_and_working_does_not_reorder_the_rows(gui):
+    """#99: with four API helpers on one project the rows jumped every time one went from waiting to working (or
+    back), so following one agent with the eye was impossible. Live helpers keep their name order; only starting or
+    stopping one moves it, and decompiling helpers still come before polishing ones."""
+    agents = gui["checks"]["agents"]
+    assert agents["flipped"] == agents["again"] == ["alpha", "beta"]
+    assert agents["rows"] == ["working-one", "stopped-one", "polishing", "paused-one"]
+
+
 def test_searching_functions_looks_at_names_and_addresses_before_the_segment(gui):
     """Searching "ma" listed every function of the segment "main". A ROM's segment counts only when no name or address
     has the text; a fork's source file is shown in the list, so it always counts there."""
@@ -98,6 +123,15 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     """The sidebar's button only flipped light and dark: once pressed, the system's choice was gone for good."""
     assert gui["checks"]["themes"] == ["light", "dark", ""]
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
+
+
+def test_an_unknown_compiler_says_the_project_was_made_with_another_tool(gui):
+    """#118: a project from another tool names a compiler decompdecomp doesn't have. The banner called it a compiler
+    with no build for this computer; it says what it is and where to pick one decompdecomp has."""
+    said = gui["checks"]["unknownCompiler"]
+    assert said["hidden"] is False and said["className"] == "notice bad"
+    assert "msvcxx-x86_64 isn't a compiler decompdecomp has" in said["text"] and "another tool" in said["text"]
+    assert "Settings" in said["text"] and "no build for this computer" not in said["text"]
 
 
 def test_the_drop_zone_takes_playstation_programs_and_leaves_a_discs_console_to_its_system_cnf(gui):

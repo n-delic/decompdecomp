@@ -136,8 +136,12 @@ class Store:
 
     @contextmanager
     def tx(self):
-        """Serialized transaction. Never compile while holding this."""
+        """Serialized transaction. Never compile while holding this. One inside another joins it: they commit (or
+        roll back) together, which is how many small writes cost one commit's wait for the disk."""
         with self.lock:
+            if getattr(self._local, "in_tx", False):
+                yield self.conn
+                return
             self.conn.execute("BEGIN IMMEDIATE")
             self._local.in_tx = True
             try:

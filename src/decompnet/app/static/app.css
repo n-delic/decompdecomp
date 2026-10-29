@@ -431,6 +431,7 @@ a.ghost, a.primary { text-decoration: none; }
 .lz-body { display: grid; gap: 12px; }
 .lz-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .lz-fields .wide { grid-column: 1 / -1; }
+.lz-models { display: grid; gap: 6px; max-height: 190px; overflow: auto; padding: 9px 10px; border: 1px solid var(--line); border-radius: var(--r); }
 .ep-pick { display: grid; gap: 8px; }
 .ep-card { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); margin: 0 0 12px; }
 .lz-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }

@@ -65,6 +65,7 @@ class Module:
     functions: dict[int, tuple[int, bool]] = field(default_factory=dict)  # address -> (size, thumb): dsd's
     relocs: dict[int, str] = field(default_factory=dict)  # from -> its line
     changed: bool = False  # its relocs changed
+    symbols_changed: bool = False  # its symbols.txt changed (a function dsd refused was taken out)
     added: dict[int, tuple[int, bool, bool]] = field(default_factory=dict)  # address -> (size, thumb, sure): ours
     covered: bytearray = field(default_factory=bytearray)  # 1 for each byte in a function
     dsds: bytes = b""  # 1 for each byte in a function dsd found (covered, before this added any)
@@ -498,7 +499,7 @@ def write(modules: list[Module]) -> list[Path]:
             head = re.sub(rf"^(\s+\.rodata\s+start:){old}", rf"\g<1>{new}", head, count=1, flags=re.M)
             (m.folder / "delinks.txt").write_text(head + ("\n\n" + rest if rest else ""), encoding="utf-8")
             out.append(m.folder / "delinks.txt")
-        if not m.added:
+        if not m.added and not m.symbols_changed:
             if m.changed:
                 (m.folder / "relocs.txt").write_text("\n".join(m.relocs[k] for k in sorted(m.relocs)) + "\n",
                                                      encoding="utf-8")
@@ -513,10 +514,29 @@ def write(modules: list[Module]) -> list[Path]:
     return out
 
 
+def _function_named(modules: list[Module], name: str) -> tuple[Module, int, bool] | None:
+    """The module, address and whether recover added it (else dsd did) of the function `name`. dsd may name its own
+    with the game's name rather than function_name's."""
+    for m in modules:
+        for a in m.added:
+            if m.function_name(a) == name:
+                return m, a, True
+    for m in modules:
+        for line in m.symbol_lines:
+            s = SYMBOL.match(line)
+            if s and s.group(1) == name and s.group(2) == "function" and (a := int(s.group(4), 16)) in m.functions:
+                return m, a, False
+        for a in m.functions:
+            if m.function_name(a) == name:
+                return m, a, False
+    return None
+
+
 def check_with_dsd(root: Path, version: str, dsd: str, modules: list[Module], log=print) -> int:
     """Delink the project with dsd, which reads every function again (by its own reading of the code, whatever size
-    it's given): one it refuses (code it calls illegal on its path) is dropped, until it takes them all. Returns how
-    many it refused."""
+    it's given): one it refuses (code it calls illegal on its path) is dropped, until it takes them all. That holds
+    for the functions recover added and for dsd's own (a call's target init made a function where none starts, #78).
+    Returns how many it refused."""
     from ...forks.project import ForkError
     from ...limits import capped
 
@@ -527,16 +547,27 @@ def check_with_dsd(root: Path, version: str, dsd: str, modules: list[Module], lo
                              text=True, timeout=3600, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
         if res.returncode == 0:
             if refused:
-                log(f"dsd refused {refused} of them (code it calls illegal on their path): left out")
+                log(f"dsd refused {refused} function{'s' if refused != 1 else ''} (its own or ones it missed, code it "
+                    "calls illegal on their path): left out")
             return refused
         said = res.stdout + res.stderr
         hit = REFUSED.search(said)
-        owner = hit and next(((x, a) for x in modules for a in x.added if x.function_name(a) == hit.group(1)), None)
+        owner = _function_named(modules, hit.group(1)) if hit else None
         if not owner or refused == MAX_REFUSALS:
             raise ForkError(f"dsd couldn't delink the game with the functions its analysis missed:\n{said.strip()[-1500:]}")
-        m, start = owner
+        m, start, ours = owner
         m.refusals.append(hit.group(0)[:300])
-        m.cover(start, m.added.pop(start)[0], 0)
+        if ours:
+            m.cover(start, m.added.pop(start)[0], 0)
+        else:
+            # #78: `dsd init --allow-unknown-function-calls` (scratch._init) makes a call's target a function even
+            # where none starts (a Thumb `lsrs` in the middle of code); dsd delinks it as its own and refuses it here
+            size = m.functions.pop(start)[0]
+            m.symbols.discard(start)
+            m.symbol_lines = [ln for ln in m.symbol_lines if not (
+                (s := SYMBOL.match(ln)) and s.group(2) == "function" and int(s.group(4), 16) == start)]
+            m.cover(start, size, 0)
+        m.symbols_changed = True
         for x in modules:  # nothing may point to it now: dsd wants a symbol at every relocation's target
             for at in [at for at, line in x.relocs.items() if f" to:{start:#010x} module:{m.kind}" in line]:
                 del x.relocs[at]

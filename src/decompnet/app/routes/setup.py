@@ -7,6 +7,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
+import httpx
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -18,6 +19,8 @@ from ...network import NetworkError
 from .. import agents
 from ..support import session_options, spread_sessions
 from . import App
+
+MAX_ENDPOINT_MODELS = 100  # an endpoint may list hundreds; the launcher shows this many at most
 
 
 def register(app: App) -> None:
@@ -78,6 +81,29 @@ def register(app: App) -> None:
         manager.refresh_detected()
         return JSONResponse({"detecting": True})
 
+    @mcp.custom_route("/api/endpoints/models", methods=["GET"])
+    async def api_endpoint_models(request: Request) -> Response:
+        """List models from one saved endpoint, using its own key and never returning connection details."""
+        if (bad := guard(request)):
+            return bad
+        entry = settings.endpoint(request.query_params.get("id", ""))
+        if entry is None:
+            return fail(ValueError("that API endpoint is no longer saved; choose it again"))
+        headers = {"Authorization": f"Bearer {entry['api_key']}"} if entry.get("api_key") else {}
+        try:
+            response = await call(lambda: httpx.get(entry["base_url"].rstrip("/") + "/models", headers=headers,
+                                                    timeout=10))
+            response.raise_for_status()
+            payload = response.json()
+            rows = payload.get("data", []) if isinstance(payload, dict) else []
+            if not isinstance(rows, list):
+                rows = []
+            models = [{"id": str(row["id"]), "name": str(row.get("name") or row["id"])}
+                      for row in rows if isinstance(row, dict) and row.get("id")]
+            return JSONResponse({"models": models[:MAX_ENDPOINT_MODELS]})
+        except (httpx.HTTPError, httpx.InvalidURL, ValueError, TypeError):
+            return JSONResponse({"models": [], "unavailable": True})
+
     @mcp.custom_route("/api/agents/start", methods=["POST"])
     async def api_agents_start(request: Request) -> Response:
         if (bad := guard(request, write=True)):
@@ -85,9 +111,34 @@ def register(app: App) -> None:
         data = await body(request)
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
         given = data.get("options") or {}
-        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task")}  # task: "readable" polishes
+        requested_models = given.get("models", [])
+        if not isinstance(requested_models, list) or any(
+                not isinstance(model, (str, dict)) or
+                (not model if isinstance(model, str) else
+                 set(model) != {"endpoint", "model"} or
+                 any(not isinstance(model.get(key), str) or not model[key] for key in ("endpoint", "model")))
+                for model in requested_models):
+            return fail(ValueError("models must be a list of model names"))
+        seen_models = set()
+        unique_models = []
+        for model in requested_models:
+            key = (model["endpoint"], model["model"]) if isinstance(model, dict) else model
+            if key not in seen_models:
+                seen_models.add(key)
+                unique_models.append(model)
+        requested_models = unique_models
+        if given.get("multiple_models") and not requested_models:
+            return fail(ValueError("choose at least one model"))
+        options = {k: v for k, v in given.items() if k in ("model", "per_session", "task", "endpoints")}  # task: "readable" polishes
         options.setdefault("per_session", settings.data.get("per_session", agents.PER_SESSION))
         count = max(1, min(int(data.get("count", 1)), agents.MAX_AT_ONCE))
+        total = (len(requested_models) if requested_models else 1) * count
+        if total > agents.MAX_PER_START:
+            return fail(ValueError(
+                f"that's {total} helpers at once; one start can begin at most {agents.MAX_PER_START}: "
+                "pick fewer models or fewer of each"))
+        if requested_models and options.get("model"):
+            return fail(ValueError("choose specific models or one model, not both"))
         picked: list[str] = []
         try:
             net.project_row(slug)
@@ -95,17 +146,65 @@ def register(app: App) -> None:
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]
             if kinds.get(kind).uses_endpoints:
-                picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
-                plan = spread_sessions(settings, manager, picked, count, given)
-                ids = [sid for entry, n in plan for sid in manager.start(kind, slug, n, options | session_options(entry))]
+                if requested_models:
+                    if any(not isinstance(model, dict) or not model.get("endpoint") for model in requested_models):
+                        raise ValueError("choose API models from a saved endpoint")
+                    choices = [(str(model["endpoint"]), str(model["model"])) for model in requested_models]
+                    entries = {eid: settings.endpoint(eid) for eid, _ in choices}
+                    if any(entry is None for entry in entries.values()):
+                        raise ValueError("an endpoint you picked isn't saved any more: pick again")
+                    per_endpoint = {eid: sum(1 for chosen, _ in choices if chosen == eid) * count for eid in entries}
+                    for eid, needed in per_endpoint.items():
+                        entry = entries[eid]
+                        active = sum(1 for sess in manager.sessions.values() if sess.options.get("endpoint") == eid
+                                     and sess.state in agents.LIVE and not sess.stop.is_set())
+                        if entry.get("max_sessions") and active + needed > int(entry["max_sessions"]):
+                            raise ValueError(f"{entry['name']} allows {entry['max_sessions']} sessions at once; reduce the selected models or stop a session")
+                    ids = []
+                    for eid, model in choices:
+                        entry = entries[eid]
+                        ids.extend(manager.start(kind, slug, count, options | session_options(entry) | {
+                            "model": model, "picked_model": model}))
+                    picked = list(dict.fromkeys(eid for eid, _ in choices))
+                else:
+                    picked = [str(e) for e in (given.get("endpoints") or ([given["endpoint"]] if given.get("endpoint") else []))]
+                    plan = spread_sessions(settings, manager, picked, count, given)
+                    ids = []
+                    for entry, n in plan:
+                        entry_options = options | session_options(entry)
+                        if given.get("model"):
+                            chosen = str(given["model"])
+                            entry_options["model"] = chosen
+                            entry_options["picked_model"] = chosen
+                        ids.extend(manager.start(kind, slug, n, entry_options))
+            elif requested_models:
+                if any(not isinstance(model, str) for model in requested_models):
+                    raise ValueError("API endpoint/model selections are only valid for API agents")
+                found = next((row for row in manager.detected() if row["id"] == kind), None)
+                model_ids = {str(model["id"]) for model in (found or {}).get("models", [])
+                             if isinstance(model, dict) and model.get("id")}
+                missing = [model for model in requested_models if model not in model_ids]
+                if missing and model_ids:
+                    raise ValueError("some selected models are no longer available; look again for installed agents and their models")
+                ids = []
+                for model in requested_models:
+                    if isinstance(model, dict):
+                        raise ValueError("API model selections are only valid for API agents")
+                    if options.get("effort"):
+                        model = f"{model.split('#')[0]}#{options['effort']}"
+                    ids.extend(manager.start(kind, slug, count, options | {"model": model}))
             else:
                 ids = manager.start(kind, slug, count, options)
         except (NetworkError, ValueError) as e:
             return fail(e)
         # remembered, so the next start is one click; models typed in come back as suggestions
         model = str(options.get("model") or "")
-        settings.data["launcher"] = {"kind": kind, "model": model, "count": count} | ({"endpoints": picked} if picked else {})
-        if model and not kinds.get(kind).uses_endpoints:
+        settings.data["launcher"] = {"kind": kind, "model": model, "models": requested_models,
+                                     "multiple": bool(given.get("multiple_models")), "count": count} | (
+                                         {"endpoints": picked} if picked else {})
+        if kinds.get(kind).uses_endpoints and model and picked:
+            settings.data["launcher"]["api_model"] = {"endpoint": picked[0], "model": model}
+        if not requested_models and model and not kinds.get(kind).uses_endpoints:
             recent = settings.data.setdefault("recent_models", {}).setdefault(kind, [])
             settings.data["recent_models"][kind] = [model] + [m for m in recent if m != model][:7]
         settings.save()
@@ -113,12 +212,15 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/agents/stop", methods=["POST"])
     async def api_agents_stop(request: Request) -> Response:
-        """Stop a helper (`id`), forget it (`remove`), or stop every helper on a project (`slug`)."""
+        """Stop a helper, remove it, remove paused helpers on a project, or stop every helper there."""
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
         if data.get("remove"):
             await call(manager.remove, str(data.get("id")))
+        elif data.get("remove_paused") and data.get("slug"):
+            removed = await call(manager.remove_paused, str(data["slug"]))
+            return JSONResponse({"ok": True, "removed": removed})
         elif data.get("slug"):
             await call(manager.stop_project, str(data["slug"]))
         elif data.get("id"):

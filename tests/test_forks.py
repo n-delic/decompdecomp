@@ -400,6 +400,52 @@ def _dtk_project(root: Path, version: str, config: str) -> None:
     (root / "orig" / version).mkdir(parents=True)
 
 
+@pytest.mark.parametrize(("obj", "expected", "got"), [
+    ("main.dol", "9619ba57...", "8fe64b0a..."),
+    ("files/dll/a.rel", "0123456789abcdef0123456789abcdef01234567", "89abcdef0123456789abcdef0123456789abcdef"),
+])
+def test_a_dtk_hash_mismatch_says_the_project_was_built_from_another_copy(tmp_path, monkeypatch, obj, expected, got):
+    """#97: dtk's hash mismatch is correct, but the user's dump is likely fine: some public projects build a main.dol
+    from an ELF or use a .rel module the retail disc doesn't contain. Say that instead of only the ninja output."""
+    from decompnet.forks.project import ForkError, ForkProject
+
+    _dtk_project(tmp_path, "GOWE69", "object: sys/main.dol\nmodules:\n- object: files/dll/a.rel\n")
+    fp = ForkProject(tmp_path)
+    tail = ("[1/2] SPLIT config\\GOWE69\\config.yml\n"
+            "FAILED: [code=1] build/GOWE69/config.json\n"
+            "build\\tools\\dtk.exe dol split config\\GOWE69\\config.yml build\\GOWE69\n"
+            " INFO Loading config\\GOWE69\\config.yml\n"
+            " INFO Loading and analyzing 1 module (using 1 thread)\n"
+            f"Failed: While loading object '{obj}'\n\nCaused by:\n"
+            f"    Hash mismatch: expected {expected}, but was {got}\n"
+            "ninja: error: rebuilding 'build.ninja': subcommand failed")
+    monkeypatch.setattr(fp, "unpack_disc", lambda version, log=print: 0)
+    monkeypatch.setattr(fp, "setup_commands", lambda version=None: [["configure.py"], ["ninja"]])
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print: (False, tail))
+    with pytest.raises(ForkError) as err:
+        fp.setup("GOWE69", log=lambda *_: None)
+    text = str(err.value)
+    assert f"your copy's {obj} isn't the one this project was built against" in text
+    assert f"expects hash {expected[:8]}..." in text and f"yours is {got[:8]}..." in text
+    assert "dump is likely fine" in text and "README" in text
+    assert "your own copy" in text and "New project → Open a game file" in text
+    assert tail in text
+
+
+def test_a_setup_failure_that_isnt_a_dtk_hash_mismatch_keeps_the_plain_message(tmp_path, monkeypatch):
+    from decompnet.forks.project import ForkError, ForkProject
+
+    _dtk_project(tmp_path, "GOWE69", "object: sys/main.dol\n")
+    fp = ForkProject(tmp_path)
+    tail = "configure.py: error: unrecognized arguments: --version GOWE69"
+    monkeypatch.setattr(fp, "unpack_disc", lambda version, log=print: 0)
+    monkeypatch.setattr(fp, "setup_commands", lambda version=None: [["configure.py"], ["ninja"]])
+    monkeypatch.setattr(fp, "run", lambda cmd, log=print: (False, tail))
+    with pytest.raises(ForkError) as err:
+        fp.setup("GOWE69", log=lambda *_: None)
+    assert str(err.value) == f"setup step failed: configure.py\n{tail}"
+
+
 def test_a_project_that_reads_an_extracted_disc_gets_its_files_from_the_disc_image(tmp_path, monkeypatch):
     """Older dtk projects read orig/<version>/sys/main.dol and files/... (the README says "extract the disc with
     Dolphin"); decompdecomp copies exactly those files out of the user's disc image, picking the disc of that version."""

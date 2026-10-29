@@ -43,6 +43,24 @@ def test_restoring_room_members_credits_does_not_reject_their_names(tmp_path, mo
     assert net.store.one("SELECT agent_id FROM notes WHERE text=?", "Try an unsigned comparison.")["agent_id"] == agent.id
 
 
+def test_restoring_leaves_out_ranges_whose_compiler_isnt_known(tmp_path, monkeypatch):
+    """#118: a save written where a project used a compiler decompdecomp doesn't have carried its address ranges
+    back unchecked, and every function in one then failed to compile with the registry's "unknown toolchain" error."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,'{}')", (str(tmp_path),))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    log = []
+    manifest = {"compiler_ranges": [
+        {"start": 0x80000000, "end": 0x80001000, "toolchain": "msvcxx-x86_64", "flags": ["/O2"]},
+        {"start": 0x80001000, "end": 0x80002000, "toolchain": "gcc-2.7.2-kmc", "flags": ["-O2"]},
+    ]}
+    saves._apply(net, "game", tmp_path, manifest, log.append)
+    cfg = json.loads(net.store.one("SELECT config FROM projects WHERE slug='game'")["config"])
+    assert [r["toolchain"] for r in cfg["compiler_ranges"]] == ["gcc-2.7.2-kmc"]
+    assert any("msvcxx-x86_64" in line and "0x80000000-0x80001000" in line for line in log)
+
+
 @pytest.fixture
 def worked(built, tmp_path):  # noqa: F811
     """The demo game with some work done: a split, a match, a rename, a best attempt, a note, settings."""

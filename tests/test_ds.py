@@ -462,6 +462,68 @@ def test_a_function_dsd_refuses_is_dropped_with_what_points_to_it(tmp_path):
     assert f"func_{BASE + 0x10:08x}" not in (m.folder / "symbols.txt").read_text()
 
 
+def test_a_function_dsd_itself_made_and_refuses_is_dropped_too(tmp_path):
+    """#78: `dsd init --allow-unknown-function-calls` makes every call's target a function, even one in the middle
+    of code (a Thumb `lsrs`): delink then refuses it. It is dsd's own symbol, not one recover added, and it goes the
+    same way, by the name dsd calls it (function_name's or the game's own), with what points to it."""
+    import sys
+
+    from decompnet.consoles.nds import recover
+
+    base = 0x0201C230
+    folder = tmp_path / "config" / "v" / "arm9"
+    folder.mkdir(parents=True)
+    lines = [f"func_{base:08x} kind:function(arm,size=0x4) addr:{base:#010x}",
+             f"GameLoop kind:function(arm,size=0x4) addr:{base + 4:#010x}"]
+    (folder / "symbols.txt").write_text("\n".join(lines) + "\n")
+    relocs = [f"from:{base + 0x10:#010x} kind:arm_call to:{base:#010x} module:main",
+              f"from:{base + 0x14:#010x} kind:arm_call to:{base + 4:#010x} module:main"]
+    (folder / "relocs.txt").write_text("\n".join(relocs) + "\n")
+    code = (0xE12FFF1E).to_bytes(4, "little") * 2 + bytes(0x18)
+    m = recover.Module("main", "main", folder, base, code, [(base, base + 8)], covered=bytearray(len(code)))
+    m.symbol_lines = lines
+    m.symbols = {base, base + 4}
+    m.functions = {base: (4, False), base + 4: (4, False)}
+    m.relocs = {base + 0x10: relocs[0], base + 0x14: relocs[1]}
+    dsd = tmp_path / "dsd.py"  # refuses each by the name it has in symbols.txt, until that's gone
+    dsd.write_text(f"#!{sys.executable}\nimport pathlib, sys\n"
+                   "said = pathlib.Path('config/v/arm9/symbols.txt').read_text()\n"
+                   f"if 'func_{base:08x}' in said:\n"
+                   f"    print('Error: function func_{base:08x} could not be analyzed: InvalidStart "
+                   "{ address: 201c230, ins: DisplayIns(Thumb(Ins { code: 90a, op: LsrI })) }')\n"
+                   "    sys.exit(1)\n"
+                   "if 'GameLoop' in said:\n"
+                   "    print('Error: function GameLoop could not be analyzed: InvalidStart "
+                   "{ address: 201c234, ins: DisplayIns(Thumb(Ins { code: 90a, op: LsrI })) }')\n"
+                   "    sys.exit(1)\n")
+    assert recover.check_with_dsd(tmp_path, "v", str(dsd), [m], log=lambda *_: None) == 2
+    assert not m.functions and not m.symbols and not m.symbol_lines
+    assert (folder / "symbols.txt").read_text().strip() == ""
+    assert (folder / "relocs.txt").read_text().strip() == ""
+    assert base not in m.relocs and base + 4 not in m.relocs
+    assert len(m.refusals) == 2
+
+
+def test_a_refusal_for_an_unknown_function_still_stops_the_import(tmp_path):
+    """The name in dsd's refusal matches no function of the config: the import stops with what dsd said, rather than
+    dropping something else."""
+    import sys
+
+    from decompnet.consoles.nds import recover
+
+    folder = tmp_path / "config" / "v" / "arm9"
+    folder.mkdir(parents=True)
+    (folder / "symbols.txt").write_text("")
+    (folder / "relocs.txt").write_text("")
+    m = recover.Module("main", "main", folder, BASE, bytes(4), [(BASE, BASE + 4)], covered=bytearray(4))
+    dsd = tmp_path / "dsd.py"
+    dsd.write_text(f"#!{sys.executable}\nimport sys\n"
+                   "print('Error: function nothing_here could not be analyzed: InvalidStart { }')\nsys.exit(1)\n")
+    with pytest.raises(ForkError, match="couldn't delink"):
+        recover.check_with_dsd(tmp_path, "v", str(dsd), [m], log=lambda *_: None)
+    assert not m.refusals
+
+
 def test_code_dsd_took_for_rodata_joins_text_with_its_calls(tmp_path):
     """dsd ends .text at the last function it found: code right after it that only pointers reach was .rodata to
     it, and calls into it from .text had no relocation (on a DS game, 45 KB and 19 calls). .text now ends where that

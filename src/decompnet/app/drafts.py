@@ -29,6 +29,7 @@ from . import workers
 
 log = logging.getLogger("decompdecomp")
 POLL_SECONDS = 30  # how often a drafter looks whether what drafts are made from changed
+SYNC_WAIT = 5  # how often it looks whether the room it joined has caught up
 
 
 @dataclass
@@ -67,6 +68,12 @@ class Drafter:
         mark = None
         try:
             while not st.stop.is_set():
+                link = self.net.links.get(slug)
+                if link is not None and link.status()["state"] == "syncing":
+                    # a room's first sync is still bringing the names and matches that drafts are made from: drafting
+                    # meanwhile fought it for the database (its names went 5 times slower) and every draft was made again
+                    st.stop.wait(min(POLL_SECONDS, SYNC_WAIT))
+                    continue
                 try:
                     now = self.net.draft_mark(self.net.project_row(slug))
                     proj = self.net.project_row(slug)  # (read after the mark: as new as what it sums up)

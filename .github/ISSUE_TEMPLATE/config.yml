@@ -1,2 +1,6 @@
 # Issues come through the forms, so each one is labelled (labels.yml adds the console's and the system's)
 blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.gg/hhEm3zZagB
+    about: Ask on the Discord (install help, how-to, your games). Bugs can be reported there too, with /report.

@@ -9,9 +9,9 @@ import logging
 import threading
 import time
 
-from ... import scoring, seeds
+from ... import scoring, seeds, toolchains
 from ...network import Agent, NetworkError
-from ...project import compiler_for
+from ...project import compiler_for, unknown_compiler_message
 
 
 class AutopilotMixin:
@@ -23,10 +23,17 @@ class AutopilotMixin:
         state = self.autopilots.get(slug)
         if state and state["state"] == "running":
             return state
+        fork = self.fork_slug(slug)
+        # #118: a project from another tool may name a compiler decompdecomp doesn't have. Say which and where to pick
+        # one, rather than failing later as "m2c can't read this project's code" or the registry's list of ids.
+        if not fork:
+            tc = self.cfg(self._project(slug))["compiler"]["toolchain"]
+            if not toolchains.known(tc):
+                raise NetworkError(unknown_compiler_message(tc))
         # first the twins (identical code to something matched: every project), then machine drafts where m2c reads
         # the code and the project's headers are fit for them (ROM projects; games started from scratch)
         try:
-            if (fork := self.fork_slug(slug)):  # a GameCube, Wii or DS game started from scratch: its own build judges
+            if fork:  # a GameCube, Wii or DS game started from scratch: its own build judges
                 ids = self.forks.autopilot_prepare(fork)
                 try_one, workers = self.forks.autopilot_one, min(workers, 2)  # each try builds a file: fewer at once
             else:
