@@ -100,6 +100,37 @@ _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbo
                     r"Section '\.note\.split' is unknown)")
 
 
+def _said(out: list[str]) -> str:
+    """What a build step said, for agents and the user: what failed, not the warnings after it (dsd's hundreds of
+    "[WARN ] No module for relocation" lines came after a compiler's error and pushed it out of the tail)."""
+    said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
+    return "\n".join(said[-60:])
+
+
+# a line where ninja's next step starts: its progress line, another failure, its own last word
+_NINJA_STEP = re.compile(r"^(?:\[\d+/\d+\] |FAILED: |ninja: )")
+
+
+def _failures(out: list[str]) -> dict[str, list[str]]:
+    """Each failed step's lines in ninja's output (its FAILED: line, the command, what it printed), by the targets
+    the step makes."""
+    found: dict[str, list[str]] = {}
+    i = 0
+    while i < len(out):
+        m = _FAILED.match(out[i])
+        if m is None or m.group(1) is None:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(out) and not _NINJA_STEP.match(out[j]):
+            j += 1
+        for t in m.group(1).split():
+            if not t.startswith("[code="):
+                found.setdefault(t, []).extend(out[i:j])
+        i = j
+    return found
+
+
 def _tool_dirs() -> list[Path]:
     """Where decompdecomp's own build tools (the ninja Python package's ninja) are: beside its Python, or, in the
     Windows setup's bundle (packages installed with --target), in the `bin` folder beside those packages, which the
@@ -496,6 +527,13 @@ class ForkProject:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
         first build: a game built with Visual C++ 2017 then built without wine's settings)."""
+        code, out, hints = self._execute(cmd, log, timeout, failed, platform)
+        return code == 0, _said(out) + ("\n\n" + hints if hints else "")
+
+    def _execute(self, cmd: list[str], log, timeout: float, failed: list[str] | None,
+                 platform: str | None = None) -> tuple[int | None, list[str], str]:
+        """Run a build step: (its exit code, None when it couldn't start or ran out of time; every line it printed,
+        or why it didn't run; what buildhelp.explain makes of a failure, or ""). `platform`: as in run."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
         # what its console's builds need (Console.build_env)
@@ -512,7 +550,7 @@ class ForkProject:
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8", creationflags=NO_WINDOW)
         except FileNotFoundError:
-            return False, f"{cmd[0]} isn't installed"
+            return None, [f"{cmd[0]} isn't installed"], ""
         out, seen, quiet = [], collections.Counter(), 0
         for line in proc.stdout:
             line = line.rstrip()
@@ -528,23 +566,19 @@ class ForkProject:
             code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
-            return False, "timed out"
+            return None, ["timed out"], ""
         if quiet:
             log(f"({quiet} repeated lines and linker warnings not shown)")
         if killed_for_memory(code):
             out.append("stopped: it used more memory than decompdecomp allows a single tool, so it was stopped "
                        "before it could slow down or freeze your computer")
-        # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
-        # a compiler's error and pushed it out of the tail agents and the user read
-        said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-        tail = "\n".join(said[-60:])
+        hints = ""
         if code:
             from .buildhelp import explain
 
             if hints := explain(self.root, executable, "\n".join(out)):
                 log(hints)
-                tail = tail + "\n\n" + hints
-        return code == 0, tail
+        return code, out, hints
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc
@@ -734,6 +768,40 @@ class ForkProject:
         tool = _tool(make) or make
         rel = os.path.relpath(unit.base, self.root)
         return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
+
+    def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
+        """Build several units' objects in one run of the build, each with what building it alone would say: (built,
+        the log), in the order given. Builds take turns (they share ninja's log), and a run's own cost (reading the
+        build file, configure's facts) is half a unit's build: 8 units took 5.6 s one by one, 1.3 s in one run
+        (an x86 game's LTCG units). With ninja only (`-k 0`: one unit that doesn't build doesn't stop the others);
+        other builds, and a run whose failure can't be put down to its units (ninja stopped before it built
+        anything: a target it has no rule for, configure failing), build each unit alone, as before."""
+        cfg = self.objdiff_config()
+        make = cfg.get("custom_make") or "make"
+        tool = _tool(make) or make
+        if len(units) < 2 or any(u.base is None for u in units) or Path(tool).stem.lower() != "ninja":
+            return [self.build_unit(u, log=log) for u in units]
+        rels = [os.path.normpath(os.path.relpath(u.base, self.root)) for u in units]
+        failed: list[str] = []
+        code, out, _ = self._execute([tool, *cfg.get("custom_args", []), "-k", "0", *dict.fromkeys(rels)], log, 600,
+                                  failed)
+        if code == 0:
+            return [(True, _said(out))] * len(units)
+        steps = _failures(out)
+        if code is None or not steps:
+            return [self.build_unit(u, log=log) for u in units]
+        # each failed step's units: its own object, or one made from what it made (a unit built in steps)
+        names = {u.name for u in units}
+        owners = {t: self.failed_units([t]) & names for t in steps}
+        if any(not who for who in owners.values()):  # a step none of them is made from (the build file itself)
+            return [self.build_unit(u, log=log) for u in units]
+        results = []
+        for u in units:
+            mine = [line for t, who in owners.items() if u.name in who for line in steps[t]]
+            # a failed unit sees its own failures only: another unit's errors in its log read as its own
+            results.append((False, _said([*mine, "ninja: build stopped: subcommand failed."])) if mine else
+                           (True, ""))
+        return results
 
     def failed_units(self, targets: list[str]) -> set[str]:
         """Units whose source object the build couldn't make: it failed, or a step it's made from did. A unit built

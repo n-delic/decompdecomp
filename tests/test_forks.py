@@ -1001,6 +1001,120 @@ def test_a_unit_whose_build_step_fails_counts_as_not_building(tmp_path):
     assert not ok and fp.failed_units(failed) == {"b"}
 
 
+def _steps_project(tmp_path: Path, broken: str = "b"):
+    """Units a, b, c, d, each built in two steps (a part, then its object); the step of the units in `broken` fails
+    with an error naming its file."""
+    import sys
+
+    from decompnet.forks.project import ForkProject
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "step.py").write_text(
+        "import shutil, sys\n"
+        "if 'BROKEN' in open(sys.argv[1]).read():\n    print(sys.argv[1] + ':1: error: a broken step')\n"
+        "    sys.exit(1)\n"
+        "shutil.copy(sys.argv[1], sys.argv[2])\n")
+    for name in "abcd":
+        (tmp_path / "src" / f"{name}.c").write_text("BROKEN\n" if name in broken else "fine\n")
+    py = sys.executable.replace("\\", "/")
+    rules = f'rule step\n  command = "{py}" step.py $in $out\n'
+    for name in "abcd":
+        rules += f"build build/{name}/part.o: step src/{name}.c\nbuild build/{name}.o: step build/{name}/part.o\n"
+    (tmp_path / "build.ninja").write_text(rules)
+    (tmp_path / "objdiff.json").write_text(json.dumps({"custom_make": "ninja", "units": [
+        {"name": n, "target_path": f"expected/{n}.o", "base_path": f"build/{n}.o",
+         "metadata": {"source_path": f"src/{n}.c"}} for n in "abcd"]}))
+    return ForkProject(tmp_path)
+
+
+def test_units_built_in_one_run_each_hear_only_their_own_failure(tmp_path, monkeypatch):
+    """A project's unit builds asked for together go in one run of ninja (half a unit's build is the run's own
+    cost), and each unit gets what building it alone would say: a unit whose step failed sees that failure, never
+    another unit's (it would read as its own), and a unit that built is built."""
+    fp = _steps_project(tmp_path, broken="bd")
+    runs = []
+    execute = fp._execute
+    monkeypatch.setattr(fp, "_execute", lambda cmd, *a: runs.append(cmd) or execute(cmd, *a))
+    results = fp.build_units([fp.unit(n) for n in "abcd"])
+    assert len(runs) == 1 and "-k" in runs[0]  # one run, going on past a failure
+    assert [ok for ok, _ in results] == [True, False, True, False]
+    assert "src/b.c:1: error: a broken step" in results[1][1] and "d.c" not in results[1][1]
+    assert "src/d.c:1: error: a broken step" in results[3][1] and "b.c" not in results[3][1]
+    assert (tmp_path / "build/a.o").is_file() and (tmp_path / "build/c.o").is_file()
+    # one unit builds alone, as it always did
+    runs.clear()
+    assert fp.build_units([fp.unit("b")]) == [fp.build_unit(fp.unit("b"))] and len(runs) == 2
+
+
+def test_a_run_that_stops_before_building_builds_each_unit_alone(tmp_path):
+    """ninja stops before it builds anything when the build file can't be brought up to date (configure failing)
+    or a target has no rule: no failure says whose it is, so each unit is built alone and says what it says."""
+    import os
+    import sys
+    import time
+
+    fp = _steps_project(tmp_path, broken="")
+    py = sys.executable.replace("\\", "/")
+    (tmp_path / "regen.py").write_text("import sys\nprint('configure: a driver it cannot read')\nsys.exit(1)\n")
+    text = (tmp_path / "build.ninja").read_text()
+    (tmp_path / "build.ninja").write_text(
+        f'rule regen\n  command = "{py}" regen.py\n  generator = 1\nbuild build.ninja: regen facts.txt\n{text}')
+    (tmp_path / "facts.txt").write_text("changed\n")
+    os.utime(tmp_path / "facts.txt", (time.time() + 5, time.time() + 5))  # newer than build.ninja
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert [ok for ok, _ in results] == [False, False]
+    assert all("configure: a driver it cannot read" in log for _, log in results)
+
+
+def test_builds_asked_for_during_a_run_go_together_in_the_next():
+    """The permuter's four workers and the agents took turns one unit at a time. A build asked for while a run
+    goes waits for the next run (this one may be building an older copy of its file), together with the others
+    asked for meanwhile; an error reaches each of its run, and the next run goes on."""
+    import threading
+    import time
+
+    from decompnet.app.forkengine import _UnitBuilds
+
+    builds, runs = _UnitBuilds(), []
+    first, release = threading.Event(), threading.Event()
+
+    def run(units):
+        runs.append(list(units))
+        if units == ["a"]:
+            first.set()
+            assert release.wait(10)
+        if "boom" in units:
+            raise OSError("the build stopped")
+        return [(True, f"built {u}") for u in units]
+
+    got = {}
+
+    def ask(u):
+        try:
+            got[u] = builds.build(u, run)
+        except OSError as e:
+            got[u] = e
+
+    threads = [threading.Thread(target=ask, args=("a",))]
+    threads[0].start()
+    assert first.wait(10)
+    for u in "bcd":  # while a's run goes
+        threads.append(threading.Thread(target=ask, args=(u,)))
+        threads[-1].start()
+    deadline = time.monotonic() + 10
+    while len(builds._queue) < 3 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    release.set()
+    for t in threads:
+        t.join(10)
+    assert runs[0] == ["a"] and sorted(runs[1]) == ["b", "c", "d"] and len(runs) == 2
+    assert got == {u: (True, f"built {u}") for u in "abcd"}
+    t = threading.Thread(target=ask, args=("boom",))
+    t.start()
+    t.join(10)
+    assert isinstance(got["boom"], OSError) and builds.build("e", run) == (True, "built e")
+
+
 def test_which_if_branch_leaves_code_out_is_told_only_when_certain():
     """An x86 game's agents parked drafts in `#if defined(SOME_FLAG)` blocks no build defines; the brief showed them as
     current and every compile wrote into them, judged on other code. A test of a macro that may be defined (the
