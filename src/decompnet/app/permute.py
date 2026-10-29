@@ -288,6 +288,7 @@ class Permuter:
             best = cur = fn["best_score"]
             deadline = time.monotonic() + SECONDS
             batches = misses = 0
+            refused, taken = None, 0  # the last refusal of a variant (NetworkError), variants the project took
             while time.monotonic() < deadline and best > 0 and not st.stop.is_set():
                 if gen is not None:
                     # a batch of decomp-permuter's variants, of the C the turn started from and of the best so far in
@@ -313,7 +314,16 @@ class Permuter:
                     if cand is None or time.monotonic() >= deadline or st.stop.is_set():
                         break
                     st.add(variants=1)
-                    score = self._score(agent, proj, fn, cand, best, fork)
+                    try:
+                        score = self._score(agent, proj, fn, cand, best, fork)
+                    except NetworkError as e:
+                        # A variant the project won't take: decomp-permuter's inlining writes a helper function
+                        # beside the function, which compile_and_diff refuses in a fork. It's skipped like one that
+                        # doesn't compile; the refusal used to end the function's permuting for good (_turn) within
+                        # seconds of its first turn: 2 of 3 of an Xbox game's near misses
+                        refused = e
+                        continue
+                    taken += 1
                     if score is None:
                         continue
                     if score < best:
@@ -325,6 +335,8 @@ class Permuter:
                             break
                     if score <= cur or rng.random() < 0.02:  # mostly downhill, now and then sideways off a plateau
                         cur, cur_src = score, cand
+            if refused is not None and not taken:  # every variant refused: it's the C the turn started from
+                raise refused
         finally:
             if gen is not None:
                 gen.close()
