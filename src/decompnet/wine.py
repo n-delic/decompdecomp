@@ -27,6 +27,8 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
+from . import limits
+
 # where wine is when it isn't on the PATH when the app was started with: Homebrew's folders (Apple Silicon's, then
 # Intel's), MacPorts' (/opt/local), the system's, and Gcenx's Wine apps in Applications (Homebrew disabled its Wine
 # casks in September 2026 over Gatekeeper; Gcenx's own tap, gcenx/wine, still has them)
@@ -75,13 +77,14 @@ def install_steps() -> str:
             "`sudo pacman -S wine`).")
 
 
-def problem() -> str | None:
-    """Why the Windows compilers that need wine can't run here, with what to do; None: they can."""
+def problem(what: str = "This compiler") -> str | None:
+    """Why the Windows compilers that need wine can't run here, with what to do; None: they can. `what`: the pack
+    asking (toolchains.runtime_error gives its name), so each pack that needs wine says its own."""
     if not needed():
         return None
     wine = find()
     if wine is None:
-        return ("Visual C++ 2017 runs through wine on Linux and macOS, and this computer has no wine. "
+        return (f"{what} runs through wine on Linux and macOS, and this computer has no wine. "
                 + install_steps() + " Then try again.")
     if server(wine) is None:
         return f"wine is at {wine}, but its wineserver isn't beside it or on the PATH: reinstall wine, then try again."
@@ -137,8 +140,9 @@ def prepare(log=print, where: Path | None = None) -> Path:
         quiet = {"stdin": subprocess.DEVNULL, "creationflags": NO_WINDOW}
         with tempfile.TemporaryFile() as said:
             try:
-                done = subprocess.run([wine, "wineboot", "--init"], env=environment(where), stdout=said, stderr=said,
-                                      timeout=PREPARE_SECONDS, **quiet)
+                # under the memory cap, as every heavy tool (limits.py): wineboot starts wine's services too
+                done = subprocess.run(limits.capped([wine, "wineboot", "--init"]), env=environment(where),
+                                      stdout=said, stderr=said, timeout=PREPARE_SECONDS, **quiet)
                 if (ws := server(wine)) is not None:
                     subprocess.run([ws, "-w"], env=environment(where), stdout=said, stderr=said, timeout=60, **quiet)
             except (OSError, subprocess.TimeoutExpired) as error:

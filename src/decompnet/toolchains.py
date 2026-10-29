@@ -211,10 +211,22 @@ def changed(tid: str, manifest: dict, where: Path | None = None) -> bool:
         return True
     try:
         if where is not None:
-            (where / MANIFEST).write_text(json.dumps({**manifest, "fingerprint": now}, indent=2), encoding="utf-8")
+            _write_manifest(where, {**manifest, "fingerprint": now})
     except OSError:
         pass  # (a folder it can't write, read-only: judged by its archives again next time)
     return False
+
+
+def _write_manifest(folder: Path, manifest: dict) -> None:
+    """An install's manifest, written whole or not at all: installed() reads it while /api/state, builds and other
+    installs run, and changed() adds the fingerprint to an older one during such a read. Written to a file beside
+    it, then moved over it in one step (os.replace), so a reader sees the old manifest or the new, never half."""
+    tmp = folder / f"{MANIFEST}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        tmp.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        os.replace(tmp, folder / MANIFEST)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 @functools.cache
@@ -231,7 +243,7 @@ def runtime_error(tid: str) -> str | None:
     if get(tid).wine:
         from . import wine
 
-        return wine.problem()
+        return wine.problem(get(tid).name)
     if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
         return None
     if _intel_mac_runtime_ready():
@@ -465,12 +477,12 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
-    (dest / MANIFEST).write_text(json.dumps({
+    _write_manifest(dest, {
         "id": tid, "name": tc.name, "license": tc.license, "source": tc.source,
         "parts": pinned, "commit": tc.commit or None, "installed_at": time.time(),
         "license_accepted": bool(tc.proprietary and accept_license), "wsl": linux,
         "fingerprint": fingerprint(tc, linux),
-    }, indent=2), encoding="utf-8")
+    })
     log(f"{tid}: installed at {dest}")
     if tc.wine and not linux:
         from . import wine

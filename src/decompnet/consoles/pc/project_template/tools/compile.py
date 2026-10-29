@@ -49,11 +49,13 @@ def main() -> int:
     parser.add_argument("--source", required=True)
     parser.add_argument("flags", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if bool(args.wine) != bool(args.wine_prefix):  # (wine without a prefix would use the user's own ~/.wine)
+        parser.error("--wine and --wine-prefix go together")
     flags = args.flags[1:] if args.flags[:1] == ["--"] else args.flags
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     env, path = None, str
     if args.wine:
-        env = {**os.environ, **WINE_QUIET, **({"WINEPREFIX": args.wine_prefix} if args.wine_prefix else {})}
+        env = {**os.environ, **WINE_QUIET, "WINEPREFIX": args.wine_prefix}
         keep_wine_server(args.wine, env)
         path = windows_path
     command = ([args.wine] if args.wine else [args.wrapper] if args.wrapper else []) + [

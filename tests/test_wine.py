@@ -44,6 +44,9 @@ def test_without_wine_the_pack_says_how_to_get_it_before_downloading(tc_root, mo
     assert toolchains.installed("msvc2017") is None and not (toolchains.root() / ".downloads").exists()
     monkeypatch.setattr(wine.sys, "platform", "darwin")
     assert "Gcenx/macOS_Wine_builds" in toolchains.runtime_error("msvc2017")
+    # each pack that needs wine names itself (a 2015 or 2019 pack would say its own name, not 2017's)
+    assert toolchains.runtime_error("msvc2017").startswith(f"{toolchains.get('msvc2017').name} runs through wine")
+    assert wine.problem("Visual C++ 2019").startswith("Visual C++ 2019 runs through wine")
     monkeypatch.setattr(wine.sys, "platform", "win32")  # Windows runs the compilers itself
     assert toolchains.runtime_error("msvc2017") is None and wine.problem() is None
 
@@ -106,3 +109,23 @@ def test_wine_is_looked_for_where_each_mac_install_puts_it(where):
     assert where in wine.PLACES
     if where.startswith("/Applications/"):
         assert where.replace("/Applications", str(wine.Path.home() / "Applications"), 1) in wine.PLACES
+
+
+def test_wineboot_runs_under_the_memory_cap(tc_root, monkeypatch, tmp_path):
+    """Making the prefix starts wineboot and wine's services: a heavy tool, run through limits.capped like the others."""
+    ran = []
+    monkeypatch.setattr(wine, "problem", lambda what="": None)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(wine, "server", lambda w: None)
+    monkeypatch.setattr(wine, "start_server", lambda w, where=None: True)
+    monkeypatch.setattr(wine.limits, "capped", lambda argv, *a, **k: ["capped", *argv])
+
+    def run(argv, **kwargs):
+        ran.append(argv)
+        (tmp_path / "prefix").mkdir(exist_ok=True)
+        (tmp_path / "prefix" / "system.reg").write_text("")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(wine.subprocess, "run", run)
+    assert wine.prepare(log=lambda *_: None, where=tmp_path / "prefix") == tmp_path / "prefix"
+    assert ran == [["capped", "/opt/wine/bin/wine", "wineboot", "--init"]]

@@ -182,6 +182,16 @@ def test_a_windows_path_is_what_wine_reads():
     assert compile_py.windows_path("build/x/y.obj") == "build\\x\\y.obj"
 
 
+def test_wine_is_never_run_without_the_apps_prefix(tmp_path):
+    """compile.py given --wine without --wine-prefix would run wine in the user's own ~/.wine: it refuses."""
+    compile_py = Path(scratch_pe.__file__).with_name("project_template") / "tools" / "compile.py"
+    common = ["--config", "c.json", "--compiler", "cl.exe", "--include", "inc", "--output", "x.obj", "--source", "x.cpp"]
+    for given in (["--wine", "/usr/bin/wine"], ["--wine-prefix", str(tmp_path)]):
+        done = subprocess.run([sys.executable, str(compile_py), *common, *given], cwd=tmp_path, capture_output=True,
+                              text=True, timeout=30)
+        assert done.returncode == 2 and "--wine and --wine-prefix go together" in done.stderr, done.stderr
+
+
 def _template_tool(name: str):
     import importlib.util
 

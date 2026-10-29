@@ -419,6 +419,25 @@ def test_an_install_made_before_fingerprints_is_judged_by_its_archives(tc_root):
     assert toolchains.changed("msvc2017", {"parts": old, "commit": None, "wsl": False})
 
 
+def test_a_manifest_is_never_seen_half_written(tc_root, monkeypatch):
+    """installed() can add the fingerprint to an older manifest while /api/state and builds read it: it's written to
+    a file beside it and moved over it in one step, so a reader finds the old one or the new one, and nothing else
+    is left in the folder."""
+    tc = toolchains.get("wibo")
+    folder = toolchains.path("wibo")
+    folder.mkdir(parents=True)
+    parts = [{"url": p["url"], "sha256": p["sha256"]} for p in tc.parts_for()]
+    (folder / toolchains.MANIFEST).write_text(json.dumps({"id": "wibo", "parts": parts, "commit": None, "wsl": False}))
+    moved = []
+    real = os.replace
+    monkeypatch.setattr(toolchains.os, "replace", lambda a, b: (moved.append((os.path.basename(a), os.path.basename(b))),
+                                                                      real(a, b)))
+    assert toolchains.installed("wibo") is not None
+    assert moved and moved[0][1] == toolchains.MANIFEST and moved[0][0] != toolchains.MANIFEST
+    assert json.loads((folder / toolchains.MANIFEST).read_text())["fingerprint"] == toolchains.fingerprint(tc, False)
+    assert sorted(f.name for f in folder.iterdir()) == [toolchains.MANIFEST]
+
+
 def test_threads_that_all_need_a_free_tool_install_it_once(tc_root, monkeypatch):
     """When an update changed objdiff's entry, a project's indexing threads each found it not installed and each
     started downloading it into the same file, and each then found the others' bytes in it (checksum mismatch):

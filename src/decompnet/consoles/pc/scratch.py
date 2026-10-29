@@ -376,8 +376,9 @@ class Build:
         """Why a program decompdecomp does start can't match (all of it, or some): none, it can."""
         out = []
         if self.newer_than_pack:
-            out.append(f"it was built with {self.compiler}, and decompdecomp has Visual C++ 6.0 to 2010 so far: "
-                       "2012 to 2015 come next (ROADMAP.md, Newer Windows games), so nothing matches until then")
+            out.append(f"it was built with {self.compiler}, and decompdecomp builds games with Visual C++ 6.0 to "
+                       "2010 so far: 2012 to 2015 come next (ROADMAP.md, Newer Windows games; 2017's compiler can "
+                       "already be chosen per file), so nothing matches until then")
         if self.whole_program:
             out.append(f"{self.whole_program} of its {self.compiled} compiled files were built with whole-program "
                        "optimisation (/GL): their functions can't match")
