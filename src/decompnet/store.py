@@ -43,6 +43,26 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress_state(
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   disk TEXT NOT NULL, projected TEXT NOT NULL, updated_at REAL NOT NULL);
+-- What changed in a project since its progress folder was last published (progress.py). Triggers fill these instead
+-- of every write site remembering to: a claim, an attempt that didn't improve the best, or an event must not make
+-- the folder re-render, while a match, a header, a note or a layout change must. `token` is new on every relevant
+-- write, so a write that lands while a sync is rendering has a token the sync did not acknowledge.
+CREATE TABLE IF NOT EXISTS progress_dirty(
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  token TEXT,  -- a new random token per relevant write: unlike a counter, a rollback cannot reuse it
+  functions INTEGER NOT NULL DEFAULT 0,
+  headers INTEGER NOT NULL DEFAULT 0,
+  metadata INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS progress_dirty_file(
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL, token TEXT,
+  PRIMARY KEY(project_id, name));
+-- The last published folder and database render, one hash per file: a sync compares hashes and writes only the rows
+-- whose file changed, instead of serialising two copies of every file (23 MB at 18,000 functions, every sync).
+CREATE TABLE IF NOT EXISTS progress_files(
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  side TEXT NOT NULL, name TEXT NOT NULL, hash TEXT NOT NULL,
+  PRIMARY KEY(project_id, side, name));
 -- a room guest's saved work waiting for the host (app/collab.py): the full sources live here, not in projects.config,
 -- which every project access parses
 CREATE TABLE IF NOT EXISTS saved_progress(
@@ -80,7 +100,107 @@ MIGRATIONS = [
     ("functions", "readable", "INTEGER NOT NULL DEFAULT 0"),   # matched C rewritten readable, still matching (readable.py)
     ("functions", "permuted", "INTEGER NOT NULL DEFAULT 0"),   # turns the permuter spent on it (app/permute.py)
     ("functions", "seed_key", "TEXT"),                         # what its machine draft was made from (engine/briefs.py)
+    ("progress_state", "format", "INTEGER NOT NULL DEFAULT 1"),  # 2: disk/projected are hashes in progress_files
+    ("progress_state", "disk_manifest", "TEXT"),               # the last acknowledged folder manifest (three-way merges)
+    ("progress_state", "projected_manifest", "TEXT"),          # the database manifest it was published with
+    ("progress_state", "config_key", "TEXT"),                  # the settings the projected manifest was rendered from
+    ("progress_state", "dirty_token", "TEXT"),  # the progress_dirty token the last publish acknowledged
 ]
+
+# Created after the migrations above: they name columns older databases get from MIGRATIONS. A trigger only marks what
+# a progress folder's render actually reads (saves._render), so work that stays in the database costs nothing.
+DIRTY_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_insert AFTER INSERT ON functions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), functions=1 WHERE project_id=NEW.project_id;
+  INSERT OR REPLACE INTO progress_dirty_file(project_id,name,token)
+    SELECT NEW.project_id, NEW.name, token FROM progress_dirty WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_update
+AFTER UPDATE OF name,vram,size,status,matched_source,matched_agent_id,best_source,best_score,best_agent_id,readable,meta
+ON functions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), functions=1 WHERE project_id=NEW.project_id;
+  INSERT OR REPLACE INTO progress_dirty_file(project_id,name,token)
+    SELECT OLD.project_id, OLD.name, token FROM progress_dirty WHERE project_id=OLD.project_id;
+  INSERT OR REPLACE INTO progress_dirty_file(project_id,name,token)
+    SELECT NEW.project_id, NEW.name, token FROM progress_dirty WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_functions_delete AFTER DELETE ON functions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(OLD.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), functions=1 WHERE project_id=OLD.project_id;
+  INSERT OR REPLACE INTO progress_dirty_file(project_id,name,token)
+    SELECT OLD.project_id, OLD.name, token FROM progress_dirty WHERE project_id=OLD.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_notes_insert AFTER INSERT ON notes
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_notes_update AFTER UPDATE OF project_id,function_id,agent_id,text ON notes
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_notes_delete AFTER DELETE ON notes
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(OLD.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=OLD.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_headers_insert AFTER INSERT ON context_versions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_headers_update AFTER UPDATE OF project_id,header,unit ON context_versions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_headers_delete AFTER DELETE ON context_versions
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(OLD.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), headers=1 WHERE project_id=OLD.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_symbols_insert AFTER INSERT ON symbols
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_symbols_update AFTER UPDATE OF project_id,name,address,size,kind ON symbols
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(NEW.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=NEW.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_symbols_delete AFTER DELETE ON symbols
+WHEN EXISTS (SELECT 1 FROM projects WHERE id=OLD.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id) VALUES(OLD.project_id);
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1 WHERE project_id=OLD.project_id;
+END;
+CREATE TRIGGER IF NOT EXISTS progress_dirty_agent_rename AFTER UPDATE OF name ON agents
+WHEN EXISTS (SELECT 1 FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
+BEGIN
+  INSERT OR IGNORE INTO progress_dirty(project_id)
+    SELECT id FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom';
+  UPDATE progress_dirty SET token=lower(hex(randomblob(16))), metadata=1
+    WHERE project_id IN (SELECT id FROM projects WHERE CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom');
+END;
+"""
 
 
 # The write-ahead log is cut back to this after a checkpoint. Without a limit it never shrinks: the owner's grew to
@@ -102,6 +222,7 @@ class Store:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+        self.conn.executescript(DIRTY_TRIGGERS)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
         # the room looks a function up by its address for every match, best attempt and note the host sends: without

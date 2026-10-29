@@ -1,22 +1,96 @@
 """Keep ROM progress files authoritative, with SQLite as the engine's working representation.
 
-SQLite stores the last successfully synchronized disk and database snapshots, so a restart can distinguish an old
-checkout from a contributor's deletion or edit. Local changes write only their changed files; a pull is validated
-before its files or database state are changed.
+SQLite stores the last successfully synchronized disk and database snapshots as one hash per file, so a restart can
+distinguish an old checkout from a contributor's deletion or edit without keeping two full copies of the sources.
+Triggers (store.DIRTY_TRIGGERS, knowledge.SCHEMA) mark the columns a render reads, so a local match writes its file
+and the manifest, while a claim, an event or an attempt that didn't improve the best writes nothing. A pull is
+validated before its files or database state are changed.
+
+Change detection guarantee: a non-forced check compares the manifest's and the three folders' stats and may skip an
+in-place file edit until the one-second autosave; a forced check (judging, tools, routes, saves, the autosave) compares
+every file's name, size and mtime, so an editor's in-place write (which leaves its directory's mtime alone) is seen
+before code is judged or a write is acknowledged. A file hash in the baseline is always compared for every file a
+sync is about to write or remove.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import stat
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import toolchains
 from ..network import NetworkError
 from ..rom.symbols import IDENT
 from . import saves
+
+CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
+PARTIAL_FUNCTIONS = 256  # more changed functions than this: one full query beats this many per-name lookups
+
+
+def _hash(text: str | None) -> str | None:
+    """A file's identity in the baseline; None keeps a missing file apart from an empty one."""
+    return None if text is None else hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def _config_key(proj, cfg: dict) -> str:
+    """A digest of only the settings a progress folder's manifest is rendered from.
+
+    Spending, check marks and the stored revision change constantly and must not look like a manifest edit; a title,
+    compiler, instructions, priority, layout source or fingerprint does."""
+    rom = cfg.get("rom") or {}
+    settings = [proj["name"], cfg.get("platform"), rom.get("sha1"), rom.get("file"), cfg.get("compiler"),
+                cfg.get("compiler_ranges") or [], cfg.get("instructions") or "", cfg.get("priority") or [],
+                cfg.get("auto_compiler"), bool(cfg.get("knowledge_auto"))]
+    return hashlib.sha1(json.dumps(settings, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+@dataclass
+class _Snapshot:
+    files: dict[str, str]
+    manifest: str | None = None
+
+    @classmethod
+    def of(cls, files: dict[str, str]) -> _Snapshot:
+        return cls({name: _hash(text) for name, text in files.items()}, files.get(saves.MANIFEST))
+
+    def changed(self, changes: dict[str, str | None], manifest: str | None) -> _Snapshot:
+        files = dict(self.files)
+        for name, text in changes.items():
+            fingerprint = _hash(text)
+            if fingerprint is None:
+                files.pop(name, None)
+            else:
+                files[name] = fingerprint
+        return _Snapshot(files, self.manifest if manifest is None else manifest)
+
+
+@dataclass
+class _Baseline:
+    disk: _Snapshot
+    projected: _Snapshot
+    dirty_token: str | None = None
+    config_key: str | None = None
+
+
+@dataclass
+class _State:
+    dirty_token: str | None
+    config_key: str | None
+
+
+@dataclass
+class _Dirty:
+    token: str | None = None
+    functions: bool = False
+    headers: bool = False
+    metadata: bool = False
 
 
 def _read(folder: Path) -> dict[str, str]:
@@ -213,56 +287,241 @@ class Progress:
         self.revisions: dict[str, int] = {}
         self.project_locks: dict[str, threading.RLock] = {}
         self.errors: dict[str, str] = {}
-        self.signatures: dict[str, tuple] = {}
-        self.baselines: dict[int, tuple[dict[str, str], dict[str, str]]] = {}
-        self.sync_changes: dict[str, int] = {}
+        self.signatures: dict[str, tuple] = {}  # slug -> every file's stat after the last acknowledged sync
+        self.stamps: dict[str, tuple] = {}  # slug -> the cheap directory/manifest stat a non-forced check compares
+        self.published: dict[str, set[str]] = {}  # slug -> the files a sync just wrote or removed
+        self.baselines: dict[int, _Baseline | None] = {}
+        self.states: dict[int, _State | None] = {}
+        self.sync_changes: dict[str, int] = {}  # kept for restore, which drops every in-memory trace of a project
         self.adopting: set[str] = set()
-        self.blocked: dict[str, tuple] = {}  # slug -> folder signature while its unknown compiler waits for a choice
+        self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
 
     @staticmethod
-    def _signature(folder: Path) -> tuple:
+    def _signature(folder: Path, *, deep: bool = True) -> tuple:
+        """What a check compares: the manifest and three folders always, and with `deep` every file too.
+
+        Directory mtimes catch files added, removed or renamed by git; they don't change when an editor writes a file
+        in place, so a forced sync uses the deep form (`deep=True`, the default) and sees that edit. A non-forced
+        check only needs to know there is something to read."""
         items = []
         for name in (saves.MANIFEST, "src", "best", "include"):
             path = folder / name
             try:
-                stat = path.stat(follow_symlinks=False)
-                items.append((name, stat.st_mtime_ns, stat.st_size, stat.st_mode))
-                if path.is_dir() and not path.is_symlink():
-                    for child in sorted(path.iterdir()):
-                        stat = child.stat(follow_symlinks=False)
-                        items.append((child.relative_to(folder).as_posix(), stat.st_mtime_ns, stat.st_size, stat.st_mode))
+                info = os.stat(path, follow_symlinks=False)
+                items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+                if deep and stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+                    with os.scandir(path) as entries:
+                        children = sorted(entries, key=lambda entry: entry.name)
+                    for child in children:
+                        info = child.stat(follow_symlinks=False)
+                        items.append((f"{name}/{child.name}", info.st_mtime_ns, info.st_size, info.st_mode))
             except OSError:
                 items.append((name, None))
         return tuple(items)
+
+    def _stamp(self, folder: Path) -> tuple:
+        """The cheap check's signature; kept separate so a test or caller can observe the deep one."""
+        return Progress._signature(folder, deep=False)
+
+    @staticmethod
+    def _expected_signature(folder: Path, cached: tuple, touched: set[str]) -> tuple | None:
+        """The signature a publish should leave, from the cached one plus the files it wrote.
+
+        Anything it can't account for (a file added, removed or edited by a pull or an editor meanwhile) returns
+        None, so the cache stays cold and the next sync reads the folder: an edit is never acknowledged unseen."""
+        entries = {item[0]: item for item in cached}
+        items = []
+        for name in (saves.MANIFEST, "src", "best", "include"):
+            path = folder / name
+            try:
+                info = os.stat(path, follow_symlinks=False)
+            except OSError:
+                items.append((name, None))
+                continue
+            items.append((name, info.st_mtime_ns, info.st_size, info.st_mode))
+            if name == saves.MANIFEST or not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                continue
+            with os.scandir(path) as entries_in_dir:
+                children = sorted(entries_in_dir, key=lambda entry: entry.name)
+            prefix = name + "/"
+            known = {key[len(prefix):] for key in entries if key.startswith(prefix)}
+            actual = {child.name for child in children}
+            expected = (known - {key[len(prefix):] for key in touched if key.startswith(prefix)}
+                        ) | {key[len(prefix):] for key in touched if key.startswith(prefix) and key[len(prefix):] in actual}
+            if actual != expected:
+                return None
+            for child in children:
+                key = prefix + child.name
+                if key in touched or key not in entries:
+                    child_info = child.stat(follow_symlinks=False)
+                    items.append((key, child_info.st_mtime_ns, child_info.st_size, child_info.st_mode))
+                else:
+                    items.append(entries[key])
+        return tuple(items)
+
+    @staticmethod
+    def _touched_acknowledged(folder: Path, touched: set[str], baseline: _Baseline | None) -> bool:
+        """The files a publish wrote still hold what the baseline recorded."""
+        if baseline is None:
+            return False
+        for name in touched:
+            path = folder / name
+            try:
+                text = path.read_text(encoding="utf-8") if path.exists() else None
+            except (OSError, UnicodeError):
+                return False
+            if _hash(text) != baseline.disk.files.get(name):
+                return False
+        return True
+
+    def _state(self, project_id: int) -> _State | None:
+        """The baseline's small bookkeeping, without loading 18,000 file hashes for a no-op check."""
+        if project_id not in self.states:
+            row = self.net.store.one("SELECT dirty_token,config_key FROM progress_state WHERE project_id=?",
+                                     project_id)
+            self.states[project_id] = None if row is None else _State(row["dirty_token"], row["config_key"])
+        return self.states[project_id]
+
+    def _dirty(self, project_id: int) -> _Dirty:
+        row = self.net.store.one("SELECT token,functions,headers,metadata FROM progress_dirty WHERE project_id=?",
+                                 project_id)
+        if row is None:
+            return _Dirty()
+        return _Dirty(row["token"], bool(row["functions"]), bool(row["headers"]), bool(row["metadata"]))
+
+    def _dirty_files(self, project_id: int) -> list:
+        """The function files changed since the last publish: (name, the token their last write had)."""
+        return self.net.store.all("SELECT name,token FROM progress_dirty_file WHERE project_id=? ORDER BY name",
+                                  project_id)
 
     def _project_lock(self, slug: str):
         with self.lock:
             return self.project_locks.setdefault(slug, threading.RLock())
 
-    def _baseline(self, project_id: int) -> tuple[dict[str, str], dict[str, str]] | None:
+    def _baseline(self, project_id: int) -> _Baseline | None:
         if project_id in self.baselines:
             return self.baselines[project_id]
-        row = self.net.store.one("SELECT disk,projected FROM progress_state WHERE project_id=?", project_id)
+        row = self.net.store.one(
+            "SELECT format,disk,projected,disk_manifest,projected_manifest,config_key,dirty_token "
+            "FROM progress_state WHERE project_id=?", project_id)
         if row is None:
+            self.baselines[project_id] = None
             return None
-        result = (json.loads(row["disk"]), json.loads(row["projected"]))
-        self.baselines[project_id] = result
-        return result
+        if (row["format"] or 1) < 2:
+            # The first release stored both full file sets as JSON (23 MB at 18,000 functions). Read that row once,
+            # keep the manifests the merge needs, and convert the files to hashes so later syncs stay small.
+            disk = _Snapshot.of(json.loads(row["disk"]))
+            projected = _Snapshot.of(json.loads(row["projected"]))
+            baseline = _Baseline(disk, projected, row["dirty_token"], row["config_key"])
+            with self.net.store.tx() as db:
+                db.execute("DELETE FROM progress_files WHERE project_id=?", (project_id,))
+                self._write_side(db, project_id, "disk", None, disk)
+                self._write_side(db, project_id, "projected", None, projected)
+                db.execute("UPDATE progress_state SET disk='{}',projected='{}',format=2,disk_manifest=?,"
+                           "projected_manifest=? WHERE project_id=?",
+                           (disk.manifest, projected.manifest, project_id))
+        else:
+            files: dict[str, dict[str, str]] = {"disk": {}, "projected": {}}
+            for r in self.net.store.all("SELECT side,name,hash FROM progress_files WHERE project_id=?", project_id):
+                files.setdefault(r["side"], {})[r["name"]] = r["hash"]
+            baseline = _Baseline(_Snapshot(files["disk"], row["disk_manifest"]),
+                                 _Snapshot(files["projected"], row["projected_manifest"]),
+                                 row["dirty_token"], row["config_key"])
+        self.baselines[project_id] = baseline
+        self.states[project_id] = _State(baseline.dirty_token, baseline.config_key)
+        return baseline
 
-    def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str]) -> None:
+    @staticmethod
+    def _write_side(db, project_id: int, side: str, old: _Snapshot | None, new: _Snapshot) -> None:
+        """Write only the file hashes that differ from the baseline."""
+        if old is None:
+            db.execute("DELETE FROM progress_files WHERE project_id=? AND side=?", (project_id, side))
+            db.executemany("INSERT INTO progress_files(project_id,side,name,hash) VALUES(?,?,?,?)",
+                           [(project_id, side, name, fingerprint) for name, fingerprint in new.files.items()])
+            return
+        for name in old.files.keys() - new.files.keys():
+            db.execute("DELETE FROM progress_files WHERE project_id=? AND side=? AND name=?", (project_id, side, name))
+        db.executemany(
+            "INSERT INTO progress_files(project_id,side,name,hash) VALUES(?,?,?,?) "
+            "ON CONFLICT(project_id,side,name) DO UPDATE SET hash=excluded.hash",
+            [(project_id, side, name, fingerprint) for name, fingerprint in new.files.items()
+             if old.files.get(name) != fingerprint])
+
+    @staticmethod
+    def _write_side_changes(db, project_id: int, side: str, changes: dict[str, str | None],
+                            old: _Snapshot) -> None:
+        for name, text in changes.items():
+            fingerprint = _hash(text)
+            if old.files.get(name) == fingerprint:
+                continue
+            if fingerprint is None:
+                db.execute("DELETE FROM progress_files WHERE project_id=? AND side=? AND name=?",
+                           (project_id, side, name))
+            else:
+                db.execute("INSERT INTO progress_files(project_id,side,name,hash) VALUES(?,?,?,?) "
+                           "ON CONFLICT(project_id,side,name) DO UPDATE SET hash=excluded.hash",
+                           (project_id, side, name, fingerprint))
+
+    @staticmethod
+    def _write_state(db, project_id: int, baseline: _Baseline) -> None:
+        db.execute(
+            "INSERT INTO progress_state(project_id,disk,projected,updated_at,format,disk_manifest,"
+            "projected_manifest,config_key,dirty_token) VALUES(?,'{}','{}',?,2,?,?,?,?) "
+            "ON CONFLICT(project_id) DO UPDATE SET disk='{}',projected='{}',updated_at=excluded.updated_at,"
+            "format=2,disk_manifest=excluded.disk_manifest,projected_manifest=excluded.projected_manifest,"
+            "config_key=excluded.config_key,dirty_token=excluded.dirty_token",
+            (project_id, time.time(), baseline.disk.manifest, baseline.projected.manifest,
+             baseline.config_key, baseline.dirty_token))
+
+    @staticmethod
+    def _ack_dirty(db, project_id: int, token: str | None, tokens: list[str]) -> None:
+        """Acknowledge the writes whose tokens the render saw; a later write has a token this does not delete."""
+        for start in range(0, len(tokens), 400):
+            chunk = tokens[start:start + 400]
+            db.execute(f"DELETE FROM progress_dirty_file WHERE project_id=? AND token IN ({','.join('?' * len(chunk))})",
+                       (project_id, *chunk))
+        row = db.execute("SELECT token FROM progress_dirty WHERE project_id=?", (project_id,)).fetchone()
+        if row is not None and row["token"] == token:
+            db.execute("UPDATE progress_dirty SET functions=0,headers=0,metadata=0 WHERE project_id=?", (project_id,))
+
+    def _remember(self, project_id: int, disk: dict[str, str], projected: dict[str, str],
+                  config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
+        """Record a full sync as per-file hashes, writing only the hashes that changed."""
+        baseline = _Baseline(_Snapshot.of(disk), _Snapshot.of(projected), dirty_token, config_key)
+        old = self.baselines.get(project_id)
+        if old is None:
+            old = self._baseline(project_id)
         with self.net.store.tx() as db:
-            db.execute("INSERT INTO progress_state(project_id,disk,projected,updated_at) VALUES(?,?,?,?) "
-                       "ON CONFLICT(project_id) DO UPDATE SET disk=excluded.disk,projected=excluded.projected,"
-                       "updated_at=excluded.updated_at",
-                       (project_id, json.dumps(disk), json.dumps(projected), time.time()))
-        self.baselines[project_id] = (disk, projected)
+            self._write_side(db, project_id, "disk", old.disk if old else None, baseline.disk)
+            self._write_side(db, project_id, "projected", old.projected if old else None, baseline.projected)
+            self._write_state(db, project_id, baseline)
+            self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
+        self.baselines[project_id] = baseline
+        self.states[project_id] = _State(dirty_token, config_key)
+
+    def _remember_changes(self, project_id: int, changes: dict[str, str | None], manifest: str,
+                          config_key: str, dirty_token: str | None, dirty_tokens: list[str]) -> None:
+        """Record what an incremental publish wrote, touching only those files' baseline rows."""
+        old = self._baseline(project_id)
+        if old is None:
+            return
+        baseline = _Baseline(old.disk.changed(changes, manifest), old.projected.changed(changes, manifest),
+                             dirty_token, config_key)
+        with self.net.store.tx() as db:
+            self._write_side_changes(db, project_id, "disk", changes, old.disk)
+            self._write_side_changes(db, project_id, "projected", changes, old.projected)
+            self._write_state(db, project_id, baseline)
+            self._ack_dirty(db, project_id, dirty_token, dirty_tokens)
+        self.baselines[project_id] = baseline
+        self.states[project_id] = _State(dirty_token, config_key)
 
     def forget(self, slug: str, project_id: int) -> None:
         """Drop in-memory state with the database row so a later project can safely reuse its slug or ID."""
         with self._project_lock(slug):
             self.baselines.pop(project_id, None)
+            self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
-                          self.signatures, self.sync_changes, self.errors, self.blocked):
+                          self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -274,15 +533,20 @@ class Progress:
             try:
                 yield
                 folder = saves.default_folder(self.net, slug)
+                proj = self.net._project(slug)
+                project_id = proj["id"]
+                baseline = self._baseline(project_id)
+                dirty = self._dirty(project_id)
+                dirty_tokens = [r["token"] for r in self._dirty_files(project_id)]
                 rendered = saves._render(self.net, slug)[0]
-                if not saves._publish(folder, rendered, self.disk.get(slug),
-                                      chosen=bool(self.net.cfg(self.net._project(slug)).get("progress_folder"))):
+                if not saves._publish(folder, rendered, baseline.disk.files if baseline else None,
+                                      chosen=bool(self.net.cfg(proj).get("progress_folder"))):
                     raise NetworkError("Progress changed while the project was being rebuilt. Read it again and retry.")
                 self.disk[slug] = _read(folder)
                 self.projected[slug] = rendered
                 saves._remember_revision(self.net, slug, json.loads(rendered[saves.MANIFEST]))
-                project_id = self.net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
-                self._remember(project_id, self.disk[slug], rendered)
+                self._remember(project_id, self.disk[slug], rendered,
+                               _config_key(proj, self.net.cfg(proj)), dirty.token, dirty_tokens)
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
             finally:
                 self.local.busy = False
@@ -322,33 +586,68 @@ class Progress:
         return getattr(self.local, "busy", False)
 
     def sync(self, slug: str, *, force: bool = False, logger=None) -> bool:
-        """Read contributions first, then publish only work changed locally since the last synchronization."""
+        """Read contributions first, then publish only work changed locally since the last synchronization.
+
+        A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
+        in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
+        the routes or the autosave. Nothing is rendered or written unless the folder or a column the render reads
+        changed."""
         if self.applying or getattr(self.net.store._local, "in_tx", False):
             return False
         with self._project_lock(slug):
-            if (not force and time.monotonic() - self.checked.get(slug, 0) < 0.25
-                    and self.sync_changes.get(slug) == self.net.store.conn.total_changes):
-                return False
             self.local.busy = True
             try:
                 proj = self.net._project(slug)
-                if self.net.is_rom(proj) and self.net.cfg(proj).get("rom", {}).get("sha1"):
+                rom = self.net.is_rom(proj) and bool(self.net.cfg(proj).get("rom", {}).get("sha1"))
+                if rom:
+                    pid = proj["id"]
                     folder = saves.default_folder(self.net, slug)
-                    signature = (self._signature(folder), self.net.store.conn.total_changes)
-                    if self.blocked.get(slug) == signature:
-                        return False  # its compiler is unknown and neither the folder nor the database changed
-                    if self._baseline(proj["id"]) is not None and self.signatures.get(slug) == signature:
-                        return False
+                    state = self._state(pid)
+                    dirty = self._dirty(pid)
+                    config_key = _config_key(proj, self.net.cfg(proj))
+                    changed_db = state is not None and (
+                        dirty.token != state.dirty_token or dirty.functions or dirty.headers or dirty.metadata
+                        or state.config_key is None or config_key != state.config_key)
+                    if state is not None and not changed_db:
+                        if not force and time.monotonic() - self.checked.get(slug, 0) < CHECK_SECONDS:
+                            return False
+                        stamp = self._stamp(folder)
+                        if not force and stamp == self.stamps.get(slug):
+                            self.checked[slug] = time.monotonic()
+                            return False
+                        if force:
+                            signature = self._signature(folder)
+                            if signature == self.signatures.get(slug):
+                                self.checked[slug] = time.monotonic()
+                                self.stamps[slug] = self._stamp(folder)
+                                return False
+                cached_signature = self.signatures.get(slug)
                 result = self._sync(slug, logger)
                 self.checked[slug] = time.monotonic()
                 self.sync_changes[slug] = self.net.store.conn.total_changes
-                if self.net.is_rom(proj):
+                if rom:
                     folder = saves.default_folder(self.net, slug)
+                    # After a real write, make sure the folder is exactly what this sync rendered and wrote. An edit
+                    # that arrived meanwhile must not be acknowledged (and so missed forever) by the cache.
                     signature = self._signature(folder)
-                    acknowledged = self.disk.get(slug) is not None and _read(folder) == self.disk.get(slug)
+                    touched = self.published.pop(slug, None)
+                    acknowledged = True
+                    if result:
+                        baseline = self._baseline(proj["id"])
+                        if cached_signature is not None and touched is not None:
+                            expected = self._expected_signature(folder, cached_signature, touched)
+                            acknowledged = (expected == signature
+                                            and self._touched_acknowledged(folder, touched, baseline))
+                        else:
+                            acknowledged = (baseline is not None
+                                            and _Snapshot.of(_read(folder)).files == baseline.disk.files)
                     stable = signature == self._signature(folder)
                     if acknowledged and stable:
-                        self.signatures[slug] = (signature, self.net.store.conn.total_changes)
+                        self.signatures[slug] = signature
+                        self.stamps[slug] = self._stamp(folder)
+                    else:
+                        self.signatures.pop(slug, None)
+                        self.stamps.pop(slug, None)
                 if not self.blocked.get(slug):
                     self.errors.pop(slug, None)
                 return result
@@ -362,37 +661,142 @@ class Progress:
             finally:
                 self.local.busy = False
 
+    def _publish_initial(self, slug: str, proj, folder: Path, disk: dict[str, str], dirty: _Dirty,
+                         config_key: str) -> bool:
+        """A first sync with nothing on disk yet: render the database's work once and record its hashes."""
+        net = self.net
+        dirty_tokens = [r["token"] for r in self._dirty_files(proj["id"])]
+        rendered, _ = saves._render(net, slug)
+        baseline = self._baseline(proj["id"])
+        previous = baseline.projected if baseline is not None else None
+        changes = {name: text for name, text in rendered.items()
+                   if previous is None or previous.files.get(name) != _hash(text)}
+        removed = {name: None for name in (previous.files if previous is not None else {}) if name not in rendered}
+        if not saves._publish(folder, changes, removed, expected=disk,
+                              chosen=bool(net.cfg(proj).get("progress_folder"))):
+            return False
+        if saves.MANIFEST in changes:
+            saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
+        disk = _read(folder)
+        proj = net._project(slug)
+        self.disk[slug] = disk
+        self.projected[slug] = rendered
+        self.published[slug] = set(changes) | set(removed)
+        self._remember(proj["id"], disk, rendered, _config_key(proj, net.cfg(proj)),
+                       dirty.token, dirty_tokens)
+        return bool(changes or removed)
+
+    def _publish_changes(self, slug: str, proj, folder: Path, baseline: _Baseline, dirty: _Dirty,
+                         config_key: str) -> bool | None:
+        """Publish only the files the database changed since the last sync; None means the folder moved meanwhile."""
+        net = self.net
+        pid = proj["id"]
+        rows = self._dirty_files(pid)
+        dirty_tokens = [r["token"] for r in rows]
+        # A token changed but no flag survived (a rollback): publish everything once rather than miss a change.
+        no_clue = (dirty.token != baseline.dirty_token
+                   and not (dirty.functions or dirty.headers or dirty.metadata or rows))
+        flags = _Dirty(dirty.token, dirty.functions or bool(rows) or no_clue,
+                       dirty.headers or no_clue, dirty.metadata or no_clue)
+        names = [r["name"] for r in rows] if flags.functions else []
+        full = (flags.functions and not names) or len(names) > PARTIAL_FUNCTIONS
+        readme_key = None
+        if baseline.projected.manifest is not None:
+            readme_key = saves._readme_key(json.loads(baseline.projected.manifest))
+        if full:
+            files, _ = saves._render(net, slug, readme_key=readme_key)
+        else:
+            files, _ = saves._render_partial(net, proj, folder, names, headers=flags.headers,
+                                             readme_key=readme_key)
+        changes = {name: text for name, text in files.items()
+                   if baseline.projected.files.get(name) != _hash(text)}
+        if full:
+            removed = {name: None for name in baseline.projected.files if name not in files}
+        else:
+            possible = {f"src/{name}.c" for name in names} | {f"best/{name}.c" for name in names}
+            if flags.headers:
+                possible |= {name for name in baseline.projected.files if name.startswith("include/")}
+            removed = {name: None for name in possible
+                       if name in baseline.projected.files and name not in files}
+        expected = {}
+        for name in set(changes) | set(removed):
+            path = folder / name
+            try:
+                current = path.read_text(encoding="utf-8") if path.exists() else None
+            except (OSError, UnicodeError):
+                return None
+            if _hash(current) != baseline.disk.files.get(name):
+                return None  # a pull or an editor wrote while this was rendering: read it next pass
+            expected[name] = current
+        if not changes and not removed:
+            self._remember_changes(pid, {}, files[saves.MANIFEST], config_key, dirty.token, dirty_tokens)
+            return False
+        if not saves._publish(folder, changes, removed, expected=expected,
+                              chosen=bool(net.cfg(proj).get("progress_folder"))):
+            return None
+        if saves.MANIFEST in changes:
+            saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
+        self.disk[slug] = dict(baseline.disk.files)
+        self.projected[slug] = files
+        self.published[slug] = set(changes) | set(removed)
+        self._remember_changes(pid, {**changes, **removed}, files[saves.MANIFEST], config_key,
+                               dirty.token, dirty_tokens)
+        return bool(changes or removed)
+
     def _sync(self, slug: str, logger=None) -> bool:
         net = self.net
         proj = net._project(slug)
         if not net.is_rom(proj):
             return False  # PROJECT mode's source files already belong to its build and git repository.
-        if not net.cfg(proj).get("rom", {}).get("sha1") or net._context(proj["id"]) is None:
+        cfg = net.cfg(proj)
+        if not cfg.get("rom", {}).get("sha1") or net._context(proj["id"]) is None:
             return False  # import has not registered the game's fingerprint and shared header yet
         folder = saves.default_folder(net, slug)
         self.blocked.pop(slug, None)  # a run that gets past its compiler gate clears the wait
-        saves._check_progress_folder(folder, chosen=bool(net.cfg(proj).get("progress_folder")))
+        saves._check_progress_folder(folder, chosen=bool(cfg.get("progress_folder")))
+        pid = proj["id"]
+        state = self._state(pid)
+        dirty = self._dirty(pid)
+        config_key = _config_key(proj, cfg)
+        stored_token = state.dirty_token if state is not None else None
+        db_changed = (dirty.token != stored_token or dirty.functions or dirty.headers or dirty.metadata)
+        config_changed = state is not None and (state.config_key is None or config_key != state.config_key)
+        baseline = self._baseline(pid)
+        signature = self._signature(folder)
+        if baseline is not None and self.signatures.get(slug) == signature:
+            if not db_changed and not config_changed:
+                return False
+            result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+            if result is not None:
+                return result
         disk = _read(folder)
-        baseline = self._baseline(proj["id"])
-        before = baseline[0] if baseline is not None else self.disk.get(slug)
-        if baseline is not None:
-            self.disk.setdefault(slug, baseline[0])
-            self.projected.setdefault(slug, baseline[1])
-        if saves.MANIFEST not in disk and (before is not None or net.cfg(proj).get("progress_folder")
+        snapshot = _Snapshot.of(disk)
+        if baseline is not None and snapshot.files == baseline.disk.files:
+            if not db_changed and not config_changed:
+                return False
+            result = self._publish_changes(slug, proj, folder, baseline, dirty, config_key)
+            if result is not None:
+                return result
+            disk = _read(folder)
+            snapshot = _Snapshot.of(disk)
+        before = baseline.disk if baseline is not None else None
+        if saves.MANIFEST not in disk and (before is not None or cfg.get("progress_folder")
                                            or disk or (folder / ".git").exists()):
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
-        if saves.MANIFEST in disk and disk != before:
-            manifest = _manifest(disk, net.cfg(proj))
+        if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
+            manifest = _manifest(disk, cfg)
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
-            stored_revision = saves._stored_revision(net.cfg(proj))
+            stored_revision = saves._stored_revision(cfg)
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
-            comparison = before if before is not None else saves._render(net, slug)[0]
+            comparison = None if before is not None else saves._render(net, slug)[0]
+            comparison_manifest = before.manifest if before is not None else comparison[saves.MANIFEST]
             if before is None:
-                self.projected.setdefault(slug, comparison)
-            changed = set(disk) | set(comparison)
-            changed = {name for name in changed if disk.get(name) != comparison.get(name)}
+                changed = {name for name in set(disk) | set(comparison) if disk.get(name) != comparison.get(name)}
+            else:
+                changed = {name for name in set(disk) | set(before.files)
+                           if _hash(disk.get(name)) != before.files.get(name)}
             initial_pending = {}
             if before is None and slug not in self.adopting:
                 changed = {name for name in changed if name in disk}
@@ -403,14 +807,17 @@ class Progress:
                 # the same name; its source is published below and that older file is not judged (#101 review).
                 legacy_newer = _database_newer(net, proj, manifest, stored_revision)
                 changed.difference_update(f"src/{name}.c" for name in legacy_newer)
+            projected = baseline.projected if baseline is not None else _Snapshot.of(comparison)
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
             all_code = False
-            if slug in self.projected:
-                rendered = saves._render(net, slug)[0]
-                previous = self.projected[slug]
+            pending = {}
+            if projected is not None:
+                rendered = comparison if comparison is not None else saves._render(net, slug)[0]
+                previous = projected
                 pending = {name: text for name, text in rendered.items()
-                           if name not in changed and previous.get(name) != text and name != "README.md"}
+                           if name not in changed and previous.files.get(name) != _hash(text)
+                           and name != "README.md"}
                 pending.update(initial_pending)
                 if before is None:
                     # A first sync upgrades the folder's manifest in one write: the merge above kept the database's
@@ -422,18 +829,18 @@ class Progress:
                     source = f"src/{name}.c"
                     if source in rendered:
                         pending[source] = rendered[source]
-                if (before is not None and saves.MANIFEST in rendered and saves.MANIFEST in previous
-                        and saves.MANIFEST in disk and previous[saves.MANIFEST] != rendered[saves.MANIFEST]):
+                if (before is not None and saves.MANIFEST in rendered and previous.manifest is not None
+                        and saves.MANIFEST in disk and previous.manifest != rendered[saves.MANIFEST]):
                     pending[saves.MANIFEST] = json.dumps(
-                        _merge_manifest(json.loads(previous[saves.MANIFEST]), json.loads(rendered[saves.MANIFEST]),
+                        _merge_manifest(json.loads(previous.manifest), json.loads(rendered[saves.MANIFEST]),
                                         json.loads(disk[saves.MANIFEST])), indent=1) + "\n"
-                removed = {name: text for name, text in previous.items()
+                removed = {name: None for name in previous.files
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
-                merged_manifest = _manifest(candidate, net.cfg(proj))
+                merged_manifest = _manifest(candidate, cfg)
                 all_code = any(name.startswith("include/") for name in changed)
                 if saves.MANIFEST in changed:
-                    old = json.loads(comparison[saves.MANIFEST])
+                    old = json.loads(comparison_manifest)
                     all_code |= any(old.get(key) != merged_manifest.get(key) for key in
                                     ("compiler", "compiler_ranges", "symbols", "headers", "set_aside"))
                     if old.get("layout") != merged_manifest.get("layout"):
@@ -445,7 +852,7 @@ class Progress:
                     # A folder from another tool can name a compiler this app doesn't have. The project's own
                     # Settings are a compiler the user already picked: use it (and correct the folder) rather than
                     # wait forever for an id that can never be installed.
-                    local = net.cfg(proj).get("compiler")
+                    local = cfg.get("compiler")
                     local_toolchain = local.get("toolchain") if isinstance(local, dict) else None
                     if isinstance(local_toolchain, str) and toolchains.known(local_toolchain):
                         merged_manifest["compiler"] = local
@@ -456,7 +863,7 @@ class Progress:
                 code_files = any(name.startswith(("src/", "best/")) for name in disk)
                 database_code = not code_files and net.store.one(
                     "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
-                    "LIMIT 1", proj["id"]) is not None
+                    "LIMIT 1", pid) is not None
                 judging_change = all_code or any(name.startswith(("src/", "best/", "include/"))
                                                  for name in changed)
                 needs_judging = judging_change and (code_files or database_code)
@@ -464,7 +871,7 @@ class Progress:
                     if not toolchains.known(toolchain):
                         # #118: no Setup can install a compiler decompdecomp doesn't know. Open the project and
                         # leave the folder's sources unjudged until the user picks one in Settings.
-                        self.blocked[slug] = (self._signature(folder), net.store.conn.total_changes)
+                        self.blocked[slug] = (self._signature(folder), dirty.token, config_key)
                         self.errors[slug] = (f"progress/decompdecomp.json names {toolchain}, which isn't a compiler "
                                              "decompdecomp has. Pick one in this project's Settings; its saved code "
                                              "waits until then.")
@@ -474,22 +881,28 @@ class Progress:
                             f"Install {toolchains.get(toolchain).name} ({toolchain}) in Setup before continuing: "
                             "progress/decompdecomp.json's code has to be judged with it.")
                 stale_revision = (saves._manifest_revision(merged_manifest)
-                                  < saves._stored_revision(net.cfg(proj)))
+                                  < saves._stored_revision(cfg))
                 if legacy_newer or stale_revision:
                     merged_manifest["saved_at"] = time.time()
                     merged_manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
                 if not saves._publish(folder, pending, removed, expected=disk,
-                                      chosen=bool(net.cfg(proj).get("progress_folder"))):
+                                      chosen=bool(cfg.get("progress_folder"))):
                     return False
+                self.published[slug] = set(pending) | set(removed)
                 disk = _read(folder)
-                manifest = _manifest(disk, net.cfg(proj))
+                manifest = _manifest(disk, cfg)
                 saves._remember_revision(net, slug, manifest)
-                changed = {name for name in set(disk) | set(comparison) if disk.get(name) != comparison.get(name)}
+                if before is None:
+                    changed = {name for name in set(disk) | set(comparison)
+                               if disk.get(name) != comparison.get(name)}
+                else:
+                    changed = {name for name in set(disk) | set(before.files)
+                               if _hash(disk.get(name)) != before.files.get(name)}
             self.revisions[slug] = self.revisions.get(slug, 0) + 1
             with net.store.tx() as db:
                 layout = {f["vram"]: f for f in manifest.get("layout", [])}
-                rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?", (proj["id"],)).fetchall()
+                rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?", (pid,)).fetchall()
                 for row in rows:
                     changed_source = f"src/{row['name']}.c" in changed
                     changed_best = f"best/{row['name']}.c" in changed
@@ -520,42 +933,25 @@ class Progress:
                                    "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
                                    (status, keep, keep, keep, row["id"]))
                         db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
-                db.execute("DELETE FROM notes WHERE project_id=?", (proj["id"],))
-                db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (proj["id"],))
+                db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
+                db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
                 units = set(manifest.get("headers") or {})
-                for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?", (proj["id"],)).fetchall():
+                for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?", (pid,)).fetchall():
                     if row["unit"] and row["unit"] not in units:
-                        db.execute("DELETE FROM context_versions WHERE project_id=? AND unit=?", (proj["id"], row["unit"]))
-            self.results[slug] = saves._apply(net, slug, folder, manifest, report, files=disk)
-            net.bump_generation(proj["id"])
-            self.projected[slug] = saves._render(net, slug)[0]
+                        db.execute("DELETE FROM context_versions WHERE project_id=? AND unit=?", (pid, row["unit"]))
+            self.results[slug] = saves._apply(net, slug, folder, manifest, report, files=disk,
+                                              judge_code=needs_judging)
+            net.bump_generation(pid)
+            proj = net._project(slug)
+            # `_apply` writes matches and notes of its own: acknowledge the writes its final render saw.
+            applied_dirty = self._dirty(pid)
+            applied_tokens = [r["token"] for r in self._dirty_files(pid)]
+            rendered, _ = saves._render(net, slug)
+            self.projected[slug] = rendered
             self.disk[slug] = disk
-            self._remember(proj["id"], disk, self.projected[slug])
+            self._remember(pid, disk, rendered, _config_key(proj, net.cfg(proj)),
+                           applied_dirty.token, applied_tokens)
             return True
-        rendered, _ = saves._render(net, slug)
-        previous = self.projected.get(slug, {})
-        changes = {name: text for name, text in rendered.items() if previous.get(name) != text}
-        removed = {name: text for name, text in previous.items() if name not in rendered}
-        # Metadata added by a contributor survives an unrelated local note or match.
-        if saves.MANIFEST in changes and saves.MANIFEST in disk and saves.MANIFEST in previous:
-            old, new, current = (json.loads(text) for text in
-                                 (previous[saves.MANIFEST], rendered[saves.MANIFEST], disk[saves.MANIFEST]))
-            merged = _merge_manifest(old, new, current)
-            if saves._manifest_revision(merged) < saves._stored_revision(net.cfg(proj)):
-                # A checkout or merge can bring back an older manifest; the file's revision still only moves forward.
-                merged["saved_at"] = time.time()
-                merged["revision"] = saves._next_revision(net, proj, folder)
-            changes[saves.MANIFEST] = json.dumps(merged, indent=1) + "\n"
-        if changes or removed:
-            if not saves._publish(folder, changes, removed, expected=disk,
-                                  chosen=bool(net.cfg(proj).get("progress_folder"))):
-                return False
-            if saves.MANIFEST in changes:
-                saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
-        self.projected[slug] = rendered
-        # Record only the snapshot actually applied or written. Reading again here could acknowledge an edit
-        # that arrived during the write without ever applying it, so the next poll would miss it forever.
-        self.disk[slug] = {name: text for name, text in (disk | changes).items()
-                           if name != "README.md" and name not in removed}
-        self._remember(proj["id"], self.disk[slug], rendered)
-        return bool(changes or removed)
+        if baseline is None:
+            return self._publish_initial(slug, proj, folder, disk, dirty, config_key)
+        return False

@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress
+from decompnet.app.progress import Progress, _read
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -642,6 +642,61 @@ def test_an_unchanged_match_does_not_need_recompiling_after_restart(project):
     net.progress = Progress(net)
     net.progress.sync("game", force=True)
     assert judged == [("f", "good\n")]
+
+
+def test_an_old_full_snapshot_baseline_is_converted_to_per_file_hashes(project):
+    """A database from before the baseline kept hashes keeps working, and stops storing two full copies."""
+    net, folder, _ = project
+    pid = net.store.one("SELECT id FROM projects WHERE slug='game'")["id"]
+    files = _read(folder)
+    with net.store.tx() as db:
+        db.execute("UPDATE progress_state SET format=1,disk=?,projected=? WHERE project_id=?",
+                   (json.dumps(files), json.dumps(files), pid))
+    net.progress = Progress(net)
+    assert not net.progress.sync("game", force=True)
+    row = net.store.one("SELECT format,disk,projected FROM progress_state WHERE project_id=?", pid)
+    assert row["format"] == 2 and row["disk"] == "{}" and row["projected"] == "{}"
+    assert net.store.all("SELECT 1 FROM progress_files WHERE project_id=? AND side='projected'", pid)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE project_id=? AND name='f'",
+                   (pid,))
+    assert net.progress.sync("game", force=True)
+    assert (folder / "best/f.c").read_text(encoding="utf-8") == "new attempt\n"
+
+
+def test_dirty_triggers_never_fail_writes_for_rows_left_by_a_removed_project(tmp_path):
+    """A database with a removed project's functions left in it (same id reused later) must still open and write."""
+    database = tmp_path / "app.db"
+    net = RomNetwork(database, tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source) "
+                   "VALUES(999,'orphan',4096,4,1,'matched','','orphan C')")
+        db.execute("UPDATE functions SET matched_source='changed' WHERE project_id=999")
+        db.execute("INSERT INTO notes(project_id,text,created_at) VALUES(999,'orphan note',0)")
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(999,1,'',0,'')")
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(999,'orphan',4096,4,'func')")
+        db.execute("INSERT INTO knowledge(project_id,text,status,created_at) VALUES(999,'orphan knowledge','accepted',0)")
+        db.execute("UPDATE notes SET text='changed' WHERE project_id=999")
+        db.execute("UPDATE context_versions SET header='changed' WHERE project_id=999")
+        db.execute("UPDATE symbols SET name='changed' WHERE project_id=999")
+        db.execute("UPDATE knowledge SET status='accepted' WHERE project_id=999")
+        db.execute("DELETE FROM notes WHERE project_id=999")
+        db.execute("DELETE FROM context_versions WHERE project_id=999")
+        db.execute("DELETE FROM knowledge WHERE project_id=999")
+    assert net.store.one("SELECT 1 FROM progress_dirty WHERE project_id=999") is None
+    net.store.conn.close()
+
+    reopened = RomNetwork(database, tmp_path)  # opening removes the leftover symbols; the triggers must not fail it
+    assert reopened.store.one("SELECT name FROM functions WHERE project_id=999")["name"] == "orphan"
+    with reopened.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='again' WHERE project_id=999")
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(999,'orphan',4096,4,'func')")
+        db.execute("DELETE FROM functions WHERE project_id=999")
+        fork = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('fork','Fork',?,?)",
+                          (str(tmp_path / "fork"), json.dumps({"kind": "fork"}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,unit) VALUES(?,'fork_function','')", (fork,))
+    assert reopened.store.one("SELECT 1 FROM progress_dirty WHERE project_id=999") is None
+    assert reopened.store.one("SELECT 1 FROM progress_dirty WHERE project_id=?", fork) is None
 
 
 def test_saving_preserves_source_line_numbers(project):

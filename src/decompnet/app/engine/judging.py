@@ -144,7 +144,9 @@ class JudgeMixin:
     def _record(self, fn, *args, **kwargs):
         slug = self.store.one("SELECT slug FROM projects WHERE id=?", fn["project_id"])["slug"]
         with self.progress._project_lock(slug):
-            if not self.progress.applying:
+            # attempt()'s judging block already read progress just before this record; a second full read here made
+            # every compile check the folder twice before and once after.
+            if not self.progress.applying and not getattr(self.progress.local, "judging", None):
                 self.progress.sync(slug, force=True)
             self.progress.check_result()
             return super()._record(fn, *args, **kwargs)

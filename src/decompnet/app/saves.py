@@ -248,37 +248,40 @@ def _read_owned(folder: Path) -> dict[str, str]:
     return {name: text for name, text in previous.items() if name in owned}
 
 
-def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None = None) -> tuple[dict[str, str], dict]:
-    proj = net._project(slug)
-    cfg = net.cfg(proj)
-    readme_folder = folder or default_folder(net, slug)
-    if chosen is None:
-        chosen = bool(cfg.get("progress_folder"))
-    _check_progress_folder(readme_folder, chosen=chosen)
+def _function_rows(net, project_id: int, *, sources: bool) -> list:
+    """The columns a render reads. Without `sources` only whether a file exists is selected: a manifest needs the
+    layout and who matched it, not the megabytes of C that make the files."""
+    exists = ("CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
+              "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best ")
+    if sources:
+        return net.store.all(
+            "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
+            f"best_agent_id, readable, meta, {exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+    return net.store.all(
+        "SELECT name, vram, size, status, matched_agent_id, best_score, best_agent_id, readable, meta, "
+        f"{exists}FROM functions WHERE project_id=? ORDER BY vram", project_id)
+
+
+def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
+    """The progress manifest and its function index from function rows (with or without their source text)."""
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
-    rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
-                         "best_agent_id, readable, meta FROM functions WHERE project_id=? ORDER BY vram", pid)
-    files = {}
     functions = {}
     for r in rows:
-        if r["status"] == "matched" and r["matched_source"]:
-            files[f"src/{r['name']}.c"] = _source_text(r["matched_source"])
+        if r["status"] == "matched" and r["has_matched"]:
             functions[r["name"]] = {"vram": r["vram"], "matched_by": names.get(r["matched_agent_id"], ""),
                                     "readable": bool(r["readable"])}
-        elif r["best_source"] and r["best_score"] is not None:
-            files[f"best/{r['name']}.c"] = _source_text(r["best_source"])
-            functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"], "best_by": names.get(r["best_agent_id"], "")}
+        elif r["has_best"] and r["best_score"] is not None:
+            functions[r["name"]] = {"vram": r["vram"], "best_score": r["best_score"],
+                                    "best_by": names.get(r["best_agent_id"], "")}
     units = {""} | net._unit_contexts(pid)
-    for unit in sorted(units):
-        files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
     notes = [{"function": r["fn"], "text": r["text"], "by": r["agent"] or ""} for r in net.store.all(
         "SELECT n.text, a.name AS agent, f.name AS fn FROM notes n LEFT JOIN agents a ON a.id=n.agent_id "
         "LEFT JOIN functions f ON f.id=n.function_id WHERE n.project_id=? ORDER BY n.id", pid)]
     knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
     manifest = {
-        "format": FORMAT, "saved_at": time.time(), "revision": _next_revision(net, proj, readme_folder),
+        "format": FORMAT, "saved_at": time.time(), "revision": _next_revision(net, proj, folder),
         "title": proj["name"], "platform": cfg.get("platform"),
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
@@ -298,8 +301,34 @@ def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None =
                        **{k: v for k, v in json.loads(r["meta"] or "{}").items() if k in SET_ASIDE_META}}
                       for r in rows if r["status"] == "asm"],
     }
-    files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
+    return manifest, functions, units
+
+
+def _readme_key(manifest: dict) -> tuple:
+    """What the README's counts and the progress map show; unchanged means no need to rebuild either."""
+    states = []
+    functions = manifest.get("functions") or {}
+    for entry in manifest.get("layout") or []:
+        name = entry.get("name")
+        info = functions.get(name) or {}
+        if entry.get("status") == "asm":
+            state = "aside"
+        elif "matched_by" in info:
+            state = "matched"
+        elif info.get("best_score") is not None:
+            state = "attempt"
+        else:
+            state = "open"
+        states.append((name, state))
+    compiler = (manifest.get("compiler") or {})
+    compiler_name = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
+    return (manifest.get("title"), manifest.get("platform"), compiler_name or "not recorded", tuple(states))
+
+
+def _write_readme(net, proj, folder: Path, manifest: dict, functions: dict) -> None:
+    """Refresh the progress card and counts. Only the files whose text or map changed are written."""
     matched = sum(1 for f in functions.values() if "matched_by" in f)
+    cfg = net.cfg(proj)
     compiler = cfg.get("compiler") or {}
     compiler_name = compiler.get("toolchain") if isinstance(compiler, dict) else str(compiler)
     compiler_name = compiler_name or "not recorded"
@@ -343,9 +372,70 @@ This folder is the source of truth. Edit its C, headers, names, notes or setting
 here. decompdecomp picks up changes automatically and judges changed code again. Deleted sources reopen their
 functions. Keep git conflict markers out of these files; unresolved conflicts pause synchronization.
 """
+    folder.mkdir(parents=True, exist_ok=True)
+    save_readme.update(net, proj, folder, readme, len(functions) - matched, details)
+
+
+def _source_files(rows) -> dict[str, str]:
+    """Each row's progress file: its match's C, else its best attempt's."""
+    files = {}
+    for r in rows:
+        if r["status"] == "matched" and r["has_matched"]:
+            files[f"src/{r['name']}.c"] = _source_text(r["matched_source"])
+        elif r["has_best"] and r["best_score"] is not None:
+            files[f"best/{r['name']}.c"] = _source_text(r["best_source"])
+    return files
+
+
+def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None = None,
+            readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
+    proj = net._project(slug)
+    cfg = net.cfg(proj)
     readme_folder = folder or default_folder(net, slug)
-    readme_folder.mkdir(parents=True, exist_ok=True)
-    save_readme.update(net, proj, readme_folder, readme, len(functions) - matched, details)
+    if chosen is None:
+        chosen = bool(cfg.get("progress_folder"))
+    _check_progress_folder(readme_folder, chosen=chosen)
+    pid = proj["id"]
+    rows = _function_rows(net, pid, sources=True)
+    manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, readme_folder)
+    files = _source_files(rows)
+    for unit in sorted(units):
+        files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
+    files[MANIFEST] = json.dumps(manifest, indent=1) + "\n"
+    if readme_key is None or _readme_key(manifest) != readme_key:
+        _write_readme(net, proj, readme_folder, manifest, functions)
+    matched = sum(1 for f in functions.values() if "matched_by" in f)
+    return files, {"matched": matched, "best": len(functions) - matched}
+
+
+def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool = False,
+                    readme_key: tuple | None = None) -> tuple[dict[str, str], dict]:
+    """Render the manifest and only the named functions' files (plus every header when one changed).
+
+    A match, a rename or a header edit touches a handful of files; rebuilding the other 17,999 sources' text is what
+    made one database change take seconds on a big game. The manifest is always rebuilt, because it carries the
+    revision, the layout and who matched what."""
+    cfg = net.cfg(proj)
+    pid = proj["id"]
+    rows = _function_rows(net, pid, sources=False)
+    manifest, functions, units = _manifest_from_rows(net, proj, cfg, rows, folder)
+    files = {MANIFEST: json.dumps(manifest, indent=1) + "\n"}
+    if headers:
+        for unit in sorted(units):
+            files["include/" + _header_file(unit)] = net._context(pid, unit)["header"]
+    if names:
+        for start in range(0, len(names), 400):
+            chunk = names[start:start + 400]
+            selected = net.store.all(
+                "SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
+                "best_agent_id, readable, meta, "
+                "CASE WHEN matched_source IS NOT NULL AND matched_source != '' THEN 1 ELSE 0 END AS has_matched, "
+                "CASE WHEN best_source IS NOT NULL AND best_source != '' THEN 1 ELSE 0 END AS has_best "
+                f"FROM functions WHERE project_id=? AND name IN ({','.join('?' * len(chunk))})", pid, *chunk)
+            files.update(_source_files(selected))
+    if readme_key is None or _readme_key(manifest) != readme_key:
+        _write_readme(net, proj, folder, manifest, functions)
+    matched = sum(1 for f in functions.values() if "matched_by" in f)
     return files, {"matched": matched, "best": len(functions) - matched}
 
 
@@ -552,7 +642,8 @@ def _restore_counts(net, slug: str) -> dict:
     }
 
 
-def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, str] | None = None) -> dict:
+def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, str] | None = None,
+           judge_code: bool = True) -> dict:
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
     pid = proj["id"]
@@ -650,6 +741,14 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
             continue
         if kind == "best" and current["best_source"] == text:
             best += 1
+            continue
+        if not judge_code:
+            # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
+            # compile every saved attempt again (the folder's C did not change).
+            if kind == "src":
+                matched += current["status"] == "matched"
+            else:
+                best += 1
             continue
         credit, _ = net.local_agent((info.get("matched_by") or info.get("best_by") or "restored"))
         agent, _ = net.local_agent("progress-judge")
