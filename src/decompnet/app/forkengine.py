@@ -22,6 +22,7 @@ import threading
 import time
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
@@ -193,6 +194,58 @@ class _TreeLock:
             with self._cond:
                 self._writer = None
                 self._cond.notify_all()
+
+
+BATCH_UNITS = 16  # units one run of a project's build takes at most
+
+
+class _UnitBuilds:
+    """One project's unit builds, which take turns (ninja's log is the tree's): the builds asked for while one runs
+    go together in the next run (ForkProject.build_units), as many as BATCH_UNITS. The four permuter workers and the
+    agents of a project took turns one unit at a time: on an x86 game's LTCG units 8 built one by one took 5.6 s,
+    in one run 1.3 s. A build asked for while a run is going waits for the next run: what that run builds may be
+    an older copy of its file. Whoever finds no run going builds the next batch, its own build among them or not."""
+
+    @dataclass(eq=False)
+    class _Ask:
+        unit: object
+        result: tuple[bool, str] | None = None
+        error: BaseException | None = None
+
+    def __init__(self):
+        self._cond = threading.Condition()
+        self._queue: list = []
+        self._running = False
+
+    def build(self, unit, run) -> tuple[bool, str]:
+        """`unit` built in the next run of `run` (units -> one (ok, log) each, in order)."""
+        ask = self._Ask(unit)
+        with self._cond:
+            self._queue.append(ask)
+        while True:
+            with self._cond:
+                while ask.result is None and ask.error is None and self._running:
+                    self._cond.wait()
+                if ask.result is not None or ask.error is not None:
+                    break
+                self._running = True
+                batch, self._queue = self._queue[:BATCH_UNITS], self._queue[BATCH_UNITS:]
+            try:
+                results = run([a.unit for a in batch])
+                if len(results) != len(batch):
+                    raise RuntimeError(f"a build of {len(batch)} units said {len(results)} results")
+                for a, r in zip(batch, results):
+                    a.result = r
+            except BaseException as e:  # each of the batch hears it, as a build of its own would have raised it
+                for a in batch:
+                    a.error = e
+            finally:
+                with self._cond:
+                    self._running = False
+                    self._cond.notify_all()
+        if ask.error is not None:
+            raise ask.error
+        return ask.result
 
 
 def _tail(log: str, lines: int = 14) -> str:
@@ -476,6 +529,7 @@ class ForkEngine:
         self._trees: dict[int, _TreeLock] = defaultdict(_TreeLock)  # project id -> its source tree's lock
         self._unit_locks: dict[tuple[int, str], threading.RLock] = defaultdict(threading.RLock)
         self._build_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)  # one build at a time per tree
+        self._unit_builds: dict[int, _UnitBuilds] = defaultdict(_UnitBuilds)  # project id -> its units' builds
         self._git_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
         self._mlock = threading.Lock()
         # (project id, unit) -> (sha1 of its source, base object mtime, {function: match %}): what objdiff said
@@ -552,9 +606,13 @@ class ForkEngine:
             yield
 
     def _build_unit(self, proj, fp: ForkProject, unit) -> tuple[bool, str]:
-        """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns."""
-        with self._build_locks[proj["id"]]:
-            return fp.build_unit(unit)
+        """Build one unit's object. Builds share the tree's build files (ninja's log), so they take turns: together
+        with the others asked for meanwhile, in one run of the build (_UnitBuilds)."""
+        return self._unit_builds[proj["id"]].build(unit, lambda units: self._build_units(proj, fp, units))
+
+    def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
+        with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
+            return fp.build_units(units)
 
     def _build_all(self, proj, fp: ForkProject, failed: list[str] | None = None) -> tuple[bool, str]:
         with self._build_locks[proj["id"]]:
