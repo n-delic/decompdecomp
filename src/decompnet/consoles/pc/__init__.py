@@ -116,6 +116,14 @@ class WindowsPC(Console):
 
         return scratch.tool_args()
 
+    def build_env(self) -> dict[str, str]:
+        """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
+        then, not written into build.ninja, so a project configured before the pack or wine was installed builds such
+        a file as soon as they are, and an older configure.py is never given an argument it doesn't know."""
+        from ... import wine
+
+        return wine.build_env()
+
     def on_start(self, net, slug: str, log=print) -> None:
         """A project made by an older decompdecomp gets what its import has learnt since, one step at a time from the
         level its manifest's "analysis" says (ANALYSIS lists them), each through forkengine.reanalyse: one commit and

@@ -3,6 +3,7 @@
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -129,3 +130,57 @@ def test_wineboot_runs_under_the_memory_cap(tc_root, monkeypatch, tmp_path):
     monkeypatch.setattr(wine.subprocess, "run", run)
     assert wine.prepare(log=lambda *_: None, where=tmp_path / "prefix") == tmp_path / "prefix"
     assert ran == [["capped", "/opt/wine/bin/wine", "wineboot", "--init"]]
+
+
+def test_the_server_leaves_by_itself_and_when_the_app_quits(tc_root, monkeypatch, tmp_path):
+    """Review of #136: `wineserver -p` stayed forever. It's started for SERVER_IDLE_SECONDS after its last compile, so
+    it leaves however the app ended (quit, Ctrl-C, killed), and stop() ends it at once when the app quits."""
+    ran = []
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(wine, "server", lambda w: "/opt/wine/bin/wineserver")
+    monkeypatch.setattr(wine.subprocess, "run", lambda argv, **k: (ran.append((argv, k["env"]["WINEPREFIX"])),
+                                                                  subprocess.CompletedProcess(argv, 0))[1])
+    assert wine.start_server("/opt/wine/bin/wine", tmp_path)
+    assert ran == [(["/opt/wine/bin/wineserver", f"-p{wine.SERVER_IDLE_SECONDS}"], str(tmp_path))]
+    ran.clear()
+    wine.stop()  # (no prefix made yet: nothing to stop)
+    assert ran == []
+    wine.prefix().mkdir(parents=True)
+    wine.stop()
+    assert ran == [(["/opt/wine/bin/wineserver", "-k"], str(wine.prefix()))]
+    compile_py = (Path(wine.__file__).parent / "consoles/pc/project_template/tools/compile.py").read_text()
+    assert f"SERVER_IDLE_SECONDS = {wine.SERVER_IDLE_SECONDS}" in compile_py  # (the build's own: the same)
+
+
+def test_a_prefix_can_be_a_scratch_one(tc_root, monkeypatch, tmp_path):
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "scratch"))
+    assert wine.prefix() == tmp_path / "scratch" and wine.environment()["WINEPREFIX"] == str(tmp_path / "scratch")
+
+
+def test_a_prefix_that_fails_fails_the_install_with_its_own_reason(tc_root, monkeypatch):
+    """Review of #136: a prefix wineboot couldn't make was only logged, and the build later said "install wine"
+    though wine was there. The install fails with what went wrong, and isn't kept."""
+    import hashlib
+    import tarfile
+
+    src = tc_root / "src"
+    src.mkdir()
+    (src / "cl.exe").write_text("")
+    archive = tc_root / "pack.tar.gz"
+    with tarfile.open(archive, "w:gz") as t:
+        t.add(src / "cl.exe", arcname="cl.exe")
+    pack = toolchains.Toolchain(id="pack", name="A Visual C++ pack", license="MIT", source="test", wine=True,
+                                parts=[{"url": archive.as_uri(), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}])
+    monkeypatch.setattr(toolchains, "registry", lambda: {"pack": pack})
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "problem", lambda what="": None)
+
+    def fails(log=print, where=None):
+        raise RuntimeError("wine couldn't prepare its prefix in /x (wineboot exited with 1): out of disk")
+
+    monkeypatch.setattr(wine, "prepare", fails)
+    with pytest.raises(toolchains.ToolchainError, match="A Visual C\\+\\+ pack downloaded, but wine couldn't prepare its "
+                                                         "prefix in /x .*out of disk"):
+        toolchains.install("pack", log=lambda *_: None)
+    assert toolchains.installed("pack") is None and not toolchains.path("pack").exists()

@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .. import agents as kinds
-from .. import hostenv
+from .. import hostenv, wine
 from ..network import NetworkError
 from . import agents, collab, routes, saves, tools, updates, window
 from .engine import RomNetwork
@@ -53,6 +53,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         window.close_app()
         manager.shutdown()
         flush_progress()
+        wine.stop()  # (its wine server would otherwise stay up to 10 minutes: wine.SERVER_IDLE_SECONDS)
         os._exit(0)
 
     def flush_progress() -> None:

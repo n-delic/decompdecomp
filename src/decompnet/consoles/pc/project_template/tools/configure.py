@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Write build.ninja and objdiff.json for this PC (Windows) decompilation, then run `ninja`.
 
-    python tools/configure.py VERSION --msvc DIR [--msvc DIR ...] [--wibo PATH] [--wine PATH --wine-prefix DIR]
+    python tools/configure.py VERSION --msvc DIR [--msvc DIR ...] [--wibo PATH]
 
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
-macOS, Visual C++ 2015 and newer through wine, which wibo can't run them on): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
+macOS, Visual C++ 2015 and newer through wine, which wibo can't run them on: the build finds wine and its prefix in
+$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, which decompdecomp sets): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
 config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
 `ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks it against your copy.
 Made by decompdecomp.
@@ -33,8 +34,6 @@ parser.add_argument("--msvc", required=True, action="append",
                     help="Visual C++ directory (holds 6.0/Bin/CL.EXE, 10.0SP1/Bin/cl.exe, ...); several: the first "
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
-parser.add_argument("--wine", default="", help="runs Visual C++ 2015 and newer on Linux and macOS")
-parser.add_argument("--wine-prefix", default="", help="the wine prefix they run in (decompdecomp's own)")
 args = parser.parse_args()
 WINE_FROM = 14  # the first Visual C++ wibo can't run (2015 and newer: 14.x), which wine runs
 INCLUDES = "includes.txt"  # in a version's folder: more header folders, relative to it (decompdecomp's toolchains.py)
@@ -82,10 +81,9 @@ def runner(version: str) -> list[str]:
         return []
     if int(version.split(".")[0]) < WINE_FROM:
         return ["--wrapper", args.wibo] if args.wibo else []
-    if not args.wine or not args.wine_prefix:
-        sys.exit(f"configure: Visual C++ {version} runs through wine on Linux and macOS, and no --wine was given: "
-                 "install wine (decompdecomp's Compilers & tools says how), then start decompdecomp again")
-    return ["--wine", args.wine, "--wine-prefix", args.wine_prefix]
+    # wine itself is found when the file builds (compile.py: $DECOMPNET_WINE, $DECOMPNET_WINE_PREFIX): build.ninja
+    # stays right whether or not wine was there when it was written
+    return ["--wine"]
 
 
 def file_compilers() -> dict[str, str]:

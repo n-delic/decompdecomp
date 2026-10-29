@@ -344,6 +344,10 @@ class ForkProject:
         are added to `failed`."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
+        if (platform := (self.manifest or {}).get("platform")):  # what its console's builds need (Console.build_env)
+            from .. import consoles
+
+            env.update(consoles.get(platform).build_env())
         # found on that PATH (decompdecomp's own ninja): Linux looks a command up there itself, Windows only in this
         # process's PATH, where decompdecomp's environment isn't when it's installed
         executable = sys.executable if cmd[0] in ("python", "python3") else shutil.which(cmd[0], path=env["PATH"]) or cmd[0]

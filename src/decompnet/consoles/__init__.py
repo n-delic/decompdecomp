@@ -207,6 +207,11 @@ class Console:
         """What the game file is: {"platform", "id", "title", "sha1"}, the sha1 of what decides which game it is."""
         raise RomError(f"{self.name} projects can't be made from scratch")
 
+    def build_env(self) -> dict[str, str]:
+        """What its projects' builds need in their environment, beyond this computer's (the PC's: where wine is, for
+        Visual C++ 2017). Set on every build step the app runs (forks/project.py, ForkProject.run)."""
+        return {}
+
     def tool_args(self) -> list[str]:
         """The arguments that point the project's configure step at this computer's pinned tools."""
         return []

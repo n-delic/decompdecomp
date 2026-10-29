@@ -45,7 +45,7 @@ from capstone import x86
 
 from decompnet.hostenv import NO_WINDOW
 
-from ... import toolchains, wine
+from ... import toolchains
 from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 from . import debuginfo
@@ -1717,9 +1717,8 @@ def write_tools(root: Path, version: str) -> list[str]:
 def tool_args() -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools: every installed compiler pack, 6.0-7.1's
     last, as an older project's configure.py keeps only the last --msvc (its projects build with 6.0 to 7.1).
-    With a pack wibo can't run (2017's) off Windows, the wine that runs it and the app's prefix, its server started
-    here, outside the build's memory cap (wine.py); only then, so a project whose tools are older than --wine
-    builds as it did. Without wine, configure.py says what a file built with 2017 needs."""
+    Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
+    new, is given an argument it doesn't know."""
     packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
     if not packs:
         raise ForkError("PC games are built with Microsoft Visual C++, which is proprietary: install it in Setup "
@@ -1728,11 +1727,6 @@ def tool_args() -> list[str]:
     if toolchains.get("wibo").supported and sys.platform != "win32":
         toolchains.ensure("wibo", log=lambda *_: None)
         args += ["--wibo", str(toolchains.binary("wibo"))]
-    if wine.needed() and any(toolchains.get(p).wine for p in packs) and wine.problem() is None:
-        try:
-            args += ["--wine", wine.find(), "--wine-prefix", str(wine.prepare(log=lambda *_: None))]
-        except RuntimeError:
-            pass  # (configure.py says why a 2017 file doesn't build)
     return args
 
 
@@ -2154,8 +2148,9 @@ Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
 1. Put your own copy of the game's program here as `orig/{version}.exe` (never commit it).
-2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>] [--wine <wine> --wine-prefix
-   <folder>]`, then `ninja` (wine: for Visual C++ 2017 on Linux and macOS).
+2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`. A file built with
+   Visual C++ 2017 on Linux or macOS runs it through wine: set `DECOMPNET_WINE` (or have wine on the PATH) and
+   `DECOMPNET_WINE_PREFIX` (a wine prefix of its own) first.
 3. Decompiled code goes in `src/`; `objdiff.json` shows each function's progress in [objdiff](https://github.com/encounter/objdiff).
 4. `ninja rebuild` puts the whole program back together in `build/{version}/{version}.exe`, each function from its C
    where that compiles to the game's code (else from your copy's), and says whether it's your copy, byte for byte.

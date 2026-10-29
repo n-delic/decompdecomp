@@ -9,11 +9,15 @@ keeps it updated); a pack that needs it says how to get it before it's downloade
 What's here is the app's own, never the user's ~/.wine:
 - a wine prefix in decompdecomp's data folder (prefix), created once when the pack is installed (prepare: wineboot
   takes a few seconds to a minute), without the Mono and Gecko installers wine would offer;
-- a wine server kept running for it (`wineserver -p`, start_server): a compile takes ~0.2 s instead of the ~2.7 s
-  of starting wine each time. It's started with no inherited pipes and in a session of its own: a server holding
-  a build's output pipe would keep the build "running" for as long as it lives (forks/project.py reads to the end).
-The projects' tools/compile.py does the same by itself before each compile (the server may have been stopped since),
-and passes every path to cl.exe as Z:\\...: cl.exe reads /Users/... as a switch. Windows runs the compilers natively.
+- a wine server kept between compiles (`wineserver -p600`, start_server): a compile takes ~0.2 s instead of the
+  ~2.7 s of starting wine each time. It leaves by itself ten minutes after its last compile, however the app ended,
+  and at once when the app quits (stop). It's started with no inherited pipes and in a session of its own: a server
+  holding a build's output pipe would keep the build "running" for as long as it lives (forks/project.py reads to
+  the end).
+A project's build finds wine when a 2017 file builds, not when it's configured: the app's build steps get
+$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX (build_env, through WindowsPC.build_env), which the project's
+tools/compile.py reads. It starts the server itself (the first compile after a while) and passes every path to
+cl.exe as Z:\\...: cl.exe reads /Users/... as a switch. Windows runs the compilers natively.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ PLACES = (*PACKAGE_BINS,
 # prefix is made (a dialog nobody answers: cl.exe needs neither)
 QUIET = {"WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}
 PREPARE_SECONDS = 600  # wineboot on a slow computer: a minute measured in a 2-core workspace
+SERVER_IDLE_SECONDS = 600  # (as the projects' tools/compile.py: the server leaves 10 minutes after its last compile)
 
 
 def needed() -> bool:
@@ -99,10 +104,26 @@ def problem(what: str = "This compiler") -> str | None:
 
 def prefix() -> Path:
     """decompdecomp's own wine prefix (the C: drive and registry wine keeps), with its toolchains (as their
-    downloads are: .downloads), so a scratch home's toolchains ($DECOMPNET_TOOLCHAINS) have their own."""
+    downloads are: .downloads), so a scratch home's toolchains ($DECOMPNET_TOOLCHAINS) have their own; or the one
+    $DECOMPNET_WINE_PREFIX names (tests: a scratch one, never the app's)."""
     from . import toolchains
 
-    return toolchains.root() / ".wine"
+    own = os.environ.get("DECOMPNET_WINE_PREFIX")
+    return Path(own) if own else toolchains.root() / ".wine"
+
+
+def build_env() -> dict[str, str]:
+    """What a project's build needs to run its Visual C++ 2015+ files through wine, read by its tools/compile.py when
+    such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX). Only where a pack that
+    needs wine is installed and wine is here; it starts nothing (the first such compile starts the server)."""
+    if not needed():
+        return {}
+    from . import toolchains
+
+    if not any(tc.wine and toolchains.installed(tid) is not None for tid, tc in toolchains.registry().items()):
+        return {}
+    wine = find()
+    return {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix())} if wine else {}
 
 
 def environment(where: Path | None = None) -> dict[str, str]:
@@ -111,18 +132,34 @@ def environment(where: Path | None = None) -> dict[str, str]:
 
 
 def start_server(wine: str, where: Path | None = None) -> bool:
-    """Keep a wine server running for the prefix (`wineserver -p`). One already running stays: the new one sees it
-    and leaves (exit 2, in milliseconds). Returns whether one runs now."""
+    """Keep a wine server running for the prefix (`wineserver -p<seconds>`): it leaves by itself SERVER_IDLE_SECONDS
+    after its last compile, however the app ended (stop() ends it when the app quits). One already running stays:
+    the new one sees it and leaves (exit 2, in milliseconds). Returns whether one runs now."""
     ws = server(wine)
     if ws is None:
         return False
     try:
-        code = subprocess.run([ws, "-p"], env=environment(where), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        code = subprocess.run([ws, f"-p{SERVER_IDLE_SECONDS}"], env=environment(where), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL, start_new_session=True, timeout=30,
                               creationflags=NO_WINDOW).returncode
     except (OSError, subprocess.TimeoutExpired):
         return False
     return code in (0, 2)
+
+
+def stop(where: Path | None = None) -> None:
+    """The app's wine server ended (`wineserver -k`), when the app quits: else it would stay up to
+    SERVER_IDLE_SECONDS. Nothing when there's no wine or no prefix."""
+    where = where or prefix()
+    wine = find() if needed() and where.is_dir() else None
+    ws = server(wine) if wine else None
+    if ws is None:
+        return
+    try:
+        subprocess.run([ws, "-k"], env=environment(where), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=30, creationflags=NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def prepare(log=print, where: Path | None = None) -> Path:

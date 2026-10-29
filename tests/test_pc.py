@@ -8,6 +8,7 @@ Visual C++ is proprietary, so the end-to-end part runs only where `msvc` was ins
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import struct
@@ -114,8 +115,16 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
 def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, monkeypatch):
     """Visual C++ 2015 and newer go through wine (wibo can't run them), older ones through wibo, file by file. cl.exe
     reads /home/... as a switch, so every path it's given is Z:\\..., or relative with backslashes; wine runs in the
-    app's prefix with its server kept (wineserver -p); the compiler's messages name the files as the build does. A
-    build given no wine says what a 2017 file needs."""
+    app's prefix with its server kept for a while (wineserver -p600); the compiler's messages name the files as the
+    build does. Wine is found when the file builds, not when the project is configured (review of #136): a project
+    configured before the pack and wine were there, whose file is then switched to 14.16 (Settings, try_compiler:
+    file_compilers.json and ninja, which configures again with the project's own arguments), builds it once they
+    are, through what the app's build runner gives its builds (WindowsPC.build_env)."""
+    from decompnet import wine as wine_py
+
+    for name in ("DECOMPNET_WINE", "DECOMPNET_WINE_PREFIX"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
     root = tmp_path / "Project with spaces ü"
     shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
     for unit in ("old", "new"):
@@ -124,7 +133,9 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     config = root / "config/TEST/functions.json"
     config.parent.mkdir(parents=True)
     config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"old": {}, "new": {}}}))
-    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/new.cpp": "14.16"}))
+    compilers = config.with_name("file_compilers.json")
+    compilers.write_text("{}\n")
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc"}))
     (root / "include").mkdir()
     (root / "tools/names.py").write_text("")
     packs = tmp_path / "Compiler & tools"
@@ -134,6 +145,7 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
         (packs / version / "Bin" / "cl.exe").write_text("")
     sdk = tmp_path / "SDK ü" / "Include"  # (2017's headers are a toolchain of their own: its includes.txt says where)
     (packs / "14.16" / "includes.txt").write_text("../../SDK ü/Include\n")
+    sdk.mkdir(parents=True)
     record, fakes = root / "ran.txt", tmp_path / "fake wine"
     fakes.mkdir()
     # wine and wibo write what they were given (and wine its prefix), then the object where /Fo says
@@ -147,16 +159,21 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
         (fakes / name).write_text(runner if name != "wineserver" else runner.split("out =")[0])
         (fakes / name).chmod(0o755)
     prefix = tmp_path / "prefix ü"
+    monkeypatch.setattr(wine_py, "find", lambda: str(fakes / "wine"))
+    monkeypatch.setattr(wine_py, "prefix", lambda: prefix)
+    # configured before the 2017 pack is installed: nothing about wine (an older configure.py would refuse it)
     configure = [sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(packs), "--wibo",
                  str(fakes / "wibo")]
-    done = subprocess.run(configure, cwd=root, capture_output=True, text=True, timeout=30)
-    assert done.returncode and "Visual C++ 14.16's headers aren't where" in done.stderr, done.stderr
-    sdk.mkdir(parents=True)
-    done = subprocess.run(configure, cwd=root, capture_output=True, text=True, timeout=30)
-    assert done.returncode and "Visual C++ 14.16 runs through wine" in done.stderr, done.stderr
-    subprocess.run([*configure, "--wine", str(fakes / "wine"), "--wine-prefix", str(prefix)], check=True,
-                   capture_output=True, timeout=30)
-    ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    subprocess.run(configure, cwd=root, check=True, capture_output=True, timeout=30)
+    assert "--wine" not in (root / "build.ninja").read_text().split("rule cl", 1)[0]
+    project = ForkProject(root)
+    compilers.write_text(json.dumps({"src/auto/new.cpp": "14.16"}))  # (what Settings and try_compiler do)
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
+    assert not ok and "DECOMPNET_WINE_PREFIX" in output or "has no wine" in output, output  # (no pack: no wine yet)
+    for tid in ("msvc2017", "winsdk-10.0.17763"):  # the pack is installed now
+        (tmp_path / "toolchains" / tid).mkdir(parents=True)
+        (tmp_path / "toolchains" / tid / toolchains.MANIFEST).write_text("{}")
+    ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert ok, output
     import ast
 
@@ -164,7 +181,7 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     # (configure.py looks for CL.EXE first: on a Mac's case-insensitive disk it finds cl.exe by that name)
     wibo = next(r for r in ran if r[0] == "wibo")
     assert wibo[1] is None and wibo[2].lower() == str(packs / "6.0/Bin/cl.exe").lower() and "src/auto/old.cpp" in wibo
-    assert ["wineserver", str(prefix), "-p"] in ran
+    assert ["wineserver", str(prefix), "-p600"] in ran
     wine = next(r for r in ran if r[0] == "wine")
     assert wine[1] == str(prefix) and wine[2].lower() == str(packs / "14.16/Bin/cl.exe").lower()  # (a Unix path)
     z = "Z:" + str(packs / "14.16/Include").replace("/", "\\")
@@ -176,6 +193,28 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     assert "src/auto/new.cpp(1): warning C4100" in output and "src\\auto" not in output, output
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows runs every Visual C++ itself")
+def test_a_headers_folder_that_isnt_there_is_named_at_configure(tmp_path):
+    """A 2017 version whose includes.txt names an SDK folder that's gone (uninstalled) says so at configure."""
+    root = tmp_path / "project"
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    (root / "src/auto").mkdir(parents=True)
+    (root / "src/auto/new.cpp").write_text("int f(void) { return 1; }\n")
+    (root / "config/TEST").mkdir(parents=True)
+    (root / "config/TEST/functions.json").write_text(json.dumps({"exe": "orig/test.exe", "units": {"new": {}}}))
+    (root / "config/TEST/file_compilers.json").write_text(json.dumps({"src/auto/new.cpp": "14.16"}))
+    (root / "include").mkdir()
+    packs = tmp_path / "packs"
+    for version in ("6.0", "14.16"):
+        (packs / version / "Bin").mkdir(parents=True)
+        (packs / version / "Include").mkdir()
+        (packs / version / "Bin" / "cl.exe").write_text("")
+    (packs / "14.16" / "includes.txt").write_text("../../SDK/Include\n")
+    done = subprocess.run([sys.executable, "tools/configure.py", "TEST", "--msvc", str(packs)], cwd=root,
+                          capture_output=True, text=True, timeout=30)
+    assert done.returncode and "Visual C++ 14.16's headers aren't where" in done.stderr, done.stderr
+
+
 def test_a_windows_path_is_what_wine_reads():
     compile_py = _template_tool("compile")
     assert compile_py.windows_path("/home/me/Visual C++/Include") == "Z:\\home\\me\\Visual C++\\Include"
@@ -183,13 +222,18 @@ def test_a_windows_path_is_what_wine_reads():
 
 
 def test_wine_is_never_run_without_the_apps_prefix(tmp_path):
-    """compile.py given --wine without --wine-prefix would run wine in the user's own ~/.wine: it refuses."""
+    """compile.py told to run a file through wine with no prefix named would run it in the user's own ~/.wine: it
+    refuses, and says what's missing (wine itself, or the prefix)."""
     compile_py = Path(scratch_pe.__file__).with_name("project_template") / "tools" / "compile.py"
-    common = ["--config", "c.json", "--compiler", "cl.exe", "--include", "inc", "--output", "x.obj", "--source", "x.cpp"]
-    for given in (["--wine", "/usr/bin/wine"], ["--wine-prefix", str(tmp_path)]):
-        done = subprocess.run([sys.executable, str(compile_py), *common, *given], cwd=tmp_path, capture_output=True,
-                              text=True, timeout=30)
-        assert done.returncode == 2 and "--wine and --wine-prefix go together" in done.stderr, done.stderr
+    common = ["--config", "c.json", "--compiler", "cl.exe", "--include", "inc", "--output", "x.obj", "--source", "x.cpp",
+              "--wine"]
+    env = {k: v for k, v in os.environ.items() if k not in ("DECOMPNET_WINE", "DECOMPNET_WINE_PREFIX")}
+    done = subprocess.run([sys.executable, str(compile_py), *common], cwd=tmp_path, capture_output=True, text=True,
+                          timeout=30, env={**env, "DECOMPNET_WINE": "/opt/wine/bin/wine"})
+    assert done.returncode == 1 and "DECOMPNET_WINE_PREFIX names no wine prefix" in done.stderr, done.stderr
+    done = subprocess.run([sys.executable, str(compile_py), *common], cwd=tmp_path, capture_output=True, text=True,
+                          timeout=30, env={**env, "PATH": str(tmp_path), "DECOMPNET_WINE_PREFIX": str(tmp_path)})
+    assert done.returncode == 1 and "this computer has no wine" in done.stderr, done.stderr
 
 
 def _template_tool(name: str):
@@ -695,17 +739,24 @@ def _wine_ready() -> bool:
 
 @needs_tools
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
-def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path):
+def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path, monkeypatch):
     """Visual C++ 2017's 32-bit and 64-bit compilers as a file's compiler: chosen in Settings while nothing in the file
     matches (each builds the file: an x86 object, an x64 one), tried by try_compiler with a real score, and refused
-    in Settings once a function of the file matches with another compiler. Off Windows they run through wine, its
-    server stopped first: the services the first wine program starts outlive it, and given the build's output
-    pipe they held it, so the build never ended."""
+    in Settings once a function of the file matches with another compiler. Off Windows they run through wine, in a
+    prefix of the test's own that has no server yet (stopped after): the services the first wine program starts
+    outlive it, and given the build's output pipe they held it, so the build never ended."""
     from decompnet import wine
+
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "wine prefix"))  # (never the app's own)
+    try:
+        _settings_choose_visual_cpp_2017(tmp_path)
+    finally:
+        wine.stop()
+
+
+def _settings_choose_visual_cpp_2017(tmp_path):
     from decompnet.app.engine import RomNetwork
 
-    if wine.needed():
-        subprocess.run([wine.server(wine.find()), "-k"], env=wine.environment(), capture_output=True, timeout=60)
     if not MAP.exists():
         subprocess.run([sys.executable, str(DEMO / "build.py")], check=True)
     net = RomNetwork(tmp_path / "app.db", tmp_path)
@@ -737,7 +788,7 @@ def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path):
 
 
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
-def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path):
+def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path, monkeypatch):
     """2017's Windows 10 SDK is a toolchain of its own (shared by the packs that use it): a project's file built with
     14.16 finds windows.h in it, through the folder's includes.txt, with the tools decompdecomp gives the build."""
     root = tmp_path / "project"
@@ -752,9 +803,16 @@ def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(
     config.parent.mkdir(parents=True)
     config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"text_00401000": {}}}))
     config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/text_00401000.cpp": "14.16"}))
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc"}))  # (its wine)
     subprocess.run([sys.executable, "tools/configure.py", "TEST", *scratch_pe.tool_args()], cwd=root, check=True,
                    capture_output=True, timeout=60)
-    ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=300)
+    from decompnet import wine
+
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "wine prefix"))  # (never the app's own)
+    try:
+        ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=300)
+    finally:
+        wine.stop()
     assert ok, output
     obj = (root / "build/TEST/src/auto/text_00401000.obj").read_bytes()
     assert struct.unpack_from("<H", obj)[0] == 0x14C and b"__imp__GetTickCount@0" in obj
@@ -860,8 +918,10 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
                         else toolchains.registry()[tid])
     assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2005"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc")]
-    # 2017's runs through wine off Windows: the build is told which, and the app's prefix (its server started here);
-    # without wine, the build is as it was, and configure.py says what a file built with 2017 needs
+    # 2017's pack goes to the build like the others, and nothing about wine does (review of #136): a project whose
+    # configure.py is older than wine would refuse an argument it doesn't know (its setup then failing, reanalyse
+    # marking its steps tried). Its builds get wine through their environment instead (WindowsPC.build_env), and
+    # nothing is started for a project that never builds a 2017 file (no prefix made, no server)
     from decompnet import wine
 
     (tmp_path / "toolchains" / "msvc2017").mkdir()
@@ -870,15 +930,44 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
     (tmp_path / "toolchains" / "winsdk-10.0.17763").mkdir()
     (tmp_path / "toolchains" / "winsdk-10.0.17763" / toolchains.MANIFEST).write_text("{}")
     monkeypatch.setattr(wine, "needed", lambda: True)
-    monkeypatch.setattr(wine, "problem", lambda: None)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
-    monkeypatch.setattr(wine, "prepare", lambda log=print, where=None: tmp_path / "prefix")
+    monkeypatch.setattr(wine, "prepare", lambda *a, **k: pytest.fail("tool_args must start no wine"))
+    monkeypatch.setattr(wine, "start_server", lambda *a, **k: pytest.fail("tool_args must start no wine"))
     assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2017"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc2005"),
-                                      "--msvc", str(tmp_path / "toolchains" / "msvc"),
-                                      "--wine", "/opt/wine/bin/wine", "--wine-prefix", str(tmp_path / "prefix")]
-    monkeypatch.setattr(wine, "problem", lambda: "no wine")
-    assert "--wine" not in scratch_pe.tool_args()
+                                      "--msvc", str(tmp_path / "toolchains" / "msvc")]
+    assert consoles.get("pc").build_env() == {"DECOMPNET_WINE": "/opt/wine/bin/wine",
+                                              "DECOMPNET_WINE_PREFIX": str(wine.prefix())}
+    monkeypatch.setattr(wine, "find", lambda: None)
+    assert consoles.get("pc").build_env() == {}  # (no wine: compile.py says how to get it)
+
+
+def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkeypatch):
+    """The reverse of a project configured before wine (review of #136): one whose tools/configure.py is older than
+    the 2017 pack (restored from a save, or opened before its tools were brought up to date) runs its setup with
+    the current tool_args, which hold no argument it doesn't know, wine installed or not."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    for tid in ("msvc", "msvc2017", "winsdk-10.0.17763"):
+        (tmp_path / "toolchains" / tid).mkdir(parents=True)
+        (tmp_path / "toolchains" / tid / toolchains.MANIFEST).write_text("{}")
+    monkeypatch.setattr(toolchains, "get", lambda tid: type("T", (), {"supported": False})() if tid == "wibo"
+                        else toolchains.registry()[tid])
+    from decompnet import wine
+
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    root = tmp_path / "project"
+    (root / "tools").mkdir(parents=True)
+    # the arguments the template's configure.py took before the 2017 pack; argparse refuses any other (exit 2)
+    (root / "tools/configure.py").write_text("import argparse\np = argparse.ArgumentParser()\np.add_argument('version')\n"
+                                             "p.add_argument('--msvc', action='append')\np.add_argument('--wibo')\n"
+                                             "p.parse_args()\n")
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "setup": [
+        ["python", "tools/configure.py", "game", "--msvc", "/elsewhere"], ["ninja"]]}))
+    first = ForkProject(root).setup_commands()[0]
+    assert "/elsewhere" not in first and str(tmp_path / "toolchains" / "msvc2017") in first  # (this computer's tools)
+    done = subprocess.run(first, cwd=root, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
 
 
 def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():

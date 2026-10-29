@@ -474,6 +474,14 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
         if linux and "runtime-i386" in tc.requires:  # WSL systems rarely have a 32-bit loader: bring ours
             n = wsl.wrap_i386(dest, wsl.path(path("runtime-i386", linux=True)))
             log(f"  {n} 32-bit programs start through the pinned 32-bit runtime")
+        if tc.wine and not linux:
+            from . import wine
+
+            if wine.needed():  # its prefix now, not in the middle of the first build (wineboot takes up to a minute)
+                try:
+                    wine.prepare(log=log)
+                except RuntimeError as error:  # (not "install wine" later: wine is here, its prefix failed)
+                    raise ToolchainError(f"{tc.name} downloaded, but {error}") from None
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
@@ -484,14 +492,6 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
         "fingerprint": fingerprint(tc, linux),
     })
     log(f"{tid}: installed at {dest}")
-    if tc.wine and not linux:
-        from . import wine
-
-        if wine.needed():  # its prefix now, not in the middle of the first build (wineboot takes up to a minute)
-            try:
-                wine.prepare(log=log)
-            except RuntimeError as error:
-                log(f"  {error}")
     return dest
 
 
@@ -785,6 +785,7 @@ def status() -> list[dict]:
     for tc in registry().values():
         m = installed(tc.id)
         rows.append({"id": tc.id, "name": tc.name, "kind": tc.kind, "platform": tc.platform, "license": tc.license,
+                     "source": tc.source,  # (where it comes from: the install's confirmation says)
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
                      # installed from an entry that has changed since: Compilers & tools offers to install it again
                      "changed": m is None and _manifest(tc.id) is not None,
