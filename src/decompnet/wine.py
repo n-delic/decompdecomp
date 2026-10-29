@@ -9,11 +9,11 @@ keeps it updated); a pack that needs it says how to get it before it's downloade
 What's here is the app's own, never the user's ~/.wine:
 - a wine prefix in decompdecomp's data folder (prefix), created once when the pack is installed (prepare: wineboot
   takes a few seconds to a minute), without the Mono and Gecko installers wine would offer;
-- a wine server kept between compiles (`wineserver -p600`, start_server): a compile takes ~0.2 s instead of the
-  ~2.7 s of starting wine each time. It leaves by itself ten minutes after its last compile, however the app ended,
-  and at once when the app quits (stop). It's started with no inherited pipes and in a session of its own: a server
-  holding a build's output pipe would keep the build "running" for as long as it lives (forks/project.py reads to
-  the end).
+- a wine server kept between compiles (`wineserver -p600`, started by the projects' tools/compile.py before a
+  compile): a compile takes ~0.2 s instead of the ~2.7 s of starting wine each time. It leaves by itself ten
+  minutes after its last compile, however the app ended, and at once when the app quits (stop). It's started with
+  no inherited pipes and in a session of its own: a server holding a build's output pipe would keep the build
+  "running" for as long as it lives (forks/project.py reads to the end).
 A project's build finds wine when a 2017 file builds, not when it's configured: the app's build steps get
 $DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX (build_env, through WindowsPC.build_env), which the project's
 tools/compile.py reads. It starts the server itself (the first compile after a while) and passes every path to
@@ -131,22 +131,6 @@ def environment(where: Path | None = None) -> dict[str, str]:
     return {**os.environ, "WINEPREFIX": str(where or prefix()), **QUIET}
 
 
-def start_server(wine: str, where: Path | None = None) -> bool:
-    """Keep a wine server running for the prefix (`wineserver -p<seconds>`): it leaves by itself SERVER_IDLE_SECONDS
-    after its last compile, however the app ended (stop() ends it when the app quits). One already running stays:
-    the new one sees it and leaves (exit 2, in milliseconds). Returns whether one runs now."""
-    ws = server(wine)
-    if ws is None:
-        return False
-    try:
-        code = subprocess.run([ws, f"-p{SERVER_IDLE_SECONDS}"], env=environment(where), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, start_new_session=True, timeout=30,
-                              creationflags=NO_WINDOW).returncode
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return code in (0, 2)
-
-
 def stop(where: Path | None = None) -> None:
     """The app's wine server ended (`wineserver -k`), when the app quits: else it would stay up to
     SERVER_IDLE_SECONDS. Nothing when there's no wine or no prefix."""
@@ -189,5 +173,6 @@ def prepare(log=print, where: Path | None = None) -> Path:
         if done.returncode or not (where / "system.reg").is_file():
             raise RuntimeError(f"wine couldn't prepare its prefix in {where} (wineboot exited with {done.returncode}): "
                                f"{tail}")
-    start_server(wine, where)
+    # no server is started here: wine's idle countdown (-p600) only begins once a wine program has run and ended, so
+    # a server nothing used would stay for good (measured: wine 9.0). The first compile starts it (tools/compile.py)
     return where

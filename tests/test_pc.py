@@ -932,7 +932,6 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(wine, "prepare", lambda *a, **k: pytest.fail("tool_args must start no wine"))
-    monkeypatch.setattr(wine, "start_server", lambda *a, **k: pytest.fail("tool_args must start no wine"))
     assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2017"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc2005"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc")]

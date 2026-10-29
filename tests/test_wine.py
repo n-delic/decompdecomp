@@ -87,18 +87,19 @@ def test_the_prefix_is_the_apps_own(tc_root):
 
 
 @pytest.mark.skipif(not wine.needed() or wine.problem() is not None, reason="needs wine (Linux, macOS)")
-def test_the_prefix_is_made_once_and_its_server_stays(tc_root):
-    """wineboot once (its registry written: its own server stopped first), then a server that stays; a second
-    prepare finds both. No pipe of ours is held: prepare returned at all."""
+def test_the_prefix_is_made_once_and_leaves_no_server(tc_root):
+    """wineboot once (its registry written: its own server stopped first); a second prepare finds it made. No pipe of
+    ours is held (prepare returned at all), and no server is left: one no wine program has used never starts its idle
+    countdown (wineserver -p600), so it would stay for good. The first compile starts one."""
     where = wine.prepare(log=lambda *_: None)
+    ws = wine.server(wine.find())
     try:
         assert (where / "system.reg").is_file() and (where / "drive_c").is_dir()
         started = time.monotonic()
         assert wine.prepare(log=lambda *_: None) == where and time.monotonic() - started < 10
-        ws = wine.server(wine.find())
-        assert subprocess.run([ws, "-p"], env=wine.environment(where)).returncode == 2  # (already running)
+        assert subprocess.run([ws, "-k"], env=wine.environment(where)).returncode == 1  # (none to stop)
     finally:
-        subprocess.run([wine.server(wine.find()), "-k"], env=wine.environment(where))
+        subprocess.run([ws, "-k"], env=wine.environment(where))
 
 
 @pytest.mark.parametrize("where", ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin",
@@ -118,7 +119,6 @@ def test_wineboot_runs_under_the_memory_cap(tc_root, monkeypatch, tmp_path):
     monkeypatch.setattr(wine, "problem", lambda what="": None)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(wine, "server", lambda w: None)
-    monkeypatch.setattr(wine, "start_server", lambda w, where=None: True)
     monkeypatch.setattr(wine.limits, "capped", lambda argv, *a, **k: ["capped", *argv])
 
     def run(argv, **kwargs):
@@ -133,17 +133,15 @@ def test_wineboot_runs_under_the_memory_cap(tc_root, monkeypatch, tmp_path):
 
 
 def test_the_server_leaves_by_itself_and_when_the_app_quits(tc_root, monkeypatch, tmp_path):
-    """Review of #136: `wineserver -p` stayed forever. It's started for SERVER_IDLE_SECONDS after its last compile, so
-    it leaves however the app ended (quit, Ctrl-C, killed), and stop() ends it at once when the app quits."""
+    """Review of #136: `wineserver -p` stayed forever. The build starts it for SERVER_IDLE_SECONDS after its last
+    compile (tools/compile.py: wineserver -p600, the routing test in test_pc.py), so it leaves however the app ended
+    (quit, Ctrl-C, killed), and stop() ends it at once when the app quits."""
     ran = []
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(wine, "server", lambda w: "/opt/wine/bin/wineserver")
     monkeypatch.setattr(wine.subprocess, "run", lambda argv, **k: (ran.append((argv, k["env"]["WINEPREFIX"])),
                                                                   subprocess.CompletedProcess(argv, 0))[1])
-    assert wine.start_server("/opt/wine/bin/wine", tmp_path)
-    assert ran == [(["/opt/wine/bin/wineserver", f"-p{wine.SERVER_IDLE_SECONDS}"], str(tmp_path))]
-    ran.clear()
     wine.stop()  # (no prefix made yet: nothing to stop)
     assert ran == []
     wine.prefix().mkdir(parents=True)
