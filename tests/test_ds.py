@@ -226,7 +226,8 @@ def test_a_from_scratch_brief_says_what_the_data_it_uses_is(per_file, monkeypatc
 def test_decomp_permuter_reads_a_forks_function_with_its_files_declarations(per_file):
     """In a fork the permuter gave decomp-permuter no header, so it refused every DS function ("Syntax error in
     base.c": `u16` was no type it knew) and only the simple rewrites ran. Now it reads what the file includes and
-    declares: add_score uses demo-fork's s32, its Player struct and globals from game.h."""
+    declares: add_score uses demo-fork's s32, its Player struct and globals from game.h. (Without the header it now
+    reads the function too, the types it lacks standing in as typedefs, so only the header's own lines are checked.)"""
     from decompnet import seeds
     from decompnet.app import permute
 
@@ -239,7 +240,6 @@ def test_decomp_permuter_reads_a_forks_function_with_its_files_declarations(per_
     job = {"source": source, "function": "add_score", "family": "gcc", "seed": 1, "count": 8}
     gen = permute.Generator()
     try:
-        assert gen.batch({**job, "header": ""}) is None  # what it got before
         variants = gen.batch({**job, "header": header})
         assert variants and all("add_score(" in v for v in variants)
     finally:

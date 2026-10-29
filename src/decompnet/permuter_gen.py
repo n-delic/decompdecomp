@@ -18,9 +18,9 @@ is open, so a header is parsed once per C a turn starts from: a second for a hea
 
 decomp-permuter reads C through pycparser, which knows neither comments nor the preprocessor: comments go, and so
 do the header's preprocessor lines (as for m2c's context, seeds.py), and the source's, which each variant gets back
-at its top. Macros stay undefined here, which is fine while the code only names them (GRAVITY) or calls them like
-a function: the compiler still gets them. A macro call pycparser can't read as C (a type as an argument) doesn't
-parse, and the permuter falls back to its simple rewrites (permuter.py). The header's object-like macros are put in
+at its top. A macro the code calls like a function stays a call (the compiler still gets it); one called with a
+type (`F(int, 0x20)`), and every object-like one, the header's and the source's own, is put in where it's used
+(`expand_in_source`), as pycparser can't read those as they are. The header's object-like macros are put in
 where it uses them, MSVC's words are rewritten (`msvc_as_c`; in the source, `Restorer` puts them back in each
 variant), and a header written for C++ is read as the C of its types (`cxx_as_c`, `type_names`). C++ in the
 function itself (a method, a constructor call, a template) still isn't read.
@@ -320,6 +320,12 @@ _PARAMETERS = re.compile(r"\w\s*\(([^()]*)\)\s*[;{]")  # a prototype's
 _UNNAMED = re.compile(r"^\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)*$")  # f(size_t)
 _CAST = re.compile(r"\(\s*(?:const\s+)?([A-Za-z_]\w*)\s*(?:\*\s*)+\)")  # (D3DMATRIX *)
 _BARE_CAST = re.compile(r"\(\s*([A-Za-z_]\w*)\s*\)\s*(?=[A-Za-z_&(]|\d)")
+# a local's declaration in a body, at the start of a statement: two names in a row (`BOOL wait;`, `fd_set r = {0};`)
+# are never an expression, nor is `T *p =` (a product isn't assigned to)
+_LOCAL_DECL = re.compile(r"(?:^|(?<=[;{}]))\s*(?:(?:const|volatile|static|register)\s+)*([A-Za-z_]\w*)\s*"
+                         r"(?:(\*[\s*]*)(?:\bconst\b\s*)?([A-Za-z_]\w*)\s*(?==)|([A-Za-z_]\w*)\s*(?=[=;\[,]))", re.M)
+_FUNCTION_MACRO = re.compile(r"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)\(([^)]*)\)[ \t]*(.*)$", re.M)
+_TYPE_ARG = re.compile(r"\s*(?:(?:const|volatile|unsigned|signed|struct|union|enum)\s+)*([A-Za-z_]\w*)\s*([*\s]*)")
 EXPANSIONS = 8
 
 
@@ -360,6 +366,73 @@ def expand_macros(header: str) -> str:
     return "\n".join(lines)
 
 
+def _call_args(text: str, at: int) -> tuple[list[str], int] | None:
+    """The arguments of the call whose `(` is at `at` (split at its own commas), and where it ends; None if it
+    doesn't close on this text."""
+    depth, args, start = 0, [], at + 1
+    for i in range(at, len(text)):
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return [*args, text[start:i]], i + 1
+        elif ch == "," and depth == 1:
+            args.append(text[start:i])
+            start = i + 1
+    return None
+
+
+def expand_in_source(source: str, definitions: str, types: set[str]) -> str:
+    """The function's own C with the macros of `definitions` (the header's and the source's own #defines) put in
+    where pycparser can't read them as they are: every object-like one (`MATCH_VOLATILE bool found` is no
+    declaration until it's `volatile`), and a function-like one called with a type (`F(int, 0x20) = v`,
+    `MP_RAW(bool, 0x62C)`: no call takes a type). A call of values stays a call, for the randomizer to move; the
+    compiler gets the variant's expansion, which is what it would have made of the macro."""
+    objects = {n: v.strip() for n, v in _OBJECT_MACRO.findall(definitions)}
+    functions = {n: ([p.strip() for p in ps.split(",")], body.strip())
+                 for n, ps, body in _FUNCTION_MACRO.findall(definitions) if "#" not in body}
+    if not objects and not functions:
+        return source
+    known = types | C_TYPE_WORDS | set(CXX_TYPES)
+
+    def is_type(arg: str) -> bool:
+        m = _TYPE_ARG.fullmatch(arg)
+        return bool(m) and (m.group(1) in known or "*" in m.group(2))
+
+    word = re.compile(r"\b(" + "|".join(map(re.escape, sorted({*objects, *functions}, key=len, reverse=True))) + r")\b")
+
+    def once(text: str) -> str:
+        out, last = [], 0
+        for m in word.finditer(text):
+            if m.start() < last:
+                continue
+            name = m.group(1)
+            if name in functions:
+                at = re.match(r"\s*\(", text[m.end():])
+                call = _call_args(text, m.end() + at.end() - 1) if at else None
+                params, body = functions[name]
+                if call is None or len(call[0]) != len(params) or not any(map(is_type, call[0])):
+                    continue
+                args = dict(zip(params, (a.strip() for a in call[0])))
+                spelled = re.sub(r"\b(" + "|".join(map(re.escape, params)) + r")\b",
+                                 lambda p, args=args: args[p.group(1)], body) if params != [""] else body
+                out += [text[last:m.start()], spelled]
+                last = call[1]
+            elif name in objects:
+                out += [text[last:m.start()], objects[name]]
+                last = m.end()
+        return "".join(out) + text[last:]
+
+    for _ in range(EXPANSIONS):  # (a macro naming a macro, a few deep)
+        expanded = once(source)
+        if expanded == source:
+            break
+        source = expanded
+    return source
+
+
 def type_names(header: str, source: str) -> str:
     """Typedefs for the names C++ has as types and C doesn't: each struct, union and enum by its own name (unless
     something else is called that, a variable, a function or C's own typedef of it), and `bool`; and for the types
@@ -388,7 +461,10 @@ def type_names(header: str, source: str) -> str:
     # `(PDWORD) x`: a name only ever in parentheses before an operand is a type (one used otherwise may be a variable)
     bare = [n for n in _BARE_CAST.findall(text) if len(re.findall(rf"\b{n}\b", text)) == len(
         re.findall(rf"\(\s*{n}\s*\)", text))]
-    for name in dict.fromkeys([*_TYPE_SPOT.findall(declared), *unnamed, *_CAST.findall(text), *bare]):
+    # and a body's locals of a type the header doesn't have (the SDK's `WAVEFORMATEX format = {0};`, a type declared
+    # where the header doesn't reach): 4% of an Xbox game's near misses stopped at one
+    local = [m.group(1) for m in _LOCAL_DECL.finditer(source)]
+    for name in dict.fromkeys([*_TYPE_SPOT.findall(declared), *unnamed, *_CAST.findall(text), *bare, *local]):
         if name not in _C_WORDS and name not in named and not taken(name):
             named.add(name)
             out.append(f"typedef int {name};\n")
@@ -410,7 +486,8 @@ def main() -> int:
         source = plain_c(job["source"])
         directives = "".join(line + "\n" for line in source.splitlines() if line.lstrip().startswith("#"))
         header = cxx_as_c(msvc_as_c(plain_c(expand_macros(plain_c(job["header"])), directives=False)))
-        own = plain_c(source, directives=False)
+        own = expand_in_source(plain_c(source, directives=False), f"{plain_c(job['header'])}\n{directives}",
+                               declared_types(header))
         types = declared_types(f"{STAND_INS}{type_names(header, msvc_as_c(own))}{header}")
         msvc = Restorer(own, types)
         unit = (f"{STAND_INS}{type_names(header, msvc.source)}{header}\ntypedef int {SOURCE_STARTS};\n"

@@ -2368,10 +2368,18 @@ class ForkEngine:
     def permuter_name(self, slug: str, function: str, source: str) -> str:
         """The name the function's definition has in `source`, which decomp-permuter looks it up by: a PC or Xbox
         game's function is its mangled symbol (`?Update@@YAXH@Z`), which no C spells, so every turn on one ended
-        with "Function ... not found in base.c". The symbol itself when no spelling of it (_names) is defined."""
+        with "Function ... not found in base.c". The symbol itself when no spelling of it (_names) is defined. The
+        definition's own spelling, class and all: a method found by its bare name (`Func_E46D0`) may be defined on
+        a class the source calls something else than its symbol does (`C_vt_003AB500::Func_E46D0`), and the
+        bare name isn't the definition's (6 of 8 an Xbox game's turns lost that way)."""
         fn = self._fn(slug, function)
         names = [n for n in self._names(self._meta(fn), fn) if re.fullmatch(r"[\w:~]+", n)]
-        return self._find(source, names)[0] or function
+        name, span = self._find(source, names)
+        if name is None:
+            return function
+        own = re.search(rf"(?<![\w:~])((?:[A-Za-z_]\w*\s*::\s*)*~?{re.escape(name.split('::')[-1])})\s*\(",
+                        source[span[0]:span[1]])
+        return re.sub(r"\s+", "", own.group(1)) if own else name
 
     def permuter_header(self, slug: str, function: str) -> str:
         """What decomp-permuter must read before a function of a fork: the headers its source file includes, then
