@@ -11,6 +11,7 @@ from decompnet.app import collab
 from decompnet.app.engine import RomNetwork
 from decompnet.app.engine.rooms import RoomMixin
 from decompnet.network import NetworkError
+from decompnet.store import Store
 
 from .test_app_engine import CLAMP, DAMAGE
 from .test_rom import built  # noqa: F401
@@ -120,7 +121,10 @@ def test_join_shares_stronger_saved_progress(built, tmp_path, monkeypatch):  # n
 
     assert joined == gslug
     assert guest.links[gslug].saved_progress
-    assert "saved_progress" in json.loads(guest.project_row(gslug)["config"])["link"]
+    assert "saved_progress" not in json.loads(guest.project_row(gslug)["config"])["link"]
+    queued = guest.store.all("SELECT name, kind, source FROM saved_progress WHERE project_id=?",
+                             guest.project_row(gslug)["id"])
+    assert {row["name"] for row in queued} == {"func_800007D0", "func_800007F4"}
     assert host._function("func_800007D0", slug)["status"] != "matched"
     monkeypatch.setattr(collab, "_share_saved_progress", share)
     guest.links[gslug].sync()
@@ -128,6 +132,7 @@ def test_join_shares_stronger_saved_progress(built, tmp_path, monkeypatch):  # n
     received = host._function("func_800007F4", slug)
     assert received["best_score"] == best["score"]
     assert "v + 1" in received["best_source"]
+    assert guest.store.all("SELECT name FROM saved_progress WHERE project_id=?", guest.project_row(gslug)["id"]) == []
 
 
 def test_saved_progress_waits_through_restart_and_retries_transient_failure(built, tmp_path, monkeypatch):  # noqa: F811
@@ -142,7 +147,6 @@ def test_saved_progress_waits_through_restart_and_retries_transient_failure(buil
 
     restarted = RomNetwork(tmp_path / "sam.db", tmp_path / "sam")
     info = json.loads(restarted.project_row(gslug)["config"])["link"]
-    info.pop("saved_progress")
     link = restarted.link_project(gslug, info, client=client, start=False)
     assert link.saved_progress == (candidates, False)
     link._req = lambda *_args, **_kwargs: {"e": 0, "a": 0, "behind": 0, "events": []}
@@ -159,38 +163,42 @@ def test_saved_progress_waits_through_restart_and_retries_transient_failure(buil
     with pytest.raises(NetworkError, match="isn't reachable"):
         link.sync()
     assert link.saved_progress == (candidates, False)
-    assert json.loads(restarted.project_row(gslug)["config"])["link"]["saved_progress"]["candidates"] == candidates
+    queued = restarted.store.all("SELECT name, kind, source FROM saved_progress WHERE project_id=?",
+                                 restarted.project_row(gslug)["id"])
+    assert [(row["name"], row["kind"], row["source"]) for row in queued] == [
+        ("func_800007F4", "match", ABS)]
 
     link.sync()
     assert calls == 2 and link.saved_progress is None
+    assert restarted.store.all("SELECT name FROM saved_progress WHERE project_id=?",
+                               restarted.project_row(gslug)["id"]) == []
     assert "saved_progress" not in json.loads(restarted.project_row(gslug)["config"])["link"]
 
 
-def test_saved_progress_retry_preserves_fork_mode(monkeypatch):
+def test_saved_progress_retry_preserves_fork_mode(tmp_path, monkeypatch):
+    """A queue an older version kept in the link's config moves into its table, and retries keep fork mode."""
     candidate = {"name": "matched_fn", "status": "matched", "matched_source": "int matched_fn(void) { return 1; }"}
     config = {"link": {"room": "room", "saved_progress": {"candidates": [candidate], "best_comparable": False}}}
-
-    class Store:
-        @contextmanager
-        def tx(self):
-            class DB:
-                def execute(_self, _query, params):
-                    updated = json.loads(params[0])
-                    config.clear()
-                    config.update(updated)
-
-            yield DB()
+    store = Store(tmp_path / "room.db")
+    with store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                   ("project", "Project", str(tmp_path), json.dumps(config)))
 
     class Net:
-        store = Store()
-
         def project_row(self, _slug):
-            return {"id": 1, "config": json.dumps(config)}
+            return store.one("SELECT * FROM projects WHERE slug='project'")
 
         def fork_slug(self, _slug):
             return "fork"
 
-    link = collab.Link(Net(), "project", "http://host", "room", "token", "member", client=object())
+    net = Net()
+    net.store = store
+    link = collab.Link(net, "project", "http://host", "room", "token", "member", client=object())
+    assert link.saved_progress == ([candidate], False)
+    assert [(row["name"], row["kind"], row["source"]) for row in
+            store.all("SELECT name, kind, source FROM saved_progress")] == [
+        ("matched_fn", "match", candidate["matched_source"])]
+    assert "saved_progress" not in json.loads(store.one("SELECT config FROM projects")["config"])["link"]
     link._req = lambda *_args, **_kwargs: {"e": 0, "a": 0, "behind": 0, "events": []}
     link.apply = lambda _state: None
     calls = []
@@ -203,11 +211,105 @@ def test_saved_progress_retry_preserves_fork_mode(monkeypatch):
     monkeypatch.setattr(collab, "_share_saved_progress", share)
     with pytest.raises(NetworkError, match="temporary host failure"):
         link.sync()
-    assert config["link"]["saved_progress"]["candidates"] == [candidate]
+    assert [row["name"] for row in store.all("SELECT name FROM saved_progress")] == ["matched_fn"]
 
     link.sync()
     assert calls == [True, True]
-    assert "saved_progress" not in config["link"]
+    assert store.all("SELECT name FROM saved_progress") == []
+    assert "saved_progress" not in json.loads(store.one("SELECT config FROM projects")["config"])["link"]
+
+
+def test_saved_progress_waits_for_approval_then_arrives(built, tmp_path):  # noqa: F811
+    """A guest waiting to be let in keeps its saved work queued; the first sync after approval still asks for the
+    host's function list (a fresh state with an advanced cursor) and sends it."""
+    host, slug, room, code, client = _host(built, tmp_path, approve=True)
+    link_text = f"http://192.168.1.20:6481/join/{code}#room={slug}"
+    guest = RomNetwork(tmp_path / "waiting.db", tmp_path / "waiting")
+    gslug = guest.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = guest.local_agent("claude-1")
+    assert guest.compile_and_diff(agent, "func_800007F4", ABS, gslug).startswith("✅ MATCH")
+
+    collab.join_room(guest, link_text, "kim", built, log=lambda *_: None, client=client, start=False)
+    waiting = guest.links[gslug]
+    assert waiting.saved_progress
+    assert host._function("func_800007F4", slug)["status"] != "matched"
+
+    room.approve("kim")
+    waiting.sync()
+    assert host._function("func_800007F4", slug)["status"] == "matched"
+    assert waiting.saved_progress is None
+    assert guest.store.all("SELECT name FROM saved_progress WHERE project_id=?",
+                           guest.project_row(gslug)["id"]) == []
+
+
+def test_one_refused_saved_candidate_does_not_wedge_the_others(built, tmp_path, monkeypatch):  # noqa: F811
+    """A candidate the host refuses (its function was claimed meanwhile) is dropped on its own; the candidate after
+    it still arrives and the queue empties."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    guest = RomNetwork(tmp_path / "mixed.db", tmp_path / "mixed")
+    gslug = guest.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = guest.local_agent("claude-1")
+    assert guest.compile_and_diff(agent, "func_80000808", DAMAGE, gslug).startswith("✅ MATCH")
+    assert guest.compile_and_diff(agent, "func_800007F4", ABS, gslug).startswith("✅ MATCH")
+    candidates = collab._saved_progress(guest, slug=gslug)
+    bad = next(candidate for candidate in candidates if candidate["name"] == "func_80000808")
+    good = next(candidate for candidate in candidates if candidate["name"] == "func_800007F4")
+    monkeypatch.setattr(collab, "_saved_progress", lambda *_args, **_kwargs: [bad, good])
+    host_agent, _ = host.local_agent("claude-1")
+    host.claim(host_agent, slug, "func_80000808")  # the guest's attempt on it will be refused
+
+    said = []
+    collab.join_room(guest, f"http://192.168.1.20:6481/join/{code}#room={slug}", "lee", built,
+                     log=said.append, client=client, start=False)
+    assert host._function("func_80000808", slug)["status"] != "matched"
+    assert host._function("func_800007F4", slug)["status"] == "matched"
+    assert guest.links[gslug].saved_progress is None
+    assert guest.store.all("SELECT name FROM saved_progress WHERE project_id=?",
+                           guest.project_row(gslug)["id"]) == []
+    assert any("refused saved progress for func_80000808" in line for line in said), said
+
+
+def test_a_failure_before_the_join_leaves_no_member_or_project(built, tmp_path, monkeypatch):  # noqa: F811
+    """#80: what the join carries is worked out before the host registers the member, so a corrupt progress folder
+    can't leave a member on the host and an imported project here."""
+    host, slug, room, code, client = _host(built, tmp_path)
+    guest = RomNetwork(tmp_path / "broken.db", tmp_path / "broken")
+
+    def corrupt(*_args, **_kwargs):
+        raise RuntimeError("its progress folder is corrupt")
+
+    monkeypatch.setattr(collab, "_saved_progress", corrupt)
+    with pytest.raises(RuntimeError, match="progress folder is corrupt"):
+        collab.join_room(guest, f"http://192.168.1.20:6481/join/{code}#room={slug}", "kim", built,
+                         log=lambda *_: None, client=client, start=False)
+    assert guest.store.all("SELECT slug FROM projects") == []
+    assert [m["name"] for m in room._members_now()] == []
+
+
+def test_saved_progress_for_another_room_stays_there(tmp_path):
+    """A queue belongs to the room it was made for: linking the project elsewhere must not send it there."""
+    store = Store(tmp_path / "rooms.db")
+    config = {"link": {"url": "http://new-host", "room": "new-room"}}
+    with store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)",
+                   ("project", "Project", str(tmp_path), json.dumps(config)))
+        pid = db.execute("SELECT id FROM projects WHERE slug='project'").fetchone()["id"]
+        db.execute("INSERT INTO saved_progress(project_id,room,url,name,kind,source,score,best_comparable) "
+                   "VALUES(?,?,?,?,?,?,?,?)",
+                   (pid, "old-room", "http://old-host", "saved_fn", "match", "int saved_fn(void) {}", None, 0))
+
+    class Net:
+        def project_row(self, _slug):
+            return store.one("SELECT * FROM projects WHERE slug='project'")
+
+        def fork_slug(self, _slug):
+            return None
+
+    net = Net()
+    net.store = store
+    link = collab.Link(net, "project", "http://new-host", "new-room", "token", "member", client=object())
+    assert link.saved_progress is None
+    assert store.all("SELECT name FROM saved_progress") == []
 
 
 def test_link_refresh_keeps_saved_progress_only_in_the_same_room(monkeypatch):

@@ -302,6 +302,8 @@ class Room:
         if first or kinds & {"rename", "split"}:
             out["symbols"] = [dict(r) for r in net.store.all(
                 "SELECT name, address, size, kind FROM symbols WHERE project_id=?", pid) if not AUTO_NAME.match(r["name"])]
+        if first or fresh or kinds & {"rename", "split"}:
+            # fresh: a guest sharing saved work asks for the layout without the room's whole history
             out["functions"] = [dict(r) for r in net.store.all(
                 "SELECT name, vram, size FROM functions WHERE project_id=? ORDER BY vram", pid)]
         ctx = net._context(pid)
@@ -326,10 +328,10 @@ class Room:
         out: dict = self._events(e, fresh)
         events = out["events"]
         names = {ev["detail"] for ev in events if ev["kind"] == "match"}
-        if e == 0 or names:
+        if e == 0 or fresh or names:
             rows = net.store.all("SELECT f.name, a.name AS agent FROM functions f LEFT JOIN agents a ON a.id=f.matched_agent_id "
                                  "WHERE f.project_id=? AND f.status='matched'", pid)
-            out["matched"] = [dict(r) for r in rows if e == 0 or r["name"] in names]
+            out["matched"] = [dict(r) for r in rows if e == 0 or fresh or r["name"] in names]
         if e == 0 or any(ev["kind"] == "note" for ev in events):
             out["notes"] = [dict(r) for r in net.store.all(
                 "SELECT n.id, n.text, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
@@ -568,13 +570,91 @@ class Refused(NetworkError):
     """The host answered, and said no: not let in yet, taken out of the room, a claim someone else has."""
 
 
+def _saved_progress_rows(candidates: list[dict], best_comparable: bool):
+    """The queue's table rows: what to send for each candidate, and enough of its function to check the host's
+    layout after a restart."""
+    for candidate in candidates:
+        if candidate.get("status") == "matched":
+            kind, source, score = "match", candidate.get("matched_source"), None
+        else:
+            kind, source, score = "best", candidate.get("best_source"), candidate.get("best_score")
+        if source is None:
+            continue
+        yield (candidate["name"], kind, source, score, candidate.get("vram"), candidate.get("size"),
+               int(best_comparable))
+
+
+def _saved_progress_candidate(row) -> dict:
+    matched = row["kind"] == "match"
+    return {"name": row["name"], "vram": row["vram"], "size": row["size"],
+            "status": "matched" if matched else "open",
+            "matched_source": row["source"] if matched else None,
+            "best_score": None if matched else row["score"],
+            "best_source": row["source"] if not matched else None}
+
+
+def _drop_old_saved_progress(net, proj, db=None) -> None:
+    """Remove the queue from projects.config (the old place for it), keeping its rows in the new table."""
+    cfg = json.loads(proj["config"])
+    link = cfg.get("link")
+    if not link or "saved_progress" not in link:
+        return
+    link.pop("saved_progress", None)
+    if db is not None:
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+        return
+    with net.store.tx() as tx:
+        tx.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+
+
+def _queued_saved_progress(net, proj, info: dict, room: str, url: str) -> tuple[list[dict], bool] | None:
+    """This project's waiting queue: its table rows, or a queue an older version kept in the link's config, moved
+    into the table once here so an in-flight queue from before the update isn't lost. A queue for another room
+    stays with that room (the old config queue was dropped the same way when the link changed)."""
+    old = info.get("saved_progress")
+    store = getattr(net, "store", None)
+    try:
+        pid = proj["id"]
+    except (KeyError, IndexError, TypeError):
+        pid = None
+    if pid is None or store is None or not hasattr(store, "all"):
+        return (list(old["candidates"]), bool(old.get("best_comparable"))) if old and old.get("candidates") else None
+    rows = store.all("SELECT name, kind, source, score, vram, size, best_comparable, room, url FROM saved_progress "
+                     "WHERE project_id=? ORDER BY name", pid)
+    if rows and (rows[0]["room"] != room or rows[0]["url"] != url):
+        with store.tx() as db:
+            db.execute("DELETE FROM saved_progress WHERE project_id=?", (pid,))
+        rows = []
+    if rows:
+        if old is not None:
+            _drop_old_saved_progress(net, proj)
+        return [_saved_progress_candidate(row) for row in rows], bool(rows[0]["best_comparable"])
+    if old and old.get("candidates"):
+        candidates = [dict(c) for c in old["candidates"]]
+        best_comparable = bool(old.get("best_comparable"))
+        with store.tx() as db:
+            db.executemany("INSERT OR REPLACE INTO saved_progress(project_id,room,url,name,kind,source,score,vram,"
+                           "size,best_comparable) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                           [(pid, room, url, *row) for row in _saved_progress_rows(candidates, best_comparable)])
+            _drop_old_saved_progress(net, proj, db)
+        return candidates, best_comparable
+    if old is not None:
+        _drop_old_saved_progress(net, proj)
+    return None
+
+
 class Link:
     """The guest's connection to a host's room."""
 
     def __init__(self, net, slug: str, url: str, room: str, token: str, member: str, client: httpx.Client | None = None):
         self.net, self.slug, self.url, self.room, self.token, self.member = net, slug, url.rstrip("/"), room, token, member
         self.client = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
-        info = json.loads(net.project_row(slug)["config"]).get("link") or {}
+        proj = net.project_row(slug)
+        try:
+            self.project_id = proj["id"]
+        except (KeyError, IndexError, TypeError):
+            self.project_id = None
+        info = json.loads(proj["config"]).get("link") or {}
         # kept with the link: from 0 after every restart, the room's whole history came again, twice in the feed
         self.cursor = {"e": 0, "a": 0, "v": 0} | (info.get("cursor") or {})
         self.saved = dict(self.cursor)
@@ -587,12 +667,10 @@ class Link:
         self.behind = 0  # events the host still has for us
         self.received = 0  # events caught up so far (with `behind`, how far "getting the host's work" is)
         self.synced = False  # caught up with the host since the app started
-        queued = info.get("saved_progress")
-        self.saved_progress: tuple[list[dict], bool] | None = (
-            (queued["candidates"], bool(queued.get("best_comparable"))) if queued else None)
+        self.saved_progress = _queued_saved_progress(net, proj, info, self.room, self.url)
         self._stop = threading.Event()
         self._lock = threading.Lock()
-        self._saved_progress_lock = threading.Lock()
+        self._saved_progress_lock = threading.RLock()
         self.fork = bool(net.fork_slug(slug))  # a git source tree: follows the host's commits (forkroom.py)
         self.head = info.get("head", "")
 
@@ -663,25 +741,42 @@ class Link:
                 candidates, best_comparable = saved_progress
                 _share_saved_progress(
                     self.net, self.slug, self, candidates, fork=self.fork, best_comparable=best_comparable,
-                    log=lambda line: logger.info("%s: %s", self.slug, line), sync_room=False)
-                if self.saved_progress == saved_progress:
-                    self.saved_progress = None
-                    self._save_saved_progress()
+                    log=lambda line: logger.info("%s: %s", self.slug, line), sync_room=False,
+                    forget=self._forget_saved_progress)
+                # every candidate was sent, refused or skipped; a transport failure raised above and kept the rest
+                self.saved_progress = None
+                self._save_saved_progress()
 
     def _save_saved_progress(self) -> None:
-        """Keep queued work with the link so a guest restarted while waiting can still send it."""
+        """Keep queued work in its own small table, not in projects.config (parsed on every project access): a guest
+        restarted while waiting can still send it."""
         with self._lock:
             proj = self.net.project_row(self.slug)
             cfg = json.loads(proj["config"])
             if "link" not in cfg:
                 return
+            with self.net.store.tx() as db:
+                db.execute("DELETE FROM saved_progress WHERE project_id=?", (proj["id"],))
+                if self.saved_progress:
+                    candidates, best_comparable = self.saved_progress
+                    db.executemany("INSERT OR REPLACE INTO saved_progress(project_id,room,url,name,kind,source,score,"
+                                   "vram,size,best_comparable) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                                   [(proj["id"], self.room, self.url, *row)
+                                    for row in _saved_progress_rows(candidates, best_comparable)])
+                if cfg["link"].pop("saved_progress", None) is not None:
+                    db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+
+    def _forget_saved_progress(self, name: str) -> None:
+        """One queued candidate is done (sent, refused, or no longer applicable): drop just its row, so the rest
+        still waits. A transport failure leaves it for the next sync."""
+        with self._saved_progress_lock:
+            pid = self.project_id if self.project_id is not None else self.net.project_row(self.slug)["id"]
+            with self.net.store.tx() as db:
+                db.execute("DELETE FROM saved_progress WHERE project_id=? AND name=?", (pid, name))
             if self.saved_progress:
                 candidates, best_comparable = self.saved_progress
-                cfg["link"]["saved_progress"] = {"candidates": candidates, "best_comparable": best_comparable}
-            else:
-                cfg["link"].pop("saved_progress", None)
-            with self.net.store.tx() as db:
-                db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
+                left = [candidate for candidate in candidates if candidate["name"] != name]
+                self.saved_progress = (left, best_comparable) if left else None
 
     def _save_cursor(self) -> None:
         proj = self.net.project_row(self.slug)
@@ -862,8 +957,11 @@ def _saved_progress(net, *, slug: str | None = None, identity: str | None = None
 
 
 def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *, fork: bool,
-                         best_comparable: bool = False, log, sync_room: bool = True) -> None:
-    """Send stronger saved work to the host; matches are always rechecked there."""
+                          best_comparable: bool = False, log, sync_room: bool = True,
+                          forget=None) -> None:
+    """Send stronger saved work to the host; matches are always rechecked there. A candidate the host refuses is
+    dropped (and logged) on its own, so it can't wedge the ones after it; only a host we can't reach leaves the rest
+    for the next sync."""
     if not candidates:
         return
     state = link._req("GET", "/collab/state", link.cursor | {"fresh": 1})
@@ -875,34 +973,45 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     if fork:
         proj = net.project_row(slug)
         local_names = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", proj["id"])}
+
+    def done(candidate: dict) -> None:
+        if forget is not None:
+            forget(candidate["name"])
+
     transfers = []
     skipped = 0
     for candidate in candidates:
         if fork:
             function = candidate["name"]
             if candidate["status"] != "matched" or function in matched_names:
+                done(candidate)
                 continue
             if function not in local_names:
                 skipped += 1
+                done(candidate)
                 continue
         else:
             host_fn = host_functions.get(candidate["vram"])
             if host_fn is None or host_fn["size"] != candidate["size"] or host_fn["name"] != candidate["name"]:
                 skipped += 1
+                done(candidate)
                 continue
             function = host_fn["name"]
             if candidate["vram"] in matched_vrams:
+                done(candidate)
                 continue
         if candidate["status"] == "matched":
-            transfers.append(("match", function, candidate["matched_source"], None))
+            transfers.append(("match", function, candidate["matched_source"], None, candidate))
         elif not fork and best_comparable and (host_best.get(candidate["vram"]) is None
                                                or candidate["best_score"] < host_best[candidate["vram"]]):
-            transfers.append(("best", function, candidate["best_source"], candidate["best_score"]))
+            transfers.append(("best", function, candidate["best_source"], candidate["best_score"], candidate))
+        else:
+            done(candidate)
 
     matches = best_attempts = 0
     if transfers:
         agent, _ = net.local_agent("saved-progress")
-    for kind, function, source, score in transfers:
+    for kind, function, source, score, candidate in transfers:
         try:
             if kind == "match":
                 result = link.attempt(agent, function, source)
@@ -913,9 +1022,14 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
             else:
                 link.call("/collab/best", agent, function=function, source=source, score=score)
                 best_attempts += 1
+        except Refused as e:
+            log(f"The host refused saved progress for {function}: {e}")
+            done(candidate)
         except NetworkError as e:
             log(f"Couldn't send saved progress for {function}: {e}")
             raise
+        else:
+            done(candidate)
 
     if sync_room:
         try:
@@ -1009,6 +1123,10 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     slug = net.import_rom(rom, toolchain=hello["compiler"]["toolchain"], flags=hello["compiler"]["flags"],
                           confirmed=True, log=log)
     try:
+        # What travels is worked out before the join: a corrupt progress folder, an unknown compiler or a disk
+        # error must not leave a member on the host and an imported project here (#80).
+        candidates = _saved_progress(net, slug=slug)
+        best_comparable = json.loads(net.project_row(slug)["config"]).get("compiler") == hello["compiler"]
         r = http.post(f"{url}/collab/join?room={hello['room']}", json={"invite": code, "name": name, "sha1": hello["sha1"]})
         joined = r.json()
         if r.status_code != 200:
@@ -1022,8 +1140,6 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     if joined["name"].lower() != name.lower():
         log(f"the name {name} was taken in this room: you're {joined['name']}")
     # the imported project's saved work goes with us: the host rechecks every match before it counts
-    candidates = _saved_progress(net, slug=slug)
-    best_comparable = json.loads(net.project_row(slug)["config"]).get("compiler") == hello["compiler"]
     room_link = net.link_project(slug, {"url": url, "room": hello["room"], "token": joined["token"],
                                         "member": joined["name"], "host_title": hello["title"]},
                                  client=client, start=False)
@@ -1033,7 +1149,8 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         if not joined.get("waiting"):
             try:
                 _share_saved_progress(net, slug, room_link, candidates, fork=False,
-                                      best_comparable=best_comparable, log=log, sync_room=False)
+                                      best_comparable=best_comparable, log=log, sync_room=False,
+                                      forget=room_link._forget_saved_progress)
             except NetworkError as e:
                 log(f"Couldn't send saved progress yet: {e}")
             else:
@@ -1111,7 +1228,8 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
             room_link.saved_progress = (candidates, False)
             room_link._save_saved_progress()
             try:
-                _share_saved_progress(net, slug, room_link, candidates, fork=True, log=log, sync_room=False)
+                _share_saved_progress(net, slug, room_link, candidates, fork=True, log=log, sync_room=False,
+                                      forget=room_link._forget_saved_progress)
             except NetworkError as e:
                 log(f"Couldn't send saved progress yet: {e}")
             else:
