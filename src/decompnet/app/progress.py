@@ -93,6 +93,10 @@ class _Dirty:
     metadata: bool = False
 
 
+class _FolderChanged(Exception):
+    """The folder moved while a sync was applying its contribution; its transaction must roll back."""
+
+
 def _read(folder: Path) -> dict[str, str]:
     files = {}
     for directory in ("src", "best", "include"):
@@ -886,64 +890,85 @@ class Progress:
                     merged_manifest["saved_at"] = time.time()
                     merged_manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
-                if not saves._publish(folder, pending, removed, expected=disk,
-                                      chosen=bool(cfg.get("progress_folder"))):
-                    return False
-                self.published[slug] = set(pending) | set(removed)
-                disk = _read(folder)
-                manifest = _manifest(disk, cfg)
-                saves._remember_revision(net, slug, manifest)
+                applied_files = candidate
+                applied_manifest = merged_manifest
                 if before is None:
-                    changed = {name for name in set(disk) | set(comparison)
-                               if disk.get(name) != comparison.get(name)}
+                    applied_changed = {name for name in set(applied_files) | set(comparison)
+                                       if applied_files.get(name) != comparison.get(name)}
                 else:
-                    changed = {name for name in set(disk) | set(before.files)
-                               if _hash(disk.get(name)) != before.files.get(name)}
+                    applied_changed = {name for name in set(applied_files) | set(before.files)
+                                       if _hash(applied_files.get(name)) != before.files.get(name)}
+            layout_by_name = {f["name"]: f for f in applied_manifest.get("layout", [])}
+            layout_by_vram: dict[int, list] = {}
+            for entry in applied_manifest.get("layout", []):
+                layout_by_vram.setdefault(entry["vram"], []).append(entry)
+            try:
+                # The layout, the database resets and every applied change are one transaction. An error rolls all
+                # of them back; the folder is written inside it, so a failed apply publishes nothing.
+                with net.store.tx() as db:
+                    rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
+                                      (pid,)).fetchall()
+                    for row in rows:
+                        changed_source = f"src/{row['name']}.c" in applied_changed
+                        changed_best = f"best/{row['name']}.c" in applied_changed
+                        keep_backup = False
+                        keep_best = False
+                        if changed_source or all_code:
+                            old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
+                                             "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
+                            if old["status"] == "matched" and old["matched_source"]:
+                                # An all_code change (a header or the layout) can't be judged yet if the compiler is
+                                # missing or the restore is cancelled. The last match stays as the best attempt until
+                                # the new source is judged (#101 review).
+                                keep_backup = True
+                                db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
+                                           (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
+                                            old["matched_agent_id"], row["id"]))
+                            elif all_code and not changed_best and old["best_source"] is not None:
+                                # Nothing about this function's own code changed: rejudging can only replace or lose
+                                # the attempt already recorded, so keep it.
+                                keep_best = True
+                        if all_code or changed_source or changed_best:
+                            entry = layout_by_name.get(row["name"])
+                            if entry is None or entry["vram"] != row["vram"]:
+                                candidates = layout_by_vram.get(row["vram"], [])
+                                entry = candidates[0] if len(candidates) == 1 else None
+                            status = (entry or {}).get("status", "open")
+                            keep = keep_backup or keep_best
+                            db.execute("UPDATE functions SET status=?, "
+                                       "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
+                                       "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
+                                       "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
+                                       "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
+                                       (status, keep, keep, keep, row["id"]))
+                            db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
+                    db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
+                    db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
+                    units = set(applied_manifest.get("headers") or {})
+                    for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?",
+                                          (pid,)).fetchall():
+                        if row["unit"] and row["unit"] not in units:
+                            db.execute("DELETE FROM context_versions WHERE project_id=? AND unit=?",
+                                       (pid, row["unit"]))
+                    by_name, _ = saves._apply_context(net, slug, folder, applied_manifest, report,
+                                                     files=applied_files)
+                    if not saves._publish(folder, pending, removed, expected=disk,
+                                          chosen=bool(cfg.get("progress_folder"))):
+                        raise _FolderChanged
+            except _FolderChanged:
+                return False
             self.revisions[slug] = self.revisions.get(slug, 0) + 1
-            with net.store.tx() as db:
-                layout = {f["vram"]: f for f in manifest.get("layout", [])}
-                rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?", (pid,)).fetchall()
-                for row in rows:
-                    changed_source = f"src/{row['name']}.c" in changed
-                    changed_best = f"best/{row['name']}.c" in changed
-                    keep_backup = False
-                    keep_best = False
-                    if changed_source or all_code:
-                        old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
-                                         "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
-                        if old["status"] == "matched" and old["matched_source"]:
-                            # An all_code change (a header or the layout) can't be judged yet if the compiler is
-                            # missing or the restore is cancelled. The last match stays as the best attempt until
-                            # the new source is judged (#101 review).
-                            keep_backup = True
-                            db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
-                                       (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
-                                        old["matched_agent_id"], row["id"]))
-                        elif all_code and not changed_best and old["best_source"] is not None:
-                            # Nothing about this function's own code changed: rejudging can only replace or lose
-                            # the attempt already recorded, so keep it.
-                            keep_best = True
-                    if all_code or changed_source or changed_best:
-                        status = layout.get(row["vram"], {}).get("status", "open")
-                        keep = keep_backup or keep_best
-                        db.execute("UPDATE functions SET status=?, "
-                                   "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
-                                   "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
-                                   "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
-                                   "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
-                                   (status, keep, keep, keep, row["id"]))
-                        db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
-                db.execute("DELETE FROM notes WHERE project_id=?", (pid,))
-                db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (pid,))
-                units = set(manifest.get("headers") or {})
-                for row in db.execute("SELECT DISTINCT unit FROM context_versions WHERE project_id=?", (pid,)).fetchall():
-                    if row["unit"] and row["unit"] not in units:
-                        db.execute("DELETE FROM context_versions WHERE project_id=? AND unit=?", (pid, row["unit"]))
-            self.results[slug] = saves._apply(net, slug, folder, manifest, report, files=disk,
-                                              judge_code=needs_judging)
+            self.published[slug] = set(pending) | set(removed)
+            disk = _read(folder)
+            manifest = _manifest(disk, cfg)
+            saves._remember_revision(net, slug, manifest)
+            self.results[slug] = saves._judge_saved(net, slug, folder, manifest, by_name,
+                                                    manifest.get("functions") or {}, report,
+                                                    files=disk, judge_code=needs_judging)
             net.bump_generation(pid)
             proj = net._project(slug)
-            # `_apply` writes matches and notes of its own: acknowledge the writes its final render saw.
+            # `_apply_context` and the judge write matches and notes of their own: acknowledge the writes this
+            # sync's final render saw.
             applied_dirty = self._dirty(pid)
             applied_tokens = [r["token"] for r in self._dirty_files(pid)]
             rendered, _ = saves._render(net, slug)

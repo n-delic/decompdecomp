@@ -825,6 +825,83 @@ def test_switching_branches_can_undo_a_function_split(project):
     assert not net.store.one("SELECT 1 FROM functions WHERE name='g'")
 
 
+def _overlay_project(tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    cfg = {"kind": "rom", "platform": "ps", "rom": {"sha1": "demo"}}
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps(cfg))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')",
+                   (pid,))
+        for name, unit in (("stage_a_func_80001000", "ovl_stage_a"),
+                           ("stage_b_func_80001000", "ovl_stage_b")):
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,matched_source,"
+                       "best_source,best_score,matched_at) VALUES(?,?,4096,8,2,'matched',?,?,?,0,1)",
+                       (pid, name, unit, f"int {name}(void) {{ return 1; }}", f"int {name}(void) {{ return 1; }}"))
+    net.attempt = lambda *args: pytest.fail("a matching overlay function was judged again")
+    return net, pid
+
+
+def test_two_overlays_at_one_address_keep_their_rows_and_matches_on_the_first_sync(tmp_path):
+    net, pid = _overlay_project(tmp_path)
+    slug = "game"
+    saves.save(net, slug)
+    folder = saves.default_folder(net, slug)
+    manifest = json.loads((folder / saves.MANIFEST).read_text())
+    assert len(manifest["layout"]) == 2 and {entry["vram"] for entry in manifest["layout"]} == {4096}
+    snapshot = [dict(row) for row in net.store.all(
+        "SELECT name,vram,unit,status,matched_source FROM functions WHERE project_id=? ORDER BY name", pid)]
+    with net.store.tx() as db:  # an existing project from main, whose progress folder has no baseline yet
+        db.execute("DELETE FROM progress_state WHERE project_id=?", (pid,))
+    net.progress = Progress(net)
+    net.progress.sync(slug, force=True)
+    assert [dict(row) for row in net.store.all(
+        "SELECT name,vram,unit,status,matched_source FROM functions WHERE project_id=? ORDER BY name", pid)] == snapshot
+
+
+def test_a_layout_that_cannot_be_applied_changes_neither_database_nor_folder(tmp_path):
+    net, pid = _overlay_project(tmp_path)
+    with net.store.tx() as db:
+        db.execute("DELETE FROM functions WHERE project_id=?", (pid,))
+        for name, address, size in (("f", 0x1000, 4), ("g", 0x1004, 4), ("h", 0x2000, 4), ("i", 0x2008, 4)):
+            function = split.RomFunction(name, address, address - 0x1000 if address < 0x2000 else address - 0x2000,
+                                         "", [split.AsmLine(address, address, 0x24020001, "addiu", "$v0, $zero, 1")],
+                                         Path("unused.s"))
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit,asm) "
+                       "VALUES(?,?,?,4,1,'open','',?)", (pid, name, address, net._asm_source(function)))
+    net.reader = lambda proj: lambda address, n: b"\0\0\0\1"  # the gap is not padding
+    saves.save(net, "game")
+    folder = saves.default_folder(net, "game")
+    path = folder / saves.MANIFEST
+    manifest = json.loads(path.read_text())
+    manifest["layout"] = [{"name": "f", "vram": 0x1000, "size": 8, "status": "open"},
+                          {"name": "h", "vram": 0x2000, "size": 12, "status": "open"}]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    db_before = "\n".join(net.store.conn.iterdump())
+    folder_before = {p.relative_to(folder).as_posix(): p.read_bytes()
+                     for p in folder.rglob("*") if p.is_file()}
+    with pytest.raises(NetworkError, match="crosses a gap"):
+        net.progress.sync("game", force=True)
+    assert "\n".join(net.store.conn.iterdump()) == db_before
+    assert {p.relative_to(folder).as_posix(): p.read_bytes()
+            for p in folder.rglob("*") if p.is_file()} == folder_before
+
+
+def test_a_layout_join_that_would_remove_a_match_is_refused(project):
+    net, _, _ = project
+    with net.store.tx() as db:
+        for name, address in (("f", 4096), ("g", 4100)):
+            function = split.RomFunction(name, address, address - 4096, "", [
+                split.AsmLine(address - 4096, address, 0x24020001, "addiu", "$v0, $zero, 1")], Path("unused.s"))
+            db.execute("UPDATE functions SET asm=? WHERE name=?", (net._asm_source(function), name))
+        db.execute("UPDATE functions SET status='matched',matched_source='known match' WHERE name='g'")
+    before = [dict(row) for row in net.store.all("SELECT * FROM functions ORDER BY name")]
+    with pytest.raises(NetworkError, match="already matches"):
+        saves._join_saved_layout(net, net._project("game"),
+                                 [{"name": "f", "vram": 4096, "size": 8, "status": "open"}])
+    assert [dict(row) for row in net.store.all("SELECT * FROM functions ORDER BY name")] == before
+
+
 def test_joining_a_saved_layout_keeps_the_tails_attempts_and_says_what_joined(project):
     net, folder, _ = project
     agent, _ = net.local_agent("helper")

@@ -156,13 +156,21 @@ class RoomMixin:
         """Mirror the room's splits and names. The host already regression-tested them on the same ROM."""
         proj = self._project(slug)
         pid = proj["id"]
-        local = {r["vram"]: r for r in self.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
+        local = {r["id"]: r for r in self.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
+        by_vram: dict[int, list] = {}
+        for row in local.values():
+            by_vram.setdefault(row["vram"], []).append(row)
         for f in sorted(functions, key=lambda f: f["vram"]):
-            if f["vram"] in local:
+            at = by_vram.get(f["vram"], [])
+            if any(row["name"] == f["name"] for row in at):
                 continue
-            owner = next((r for r in local.values() if r["vram"] < f["vram"] < r["vram"] + r["size"]), None)
-            if owner is None or owner["status"] == "matched":
+            if at:
+                # The address belongs to another overlay's function (or a renamed one): never guess which to split.
                 continue
+            owners = [r for r in local.values() if r["vram"] < f["vram"] < r["vram"] + r["size"]]
+            if len(owners) != 1 or owners[0]["status"] == "matched":
+                continue
+            owner = owners[0]
             rf = self._parse_asm(owner["name"], owner["asm"], owner["unit"])
             try:
                 head, tail = split.split_function(rf, f["vram"], f["name"])
@@ -174,16 +182,26 @@ class RoomMixin:
             with self.store.tx() as db:
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL WHERE id=?",
                            (head.size, len(head.lines), th.code, json.dumps(th.to_json()), self._asm_source(head), owner["id"]))
-                db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
-                           "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (pid, f["name"], tail.size, len(tail.lines), tt.code,
-                                                            json.dumps(tt.to_json()), self._asm_source(tail), None,
-                                                            owner["unit"], f["vram"], tail.rom))
+                tail_id = db.execute(
+                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (pid, f["name"], tail.size, len(tail.lines), tt.code,
+                                                     json.dumps(tt.to_json()), self._asm_source(tail), None,
+                                                     owner["unit"], f["vram"], tail.rom)).lastrowid
                 db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, f["name"], f["vram"], tail.size, "func"))
-            local = {r["vram"]: r for r in self.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
+            local[owner["id"]] = {**owner, "size": head.size}
+            local[tail_id] = {**owner, "id": tail_id, "name": f["name"], "vram": f["vram"], "size": tail.size}
+            by_vram.setdefault(f["vram"], []).append(local[tail_id])
         self._xrefs.pop(pid, None)
         syms = self.symbols(pid)
         for sym in symbols:
+            at = by_vram.get(sym["address"], [])
+            if any(row["name"] == sym["name"] for row in at):
+                continue
+            if len(at) != 1:
+                # An overlay address names several functions; renaming the address would rename all of them.
+                continue
+            row = at[0]
             current, off = syms.name_at(sym["address"])
             if off == 0 and current == sym["name"]:
                 continue
@@ -193,11 +211,13 @@ class RoomMixin:
                 db.execute("DELETE FROM symbols WHERE project_id=? AND (name=? OR name=?)", (pid, old, sym["name"]))
                 db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, sym["name"], sym["address"], sym["size"], sym["kind"]))
-                db.execute("UPDATE functions SET name=? WHERE project_id=? AND vram=?", (sym["name"], pid, sym["address"]))
-                for r in db.execute("SELECT id, matched_source, best_source FROM functions WHERE project_id=? AND "
-                                    "(matched_source IS NOT NULL OR best_source IS NOT NULL)", (pid,)).fetchall():
-                    db.execute("UPDATE functions SET matched_source=?, best_source=? WHERE id=?",
-                               (word.sub(sym["name"], r["matched_source"]) if r["matched_source"] else None,
-                                word.sub(sym["name"], r["best_source"]) if r["best_source"] else None, r["id"]))
+                db.execute("UPDATE functions SET name=?, matched_source=?, best_source=? WHERE id=?",
+                           (sym["name"],
+                            word.sub(sym["name"], row["matched_source"]) if row["matched_source"] else None,
+                            word.sub(sym["name"], row["best_source"]) if row["best_source"] else None, row["id"]))
+            renamed = {**row, "name": sym["name"]}
+            local[row["id"]] = renamed
+            by_vram[sym["address"]] = [renamed if item["id"] == row["id"] else item
+                                       for item in by_vram[sym["address"]]]
             self._syms.pop(pid, None)
             syms = self.symbols(pid)

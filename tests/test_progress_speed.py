@@ -1,7 +1,8 @@
 """A big ROM project's progress sync stays cheap when only a little changed (#101).
 
 The project is made directly in the database, as tests/test_progress.py does, so no compiler or game is needed: what
-is measured is the folder synchronization, not the judge.
+is measured is the folder synchronization, not the judge. The fixture times its full first sync and the timing
+assertions are fractions of that same-run reference, not absolute milliseconds on an unknown CI runner.
 """
 
 import json
@@ -13,9 +14,12 @@ from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
 
 FUNCTIONS = 5000
-NOOP_MILLISECONDS = 20
-FORCED_NOOP_MILLISECONDS = 100
-ONE_MATCH_MILLISECONDS = 200
+# Timing limits are fractions of the full first sync measured in the same run: absolute milliseconds depend on the
+# runner's shared CPU and disk. The one absolute bound is only a catastrophic-regression guard.
+NOOP_FRACTION = 50
+FORCED_NOOP_FRACTION = 5
+ONE_MATCH_FRACTION = 3
+CATASTROPHIC_MILLISECONDS = 2000
 
 
 def _milliseconds(call, repeat=1):
@@ -54,12 +58,14 @@ def project(tmp_path):
     net.apply_remote_layout = lambda *args: None
     judged = []
     net.attempt = lambda agent, name, source, slug: judged.append((name, source)) or {"matched": False}
-    net.progress.sync("game", force=True)  # the first save writes every file once
-    return net, saves.default_folder(net, "game"), pid, judged
+    start = time.perf_counter()
+    net.progress.sync("game", force=True)  # the first save: a full render and publish of every file
+    full_sync_ms = (time.perf_counter() - start) * 1000
+    return net, saves.default_folder(net, "game"), pid, judged, full_sync_ms
 
 
 def test_a_noop_check_and_a_forced_noop_are_cheap(project):
-    net, _, _, _ = project
+    net, _, _, _, full_sync_ms = project
     progress = net.progress
     timings = []
     for _ in range(3):
@@ -67,21 +73,25 @@ def test_a_noop_check_and_a_forced_noop_are_cheap(project):
         elapsed, result = _milliseconds(lambda: net._project("game"))
         assert result["slug"] == "game"
         timings.append(elapsed)
-    assert min(timings) < NOOP_MILLISECONDS
+    assert min(timings) < full_sync_ms / NOOP_FRACTION, \
+        f"a non-forced no-op took {min(timings):.1f} ms; a full sync here takes {full_sync_ms:.0f} ms"
     elapsed, published = _milliseconds(lambda: progress.sync("game", force=True), repeat=3)
     assert published is False
-    assert elapsed < FORCED_NOOP_MILLISECONDS
+    assert elapsed < full_sync_ms / FORCED_NOOP_FRACTION, \
+        f"a forced no-op took {elapsed:.1f} ms; a full sync here takes {full_sync_ms:.0f} ms"
 
 
 def test_one_match_changed_writes_its_file_and_the_manifest(project):
-    net, folder, pid, _ = project
+    net, folder, pid, _, full_sync_ms = project
     before = _file_stats(folder)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET matched_source=? WHERE project_id=? AND name='f0'",
                    ("int f0(void) { return 5000; }", pid))
     elapsed, published = _milliseconds(lambda: net.progress.sync("game", force=True))
     assert published is True
-    assert elapsed < ONE_MATCH_MILLISECONDS
+    assert elapsed < full_sync_ms / ONE_MATCH_FRACTION, \
+        f"one changed match took {elapsed:.1f} ms; a full sync here takes {full_sync_ms:.0f} ms"
+    assert elapsed < CATASTROPHIC_MILLISECONDS
     after = _file_stats(folder)
     written = {name for name in set(before) | set(after) if before.get(name) != after.get(name)}
     assert written == {"src/f0.c", saves.MANIFEST}
@@ -89,7 +99,7 @@ def test_one_match_changed_writes_its_file_and_the_manifest(project):
 
 
 def test_a_claim_or_an_attempt_that_did_not_improve_the_best_does_not_render(project, monkeypatch):
-    net, _, pid, _ = project
+    net, _, pid, _, _ = project
     monkeypatch.setattr(saves, "_render", lambda *args, **kwargs: pytest.fail("rendered a claim"))
     monkeypatch.setattr(saves, "_render_partial", lambda *args, **kwargs: pytest.fail("rendered a claim"))
     with net.store.tx() as db:
@@ -103,7 +113,7 @@ def test_a_claim_or_an_attempt_that_did_not_improve_the_best_does_not_render(pro
 
 
 def test_a_manifest_only_pull_neither_judges_nor_rewrites_sources(project):
-    net, folder, _, judged = project
+    net, folder, _, judged, _ = project
     before = _file_stats(folder)
     data = json.loads((folder / saves.MANIFEST).read_text(encoding="utf-8"))
     data["instructions"] = "from a pull"

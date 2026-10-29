@@ -642,34 +642,39 @@ def _restore_counts(net, slug: str) -> dict:
     }
 
 
-def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, str] | None = None,
-           judge_code: bool = True) -> dict:
+def _saved_source(folder: Path, files: dict[str, str] | None, name: str) -> str | None:
+    if files is not None:
+        return files.get(name)
+    path = folder / name
+    return path.read_text(encoding="utf-8") if path.exists() else None
+
+
+def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
+                   files: dict[str, str] | None = None) -> tuple[dict, dict]:
+    """Put back everything a save changes before its C is judged: layout, names, settings, notes, set-aside."""
     check_cancel = getattr(log, "check_cancel", lambda: None)
     proj = net._project(slug)
     pid = proj["id"]
     log("putting back the function splits and names")
     layout = manifest.get("layout") or []
     symbols = manifest.get("symbols") or []
+    known_symbols = {s["name"] for s in symbols}
     symbols = symbols + [{"name": f["name"], "address": f["vram"], "size": f["size"], "kind": "func"}
-                         for f in layout if not any(s["address"] == f["vram"] for s in symbols)]
-    _join_saved_layout(net, proj, layout, log)
-    net.apply_remote_layout(slug, layout, symbols)
+                         for f in layout if f["name"] not in known_symbols]
+    if _layout_matches_db(net, pid, layout):
+        log("the saved layout already matches this project")
+    else:
+        _join_saved_layout(net, proj, layout, log)
+        net.apply_remote_layout(slug, layout, symbols)
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
             # A synced layout can already have set it aside before this runs; its reason still has to come back.
-            row = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND vram=? "
-                             "AND status IN ('open','asm')", (pid, item["vram"])).fetchone()
+            row = _set_aside_row(db, pid, item)
             if row is None:
                 continue
             why = {key: value for key, value in item.items() if key in SET_ASIDE_META}
             meta = json.loads(row["meta"] or "{}") | why
             db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?", (json.dumps(meta), row["id"]))
-
-    def source(name):
-        if files is not None:
-            return files.get(name)
-        path = folder / name
-        return path.read_text(encoding="utf-8") if path.exists() else None
 
     def setup(cfg):
         if manifest.get("compiler") and toolchains.installed(manifest["compiler"].get("toolchain") or "") is not None:
@@ -699,7 +704,7 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
     with net.store.tx() as db:
         for unit, file in (manifest.get("headers") or {}).items():
             check_cancel()
-            header = source("include/" + file)
+            header = _saved_source(folder, files, "include/" + file)
             if header is not None and header != net._context(pid, unit)["header"]:
                 db.execute("INSERT INTO context_versions(project_id,version,header,agent_id,message,created_at,unit) "
                            "VALUES(?,?,?,?,?,?,?)", (pid, net._next_version(db, pid), header, restorer.id,
@@ -717,22 +722,34 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
             continue  # its function is gone (a split the layout couldn't make again)
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
-            row = db.execute("SELECT id, meta FROM functions WHERE project_id=? AND vram=? "
-                             "AND status IN ('open','asm')", (pid, item["vram"])).fetchone()
+            row = _set_aside_row(db, pid, item)
             if row is not None:
                 why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
                            (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
-    by_vram = {r["vram"]: r["name"] for r in net.store.all("SELECT vram, name FROM functions WHERE project_id=?", pid)}
-    saved = manifest.get("functions") or {}
+    by_name = {r["name"]: r for r in net.store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
+    return by_name, manifest.get("functions") or {}
+
+
+def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
+                 files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
+    check_cancel = getattr(log, "check_cancel", lambda: None)
+    pid = net._project(slug)["id"]
+    by_vram: dict[int, list[str]] = {}
+    for name, row in by_name.items():
+        by_vram.setdefault(row["vram"], []).append(name)
     matched, lost, best = 0, [], 0
     log(f"judging {len(saved)} saved functions again")
     for old_name, info in saved.items():
-        getattr(log, "check_cancel", lambda: None)()
+        check_cancel()
         log(f"checking {old_name}")
         kind = "src" if "matched_by" in info else "best"
-        text = source(f"{kind}/{old_name}.c")
-        name = by_vram.get(info["vram"])
+        text = _saved_source(folder, files, f"{kind}/{old_name}.c")
+        row = by_name.get(old_name)
+        name = old_name if row is not None and row["vram"] == info["vram"] else None
+        if name is None:
+            candidates = by_vram.get(info["vram"], [])
+            name = candidates[0] if len(candidates) == 1 else None
         if name is None or text is None:
             lost.append(old_name) if kind == "src" else None
             continue
@@ -782,20 +799,69 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
     return {"matched": matched, "best": best, "lost": lost}
 
 
+def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, str] | None = None,
+           judge_code: bool = True) -> dict:
+    by_name, saved = _apply_context(net, slug, folder, manifest, log, files=files)
+    return _judge_saved(net, slug, folder, manifest, by_name, saved, log, files=files, judge_code=judge_code)
+
+
+def _layout_matches_db(net, project_id: int, layout: list[dict]) -> bool:
+    """Whether every layout entry is the database's own function, by name, address and size.
+
+    A folder this app saved from this database has such a layout; applying it again must not join or split anything,
+    and same-address overlay functions are different functions, not split pieces."""
+    rows = net.store.all("SELECT name,vram,size FROM functions WHERE project_id=?", project_id)
+    if len(rows) != len(layout):
+        return False
+    by_name = {row["name"]: row for row in rows}
+    return all(by_name.get(entry["name"]) is not None
+               and by_name[entry["name"]]["vram"] == entry["vram"]
+               and by_name[entry["name"]]["size"] == entry["size"] for entry in layout)
+
+
+def _set_aside_row(db, project_id: int, item: dict):
+    """The function a saved set-aside entry names, never another overlay's function at the same address."""
+    row = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND name=? AND vram=? "
+                     "AND status IN ('open','asm')", (project_id, item["name"], item["vram"])).fetchone()
+    if row is not None:
+        return row
+    rows = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND vram=? "
+                      "AND status IN ('open','asm') ORDER BY id", (project_id, item["vram"])).fetchall()
+    return rows[0] if len(rows) == 1 else None
+
+
 def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
     """Switching git branches can undo a split. Join its stored assembly before applying the new splits, keeping the
-    tails' attempts on the joined function: they are work agents did, not something a layout change may delete."""
+    tails' attempts on the joined function: they are work agents did, not something a layout change may delete.
+
+    A join is planned for the layout entry's own function (same name and address, and only pieces in its own source
+    unit), so two overlays that share an address are never joined. Every plan is checked before the first write; a gap
+    or a matched function among the pieces refuses the whole layout instead of deleting work."""
     from dataclasses import replace
 
     report = report or (lambda line: None)
     pid = proj["id"]
+    plans = []
     for entry in layout:
         start, end = entry["vram"], entry["vram"] + entry["size"]
-        rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? ORDER BY vram",
-                             pid, start, end)
-        if len(rows) < 2 or rows[0]["vram"] != start:
+        candidates = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram=? ORDER BY id", pid, start)
+        head = next((row for row in candidates if row["name"] == entry["name"]), None)
+        if head is None:
+            if len(candidates) != 1:
+                continue  # an ambiguous overlay address (or a rename): never guess which function is meant
+            head = candidates[0]
+        if (head["size"] or 0) >= entry["size"]:
+            continue  # already the saved function: there is no split to undo
+        rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
+                             "ORDER BY vram, id", pid, start, end, head["unit"])
+        if len(rows) < 2 or rows[0]["id"] != head["id"]:
             continue
-        parts = [net._parse_asm(r["name"], r["asm"], r["unit"]) for r in rows]
+        tails = rows[1:]
+        if any(tail["status"] == "matched" or tail["matched_source"] for tail in tails):
+            raise NetworkError(
+                f"The saved layout would join a function that already matches at 0x{start:08X}. "
+                "Reimport the game before continuing; nothing was changed.")
+        parts = [net._parse_asm(row["name"], row["asm"], row["unit"]) for row in rows]
         lines = {line.vram: line for part in parts for line in part.lines if line.vram < end}
         missing = set(range(start, end, 4)) - lines.keys()
         if missing:
@@ -812,13 +878,16 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
         joined = replace(parts[0], lines=[lines[address] for address in sorted(lines)],
                          labels=set().union(*(part.labels for part in parts)))
         target = net._make_target(proj, joined, net.symbols(pid))
-        head, tails = rows[0], rows[1:]
-        moved = 0
-        with net.store.tx() as db:
+        plans.append((head, tails, joined, target))
+    if not plans:
+        return
+    with net.store.tx() as db:
+        for head, tails, joined, target in plans:
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,attempts=attempts+? "
                        "WHERE id=?",
                        (joined.size, len(joined.lines), target.code, json.dumps(target.to_json()),
                         net._asm_source(joined), sum(tail["attempts"] or 0 for tail in tails), head["id"]))
+            moved = 0
             for tail in tails:
                 moved += db.execute("UPDATE attempts SET function_id=? WHERE function_id=?",
                                     (head["id"], tail["id"])).rowcount
@@ -829,9 +898,9 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
                 db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], tail["id"]))
                 db.execute("DELETE FROM functions WHERE id=?", (tail["id"],))
                 db.execute("DELETE FROM symbols WHERE project_id=? AND address=? AND kind='func'", (pid, tail["vram"]))
-        net._syms.pop(pid, None)
-        report(f"joined {', '.join(tail['name'] for tail in tails)} into {head['name']}: "
-               f"{moved} attempt(s) kept on it")
+            report(f"joined {', '.join(tail['name'] for tail in tails)} into {head['name']}: "
+                   f"{moved} attempt(s) kept on it")
+    net._syms.pop(pid, None)
 
 
 class Autosave:
