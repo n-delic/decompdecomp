@@ -27,13 +27,14 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-# where wine is when it isn't on the PATH the app was started with (a Mac app's PATH has no Homebrew in it):
-# Homebrew's folders, and the app bundles of Gcenx's macOS builds (github.com/Gcenx/macOS_Wine_builds), which the
-# Homebrew casks installed until Homebrew disabled them (September 2026: they fail Gatekeeper)
-MAC_APPS = ("Wine Stable", "Wine Staging", "Wine Devel")
-PLACES = ("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
-          *(f"{apps}/{app}.app/Contents/Resources/wine/bin" for apps in ("/Applications", str(Path.home() / "Applications"))
-            for app in MAC_APPS))
+# where wine is when it isn't found in PATH at app start. Try Homebrew and MacPorts's folders (Apple Silicon's, then
+# Intel's), the system's. Homebrew disabled these due to a Gatekeeper issue in September 2026; Gcenx's tap gcenx/wine
+# still has them)
+MAC_APPS = ("Wine Stable", "Wine Staging", "Wine Devel", "Wine Crossover")
+PACKAGE_BINS = ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin")
+APP_FOLDERS = ("/Applications", str(Path.home() / "Applications"))
+PLACES = (*PACKAGE_BINS,
+          *(f"{folder}/{app}.app/Contents/Resources/wine/bin" for folder in APP_FOLDERS for app in MAC_APPS))
 # what wine is told: no debug output (it goes to the compiler's log), and no offer to install Mono or Gecko when the
 # prefix is made (a dialog nobody answers: cl.exe needs neither)
 QUIET = {"WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}
@@ -66,8 +67,9 @@ def install_steps() -> str:
     if sys.platform == "darwin":
         return ("On a Mac: download Wine Stable (wine-stable-...-osx64.tar.xz) from "
                 "https://github.com/Gcenx/macOS_Wine_builds/releases, put Wine Stable.app in Applications, and open "
-                "it once (Homebrew's wine-stable cask was disabled in September 2026). On Apple Silicon wine runs "
-                "through Rosetta 2.")
+                "it once (Homebrew's wine-stable cask was disabled in September 2026), or install a wine port from "
+                "https://github.com/Gcenx/macports-wine with MacPorts. Stable, Staging and Devel all work. On Apple "
+                "Silicon wine runs through Rosetta 2.")
     return ("On Linux: install your distribution's wine package (Ubuntu and Debian: `sudo dpkg --add-architecture "
             "i386 && sudo apt update && sudo apt install wine wine32:i386`; Fedora: `sudo dnf install wine`; Arch: "
             "`sudo pacman -S wine`).")

@@ -95,3 +95,14 @@ def test_the_prefix_is_made_once_and_its_server_stays(tc_root):
         assert subprocess.run([ws, "-p"], env=wine.environment(where)).returncode == 2  # (already running)
     finally:
         subprocess.run([wine.server(wine.find()), "-k"], env=wine.environment(where))
+
+
+@pytest.mark.parametrize("where", ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin",
+                                   *(f"/Applications/Wine {kind}.app/Contents/Resources/wine/bin"
+                                     for kind in ("Stable", "Staging", "Devel"))])
+def test_wine_is_looked_for_where_each_mac_install_puts_it(where):
+    """Homebrew (Apple Silicon, Intel), MacPorts (Gcenx's ports, under /opt/local) and Gcenx's app bundles, whichever
+    of wine's releases (Stable, Staging, Devel): each in Applications, the system's or the user's own."""
+    assert where in wine.PLACES
+    if where.startswith("/Applications/"):
+        assert where.replace("/Applications", str(wine.Path.home() / "Applications"), 1) in wine.PLACES
