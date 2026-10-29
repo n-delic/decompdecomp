@@ -182,6 +182,25 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     return manifest, pending
 
 
+def _database_newer(net, proj, manifest: dict, stored_revision: int) -> set[str]:
+    """The database matches that a first sync (no baseline) must keep over the folder's snapshot.
+
+    A snapshot says when it was written (`saved_at`), and a positive manifest revision below the database's own last
+    save means the folder predates that save. A manifest without a revision is from before revisions: use its
+    `saved_at`. With neither, the folder can't be shown to be newer, so the database's matches win: a same-name stale
+    file must not overwrite a match made after the folder was saved (#101 review)."""
+    rows = net.store.all("SELECT name, matched_at FROM functions WHERE project_id=? AND status='matched'", proj["id"])
+    revision = manifest.get("revision")
+    if (isinstance(revision, int) and not isinstance(revision, bool) and revision > 0
+            and revision < stored_revision):
+        return {row["name"] for row in rows}
+    saved_at = manifest.get("saved_at")
+    if isinstance(saved_at, (int, float)) and not isinstance(saved_at, bool):
+        return {row["name"] for row in rows
+                if isinstance(row["matched_at"], (int, float)) and row["matched_at"] > saved_at}
+    return {row["name"] for row in rows}
+
+
 class Progress:
     def __init__(self, net):
         self.net = net
@@ -198,6 +217,7 @@ class Progress:
         self.baselines: dict[int, tuple[dict[str, str], dict[str, str]]] = {}
         self.sync_changes: dict[str, int] = {}
         self.adopting: set[str] = set()
+        self.blocked: dict[str, tuple] = {}  # slug -> folder signature while its unknown compiler waits for a choice
 
     @staticmethod
     def _signature(folder: Path) -> tuple:
@@ -242,7 +262,7 @@ class Progress:
         with self._project_lock(slug):
             self.baselines.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
-                          self.signatures, self.sync_changes, self.errors):
+                          self.signatures, self.sync_changes, self.errors, self.blocked):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -255,10 +275,12 @@ class Progress:
                 yield
                 folder = saves.default_folder(self.net, slug)
                 rendered = saves._render(self.net, slug)[0]
-                if not saves._publish(folder, rendered, self.disk.get(slug)):
+                if not saves._publish(folder, rendered, self.disk.get(slug),
+                                      chosen=bool(self.net.cfg(self.net._project(slug)).get("progress_folder"))):
                     raise NetworkError("Progress changed while the project was being rebuilt. Read it again and retry.")
                 self.disk[slug] = _read(folder)
                 self.projected[slug] = rendered
+                saves._remember_revision(self.net, slug, json.loads(rendered[saves.MANIFEST]))
                 project_id = self.net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
                 self._remember(project_id, self.disk[slug], rendered)
                 self.revisions[slug] = self.revisions.get(slug, 0) + 1
@@ -313,6 +335,8 @@ class Progress:
                 if self.net.is_rom(proj) and self.net.cfg(proj).get("rom", {}).get("sha1"):
                     folder = saves.default_folder(self.net, slug)
                     signature = (self._signature(folder), self.net.store.conn.total_changes)
+                    if self.blocked.get(slug) == signature:
+                        return False  # its compiler is unknown and neither the folder nor the database changed
                     if self._baseline(proj["id"]) is not None and self.signatures.get(slug) == signature:
                         return False
                 result = self._sync(slug, logger)
@@ -325,7 +349,8 @@ class Progress:
                     stable = signature == self._signature(folder)
                     if acknowledged and stable:
                         self.signatures[slug] = (signature, self.net.store.conn.total_changes)
-                self.errors.pop(slug, None)
+                if not self.blocked.get(slug):
+                    self.errors.pop(slug, None)
                 return result
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
                 message = "Could not read or write progress. Finish the git operation and check the folder's permissions."
@@ -345,6 +370,8 @@ class Progress:
         if not net.cfg(proj).get("rom", {}).get("sha1") or net._context(proj["id"]) is None:
             return False  # import has not registered the game's fingerprint and shared header yet
         folder = saves.default_folder(net, slug)
+        self.blocked.pop(slug, None)  # a run that gets past its compiler gate clears the wait
+        saves._check_progress_folder(folder, chosen=bool(net.cfg(proj).get("progress_folder")))
         disk = _read(folder)
         baseline = self._baseline(proj["id"])
         before = baseline[0] if baseline is not None else self.disk.get(slug)
@@ -358,9 +385,8 @@ class Progress:
             manifest = _manifest(disk, net.cfg(proj))
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
             getattr(report, "check_cancel", lambda: None)()
-            compiler = manifest.get("compiler") or {}
-            if compiler.get("toolchain") and toolchains.installed(compiler["toolchain"]) is None:
-                raise NetworkError("Install the compiler named in progress/decompdecomp.json through Setup before continuing.")
+            # Captured before any render: the folder's revision is compared with what the database wrote last.
+            stored_revision = saves._stored_revision(net.cfg(proj))
             # Preserve work on unrelated functions even if a helper finished while a contribution was pulled.
             comparison = before if before is not None else saves._render(net, slug)[0]
             if before is None:
@@ -372,14 +398,14 @@ class Progress:
                 changed = {name for name in changed if name in disk}
                 manifest, initial_pending = _initial_merge(manifest, comparison, disk)
             legacy_newer = set()
-            saved_at = manifest.get("saved_at")
-            if before is None and slug not in self.adopting and isinstance(saved_at, (int, float)):
-                legacy_newer = {row["name"] for row in net.store.all(
-                    "SELECT name,matched_at FROM functions WHERE project_id=? AND status='matched' AND matched_at>?",
-                    proj["id"], saved_at) if f"src/{row['name']}.c" not in disk}
+            if before is None and slug not in self.adopting:
+                # A database match newer than the folder's snapshot wins even when the folder has an older file of
+                # the same name; its source is published below and that older file is not judged (#101 review).
+                legacy_newer = _database_newer(net, proj, manifest, stored_revision)
                 changed.difference_update(f"src/{name}.c" for name in legacy_newer)
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
+            all_code = False
             if slug in self.projected:
                 rendered = saves._render(net, slug)[0]
                 previous = self.projected[slug]
@@ -387,13 +413,17 @@ class Progress:
                            if name not in changed and previous.get(name) != text and name != "README.md"}
                 pending.update(initial_pending)
                 if before is None:
+                    # A first sync upgrades the folder's manifest in one write: the merge above kept the database's
+                    # work, and the new revision/saved_at make later first syncs safe (#101 review).
+                    manifest["saved_at"] = time.time()
+                    manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
                 for name in legacy_newer:
                     source = f"src/{name}.c"
                     if source in rendered:
                         pending[source] = rendered[source]
-                if (saves.MANIFEST in rendered and saves.MANIFEST in previous and saves.MANIFEST in disk
-                        and previous[saves.MANIFEST] != rendered[saves.MANIFEST]):
+                if (before is not None and saves.MANIFEST in rendered and saves.MANIFEST in previous
+                        and saves.MANIFEST in disk and previous[saves.MANIFEST] != rendered[saves.MANIFEST]):
                     pending[saves.MANIFEST] = json.dumps(
                         _merge_manifest(json.loads(previous[saves.MANIFEST]), json.loads(rendered[saves.MANIFEST]),
                                         json.loads(disk[saves.MANIFEST])), indent=1) + "\n"
@@ -401,26 +431,61 @@ class Progress:
                            if name not in changed and name not in rendered}
                 candidate = {name: text for name, text in (disk | pending).items() if name not in removed}
                 merged_manifest = _manifest(candidate, net.cfg(proj))
-                if legacy_newer:
+                all_code = any(name.startswith("include/") for name in changed)
+                if saves.MANIFEST in changed:
+                    old = json.loads(comparison[saves.MANIFEST])
+                    all_code |= any(old.get(key) != merged_manifest.get(key) for key in
+                                    ("compiler", "compiler_ranges", "symbols", "headers", "set_aside"))
+                    if old.get("layout") != merged_manifest.get("layout"):
+                        old_layout = {f["name"]: (f["vram"], f["size"]) for f in old.get("layout", [])}
+                        new_layout = {f["name"]: (f["vram"], f["size"]) for f in merged_manifest.get("layout", [])}
+                        all_code |= old_layout != new_layout
+                toolchain = (merged_manifest.get("compiler") or {}).get("toolchain")
+                if toolchain and not toolchains.known(toolchain):
+                    # A folder from another tool can name a compiler this app doesn't have. The project's own
+                    # Settings are a compiler the user already picked: use it (and correct the folder) rather than
+                    # wait forever for an id that can never be installed.
+                    local = net.cfg(proj).get("compiler")
+                    local_toolchain = local.get("toolchain") if isinstance(local, dict) else None
+                    if isinstance(local_toolchain, str) and toolchains.known(local_toolchain):
+                        merged_manifest["compiler"] = local
+                        merged_manifest["saved_at"] = time.time()
+                        merged_manifest["revision"] = saves._next_revision(net, proj, folder)
+                        pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
+                        toolchain = local_toolchain
+                code_files = any(name.startswith(("src/", "best/")) for name in disk)
+                database_code = not code_files and net.store.one(
+                    "SELECT 1 FROM functions WHERE project_id=? AND status='matched' AND matched_source IS NOT NULL "
+                    "LIMIT 1", proj["id"]) is not None
+                judging_change = all_code or any(name.startswith(("src/", "best/", "include/"))
+                                                 for name in changed)
+                needs_judging = judging_change and (code_files or database_code)
+                if toolchain and needs_judging:
+                    if not toolchains.known(toolchain):
+                        # #118: no Setup can install a compiler decompdecomp doesn't know. Open the project and
+                        # leave the folder's sources unjudged until the user picks one in Settings.
+                        self.blocked[slug] = (self._signature(folder), net.store.conn.total_changes)
+                        self.errors[slug] = (f"progress/decompdecomp.json names {toolchain}, which isn't a compiler "
+                                             "decompdecomp has. Pick one in this project's Settings; its saved code "
+                                             "waits until then.")
+                        return False
+                    if toolchains.installed(toolchain) is None:
+                        raise NetworkError(
+                            f"Install {toolchains.get(toolchain).name} ({toolchain}) in Setup before continuing: "
+                            "progress/decompdecomp.json's code has to be judged with it.")
+                stale_revision = (saves._manifest_revision(merged_manifest)
+                                  < saves._stored_revision(net.cfg(proj)))
+                if legacy_newer or stale_revision:
+                    merged_manifest["saved_at"] = time.time()
+                    merged_manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(merged_manifest, indent=1) + "\n"
-                selected_compiler = merged_manifest.get("compiler") or {}
-                if (selected_compiler.get("toolchain")
-                        and toolchains.installed(selected_compiler["toolchain"]) is None):
-                    raise NetworkError("Install the compiler named in progress/decompdecomp.json through Setup before continuing.")
-                if not saves._publish(folder, pending, removed, expected=disk):
+                if not saves._publish(folder, pending, removed, expected=disk,
+                                      chosen=bool(net.cfg(proj).get("progress_folder"))):
                     return False
                 disk = _read(folder)
                 manifest = _manifest(disk, net.cfg(proj))
+                saves._remember_revision(net, slug, manifest)
                 changed = {name for name in set(disk) | set(comparison) if disk.get(name) != comparison.get(name)}
-            all_code = any(name.startswith("include/") for name in changed)
-            if saves.MANIFEST in changed:
-                old = json.loads(comparison[saves.MANIFEST])
-                all_code |= any(old.get(key) != manifest.get(key) for key in
-                                ("compiler", "compiler_ranges", "symbols", "headers", "set_aside"))
-                if old.get("layout") != manifest.get("layout"):
-                    old_layout = {f["name"]: (f["vram"], f["size"]) for f in old.get("layout", [])}
-                    new_layout = {f["name"]: (f["vram"], f["size"]) for f in manifest.get("layout", [])}
-                    all_code |= old_layout != new_layout
             self.revisions[slug] = self.revisions.get(slug, 0) + 1
             with net.store.tx() as db:
                 layout = {f["vram"]: f for f in manifest.get("layout", [])}
@@ -429,22 +494,31 @@ class Progress:
                     changed_source = f"src/{row['name']}.c" in changed
                     changed_best = f"best/{row['name']}.c" in changed
                     keep_backup = False
+                    keep_best = False
                     if changed_source or all_code:
-                        old = db.execute("SELECT status,matched_source,matched_agent_id FROM functions WHERE id=?",
-                                         (row["id"],)).fetchone()
-                        if old["status"] == "matched" and old["matched_source"] and changed_source:
+                        old = db.execute("SELECT status,matched_source,matched_agent_id,best_source,best_score,"
+                                         "best_agent_id FROM functions WHERE id=?", (row["id"],)).fetchone()
+                        if old["status"] == "matched" and old["matched_source"]:
+                            # An all_code change (a header or the layout) can't be judged yet if the compiler is
+                            # missing or the restore is cancelled. The last match stays as the best attempt until
+                            # the new source is judged (#101 review).
                             keep_backup = True
                             db.execute("UPDATE functions SET best_source=?,best_score=?,best_agent_id=? WHERE id=?",
                                        (old["matched_source"], max(1, row["n_insns"] or 1) * 100,
                                         old["matched_agent_id"], row["id"]))
+                        elif all_code and not changed_best and old["best_source"] is not None:
+                            # Nothing about this function's own code changed: rejudging can only replace or lose
+                            # the attempt already recorded, so keep it.
+                            keep_best = True
                     if all_code or changed_source or changed_best:
                         status = layout.get(row["vram"], {}).get("status", "open")
+                        keep = keep_backup or keep_best
                         db.execute("UPDATE functions SET status=?, "
                                    "matched_source=NULL,matched_agent_id=NULL,matched_at=NULL,readable=0,"
                                    "best_source=CASE WHEN ? THEN best_source ELSE NULL END,"
                                    "best_score=CASE WHEN ? THEN best_score ELSE NULL END,"
                                    "best_agent_id=CASE WHEN ? THEN best_agent_id ELSE NULL END WHERE id=?",
-                                   (status, keep_backup, keep_backup, keep_backup, row["id"]))
+                                   (status, keep, keep, keep, row["id"]))
                         db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
                 db.execute("DELETE FROM notes WHERE project_id=?", (proj["id"],))
                 db.execute("DELETE FROM knowledge WHERE project_id=? AND status='accepted'", (proj["id"],))
@@ -466,10 +540,18 @@ class Progress:
         if saves.MANIFEST in changes and saves.MANIFEST in disk and saves.MANIFEST in previous:
             old, new, current = (json.loads(text) for text in
                                  (previous[saves.MANIFEST], rendered[saves.MANIFEST], disk[saves.MANIFEST]))
-            changes[saves.MANIFEST] = json.dumps(_merge_manifest(old, new, current), indent=1) + "\n"
+            merged = _merge_manifest(old, new, current)
+            if saves._manifest_revision(merged) < saves._stored_revision(net.cfg(proj)):
+                # A checkout or merge can bring back an older manifest; the file's revision still only moves forward.
+                merged["saved_at"] = time.time()
+                merged["revision"] = saves._next_revision(net, proj, folder)
+            changes[saves.MANIFEST] = json.dumps(merged, indent=1) + "\n"
         if changes or removed:
-            if not saves._publish(folder, changes, removed, expected=disk):
+            if not saves._publish(folder, changes, removed, expected=disk,
+                                  chosen=bool(net.cfg(proj).get("progress_folder"))):
                 return False
+            if saves.MANIFEST in changes:
+                saves._remember_revision(net, slug, json.loads(changes[saves.MANIFEST]))
         self.projected[slug] = rendered
         # Record only the snapshot actually applied or written. Reading again here could acknowledge an edit
         # that arrived during the write without ever applying it, so the next poll would miss it forever.

@@ -4,11 +4,13 @@ The report: a project made with another tool named a 64-bit Visual C++ compiler;
 "unknown toolchain 'msvcxx-x86_64'; known: ..." error and the whole page failed, with nothing saying what to do.
 """
 
+import json
 import shutil
 
 import pytest
 
 from decompnet import toolchains
+from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
 from decompnet.network import NetworkError
 from decompnet.project import compiler_config
@@ -90,3 +92,35 @@ def test_the_compile_command_itself_carries_the_sentence(tmp_path):
         compiler_config(tmp_path, {"compiler": {"toolchain": UNKNOWN, "flags": [], "timeout": 20}})
     text = str(said.value)
     assert UNKNOWN in text and "Settings" in text and "known:" not in text
+
+
+def test_an_unknown_compiler_opens_and_leaves_folder_sources_unjudged(tmp_path, monkeypatch):
+    """#101 review: no Setup can install a compiler decompdecomp doesn't know, so a progress folder naming one must
+    not stop the project page, the overview or a restore (#118). Its sources wait for a compiler the user picks."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    config = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"},
+              "compiler": {"toolchain": UNKNOWN, "flags": ["/O2"]}}
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                         (str(tmp_path / "game"), json.dumps(config))).lastrowid
+        db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,matched_source,best_source,"
+                   "best_score,unit) VALUES(?,'f',4096,4,1,'matched','good old','good old',0,'')", (pid,))
+        db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                   "VALUES(?,'g',4100,4,1,'open','')", (pid,))
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    judged = []
+    monkeypatch.setattr(net, "attempt", lambda *args: judged.append(args) or {"matched": False})
+    net.progress.sync("game", force=True)  # writes progress/decompdecomp.json naming the unknown compiler
+    folder = saves.default_folder(net, "game")
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good old\n", encoding="utf-8")
+    (folder / "src/g.c").write_text("good new\n", encoding="utf-8")
+    assert net.progress.sync("game", force=True) is False  # waiting for a compiler, not raising
+    assert judged == []
+    assert net._function("f", "game")["matched_source"] == "good old"
+    assert net._function("g", "game")["status"] == "open"
+    ov = net.overview("game")
+    assert ov["compiler"]["toolchain"] == UNKNOWN and ov["compiler"]["known"] is False
+    summary = net.summary("game")
+    assert summary["compiler"]["name"] == UNKNOWN and UNKNOWN in summary["progress_error"]

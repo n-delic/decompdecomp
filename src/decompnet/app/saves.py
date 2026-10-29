@@ -49,31 +49,68 @@ def _source_text(text: str) -> str:
 
 
 def default_folder(net, slug: str) -> Path:
-    proj = net.project_row(slug)
+    """The project's progress folder. Reads the project row rather than `net._project`, which synchronizes: a save to
+    another folder must not be stopped by the default folder's unresolved git merge (#101 review)."""
+    proj = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+    if proj is None:
+        raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
     return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
 
 
 def save(net, slug: str, folder: Path | None = None) -> dict:
-    """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved."""
-    proj = net._project(slug)
-    folder = Path(folder) if folder else default_folder(net, slug)
-    _check_save_paths(folder)
-    if not net.is_rom(proj):
-        return _save_best(net, proj, folder)
-    net.progress.sync(slug, force=True)
-    files, result = _render(net, slug, folder)
-    if folder == default_folder(net, slug):
-        net.progress.sync(slug, force=True)
-    else:
-        previous = _read_owned(folder)
-        if not _publish(folder, files, previous):
-            raise NetworkError("The save folder changed while it was being written. Save again after the change finishes.")
-    return result | {"folder": str(folder)}
+    """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved.
+
+    A folder chosen here is written from the database alone: the default progress folder can be in the middle of a
+    git merge or a failed write, and "Save now" elsewhere must still get the work out."""
+    default = default_folder(net, slug)
+    target = Path(folder) if folder is not None else default
+    try:
+        chosen = target.resolve() != default.resolve()
+    except OSError:  # a path that can't be resolved (a broken link): compare it as written
+        chosen = target != default
+    progress = getattr(net, "progress", None)
+    was_busy = getattr(progress.local, "busy", False) if progress is not None else False
+    if chosen and progress is not None:
+        progress.local.busy = True  # reading the project must not apply the default folder
+    try:
+        proj = net._project(slug)
+        _check_save_paths(target, chosen=chosen or bool(net.cfg(proj).get("progress_folder")))
+        if not net.is_rom(proj):
+            return _save_best(net, proj, target)
+        if chosen:
+            files, result = _render(net, slug, target, chosen=True)
+            previous = _read_owned(target)
+            if not _publish(target, files, previous, chosen=True):
+                raise NetworkError("The save folder changed while it was being written. Save again after the change finishes.")
+            _remember_revision(net, slug, json.loads(files[MANIFEST]))
+        else:
+            net.progress.sync(slug, force=True)
+            manifest_path = target / MANIFEST
+            manifest_before = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+            files, result = _render(net, slug, target)
+            net.progress.sync(slug, force=True)
+            # A sync writes the manifest only when the database changed. A save also records when it was saved, so a
+            # first sync after a database backup can tell this snapshot's age (#101 review).
+            current = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+            if current == manifest_before:
+                if not _publish(target, {MANIFEST: files[MANIFEST]}, expected={MANIFEST: manifest_before},
+                               chosen=bool(net.cfg(proj).get("progress_folder"))):
+                    raise NetworkError("The save folder changed while it was being written. Save again after the change finishes.")
+                _remember_revision(net, slug, json.loads(files[MANIFEST]))
+            else:
+                net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
+        return result | {"folder": str(target)}
+    finally:
+        if chosen and progress is not None:
+            progress.local.busy = was_busy
 
 
 def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | None = None,
-             expected: dict[str, str] | None = None) -> bool:
-    """Only change owned files whose contents changed; keep git and contributors' other files intact."""
+             expected: dict[str, str] | None = None, *, chosen: bool = False) -> bool:
+    """Only change owned files whose contents changed; keep git and contributors' other files intact.
+
+    `chosen`: the progress folder is the one the user saved to or configured, so a link at its own path is theirs to
+    keep; links inside it are still refused."""
     names = files.keys() | (previous or {}).keys()
     for name in names:
         path = Path(name)
@@ -85,6 +122,8 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
         for parent in (target, *target.parents):
             if parent == folder.parent:
                 break
+            if parent == folder and chosen:
+                continue
             if parent.is_symlink():
                 raise NetworkError("Progress paths cannot use symbolic links. Replace the link and try again.")
         if target.exists() and not target.is_file():
@@ -110,17 +149,78 @@ def _publish(folder: Path, files: dict[str, str], previous: dict[str, str] | Non
     return True
 
 
-def _check_save_paths(folder: Path) -> None:
-    """Reject links before README or map updates can follow one outside the selected save folder."""
+def _manifest_revision(manifest: dict) -> int:
+    """A manifest's revision; 0 for saves written before manifests had one."""
+    value = manifest.get("revision")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _stored_revision(cfg: dict) -> int:
+    """The highest revision this database has written for its project's progress folder."""
+    value = cfg.get("progress_revision")
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _next_revision(net, proj, folder: Path) -> int:
+    """One more than the highest revision this project or the folder has seen.
+
+    A revision tells a first sync without `progress_state` (a database restored from backup, a project copied without
+    .decomp) whether the folder is an older snapshot than the database's own work (#101 review)."""
+    revision = _stored_revision(net.cfg(proj))
+    try:
+        previous = json.loads((folder / MANIFEST).read_text(encoding="utf-8"))
+        revision = max(revision, _manifest_revision(previous))
+    except (OSError, ValueError, TypeError):
+        pass
+    return revision + 1
+
+
+def _remember_revision(net, slug: str, manifest: dict) -> None:
+    """Record the revision of a manifest this project just wrote, for the next first sync without a baseline."""
+    written = _manifest_revision(manifest)
+    if written <= 0:
+        return
+    with net.store.tx() as db:
+        row = db.execute("SELECT id,config FROM projects WHERE slug=?", (slug,)).fetchone()
+        if row is None:
+            return
+        config = json.loads(row["config"])
+        if written > _stored_revision(config):
+            config["progress_revision"] = written
+            db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(config), row["id"]))
+
+
+def _check_progress_folder(folder: Path, *, chosen: bool = False) -> None:
+    """Reject links or wrong types before README, the progress card or a source write can follow one outside the
+    progress folder. `chosen`: the user picked this folder itself in Settings or the Save dialog, so a link at its
+    own path is theirs to keep; links inside it are never followed."""
     if folder.is_symlink():
-        raise NetworkError("Progress folders must be regular directories. Replace the symbolic link and try again.")
-    for name in ("README.md", save_readme.CARD, "src", "best", "include"):
+        if not chosen:
+            raise NetworkError("The progress folder is a symbolic link to another place. Replace it with a real folder, "
+                               "or choose that place in the project's Settings, and try again.")
+        if not folder.is_dir():
+            raise NetworkError("The progress folder's link points to a place that isn't a folder. "
+                               "Fix the link and try again.")
+    for name in ("README.md", save_readme.CARD):
         path = folder / name
         if path.is_symlink():
             raise NetworkError("Progress paths cannot use symbolic links. Replace the link and try again.")
-        if path.exists() and (path.is_dir() if name in ("README.md", save_readme.CARD) else not path.is_dir()):
-            raise NetworkError("The save folder contains a path with the wrong type. Move it and try again.")
-        if name in ("src", "best", "include") and path.is_dir():
+        if path.exists() and path.is_dir():
+            raise NetworkError("The progress folder contains a path with the wrong type. Move it and try again.")
+    for name in ("src", "best", "include"):
+        path = folder / name
+        if path.is_symlink():
+            raise NetworkError("Progress folders must be regular directories. Replace the symbolic link and try again.")
+        if path.exists() and not path.is_dir():
+            raise NetworkError("The progress folder contains a path with the wrong type. Move it and try again.")
+
+
+def _check_save_paths(folder: Path, *, chosen: bool = False) -> None:
+    """Reject links before README, the map or a save's files can follow one outside the selected save folder."""
+    _check_progress_folder(folder, chosen=chosen)
+    for name in ("src", "best", "include"):
+        path = folder / name
+        if path.is_dir():
             for child in path.iterdir():
                 if child.is_symlink() or not child.is_file():
                     raise NetworkError("Progress files must be regular files. Replace the conflicting path and try again.")
@@ -148,9 +248,13 @@ def _read_owned(folder: Path) -> dict[str, str]:
     return {name: text for name, text in previous.items() if name in owned}
 
 
-def _render(net, slug: str, folder: Path | None = None) -> tuple[dict[str, str], dict]:
+def _render(net, slug: str, folder: Path | None = None, *, chosen: bool | None = None) -> tuple[dict[str, str], dict]:
     proj = net._project(slug)
     cfg = net.cfg(proj)
+    readme_folder = folder or default_folder(net, slug)
+    if chosen is None:
+        chosen = bool(cfg.get("progress_folder"))
+    _check_progress_folder(readme_folder, chosen=chosen)
     pid = proj["id"]
     names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, vram, size, status, matched_source, matched_agent_id, best_source, best_score, "
@@ -174,7 +278,8 @@ def _render(net, slug: str, folder: Path | None = None) -> tuple[dict[str, str],
     knowledge = [r["text"] for r in net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status='accepted' "
                                                   "ORDER BY id", pid)]
     manifest = {
-        "format": FORMAT, "title": proj["name"], "platform": cfg.get("platform"),
+        "format": FORMAT, "saved_at": time.time(), "revision": _next_revision(net, proj, readme_folder),
+        "title": proj["name"], "platform": cfg.get("platform"),
         "game": {"sha1": cfg.get("rom", {}).get("sha1"), "file": cfg.get("rom", {}).get("file")},
         "compiler": cfg.get("compiler"), "compiler_ranges": cfg.get("compiler_ranges") or [],
         "instructions": cfg.get("instructions") or "", "knowledge": knowledge,
@@ -366,43 +471,73 @@ def restore(net, source: str, game: Path, log=print) -> dict:
                 if progress is not None:
                     progress.local.busy = False
             getattr(log, "check_cancel", lambda: None)()
-            if progress is None:
-                raise RuntimeError("restoring a saved project requires progress synchronization")
-            # Import may create a new project; from here on, sync and rebind take the same lock.
-            with progress._project_lock(slug):
-                progress.results.pop(slug, None)
-                progress.local.busy = True
-                try:
-                    # Keep a local checkout in place; keep a clone (including .git) after the temporary directory ends.
-                    if Path(source).expanduser().is_dir():
-                        live = folder.resolve()
-                    else:
-                        live = Path(net.store.one("SELECT root FROM projects WHERE slug=?", slug)["root"]) / SAVE_FOLDER
-                        if (live / ".git").exists():
-                            raise NetworkError("This project already has a progress checkout. Pull changes there, or open that local folder.")
-                        _publish(live, {}, _read(live))
-                        shutil.copytree(folder, live, dirs_exist_ok=True)
-                    net._update_cfg(slug, lambda cfg: cfg.__setitem__("progress_folder", str(live)))
-                    project_id = net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
+            imported = slug not in {row["slug"] for row in existing}
+            try:
+                if progress is None:
+                    raise RuntimeError("restoring a saved project requires progress synchronization")
+                # Import may create a new project; from here on, sync and rebind take the same lock.
+                with progress._project_lock(slug):
+                    progress.results.pop(slug, None)
+                    progress.local.busy = True
+                    try:
+                        # Keep a local checkout in place; keep a clone (including .git) after the temporary directory ends.
+                        if Path(source).expanduser().is_dir():
+                            live = folder.resolve()
+                        else:
+                            live = Path(net.store.one("SELECT root FROM projects WHERE slug=?", slug)["root"]) / SAVE_FOLDER
+                            if (live / ".git").exists():
+                                raise NetworkError("This project already has a progress checkout. Pull changes there, or open that local folder.")
+                            _publish(live, {}, _read(live))
+                            shutil.copytree(folder, live, dirs_exist_ok=True)
+                        net._update_cfg(slug, lambda cfg: cfg.__setitem__("progress_folder", str(live)))
+                        project_id = net.store.one("SELECT id FROM projects WHERE slug=?", slug)["id"]
+                        if not same_linked_save:
+                            with net.store.tx() as db:
+                                db.execute("DELETE FROM progress_state WHERE project_id=?", (project_id,))
+                            progress.baselines.pop(project_id, None)
+                        progress.disk.pop(slug, None)
+                        progress.projected.pop(slug, None)
+                        progress.signatures.pop(slug, None)
+                        progress.checked.pop(slug, None)
+                        progress.sync_changes.pop(slug, None)
+                    finally:
+                        progress.local.busy = False
                     if not same_linked_save:
-                        with net.store.tx() as db:
-                            db.execute("DELETE FROM progress_state WHERE project_id=?", (project_id,))
-                        progress.baselines.pop(project_id, None)
-                    progress.disk.pop(slug, None)
-                    progress.projected.pop(slug, None)
-                    progress.signatures.pop(slug, None)
-                    progress.checked.pop(slug, None)
-                    progress.sync_changes.pop(slug, None)
-                finally:
-                    progress.local.busy = False
-                if not same_linked_save:
-                    progress.adopting.add(slug)
-                try:
-                    progress.sync(slug, force=True, logger=log)
-                finally:
-                    progress.adopting.discard(slug)
-                result = progress.results.pop(slug, None) or _restore_counts(net, slug)
-                return result | {"slug": slug}
+                        progress.adopting.add(slug)
+                    try:
+                        progress.sync(slug, force=True, logger=log)
+                    finally:
+                        progress.adopting.discard(slug)
+                    result = progress.results.pop(slug, None) or _restore_counts(net, slug)
+                    return result | {"slug": slug}
+            except Exception:
+                # #101 review: importing and splitting happened before the save could be applied. A restore that
+                # fails (a missing compiler, a cancelled judge) leaves no half-open project, as a failed room join
+                # doesn't; a project that was here before stays.
+                if imported:
+                    _discard_imported(net, slug, progress)
+                raise
+
+
+def _discard_imported(net, slug: str, progress=None) -> None:
+    """Remove a project a failed restore imported, without letting its half-applied folder synchronize on the way."""
+    row = net.store.one("SELECT id,root FROM projects WHERE slug=?", slug)
+    if row is None:
+        return
+    previous = getattr(progress.local, "busy", False) if progress is not None else False
+    if progress is not None:
+        progress.local.busy = True
+    removed = False
+    try:
+        net.remove_project(slug)
+        removed = True
+    except Exception:  # cleanup must not replace the error that made the restore fail
+        log.exception("could not remove the project a failed restore imported")
+    finally:
+        if progress is not None:
+            progress.local.busy = previous
+        if removed:
+            shutil.rmtree(Path(row["root"]), ignore_errors=True)
 
 
 def _restore_counts(net, slug: str) -> dict:
@@ -426,7 +561,7 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
     symbols = manifest.get("symbols") or []
     symbols = symbols + [{"name": f["name"], "address": f["vram"], "size": f["size"], "kind": "func"}
                          for f in layout if not any(s["address"] == f["vram"] for s in symbols)]
-    _join_saved_layout(net, proj, layout)
+    _join_saved_layout(net, proj, layout, log)
     net.apply_remote_layout(slug, layout, symbols)
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
@@ -520,7 +655,9 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
         agent, _ = net.local_agent("progress-judge")
         try:
             result = net.attempt(agent, name, text, slug)
-        except NetworkError as e:
+        except (NetworkError, toolchains.ToolchainError) as e:
+            # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
+            # from coming back; the function stays open for when the user picks one (#118).
             log(f"{name}: {e}")
             result = {"matched": False}
         finally:
@@ -545,10 +682,12 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
     return {"matched": matched, "best": best, "lost": lost}
 
 
-def _join_saved_layout(net, proj, layout: list[dict]) -> None:
-    """Switching git branches can undo a split. Join its stored assembly before applying the new splits."""
+def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
+    """Switching git branches can undo a split. Join its stored assembly before applying the new splits, keeping the
+    tails' attempts on the joined function: they are work agents did, not something a layout change may delete."""
     from dataclasses import replace
 
+    report = report or (lambda line: None)
     pid = proj["id"]
     for entry in layout:
         start, end = entry["vram"], entry["vram"] + entry["size"]
@@ -573,18 +712,26 @@ def _join_saved_layout(net, proj, layout: list[dict]) -> None:
         joined = replace(parts[0], lines=[lines[address] for address in sorted(lines)],
                          labels=set().union(*(part.labels for part in parts)))
         target = net._make_target(proj, joined, net.symbols(pid))
+        head, tails = rows[0], rows[1:]
+        moved = 0
         with net.store.tx() as db:
-            db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL WHERE id=?",
+            db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,attempts=attempts+? "
+                       "WHERE id=?",
                        (joined.size, len(joined.lines), target.code, json.dumps(target.to_json()),
-                        net._asm_source(joined), rows[0]["id"]))
-            for tail in rows[1:]:
-                for table in ("claims", "attempts", "twin_misses"):
-                    db.execute(f"DELETE FROM {table} WHERE function_id=?", (tail["id"],))
+                        net._asm_source(joined), sum(tail["attempts"] or 0 for tail in tails), head["id"]))
+            for tail in tails:
+                moved += db.execute("UPDATE attempts SET function_id=? WHERE function_id=?",
+                                    (head["id"], tail["id"])).rowcount
+                db.execute("UPDATE OR IGNORE twin_misses SET function_id=? WHERE function_id=?", (head["id"], tail["id"]))
+                db.execute("DELETE FROM twin_misses WHERE function_id=?", (tail["id"],))
+                db.execute("DELETE FROM claims WHERE function_id=?", (tail["id"],))
                 db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (tail["id"], tail["id"]))
-                db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (rows[0]["id"], tail["id"]))
+                db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], tail["id"]))
                 db.execute("DELETE FROM functions WHERE id=?", (tail["id"],))
                 db.execute("DELETE FROM symbols WHERE project_id=? AND address=? AND kind='func'", (pid, tail["vram"]))
         net._syms.pop(pid, None)
+        report(f"joined {', '.join(tail['name'] for tail in tails)} into {head['name']}: "
+               f"{moved} attempt(s) kept on it")
 
 
 class Autosave:

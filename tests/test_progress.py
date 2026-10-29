@@ -102,6 +102,23 @@ def test_headers_rejudge_existing_matches(project):
     assert len(judged) == 2
 
 
+def test_a_header_change_keeps_the_last_match_until_rejudging_can_run(project, monkeypatch):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='known match',best_source='known match',"
+                   "best_score=0,matched_at=1 WHERE name='f'")
+    net.progress.sync("game", force=True)
+    (folder / "include/common.h").write_text("broken header", encoding="utf-8")
+
+    def unavailable(*_args, **_kwargs):
+        raise NetworkError("the compiler was cancelled")
+
+    monkeypatch.setattr(net, "attempt", unavailable)
+    net.progress.sync("game", force=True)
+    fn = net._function("f", "game")
+    assert fn["status"] == "open" and fn["best_source"] == "known match"
+
+
 def test_a_restart_reads_progress_before_writing_stale_database_sources(project):
     net, folder, judged = project
     (folder / "src").mkdir()
@@ -182,6 +199,85 @@ def test_first_legacy_save_keeps_a_database_match_newer_than_saved_at(project):
     assert (folder / "src/f.c").read_text() == "newer match\n"
     assert net._function("g", "game")["matched_source"] == "good external contribution\n"
     assert judged == [("g", "good external contribution\n")]
+
+
+def test_a_first_sync_keeps_a_newer_database_match_over_a_same_name_stale_file(project):
+    """#101 review: the folder had an older src/f.c, so the newer database match was rejudged away."""
+    net, folder, judged = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good newer C',best_source='good newer C',"
+                   "best_score=0,matched_at=200 WHERE name='f'")
+        db.execute("UPDATE projects SET config=json_remove(config,'$.progress_revision') WHERE slug='game'")
+        db.execute("DELETE FROM progress_state WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good stale C\n", encoding="utf-8")
+    manifest(folder, saved_at=100, revision=0)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    fn = net._function("f", "game")
+    assert fn["matched_source"] == "good newer C"
+    assert fn["best_source"] == "good newer C"
+    assert (folder / "src/f.c").read_text() == "good newer C\n"
+    assert judged == []  # the folder's older file was not applied or judged
+
+
+def test_a_manifest_records_when_it_was_saved_and_a_raising_revision(project):
+    net, folder, _ = project
+    first = json.loads((folder / saves.MANIFEST).read_text())
+    assert isinstance(first.get("saved_at"), (int, float))
+    assert first.get("revision", 0) >= 1
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good C',best_source='good C',"
+                   "best_score=0,matched_at=? WHERE name='f'", (time.time(),))
+    net.progress.sync("game", force=True)
+    second = json.loads((folder / saves.MANIFEST).read_text())
+    assert second["revision"] > first["revision"]
+    assert second["saved_at"] >= first["saved_at"]
+    saves.save(net, "game")
+    third = json.loads((folder / saves.MANIFEST).read_text())
+    assert third["revision"] > second["revision"] and third["saved_at"] >= second["saved_at"]
+
+
+def test_a_first_sync_uses_the_revision_to_keep_a_match_over_an_older_folder(project):
+    net, folder, judged = project
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("progress_revision", 5))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good db match',best_source='good db match',"
+                   "best_score=0,matched_at=1 WHERE name='f'")
+        db.execute("DELETE FROM progress_state WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good old file\n", encoding="utf-8")
+    manifest(folder, saved_at=time.time(), revision=3)
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    assert net._function("f", "game")["matched_source"] == "good db match"
+    assert (folder / "src/f.c").read_text() == "good db match\n"
+    assert judged == []
+
+
+def test_an_old_manifest_without_a_revision_still_syncs(project):
+    net, folder, _ = project
+    data = json.loads((folder / saves.MANIFEST).read_text())
+    data.pop("revision", None)
+    (folder / saves.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
+    manifest(folder, instructions="from an older save")
+    net.progress.sync("game", force=True)
+    assert net.instructions("game") == "from an older save"
+
+
+def test_a_first_sync_keeps_database_settings_and_notes(project):
+    """The first sync upgrades the manifest in one write without dropping work only the database has."""
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=json_set(config,'$.instructions','local instructions') WHERE slug='game'")
+        db.execute("INSERT INTO notes(project_id,text,created_at) VALUES((SELECT id FROM projects WHERE slug='game'),"
+                   "'local note',0)")
+        db.execute("DELETE FROM progress_state WHERE project_id=(SELECT id FROM projects WHERE slug='game')")
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    assert net.instructions("game") == "local instructions"
+    assert [row["text"] for row in net.store.all("SELECT text FROM notes")] == ["local note"]
+    assert json.loads((folder / saves.MANIFEST).read_text())["revision"] >= 1
 
 
 def test_an_invalid_merged_rename_does_not_write_the_manifest(project):
@@ -451,16 +547,39 @@ def test_a_best_attempt_can_be_edited_and_deleted(project):
     assert net._function("f", "game")["best_source"] is None
 
 
-def test_an_unavailable_compiler_does_not_clear_existing_work(project, monkeypatch):
+def test_an_uninstalled_compiler_does_not_clear_existing_work(project, monkeypatch):
     net, folder, _ = project
     with net.store.tx() as db:
         db.execute("UPDATE functions SET matched_source='good old',status='matched' WHERE name='f'")
     net.progress.sync("game", force=True)
-    manifest(folder, compiler={"toolchain": "missing"})
+    manifest(folder, compiler={"toolchain": "gcc-2.7.2-kmc"})
     monkeypatch.setattr("decompnet.app.progress.toolchains.installed", lambda _: None)
-    with pytest.raises(NetworkError, match="Install the compiler"):
+    with pytest.raises(NetworkError, match="gcc-2.7.2-kmc"):
         net.progress.sync("game", force=True)
     assert net.store.one("SELECT matched_source FROM functions WHERE name='f'")["matched_source"] == "good old"
+
+
+def test_an_uninstalled_compiler_is_only_needed_for_code_to_judge(project, monkeypatch):
+    net, folder, _ = project
+    manifest(folder, compiler={"toolchain": "gcc-2.7.2-kmc"}, notes=[])
+    monkeypatch.setattr("decompnet.app.progress.toolchains.installed", lambda _: None)
+    net.progress.sync("game", force=True)  # a settings-only change: nothing is compiled
+    assert net._function("f", "game")["status"] == "open"
+
+
+def test_a_project_compiler_replaces_an_unknown_folders_choice(project, monkeypatch):
+    """A save from another tool names a compiler decompdecomp can't install; the project's own Settings are the
+    compiler the user already picked, so its saved code is judged with it and the folder is corrected."""
+    net, folder, judged = project
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("compiler", {"toolchain": "gcc-2.7.2-kmc", "flags": []}))
+    manifest(folder, compiler={"toolchain": "a-tool-this-app-does-not-have", "flags": []})
+    monkeypatch.setattr("decompnet.app.progress.toolchains.installed",
+                        lambda tid: {"installed": True} if tid == "gcc-2.7.2-kmc" else None)
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good with the project compiler", encoding="utf-8")
+    assert net.progress.sync("game", force=True)
+    assert json.loads((folder / saves.MANIFEST).read_text())["compiler"]["toolchain"] == "gcc-2.7.2-kmc"
+    assert ("f", "good with the project compiler") in judged
 
 
 @pytest.mark.parametrize("remote", [False, True])
@@ -534,6 +653,76 @@ def test_saving_preserves_source_line_numbers(project):
     assert (folder / "src/f.c").read_text() == source
 
 
+def test_saving_to_a_chosen_folder_ignores_a_broken_default_folder(project, tmp_path):
+    """#101 review: "Save now" elsewhere must still rescue the work when progress/decompdecomp.json has conflicts."""
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched',matched_source='good saved C',best_source='good saved C',"
+                   "best_score=0 WHERE name='f'")
+    (folder / saves.MANIFEST).write_text("<<<<<<< HEAD\n=======\n>>>>>>> branch\n", encoding="utf-8")
+    chosen = tmp_path / "chosen"
+    result = saves.save(net, "game", chosen)
+    assert result["folder"] == str(chosen) and result["matched"] == 1
+    assert (chosen / "src/f.c").read_text() == "good saved C\n"
+    assert "f" in json.loads((chosen / saves.MANIFEST).read_text())["functions"]
+    assert "<<<<<<<" in (folder / saves.MANIFEST).read_text()
+
+
+def test_sync_refuses_to_write_through_a_linked_progress_file(project, tmp_path):
+    net, folder, _ = project
+    for name in ("README.md", saves.save_readme.CARD):
+        outside = tmp_path / f"outside-{name}"
+        outside.write_text("outside", encoding="utf-8")
+        path = folder / name
+        path.unlink()
+        try:
+            path.symlink_to(outside)
+        except OSError as error:
+            pytest.skip(f"symlinks are unavailable: {error}")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE name='f'")
+    with pytest.raises(NetworkError, match="symbolic links"):
+        net.progress.sync("game", force=True)
+    assert all((tmp_path / f"outside-{name}").read_text() == "outside"
+               for name in ("README.md", saves.save_readme.CARD))
+
+
+def test_sync_refuses_a_default_progress_folder_that_is_a_link_elsewhere(project, tmp_path):
+    net, folder, _ = project
+    outside = tmp_path / "elsewhere"
+    shutil.copytree(folder, outside)
+    shutil.rmtree(folder)
+    try:
+        folder.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable: {error}")
+    readme = (outside / "README.md").read_text()
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE name='f'")
+    with pytest.raises(NetworkError, match="symbolic link"):
+        net.progress.sync("game", force=True)
+    assert not (outside / "best/f.c").exists()
+    assert (outside / "README.md").read_text() == readme  # the render never wrote through the link either
+
+
+def test_a_progress_folder_the_user_chose_may_be_a_link(project, tmp_path):
+    net, folder, _ = project
+    outside = tmp_path / "elsewhere"
+    shutil.copytree(folder, outside)
+    shutil.rmtree(folder)
+    try:
+        folder.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"symlinks are unavailable: {error}")
+    net._update_cfg("game", lambda cfg: cfg.__setitem__("progress_folder", str(folder)))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='new attempt',best_score=10 WHERE name='f'")
+    net.progress.sync("game", force=True)
+    assert (outside / "best/f.c").read_text() == "new attempt\n"
+    saves.save(net, "game")  # Save now writes the manifest through the configured link too
+    assert (outside / saves.MANIFEST).exists()
+
+
 def test_switching_branches_can_undo_a_function_split(project):
     net, folder, _ = project
     with net.store.tx() as db:
@@ -545,6 +734,28 @@ def test_switching_branches_can_undo_a_function_split(project):
     net.progress.sync("game", force=True)
     assert net._function("f", "game")["size"] == 8
     assert not net.store.one("SELECT 1 FROM functions WHERE name='g'")
+
+
+def test_joining_a_saved_layout_keeps_the_tails_attempts_and_says_what_joined(project):
+    net, folder, _ = project
+    agent, _ = net.local_agent("helper")
+    with net.store.tx() as db:
+        for name, address in (("f", 4096), ("g", 4100)):
+            function = split.RomFunction(name, address, address - 4096, "", [
+                split.AsmLine(address - 4096, address, 0x24020001, "addiu", "$v0, $zero, 1")], Path("unused.s"))
+            db.execute("UPDATE functions SET asm=? WHERE name=?", (net._asm_source(function), name))
+        head = db.execute("SELECT id,attempts FROM functions WHERE name='f'").fetchone()
+        tail = db.execute("SELECT id FROM functions WHERE name='g'").fetchone()
+        db.execute("UPDATE functions SET attempts=5 WHERE id=?", (tail["id"],))
+        db.execute("INSERT INTO attempts(function_id,agent_id,score,compiled,context_version,source,created_at) "
+                   "VALUES(?,?,0,1,1,'tail attempt',1)", (tail["id"], agent.id))
+    report = []
+    saves._join_saved_layout(net, net._project("game"), [{"name": "f", "vram": 4096, "size": 8}], report.append)
+    joined = net.store.one("SELECT id,attempts FROM functions WHERE name='f'")
+    assert joined["id"] == head["id"] and joined["attempts"] == head["attempts"] + 5
+    assert net.store.one("SELECT function_id FROM attempts WHERE source='tail attempt'")["function_id"] == head["id"]
+    assert not net.store.one("SELECT 1 FROM functions WHERE name='g'")
+    assert any("joined g into f" in line and "1 attempt(s)" in line for line in report)
 
 
 def test_an_edit_arriving_during_a_save_is_read_on_the_next_pass(project, monkeypatch):

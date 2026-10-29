@@ -142,6 +142,48 @@ def test_a_new_restore_adopts_saved_settings_over_fresh_import_defaults(tmp_path
     assert net.instructions("game") == "instructions from saved project"
 
 
+def test_a_restore_that_cannot_judge_leaves_no_half_imported_project(tmp_path, monkeypatch):
+    """#101 review: importing and splitting happen before the save is applied; a failed restore (a known compiler
+    that isn't installed here) must not leave the imported project and its folder behind."""
+    from types import SimpleNamespace
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "workspace")
+    save = tmp_path / "save"
+    (save / "src").mkdir(parents=True)
+    (save / "include").mkdir()
+    (save / "src/f.c").write_text("void f(void) {}\n", encoding="utf-8")
+    (save / "include/common.h").write_text("/* saved header */\n", encoding="utf-8")
+    (save / saves.MANIFEST).write_text(json.dumps({
+        "format": saves.FORMAT, "title": "Game", "platform": "n64", "game": {"sha1": "demo"},
+        "headers": {"": "common.h"}, "compiler": {"toolchain": "gcc-2.7.2-kmc", "flags": []},
+        "layout": [{"name": "f", "vram": 4096, "size": 4}],
+        "functions": {"f": {"vram": 4096, "matched_by": ""}}, "knowledge": [], "notes": [],
+    }), encoding="utf-8")
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: SimpleNamespace(
+        read_game=lambda *_: SimpleNamespace(info={"sha1": "demo"})))
+    root = tmp_path / "workspace" / "game"
+
+    def import_game(*_args, **_kwargs):
+        root.mkdir(parents=True)
+        with net.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(root), json.dumps({"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) VALUES(?,1,'',0,'')",
+                       (pid,))
+            db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                       "VALUES(?,'f',4096,4,1,'open','')", (pid,))
+        return "game"
+
+    monkeypatch.setattr(net, "import_rom", import_game)
+    monkeypatch.setattr(net, "apply_remote_layout", lambda *args: None)
+    monkeypatch.setattr("decompnet.app.progress.toolchains.installed", lambda _: None)
+    with pytest.raises(NetworkError, match="gcc-2.7.2-kmc"):
+        saves.restore(net, str(save), tmp_path / "own-game", log=lambda *_: None)
+    assert net.store.all("SELECT slug FROM projects") == []
+    assert not root.exists()
+    assert (save / saves.MANIFEST).exists()  # the user's saved folder is untouched
+
+
 def test_a_save_restores_only_onto_the_same_game(worked, tmp_path):
     net, slug, _ = worked
     saves.save(net, slug, tmp_path / "save")
