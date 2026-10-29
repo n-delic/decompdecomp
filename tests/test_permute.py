@@ -165,6 +165,9 @@ def test_decomp_permuter_looks_a_function_up_by_the_name_its_c_has(monkeypatch):
     source = "void Update(int n)\n{\n    g = n;\n}\n"
     assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", source) == "Update"
     assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", "int x;\n") == "?Update@@YAXH@Z"
+    # defined on a class the source calls something else: the definition's own spelling, which the generator finds
+    other = "// a note (with parentheses)\nvoid C_vt_003AB500 :: Update(int n)\n{\n    g = n;\n}\n"
+    assert ForkEngine.permuter_name(Engine(), "game", "?Update@@YAXH@Z", other) == "C_vt_003AB500::Update"
 
 
 def test_the_generator_gets_the_header_as_c(monkeypatch):
@@ -455,6 +458,46 @@ def test_cxx_that_isnt_a_constructor_is_left_alone():
 
     source = "int f(Vec2 *v, int a)\n{\n    int n = sizeof(Vec2) + g(a) + (a & 3);\n    return (Vec2 *) v != 0;\n}\n"
     assert Restorer(source, {"Vec2"}).source == source
+
+
+def test_macros_called_with_a_type_and_object_like_ones_are_put_in_the_functions_c():
+    """`F(int, 0x20) = v` and `MATCH_VOLATILE bool found` aren't C pycparser reads: 13 of an Xbox game's near
+    misses stopped at one. A macro called with values stays a call, for the randomizer to move."""
+    from decompnet import permuter_gen as g
+
+    header = "#define MP_RAW(T, off) (*(T *)((char *)this + (off)))\n#define MATCH_VOLATILE volatile\n#define SQ(x) ((x) * (x))\n"
+    source = ("void f(char *p)\n{\n    MATCH_VOLATILE bool found = false;\n    F(int, 0x20) = MP_RAW(Widget *, 8)->n;\n"
+              "    g(SQ(3), MP_RAW(bool, SQ(2)));\n}\n")
+    out = g.expand_in_source(source, header + "#define F(T, off) (*(T *)(p + (off)))\n", {"Widget"})
+    assert "volatile bool found" in out and "(*(int *)(p + (0x20))) = (*(Widget * *)((char *)this + (8)))->n" in out
+    assert "g(SQ(3), (*(bool *)((char *)this + (SQ(2)))))" in out  # (SQ is called with values: it stays)
+
+
+def test_a_bodys_local_of_a_type_the_header_lacks_is_a_type():
+    """The SDK's `WAVEFORMATEX format = {0};`, `BOOL wait;`, a type declared where the header doesn't reach: two
+    names in a row or `T *p =` start a declaration, never an expression; `a * b;` and `return x;` aren't these."""
+    from decompnet import permuter_gen as g
+
+    names = g.type_names("", "void f(int a, int b)\n{\n    WAVEFORMATEX format = { 0 };\n    BOOL wait;\n"
+                             "    CLobbyClient *lobby = &g_net.m_lobby;\n    a * b;\n    return a;\n}\n")
+    for t in ("WAVEFORMATEX", "BOOL", "CLobbyClient"):
+        assert f"typedef int {t};" in names
+    assert "typedef int a;" not in names and "typedef int return;" not in names
+
+
+@needs_tool
+def test_decomp_permuter_reads_an_sdk_local_and_a_macro_with_a_type():
+    job = {"header": CXX_HEADER + "#define MP_RAW(T, off) (*(T *)((char *)this + (off)))\n", "family": "base",
+           "seed": 1, "count": 8, "function": "Widget::Count",
+           "source": "int Widget::Count(int k)\n{\n    BOOL wait = 0;\n    int n = MP_RAW(int, 0x10);\n"
+                     "    for (Widget *w = this; w; w = w->next) n += w->mode + k;\n    return n + wait;\n}\n"}
+    gen = permute.Generator()
+    try:
+        job["header"] = permute.permuter_header(job["header"], job["source"])
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all(" Widget::Count(int k)\n" in v for v in variants)
 
 
 @needs_tool
