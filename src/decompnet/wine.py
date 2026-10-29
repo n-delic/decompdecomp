@@ -131,9 +131,8 @@ def environment(where: Path | None = None) -> dict[str, str]:
 
 
 def stop(where: Path | None = None) -> None:
-    """The app's wine server ended (`wineserver -k`), when the app quits: else it would stay up to
-    ten minutes after its last compile (tools/compile.py's SERVER_IDLE_SECONDS). Nothing when there's no wine or no
-    prefix."""
+    """The app's wine server ended (`wineserver -k`), when the app quits: else it would stay up to ten minutes
+    after its last compile (tools/compile.py's SERVER_IDLE_SECONDS). Nothing when there's no wine or no prefix."""
     where = where or prefix()
     wine = find() if needed() and where.is_dir() else None
     ws = server(wine) if wine else None
