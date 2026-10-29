@@ -109,12 +109,15 @@ def _said(out: list[str]) -> str:
 
 # a line where ninja's next step starts: its progress line, another failure, its own last word
 _NINJA_STEP = re.compile(r"^(?:\[\d+/\d+\] |FAILED: |ninja: )")
+_STEP_LINE = re.compile(r"^\[\d+/\d+\] ")  # a step ninja runs (or, -n, would run)
+UNIT_SECONDS = 600  # a unit's build, at most
+BATCH_UNIT_SECONDS = 120  # more for each other unit in the same run (they build side by side)
 
 
-def _failures(out: list[str]) -> dict[str, list[str]]:
-    """Each failed step's lines in ninja's output (its FAILED: line, the command, what it printed), by the targets
-    the step makes."""
-    found: dict[str, list[str]] = {}
+def _failures(out: list[str]) -> list[tuple[list[str], list[str]]]:
+    """Each failed step in ninja's output: (the targets it makes, its lines: the FAILED: line, the command, what it
+    printed). Once per step: a step making two files is one failure."""
+    found = []
     i = 0
     while i < len(out):
         m = _FAILED.match(out[i])
@@ -124,9 +127,7 @@ def _failures(out: list[str]) -> dict[str, list[str]]:
         j = i + 1
         while j < len(out) and not _NINJA_STEP.match(out[j]):
             j += 1
-        for t in m.group(1).split():
-            if not t.startswith("[code="):
-                found.setdefault(t, []).extend(out[i:j])
+        found.append(([t for t in m.group(1).split() if not t.startswith("[code=")], out[i:j]))
         i = j
     return found
 
@@ -769,40 +770,71 @@ class ForkProject:
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
         rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
-        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=600)
+        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=UNIT_SECONDS)
 
     def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
-        """Build several units' objects in one run of the build, each with what building it alone would say: (built,
-        the log), in the order given. Builds take turns (they share ninja's log), and a run's own cost (reading the
-        build file, configure's facts) is half a unit's build: 8 units took 5.6 s one by one, 1.3 s in one run
-        (an x86 game's LTCG units). With ninja only (`-k 0`: one unit that doesn't build doesn't stop the others);
-        other builds, and a run whose failure can't be put down to its units (ninja stopped before it built
-        anything: a target it has no rule for, configure failing), build each unit alone, as before."""
+        """Build several units' objects in one run of the build: (built, the log) for each, in the order given.
+        Builds take turns (they share ninja's log), and a run's own cost (reading the build file, configure's facts)
+        is half a unit's build: 8 units took 5.6 s one by one, 1.3 s in one run (an x86 game's LTCG units). With
+        ninja only (`-k 0`: one unit that doesn't build doesn't stop the others); other builds, and one unit, build
+        alone as before. A unit whose step failed gets that step's failure and no other unit's (it would read as its
+        own); a unit that built gets no log (what a run of several printed is theirs together, and no caller reads a
+        build's log when it built). A unit is built only when ninja says so: a run can stop short without a failure
+        of the unit's own (the memory cap ends the whole run, a dependency known only from a depfile), and then the
+        old object would be judged as the new file's. Whatever can't be put down to a unit (ninja stopping before it
+        builds anything: a target it has no rule for, configure failing) builds each unit alone."""
         cfg = self.objdiff_config()
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
         if len(units) < 2 or any(u.base is None for u in units) or Path(tool).stem.lower() != "ninja":
             return [self.build_unit(u, log=log) for u in units]
         rels = [os.path.normpath(os.path.relpath(u.base, self.root)) for u in units]
-        failed: list[str] = []
-        code, out, _ = self._execute([tool, *cfg.get("custom_args", []), "-k", "0", *dict.fromkeys(rels)], log, 600,
-                                  failed)
+        ninja = [tool, *cfg.get("custom_args", [])]
+        targets = list(dict.fromkeys(rels))
+        code, out, _ = self._execute([*ninja, "-k", "0", *targets], log,
+                                     UNIT_SECONDS + BATCH_UNIT_SECONDS * (len(targets) - 1), None)
         if code == 0:
-            return [(True, _said(out))] * len(units)
+            return [(True, "")] * len(units)
+        if code is None:  # it didn't start or ran out of time: a build of each alone would say the same, slower
+            return [(False, _said(out))] * len(units)
+        judged = self._judge_batch(units, rels, ninja, out)
+        if judged is None:
+            return [self.build_unit(u, log=log) for u in units]
+        return [r if r is not None else self.build_unit(u, log=log) for u, r in zip(units, judged)]
+
+    def _judge_batch(self, units: list[Unit], rels: list[str], ninja: list[str],
+                     out: list[str]) -> list[tuple[bool, str] | None] | None:
+        """For a run of units' builds that failed: each unit's (False, its failures), or (True, "") when ninja says
+        it's built, or None when that isn't certain (it's built alone); or None for the lot when a failure belongs
+        to none of them."""
         steps = _failures(out)
-        if code is None or not steps:
-            return [self.build_unit(u, log=log) for u in units]
-        # each failed step's units: its own object, or one made from what it made (a unit built in steps)
-        names = {u.name for u in units}
-        owners = {t: self.failed_units([t]) & names for t in steps}
-        if any(not who for who in owners.values()):  # a step none of them is made from (the build file itself)
-            return [self.build_unit(u, log=log) for u in units]
-        results = []
+        if not steps:
+            return None
+        try:
+            names = {u.name for u in units}
+            unit_of = {os.path.normpath(os.path.relpath(u.base, self.root)): u.name for u in self.units()
+                       if u.base is not None}
+            owners = []  # each failed step's units: its own object, or one made from what it made (a unit in steps)
+            for made, lines in steps:
+                reached = {os.path.normpath(t) for t in [*made, *self._made_from(made)]}
+                who = {unit_of[t] for t in reached if t in unit_of} & names
+                if not who:  # a step none of them is made from (the build file itself)
+                    return None
+                owners.append((who, lines))
+            rest = list(dict.fromkeys(r for u, r in zip(units, rels) if not any(u.name in w for w, _ in owners)))
+            unsure = False
+            if rest:  # built, ninja says: nothing left to do for them (a dry run)
+                code, said, _ = self._execute([*ninja, "-n", *rest], lambda *_: None, 120, None)
+                unsure = code != 0 or any(_STEP_LINE.match(line) for line in said)
+        except (ForkError, OSError, ValueError):
+            return None
+        results: list[tuple[bool, str] | None] = []
         for u in units:
-            mine = [line for t, who in owners.items() if u.name in who for line in steps[t]]
-            # a failed unit sees its own failures only: another unit's errors in its log read as its own
-            results.append((False, _said([*mine, "ninja: build stopped: subcommand failed."])) if mine else
-                           (True, ""))
+            mine = [line for who, lines in owners if u.name in who for line in lines]
+            if mine:
+                results.append((False, _said([*mine, "ninja: build stopped: subcommand failed."])))
+            else:
+                results.append(None if unsure else (True, ""))
         return results
 
     def failed_units(self, targets: list[str]) -> set[str]:
