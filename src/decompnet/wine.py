@@ -27,9 +27,9 @@ from pathlib import Path
 
 from decompnet.hostenv import NO_WINDOW
 
-# where wine is when it isn't found in PATH at app start. Try Homebrew and MacPorts's folders (Apple Silicon's, then
-# Intel's), the system's. Homebrew disabled these due to a Gatekeeper issue in September 2026; Gcenx's tap gcenx/wine
-# still has them)
+# where wine is when it isn't on the PATH when the app was started with: Homebrew's folders (Apple Silicon's, then
+# Intel's), MacPorts' (/opt/local), the system's, and Gcenx's Wine apps in Applications (Homebrew disabled its Wine
+# casks in September 2026 over Gatekeeper; Gcenx's own tap, gcenx/wine, still has them)
 MAC_APPS = ("Wine Stable", "Wine Staging", "Wine Devel", "Wine Crossover")
 PACKAGE_BINS = ("/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin")
 APP_FOLDERS = ("/Applications", str(Path.home() / "Applications"))
