@@ -55,7 +55,8 @@ class FakeNet:
 
 
 class ScriptedPermuter(Permuter):
-    """Scores from a table (C -> score; None: it doesn't compile; anything else is far off)."""
+    """Scores from a table (C -> score; None: it doesn't compile; an exception: the project refuses it; anything else
+    is far off)."""
 
     def __init__(self, net, scores):
         super().__init__(net)
@@ -63,7 +64,10 @@ class ScriptedPermuter(Permuter):
 
     def _score(self, agent, proj, fn, source, best, fork):
         self.judged.append(source)
-        return self.scores.get(source, 1000)
+        score = self.scores.get(source, 1000)
+        if isinstance(score, Exception):
+            raise score
+        return score
 
 
 AGENT = Agent(1, "permuter", None)
@@ -480,6 +484,36 @@ def test_decomp_permuter_reads_a_c_function_among_cxx_headers():
     finally:
         gen.close()
     assert variants and all("int __fastcall Count(Widget *w, Id id)" in v for v in variants)
+
+
+def test_a_variant_the_project_refuses_is_skipped_and_the_turn_goes_on(monkeypatch):
+    """decomp-permuter's inlining writes a helper function beside the function, which a fork's compile_and_diff
+    refuses: that refusal ended the function's permuting for good, seconds into its first turn (2 of 3 of an Xbox
+    game's near misses). Such a variant is skipped like one that doesn't compile."""
+    from decompnet.network import NetworkError
+
+    net = FakeNet()
+    helper = "inline s32 g(s32 a) { return a; }\n" + SOURCE
+    batches(monkeypatch, [helper, "closer", "same"])
+    p = ScriptedPermuter(net, {helper: NetworkError("compile_and_diff takes one function definition"), "closer": 20,
+                               "same": 0})
+    st = State()
+    p._permute(AGENT, net.project_row("game"), net.function(), st)
+    assert p.judged == [helper, "closer", "same"] and st.matched == 1
+
+
+def test_a_turn_whose_every_variant_is_refused_hands_the_refusal_on(monkeypatch):
+    """Every variant refused: the C the turn started from is what the project won't take, and _turn leaves the
+    function to agents (test_a_source_the_project_refuses_is_one_line_in_the_log)."""
+    from decompnet.network import NetworkError
+
+    net = FakeNet()
+    batches(monkeypatch, ["a", "b"])
+    refusal = NetworkError("send the function definition")
+    p = ScriptedPermuter(net, {"a": refusal, "b": refusal})
+    with pytest.raises(NetworkError):
+        p._permute(AGENT, net.project_row("game"), net.function(), State())
+    assert p.judged == ["a", "b"] and net.store.one("SELECT 1 FROM claims") is None  # let go all the same
 
 
 def test_a_source_the_project_refuses_is_one_line_in_the_log(tmp_path, caplog, monkeypatch):
