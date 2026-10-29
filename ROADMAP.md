@@ -91,7 +91,7 @@ Where to start on a gap:
 
 ## Recently done
 
-- **Visual C++ 2017 for Windows PC, through wine.** The `msvc2017` pack (proprietary, installed after the user
+- **Visual C++ 2017 for Windows PC, through wine.** The `msvc2015` pack (proprietary, installed after the user
   accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
   with (10.0.17763), from ojdkbuild's copies of the Build Tools, pinned by sha256. The SDK's headers are a toolchain
   of their own (`winsdk-10.0.17763`) that the pack names, so a later pack that uses the same SDK shares one copy
@@ -513,7 +513,7 @@ Where to start on a gap:
 
 PC projects build with Visual C++ 6.0 to 2010 (phases B and C are done: Recently done). The import already tells a
 newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Visual C++ 2017's compilers are
-installed (`msvc2017`, Recently done) and can be chosen per file, but games built with 2017 and newer are still
+installed (`msvc2015`, Recently done) and can be chosen per file, but games built with 2017 and newer are still
 refused at import.
 
 - **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules

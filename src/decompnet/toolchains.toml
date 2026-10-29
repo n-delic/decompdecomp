@@ -934,7 +934,10 @@ keep = { "Include/10.0.17763.0/shared" = "Include", "Include/10.0.17763.0/um" = 
 # program database DLLs (mspdb140, mspdbcore; msobj140 for debug information): they're copied beside it, so it runs
 # by itself under wine and on Windows, where Visual Studio's PATH would otherwise hold Hostx86/x86.
 # wibo can't run these compilers, so on Linux and macOS they run through wine (wine.py), which the user installs.
-[msvc2017]
+# Its id says 2015, its name 2017: the packs are named after the first version they hold (`msvc`: 6.0-7.1, `msvc2005`:
+# 2005-2010), and Visual C++ 2015 (Update 3) is to join this pack beside 2017, both run through wine. An install is
+# filed under its id, so the id was chosen before anyone installed the pack; its name says 2015 once 2015 is in it.
+[msvc2015]
 name = "Microsoft Visual C++ 2017 (PC)"
 kind = "compiler-pack"
 platform = "PC"
@@ -943,13 +946,13 @@ source = "ojdkbuild's Visual Studio 2017 Build Tools 14.16 (tools_toolchain_vs20
 description = "Visual C++ 2017 (14.16), the compiler of Windows games of 2017-2019, with its Windows 10 SDK: a 32-bit and a 64-bit compiler. Windows programs, run through wine on Linux and macOS."
 wine = true
 headers = ["winsdk-10.0.17763"]  # the SDK it was used with
-[[msvc2017.parts]]
+[[msvc2015.parts]]
 url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"  # 19.16.27027.1
 sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
 subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"
 keep = { "VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86" = "Bin", "VC/Tools/MSVC/14.16.27023/include" = "Include" }
 into = "14.16"
-[[msvc2017.parts]]
+[[msvc2015.parts]]
 url = "https://github.com/ojdkbuild/tools_toolchain_vs2017bt_1416/archive/d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a.tar.gz"
 sha256 = "f5e906cbb4406a5e1c9562a3d9e0c42fd91ba9cf99551b3ddd18ee6eb3358ac1"
 subdir = "tools_toolchain_vs2017bt_1416-d3cdb9a6cb3d92f6081290849f4386a9ff2ce30a"

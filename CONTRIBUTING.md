@@ -206,7 +206,7 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
    2012-2013 would be) with its `url`, its `sha256` (`sha256sum` of the archive) and `into = "11.0"`. An archive
    that's a whole install takes only its compiler and headers with `keep` (see `msvc2005`). A compiler of 2015 and
    newer compiles against a Windows SDK: that's a toolchain of its own (`winsdk-<version>`) the pack names in
-   `headers`, so packs that use one SDK share it (see `msvc2017`); each version's folder then gets an `includes.txt`
+   `headers`, so packs that use one SDK share it (see `msvc2015`); each version's folder then gets an `includes.txt`
    the build reads. Take it from where the decomp community keeps it (decomp.me's compilers, decomp.dev's archive,
    the repositories they use). Where the community keeps none (Visual C++ 2015 and newer: decomp.me's newest x86
    Visual C++ is 2005 SP1), take a public archive of the vendor's own files, pinned by commit and sha256, and say

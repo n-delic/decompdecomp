@@ -42,7 +42,7 @@ from .. import BETA, PROJECT, REBUILD_CHECK, Compiler, Console
 
 MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1",  # the `msvc` pack
                  "MSVC/8.0", "MSVC/8.0SP1", "MSVC/9.0", "MSVC/9.0SP1", "MSVC/10.0", "MSVC/10.0SP1",  # `msvc2005`
-                 "MSVC/14.16", "MSVC/14.16-x64"]  # `msvc2017`: its 32-bit compiler and its 64-bit one
+                 "MSVC/14.16", "MSVC/14.16-x64"]  # `msvc2015`: its 32-bit compiler and its 64-bit one
 # what the app calls a version whose number alone doesn't say it: 2017's (Visual Studio's year, and its target)
 MSVC_NAMES = {"14.16": "Visual C++ 14.16 (2017)", "14.16-x64": "Visual C++ 14.16 (2017, 64-bit)"}
 
@@ -61,7 +61,7 @@ class WindowsPC(Console):
                       for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
              ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 600 MB)"),
-             ("msvc2017", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 220 MB; runs "
+             ("msvc2015", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 220 MB; runs "
                           "through wine on Linux and macOS, which you install)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
     guides = ("x86", "cpp")

@@ -339,7 +339,7 @@ def _archive(tc_root, name: str, files: dict[str, str]) -> tuple[str, str]:
 
 
 def _pack_and_sdk(monkeypatch, tc_root) -> dict:
-    """A compiler pack of two versions that names an SDK of its own in `headers`, as msvc2017 does."""
+    """A compiler pack of two versions that names an SDK of its own in `headers`, as msvc2015 does."""
     url, sha = _archive(tc_root, "pack", {"bin/cl.exe": "cl", "include/sal.h": "the compiler's"})
     sdk_url, sdk_sha = _archive(tc_root, "sdk", {"um/windows.h": "windows", "shared/sal.h": "the SDK's"})
     reg = {"sdk": toolchains.Toolchain(id="sdk", name="SDK", license="proprietary", source="test", parts=[
@@ -413,10 +413,10 @@ def test_an_install_made_before_fingerprints_is_judged_by_its_archives(tc_root):
                 toolchains.fingerprint(tc, linux), tc.id
             assert toolchains.changed(tc.id, {**manifest, "parts": [*pinned, {"url": "https://x/old.tar.gz",
                                                                             "sha256": "0" * 64}]}), tc.id
-    sdk = toolchains.get("msvc2017")  # an install from before the SDK was a toolchain of its own: install it again
+    sdk = toolchains.get("msvc2015")  # an install from before the SDK was a toolchain of its own: install it again
     old = [{"url": url, "sha256": "0" * 64} for url in ("https://github.com/ojdkbuild/tools_toolchain_sdk10_17763/"
            "archive/a647d1194cd10afdaa52f8056db239b7598fe1dd.tar.gz", sdk.parts[0]["url"])]
-    assert toolchains.changed("msvc2017", {"parts": old, "commit": None, "wsl": False})
+    assert toolchains.changed("msvc2015", {"parts": old, "commit": None, "wsl": False})
 
 
 def test_a_manifest_is_never_seen_half_written(tc_root, monkeypatch):

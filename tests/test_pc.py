@@ -170,7 +170,7 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     compilers.write_text(json.dumps({"src/auto/new.cpp": "14.16"}))  # (what Settings and try_compiler do)
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert not ok and "DECOMPNET_WINE_PREFIX" in output or "has no wine" in output, output  # (no pack: no wine yet)
-    for tid in ("msvc2017", "winsdk-10.0.17763"):  # the pack is installed now
+    for tid in ("msvc2015", "winsdk-10.0.17763"):  # the pack is installed now
         (tmp_path / "toolchains" / tid).mkdir(parents=True)
         (tmp_path / "toolchains" / tid / toolchains.MANIFEST).write_text("{}")
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
@@ -734,11 +734,11 @@ def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
 def _wine_ready() -> bool:
     from decompnet import wine
 
-    return toolchains.installed("msvc2017") is not None and wine.problem() is None
+    return toolchains.installed("msvc2015") is not None and wine.problem() is None
 
 
 @needs_tools
-@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
 def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path, monkeypatch):
     """Visual C++ 2017's 32-bit and 64-bit compilers as a file's compiler: chosen in Settings while nothing in the file
     matches (each builds the file: an x86 object, an x64 one), tried by try_compiler with a real score, and refused
@@ -787,7 +787,7 @@ def _settings_choose_visual_cpp_2017(tmp_path):
     assert scratch_pe.file_compilers(root, "demoquest") == {} and net._function(adder, slug)["status"] == "matched"
 
 
-@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2017, proprietary) and, off Windows, wine")
+@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
 def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path, monkeypatch):
     """2017's Windows 10 SDK is a toolchain of its own (shared by the packs that use it): a project's file built with
     14.16 finds windows.h in it, through the folder's includes.txt, with the tools decompdecomp gives the build."""
@@ -924,15 +924,15 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
     # nothing is started for a project that never builds a 2017 file (no prefix made, no server)
     from decompnet import wine
 
-    (tmp_path / "toolchains" / "msvc2017").mkdir()
-    (tmp_path / "toolchains" / "msvc2017" / toolchains.MANIFEST).write_text("{}")
-    assert "msvc2017" not in "".join(scratch_pe.tool_args())  # (its SDK isn't installed: it can't build)
+    (tmp_path / "toolchains" / "msvc2015").mkdir()
+    (tmp_path / "toolchains" / "msvc2015" / toolchains.MANIFEST).write_text("{}")
+    assert "msvc2015" not in "".join(scratch_pe.tool_args())  # (its SDK isn't installed: it can't build)
     (tmp_path / "toolchains" / "winsdk-10.0.17763").mkdir()
     (tmp_path / "toolchains" / "winsdk-10.0.17763" / toolchains.MANIFEST).write_text("{}")
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(wine, "prepare", lambda *a, **k: pytest.fail("tool_args must start no wine"))
-    assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2017"),
+    assert scratch_pe.tool_args() == ["--msvc", str(tmp_path / "toolchains" / "msvc2015"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc2005"),
                                       "--msvc", str(tmp_path / "toolchains" / "msvc")]
     assert consoles.get("pc").build_env() == {"DECOMPNET_WINE": "/opt/wine/bin/wine",
@@ -946,7 +946,7 @@ def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkey
     the 2017 pack (restored from a save, or opened before its tools were brought up to date) runs its setup with
     the current tool_args, which hold no argument it doesn't know, wine installed or not."""
     monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
-    for tid in ("msvc", "msvc2017", "winsdk-10.0.17763"):
+    for tid in ("msvc", "msvc2015", "winsdk-10.0.17763"):
         (tmp_path / "toolchains" / tid).mkdir(parents=True)
         (tmp_path / "toolchains" / tid / toolchains.MANIFEST).write_text("{}")
     monkeypatch.setattr(toolchains, "get", lambda tid: type("T", (), {"supported": False})() if tid == "wibo"
@@ -965,7 +965,7 @@ def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkey
     (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "setup": [
         ["python", "tools/configure.py", "game", "--msvc", "/elsewhere"], ["ninja"]]}))
     first = ForkProject(root).setup_commands()[0]
-    assert "/elsewhere" not in first and str(tmp_path / "toolchains" / "msvc2017") in first  # (this computer's tools)
+    assert "/elsewhere" not in first and str(tmp_path / "toolchains" / "msvc2015") in first  # (this computer's tools)
     done = subprocess.run(first, cwd=root, capture_output=True, text=True, timeout=30)
     assert done.returncode == 0, done.stderr
 

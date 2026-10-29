@@ -19,7 +19,7 @@ def test_the_2017_pack_is_pinned_and_runs_through_wine():
     """Your verified downloads, each version a folder with Bin and Include (msvc2005's layout), the Windows 10 SDK's
     headers a toolchain of their own the pack names (shared by packs that use that SDK, one copy on disk), and the
     64-bit compiler with the host's program database DLLs beside it."""
-    tc = toolchains.get("msvc2017")
+    tc = toolchains.get("msvc2015")
     assert tc.wine and tc.proprietary and tc.kind == "compiler-pack" and tc.platform == "PC"
     assert all(len(p["sha256"]) == 64 for p in tc.parts)
     assert [p["into"] for p in tc.parts] == ["14.16", "14.16-x64"]
@@ -33,22 +33,22 @@ def test_the_2017_pack_is_pinned_and_runs_through_wine():
     x64 = tc.parts[1]["keep"]
     assert x64["VC/Tools/MSVC/14.16.27023/bin/Hostx86/x64"] == "Bin"
     assert {f"Bin/{dll}" for dll in ("mspdb140.dll", "mspdbcore.dll", "msobj140.dll")} <= set(x64.values())
-    assert not any(t.wine for tid, t in toolchains.registry().items() if tid != "msvc2017")  # (the rest: wibo)
+    assert not any(t.wine for tid, t in toolchains.registry().items() if tid != "msvc2015")  # (the rest: wibo)
 
 
 def test_without_wine_the_pack_says_how_to_get_it_before_downloading(tc_root, monkeypatch):
     monkeypatch.setattr(wine, "find", lambda: None)
     monkeypatch.setattr(wine.sys, "platform", "linux")
     with pytest.raises(toolchains.ToolchainError, match="no wine.*apt install wine"):
-        toolchains.install("msvc2017", accept_license=True, log=lambda *_: None)
-    assert toolchains.installed("msvc2017") is None and not (toolchains.root() / ".downloads").exists()
+        toolchains.install("msvc2015", accept_license=True, log=lambda *_: None)
+    assert toolchains.installed("msvc2015") is None and not (toolchains.root() / ".downloads").exists()
     monkeypatch.setattr(wine.sys, "platform", "darwin")
-    assert "Gcenx/macOS_Wine_builds" in toolchains.runtime_error("msvc2017")
+    assert "Gcenx/macOS_Wine_builds" in toolchains.runtime_error("msvc2015")
     # each pack that needs wine names itself (a 2015 or 2019 pack would say its own name, not 2017's)
-    assert toolchains.runtime_error("msvc2017").startswith(f"{toolchains.get('msvc2017').name} runs through wine")
+    assert toolchains.runtime_error("msvc2015").startswith(f"{toolchains.get('msvc2015').name} runs through wine")
     assert wine.problem("Visual C++ 2019").startswith("Visual C++ 2019 runs through wine")
     monkeypatch.setattr(wine.sys, "platform", "win32")  # Windows runs the compilers itself
-    assert toolchains.runtime_error("msvc2017") is None and wine.problem() is None
+    assert toolchains.runtime_error("msvc2015") is None and wine.problem() is None
 
 
 def test_wine_on_apple_silicon_needs_rosetta(tc_root, monkeypatch, tmp_path):
