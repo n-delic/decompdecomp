@@ -1,6 +1,7 @@
 """wine: how Linux and macOS run Visual C++ 2017 (wine.py). The parts that need wine itself skip without it."""
 
 import subprocess
+import sys
 import time
 
 import pytest
@@ -58,6 +59,7 @@ def test_wine_on_apple_silicon_needs_rosetta(tc_root, monkeypatch, tmp_path):
     assert "Rosetta 2" in wine.problem()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Wine is not required for Windows")
 def test_wine_is_found_where_a_mac_app_has_none_on_its_path(tmp_path, monkeypatch):
     """A Mac app starts with a PATH without Homebrew: wine is looked for where Homebrew and Gcenx's app put it, and
     its wineserver beside it."""
