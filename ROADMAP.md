@@ -103,9 +103,12 @@ Where to start on a gap:
   program database DLLs beside it, so it runs by itself). wibo can't run them (under a patched wibo a hello world
   exited 99 and `#include <windows.h>` failed without a word), so on Linux and macOS they run through wine, which
   the user installs; the pack says how before downloading (`wine.py`). The app keeps its own prefix beside its
-  toolchains and a wine server running for it (0.2 s a compile instead of 2.7 s), the build passes every path as
-  `Z:\...`, and wine's output goes through a file: the services the first wine program starts outlive it and, given
-  the build's pipe, held the build open for as long as the server ran. The older packs stay on wibo.
+  toolchains and a wine server for it between compiles (0.2 s a compile instead of 2.7 s; it leaves ten minutes after
+  the last one, or when the app quits). A build finds wine when a 2017 file builds (the app's build steps say where:
+  `Console.build_env`), so a project configured before wine or the pack was installed builds one as soon as they are,
+  and no older configure.py is given an argument it doesn't know. The build passes every path as `Z:\...`, and
+  wine's output goes through a file: the services the first wine program starts outlive it and, given the build's
+  pipe, held the build open for as long as the server ran. The older packs stay on wibo.
 - **PSP.** A UMD image (read in place, also as a CSO) or the game's program, with its title and product code from
   PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
   import stubs are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID

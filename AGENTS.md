@@ -46,7 +46,11 @@ Testing a change must not touch it:
 - Don't restart, update or quit the user's app, and don't change its projects, without asking.
 
 Compilers and tools (objdiff, dtk, wibo, Ghidra, m2c, decomp-permuter, period compilers) are pinned with checksums
-in `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. splat is a
+in `src/decompnet/toolchains.toml` and installed by `src/decompnet/toolchains.py`, never taken from PATH. The one
+exception is wine (`src/decompnet/wine.py`), which runs the compilers wibo can't (Visual C++ 2017) on Linux and macOS:
+it's a whole Windows runtime that the user's system installs and keeps updated, with no build the app could pin for
+every distribution and Mac, so it comes from `$DECOMPNET_WINE`, the PATH or the places wine.py lists, and only the
+packs marked `wine = true` use it. The compilers it runs are pinned like the rest. splat is a
 Python dependency in `pyproject.toml`. Proprietary
 compilers are only installed after the user accepts that in Setup; don't add code that fetches them silently.
 

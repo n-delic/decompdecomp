@@ -159,7 +159,10 @@ try {
 
 ## 6. External tools and safety
 
-- Compilers and tools come only from the pinned toolchains (`toolchains.toml`), never from PATH.
+- Compilers and tools come only from the pinned toolchains (`toolchains.toml`), never from PATH. Except wine
+  (`wine.py`), for the packs marked `wine = true`: a Windows runtime the user's system installs and updates, with no
+  build to pin for every Linux distribution and Mac. It comes from `$DECOMPNET_WINE`, the PATH or wine.py's known
+  places; the compilers it runs stay pinned.
 - Proprietary compilers are installed only after the user accepts their licence in the app.
 - Heavy tools run through `limits.capped(argv)` (a memory cap) and with a timeout.
 - Agents may edit only source and header files: `EDITABLE` and `FORBIDDEN_PARTS` in `forks/project.py`.

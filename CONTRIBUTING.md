@@ -207,14 +207,18 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
    that's a whole install takes only its compiler and headers with `keep` (see `msvc2005`). A compiler of 2015 and
    newer compiles against a Windows SDK: that's a toolchain of its own (`winsdk-<version>`) the pack names in
    `headers`, so packs that use one SDK share it (see `msvc2017`); each version's folder then gets an `includes.txt`
-   the build reads. Take it from where the decomp community keeps it; never from the vendor's site with someone's
-   account. Changing an entry later is safe: an install from the old entry counts as not installed
+   the build reads. Take it from where the decomp community keeps it (decomp.me's compilers, decomp.dev's archive,
+   the repositories they use). Where the community keeps none (Visual C++ 2015 and newer: decomp.me's newest x86
+   Visual C++ is 2005 SP1), take a public archive of the vendor's own files, pinned by commit and sha256, and say
+   whose it is in the entry's `source` (2017's is ojdkbuild's, made for building OpenJDK); never from the vendor's
+   site with someone's account. Changing an entry later is safe: an install from the old entry counts as not installed
    (`toolchains.changed`), and the app offers to install it again.
 2. **Proprietary means opt-in.** Its entry says `license = "proprietary"`. The app installs it only after the user
    accepts its licence in Setup. Never download it in code, a test or CI: public CI can't have it, and its tests
    skip there.
 3. **How it runs on Linux.** Windows compilers run through wibo (a pinned tool); check that the new `cl.exe` runs
-   there. wibo stops at the first Windows function it doesn't have and names it (2010's compiler needed
+   there. One wibo can't run (2015 and newer) goes in a pack marked `wine = true`, run through the user's wine
+   (`wine.py`). wibo stops at the first Windows function it doesn't have and names it (2010's compiler needed
    `msvcp100.dll` beside it; 2005's and later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
 4. **The console lists it**: `consoles/pc/__init__.py`, `MSVC_VERSIONS`. A ROM console's compilers are its
    `compilers` tuple: `Compiler(id, name, built, guess)` (see `consoles/ps2/__init__.py`).
