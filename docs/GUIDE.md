@@ -219,7 +219,8 @@ different build, which is planned.
   when you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the
   project, with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C
   runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long
-  after the game (mods) are left out, and the import's log says which and why.
+  after the game (mods) are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md)
+  lists the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
 of its own project.
