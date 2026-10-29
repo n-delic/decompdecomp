@@ -131,7 +131,9 @@ decompdecomp helps with these steps:
 
 The app starts each helper itself, from **Start agents** in the project's header. A helper that stops starts again
 by itself. On a usage limit it waits until the limit resets. Five fast failures in a row pause it, and the app says
-why. Run several helpers, of different models: they work on different functions at the same time.
+why. Run several helpers, of different models: they work on different functions at the same time. Choose **Multiple
+models** in the launcher to pick several at once; the app remembers the choice. One start can begin at most 24
+helpers in total.
 
 Agents get only the tools of decompdecomp. They get no shell. They cannot access your files, except the source tree
 of a fork. The app installs missing agents and tells you how to sign in.

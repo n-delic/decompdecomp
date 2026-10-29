@@ -72,6 +72,8 @@ _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[
 # with 2 per session that was most of what small functions cost.
 PER_SESSION = 8
 MAX_AT_ONCE = 8  # helpers started with one click
+MAX_PER_START = 24  # helpers one start may begin in total, across the models it picks: without it, many models at once
+                    # would launch hundreds (a start used to check only each endpoint's own max_sessions)
 FEED_LINES = 400  # what each helper said and did, kept for its details
 FEED_TEXT = 4000  # characters of one feed line
 LAST_WORDS = 600  # characters of the agent's last message kept on its record

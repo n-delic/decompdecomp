@@ -90,14 +90,18 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
-        endpoint was removed since)."""
+        endpoint was removed since). A model it was started on stays: the endpoint's default would record its costs
+        against another model."""
         if not kinds.get(kind).uses_endpoints:
             return options
         saved = settings.endpoint(str(options.get("endpoint") or "")) if options.get("endpoint") else (
             next((e for e in settings.endpoints() if e["base_url"] == options.get("base_url")), None))
         if saved is None and options.get("endpoint"):
             return None
-        return options | (session_options(saved) if saved is not None else {})
+        now = options | (session_options(saved) if saved is not None else {})
+        if options.get("picked_model"):
+            now["model"] = str(options["picked_model"])
+        return now
     manager.options_now = options_now
     manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 
