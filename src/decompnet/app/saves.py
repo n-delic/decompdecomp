@@ -656,8 +656,9 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
     net.apply_remote_layout(slug, layout, symbols)
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
-            row = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND vram=? AND status='open'",
-                             (pid, item["vram"])).fetchone()
+            # A synced layout can already have set it aside before this runs; its reason still has to come back.
+            row = db.execute("SELECT id,meta FROM functions WHERE project_id=? AND vram=? "
+                             "AND status IN ('open','asm')", (pid, item["vram"])).fetchone()
             if row is None:
                 continue
             why = {key: value for key, value in item.items() if key in SET_ASIDE_META}
@@ -716,8 +717,8 @@ def _apply(net, slug: str, folder: Path, manifest: dict, log, files: dict[str, s
             continue  # its function is gone (a split the layout couldn't make again)
     with net.store.tx() as db:
         for item in manifest.get("set_aside") or []:
-            row = db.execute("SELECT id, meta FROM functions WHERE project_id=? AND vram=? AND status='open'",
-                             (pid, item["vram"])).fetchone()
+            row = db.execute("SELECT id, meta FROM functions WHERE project_id=? AND vram=? "
+                             "AND status IN ('open','asm')", (pid, item["vram"])).fetchone()
             if row is not None:
                 why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",

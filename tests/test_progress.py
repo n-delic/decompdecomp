@@ -397,6 +397,40 @@ def test_restoring_the_same_linked_save_returns_fresh_counts_when_sync_is_a_noop
     assert net.progress.results.get("game") is None
 
 
+def test_a_set_aside_function_comes_back_through_save_and_restore(project, tmp_path, monkeypatch):
+    """The saved layout marks it asm before _apply runs; its reason must still be restored with it."""
+    net, folder, _ = project
+    net.set_aside_by_you("g", "game", "hand-written")
+    saves.save(net, "game")
+    saved = json.loads((folder / saves.MANIFEST).read_text())
+    assert saved["set_aside"] and saved["set_aside"][0]["asm_code"].endswith("hand-written")
+
+    work = tmp_path / "fresh"
+    work.mkdir()
+    fresh = RomNetwork(work / "app.db", work)
+    console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
+    monkeypatch.setattr(saves.consoles, "identify", lambda _: console)
+
+    def import_game(*_args, **_kwargs):
+        config = {"kind": "rom", "platform": "n64", "rom": {"sha1": "demo"}}
+        with fresh.store.tx() as db:
+            pid = db.execute("INSERT INTO projects(slug,name,root,config) VALUES('game','Game',?,?)",
+                             (str(work / "game"), json.dumps(config))).lastrowid
+            db.execute("INSERT INTO context_versions(project_id,version,header,created_at,unit) "
+                       "VALUES(?,1,'',0,'')", (pid,))
+            for name, address in (("f", 4096), ("g", 4100)):
+                db.execute("INSERT INTO functions(project_id,name,vram,size,n_insns,status,unit) "
+                           "VALUES(?,?,?,4,1,'open','')", (pid, name, address))
+        return "game"
+
+    monkeypatch.setattr(fresh, "import_rom", import_game)
+    monkeypatch.setattr(fresh, "apply_remote_layout", lambda *args: None)
+    out = saves.restore(fresh, str(folder), Path("unused-own-game.bin"), log=lambda *_: None)
+    row = fresh._function("g", out["slug"])
+    assert row["status"] == "asm"
+    assert "hand-written" in json.loads(row["meta"])["asm_code"]
+
+
 def test_restore_waiting_for_project_lock_does_not_hold_the_registry_lock(project, monkeypatch):
     net, folder, _ = project
     console = SimpleNamespace(read_game=lambda *args: SimpleNamespace(info={"sha1": "demo"}))
