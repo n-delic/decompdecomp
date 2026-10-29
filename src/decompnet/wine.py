@@ -45,7 +45,6 @@ PLACES = (*PACKAGE_BINS,
 # prefix is made (a dialog nobody answers: cl.exe needs neither)
 QUIET = {"WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}
 PREPARE_SECONDS = 600  # wineboot on a slow computer: a minute measured in a 2-core workspace
-SERVER_IDLE_SECONDS = 600  # (as the projects' tools/compile.py: the server leaves 10 minutes after its last compile)
 
 
 def needed() -> bool:
@@ -133,7 +132,8 @@ def environment(where: Path | None = None) -> dict[str, str]:
 
 def stop(where: Path | None = None) -> None:
     """The app's wine server ended (`wineserver -k`), when the app quits: else it would stay up to
-    SERVER_IDLE_SECONDS. Nothing when there's no wine or no prefix."""
+    ten minutes after its last compile (tools/compile.py's SERVER_IDLE_SECONDS). Nothing when there's no wine or no
+    prefix."""
     where = where or prefix()
     wine = find() if needed() and where.is_dir() else None
     ws = server(wine) if wine else None

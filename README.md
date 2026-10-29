@@ -235,8 +235,9 @@ from beta to recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
 Visual C++ 2017 runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install yourself (your
-distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases),
-which needs Rosetta 2 on Apple Silicon): the app says so when you install that pack. The older Visual C++ run without it.
+distribution's `wine` package; on a Mac, Wine Stable from
+[Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple Silicon): the
+app says so when you install that pack. The older Visual C++ run without it.
 
 ## Questions people ask
 

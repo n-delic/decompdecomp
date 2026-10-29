@@ -430,8 +430,8 @@ def test_a_manifest_is_never_seen_half_written(tc_root, monkeypatch):
     (folder / toolchains.MANIFEST).write_text(json.dumps({"id": "wibo", "parts": parts, "commit": None, "wsl": False}))
     moved = []
     real = os.replace
-    monkeypatch.setattr(toolchains.os, "replace", lambda a, b: (moved.append((os.path.basename(a), os.path.basename(b))),
-                                                                      real(a, b)))
+    name = os.path.basename
+    monkeypatch.setattr(toolchains.os, "replace", lambda a, b: (moved.append((name(a), name(b))), real(a, b)))
     assert toolchains.installed("wibo") is not None
     assert moved and moved[0][1] == toolchains.MANIFEST and moved[0][0] != toolchains.MANIFEST
     assert json.loads((folder / toolchains.MANIFEST).read_text())["fingerprint"] == toolchains.fingerprint(tc, False)

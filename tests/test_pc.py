@@ -150,8 +150,8 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
     fakes.mkdir()
     # wine and wibo write what they were given (and wine its prefix), then the object where /Fo says
     runner = ('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
-              f'with open({str(record)!r}, "a") as f: f.write(repr([Path(sys.argv[0]).name, os.environ.get("WINEPREFIX"),'
-              ' *sys.argv[1:]]) + "\\n")\n'
+              f'with open({str(record)!r}, "a") as f: f.write(repr([Path(sys.argv[0]).name,'
+              ' os.environ.get("WINEPREFIX"), *sys.argv[1:]]) + "\\n")\n'
               'out = next(a[3:] for a in sys.argv if a.startswith("/Fo")).replace("\\\\", "/")\n'
               'Path(out).parent.mkdir(parents=True, exist_ok=True)\nPath(out).write_text("object")\n'
               'print(sys.argv[-1] + "(1): warning C4100: a message naming the file")\n')
@@ -225,8 +225,8 @@ def test_wine_is_never_run_without_the_apps_prefix(tmp_path):
     """compile.py told to run a file through wine with no prefix named would run it in the user's own ~/.wine: it
     refuses, and says what's missing (wine itself, or the prefix)."""
     compile_py = Path(scratch_pe.__file__).with_name("project_template") / "tools" / "compile.py"
-    common = ["--config", "c.json", "--compiler", "cl.exe", "--include", "inc", "--output", "x.obj", "--source", "x.cpp",
-              "--wine"]
+    common = ["--config", "c.json", "--compiler", "cl.exe", "--include", "inc", "--output", "x.obj", "--source",
+              "x.cpp", "--wine"]
     env = {k: v for k, v in os.environ.items() if k not in ("DECOMPNET_WINE", "DECOMPNET_WINE_PREFIX")}
     done = subprocess.run([sys.executable, str(compile_py), *common], cwd=tmp_path, capture_output=True, text=True,
                           timeout=30, env={**env, "DECOMPNET_WINE": "/opt/wine/bin/wine"})
@@ -958,8 +958,9 @@ def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkey
     root = tmp_path / "project"
     (root / "tools").mkdir(parents=True)
     # the arguments the template's configure.py took before the 2017 pack; argparse refuses any other (exit 2)
-    (root / "tools/configure.py").write_text("import argparse\np = argparse.ArgumentParser()\np.add_argument('version')\n"
-                                             "p.add_argument('--msvc', action='append')\np.add_argument('--wibo')\n"
+    (root / "tools/configure.py").write_text("import argparse\np = argparse.ArgumentParser()\n"
+                                             "p.add_argument('version')\np.add_argument('--msvc', action='append')\n"
+                                             "p.add_argument('--wibo')\n"
                                              "p.parse_args()\n")
     (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc", "setup": [
         ["python", "tools/configure.py", "game", "--msvc", "/elsewhere"], ["ninja"]]}))

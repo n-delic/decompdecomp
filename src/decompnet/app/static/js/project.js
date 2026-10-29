@@ -670,8 +670,9 @@ async function installAllCompilers(owned) {
 }
 
 async function installToolchain(id, proprietary) {
-  const tc = (S.st?.toolchains || []).find((t) => t.id === id);  // (each says where it comes from: toolchains.toml's source)
-  if (proprietary && !confirm(`This downloads ${tc ? tc.name : "a compiler"}, proprietary software${tc?.source ? `, from ${tc.source}` : ""}. Install it only if you accept that. Continue?`)) return;
+  const tc = (S.st?.toolchains || []).find((t) => t.id === id);  // (each names where it comes from: its source)
+  const what = `${tc ? tc.name : "a compiler"}, proprietary software${tc?.source ? `, from ${tc.source}` : ""}`;
+  if (proprietary && !confirm(`This downloads ${what}. Install it only if you accept that. Continue?`)) return;
   const body = dialog("Install compiler or tool", `<pre class="joblog tall" id="toolLog"></pre>`);
   const log = body.querySelector("#toolLog");
   const finish = beginWork(log, "Installing compiler or tool", [], "Compiler or tool installed.");

@@ -18,10 +18,11 @@ does the delinking itself:
 
 The project (tools/configure.py, tools/delink.py) cuts the functions out of the user's copy into COFF objects at
 build time, one per source file (src/auto/text_<address>.cpp, about 4 KiB of functions each), and compiles src/ with
-MSVC through wibo (Visual C++ 2017 through wine). A program built without relocations (most games before 2005) has every address fixed, which is
-what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together from the project, each function
-at its address from its C where that compiles to the game's code, else from the delinked objects, the rest your
-copy's, and compares it with the user's copy: the project's rebuild check (check_code) and its export.
+MSVC through wibo (Visual C++ 2017 through wine). A program built without relocations (most games before 2005) has
+every address fixed, which is what this reads. `ninja rebuild` (tools/rebuild.py) puts the whole .exe back together
+from the project, each function at its address from its C where that compiles to the game's code, else from the
+delinked objects, the rest your copy's, and compares it with the user's copy: the project's rebuild check (check_code)
+and its export.
 The game's own DLLs are analysed the same way, each a program of the project (find_modules), rebuilt against its
 own copy.
 """

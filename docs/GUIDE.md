@@ -218,12 +218,12 @@ different build, which is planned.
   pack of their own); 2012 to 2015 import but can't match until their compilers come; 64-bit programs,
   programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
   says why. Visual C++ 2017 itself (32- and 64-bit) is a pack of its own, chosen per file in Settings: on Linux and
-  macOS it runs through wine, which you install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them
-  when you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the
-  project, with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C
-  runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long
-  after the game (mods) are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md)
-  lists the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
+  macOS it runs through wine, which you install. decompdecomp never removes or gets around DRM. A game that keeps code
+  in DLLs of its own comes with them when you give its path (the game's folder, or its .exe; a dropped file comes
+  alone): each DLL is a program of the project, with its source files in `src/auto/<its name>/`, its exports' names
+  and its own Visual C++. The C runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI
+  plugins and DLLs built long after the game (mods) are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md) lists
+  the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
 of its own project.

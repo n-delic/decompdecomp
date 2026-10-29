@@ -14,7 +14,8 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # prefix (decompdecomp makes it when Visual C++ 2017 is installed: its wine.py)
 WINE_QUIET = {"WINEDEBUG": "-all", "WINEDLLOVERRIDES": "mscoree,mshtml="}
 # how long the wine server stays after its last compile: then it leaves by itself, however the app ended (quit, Ctrl-C,
-# killed); the next compile starts one again
+# killed); the next compile starts one again. Only here: this file is copied into each project and runs without
+# decompdecomp (standard library only), so it can't share a constant with the app's wine.py
 SERVER_IDLE_SECONDS = 600
 
 
@@ -33,8 +34,8 @@ def keep_wine_server(wine: str, env: dict) -> None:
     if server is None:
         return  # (wine starts one of its own, which only lives a few seconds)
     try:
-        subprocess.run([server, f"-p{SERVER_IDLE_SECONDS}"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, start_new_session=True, timeout=30)
+        subprocess.run([server, f"-p{SERVER_IDLE_SECONDS}"], env=env, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         pass
 
@@ -49,8 +50,8 @@ def wine_setup() -> tuple[str, dict]:
                  "wine: decompdecomp's Compilers & tools says how to get it")
     prefix = os.environ.get("DECOMPNET_WINE_PREFIX")
     if not prefix:
-        sys.exit("compile.py: DECOMPNET_WINE_PREFIX names no wine prefix: decompdecomp sets it for its builds; by hand, "
-                 "point it at a folder of its own (never your ~/.wine)")
+        sys.exit("compile.py: DECOMPNET_WINE_PREFIX names no wine prefix: decompdecomp sets it for its builds; by "
+                 "hand, point it at a folder of its own (never your ~/.wine)")
     return wine, {**os.environ, **WINE_QUIET, "WINEPREFIX": prefix}
 
 
@@ -61,7 +62,7 @@ def main() -> int:
     parser.add_argument("--include", required=True, action="append")  # each searched in turn: Visual C++'s, an SDK's
     parser.add_argument("--config", required=True)
     parser.add_argument("--wrapper", default="")  # wibo
-    parser.add_argument("--wine", action="store_true")  # through wine: Visual C++ 2015 and newer (configure's WINE_FROM)
+    parser.add_argument("--wine", action="store_true")  # through wine: Visual C++ 2015+ (configure.py's WINE_FROM)
     parser.add_argument("--output", required=True)
     parser.add_argument("--source", required=True)
     parser.add_argument("flags", nargs=argparse.REMAINDER)

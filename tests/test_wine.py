@@ -3,7 +3,6 @@
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import pytest
 
@@ -83,7 +82,8 @@ def test_the_prefix_is_the_apps_own(tc_root):
     """Never ~/.wine: with the toolchains (a scratch home's toolchains have their own)."""
     assert wine.prefix() == toolchains.root() / ".wine"
     env = wine.environment()
-    assert env["WINEPREFIX"] == str(wine.prefix()) and env["WINEDEBUG"] == "-all" and "mscoree" in env["WINEDLLOVERRIDES"]
+    assert env["WINEPREFIX"] == str(wine.prefix()) and env["WINEDEBUG"] == "-all"
+    assert "mscoree" in env["WINEDLLOVERRIDES"]
 
 
 @pytest.mark.skipif(not wine.needed() or wine.problem() is not None, reason="needs wine (Linux, macOS)")
@@ -114,7 +114,8 @@ def test_wine_is_looked_for_where_each_mac_install_puts_it(where):
 
 
 def test_wineboot_runs_under_the_memory_cap(tc_root, monkeypatch, tmp_path):
-    """Making the prefix starts wineboot and wine's services: a heavy tool, run through limits.capped like the others."""
+    """Making the prefix starts wineboot and wine's services: a heavy tool, run through limits.capped like the
+    others."""
     ran = []
     monkeypatch.setattr(wine, "problem", lambda what="": None)
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
@@ -147,8 +148,6 @@ def test_the_server_leaves_by_itself_and_when_the_app_quits(tc_root, monkeypatch
     wine.prefix().mkdir(parents=True)
     wine.stop()
     assert ran == [(["/opt/wine/bin/wineserver", "-k"], str(wine.prefix()))]
-    compile_py = (Path(wine.__file__).parent / "consoles/pc/project_template/tools/compile.py").read_text()
-    assert f"SERVER_IDLE_SECONDS = {wine.SERVER_IDLE_SECONDS}" in compile_py  # (the build's own: the same)
 
 
 def test_a_prefix_can_be_a_scratch_one(tc_root, monkeypatch, tmp_path):
@@ -168,8 +167,9 @@ def test_a_prefix_that_fails_fails_the_install_with_its_own_reason(tc_root, monk
     archive = tc_root / "pack.tar.gz"
     with tarfile.open(archive, "w:gz") as t:
         t.add(src / "cl.exe", arcname="cl.exe")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     pack = toolchains.Toolchain(id="pack", name="A Visual C++ pack", license="MIT", source="test", wine=True,
-                                parts=[{"url": archive.as_uri(), "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}])
+                                parts=[{"url": archive.as_uri(), "sha256": digest}])
     monkeypatch.setattr(toolchains, "registry", lambda: {"pack": pack})
     monkeypatch.setattr(wine, "needed", lambda: True)
     monkeypatch.setattr(wine, "problem", lambda what="": None)
@@ -178,7 +178,8 @@ def test_a_prefix_that_fails_fails_the_install_with_its_own_reason(tc_root, monk
         raise RuntimeError("wine couldn't prepare its prefix in /x (wineboot exited with 1): out of disk")
 
     monkeypatch.setattr(wine, "prepare", fails)
-    with pytest.raises(toolchains.ToolchainError, match="A Visual C\\+\\+ pack downloaded, but wine couldn't prepare its "
-                                                         "prefix in /x .*out of disk"):
+    with pytest.raises(toolchains.ToolchainError,
+                       match="A Visual C\\+\\+ pack downloaded, but wine couldn't prepare its prefix in /x "
+                             ".*out of disk"):
         toolchains.install("pack", log=lambda *_: None)
     assert toolchains.installed("pack") is None and not toolchains.path("pack").exists()

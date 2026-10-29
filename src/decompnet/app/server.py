@@ -53,7 +53,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         window.close_app()
         manager.shutdown()
         flush_progress()
-        wine.stop()  # (its wine server would otherwise stay up to 10 minutes: wine.SERVER_IDLE_SECONDS)
+        wine.stop()  # (its wine server would otherwise stay up to 10 minutes after the last compile)
         os._exit(0)
 
     def flush_progress() -> None:

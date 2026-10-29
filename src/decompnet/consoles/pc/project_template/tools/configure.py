@@ -6,7 +6,8 @@
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
 macOS, Visual C++ 2015 and newer through wine, which wibo can't run them on: the build finds wine and its prefix in
-$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, which decompdecomp sets): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
+$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, which decompdecomp sets): each file with its own version when
+config/VERSION/file_compilers.json names one, and with the more flags
 config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions with the original's.
 `ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks it against your copy.
 Made by decompdecomp.
