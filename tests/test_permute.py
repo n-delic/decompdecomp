@@ -471,6 +471,9 @@ def test_macros_called_with_a_type_and_object_like_ones_are_put_in_the_functions
     out = g.expand_in_source(source, header + "#define F(T, off) (*(T *)(p + (off)))\n", {"Widget"})
     assert "volatile bool found" in out and "(*(int *)(p + (0x20))) = (*(Widget * *)((char *)this + (8)))->n" in out
     assert "g(SQ(3), (*(bool *)((char *)this + (SQ(2)))))" in out  # (SQ is called with values: it stays)
+    # a macro naming another name reads as the name it is: put in, it renamed the function's own class
+    alias = "bool CPlayerCar::Update(int n)\n{\n    return n == LIMIT;\n}\n"
+    assert g.expand_in_source(alias, "#define CPlayerCar CPlayerCarView\n#define LIMIT 3\n", set()) == alias
 
 
 def test_a_bodys_local_of_a_type_the_header_lacks_is_a_type():
@@ -479,10 +482,12 @@ def test_a_bodys_local_of_a_type_the_header_lacks_is_a_type():
     from decompnet import permuter_gen as g
 
     names = g.type_names("", "void f(int a, int b)\n{\n    WAVEFORMATEX format = { 0 };\n    BOOL wait;\n"
-                             "    CLobbyClient *lobby = &g_net.m_lobby;\n    a * b;\n    return a;\n}\n")
+                             "    CLobbyClient *lobby = &g_net.m_lobby;\n    a * b;\n    limit = 1.2f;\n"
+                             "    g_3EBF60 = 0;\n    return a;\n}\n")
     for t in ("WAVEFORMATEX", "BOOL", "CLobbyClient"):
         assert f"typedef int {t};" in names
     assert "typedef int a;" not in names and "typedef int return;" not in names
+    assert "limi" not in names and "g_3EB" not in names  # (one name isn't two: `limit = 1.2f;`)
 
 
 @needs_tool
