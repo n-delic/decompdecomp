@@ -43,6 +43,14 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS progress_state(
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
   disk TEXT NOT NULL, projected TEXT NOT NULL, updated_at REAL NOT NULL);
+-- a room guest's saved work waiting for the host (app/collab.py): the full sources live here, not in projects.config,
+-- which every project access parses
+CREATE TABLE IF NOT EXISTS saved_progress(
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  room TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, score INTEGER,
+  vram INTEGER, size INTEGER, best_comparable INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(project_id, name));
 CREATE TABLE IF NOT EXISTS symbols(
   project_id INTEGER NOT NULL, name TEXT NOT NULL, address INTEGER NOT NULL, size INTEGER NOT NULL DEFAULT 0,
   kind TEXT NOT NULL DEFAULT 'data', preview TEXT, PRIMARY KEY(project_id, name));
