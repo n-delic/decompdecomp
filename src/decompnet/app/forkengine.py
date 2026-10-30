@@ -2124,10 +2124,12 @@ class ForkEngine:
     @staticmethod
     def _missing_note(unit, fn) -> str:
         """What to tell an agent whose compile built, but whose unit's object has no such function: with what the
-        build said about its address (an LTCG harness's <object>.ltcg.json `problems`)."""
+        build said about its address (an LTCG harness's <object>.ltcg.json `problems`). It names the symbol, not the
+        row: a name made unique with a trailing "'" sent agents after a symbol no C could make."""
         at = f"0x{fn['vram']:08X}" if "vram" in fn.keys() and fn["vram"] else None
         said = [p for p in objdiff.ltcg_problems(unit.base) if at and at.lower() in p.lower()]
-        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
+        sym = ForkEngine._meta(fn).get("symbol") or fn["name"]
+        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {sym}, so there "
                 "is nothing to compare yet")
         if not said:
             return note + "."

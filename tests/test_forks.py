@@ -272,6 +272,18 @@ def test_csource_finds_definitions_and_stubs():
     assert "return 1" in csource.replace(src, "g", "int g(void) { return 1; }")
 
 
+def test_not_in_your_build_names_the_symbol_not_the_rows_unique_name():
+    """A function whose row name was made unique with a trailing "'" (a re-sync after a split) was reported as "its
+    object doesn't define _f@4'": agents spent days saying no C makes a name with a quote, and never looked further."""
+    from types import SimpleNamespace
+
+    from decompnet.app.forkengine import ForkEngine
+
+    fn = {"name": "_f@4'", "meta": json.dumps({"symbol": "_f@4"}), "vram": None}
+    note = ForkEngine._missing_note(SimpleNamespace(name="u", base=None), fn)
+    assert "doesn't define _f@4," in note and "_f@4'" not in note
+
+
 def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for():
     """A PC game's function written as a class named after it: its constructor was found, its destructor wasn't (an
     agent's func_004D9DD0::~func_004D9DD0 was refused: "send the complete definition of _func_004D9DD0"). C files
