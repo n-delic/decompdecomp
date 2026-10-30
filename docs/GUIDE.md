@@ -188,7 +188,7 @@ the game.
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (by file, through wine) | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine) | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **GBA · 3DS · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
 
@@ -222,11 +222,10 @@ different build, which is planned.
   keeps code in DLLs of its own comes with them when you give its path (the game's folder, or its .exe; a dropped file
   comes alone): each DLL is a program of the project, with its source files in `src/auto/<its name>/`, its exports' names
   and its own Visual C++. The C runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI
-  plugins and DLLs built long after the game (mods) are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md) lists
-  the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
+  plugins and DLLs built long after the game (mods) are left out, and the import's log says which and why.
+  [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
 
-Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status
-of its own project.
+Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status of its own project.
 
 **Tools for a start from scratch:**
 
@@ -371,6 +370,7 @@ ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https:
 [decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses. The
 [decompals](https://github.com/decompals) period compilers build the code.
 [decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games, and
-[wibo](https://github.com/decompals/wibo) runs the Windows compilers on Linux, and [wine](https://www.winehq.org/)
-Visual C++ 2017. Thank you to the decomp community for
-these tools. decompdecomp is not related to these projects.
+[wibo](https://github.com/decompals/wibo) runs the 32-bit Windows compilers on Linux/macOS, and
+[wine](https://www.winehq.org/) runs the 64-bit Visual C++ 2017 compiler.
+Thank you to the decomp community for these tools.
+decompdecomp is not related to these projects.
