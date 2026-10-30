@@ -691,12 +691,23 @@ name = "Ghidra"
 kind = "tool"
 license = "Apache-2.0"
 source = "NationalSecurityAgency/ghidra 12.1.4"
-description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs a Java 21+ JDK (the computer's, or the jdk toolchain); optional."
+description = "The NSA's reverse-engineering suite: analyses and decompiles code for almost any CPU. Large (540 MB) and needs a Java 21+ JDK (the computer's, or the jdk toolchain); optional. On a Mac its decompiler is built at install (Xcode Command Line Tools)."
 requires_java = 21
+# Ghidra's release brings its decompiler (a native program) for Intel Linux and Windows only. Without it Ghidra
+# still finds functions, but its analysis can't tell their calling conventions: on a Mac every __fastcall and
+# __thiscall function was imported as __cdecl. Elsewhere the decompiler is built from the C++ source the release
+# ships (build: _build_ghidra_decompiler), with the computer's own C++ compiler and make.
 [[ghidra.parts]]
 url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip"
 sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
 subdir = "ghidra_12.1.4_PUBLIC"
+platforms = ["linux-x86_64", "windows-x86_64"]
+[[ghidra.parts]]
+url = "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip"
+sha256 = "ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db"
+subdir = "ghidra_12.1.4_PUBLIC"
+build = "ghidra-decompiler"
+platforms = ["macos-x86_64", "macos-arm64", "linux-aarch64"]
 
 [jdk]
 name = "Java development kit (Eclipse Temurin 21)"
