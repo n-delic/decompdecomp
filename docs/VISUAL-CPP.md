@@ -16,7 +16,8 @@ import reads it and picks a compiler:
 1. The build the program names, if decompdecomp has it.
 2. Otherwise, the closest build of the same version.
 3. A game built with a version decompdecomp doesn't have yet (2012 to 2015) imports, but its functions can't match
-   until that version comes. Games built with 2017 or newer aren't started.
+   until that version comes. Games built with 2017 or newer aren't started yet, though decompdecomp has 2017's
+   compilers: you can choose one for a file in a project's Settings, and agents can try it with `try_compiler`.
 
 The Rich header keeps only the build number, not the whole version. Some updates kept the build number of `cl.exe`
 but changed the compiler behind it, so the Rich header can't tell them apart:
@@ -39,8 +40,15 @@ but changed the compiler behind it, so the Rich header can't tell them apart:
 | 9.0SP1 | 2008 SP1 | 15.00.30729.01 | 2008 | `msvc2005` |
 | 10.0 | 2010 | 16.00.30319.01 | 2010 | `msvc2005` |
 | 10.0SP1 | 2010 SP1 | 16.00.40219.01 | 2011 | `msvc2005` |
+| 14.16 | 2017 15.9, 32-bit | 19.16.27027.1 | 2019 | `msvc2015` |
+| 14.16-x64 | 2017 15.9, 64-bit | 19.16.27027.1 | 2019 | `msvc2015` |
 
 `src/decompnet/toolchains.toml` pins where each one comes from, with its checksum.
+
+The packs up to 2010 run through wibo on Linux and macOS. wibo can't run Visual C++ 2017, so its pack runs through
+wine there, which you install yourself; installing the pack says how. Windows runs every pack natively. The 2017 pack
+also brings the Windows 10 SDK it was used with (10.0.17763). The pack's id is `msvc2015` because 2015 is to join it,
+as each pack is named after the first version it holds.
 
 ## Where the code changes
 
@@ -74,7 +82,6 @@ builds decompdecomp has.
 | :-- | :-- | :-- | :-- |
 | 2013 Update 5 | 18.00.40629 | 2012 and 2013 use SSE2 by default. 2013 also stands in for 2012 until a 2012 source is found. | ojdkbuild/tools_toolchain_vs2013e |
 | 2015 Update 3 | 19.00.24210 | The new optimizer. It also covers 2017 15.0, which has the same optimizer. | SincoMao/AptioVBuildEnv (`EWDK1703`) |
-| 2017 15.9 | 19.16.27027 | The last 2017 build, with the 15.3 and 15.5 optimizer. | ojdkbuild/tools_toolchain_vs2017bt_1416 |
 | 2012 Update 4 | 17.00.61030 | The first SSE2 default. | None found yet. A 2012 release candidate (17.00.50522) exists, but it is unknown if games used. |
 
 If you know a public archive of Visual C++ 2012 (RTM or an update), please
