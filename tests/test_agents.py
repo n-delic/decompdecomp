@@ -552,7 +552,10 @@ def test_when_a_usage_limit_resets_is_read_from_what_the_agent_said():
     sydney = datetime.fromtimestamp(reset("You've hit your session limit · resets 5am (Australia/Sydney)", now),
                                     ZoneInfo("Australia/Sydney"))
     assert (sydney.hour, sydney.minute) == (5, 0)
-    assert reset("quota resets at 2026-10-18T15:30:00Z", now) == datetime.fromisoformat("2026-10-18T15:30:00+00:00").timestamp()
+    # an ISO time in UTC, two and a half hours after `now` wherever the tests run: 15:30Z was in the past on a computer
+    # whose 13:00 is later than 15:30 UTC (America/New_York: 17:00 UTC), and a reset in the past is none
+    later = (noon + timedelta(hours=2, minutes=30)).astimezone(timezone.utc)
+    assert reset(f"quota resets at {later:%Y-%m-%dT%H:%M:%SZ}", now) == later.timestamp()
     for vague in ("quota exhausted", "resets 3", f"usage limit reached|{int(now) + 365 * 86400}"):
         assert reset(vague, now) is None, vague
 
