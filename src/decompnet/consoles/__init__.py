@@ -417,7 +417,8 @@ class Console:
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
                 "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
-                "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
+                "compilers": [{"id": c.id, "name": c.name, "built": c.built, "target": c.target}
+                              for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside,

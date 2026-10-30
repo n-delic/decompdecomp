@@ -1980,8 +1980,9 @@ class ForkEngine:
         scratch = next((u.scratch for u in units if u.scratch), None) or {}
         platform = consoles.name(cfg.get("platform")) or "unknown platform"
         console = consoles.get(cfg.get("platform"))
+        # the project's own compilers (review of #138: a 32-bit PC game's session was told of MSVC/14.16-x64 too)
         per_file = (f"each source file can have its own compiler (try_compiler switches it, \"all\" tries each); "
-                    f"this platform's: {', '.join(c.id for c in console.compilers)}\n"
+                    f"this project's: {', '.join(c.id for c in console.project_compilers(fp))}\n"
                     if console.file_compiler(fp, "") else "")
         what = ("started from scratch from your copy of the game" if cfg.get("origin") == "scratch"
                 else f"a fork of {cfg['repo_url']}")

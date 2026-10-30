@@ -99,20 +99,21 @@ Where to start on a gap:
   it, said as the closest). A game of a version the packs don't have builds with the nearest by year, and the import
   says so: 2015's with 2017's (the same toolset's next version), 2019 and newer with 2017's, with a line that their
   compilers' own code can't match until they come, 2012-2013 with 2010 SP1 as before. A 32-bit game never builds with
-  or is offered the 64-bit compiler (a compiler's target: Settings and try_compiler "all" offer a project only its
-  program's). The drop zone offers the pack the import will ask for from the server's table, so a new pack needs
-  nothing in its script. Demo Quest built by 2017 and linked by its own linker under wine (`projects/demo-pc/build.py`
-  e.g. `14.16`) imports with every function, rebuilds byte for byte, and all of it matches from its C but the hand-written
-  `_ftol` (split where `game.c` starts: 2017 inlines a file's functions into each other). What 2017 showed, fixed for every
-  game: code before the first function Ghidra found (a function inlined everywhere, first in `.text`) is a function too; a
-  `catch (...) {}` block (only `mov eax, <where to go on>; ret`) is joined to its function; from 2015 on, the int3
-  after a call that never returns is the function's own; 2017's exception handlers that check the function's /GS cookie
-  first are set aside as stubs; a game that imports its C runtime from DLLs (vcruntime140, the Universal CRT) builds
-  with /MD, so the runtime's calls go through its imports; and a split moves a PC program's functions with their rows
-  (they were added anew, their names ending in `'`). Which packs run through wine is each pack's own
-  (toolchains.toml's `wine`, given to the build as `$DECOMPNET_WINE_PACKS` beside wine itself), not a version number,
-  so a 2012-2013 pack can run under either. Visual Studio 2017's release defaults (/GS, /Gy, SSE2, thread-safe statics)
-  are what the project's flags give 2017's compiler (a test checks each).
+  or is offered the 64-bit compiler (a compiler's target): not in the import's list of compilers, which refuses one
+  for another processor, nor in Settings, try_compiler "all", suggest or the agents' project info. The drop zone
+  offers the pack the import will ask for from the server's table, so a new pack needs nothing in its script. Demo Quest
+  built by 2017 and linked by its own linker under wine (`projects/demo-pc/build.py 14.16`) imports with every
+  function, rebuilds byte for byte, and all of it matches from its C but the hand-written `_ftol` (split where `game.c`
+  starts: 2017 inlines a file's functions into each other). What 2017 showed, fixed for every game: code before the first
+  function Ghidra found (a function inlined everywhere, first in `.text`) is a function too; a `catch (...) {}` block
+  (only `mov eax, <where to go on>; ret`) is joined to its function; from 2015 on, the int3 after a call that never
+  returns is the function's own; 2017's exception handlers that check the function's /GS cookie first are set aside as
+  stubs; a game that imports its C runtime from DLLs (vcruntime140, the Universal CRT) builds with /MD, so the runtime's
+  calls go through its imports; and a split moves a PC program's functions with their rows (they were added anew, their
+  names ending in `'`). Which packs run through wine is each pack's own (toolchains.toml's `wine`, given to the build as
+  `$DECOMPNET_WINE_PACKS` beside wine itself), not a version number, so a 2012-2013 pack can run under either. Visual
+  Studio 2017's release defaults (/GS, /Gy, SSE2, thread-safe statics) are what the project's flags give 2017's compiler
+  (a test checks each).
 
 - **Visual C++ 2017 for Windows PC, through wine.** The `msvc2015` pack (proprietary, installed after the user
   accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
@@ -282,9 +283,9 @@ Where to start on a gap:
   the game's own code (the Rich header's compilers, the build its linker shares; without a Rich header, the linker's
   version), how many files were built with whole-program optimisation (/GL), 32 or 64-bit, and the DRM or packer
   its sections show (SteamStub, SecuROM, SafeDisc, StarForce, Themida, VMProtect, Enigma, Denuvo, UPX), only named,
-  never removed. 64-bit programs, Visual C++ 2017 and newer (out of scope for now), mostly-/GL games and wrapped ones
-  aren't started, each with what it means; 2005 to 2015 games import, told they can't match until their compilers
-  come.
+  never removed. 64-bit programs, mostly-/GL games and wrapped ones aren't started, each with what it means (games
+  built with Visual C++ 2017 and newer were too, until they built with 2017's: see above); a game of a version the
+  packs don't have imports with the nearest they do, told what can't match until its compiler comes.
 - **C++ classes on Windows PC, by their own names.** A program built with `/GR` keeps each polymorphic class's
   name (`.?AVClassName@@`) next to its vtable, through the RTTI Complete Object Locator. decompdecomp reads it:
   `get_class` lists the classes (templates and nested names written as C++), each with its vtable, virtual functions,

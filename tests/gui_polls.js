@@ -189,8 +189,12 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       h.set(bytes);
       h[0x3c] = pe;
       const info = identifyHead(h, { name: "game.exe", size: 0x400 });
-      return [[...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join(""), info.pack, packOf(info)];
+      const hex = [...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      return [hex, info.pack, packOf(info), info.target];
     })),
+    // the compilers the import's dialog lists for a dropped 32-bit PC game (compilerFits), from the server's console
+    pcCompilers: (SERVER_CONSOLES.find((c) => c.id === "pc")?.compilers || [])
+      .filter((v) => compilerFits({ target: "x86" }, v)).map((v) => v.id),
     // a PSP's UMD image and programs are told apart from the PS2's; what can't be read yet says what to do instead
     psp: (() => {
       const head = (writes) => {

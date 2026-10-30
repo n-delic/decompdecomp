@@ -112,10 +112,12 @@ def test_generated_pc_builds_quote_paths_and_only_process_successful_objects(tmp
     assert not ok and "Visual C++ 9.9 isn't in" in output, output
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Windows runs every Visual C++ itself")
-def test_a_32_bit_games_project_is_offered_32_bit_compilers_only(tmp_path):
+def test_a_32_bit_games_project_is_offered_32_bit_compilers_only(tmp_path, monkeypatch):
     """The 64-bit compiler (MSVC/14.16-x64) was offered to every PC project, in Settings and to try_compiler "all":
-    a 32-bit game's files can't match with it. A project's target is its program's machine."""
+    a 32-bit game's files can't match with it. A project's target is its program's machine. The import's own list
+    offered it too (review of #138), and building a 32-bit game's project with it made x64 objects: the drop zone's
+    list keeps a compiler's target (home.js shows the program's own), and the import refuses another before it
+    installs or analyses anything. (No compiler runs here: on Windows too.)"""
     from decompnet.consoles.pc import WindowsPC
 
     pc = consoles.get("pc")
@@ -130,6 +132,16 @@ def test_a_32_bit_games_project_is_offered_32_bit_compilers_only(tmp_path):
             (False, True, True) if target == "x86" else (True, False, False))
     assert [c.id for c in consoles.get("nds").project_compilers(fp)] == [c.id for c in consoles.get("nds").compilers]
     assert all(c.target == ("x64" if c.id.endswith("-x64") else "x86") for c in WindowsPC.compilers)
+    listed = {c["id"]: c["target"] for c in pc.describe()["compilers"]}
+    assert listed["MSVC/14.16-x64"] == "x64" and listed["MSVC/14.16"] == listed["MSVC/6.0"] == "x86"
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))  # (none: refused before it looks)
+    game = tmp_path / "game.exe"
+    game.write_bytes(_windows_program(rich=[(0x105, 27027, 1)]))
+    with pytest.raises(ForkError, match=r"14\.16-x64 makes x64 code, and this game is an x86 program"):
+        scratch_pe.create(tmp_path / "project", game, compiler="MSVC/14.16-x64", log=lambda *_: None)
+    assert not (tmp_path / "project").exists()
+    with pytest.raises(ForkError, match="comes in"):  # (its own, 32-bit: on to the pack it needs)
+        scratch_pe.create(tmp_path / "project", game, compiler="MSVC/14.16", log=lambda *_: None)
 
 
 def test_which_compilers_run_through_wine_is_each_packs_own(tmp_path):
@@ -778,7 +790,12 @@ def test_agents_divide_a_file_and_give_it_its_own_compiler(pc):
     last = f"src/auto/text_{syms['_entity_spawn']:08X}.cpp"
     net.forks.set_file_compiler_by_hand(slug, last, "MSVC/7.1")  # (nothing in it matches yet)
     assert scratch_pe.file_compilers(root, "demoquest") == {last: "7.1"}
-    assert "each source file can have its own compiler" in net.forks.info(slug)
+    info = net.forks.info(slug)
+    assert "each source file can have its own compiler" in info
+    # the agents are told of this 32-bit game's own compilers, and can't suggest the 64-bit one (review of #138)
+    assert "MSVC/6.0" in info and "MSVC/14.16-x64" not in info
+    with pytest.raises(NetworkError, match="no compiler 'MSVC/14.16-x64' for this game; its own: MSVC/6.0"):
+        net.suggest(agent, slug, "built with 2017, 64-bit", compiler="MSVC/14.16-x64")
     adder = f"_func_{syms['_add_score']:08X}"
     sub = _by_address()
     said = net.forks.try_compiler(agent, slug, adder, "MSVC/6.0", source=sub(csource.get(GAME.read_text(), "add_score")))
@@ -1184,7 +1201,7 @@ def test_a_2017_game_without_its_sdk_or_wine_says_so_before_ghidra_runs(tmp_path
     (tmp_path / "toolchains" / "winsdk-10.0.17763").mkdir()
     (tmp_path / "toolchains" / "winsdk-10.0.17763" / toolchains.MANIFEST).write_text("{}")
     monkeypatch.setattr(wine, "needed", lambda: True)
-    monkeypatch.setattr(wine, "problem", lambda: "wine isn't installed")
+    monkeypatch.setattr(wine, "problem", lambda what="": "wine isn't installed")
     with pytest.raises(ForkError, match="wine isn't installed"):
         scratch_pe.create(tmp_path / "project", game, log=lambda *_: None)
     assert not (tmp_path / "project").exists()
@@ -1394,7 +1411,7 @@ def _importing(dlls: list[str]) -> bytes:
 
 def test_a_program_importing_its_c_runtime_from_a_dll_is_named():
     """A 2017 game built with /MD (Visual Studio's release default) calls the C runtime through its imports (`call
-    [__imp__strncpy]`): its project builds with /MD, so the runtime's headers declare them so (create)."""
+    [__imp__strncpy]`): its project builds with /MD (configure_settings, next test)."""
     pe = scratch_pe.read_pe(_importing(["KERNEL32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-string-l1-1-0.dll",
                                         "d3d9.dll"]))
     assert pe.dlls == ["KERNEL32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-string-l1-1-0.dll", "d3d9.dll"]
@@ -1402,6 +1419,31 @@ def test_a_program_importing_its_c_runtime_from_a_dll_is_named():
     assert scratch_pe.dll_runtime(scratch_pe.read_pe(_importing(["MSVCR71.dll", "msvcp140_1.dll", "msvcrt.dll"]))) == \
         ["MSVCR71.dll", "msvcp140_1.dll", "msvcrt.dll"]
     assert scratch_pe.dll_runtime(scratch_pe.read_pe(_importing(["KERNEL32.dll", "USER32.dll"]))) == []
+
+
+def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
+    """What create writes into the project's tools/configure.py (configure_settings), read back as configure.py reads
+    it: /MD for a 2015-and-newer game that imports its C runtime from DLLs, never for one with its own copy (/MT) or
+    an older compiler's (msvcr71, older games: not yet), and /EHsc for /GX from 2005 on. Each change must find its
+    line in the template, or the project would quietly build without it (review of #138: no test called create)."""
+    template = (Path(scratch_pe.__file__).with_name("project_template") / "tools" / "configure.py").read_text()
+    dll = scratch_pe.read_pe(_importing(["KERNEL32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-string-l1-1-0.dll"]))
+    own = scratch_pe.read_pe(_importing(["KERNEL32.dll", "USER32.dll"]))
+    old = scratch_pe.read_pe(_importing(["KERNEL32.dll", "MSVCR71.dll"]))
+
+    def settings(compiler: str, pe) -> tuple[str, list[str]]:
+        said: list[str] = []
+        text = scratch_pe.configure_settings(template, compiler, pe, log=said.append)
+        version = re.search(r'^MSVC_VERSION = "([^"]*)"', text, re.M).group(1)
+        flags = ast.literal_eval(re.search(r"^CL_FLAGS = (\[[^\]]*\])", text, re.M).group(1))
+        assert (version, bool(said)) == (compiler, "/MD" in flags)  # (the log says so exactly when it builds so)
+        return version, flags
+
+    assert settings("14.16", dll)[1] == ["/nologo", "/c", "/O2", "/W3", "/EHsc", "/MD"]
+    assert settings("14.16", own)[1] == ["/nologo", "/c", "/O2", "/W3", "/EHsc"]
+    assert settings("7.1", old)[1] == ["/nologo", "/c", "/O2", "/W3", "/GX"]
+    assert settings("10.0SP1", dll)[1] == ["/nologo", "/c", "/O2", "/W3", "/EHsc"]  # (2015 on only)
+    assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
 
 
 def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():

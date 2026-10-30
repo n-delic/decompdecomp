@@ -212,10 +212,13 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
     from decompnet.consoles.pc import scratch
 
     packs = gui["checks"]["pcPack"]
-    for head, pack, offered in packs:
+    for head, pack, offered, target in packs:
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
-    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
+        assert target == "x86"  # (a 32-bit program: its import lists 32-bit compilers only, next)
+    listed = gui["checks"]["pcCompilers"]  # (review of #138: it listed MSVC/14.16-x64 too)
+    assert "MSVC/6.0" in listed and "MSVC/14.16" in listed and not any(c.endswith("-x64") for c in listed)
+    assert [p for _, p, _, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
                                         "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
 
 

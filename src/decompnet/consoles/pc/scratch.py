@@ -169,8 +169,9 @@ PE_HEADER_BYTES = 0x18  # "PE\0\0" and the COFF header
 MACHINE_AT, SECTION_COUNT_AT, TIMESTAMP_AT, OPTIONAL_HEADER_SIZE_AT = 4, 6, 8, 20  # in the COFF header, from "PE\0\0"
 OPTIONAL_HEADER_AT = PE_HEADER_BYTES
 MACHINE_I386, PE32_MAGIC = 0x14C, 0x10B
+X64_MACHINE = 0x8664  # AMD64: a 64-bit program's (MACHINES)
 X86 = "32-bit x86"
-MACHINES = {MACHINE_I386: X86, 0x8664: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
+MACHINES = {MACHINE_I386: X86, X64_MACHINE: "64-bit (x64)", 0xAA64: "64-bit ARM", 0x1C0: "ARM", 0x1C4: "ARM",
             0x200: "Itanium"}
 ENTRY_AT, IMAGE_BASE_AT, IMAGE_SIZE_AT, IMPORTS_AT = 16, 28, 56, 104  # in the optional header
 SECTION_HEADER_BYTES, SECTION_FLAGS_AT = 40, 36
@@ -511,7 +512,8 @@ def game_info(path: Path) -> dict:
         why = f"it was built with {built.compiler}; the closest the compiler packs have is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
-            "cannot_match": built.cannot_match(), "exact": built.exact}
+            "cannot_match": built.cannot_match(), "exact": built.exact,
+            "target": "x64" if built.machine == MACHINES[X64_MACHINE] else "x86"}
 
 
 # ---------------------------------------------------------------------------------------------------- the game's DLLs
@@ -1725,6 +1727,22 @@ def set_frame_flags(root: Path, version: str, keep: set[str] = frozenset()) -> i
 # ---------------------------------------------------------------------------------------------------- the project
 
 
+def configure_settings(text: str, compiler: str, pe: PE, log=print) -> str:
+    """tools/configure.py's settings for the game (its `text`, the template's): the Visual C++ it builds with, and the
+    flags that version and the program need: /EHsc for /GX from 2005 on (saying /GX warns on every file), and /MD
+    from 2015 on for a program that imports its C runtime from DLLs (dll_runtime: then the runtime's headers declare
+    its functions as imports, `call [__imp__strncpy]`, as the game's code calls them)."""
+    text = text.replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
+    if compiler_pack(compiler) != "msvc":
+        text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
+    if (runtime := dll_runtime(pe)) and _version_key(re.match(r"\d+\.\d+", compiler).group()) >= DLL_RUNTIME_FROM:
+        text = text.replace('"/EHsc"]  # /EHsc', '"/EHsc", "/MD"]  # /MD: its C runtime is a DLL, as the program '
+                            'imports it; /EHsc')
+        log(f"it imports its C runtime from {', '.join(runtime)}: it builds with /MD, so the C runtime's headers "
+            "declare their functions as imports")
+    return text
+
+
 def dll_runtime(pe: PE) -> list[str]:
     """The DLLs of the C runtime the program imports from (C_RUNTIME_DLL): none, it has its own copy (/MT)."""
     return [dll for dll in pe.dlls if C_RUNTIME_DLL.fullmatch(dll)]
@@ -1876,7 +1894,7 @@ def _header_compiles(root: Path, version: str, unit: str, log) -> bool:
     """Whether a source file that includes common.h, with the game's types, builds: a header that doesn't would fail
     every attempt in every file."""
     obj = (Path("build") / version / _source(root, unit)).with_suffix(".obj").as_posix()
-    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS)[0]
+    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS, platform="pc")[0]  # (at create too)
 
 
 _PROGRAMS: dict[tuple, list[PE]] = {}  # (paths, mtimes) -> the parsed programs, for data_bytes
@@ -2036,7 +2054,7 @@ def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
 
 
 def _run(cmd: list[str], root: Path, what: str, log) -> None:
-    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS)
+    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS, platform="pc")  # (the first: no manifest yet)
     if not ok:
         raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
@@ -2048,6 +2066,14 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     info = game_info(game)
     version = info["id"]
     compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
+    from . import X64_SUFFIX
+
+    if (theirs := "x64" if compiler.endswith(X64_SUFFIX) else "x86") != info["target"]:
+        # (review of #138: the import's list offered MSVC/14.16-x64 for a 32-bit game, whose project then built x64
+        # objects that can never match its code)
+        raise ForkError(f"Visual C++ {compiler} makes {theirs} code, and this game is an {info['target']} program: "
+                        f"none of its functions could match. Choose a compiler for {info['target']} (or let "
+                        "decompdecomp pick from the program)")
     log(f"the program: {info['summary']}")
     for why in info["cannot_match"]:
         log(f"what can't match: {why}")
@@ -2145,15 +2171,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (root / "include").mkdir()
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
-    text = cfg.read_text(encoding="utf-8").replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
-    if pack != "msvc":  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
-        text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
-    if dll_runtime(pe) and _version_key(re.match(r"\d+\.\d+", compiler).group()) >= DLL_RUNTIME_FROM:
-        text = text.replace('"/EHsc"]  # /EHsc', '"/EHsc", "/MD"]  # /MD: its C runtime is a DLL, as the program '
-                            'imports it; /EHsc')
-        log(f"it imports its C runtime from {', '.join(dll_runtime(pe))}: it builds with /MD, so the C runtime's "
-            "headers declare their functions as imports")
-    cfg.write_text(text, encoding="utf-8")
+    cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log), encoding="utf-8")
     conf = root / "config" / version
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({

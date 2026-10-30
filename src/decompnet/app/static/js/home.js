@@ -113,6 +113,11 @@ function parseRom(buf) {
   };
 }
 
+/* Whether the import offers a compiler for what was dropped: only those for the program's processor (a 32-bit PC
+   game's, never the 64-bit compiler, whose code can't match it; Compiler.target). The import refuses another all the
+   same (scratch.create). */
+const compilerFits = (info, compiler) => !info?.target || !compiler.target || compiler.target === info.target;
+
 /* What the user dropped, from its first bytes (nothing is uploaded until they confirm). */
 const platformName = (p) => ({ gcwii: "GameCube or Wii", playstation: "PlayStation 1, 2 or PSP" }[p] || consoleOf(p)?.name || "");
 /* What installing a console's proprietary compiler pack (its first pack) means, and how its compiler is picked. */
@@ -225,7 +230,8 @@ function identifyHead(head, file) {
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
-    return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+    return { ...base, platform: "win32", order: "Windows program (.exe)",
+      entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe), target: "x86" };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
   // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
@@ -352,7 +358,10 @@ function setupCompilers(info) {
   }
   // a project of the community's kind: the compiler versions its build knows (a compressed GameCube or Wii disc: both)
   const shown = p === "gcwii" ? [consoleOf("gc"), consoleOf("wii")].filter(Boolean) : [con];
-  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${c.compilers.map((v) => `<option value="${esc(v.id)}" ${v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc") ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</optgroup>`).join("")
+  const chosen = (c, v) => v.id === c.default_compiler && (p !== "gcwii" || c.id === "gc");
+  const options = (c) => c.compilers.filter((v) => compilerFits(info, v))
+    .map((v) => `<option value="${esc(v.id)}" ${chosen(c, v) ? "selected" : ""}>${esc(v.name)}</option>`).join("");
+  select.innerHTML = shown.map((c) => `<optgroup label="${esc(c.name)}">${options(c)}</optgroup>`).join("")
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
   const pack = packOf(info);
   note.hidden = false;
