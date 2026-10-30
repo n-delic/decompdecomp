@@ -238,13 +238,13 @@ game's code is its rights holder's: keep it to yourself.
 | Game Boy Advance, 3DS, Switch, Xbox, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
-[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
-from beta to recommended.
+[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes from beta to
+recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
-Visual C++ 2017 runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install yourself (your distribution's `wine`
-package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple Silicon): the app says
-so when you install that pack. The older Visual C++ run without it.
+Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you
+install yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs
+Rosetta 2 on Apple Silicon): the app says so when you install that pack. The older Visual C++ run without it.
 
 ## Questions people ask
 
@@ -321,8 +321,7 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
 decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals
-compilers. The
-[guide](docs/GUIDE.md#built-on) lists them.
+compilers. The [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License
 

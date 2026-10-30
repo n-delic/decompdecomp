@@ -115,16 +115,23 @@ def prefix() -> Path:
 
 def build_env() -> dict[str, str]:
     """What a project's build needs to run its Visual C++ 2015+ files through wine, read by its tools/compile.py when
-    such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX). Only where a pack that
-    needs wine is installed and wine is here; it starts nothing (the first such compile starts the server)."""
+    such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX); and, for its
+    tools/configure.py, which installed packs wine runs, not wibo ($DECOMPNET_WINE_PACKS: their folders, joined by
+    os.pathsep), as toolchains.toml's `wine` says. Only where a pack that needs wine is installed and wine is here
+    (never on Windows, which runs the compilers itself); it starts nothing (the first such compile starts the
+    server). In the environment, not configure.py's arguments: an older project's configure.py ran by its stored
+    setup commands before its tools are brought up to date would refuse an argument it doesn't know."""
     if not needed():
         return {}
     from . import toolchains
 
-    if not any(tc.wine and toolchains.installed(tid) is not None for tid, tc in toolchains.registry().items()):
+    packs = [toolchains.path(tid) for tid, tc in toolchains.registry().items()
+             if tc.wine and toolchains.installed(tid) is not None]
+    wine = find() if packs else None
+    if not wine:
         return {}
-    wine = find()
-    return {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix())} if wine else {}
+    return {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix()),
+            "DECOMPNET_WINE_PACKS": os.pathsep.join(str(p) for p in packs)}
 
 
 def environment(where: Path | None = None) -> dict[str, str]:

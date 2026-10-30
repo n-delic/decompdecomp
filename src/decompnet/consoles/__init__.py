@@ -47,6 +47,7 @@ class Compiler:
     name: str  # what the app shows: "KMC GCC 2.7.2"
     built: str = ""  # which games it built, for Setup: "many third-party N64 games"
     guess: str = ""  # what read_game calls it when a program looks built by it ("KMC", "EEGCC-2.95.2")
+    target: str = ""  # the processor its code is for, where a console's compilers differ ("x86", "x64"): Console.target
 
 
 class Console:
@@ -243,6 +244,16 @@ class Console:
     def read_data(self, fp, name: str, length: int) -> str | None:
         """A data symbol's bytes, when the project's objects don't hold the game's data; None: they do."""
         return None
+
+    def target(self, fp) -> str:
+        """The processor a project's code is for, where the console's compilers make code for more than one (PC:
+        32-bit or 64-bit); "": they all make the same."""
+        return ""
+
+    def project_compilers(self, fp) -> list[Compiler]:
+        """The compilers a project's files can be built with (Settings, try_compiler): those for its target."""
+        target = self.target(fp)
+        return [c for c in self.compilers if not target or not c.target or c.target == target]
 
     def file_compiler(self, fp, source: str) -> str | None:
         """The compiler (one of `compilers`) the project builds a source file with, when its build lets each file have

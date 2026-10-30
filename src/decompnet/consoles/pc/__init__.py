@@ -1,13 +1,13 @@
-"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010, PROJECT mode. Only
-the game is a Windows program: decompdecomp runs on Linux and macOS, and so do the compilers (through wibo; Visual
-C++ 2017's, which wibo can't run, through wine: wine.py). Visual C++ 2017 (its 32-bit and 64-bit compilers) can be
-chosen for a source file in Settings; games built with it are next (ROADMAP.md, Newer Windows games).
+"""Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
+newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
+macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
+Visual C++ 2017's 64-bit compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games).
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
   of its own (the target objdiff compares with); which Visual C++ built it comes from the program's Rich header,
-  which also says (with its sections) whether decompdecomp can start it at all: 64-bit, Visual C++ 2017 and newer,
-  mostly whole-program optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
+  which also says (with its sections) whether decompdecomp can start it at all: 64-bit, mostly whole-program
+  optimised, or wrapped in DRM (scratch.describe). The rebuild check, which is also the
   project's export, puts the whole program back together from the project (`ninja rebuild`, check_code): each
   function from its C where that compiles to the game's code, else from those objects. Visual C++'s
   exception-handling stubs are set aside (exception_stubs), and so are the import thunks, named after their imports
@@ -45,6 +45,10 @@ MSVC_VERSIONS = ["MSVC/6.0", "MSVC/7.0", "MSVC/7.1",  # the `msvc` pack
                  "MSVC/14.16", "MSVC/14.16-x64"]  # `msvc2015`: its 32-bit compiler and its 64-bit one
 # what the app calls a version whose number alone doesn't say it: 2017's (Visual Studio's year, and its target)
 MSVC_NAMES = {"14.16": "Visual C++ 14.16 (2017)", "14.16-x64": "Visual C++ 14.16 (2017, 64-bit)"}
+X64_SUFFIX = "-x64"  # a 64-bit compiler's version: the rest are 32-bit x86's (Compiler.target)
+
+
+PE_HEAD_BYTES, X64_MACHINE = 4096, (0x8664).to_bytes(2, "little")  # where a program's headers are; AMD64's machine
 
 
 class WindowsPC(Console):
@@ -57,7 +61,8 @@ class WindowsPC(Console):
     mode = PROJECT
     layout = "Ghidra + objdiff"
     compilers = tuple(Compiler(v, MSVC_NAMES.get(v.removeprefix("MSVC/"),
-                                                 f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}"))
+                                                 f"Visual C++ {v.removeprefix('MSVC/').replace('SP', ' SP')}"),
+                               target="x64" if v.endswith(X64_SUFFIX) else "x86")
                       for v in MSVC_VERSIONS)
     packs = (("msvc", "Visual C++ 6.0, 7.0 and 7.1, the compilers of PC games (proprietary)"),
              ("msvc2005", "Visual C++ 2005, 2008 and 2010, the compilers of newer PC games (proprietary, 600 MB)"),
@@ -82,6 +87,29 @@ class WindowsPC(Console):
     # the thunks, which keep no frame and would count against their file's. Its build tools have a version of their
     # own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
     ANALYSIS = 6
+
+    def target(self, fp) -> str:
+        """The project's program's processor: x86 (a 32-bit program: every game started so far), or x64."""
+        from .scratch import MACHINE_AT, _pe_header
+
+        manifest = fp.manifest or {}
+        path = fp.root / manifest.get("game", {}).get("path", f"orig/{manifest.get('version')}.exe")
+        try:
+            with open(path, "rb") as f:
+                head = f.read(PE_HEAD_BYTES)
+        except OSError:
+            return "x86"  # (not in the project yet: as every game started so far)
+        at = _pe_header(head)
+        return "x64" if at is not None and head[at + MACHINE_AT:at + MACHINE_AT + 2] == X64_MACHINE else "x86"
+
+    def describe(self) -> dict:
+        """With the pack each Visual C++ version's games build with (by what the Rich header or the linker names; "":
+        none), and where 2015 and newer's builds start, for the drop zone (home.js pcPack): no numbers of its own."""
+        from .scratch import MSVC_DEFAULT, VC14_BUILDS, VISUAL_STUDIO, X86, Build, compiler_pack
+
+        return {**super().describe(), "vc14_builds": [list(b) for b in VC14_BUILDS],
+                "pack_by_version": {"": compiler_pack(MSVC_DEFAULT),
+                                    **{v: compiler_pack(Build(X86, v, None).pack_version) for v in VISUAL_STUDIO}}}
 
     def sniff(self, head: bytes, file) -> bool:
         """Any Windows program, 64-bit ones too: the import says exactly why one it can't start can't start."""

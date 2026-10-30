@@ -304,6 +304,12 @@ def _headers_defining(fp: ForkProject, rel: str, include_lines: list[str], names
     return out
 
 
+def _module(unit: str) -> str:
+    """The module a unit's file belongs to: its name's first folder ("game/text_10001000": a PC game's DLL; a
+    GameCube REL's), none for the program's own (a PC program's "text_00401000"), so a split moves its functions."""
+    return unit.split("/", 1)[0] if "/" in unit else ""
+
+
 def _data_symbols(target: Path | None) -> set[str]:
     """The data symbols of a target object: objdiff's report counts data in a code section as a function (a DS
     program's BuildInfo, the SDK's build information with its RSA text, sits in .text), and agents tried to write it
@@ -896,7 +902,7 @@ class ForkEngine:
         moved: dict[tuple[str, str], list] = defaultdict(list)  # (module, symbol) -> rows no unit has any more
         for key, r in existing.items():
             if key not in here and key[0]:
-                moved[(key[0].split("/", 1)[0], key[1])].append(r)
+                moved[(_module(key[0]), key[1])].append(r)
         with self.net.store.tx() as db:
             for uname, f in rows:
                 sym = f["name"]
@@ -913,8 +919,8 @@ class ForkEngine:
                 if real := reals.get(sym):
                     meta["real"] = real
                 old = existing.get((uname, sym, k))
-                if old is None and moved.get((uname.split("/", 1)[0], sym)):
-                    old = moved[(uname.split("/", 1)[0], sym)].pop(0)
+                if old is None and moved.get((_module(uname), sym)):
+                    old = moved[(_module(uname), sym)].pop(0)
                     name = sym if counts[sym] == 1 else f"{sym}@{uname}" + (f"#{k + 1}" if k else "")
                     used.discard(old["name"])
                     while name in used:
@@ -2871,13 +2877,13 @@ class ForkEngine:
             raise NetworkError("this project's flags are its build's own: try_compiler changes only the file's compiler")
         if fn["status"] == "matched":
             raise NetworkError(f"{fn['name']} already matches with {own}")
-        known = [c.id for c in console.compilers]
+        known = [c.id for c in console.project_compilers(fp)]  # (a 32-bit game's: never a 64-bit compiler)
         if compiler.strip().lower() == "all":
             wanted = sorted(known, key=lambda c: abs(known.index(c) - known.index(own))) if own in known else known
         else:
             wanted = [compiler.strip()]
         if wanted[0] not in known:
-            raise NetworkError(f"{wanted[0]!r} isn't one of this platform's compilers: {', '.join(known)}")
+            raise NetworkError(f"{wanted[0]!r} isn't one of this project's compilers: {', '.join(known)}")
         if wanted == [own]:
             raise NetworkError(f"{unit.source} is built with {own} already")
         source = source.strip() or self.net._source_of(fn) or ""
@@ -3675,7 +3681,8 @@ class ForkEngine:
         own, parts = found
         return {"compiler": {"toolchain": own, "name": consoles.compiler_name(own), "flags": [], "installed": True,
                              "proprietary": False, "supported": True},
-                "compilers": [c.id for c in consoles.get(cfg.get("platform")).compilers], "compiler_ranges": parts}
+                "compilers": [c.id for c in consoles.get(cfg.get("platform")).project_compilers(fp)],
+                "compiler_ranges": parts}
 
     def compiler_answer(self, slug: str) -> dict:
         """The Settings panel's answer (engine.compiler_answer's form): the project's compiler and the files built
@@ -3735,8 +3742,8 @@ class ForkEngine:
         console = consoles.get(cfg.get("platform"))
         if console.file_compiler(fp, "") is None:
             raise NetworkError("this project's own build sets its compilers")
-        if compiler not in {c.id for c in console.compilers}:
-            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler not in {c.id for c in console.project_compilers(fp)}:
+            raise NetworkError(f"{compiler!r} isn't one of this project's compilers")
         sources = sorted({u.source for u in fp.units() if u.source})
         stayed = []
         for n, source in enumerate(sources, 1):
@@ -3798,8 +3805,8 @@ class ForkEngine:
         units = fp.units_for(source)
         if own is None or not units:
             raise NetworkError(f"{source} isn't a source file whose compiler this project lets you choose")
-        if compiler not in {c.id for c in console.compilers}:
-            raise NetworkError(f"{compiler!r} isn't one of this platform's compilers")
+        if compiler not in {c.id for c in console.project_compilers(fp)}:
+            raise NetworkError(f"{compiler!r} isn't one of this project's compilers")
         if compiler == own:
             return
         text = (fp.root / source).read_text(errors="replace", encoding="utf-8")

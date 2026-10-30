@@ -121,16 +121,29 @@ const CW_PACK = {
     note: "Not sure? Keep the default; you can change it later in configure.py if functions don't match." },
   msvc: { title: "Visual C++", text: "Install Visual C++ 6.0, 7.0 and 7.1, the compilers most PC games of 1998-2005 were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself when it can; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
+  msvc2015: { title: "Visual C++ 2017",
+    text: "Install Visual C++ 2017 and its Windows 10 SDK, the compiler PC games of 2015-2019 were built with (about "
+      + "220 MB): this game's program says it builds with it. It's proprietary software, kept by the decomp "
+      + "community: only if you accept that. On Linux and macOS it runs through wine, which you install.",
+    note: "decompdecomp reads which Visual C++ built the game from the program itself (a version it doesn't have yet "
+      + "builds with the nearest it has, and the import says so); you can change it later in tools/configure.py. The "
+      + "functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   msvc2005: { title: "Visual C++ 2005-2010", text: "Install Visual C++ 2005, 2008 and 2010, the compilers PC games of 2005-2012 were built with (about 600 MB): this game's program says it's one of them. It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "decompdecomp reads which Visual C++ built the game from the program itself; you can change it later in tools/configure.py. The functions are found by Ghidra (installed once, 540 MB, needs Java 21+)." },
   mwccarm: { title: "CodeWarrior for DS", text: "Install CodeWarrior for DS, the 24 compiler versions DS games were built with (about 50 MB). It's proprietary software, kept by the decomp community: only if you accept that.",
     note: "Not sure? Keep the default. Games mix versions: a file the game built with another one gets it later, when a helper finds the version its functions match with." },
 };
+// a pack not written up above (a newer Visual C++'s): its toolchain's own name and description say what it is
+const cwPack = (id) => CW_PACK[id] || ((tc) => ({ title: tc?.name || id, note: CW_PACK.msvc2015.note,
+  text: `Install ${tc?.name || id}: ${tc?.description || ""} It's proprietary software, kept by the decomp community: `
+    + "only if you accept that." }))((S.st?.toolchains || []).find((t) => t.id === id));
 // the pack the game's program asks for (a PC game's Visual C++: pcPack), else its console's first
 const packOf = (info) => info?.pack || (CW_PACK[consoleOf(info?.platform)?.packs[0]] ? consoleOf(info.platform).packs[0] : "mwcc");
 
 /* Which Visual C++ pack a 32-bit Windows program needs, from the head bytes the drop has read: scratch.describe in
-   short. A game of 2005-2010 was offered the 6.0-7.1 pack, and its import then asked for 2005-2010's. Its Rich header
+   short, and the pack its version builds with the server's (the PC console's pack_by_version, its 2015-and-newer
+   builds' vc14_builds), so a new pack needs nothing here. A game of 2005-2010 was offered the 6.0-7.1 pack, and its
+   import then asked for 2005-2010's. Its Rich header
    counts the files each tool built (product id << 16 | build, XORed with its key): the compiler whose build is also
    the linker's built the game's own code, else the version that built the most files; without a Rich header, the
    linker's version says. (tests/test_pc_debug.py keeps these ids scratch.RICH_COMPILERS' and RICH_LINKERS'.) */
@@ -143,6 +156,7 @@ const RICH_COMPILERS = {  // version -> its compilers' product ids (whole-progra
 const RICH_LINKERS = [0x04, 0x13, 0x1e, 0x20, 0x25, 0x28, 0x3c, 0x3d, 0x47, 0x56, 0x5a, 0x78, 0x91, 0x9d, 0xba, 0xcc,
   0xde, 0xf0, 0x102];
 function pcPack(head, pe) {
+  const pc = consoleOf("pc") || {};
   const word = (at) => new DataView(head.buffer).getUint32(at, true);
   const find = (bytes, from, to, back) => {
     for (let at = back ? to - 4 : from; back ? at >= from : at <= to - 4; at += back ? -1 : 1)
@@ -156,19 +170,28 @@ function pcPack(head, pe) {
     const comp = (word(at) ^ word(end + 4)) >>> 0, count = (word(at + 4) ^ word(end + 4)) >>> 0;
     const product = comp >>> 16, build = comp & 0xffff;
     if (RICH_LINKERS.includes(product)) linkers.add(build);
-    const version = Object.keys(RICH_COMPILERS).find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    let version = Object.keys(RICH_COMPILERS)
+      .find((v) => RICH_COMPILERS[v].some(([lo, hi]) => product >= lo && product < hi));
+    // 2015 and newer share ids: their builds say which
+    if (version === "14") version = (pc.vc14_builds || []).find(([first]) => build >= first)?.[1] || "14.0";
     if (version) files.set(`${version} ${build}`, (files.get(`${version} ${build}`) || 0) + count);
   }
   const most = (counts) => [...counts].reduce((best, kv) => (kv[1] > best[1] ? kv : best))[0];
   let version;
-  if (!files.size) version = String(head[pe + 24 + 2]);  // the linker's major version: 6, 7, 8, 9, 10...
-  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1]))) version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1])));
+  if (!files.size) {  // the linker's version: 6.0, 7.10, 8.0, 14.16...
+    const major = head[pe + 24 + 2], minor = head[pe + 24 + 3];
+    version = major === 6 ? "6.0" : major === 7 ? (minor >= 10 ? "7.1" : "7.0")
+      : `${major}.${major === 14 ? Math.floor(minor / 10) : 0}`;
+  }
+  else if ([...files.keys()].some((k) => linkers.has(+k.split(" ")[1])))
+    version = most([...files].filter(([k]) => linkers.has(+k.split(" ")[1]))).split(" ")[0];
   else {
     const byVersion = new Map();
     for (const [k, n] of files) byVersion.set(k.split(" ")[0], (byVersion.get(k.split(" ")[0]) || 0) + n);
     version = most(byVersion);
   }
-  return parseFloat(version) >= 8 ? "msvc2005" : "msvc";  // (newer than 2010: the closest the packs have, 2010)
+  const packs = pc.pack_by_version || {};
+  return packs[version] || packs[""] || "msvc";
 }
 const MB = (n) => (n < 1048576 ? `${Math.max(1, Math.round(n / 1024))} KiB` : `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MiB`);
 
@@ -240,7 +263,10 @@ function notSupported(head, file) {
   if (text(0, 2) === "MZ") {  // (a 32-bit x86 one is identifyHead's): which machine, from its PE header
     const dv = new DataView(head.buffer), pe = head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
     const machine = pe && pe + 6 <= head.length && text(pe, pe + 4) === "PE\0\0" ? dv.getUint16(pe + 4, true) : 0;
-    if (machine === 0x8664) return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games come after the Visual C++ 2012 to 2015 compilers (see the roadmap, Newer Windows games).";
+    if (machine === 0x8664) {
+      return "That's a 64-bit Windows program. decompdecomp starts PC games from 32-bit ones for now: 64-bit games "
+        + "come next (see the roadmap, Newer Windows games).";
+    }
     if (machine) return "That Windows program isn't for a 32-bit x86 processor (it's for ARM or another one). decompdecomp starts PC games from their 32-bit x86 .exe.";
     return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
   }
@@ -330,8 +356,8 @@ function setupCompilers(info) {
     + (con.default_compiler ? "" : `<option value="" selected>Let decompdecomp pick (from the program itself)</option>`);
   const pack = packOf(info);
   note.hidden = false;
-  note.textContent = CW_PACK[pack].note;
-  $("mwText").textContent = CW_PACK[pack].text;
+  note.textContent = cwPack(pack).note;
+  $("mwText").textContent = cwPack(pack).text;
   $("mwConsent").hidden = !!(S.st?.toolchains || []).find((t) => t.id === pack && t.installed);
 }
 
@@ -349,11 +375,15 @@ function updateAnalyse() {
 }
 $("mwAccept").addEventListener("change", updateAnalyse);
 
-function fillCompilers(select, current, platform) {
-  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id);  // the console's compilers
+/* `only`: the project's own (its overview's compilers: a 32-bit PC game's, never a 64-bit compiler). */
+function fillCompilers(select, current, platform, only) {
+  // the console's compilers
+  const own = (consoleOf(platform)?.compilers || []).map((c) => c.id).filter((id) => !only || only.includes(id));
   const tcs = (S.st?.toolchains || []).filter((t) => t.kind === "compiler" && (!own.length || own.includes(t.id)));
   if (own.length && !tcs.length) {  // versions of a compiler pack (DS's CodeWarriors), not toolchains of their own
-    select.innerHTML = consoleOf(platform).compilers.map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    select.innerHTML = consoleOf(platform).compilers.filter((c) => own.includes(c.id))
+      .map((c) => `<option value="${esc(c.id)}" ${c.id === current ? "selected" : ""}>${esc(c.name)}</option>`)
+      .join("");
     return;
   }
   select.innerHTML = tcs.map((t) => {
@@ -425,7 +455,7 @@ $("errBack").onclick = (e) => { e.stopPropagation(); resetDrop(); };
 async function ensureCodeWarrior() {
   if ($("mwConsent").hidden) return;
   const id = packOf(picked?.info);
-  $("busyTitle").textContent = `Installing ${CW_PACK[id].title}…`;
+  $("busyTitle").textContent = `Installing ${cwPack(id).title}…`;
   const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true } });
   await followJob(job, $("jobLog"));
   await loadState();
@@ -437,7 +467,10 @@ $("analyse").onclick = async () => {
   const title = `Analysing ${picked.info.title}…`;
   if (!$("mwConsent").hidden) {
     $("dropPicked").hidden = true; $("dropBusy").hidden = false; $("impUp").hidden = true;
-    try { await ensureCodeWarrior(); } catch (e) { importFailed(CW_PACK[packOf(picked.info)].title, e, $("jobLog").textContent); return; }
+    try { await ensureCodeWarrior(); } catch (e) {
+      importFailed(cwPack(packOf(picked.info)).title, e, $("jobLog").textContent);
+      return;
+    }
   }
   // the debug files go after the game in the same upload; the server cuts them off and puts them beside it
   const body = new Blob([picked.buf, ...picked.extras]);

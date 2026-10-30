@@ -6,11 +6,11 @@
 The build cuts every function out of your copy of the game (orig/, see config/VERSION/functions.json) into objects,
 one per source file (tools/delink.py), and compiles src/ with the game's Visual C++ (run through wibo on Linux and
 macOS, Visual C++ 2015 and newer through wine, which wibo can't run them on: the build finds wine and its prefix in
-$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, which decompdecomp sets): each file with its own version when
-config/VERSION/file_compilers.json names one, and with the more flags config/VERSION/file_flags.json gives it
-(/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions
-with the original's. `ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks
-it against your copy. Made by decompdecomp.
+$DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, and the packs wine runs in $DECOMPNET_WINE_PACKS, which decompdecomp
+sets): each file with its own version when config/VERSION/file_compilers.json names one, and with the more flags
+config/VERSION/file_flags.json gives it (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp)
+compares every source file's functions with the original's. `ninja rebuild` puts the whole program back together from
+them (tools/rebuild.py) and checks it against your copy. Made by decompdecomp.
 """
 
 import argparse
@@ -36,7 +36,10 @@ parser.add_argument("--msvc", required=True, action="append",
                          "with MSVC_VERSION")
 parser.add_argument("--wibo", default="", help="runs the Windows compilers on Linux and macOS")
 args = parser.parse_args()
-WINE_FROM = 14  # the first Visual C++ wibo can't run (2015 and newer: 14.x), which wine runs
+WINE_FROM = 14  # without $DECOMPNET_WINE_PACKS: the first Visual C++ wibo can't run (2015 and newer), which wine runs
+# the --msvc folders whose compilers run through wine, not wibo (decompdecomp sets it from its toolchains' `wine`, as
+# it sets $DECOMPNET_WINE: an environment variable, not an argument, so no configure.py is given one it doesn't know)
+WINE_PACKS = "DECOMPNET_WINE_PACKS"
 INCLUDES = "includes.txt"  # in a version's folder: more header folders, relative to it (decompdecomp's toolchains.py)
 
 VERSION = args.version
@@ -76,11 +79,23 @@ def msvc(version: str) -> tuple[str, list[str]]:
     return str(cl), [str(home / "Include"), *extra]
 
 
+def pack_of(version: str) -> Path | None:
+    """The --msvc folder a Visual C++ version comes from: the first that has it."""
+    return next((Path(d) for d in args.msvc for p in (Path(d) / version / "Bin" / "CL.EXE",
+                                                      Path(d) / version / "Bin" / "cl.exe") if p.exists()), None)
+
+
 def runner(version: str) -> list[str]:
-    """What runs a Visual C++ version's compiler here: nothing on Windows, else wibo, or wine from WINE_FROM on."""
+    """What runs a Visual C++ version's compiler here: nothing on Windows, else wibo, or wine for a pack decompdecomp
+    says wine runs ($DECOMPNET_WINE_PACKS, folders separated by os.pathsep; without it, the versions from WINE_FROM
+    on)."""
     if sys.platform == "win32":
         return []
-    if int(version.split(".")[0]) < WINE_FROM:
+    wine_packs = {os.path.normcase(os.path.abspath(d)) for d in os.environ.get(WINE_PACKS, "").split(os.pathsep) if d}
+    folder = pack_of(version)
+    by_wine = os.path.normcase(os.path.abspath(folder)) in wine_packs if wine_packs and folder is not None else \
+        int(version.split(".")[0]) >= WINE_FROM
+    if not by_wine:
         return ["--wrapper", args.wibo] if args.wibo else []
     # wine itself is found when the file builds (compile.py: $DECOMPNET_WINE, $DECOMPNET_WINE_PREFIX): build.ninja
     # stays right whether or not wine was there when it was written

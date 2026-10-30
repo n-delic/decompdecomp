@@ -1,6 +1,7 @@
 """The GUI's own logic, run in node against a stand-in for the page (tests/gui_polls.js): no browser needed."""
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -37,8 +38,11 @@ def test_launcher_keeps_single_and_multiple_model_modes_for_every_provider():
 def gui():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")
+    from decompnet.consoles import CONSOLES
+
+    env = {**os.environ, "GUI_CONSOLES": json.dumps([c.describe() for c in CONSOLES])}  # (/api/state's)
     out = subprocess.run([NODE, str(Path(__file__).with_name("gui_polls.js"))], capture_output=True, text=True,
-                         timeout=GUI_TIMEOUT_SECONDS, check=True)
+                         timeout=GUI_TIMEOUT_SECONDS, check=True, env=env)
     result = json.loads(out.stdout)
     assert result["errors"] == []
     return result
@@ -211,7 +215,8 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
     for head, pack, offered in packs:
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
-    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc"]
+    assert [p for _, p, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
+                                        "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
 
 
 def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():

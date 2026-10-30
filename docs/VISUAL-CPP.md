@@ -14,10 +14,16 @@ A program says which Visual C++ made it in its Rich header: the version, and the
 import reads it and picks a compiler:
 
 1. The build the program names, if decompdecomp has it.
-2. Otherwise, the closest build of the same version.
-3. A game built with a version decompdecomp doesn't have yet (2012 to 2015) imports, but its functions can't match
-   until that version comes. Games built with 2017 or newer aren't started yet, though decompdecomp has 2017's
-   compilers: you can choose one for a file in a project's Settings, and agents can try it with `try_compiler`.
+2. Otherwise, the closest build of the same version. Every 2017 update builds with 14.16 (15.9), the one 2017 build
+   decompdecomp has.
+3. A game built with a version decompdecomp doesn't have yet builds with the nearest version it has, by year, and
+   the import says so: 2012 and 2013 with 2010 SP1, 2015 and 2019 or newer with 2017. Its functions match only where
+   the two compilers make the same code, which "Where the code changes" below says something about: little of a
+   2012 or 2013 game, more of a 2015 one. Its own version, once decompdecomp has it, matches the rest.
+
+A 32-bit game is never given 2017's 64-bit compiler (14.16-x64): the import, a project's Settings and `try_compiler`
+offer a game only the compilers for its processor. In a project's Settings you can choose another compiler for a
+file, and agents can try one with `try_compiler`.
 
 The Rich header keeps only the build number, not the whole version. Some updates kept the build number of `cl.exe`
 but changed the compiler behind it, so the Rich header can't tell them apart:
