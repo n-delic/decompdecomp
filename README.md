@@ -74,6 +74,9 @@ brings back a window closed while helpers work. Free tools use Windows builds wh
 > GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't need WSL: their compilers run on
 > Windows itself.
 
+PS4 projects currently need the Linux app on x86-64 (including inside WSL 2), a decrypted `eboot.elf`,
+and the pinned public Clang 5.0.2 available in Compilers & tools. No Sony SDK or game files are included.
+
 ### macOS (Intel and Apple Silicon)
 
 For an app you can put in `/Applications`, download `macos_arm64` (Apple Silicon) or
@@ -231,6 +234,7 @@ game's code is its rights holder's: keep it to yourself.
 | Nintendo 64 | Recommended |
 | PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
+| PlayStation 4 (decrypted ELF, Linux x86-64) | Beta |
 | PSP | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |

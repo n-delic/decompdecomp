@@ -76,8 +76,8 @@ drop.addEventListener("drop", (e) => {
   pickFiles(e.dataTransfer.files);
 });
 $("file").addEventListener("change", () => pickFiles($("file").files));
-/* A game, and the debug information that may come with it (a PC game's .pdb or linker .map: its import reads them). */
-const DEBUG_FILE = /\.(pdb|map)$/i;
+/* A game with its PC debug symbols or PS4 function map. */
+const DEBUG_FILE = /\.(pdb|map)$|(?:^|\.)functions\.jsonl$/i;
 function pickFiles(list) {
   const files = [...list], debug = files.filter((f) => DEBUG_FILE.test(f.name));
   const game = files.find((f) => !debug.includes(f)) || files[0];
@@ -203,6 +203,9 @@ function identifyHead(head, file) {
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+  if (head.length >= 64 && text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 1
+      && [0xfe10, 0xfe04].includes(dv.getUint16(16, true)) && dv.getUint16(18, true) === 62)
+    return { ...base, platform: "ps4", order: "decrypted Orbis ELF", entry: Number(dv.getBigUint64(24, true)) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
   // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
@@ -273,8 +276,9 @@ async function pickFile(file, extras = []) {
       return toast(esc(NOT_A_GAME), "err");
     }
   }
-  // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
-  picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
+  // Send only the sidecars this console reads beside its uploaded program.
+  picked = { buf, info, name: file.name, extras: extras.filter((f) => info.platform === "win32" ? /\.(pdb|map)$/i.test(f.name)
+    : info.platform === "ps4" && /(?:^|\.)functions\.jsonl$/i.test(f.name)) };
   if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
@@ -284,7 +288,7 @@ async function pickFile(file, extras = []) {
        ["Entry", hex8(info.entry)], ["Looks like", info.compiler === "IDO" ? "IDO" : "GCC (KMC)"]]
     : [["Platform", platformName(p)], ["Format", info.order], ["Size", MB(info.size)],
        info.code ? ["Game ID", info.code] : ["Entry", info.entry != null ? hex8(info.entry) : "from the disc"],
-       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
+       ["Project", consoleOf(p)?.layout || ""], ...(picked.extras.length ? [["Function maps / debug symbols", picked.extras.map((f) => f.name).join(", ")]] : [])];
   $("romFacts").innerHTML = facts.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("");
   const level = platformStatus(p);
   $("romStatus").hidden = !level;

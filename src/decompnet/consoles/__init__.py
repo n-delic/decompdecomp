@@ -211,6 +211,10 @@ class Console:
         """The arguments that point the project's configure step at this computer's pinned tools."""
         return []
 
+    def adapt_draft(self, text: str) -> str:
+        """Translate machine-draft type names into this console's project headers."""
+        return text
+
     def identity(self, path: Path) -> str | None:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
@@ -407,12 +411,13 @@ def _registry() -> list[Console]:
     from .pc import PC
     from .ps1 import PS1
     from .ps2 import PS2
+    from .ps4 import PS4_CONSOLE
     from .psp import PSP
     from .public import PUBLIC_ONLY
 
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF)
-    return [N64, PSP, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    return [N64, PSP, PS1, PS2, PS4_CONSOLE, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

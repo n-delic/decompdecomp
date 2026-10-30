@@ -210,3 +210,7 @@ def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():
     assert js == {v: {*compilers, *glued} for v, compilers, glued in scratch.RICH_COMPILERS}
     linkers = re.search(r"const RICH_LINKERS = \[(.*?)\];", text, re.S).group(1)
     assert {int(x, 16) for x in re.findall(r"0x[0-9a-f]+", linkers)} == scratch.RICH_LINKERS
+
+
+def test_ps4_decrypted_executables_are_accepted_but_other_elfs_are_not(gui):
+    assert gui["checks"]["ps4"] == ["ps4", "ps4", None, None]

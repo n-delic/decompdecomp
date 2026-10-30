@@ -17,7 +17,7 @@ from capstone import x86 as cs_x86
 RELOC_MASKS: dict[int, tuple[int, int, int]] = {}  # every x86 relocation fills the 4 bytes at r_offset (the default)
 CAPSTONE = {False: (capstone.CS_ARCH_X86, capstone.CS_MODE_32)}
 
-RELOC_MASKS_64 = {1: (0, 8, 0xFFFFFFFFFFFFFFFF)}  # R_X86_64_64; the rest fill 4 bytes
+RELOC_MASKS_64 = {1: (0, 8, 0xFFFFFFFFFFFFFFFF), 15: (0, 1, 0xFF)}  # R_X86_64_64; the rest fill 4 bytes
 CAPSTONE_64 = {False: (capstone.CS_ARCH_X86, capstone.CS_MODE_64)}
 
 _READER = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)

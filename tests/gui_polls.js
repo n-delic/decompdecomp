@@ -134,6 +134,16 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.ov = before;
       return { guest, host, alone };
     })(),
+    ps4: (() => {
+      const h = new Uint8Array(64), dv = new DataView(h.buffer);
+      h.set([0x7f, 0x45, 0x4c, 0x46, 2, 1]);
+      dv.setUint16(18, 62, true);
+      const file = { name: "eboot.elf", size: 256 };
+      return [0xfe10, 0xfe04, 2, 0xfe18].map((type) => {
+        dv.setUint16(16, type, true);
+        return identifyHead(h, file)?.platform ?? null;
+      });
+    })(),
     dropped: (() => {
       const head = (at, text) => { const h = new Uint8Array(0x10000); [...text].forEach((c, i) => (h[at + i] = c.charCodeAt(0))); return h; };
       const file = { name: "SLUS_000.01", size: 0x10000 };

@@ -137,7 +137,12 @@ def _missing(console) -> list[str]:
             return toolchains.installed(tool) is not None
         except toolchains.ToolchainError:  # a program on PATH, not a toolchain
             return shutil.which(tool) is not None
-    return [t for t in console.demo_tools if not there(t)] + ([] if ZLIB.exists() else ["zlib (projects/zlib-n64/prepare.py)"])
+    missing = [t for t in console.demo_tools if not there(t)]
+    # Read the demo's own prerequisites, including consoles added after this test.
+    build = ROOT / "projects" / getattr(console, "demo", "") / "build.py"
+    if build.is_file() and "zlib-n64" in build.read_text() and not ZLIB.exists():
+        missing.append("zlib (projects/zlib-n64/prepare.py)")
+    return missing
 
 
 @pytest.fixture(scope="module", params=DEMOS, ids=[c.id for c in DEMOS])
@@ -169,7 +174,8 @@ def _function(net, slug: str, symbols: dict, name: str) -> tuple[str, str]:
     address = next(a for s, a in symbols.items() if re.sub(r"^[_@]|@\d+$", "", s) == name)
     pid = net.project_row(slug)["id"]
     row = net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", pid, address) or next(
-        r for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid) if f"{address:08x}" in r["name"].lower())
+        r for r in net.store.all("SELECT name FROM functions WHERE project_id=?", pid) if f"{address:08x}" in r["name"].lower()
+        or re.sub(r"^[_@]|@\d+$", "", r["name"]) == name)
     plain = re.sub(r"^[_@]|@\d+$", "", row["name"])  # (a PC function's name says its calling convention)
     return row["name"], csource.get(DEMO_GAME.read_text(), name).replace(f"{name}(", f"{plain}(", 1)
 
