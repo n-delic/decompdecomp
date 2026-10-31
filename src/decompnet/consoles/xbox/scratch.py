@@ -112,7 +112,7 @@ class XBE:
 
     @property
     def title_code(self) -> str:
-        """The title ID as Xbox people write it: publisher letters and number, 0x4D530004 -> "MS-004"."""
+        """The title ID as Xbox people write it: publisher letters and number, 0x44510001 -> "DQ-001" (the demo's)."""
         a, b = chr(self.title_id >> 24), chr(self.title_id >> 16 & 0xFF)
         return f"{a}{b}-{self.title_id & 0xFFFF:03d}" if (a + b).isalnum() and (a + b).isascii() \
             else f"{self.title_id:08X}"

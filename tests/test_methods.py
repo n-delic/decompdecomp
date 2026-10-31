@@ -204,7 +204,7 @@ def test_an_attempt_whose_function_the_linker_gave_another_convention_is_told_so
 
 
 def test_a_member_functions_known_signature_is_read_from_its_undecorated_name():
-    """Burnout 3: a brief suggested `int Struct_0015F270::?Update(int arg1, int arg2)` for a function whose symbol
+    """An Xbox game built with link-time code generation: a brief suggested `int Struct_0015F270::?Update(int arg1, int arg2)` for a function whose symbol
     said `public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *, float)`."""
     assert methods.known_signature("public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *,float)") \
         == ("C_vt_003A94FC", "virtual void C_vt_003A94FC::Update(CCamOut *, float)")
