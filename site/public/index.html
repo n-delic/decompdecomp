@@ -75,6 +75,7 @@
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
+    <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
   </fieldset>
   <output class="answer js-only" id="answer" for="platform" aria-live="polite" hidden></output>
 
@@ -144,7 +145,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>Program</b><span>a 32-bit x86 .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010; C and C++</span></li>
+        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -157,6 +158,16 @@
         <li><small>Built by</small><b>CodeWarrior for DS</b><span>1.2 to DSi 1.6, each source file with its own version</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A ds-decomp project</b><span>that rebuilds your ROM and checks it, byte for byte</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="gba" data-file="game.gba">
+      <h3><span class="pl-name">Game Boy Advance</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>ROM</b><span>.gba</span></li>
+        <li><small>Split by</small><b>luvdis</b><span>plus decompdecomp's own function finder, for Thumb and ARM</span></li>
+        <li><small>Built by</small><b>agbcc</b><span>the community's free GCC-based compiler (GPL); C</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
+        <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
       </ol>
     </article>
   </div>
@@ -223,6 +234,7 @@ jr      $ra
       <p class="step-note">Linux, or Windows 10 and 11 through WSL 2: run it in your WSL terminal (Ubuntu, for example). It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the releases page.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
       <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS1/PS2 period compilers need Linux; macOS has no menu bar tray icon yet.</p>
+      <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/n-delic/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>
