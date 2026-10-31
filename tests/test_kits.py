@@ -174,3 +174,11 @@ def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_p
     [own] = kit.compilers(copy)
     assert own.includes[1:] == (inc / "ucrt", inc / "um", inc / "shared")
     assert kit.verify(copy) == "Visual C++ 19.16.27023.0"
+
+
+def test_setup_lists_every_kit_a_console_takes():
+    """The Compilers & tools page shows what /api/state sends: the compilers, the tools and the consoles' packs and
+    kits (app/engine TOOLS). A kit missing from it can't be set up at all."""
+    from decompnet.app.engine import TOOLS
+
+    assert {kid for c in consoles.CONSOLES for kid in c.kits} <= set(TOOLS)
