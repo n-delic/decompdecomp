@@ -24,8 +24,20 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import arch, classes, consoles, similarity, structs, toolchains
-from ..forks import convention, csource, datadiff, drafts, dtksplits, ghidra, ltcg, objdiff, standins, unresolved
+from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from ..forks import (
+    convention,
+    csource,
+    datadiff,
+    drafts,
+    dtksplits,
+    ghidra,
+    ltcg,
+    methods,
+    objdiff,
+    standins,
+    unresolved,
+)
 from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
 from ..hostenv import NO_WINDOW
@@ -2148,6 +2160,55 @@ class ForkEngine:
                 "callers; harness/ must call it the same way)", *mode,
                 *[f"- {line}" if not line.startswith("  ") else line for line in found]]
 
+    def _convention_warning(self, fp: ForkProject, meta: dict, fn, unit) -> list[str]:
+        """For an attempt's result in an LTCG project: when the function the harness link made differs in convention
+        from the original's, say so. A helper or driver call adds a call site, which can change what the linker picks
+        for the callee, and then the bytes differ for a reason the C doesn't show."""
+        if unit.base is None or (prog := self._program(fp)) is None:
+            return []
+        try:
+            symbol = meta.get("symbol") or fn["name"]
+            addr = prog.find(symbol)
+            if addr is None or not unit.base.exists():
+                return []
+            code = next((c for owner, c, _ in coffobj.sections(unit.base.read_bytes())
+                         if owner == symbol or coffobj.c_name(owner) == fn["name"]), None)
+            if not code:
+                return []
+            found = convention.differences(convention.analyse(prog.code(addr), addr), convention.analyse(code, addr))
+        except Exception:  # a heuristic: it never stands between an agent and the result
+            logging.getLogger("decompdecomp").exception("comparing the compiled convention failed")
+            return []
+        if not found:
+            return []
+        return ["", "The linker gave your function another convention than the original's (" + "; ".join(found) + "). "
+                "Under LTCG the callers decide it: keep the original's number of call sites (a helper, a stand-in or "
+                "a second driver call adds one), and check that the driver's calls load what the brief's call sites "
+                "load. The brief's convention evidence is the target."]
+
+    def _method_brief(self, fp: ForkProject, cfg: dict, meta: dict, fn) -> list[str]:
+        """For a brief, in an LTCG project: whether the function looks like a member function, of which struct, its
+        fields and the declaration to write (forks/methods.py: `this` can arrive in any register under LTCG, which the
+        ECX-only readers of structs.py and the RTTI classes miss). When RTTI already named the function's class
+        (`_class_brief`), only the register is added: the class's name is the game's own."""
+        if (prog := self._program(fp)) is None:
+            return []
+        try:
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            if addr is None:
+                return []
+            objs = methods.recover(prog, True)
+            lines = methods.brief(prog, objs, addr, True, meta.get("demangled"))
+            if self._class_of(fp, cfg, fn)[1] is not None and addr in objs.of:
+                return ["", f"- `this` arrives in {objs.of[addr].methods[addr]} (the linker's choice under link-time "
+                            "code generation): a member function of the class above still matches"]
+            if lines and lines[1].startswith("### Looks like a member function"):
+                lines += ["```cpp", methods.declaration(prog, objs.of[addr]), "```"]
+            return lines
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("finding member functions failed")
+            return []
+
     def _unresolved_lines(self, fp: ForkProject, meta: dict, fn, unit, code: str | None,
                           only_mattering: bool = False) -> list[str]:
         """For a brief, a compile result or a release: the names the unit's last harness link left unresolved that
@@ -2340,6 +2401,7 @@ class ForkEngine:
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
         lines += self._ltcg_brief(fp, meta, fn, unit)
+        lines += self._method_brief(fp, cfg, meta, fn)
         if found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None):
             lines += ["", f"### Unresolved in {unit.name}'s harness link (nothing in it defines them yet)", *found]
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
@@ -2967,7 +3029,7 @@ class ForkEngine:
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
-        found = self._unresolved_lines(fp, meta, fn, unit, code)
+        found = self._unresolved_lines(fp, meta, fn, unit, code) + self._convention_warning(fp, meta, fn, unit)
         missing = ((self._missing_note(unit, fn) if d.match_percent is None else "")
                    + ("\n\n" + "\n".join(found) if found else ""))
         if d.literals:

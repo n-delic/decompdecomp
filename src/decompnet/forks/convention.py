@@ -73,6 +73,26 @@ class Convention:
         return [r for r in self.reads if r not in ("ecx", "edx")]
 
 
+def differences(original: Convention, compiled: Convention) -> list[str]:
+    """What the compiled function's convention does differently from the original's (registers read before written,
+    stack arguments, `ret N`, float registers), one clause each; empty when they agree. Callee-less analyses of both:
+    the compiled object's calls carry no targets to follow."""
+    out = []
+    for what, a, b in (("registers read before written", original.reads, compiled.reads),
+                       ("XMM registers read", original.xmm, compiled.xmm),
+                       ("stack arguments", [f"[esp+{n}]" for n in original.stack],
+                        [f"[esp+{n}]" for n in compiled.stack])):
+        if a != b:
+            out.append(f"{what}: original {', '.join(a) or 'none'}, yours {', '.join(b) or 'none'}")
+    if original.ret != compiled.ret:
+        out.append(f"{_ret(original.ret)} in the original, {_ret(compiled.ret)} in yours")
+    return out
+
+
+def _ret(n: int | None) -> str:
+    return "no ret" if n is None else f"ret {n}" if n else "ret (the caller pops)"
+
+
 def _rw(ins) -> tuple[set[str], set[str]]:
     try:
         r, w = ins.regs_access()
