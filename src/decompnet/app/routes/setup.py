@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse, Response
 from decompnet.hostenv import NO_WINDOW
 
 from ... import agents as kinds
-from ... import toolchains
+from ... import hostenv, toolchains
 from ...network import NetworkError
 from .. import agents
 from ..support import session_options, spread_sessions
@@ -33,8 +33,24 @@ def register(app: App) -> None:
             return bad
         data = await body(request)
         tid, accept = str(data.get("id", "")), bool(data.get("accept_license"))
-        return JSONResponse({"job": jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, log=log)
+        folder = str(data.get("folder") or "").strip() or None  # a local toolchain: a copy of the user's own (added to the ones set up)
+        if folder:  # as the user wrote it: a Windows path becomes /mnt/c/... in WSL
+            folder = hostenv.local_path(folder)
+        return JSONResponse({"job": jobs.start("toolchain", lambda log: (toolchains.install(tid, accept_license=accept, log=log,
+                                                                                            folder=folder)
                                                                          and {"id": tid}))})
+
+    @mcp.custom_route("/api/toolchain/remove", methods=["POST"])
+    async def api_toolchain_remove(request: Request) -> Response:
+        """Forget one of the user's own copies of a kit (its files stay where they are)."""
+        if (bad := guard(request, write=True)):
+            return bad
+        data = await body(request)
+        try:
+            toolchains.remove_local(str(data.get("id", "")), str(data.get("folder", "")))
+        except (toolchains.ToolchainError, KeyError) as e:
+            return fail(e)
+        return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/toolchain/all", methods=["POST"])
     async def api_toolchain_all(request: Request) -> Response:

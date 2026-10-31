@@ -24,9 +24,21 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import arch, classes, consoles, similarity, structs, toolchains
-from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
-from ..forks.objdiff import ObjdiffError
+from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
+from ..forks import (
+    convention,
+    csource,
+    datadiff,
+    drafts,
+    dtksplits,
+    ghidra,
+    ltcg,
+    methods,
+    objdiff,
+    standins,
+    unresolved,
+)
+from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
 from ..hostenv import NO_WINDOW
 from ..network import (
@@ -219,6 +231,14 @@ def _floor_pct(pct: float, matched: bool) -> float:
 def _digest(code: str) -> str:
     """A function's text, whitespace aside."""
     return hashlib.sha1(re.sub(r"\s+", " ", code).strip().encode()).hexdigest()
+
+
+def ltcg_unresolved(base: Path) -> list[str]:
+    """What a unit's last harness link left unresolved (dll2coff's <object>.ltcg.json): not written yet."""
+    try:
+        return list(json.loads(base.with_suffix(".ltcg.json").read_text(encoding="utf-8")).get("unresolved") or [])
+    except (OSError, ValueError, AttributeError):
+        return []
 
 
 def _set_aside(fp: ForkProject) -> dict[str, str]:
@@ -645,11 +665,12 @@ class ForkEngine:
             self.net._event(db, pid, None, "fork", event)
 
     def create_scratch(self, game: Path, console: consoles.Console, *, compiler: str | None = None, log=print,
-                       scope: str | None = None) -> str:
+                       scope: str | None = None, options: dict | None = None) -> str:
         """A game of a PROJECT-mode console (GameCube, Wii, PC, DS), from scratch: the console generates the
         community's kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from
         Ghidra's analysis; for DS, ds-decomp's), opened like a fork. `scope`: what the project covers (SCOPES), for
-        a console whose import sets library code aside (Console.sets_aside); kept in the project's manifest."""
+        a console whose import sets library code aside (Console.sets_aside); kept in the project's manifest.
+        `options`: the user's answers to Console.import_options, given to create_project as keywords."""
         if scope is not None and scope not in SCOPES:
             raise NetworkError(f"a project covers the game's own code ({GAME!r}) or the whole program, not {scope!r}")
         scoped = {"scope": scope or GAME} if console.sets_aside else {}
@@ -662,7 +683,7 @@ class ForkEngine:
         slug = self._free_slug(_slug(f"{info['title']} {info['id']}" if info.get("kind") != "dol" else info["title"]))
         dest = self.net.workspace / slug
         try:
-            facts = console.create_project(dest, game, compiler=compiler, log=log, **scoped)
+            facts = console.create_project(dest, game, compiler=compiler, log=log, **scoped, **(options or {}))
             if scoped:  # (before the first measuring, which reads it)
                 ForkProject(dest).update_manifest(**scoped)
         except BaseException:
@@ -2084,9 +2105,150 @@ class ForkEngine:
 
     @staticmethod
     def _missing_note(unit, fn) -> str:
-        """What to tell an agent whose compile built, but whose unit's object has no such function."""
-        return (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
-                "is nothing to compare yet.")
+        """What to tell an agent whose compile built, but whose unit's object has no such function: with what the
+        build said about its address (an LTCG harness's <object>.ltcg.json `problems`)."""
+        at = f"0x{fn['vram']:08X}" if "vram" in fn.keys() and fn["vram"] else None
+        said = [p for p in objdiff.ltcg_problems(unit.base) if at and at.lower() in p.lower()]
+        note = (f"\n\nNOT IN YOUR BUILD: {unit.name} compiled, but its object doesn't define {fn['name']}, so there "
+                "is nothing to compare yet")
+        if not said:
+            return note + "."
+        return (note + ":\n" + "\n".join(f"- {p}" for p in said[:4]) + "\nIf a helper sits between the function's "
+                "`// FUNCTION:` annotation and its definition, move the helper above the annotation (edit_file).")
+
+    def _program(self, fp: ForkProject):
+        """The original program and its functions, for a project built with link-time code generation (None: not
+        one, or it can't be read: a heuristic never stands between an agent and the function)."""
+        manifest = fp.manifest or {}
+        if not manifest.get("ltcg"):
+            return None
+        try:
+            return convention.load(fp.root, manifest)
+        except (OSError, KeyError, ValueError, ForkError):
+            return None
+
+    def _ltcg_brief(self, fp: ForkProject, meta: dict, fn, unit) -> list[str]:
+        """For a brief, in an LTCG project (forks/ltcg.py): how the original passes the function its arguments
+        (forks/convention.py), which the driver and stand-ins in harness/ must reproduce, and whether this unit's
+        compile already goes through a harness."""
+        if (prog := self._program(fp)) is None:
+            return []
+        try:
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            found = convention.evidence(prog, addr) if addr is not None else []
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("reading the function's convention failed")
+            return []
+        if not found:
+            return []
+        name = unit.name
+        if ltcg.has_entry(fp.root, name):
+            mode = [f"- Your compile already goes through the harness: {name} is built with /GL and linked with /LTCG "
+                    f"with harness/{name}.drv.cpp, whose calls make the linker pick these registers. Write the "
+                    "function as ordinary C/C++ and compile it: the convention is not a reason to release it. If "
+                    "what differs is the convention itself, make the driver's call (or a stand-in) look like the "
+                    "original's call site below. Functions are found in the link by func_<address> in their names, or "
+                    "by `// FUNCTION: 0x<address>` right above the definition (for a method or an operator: add the "
+                    "map symbol's substring after the address)."]
+        else:
+            mode = [f"- {name} builds plain, without /GL: harness/{name}.drv.cpp doesn't define HarnessEntry yet. "
+                    "That is right for code the game built without link-time code generation (a library piece, a "
+                    "file built /O2): write it as plain C. If this function's callers pass it registers (below), the "
+                    f"unit needs a driver first: standins_for(\"{name}\") writes a starting point (stand-ins "
+                    "for what the unit uses elsewhere, a HarnessEntry); put it in with edit_file."]
+        return ["", "### Calling convention in the original (link-time code generation: the linker picked it for its "
+                "callers; harness/ must call it the same way)", *mode,
+                *[f"- {line}" if not line.startswith("  ") else line for line in found]]
+
+    def _convention_warning(self, fp: ForkProject, meta: dict, fn, unit) -> list[str]:
+        """For an attempt's result in an LTCG project: when the function the harness link made differs in convention
+        from the original's, say so. A helper or driver call adds a call site, which can change what the linker picks
+        for the callee, and then the bytes differ for a reason the C doesn't show."""
+        if unit.base is None or (prog := self._program(fp)) is None:
+            return []
+        try:
+            symbol = meta.get("symbol") or fn["name"]
+            addr = prog.find(symbol)
+            if addr is None or not unit.base.exists():
+                return []
+            code = next((c for owner, c, _ in coffobj.sections(unit.base.read_bytes())
+                         if owner == symbol or coffobj.c_name(owner) == fn["name"]), None)
+            if not code:
+                return []
+            found = convention.differences(convention.analyse(prog.code(addr), addr), convention.analyse(code, addr))
+        except Exception:  # a heuristic: it never stands between an agent and the result
+            logging.getLogger("decompdecomp").exception("comparing the compiled convention failed")
+            return []
+        if not found:
+            return []
+        return ["", "The linker gave your function another convention than the original's (" + "; ".join(found) + "). "
+                "Under LTCG the callers decide it: keep the original's number of call sites (a helper, a stand-in or "
+                "a second driver call adds one), and check that the driver's calls load what the brief's call sites "
+                "load. The brief's convention evidence is the target."]
+
+    def _method_brief(self, fp: ForkProject, cfg: dict, meta: dict, fn) -> list[str]:
+        """For a brief, in an LTCG project: whether the function looks like a member function, of which struct, its
+        fields and the declaration to write (forks/methods.py: `this` can arrive in any register under LTCG, which the
+        ECX-only readers of structs.py and the RTTI classes miss). When RTTI already named the function's class
+        (`_class_brief`), only the register is added: the class's name is the game's own."""
+        if (prog := self._program(fp)) is None:
+            return []
+        try:
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            if addr is None:
+                return []
+            objs = methods.recover(prog, True)
+            lines = methods.brief(prog, objs, addr, True, meta.get("demangled"))
+            if self._class_of(fp, cfg, fn)[1] is not None and addr in objs.of:
+                return ["", f"- `this` arrives in {objs.of[addr].methods[addr]} (the linker's choice under link-time "
+                            "code generation): a member function of the class above still matches"]
+            if lines and lines[1].startswith("### Looks like a member function"):
+                lines += ["```cpp", methods.declaration(prog, objs.of[addr]), "```"]
+            return lines
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("finding member functions failed")
+            return []
+
+    def _unresolved_lines(self, fp: ForkProject, meta: dict, fn, unit, code: str | None,
+                          only_mattering: bool = False) -> list[str]:
+        """For a brief, a compile result or a release: the names the unit's last harness link left unresolved that
+        this function's code uses, which of them can change its code (forks/unresolved.py) and which are harmless.
+        A bare list read as a to-do, and agents released functions for references that change nothing."""
+        if unit.base is None or not (missing := ltcg_unresolved(unit.base)):
+            return []
+        prog = self._program(fp)
+        caller, library = None, set()
+        if prog is not None:
+            caller = prog.find(meta.get("symbol") or fn["name"])
+            library = {prog.by_name[x] for x in _set_aside(fp) if x in prog.by_name}
+        used = unresolved.used_by(code, missing) if code else []
+        found = [unresolved.classify(prog, caller, x, library) for x in used]
+        if only_mattering:
+            found = [u for u in found if u.matters is not False]
+            return unresolved.summary(found, unit.name) if found else []
+        return unresolved.summary(found, unit.name, len(missing) - len(used))
+
+    def standins_for(self, agent: Agent | None, slug: str, what: str) -> str:
+        """Stand-in and driver skeletons for a unit of an LTCG project (forks/standins.py): a unit, its source file
+        or one of its functions. What agents write into harness/."""
+        _, fp, _ = self.get(slug)
+        if (prog := self._program(fp)) is None:
+            raise NetworkError("standins_for is for projects of games built with link-time code generation (harness/ "
+                               "files): this project isn't one")
+        name = what.strip()
+        units = {f["unit"] for f in prog.functions.values()}
+        unit = next((u for u in (name, name.rsplit("/", 1)[-1], Path(name).stem) if u in units), None)
+        if unit is None and (addr := prog.find(name)) is not None:
+            unit = prog.functions[addr]["unit"]
+        if unit is None:
+            try:
+                row = self._fn(slug, name)
+            except NetworkError:
+                raise NetworkError(f"{what!r} isn't a unit, source file or function of this project") from None
+            if (addr := prog.find(self._meta(row).get("symbol") or row["name"])) is None:
+                raise NetworkError(f"{what!r} isn't in this project's functions.json")
+            unit = prog.functions[addr]["unit"]
+        return standins.render(prog, unit)
 
     def _apply_scores(self, proj, unit: str, scores: dict[str, float | None], skip: int | None = None,
                       agent: Agent | None = None, text: str | None = None, via: str = "unit diff") -> None:
@@ -2204,7 +2366,7 @@ class ForkEngine:
         try:
             d = fp.diff(unit, meta.get("symbol") or fn["name"])
             pct = ("not in your build yet" if d.match_percent is None else
-                   "every instruction matches, but loaded constants differ" if d.literals else
+                   d.why_not() if d.literals else
                    f"{percent_text(d.match_percent)} match")
             asm = d.target_asm().splitlines()
             if len(asm) > 500:
@@ -2238,6 +2400,10 @@ class ForkEngine:
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
         lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
+        lines += self._ltcg_brief(fp, meta, fn, unit)
+        lines += self._method_brief(fp, cfg, meta, fn)
+        if found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None):
+            lines += ["", f"### Unresolved in {unit.name}'s harness link (nothing in it defines them yet)", *found]
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
         lines += twin
         try:
@@ -2730,7 +2896,10 @@ class ForkEngine:
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched
-            key = self.net.compile_key(fn, unit.name, after)
+            # (an LTCG project's driver and stand-ins are part of what the unit builds with: harness/<unit>.*.cpp)
+            harness = "".join(p.read_text(errors="replace", encoding="utf-8")
+                              for p in sorted((fp.root / "harness").glob(f"{unit.name}.*.cpp")))
+            key = self.net.compile_key(fn, unit.name, after, harness)
             if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
                 return again
             renamed: dict[Path, str] = {}
@@ -2860,7 +3029,9 @@ class ForkEngine:
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
-        missing = self._missing_note(unit, fn) if d.match_percent is None else ""
+        found = self._unresolved_lines(fp, meta, fn, unit, code) + self._convention_warning(fp, meta, fn, unit)
+        missing = ((self._missing_note(unit, fn) if d.match_percent is None else "")
+                   + ("\n\n" + "\n".join(found) if found else ""))
         if d.literals:
             text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
         else:
@@ -3308,9 +3479,18 @@ class ForkEngine:
         return None
 
     def release_hints(self, slug: str, fn) -> list[str]:
-        """For a release pushed back: what this project knows about what to do next with the function (nothing yet
-        in general)."""
-        return []
+        """For a release pushed back: what this project knows about what to do next with the function (in an LTCG
+        project: the unresolved names that change its code, and that the rest are no reason to stop)."""
+        _, fp, _ = self.get(slug)
+        if not (fp.manifest or {}).get("ltcg"):
+            return []
+        unit = fp.unit(fn["unit"])
+        if unit.base is None or not ltcg_unresolved(unit.base):
+            return []
+        found = self._unresolved_lines(fp, self._meta(fn), fn, unit, self._current_source(fp, fn), only_mattering=True)
+        return ["Unresolved names in the harness link are no reason to stop: data and callees the original calls with "
+                "a standard convention change nothing (the judge writes the original's references in their place).",
+                *found]
 
     def read_file(self, slug: str, path: str, start: int = 1, count: int = 200) -> str:
         _, fp, _ = self.get(slug)
@@ -3866,7 +4046,8 @@ class ForkEngine:
             return {"kind": None, "rows": None, "error": f"objdiff: {e}"}
         if d.match_percent is None:
             return {"kind": None, "rows": None}
-        problems = [f"a loaded constant differs: {m.describe()}" for m in d.literals]
+        problems = [f"{'a reference differs' if isinstance(m, MappingConflict) else 'a loaded constant differs'}: "
+                    f"{m.describe()}" for m in d.literals]
         problems += [f"refers to `{mine}` where the original refers to `{orig}`" for orig, mine in d.renamed]
         return {"kind": "matched" if fn["status"] == "matched" else "latest", "rows": [list(r) for r in d.rows],
                 "score": None, "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}

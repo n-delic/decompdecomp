@@ -74,6 +74,7 @@
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
+    <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
     <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
   </fieldset>
@@ -145,7 +146,17 @@
       <ol class="stations">
         <li><small>Your file</small><b>Program</b><span>a 32-bit x86 .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); C and C++</span></li>
+        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); any other, from your own copy; C and C++</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="xbox" data-file="default.xbe">
+      <h3><span class="pl-name">Xbox</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>Program or disc</b><span>default.xbe, an .xiso or a Redump .iso</span></li>
+        <li><small>Split by</small><b>Ghidra</b><span>after decompdecomp makes the XBE a Windows program at the same addresses</span></li>
+        <li><small>Built by</small><b>Visual C++ 7.0 / 7.1</b><span>the XDK's compilers; your own XDK optional; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -173,7 +184,7 @@
   </div>
 
   <p class="fineprint">1.0.3 rewrote most of the app, so every platform needs testing again. Try it on a game you own and <a href="https://github.com/n-delic/decompdecomp/issues">tell us how it went</a>.</p>
-  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox, through a fork of a community decomp repository.</p>
+  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox 360, through a fork of a community decomp repository.</p>
 </section>
 
 <!-- 3 · the proof -->

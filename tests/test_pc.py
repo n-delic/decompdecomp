@@ -14,15 +14,17 @@ import shutil
 import struct
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from decompnet import consoles, toolchains
+from decompnet import consoles, kits, toolchains
 from decompnet.consoles.pc import scratch as scratch_pe
 from decompnet.forks import csource, ghidra
 from decompnet.forks.project import ForkError, ForkProject
 from decompnet.network import NetworkError
+from tests.test_kits import make_vc
 
 ROOT = Path(__file__).resolve().parent.parent
 DEMO = ROOT / "projects" / "demo-pc"
@@ -1110,6 +1112,11 @@ def test_a_piece_is_delinked_with_the_function_it_belongs_to():
     assert scratch_pe.merge_pieces(pe, found, keep={"_func_0040100F"}, log=lambda *_: None)[1] == {}
     called = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e8eaffffffc3")  # call 0x40100f; ret
     pe = scratch_pe.read_pe(_tiny_exe(called))
+    assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
+    # nor one another function jumps into: a linker that shares one tail between functions (link-time code
+    # generation) leaves that jump naming the piece, a symbol the join would take away
+    jumped = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e9eaffffff")  # jmp 0x40100f
+    pe = scratch_pe.read_pe(_tiny_exe(jumped))
     assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
 
 
@@ -2433,3 +2440,73 @@ def test_a_game_folder_brings_its_dll_and_agents_match_the_dlls_functions(tmp_pa
     symbol = next(fn["name"] for fns in info["units"].values() for fn in fns if fn["name"].endswith(clamp))
     res = net.attempt(agent, symbol, csource.get(GAME.read_text(), "clamp_s32"), slug)
     assert res["matched"], res["text"]
+
+
+def _own_copies(tmp_path, monkeypatch, *builds):
+    """The user's Visual C++ copies (homemade stand-ins), set up in Setup."""
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    for i, build in enumerate(builds):
+        copy = make_vc(tmp_path / f"vc{i}", build)
+        toolchains.install("visualcpp", folder=copy, accept_license=True, log=lambda *_: None)
+
+
+def test_a_game_of_a_build_no_pack_has_builds_with_the_users_own_visual_cpp(tmp_path, monkeypatch):
+    rich_2008 = [(0x84, 30411, 300), (0x91, 30411, 1)]  # a 2008 hotfix build: the packs have SP1 (30729) and RTM
+    rich_2019 = [(0x109, 30137, 658), (0x104, 24234, 556), (0x105, 24215, 395), (0x102, 30137, 1)]
+    plain = scratch_pe.describe(_windows_program(rich=rich_2008))
+    assert plain.own is None and plain.pack_version == "9.0SP1"  # (no copy: today's)
+    assert scratch_pe.describe(_windows_program(rich=rich_2019)).out_of_scope
+    _own_copies(tmp_path, monkeypatch, "15.0.30411.1", "15.0.21022.8", "19.29.30137.0")
+    exact = scratch_pe.describe(_windows_program(rich=rich_2008))
+    assert exact.own.version == "own-15.0.30411" and exact.pack_version == "own-15.0.30411"
+    # its own build is the very one: the pack's nearest isn't used, and the game says so
+    names = {c[0]: c for c in scratch_pe.program_compilers(_windows_program(rich=rich_2008))}
+    assert names["MSVC/own-15.0.30411"][3] is True
+    # the newest 2019 build no pack has, and out of scope until now: in scope with a copy of its version
+    new = scratch_pe.describe(_windows_program(rich=rich_2019))
+    assert not new.out_of_scope and not new.blockers() and "2012 to 2015" not in " ".join(new.cannot_match())
+    assert new.pack_version == "own-19.29.30137" and new.own.runner == "wine"
+    # another build of the same version: the nearest copy, never another version's
+    near = scratch_pe.describe(_windows_program(rich=[(0x84, 30500, 300), (0x91, 30500, 1)]))
+    assert near.own.version == "own-15.0.30411"
+    assert scratch_pe.describe(_windows_program(rich=[(0x0B, 8047, 100)])).own is None  # (no 6.0 copy)
+    # the console lists the copies' compilers, so a file can be switched to one (try_compiler)
+    ids = {c.id for c in consoles.get("pc").compilers}
+    assert {"MSVC/own-15.0.30411", "MSVC/own-15.0.21022", "MSVC/own-19.29.30137", "MSVC/9.0"} <= ids
+
+
+def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp_path):
+    root = tmp_path / "project"
+    shutil.copytree(Path(scratch_pe.__file__).with_name("project_template") / "tools", root / "tools")
+    for unit in ("one", "two"):
+        (root / "src/auto").mkdir(parents=True, exist_ok=True)
+        (root / f"src/auto/{unit}.cpp").write_text("int f(void) { return 1; }\n")
+    config = root / "config/TEST/functions.json"
+    config.parent.mkdir(parents=True)
+    config.write_text(json.dumps({"exe": "orig/test.exe", "units": {"one": {}, "two": {}}}))
+    (root / "include").mkdir()
+    pack = tmp_path / "pack"
+    (pack / "6.0" / "Bin").mkdir(parents=True)
+    (pack / "6.0" / "Bin" / "CL.EXE").write_bytes(b"")
+    (pack / "6.0" / "Include").mkdir()
+    a, b = make_vc(tmp_path / "a", "15.0.30411.1"), make_vc(tmp_path / "b", "16.0.30319.1")
+    compilers = [c for copy in (a, b) for c in kits.get("visualcpp").compilers(copy)]
+    config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.cpp": compilers[0].version,
+                                                                        "src/auto/two.cpp": compilers[1].version}))
+    subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(pack),
+                    *scratch_pe.own_compiler_args([replace(c, runner="none") for c in compilers])],
+                   check=True, capture_output=True, timeout=30, cwd=root)
+    ninja = (root / "build.ninja").read_text(encoding="utf-8")
+    for c in compilers:
+        assert str(c.exe) in ninja and str(c.includes[0]) in ninja
+
+
+@pytest.mark.parametrize("build, version", [
+    ("12.0.8168.0", ("6.0", 8168)), ("13.0.9466.0", ("7.0", 9466)), ("13.10.3077.0", ("7.1", 3077)),
+    ("14.0.50727.762", ("8.0", 50727)), ("15.0.30729.1", ("9.0", 30729)), ("16.0.40219.1", ("10.0", 40219)),
+    ("17.0.61030.0", ("11.0", 61030)), ("18.0.40629.0", ("12.0", 40629)), ("19.0.24215.1", ("14.0", 24215)),
+    ("19.16.27023.0", ("14.1", 27023)), ("19.29.30137.0", ("14.2", 30137))])
+def test_a_copys_compiler_build_is_read_as_the_rich_header_reads_it(build, version):
+    """c2.dll's file version is cl.exe's (the msvc packs' 6.0 to 2010 say 12.0 to 16.0): a copy matches a game's
+    Rich header only as its Visual C++ version."""
+    assert scratch_pe.rich_version(build) == version

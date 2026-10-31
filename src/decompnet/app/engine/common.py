@@ -6,15 +6,17 @@ from __future__ import annotations
 import json
 import re
 
-from ... import consoles
+from ... import consoles, kits
 from ...network import NetworkError
 
-# Tools shown in Setup besides the compilers, with what each console adds (its packs: consoles/<id>/)
+# Tools shown in Setup besides the compilers, with what each console adds (its packs and the kits users bring for it:
+# consoles/<id>/, kits/)
 TOOLS = {
     "m2c": "machine-made first drafts (MIPS, PowerPC, ARM)",
     "decomp-permuter": "rewrites near misses thousands of ways in the background, so more of them match",
     "objdiff-cli": "judges forks of public decomps, function by function",
-} | {tool: use for console in consoles.CONSOLES for tool, use in console.packs}
+} | {tool: use for console in consoles.CONSOLES for tool, use in console.packs} | {
+    kid: kits.get(kid).description for console in consoles.CONSOLES for kid in console.kits}
 # ROM mode's compilers, with which games each built, for Setup
 COMPILERS = {c.id: c.built for console in consoles.CONSOLES if console.mode == consoles.ROM for c in console.compilers}
 # Functions this small are handed out in batches (claim_function count): agents match most on the first try.

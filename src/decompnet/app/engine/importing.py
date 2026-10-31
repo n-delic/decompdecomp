@@ -56,17 +56,20 @@ def pair_old_functions(rows, functions) -> dict:
 
 class ImportMixin:
     def import_rom(self, data: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                   confirmed: bool = False, name: str = "", log=print, scope: str | None = None) -> str:
+                   confirmed: bool = False, name: str = "", log=print, scope: str | None = None,
+                   options: dict | None = None) -> str:
         """Import a game the user owns (ROM bytes, or a file such as a disc image): split it, store every function
         as a target. Returns the slug. `scope`: what the project covers, where its console sets library code aside
-        ("game", the default, or "program": forks/project.py SCOPES)."""
+        ("game", the default, or "program": forks/project.py SCOPES). `options`: answers to the console's
+        import_options."""
         if not confirmed:
             raise NetworkError("confirm that this is your own legally obtained copy of the game")
         if isinstance(data, Path) and data.is_dir():  # a game that is a folder (a PC game: its .exe and DLLs)
             data = consoles.game_in(data)
             log(f"the game's program in that folder: {data.name}")
         console = consoles.identify(data)
-        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope)
+        return console.import_game(self, data, toolchain=toolchain, flags=flags, name=name, log=log, scope=scope,
+                                   options=options)
 
     def saved_file(self, data: bytes | Path, name: str) -> Path:
         """A game sent as bytes, saved to a file first (PROJECT mode's tools read files); a file stays where it is."""

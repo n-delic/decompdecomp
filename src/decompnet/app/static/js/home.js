@@ -200,6 +200,22 @@ function isGbaHead(head) {
   return ((-sum) & 0xff) === head[0xbd];
 }
 
+/* An original Xbox program (XBE): "XBEH", and a base address on a 4 KiB boundary at 0x104. */
+function isXbe(head, dv) {
+  return head.length >= 0x178 && dv.getUint32(0, true) === 0x48454258 && dv.getUint32(0x104, true) % 0x1000 === 0;
+}
+
+/* An Xbox disc image (XDVDFS): its descriptor is at 64 KiB in an XISO, past the video partition in a full dump. A
+   full dump starts like a DVD video disc, so this is asked before the other disc checks. */
+async function identifyXboxDisc(file) {
+  for (const at of [0x10000, 0x18310000]) {
+    if (file.size < at + 20) continue;
+    if (String.fromCharCode(...new Uint8Array(await file.slice(at, at + 20).arrayBuffer())) === "MICROSOFT*XBOX*MEDIA")
+      return { title: file.name.replace(/\.[^.]*$/, ""), size: file.size, platform: "xbox", order: "Xbox disc image" };
+  }
+  return null;
+}
+
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
   const text = (a, b) => String.fromCharCode(...head.slice(a, b));
@@ -211,6 +227,7 @@ function identifyHead(head, file) {
   if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
+  if (isXbe(head, dv)) return { ...base, platform: "xbox", order: "Xbox program (XBE)" };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
   // a PSP's UMD image names its system in the volume descriptor ("PSP GAME"); which other PlayStation a disc is
   // for, its SYSTEM.CNF says (the server reads it, and a CHD's too, which the browser can't look into)
@@ -272,7 +289,7 @@ const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (
 
 async function pickFile(file, extras = []) {
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
-  let info = identifyHead(head, file), buf = file;
+  let info = await identifyXboxDisc(file).catch(() => null) || identifyHead(head, file), buf = file;
   if (!info) {
     const why = notSupported(head, file);
     if (why || file.size > 64 * 1024 * 1024) return toast(esc(why || NOT_A_GAME), "err");
@@ -317,6 +334,8 @@ function setupCompilers(info) {
   $("allCompilers").hidden = true;
   // where the import recognises library code: the project covers the game's own code, or the whole program
   $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  // the console's own import questions (Console.import_options: Xbox asks about link-time code generation)
+  $("importOptions").innerHTML = (con.import_options || []).map((o) => `<div class="row"><label class="field grow"><span>${esc(o.label)}</span><select data-option="${esc(o.id)}">${o.choices.map((c) => `<option value="${esc(c.value)}">${esc(c.text)}</option>`).join("")}</select></label></div>`).join("");
   if (con.mode === "rom" || p === "playstation") {
     // every compiler of its console first, so the import's test tries them all (a guess from the program can miss)
     const missing = missingCompilers(p), owned = missing.filter((t) => t.license === "proprietary");
@@ -452,7 +471,9 @@ $("analyse").onclick = async () => {
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
   const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
+  const chosen = Object.fromEntries([...$("importOptions").querySelectorAll("select[data-option]")].map((s) => [s.dataset.option, s.value]));
+  const options = Object.keys(chosen).length ? `&options=${encodeURIComponent(JSON.stringify(chosen))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${options}${all}${extras}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
 function askPath(why = "") {

@@ -64,7 +64,6 @@ function renderAgentsPage() {
 $("agRefresh").onclick = showAgentsPage;
 
 /* ------------------------------------------------------------------ compilers & tools page */
-const TOOL_GROUPS = [["", "All"], ["N64", "N64"], ["PS2", "PS2"], ["PSP", "PSP"], ["GameCube/Wii", "GameCube, Wii"], ["PC", "PC"], ["tool", "Tools"]];
 let toolFilter = "";
 async function showToolsPage() {
   show("toolsPage");
@@ -73,19 +72,77 @@ async function showToolsPage() {
 }
 function renderTools() {
   const all = S.st.toolchains;
-  const group = (t) => t.platform || "tool";  // a compiler or a pack of them says its platform (toolchains.toml)
-  $("toolChips").innerHTML = TOOL_GROUPS.map(([k, label]) => `<button class="chip ${toolFilter === k ? "on" : ""}" data-g="${k}" type="button">${label} <span>${k ? all.filter((t) => group(t) === k).length : all.length}</span></button>`).join("");
+  const group = (t) => t.platform || "tool";  // a compiler or a pack of them says its platform (toolchains.toml, kits/)
+  // a chip per platform the list has, in its order (a console added later has its own), then the tools
+  const groups = [["", "All"], ...[...new Set(all.map(group))].filter((g) => g !== "tool").map((g) => [g, g.replace("/", ", ")]),
+    ["tool", "Tools"]];
+  $("toolChips").innerHTML = groups.map(([k, label]) => `<button class="chip ${toolFilter === k ? "on" : ""}" data-g="${k}" type="button">${label} <span>${k ? all.filter((t) => group(t) === k).length : all.length}</span></button>`).join("");
   $("toolChips").querySelectorAll("[data-g]").forEach((b) => { b.onclick = () => { toolFilter = b.dataset.g; renderTools(); }; });
   const rows = all.filter((t) => !toolFilter || group(t) === toolFilter);
   $("toolGrid").innerHTML = rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
       <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
+      ${(t.copies || []).map((c) => `<div class="row copy"><span class="grow copy-text"><span class="ok-mark">✓ ${esc(c.build || "your copy")}</span>`
+        + `${c.verified ? `<span class="muted small">${esc(c.verified)}</span>` : ""}`
+        // (the folder's last parts: a full path is long; it's on hover)
+        + `<span class="muted small copy-path" title="${esc(c.folder)}">…/${esc(c.folder.split(/[\\/]/).slice(-3).join("/"))}</span></span>`
+        + `<button class="ghost small-btn" data-remove="${esc(t.id)}" data-folder="${esc(c.folder)}" type="button">Remove</button></div>`).join("")}
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
+        : t.local ? `<span class="grow"></span><button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Add a copy" : "Choose your folder"}</button>`
         : t.installed ? `<span class="ok-mark">✓ installed</span>`
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
           + `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}"`
           + ` type="button">${t.changed ? "Install again" : "Install"}</button>`}</div></div>`).join("");
   $("toolGrid").querySelectorAll("[data-tc]").forEach((b) => { b.onclick = () => { b.disabled = true; installToolchain(b.dataset.tc, !!b.dataset.prop).finally(() => { b.disabled = false; }); }; });
+  $("toolGrid").querySelectorAll("[data-local]").forEach((b) => { b.onclick = () => useLocalToolchain(b.dataset.local); });
+  $("toolGrid").querySelectorAll("[data-remove]").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await api("/api/toolchain/remove", { method: "POST", body: { id: b.dataset.remove, folder: b.dataset.folder } }); await loadState(); renderTools(); }
+      catch (e) { toast(e.message, "err"); b.disabled = false; }
+    };
+  });
+}
+/* A local toolchain (a kit: the Xbox XDK, Visual C++): nothing is downloaded; decompdecomp checks the user's own
+   folder and reads it where it is. Each copy is listed (its build, whether decompdecomp knows it) with Remove; "Add a
+   copy" adds another. The folder and the licence are asked for in the tool's card (prompt() and confirm() are cramped for a
+   Windows path, and some browsers block them). */
+function useLocalToolchain(id) {
+  const t = (S.st.toolchains || []).find((x) => x.id === id) || {};
+  const card = $("toolGrid").querySelector(`[data-local="${CSS.escape(id)}"]`)?.closest(".tool-card");
+  if (!card || card.querySelector(".local-form")) return;
+  const form = document.createElement("form");
+  form.className = "local-form";
+  form.innerHTML = `<label class="field"><span>The folder of your own copy (the one holding the files it needs, or the folder above it)</span>
+      <input name="folder" type="text" spellcheck="false" placeholder="C:\\Program Files\\Microsoft Visual Studio"></label>
+    ${t.license === "proprietary" ? `<label class="check"><input type="checkbox" name="accept"><span>This is proprietary software. decompdecomp reads your copy where it is and never copies or uploads it. I accept that.</span></label>` : ""}
+    <div class="row"><button class="small-btn" type="submit">Use this folder</button><button class="ghost small-btn" type="button" data-cancel>Cancel</button></div>
+    <pre class="joblog" hidden></pre>`;
+  card.appendChild(form);
+  const input = form.querySelector("[name=folder]");
+  input.focus();
+  form.querySelector("[data-cancel]").onclick = () => form.remove();
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const folder = input.value.trim();
+    if (!folder) { input.focus(); return; }
+    const accept = form.querySelector("[name=accept]");
+    if (accept && !accept.checked) { toast("Tick the box to accept the licence first.", "err"); return; }
+    form.querySelector("[type=submit]").disabled = true;
+    const log = form.querySelector(".joblog");
+    log.hidden = false;
+    const finish = beginWork(log, "Checking your folder", [], "Your copy is set up.");
+    try {
+      const { job } = await api("/api/toolchain", { method: "POST", body: { id, accept_license: true, folder } });
+      await followJob(job, log);
+      toast("Your copy is set up.", "match");
+      await loadState();
+      renderTools();
+    } catch (e) {
+      showJobError(log, e.message);
+      form.querySelector("[type=submit]").disabled = false;
+    } finally { finish(); }
+  };
 }
 
 /* ------------------------------------------------------------------ settings page */

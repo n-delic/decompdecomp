@@ -1123,4 +1123,3 @@ description = "The community's project template for GameCube and Wii decomps, us
 url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725a4ce73524470e7a02.tar.gz"
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
-
