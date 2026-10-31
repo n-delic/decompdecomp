@@ -406,3 +406,35 @@ def test_an_agent_goes_from_the_brief_to_a_match_with_the_tools_it_has(demo, fre
     assert "D_00013400 (data: may change this function's code under LTCG" in text
     assert "func_000113C0 (" in text and "standins_for" in text
 
+
+def test_the_import_asks_whether_the_game_used_ltcg_through_the_consoles_options(tmp_path):
+    from decompnet import consoles
+    from decompnet.app import tools
+
+    xbox = consoles.get("xbox")
+    asked = xbox.describe()["import_options"]
+    assert [o["id"] for o in asked] == ["ltcg"] and [c["value"] for c in asked[0]["choices"]] == ["auto", "on", "off"]
+    assert consoles.get("pc").describe()["import_options"] == []
+
+    seen = {}
+
+    class Forks:
+        def create_scratch(self, path, console, **kwargs):
+            seen.update(kwargs)
+            return "slug"
+
+    net = type("Net", (), {"forks": Forks(), "saved_file": lambda self, data, name: tmp_path / name})()
+    xbox.import_game(net, tmp_path / "default.xbe", options={"ltcg": "off", "nonsense": "1"})
+    assert seen["options"] == {"ltcg": "off"}  # (answers to questions the console doesn't ask are dropped)
+    assert "standins_for" in tools.tool_names(True, xbox, ltcg=True)
+    assert "standins_for" not in tools.tool_names(True, xbox) and "standins_for" not in tools.tool_names(False)
+
+
+def test_the_user_can_say_the_game_did_not_use_ltcg(demo, tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said: list[str] = []
+    slug = net.import_rom(demo[0], confirmed=True, log=said.append, options={"ltcg": "off"})
+    fp = net.forks.get(slug)[1]
+    assert not fp.manifest.get("ltcg") and "LTCG = False" in (fp.root / "tools" / "configure.py").read_text()
+    assert not any(line.startswith("link-time code generation? ") for line in said)  # (nothing to detect)
+    assert not list((fp.root / "harness").glob("*.drv.cpp"))

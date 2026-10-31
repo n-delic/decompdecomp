@@ -653,11 +653,12 @@ class ForkEngine:
             self.net._event(db, pid, None, "fork", event)
 
     def create_scratch(self, game: Path, console: consoles.Console, *, compiler: str | None = None, log=print,
-                       scope: str | None = None) -> str:
+                       scope: str | None = None, options: dict | None = None) -> str:
         """A game of a PROJECT-mode console (GameCube, Wii, PC, DS), from scratch: the console generates the
         community's kind of project for it (Console.create_project: dtk-template; for PC, decompdecomp's own from
         Ghidra's analysis; for DS, ds-decomp's), opened like a fork. `scope`: what the project covers (SCOPES), for
-        a console whose import sets library code aside (Console.sets_aside); kept in the project's manifest."""
+        a console whose import sets library code aside (Console.sets_aside); kept in the project's manifest.
+        `options`: the user's answers to Console.import_options, given to create_project as keywords."""
         if scope is not None and scope not in SCOPES:
             raise NetworkError(f"a project covers the game's own code ({GAME!r}) or the whole program, not {scope!r}")
         scoped = {"scope": scope or GAME} if console.sets_aside else {}
@@ -670,7 +671,7 @@ class ForkEngine:
         slug = self._free_slug(_slug(f"{info['title']} {info['id']}" if info.get("kind") != "dol" else info["title"]))
         dest = self.net.workspace / slug
         try:
-            facts = console.create_project(dest, game, compiler=compiler, log=log, **scoped)
+            facts = console.create_project(dest, game, compiler=compiler, log=log, **scoped, **(options or {}))
             if scoped:  # (before the first measuring, which reads it)
                 ForkProject(dest).update_manifest(**scoped)
         except BaseException:

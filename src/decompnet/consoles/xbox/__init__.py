@@ -53,6 +53,10 @@ class Xbox(WindowsPC):
     guides = ("x86", "xbox", "cpp")
     ram = (0x00010000, 0x80000000)  # an XBE loads at 0x10000; the kernel is above 0x80000000
     demo = "demo-xbox"
+    import_options = (("ltcg", "Link-time code generation (/GL, /LTCG)", (
+        ("auto", "Detect it from the program (recommended)"),
+        ("on", "The game was built with it: build units through a harness"),
+        ("off", "The game wasn't: build every unit on its own"))),)
 
     def sniff(self, head: bytes, file) -> bool:
         from . import scratch, xdvdfs
@@ -95,7 +99,9 @@ class Xbox(WindowsPC):
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, ltcg: bool | None = None,
                        log=print) -> dict:
         """The PC path's project, from the XBE's PE view, then the XDK's library sections set aside. `ltcg`: whether
-        the game was built with link-time code generation (None: told from the program, forks/ltcg.py)."""
+        the game was built with link-time code generation (None, or "auto": told from the program, forks/ltcg.py;
+        "on" and "off" as the import's choice says)."""
+        ltcg = {"on": True, "off": False, "auto": None}.get(ltcg, ltcg)
         from ...forks import ltcg as ltcg_mode
         from ..pc import scratch as pc
         from . import scratch

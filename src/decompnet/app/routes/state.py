@@ -158,6 +158,12 @@ def register(app: App) -> None:
         q = request.query_params
         toolchain = q.get("toolchain") or None
         scope = q.get("scope") or None  # what the project covers, where its console sets library code aside
+        try:  # the answers to the console's import_options (JSON, an object of strings)
+            options = json.loads(q.get("options") or "{}")
+            if not isinstance(options, dict) or not all(isinstance(v, str) for v in options.values()):
+                raise ValueError
+        except ValueError:
+            return fail(ValueError("options must be a JSON object of strings"))
         # every compiler of the game's console first (the proprietary ones with `accept`), so its test tries them all
         all_compilers, accept = q.get("all_compilers") == "1", q.get("accept") == "1"
         if scope not in (None, *SCOPES):
@@ -201,7 +207,8 @@ def register(app: App) -> None:
 
         def work(log):
             try:
-                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope)
+                slug = net.import_rom(game, toolchain=toolchain, confirmed=True, name=name, log=log, scope=scope,
+                                     options=options)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)
