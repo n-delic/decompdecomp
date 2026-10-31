@@ -372,9 +372,9 @@ Where to start on a gap:
   set-aside code out. **Check again** (About this project) looks at a project with what the running version knows;
   it also runs before helpers start, once after each update.
 - **PlayStation (PS1) games from your own copy** (beta): a disc image (BIN, ISO or CHD; SYSTEM.CNF says which
-  program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.6.3,
-  2.7.2 or 2.8.1, then maspsx, which does what Sony's assembler ASPSX did, then GNU as; the import tries the three on
-  the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
+  program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.5.7,
+  2.6.0, 2.6.3, 2.7.2 (or its CDK build), 2.8.0, 2.8.1, EGCS 2.91.66 or GCC 2.95.2, then maspsx, which does what
+  Sony's assembler ASPSX did, then GNU as; the import tries them on the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
   and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
   gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
   loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
@@ -472,7 +472,8 @@ Where to start on a gap:
   installer creates a Finder app in `~/Applications`. Intel and Apple Silicon CI exercise portable regressions
   and the hidden native window. KMC GCC/binutils require Rosetta on Apple Silicon; unavailable Linux-only
   compilers remain unavailable. PS1 GCC 2.6.3 builds natively from pinned source on Intel and Apple Silicon Macs
-  with Xcode Command Line Tools; GCC 2.7.2 and 2.8.1 use pinned native Apple Silicon builds with maspsx. The
+  with Xcode Command Line Tools; GCC 2.7.2, 2.7.2 CDK and 2.8.1 use pinned native Apple Silicon builds with maspsx;
+  the other PS1 GCCs and EGCS 2.91.66 need Linux, or Windows through WSL 2. The
   assembler helper uses the app's Python rather than Apple's older system Python. Mac workers use per-thread QoS
   so they don't lower the whole app's priority.
 - **Linux packages**: a `.deb`, an `.rpm` and an AppImage with their own Python, built for each release.

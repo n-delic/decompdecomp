@@ -187,7 +187,7 @@ the game.
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
-| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.6.3 · 2.7.2 · 2.8.1 (PSY-Q), with maspsx | ✓ export | ✓ |
+| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.5.7 · 2.6.0 · 2.6.3 · 2.7.2 (and CDK) · 2.8.0 · 2.8.1 · EGCS 2.91.66 · 2.95.2 (PSY-Q), with maspsx | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |

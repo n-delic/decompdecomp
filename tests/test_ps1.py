@@ -146,6 +146,40 @@ def demo(tmp_path_factory):
 
 
 @needs_demo
+@pytest.mark.parametrize("toolchain", [compiler.id for compiler in PS1.compilers])
+def test_every_ps1_compiler_compiles_and_is_judged(demo, toolchain):
+    """Each compiler the console lists builds a demo function through the app's compile path, and the judge scores
+    it: a PS1 game can have been built with any of them, so none may be listed without a working toolchain."""
+    if toolchains.installed(toolchain) is None:
+        pytest.skip(f"needs {toolchain}")
+    from decompnet.forks import csource
+
+    net, slug, symbols = demo
+    address = symbols["clamp_s32"]
+    pid = net.project_row(slug)["id"]
+    row = net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", pid, address)
+    assert row is not None, "the demo's clamp_s32 isn't a function at its symbol's address"
+    source = csource.get((GAME / "game.c").read_text(), "clamp_s32").replace("clamp_s32(", f"{row['name']}(", 1)
+    agent, _ = net.local_agent(f"compiler-{toolchain}")
+    said = net.try_compiler(agent, slug, row["name"], toolchain, source=source)
+    assert "doesn't compile" not in said, said
+    assert "MATCHES" in said or "not a match" in said, said
+
+
+def test_the_earliest_ps1_compiler_assembles_its_division_check(tmp_path):
+    """ASPSX 2.08's division check is `tge`, a MIPS II instruction: the compiler's assembler must accept it, or a
+    game built with GCC 2.5.7 can't compile any C that divides."""
+    if toolchains.installed("gcc-2.5.7-psx") is None:
+        pytest.skip("needs gcc-2.5.7-psx")
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": "gcc-2.5.7-psx"}})
+    result = compile_source(cfg, "", "int divide(int a, int b) { return a / b; }\n")
+    assert result.ok, result.log
+
+
+@needs_demo
 def test_the_demo_imports_with_gp_and_its_compiler(demo):
     net, slug, _ = demo
     ov = net.overview(slug)
