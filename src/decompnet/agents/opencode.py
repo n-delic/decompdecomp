@@ -86,6 +86,9 @@ class Opencode(Agent):
         else:
             config = {"mcp": {MCP_SERVER: {"type": "remote", "url": mcp_url, "enabled": True, "headers": headers}},
                       "permission": {"edit": never, "bash": never, "webfetch": never}}
+            if zen:  # a rejected ask ends the whole run unless this says otherwise: a free model reaching for `rg`
+                # or `ls` on its third step ended every session of a PC game's helpers, 20 seconds in
+                config["experimental"] = {"continue_loop_on_deny": True}
         (workdir / "opencode.json").write_text(json.dumps({"$schema": "https://opencode.ai/config.json", **config}),
                                                encoding="utf-8")
         # --print-logs: opencode's JSON error only says "Unexpected server error"; the log line says what failed.

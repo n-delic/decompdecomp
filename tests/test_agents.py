@@ -317,7 +317,10 @@ def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_pat
         work = tmp_path / f"oc-{rule}-{model.replace('/', '_')}"
         work.mkdir()
         m._command(s, "tok", work)
-        assert json.loads((work / "opencode.json").read_text())["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        config = json.loads((work / "opencode.json").read_text())
+        assert config["permission"] == {"edit": rule, "bash": rule, "webfetch": rule}
+        # a rejected ask ended the run: a free model's first `rg` ended its session, every session, 20 s in
+        assert config.get("experimental") == ({"continue_loop_on_deny": True} if rule == "ask" else None)
     # its own connection, with its own token, and nothing else: opencode 2's shared service ran the user's own
     # `decomp` server without the session's token, so every helper worked as the user's one chat agent
     for version, standalone in (("opencode v2.0.28", True), ("0.15.4", False)):  # opencode 2's shared service
