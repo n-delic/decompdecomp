@@ -45,8 +45,8 @@ class Xbox(WindowsPC):
                  Compiler("MSVC/7.0", "Visual C++ 7.0", "games made with earlier XDKs"),
                  Compiler("MSVC/xdk", "your XDK's own Visual C++", "early games: the build their XDK shipped"))
     packs = (("msvc", "Visual C++ 7.0 and 7.1, the compilers of Xbox games (proprietary)"),
-             ("xdk", "your own Xbox Development Kit folder: recognises the XDK's library code in a game (proprietary, never copied)"),
              ("ghidra", "finds an Xbox game's functions, and drafts of its code (540 MB, needs Java 21+)"))
+    kits = ("xdk",)  # the user's own XDK: its libraries' code set aside, its compiler for early games
     guides = ("x86", "xbox", "cpp")
     ram = (0x00010000, 0x80000000)  # an XBE loads at 0x10000; the kernel is above 0x80000000
     demo = "demo-xbox"
@@ -65,12 +65,11 @@ class Xbox(WindowsPC):
         return None  # an Xbox game is its default.xbe or its disc image, never a folder of DLLs
 
     def tool_args(self) -> list[str]:
-        """The PC's, and the user's own XDK where it's set up (its compiler, MSVC/xdk: scratch.own_compiler)."""
+        """The PC's, and the compilers of the kits the user set up (the XDK's own Visual C++: MSVC/xdk)."""
+        from ... import kits
         from ..pc import scratch as pc
-        from . import scratch
 
-        xdk = scratch.xdk_folder()
-        return [*pc.tool_args(), *(["--xdk", str(xdk)] if xdk else [])]
+        return [*pc.tool_args(), *pc.own_compiler_args(kits.compilers(self.kits))]
 
     def game_info(self, game: Path) -> dict:
         from . import scratch

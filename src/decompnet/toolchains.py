@@ -72,9 +72,11 @@ class Toolchain:
     # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs
     # share, downloaded once (installed first, like `requires`; INCLUDES says where in each version's folder)
     headers: list[str] = field(default_factory=list)
-    # A local, user-supplied toolchain (kind = "local"): nothing is downloaded; the user points Setup at their own
-    # copy, which must hold these files (case doesn't matter, as on Windows). The Xbox XDK is one.
+    # A local, user-supplied toolchain (kind = "local", a kit: kits/): nothing is downloaded; the user points Setup at
+    # their own copy, which must hold these files (case doesn't matter, as on Windows), in the folder they picked or
+    # one of local_places in it
     local_files: list[str] = field(default_factory=list)
+    local_places: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
@@ -127,7 +129,11 @@ def unsupported_cpu() -> str | None:
 
 @functools.cache
 def _registry_data() -> dict:
-    return tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8"))
+    """toolchains.toml's entries, and the kits users bring (kits/: local toolchains, nothing to download)."""
+    from . import kits
+
+    return {**tomllib.loads(resources.files("decompnet").joinpath("toolchains.toml").read_text(encoding="utf-8")),
+            **{k.id: k.toolchain() for k in kits.KITS}}
 
 
 def registry() -> dict[str, Toolchain]:
@@ -388,23 +394,14 @@ _installs: dict[str, threading.RLock] = {}
 
 
 def find_local(tc: Toolchain, folder: str | Path) -> Path | None:
-    """The folder that holds a local toolchain's files: the one given, or a folder inside it the user may have
-    meant (for the XDK: `xbox`, `XDK` or `XDK/xbox`, so the folder the installer unpacks works as it is). Names are
-    compared ignoring case: the XDK's are Windows names (`XTL.h`)."""
-    def has(base: Path, rel: str) -> bool:
-        at = base
-        for part in Path(rel).parts:
-            if not at.is_dir():
-                return False
-            at = next((c for c in at.iterdir() if c.name.lower() == part.lower()), None)
-            if at is None:
-                return False
-        return at.is_file()
+    """The folder that holds a local toolchain's files: the one given, or one of its places inside it (the XDK's:
+    `xbox`, `XDK/xbox`, so the folder its installer unpacks works as it is). Names are compared ignoring case."""
+    from .kits import find
 
     root = Path(folder).expanduser()
-    for base in (root, root / "xbox", root / "XDK" / "xbox", root / "XDK"):
+    for base in (root, *(root / p for p in tc.local_places)):
         try:
-            if all(has(base, f) for f in tc.local_files):
+            if all(find(base, f) is not None for f in tc.local_files):
                 return base.resolve()
         except OSError:
             continue
@@ -850,6 +847,17 @@ def java_version() -> int:
     return int(m.group(1)) if m else 0
 
 
+def _local_status(tc: Toolchain, m: dict) -> dict:
+    """Where a kit the user set up is, and whether its files are ones decompdecomp knows (Kit.verify)."""
+    from . import kits
+
+    try:
+        verified = kits.get(tc.id).verify(Path(m["folder"]))
+    except (KeyError, OSError):
+        verified = ""
+    return {"folder": m.get("folder"), "verified": verified}
+
+
 def status() -> list[dict]:
     """Every pinned compiler and tool: whether it's installed and can be on this computer, its licence, and whether
     its downloads are pinned. For Compilers & tools."""
@@ -861,6 +869,6 @@ def status() -> list[dict]:
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
                      # installed from an entry that has changed since: Compilers & tools offers to install it again
                      "changed": m is None and _manifest(tc.id) is not None,
-                     "wsl": tc.via_wsl, "local": tc.local, **({"folder": m.get("folder")} if tc.local and m else {}),
+                     "wsl": tc.via_wsl, "local": tc.local, **(_local_status(tc, m) if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
     return rows

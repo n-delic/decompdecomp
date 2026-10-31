@@ -247,6 +247,30 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
    when it isn't installed: `pytest.mark.skipif(toolchains.installed(...) is None, reason="needs ...")`.
 9. **Say it**: the compiler in ROADMAP.md, README.md and docs/GUIDE.md where they list the console's compilers.
 
+### Adding a kit (a compiler or SDK users bring)
+
+A compiler that only ever came in a proprietary SDK (an early Xbox XDK's Visual C++ 7.0 build), or an SDK whose
+libraries a console needs, can't be pinned and downloaded: nobody may publish it. It's a kit, in `src/decompnet/kits/`
+(the connector, like `consoles/` and `agents/`): the user points Setup at their own copy, decompdecomp checks and
+records the folder, and reads it there. Nothing of it is copied, downloaded or put in CI.
+
+1. **Copy `kits/xdk.py`** to `kits/<id>.py` and fill in its facts: `id` (its Setup entry), `name`, `platform`,
+   `description`, `files` (what proves the folder: paths in it, any case), `places` (folders inside the one the
+   user picks where it may be).
+2. **Its parts**, each optional: `build(folder)` (which build the copy is, read from its files), `compilers(folder)`
+   (`OwnCompiler`: a version name, the compiler, its headers, what runs it: wibo, wine or nothing) and `known_files`
+   + `known` (the SHA-256 of a file each build has, so Setup says "verified": a kit isn't pinned, this is how users
+   know their copy is the one the games were built with). Hashes are facts and may be shipped; the files never.
+3. **Register it** in `_registry` at the end of `kits/__init__.py`. It shows in Setup as a toolchain of kind
+   "local" (`toolchains.registry` adds it); it needs no entry in `toolchains.toml`.
+4. **The console takes it**: its `kits` names it, and the console asks the connector for it (`kits.folder`,
+   `kits.compilers`) where it's needed: the Xbox's `tool_args` passes the kits' compilers to the build
+   (`own_compiler_args`: configure.py's `--own VERSION=RUNNER,CL,INCLUDE`), and its `game_info` picks the kit's
+   compiler for a game of the kit's build. A project template other than PC's takes `--own` the same way.
+5. **Pass the tests**: `uv run pytest tests/test_kits.py -q`. It checks the facts, that it's a local toolchain
+   nothing downloads, that a console takes it, and that no code outside `kits/` and that console names it. Test
+   it with a homemade folder (empty stand-ins, never a file of the real kit).
+
 ## Agents
 
 ### Where an agent's code is

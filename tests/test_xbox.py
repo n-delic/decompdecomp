@@ -161,7 +161,7 @@ def test_an_early_game_builds_with_its_own_xdks_compiler(demo, tmp_path, monkeyp
     xdk = tmp_path / "xdk"
     (xdk / "lib").mkdir(parents=True)  # (a homemade stand-in: only the version record the XDK's libraries carry)
     (xdk / "lib" / "xapilib.lib").write_bytes(b"!<arch>\n" + b"XAPILIB\0" + struct.pack("<4H", 1, 0, 3911, 0x4001))
-    monkeypatch.setattr(xbox, "xdk_folder", lambda: xdk)
+    monkeypatch.setattr(xbox.kits, "folder", lambda kid: xdk if kid == xbox.KIT else None)
     assert xbox.game_info(game)["compiler"] == "xdk"
     (xdk / "lib" / "xapilib.lib").write_bytes(b"XAPILIB\0" + struct.pack("<4H", 1, 0, 4361, 0x4001))
     info = xbox.game_info(game)  # another XDK's: the nearest the pack has, and what to set up

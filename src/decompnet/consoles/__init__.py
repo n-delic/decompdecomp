@@ -68,6 +68,7 @@ class Console:
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
     compilers: tuple[Compiler, ...] = ()  # the first is the default, unless default_compiler says another
     packs: tuple[tuple[str, str], ...] = ()  # (toolchain, what it's for): more that Setup offers for it
+    kits: tuple[str, ...] = ()  # the kits users bring that it takes (kits/: an SDK, a compiler only it came in)
     guides: tuple[str, ...] = ()  # guide topics worth reading first (files in its guides/ folder or app/guide/)
     m2c = ""  # m2c's target for drafts of its code, without the language ("mipsee-gcc"); "" when m2c can't read it
     compiler_guide = ""  # the guide on matching what most of its games were built with ("mwcc"): see up_front_guide
@@ -505,7 +506,7 @@ class Console:
         """What the GUI shows about it (the `consoles` list of /api/state)."""
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
-                "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
+                "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",

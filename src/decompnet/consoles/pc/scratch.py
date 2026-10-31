@@ -59,7 +59,6 @@ UNIT_BYTES = 0x1000
 FUNCTION_ALIGN, PADDING_BYTES, ALIGNED_SHARE = 16, (0xCC, 0x00, 0x90), 3
 TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
-OWN_COMPILER = "xdk"  # the version the user's own Xbox XDK's Visual C++ goes by (tools/configure.py --xdk)
 DIR32, REL32 = 0x06, 0x14
 PAD = 0x90  # what Visual C++ 6 pads a function's section with (the linker pads between objects with 0xCC or zeros)
 # Which Visual C++ built each part of the program, by the product ids its Rich header gives: every version numbers its
@@ -1734,6 +1733,17 @@ def tool_args() -> list[str]:
     return args
 
 
+def own_compiler_args(compilers) -> list[str]:
+    """configure.py's arguments for compilers of the user's own (kits.OwnCompiler: a kit's, not a pack's)."""
+    return [arg for c in compilers for arg in ("--own", ",".join([f"{c.version}={c.runner or 'none'}", str(c.exe),
+                                                                  *map(str, c.includes)]))]
+
+
+def own_versions(args: list[str]) -> set[str]:
+    """The versions configure.py arguments name compilers of the user's own for (own_compiler_args)."""
+    return {args[i + 1].split("=", 1)[0] for i, a in enumerate(args[:-1]) if a == "--own"}
+
+
 TYPES_H = """/* Basic types for this decompilation (32-bit x86, Visual C++, written in C++). Agents add structs, classes and
  * prototypes here or in new headers next to it.
  *
@@ -1988,8 +1998,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game. Another
     console whose games are x86 programs in another format gives the program as a PE (`game`) and says what it is
     (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`) and how the README's reader gets the
-    program into orig/ (`game_step`), and its configure.py arguments (`args`, for a compiler of the user's own:
-    OWN_COMPILER): consoles/xbox/."""
+    program into orig/ (`game_step`), and its configure.py arguments (`args`, with its kits' compilers:
+    own_compiler_args): consoles/xbox/."""
     from ...forks import ghidra
 
     info = info or game_info(game)
@@ -2000,8 +2010,9 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         log(f"what can't match: {why}")
     if not info["cannot_match"]:
         log(f"it can match: decompdecomp builds with Visual C++ {compiler}")
-    pack = compiler_pack(compiler) if compiler != OWN_COMPILER else "msvc"
-    if compiler != OWN_COMPILER and not (toolchains.path(pack) / compiler).is_dir():
+    own = compiler in own_versions(args or [])  # (a compiler of the user's own: in a kit, not a pack)
+    pack = "msvc" if own else compiler_pack(compiler)
+    if not own and not (toolchains.path(pack) / compiler).is_dir():
         raise ForkError(f"this game builds with Visual C++ {compiler}, which comes in {toolchains.get(pack).name}: "
                         "install it in Setup (Compilers & tools) if you accept its licence, then try again")
     args = args or tool_args()

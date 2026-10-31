@@ -20,6 +20,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+XAPILIB = "lib/xapilib.lib"  # (in the XDK's folder: the library every game links)
 I386 = 0x14C
 CODE = 0x20  # section characteristics: holds code
 RELOC_BYTES = {0x01: 2, 0x02: 2, 0x06: 4, 0x07: 4, 0x0A: 2, 0x0B: 4, 0x14: 4}  # i386 relocation -> bytes it fills

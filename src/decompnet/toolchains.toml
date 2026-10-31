@@ -1028,15 +1028,3 @@ description = "The community's project template for GameCube and Wii decomps, us
 url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725a4ce73524470e7a02.tar.gz"
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
-
-# The Xbox XDK is the user's own copy: never downloaded, never copied. XDK 5849's compiler is the [msvc] pack's 7.1
-# (the same files); the XDK gives the libraries (xbox/lib) whose code decompdecomp recognises in an Xbox game
-# (consoles/xbox/xdklib.py) and, for the early games, its own Visual C++ 7.0 build (xbox/bin/vc7: MSVC/xdk).
-[xdk]
-name = "Microsoft Xbox Development Kit (your own copy)"
-kind = "local"
-platform = "Xbox"
-license = "proprietary"
-source = "your own XDK folder: nothing is downloaded"
-description = "The libraries of original Xbox games, and the compiler of early ones. Give the folder of your own copy (the one holding xbox/include and xbox/lib)."
-local_files = ["include/xtl.h", "lib/xapilib.lib"]

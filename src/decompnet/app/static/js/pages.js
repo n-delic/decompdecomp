@@ -81,7 +81,7 @@ function renderTools() {
       <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
-        : t.local ? `${t.installed ? `<span class="ok-mark grow" title="${esc(t.folder || "")}">✓ your copy</span>` : ""}`
+        : t.local ? `${t.installed ? `<span class="ok-mark grow" title="${esc([t.folder, t.verified].filter(Boolean).join("\n"))}">✓ your copy${t.verified && !t.verified.startsWith("verified") ? " (unknown build)" : ""}</span>` : ""}`
           + `<button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Change folder" : "Choose your folder"}</button>`
         : t.installed ? `<span class="ok-mark">✓ installed</span>`
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
