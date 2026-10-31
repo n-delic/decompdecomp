@@ -52,6 +52,7 @@ class Section:
     addr: int
     offset: int
     size: int
+    flags: int = 0  # SHF_*: EXECUTABLE is code
 
 
 @dataclass
@@ -103,13 +104,17 @@ def _sections(data: bytes, shoff: int, shentsize: int, shnum: int, shstrndx: int
     _, _, _, _, str_off, str_size = heads[shstrndx]
     names = data[str_off:str_off + str_size]
     out = {}
-    for name, kind, _, addr, off, size in heads:
+    for i, (name, kind, flags, addr, off, size) in enumerate(heads):
         end = names.find(b"\0", name)
-        if name < len(names) and end != -1:
-            label = names[name:end].decode("latin-1")
-            if label and label.startswith("."):
-                out.setdefault(label, Section(label, kind, addr, off, size))
+        label = names[name:end].decode("latin-1") if name < len(names) and end != -1 else ""
+        # a decrypted retail program's section names are zeros (decryption restores only what its segments hold):
+        # its sections are still there, by number, with their addresses, sizes and flags
+        label = label if label.startswith(".") else f"#{i}"
+        out.setdefault(label, Section(label, kind, addr, off, size, flags))
     return out
+
+
+EXECUTABLE = 0x4  # SHF_EXECINSTR
 
 
 def section_bytes(data: bytes, section: Section | None) -> bytes:
@@ -164,6 +169,20 @@ def module_descriptor(data: bytes, elf: Ps3Elf) -> Descriptor | None:
     return Descriptor("ilp32", tocs[0], functions, tocs)
 
 
+PROCESS_PARAM, PROCESS_PARAM_MAGIC = 0x60000001, 0x13BCC5F6  # sys_process_param: its program header and magic
+
+
+def sdk_version(data: bytes, elf: Ps3Elf) -> str:
+    """The SDK the program was built with, as its process parameters record it ("2.5.0" from 0x00250001), or "".
+    A decrypted retail program's .comment (and its section names) are zeros: only its segments survive decryption,
+    and the process parameters are one."""
+    seg = next((s for s in elf.segments if s.kind == PROCESS_PARAM and s.filesz >= 16), None)
+    if seg is None or struct.unpack_from(">I", data, seg.offset + 4)[0] != PROCESS_PARAM_MAGIC:
+        return ""
+    v = struct.unpack_from(">I", data, seg.offset + 12)[0]
+    return f"{v >> 20 & 0xF}.{v >> 16 & 0xF}.{v >> 12 & 0xF}" if v else ""
+
+
 def guess_compiler(comment: bytes) -> str:
     return next((guess for pattern, guess in _COMPILERS if re.search(pattern, comment)), "")
 
@@ -180,12 +199,18 @@ def read_elf(data: bytes, name: str = "") -> tuple[bytes, dict]:
         raise RomError("this PlayStation 3 ELF has no loadable code")
     descriptor = module_descriptor(data, elf)
     comment = section_bytes(data, elf.sections.get(".comment"))
+    sdk = sdk_version(data, elf)
     stem = re.sub(r"\.(elf|self|bin)$", "", name.split("/")[-1].split("\\")[-1], flags=re.I)
     title = stem if stem and stem.lower() not in ("eboot", "game", "main") else "PlayStation 3 game"
     return data, {
         "title": title, "game_code": "", "region": "Unknown region", "version": 0, "entrypoint": elf.entry, "gp": 0,
         "crc1": 0, "crc2": 0, "size": len(data), "sha1": hashlib.sha1(data).hexdigest(), "byte_order": "elf",
-        "compiler_guess": guess_compiler(comment), "sdk": ps3sdk.stamp(comment), "platform": "ps3", "small_data": False,
+        # (what the import says it looks built with: the compiler's stamp, else the SDK its parameters record)
+        "compiler_guess": guess_compiler(comment) or (f"SDK {sdk}" if sdk else ""),
+        "platform": "ps3", "small_data": False,
+        # the compiler's stamp ("SDK270"), else the SDK the process parameters record, written as the stamp is
+        "sdk": ps3sdk.stamp(comment) or (f"SDK{sdk.replace('.', '')}" if sdk else ""),
+        "sdk_version": sdk,
         "osabi": elf.osabi, "abi": descriptor.abi if descriptor else "ilp32",
         "toc": descriptor.toc if descriptor else 0, "descriptors": len(descriptor.functions) if descriptor else 0,
         "symbols": ".symtab" in elf.sections,

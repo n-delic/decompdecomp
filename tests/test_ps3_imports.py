@@ -135,3 +135,48 @@ def test_a_damaged_table_gives_no_wrong_names(cut):
     image = bytearray(with_imports())
     image[cut:cut + 16] = bytes(16)  # the record's header, or the library's name
     assert imports.read_imports(bytes(image)) == []
+
+
+# What a decrypted retail program showed (a PS3 game of 22,000 functions, SDK 2.5.0): its stubs build the slot's address
+# with li and oris and save the TOC first; its section names and .comment are zeros, as decryption restores only what
+# its segments hold; and its process parameters say the SDK.
+def retail_stub(slot: int) -> bytes:
+    hi, lo = (slot + 0x8000) >> 16, slot & 0xFFFF
+    return words(0x39800000, 0x658C0000 | hi, 0x818C0000 | lo,  # li r12,0; oris r12,r12,hi; lwz r12,lo(r12)
+                 0xF8410028, 0x800C0000, 0x804C0004, 0x7C0903A6, 0x4E800420)  # std r2,40(r1); ...; mtctr r0; bctr
+
+
+def test_a_retail_stub_is_known_by_the_slot_it_builds_and_every_stub_starts_a_function():
+    slots = {0x75FB40, 0x75FB44}
+    assert imports.stub_slot(retail_stub(0x75FB40), slots) == 0x75FB40  # (lo 0xFB40: oris 0x76, then -0x4C0)
+    code = words(BLR) + retail_stub(0x75FB40) + retail_stub(0x75FB44)  # (nothing calls the second)
+    assert imports.stub_starts(code, [(0x1000, 0, len(code))], slots) == {0x1004, 0x1024}
+
+
+def test_a_retail_programs_nameless_sections_still_say_where_its_code_is():
+    from decompnet.consoles.ps3 import split
+
+    image = bytearray(program(sections=True))
+    names = b"\0.text\0.comment\0.shstrtab\0"
+    image[len(image) - len(names):] = bytes(len(names))  # (decrypted: the name table is zeros)
+    elf = ps3elf.parse(bytes(image))
+    assert not any(n.startswith(".") for n in elf.sections) and any(s.flags & ps3elf.EXECUTABLE for s in elf.sections.values())
+    assert split.code_ranges(bytes(image), elf) == [(TEXT, 0x1000, 0x100)]
+
+
+def test_the_sdk_is_read_from_the_process_parameters():
+    param = struct.pack(">IIII", 0x20, 0x13BCC5F6, 0x9000, 0x00250001) + bytes(16)
+    elf = ps3elf.Ps3Elf(0, [ps3elf.Segment(ps3elf.PROCESS_PARAM, 0, 0, 0, len(param), len(param))], {}, 0x66)
+    assert ps3elf.sdk_version(param, elf) == "2.5.0"
+
+
+def test_the_title_comes_from_the_discs_param_sfo(tmp_path):
+    from .test_psp import _sfo
+
+    usrdir = tmp_path / "PS3_GAME" / "USRDIR"
+    usrdir.mkdir(parents=True)
+    (usrdir / "EBOOT.ELF").write_bytes(program())
+    (tmp_path / "PS3_GAME" / "PARAM.SFO").write_bytes(_sfo({"TITLE": "Demo Quest", "TITLE_ID": "BCUS00000"}))
+    picked = ps3.PS3.read_game(usrdir / "EBOOT.ELF")
+    assert (picked.info["title"], picked.info["game_code"], picked.info["region"]) == ("Demo Quest", "BCUS00000",
+                                                                                    "North America")

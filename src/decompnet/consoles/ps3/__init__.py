@@ -66,14 +66,18 @@ class PlayStation3(Console):
         return elf.looks_like_self(head) or elf.is_ps3_elf(head)
 
     def read_game(self, file, name: str = "") -> Picked:
-        """The decrypted ELF to split; a SELF is refused with what to do about it."""
+        """The decrypted ELF to split; a SELF is refused with what to do about it. Its title and title ID come from
+        the disc's PARAM.SFO when the ELF is in its folder (PS3_GAME/USRDIR/EBOOT.ELF beside PS3_GAME/PARAM.SFO)."""
         from . import elf
 
+        known = {}
         if isinstance(file, (str, Path)):
-            name = name or Path(file).name
-            file = Path(file).read_bytes()
+            path = Path(file)
+            name = name or path.name
+            known = _title(path.parent.parent / "PARAM.SFO")
+            file = path.read_bytes()
         program, info = elf.read_elf(bytes(file), name)
-        return Picked(self.id, program, "game.elf", info, True)
+        return Picked(self.id, program, "game.elf", info | known, True)
 
     def default_compiler(self, info: dict, splat_guess: str) -> str:
         """The copy of the user's SDK whose compiler built the game (its .comment stamp, "SDK270", against each copy's
@@ -214,3 +218,21 @@ def name_system_calls(net, slug: str, log=print) -> int:
 
 
 PS3 = PlayStation3()
+
+
+def _title(path: Path) -> dict:
+    """The title and title ID of a PS3 disc's PARAM.SFO (the PSP's format: consoles/psp/sfo.py), or {}."""
+    from ...rom import RomError
+    from ..psp import sfo
+
+    try:
+        keys = sfo.read(path.read_bytes())
+    except (OSError, RomError):
+        return {}
+    out = {k: v for k, v in (("title", keys.get("TITLE")), ("game_code", keys.get("TITLE_ID"))) if isinstance(v, str) and v}
+    # a title ID's third letter is its region: BCUS, BLES, NPJB...
+    region = REGIONS.get(out.get("game_code", "")[2:3])
+    return out | ({"region": region} if region else {})
+
+
+REGIONS = {"U": "North America", "E": "Europe", "J": "Japan", "A": "Asia", "K": "Korea", "H": "Asia"}

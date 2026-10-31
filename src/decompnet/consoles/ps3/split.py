@@ -142,9 +142,9 @@ def code_ranges(program: bytes, elf: ps3elf.Ps3Elf, descriptor=None) -> list[tup
     after the last function as one more function."""
     code = elf.code
     out = []
-    for s in elf.sections.values():
+    for s in elf.sections.values():  # (by name; or by flag, where decryption left the names zeros)
         if s.kind == 1 and code.vaddr <= s.addr < code.vaddr + code.filesz and s.size and \
-                s.name.startswith((".text", ".init", ".fini")):
+                (s.name.startswith((".text", ".init", ".fini")) or s.name.startswith("#") and s.flags & ps3elf.EXECUTABLE):
             out.append((s.addr, s.offset, s.size))
     if out:
         return sorted(out)
@@ -179,6 +179,9 @@ def find_starts(program: bytes, elf: ps3elf.Ps3Elf, descriptor, log=print, named
             entry = int.from_bytes(data[k:k + (4 if step == 8 else 8)], "big")
             if inside(entry) and entry % 4 == 0:
                 found.add(entry)
+    from .imports import read_imports, stub_starts
+
+    found |= stub_starts(program, ranges, {i.slot for i in read_imports(program)})  # (an import nothing calls too)
     from_headers = len(found) - from_descriptor
     for addr, off, length in ranges:
         words = _words(program, off, length)

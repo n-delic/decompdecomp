@@ -12,8 +12,9 @@ A call goes to a small function of the SDK's, which loads its slot and jumps thr
 so the slot an import stub loads says which import it is (stub_slot). A kernel call is `li r11,N; sc; blr` (syscall_number):
 the number is the table's (nids.syscalls). Names: `<library>_<function>` from PSL1GHT's lists (nids.py), else
 `<library>_<NID>`, the way the PSP's stubs are named.
-shortcut: stubs that reach their slot through the TOC (`lwz r12,off(r2)`) rather than by address aren't recognised;
-confirm the retail form on one game.
+A retail game's SDK stubs build the slot's address as `li r12,0; oris r12,r12,hi` and save the TOC first
+(`std r2,0x28(r1)`): stub_slot follows any of those. shortcut: stubs that reach their slot through the TOC
+(`lwz r12,off(r2)`) rather than by address aren't recognised; none were in the retail game checked.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ PT_PROC_PRX_PARAM = 0x60000002
 PRX_PARAM_MAGIC = 0x1B434CEC
 RECORD_BYTES = 0x2C
 MAX_STUB_INSNS = 24
+STUB_BYTES = 32  # an SDK import stub: 8 instructions
 MAX_SYSCALL_INSNS = 8
-LIS, LWZ, LD, LI, SC = 15, 32, 58, 14, 17
+LIS, LWZ, LD, LI, SC, ORI, ORIS = 15, 32, 58, 14, 17, 24, 25
 
 
 @dataclass
@@ -96,22 +98,44 @@ def _words(code: bytes):
 
 
 def stub_slot(code: bytes, slots: set[int]) -> int | None:
-    """The stub slot an import stub's code loads (`lis rA,hi` then a word or doubleword load from lo(rA)), or None
-    when it isn't a short function that ends by jumping or returning after such a load."""
+    """The stub slot an import stub's code loads, or None when it isn't a short function that loads one: the slot's
+    address is built in a register (`lis rA,hi`, or `li rA,0; oris rA,rA,hi` as a retail game's SDK stubs do; then
+    `addi`/`ori` for the low half, or the load's own offset) and a word or doubleword is loaded from it."""
     words = _words(code)
     if not 2 <= len(words) <= MAX_STUB_INSNS:
         return None
-    high: dict[int, int] = {}
+    known: dict[int, int] = {}  # register -> the address it holds so far
+
+    def signed(v: int) -> int:
+        return v - 0x10000 if v & 0x8000 else v
     for w in words:
-        op, d, a = w >> 26, (w >> 21) & 31, (w >> 16) & 31
-        if op == LIS and a == 0:
-            high[d] = (w & 0xFFFF) << 16
-        elif op in (LWZ, LD) and a in high:
-            low = w & (0xFFFF if op == LWZ else 0xFFFC)
-            address = (high[a] + (low - 0x10000 if low & 0x8000 else low)) & 0xFFFFFFFF
+        op, d, a, imm = w >> 26, (w >> 21) & 31, (w >> 16) & 31, w & 0xFFFF
+        if op in (LI, LIS) and (a == 0 or a in known):  # addi / addis (li / lis when rA is 0)
+            known[d] = ((known.get(a, 0) if a else 0) + (signed(imm) << (16 if op == LIS else 0))) & 0xFFFFFFFF
+        elif op in (ORI, ORIS) and d in known:  # (d is the source, a the destination here)
+            known[a] = known[d] | (imm << (16 if op == ORIS else 0))
+        elif op in (LWZ, LD) and a in known:
+            address = (known[a] + signed(imm & (0xFFFF if op == LWZ else 0xFFFC))) & 0xFFFFFFFF
             if address in slots:
                 return address
+            known.pop(d, None)
+        elif d in known and op not in (36, 62):  # anything else that writes the register (but stores) forgets it
+            known.pop(d, None)
     return None
+
+
+def stub_starts(program: bytes, ranges: list[tuple[int, int, int]], slots: set[int]) -> set[int]:
+    """Where the import stubs are in the code `ranges` ((address, file offset, length)): each starts building its
+    slot's address in r12 (`li r12,0` or `lis r12,hi`). The splitter starts a function at each, as no call needs to
+    reach one (an import the game never calls still has its stub)."""
+    out = set()
+    for addr, off, length in ranges:
+        for k in range(0, length - 4, 4):  # (to the range's end: the table's last stub is in its last 32 bytes)
+            w = int.from_bytes(program[off + k:off + k + 4], "big")
+            if (w == 0x39800000 or w >> 16 == 0x3D80) and \
+                    stub_slot(program[off + k:off + min(k + STUB_BYTES, length)], slots) is not None:
+                out.add(addr + k)
+    return out
 
 
 def syscall_number(code: bytes) -> int | None:
