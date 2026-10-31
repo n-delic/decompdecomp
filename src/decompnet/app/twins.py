@@ -33,7 +33,7 @@ from ..project import compiler_for
 
 log = logging.getLogger("decompdecomp")
 IDENT = re.compile(r"^[A-Za-z_]\w*$")
-_MACHINE = {"EM_PPC": ("ppc", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
+_MACHINE = {"EM_PPC": ("ppc", "big"), "EM_PPC64": ("ppc64", "big"), "EM_MIPS": ("mips", None), "EM_ARM": ("arm", "little")}
 _CACHE_VERSION = 5  # of twins.json: 2 added why code is hand-written assembly, 3 ARM's BIOS call stubs, 4 ARM's
 # system instructions, 5 COFF objects (PC) and the C names of their symbols
 # A twin's code that didn't match isn't tried again for this long while neither function's code changes (the
