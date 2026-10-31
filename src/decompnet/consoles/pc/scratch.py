@@ -931,10 +931,13 @@ def merge_pieces(pe: PE, functions: list[Function], keep: set[str] = frozenset()
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     md.detail = True
     names = {f.addr: f.name for f in functions}
-    reached: dict[str, set[str]] = {}  # name -> the functions whose code calls it or holds its address
+    # name -> the functions whose code calls it, jumps to it or holds its address: a jump counts too, as a linker
+    # that shares one tail between functions (link-time code generation: on an Xbox game, two functions jumped into
+    # a "piece") leaves the other's jump naming a symbol the join took away
+    reached: dict[str, set[str]] = {}
     for f in functions:
-        for off, kind, name, _ in f.relocs:
-            if name is not None and (kind == DIR32 or pe.read(f.addr + off - 1, 1) == bytes([CALL])):
+        for _, _, name, _ in f.relocs:
+            if name is not None:
                 reached.setdefault(name, set()).add(f.name)
     home: dict[str, str] = {}  # a piece -> the function it was joined to
 

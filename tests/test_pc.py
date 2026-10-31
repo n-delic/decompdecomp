@@ -1111,6 +1111,11 @@ def test_a_piece_is_delinked_with_the_function_it_belongs_to():
     called = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e8eaffffffc3")  # call 0x40100f; ret
     pe = scratch_pe.read_pe(_tiny_exe(called))
     assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
+    # nor one another function jumps into: a linker that shares one tail between functions (link-time code
+    # generation) leaves that jump naming the piece, a symbol the join would take away
+    jumped = (OWNER + EH_EPILOGUE).ljust(0x20, b"\x90") + bytes.fromhex("e9eaffffff")  # jmp 0x40100f
+    pe = scratch_pe.read_pe(_tiny_exe(jumped))
+    assert scratch_pe.merge_pieces(pe, scratch_pe.analyse(pe, ROWS), log=lambda *_: None)[1] == {}
 
 
 def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
