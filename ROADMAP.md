@@ -519,10 +519,12 @@ judge links each candidate at its address and compares what each instruction ref
 function descriptors, the call-site TOC restore). Its imports are named from their NIDs and its kernel calls from
 their numbers (PSL1GHT's lists, MIT), and their stubs set aside. It builds with the free ps3dev GCC (the demo) or your
 own SDK's compiler (the `ps3sdk` kit: the game's `.comment` stamp picks the copy). Every feature of the table ran on
-its demo (`projects/demo-ps3`); no retail game has been tried. What's left:
+its demo (`projects/demo-ps3`), and a decrypted retail game (22,482 functions, SDK 2.5.0) imported whole: its module
+descriptor (Sony's 8-byte pairs), its import stubs (all 194 named), its nameless sections and its SDK read as they
+are, and two of its functions matched through the judge with Sony's GCC rebuilt from its GPL source. What's left:
 
-- **A retail program.** The module descriptor's layout, the retail import stubs (and stubs that reach their slot
-  through the TOC), and whether Sony's linker narrows TOC loads as LLD does are from the research, not seen.
+- **TOC-relative references on a retail program.** Whether Sony's linker narrows TOC loads as LLD does isn't seen
+  yet: the functions matched so far don't load through the TOC.
 - **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.7.0) from
   the GPL parts of its published source; its `toolchains.toml` entries wait for it to be published.
 - **Drafts.** m2c has no PPC64 target: a ROM-mode Ghidra draft (as PC's) would give PS3 drafts, autopilot's draft
