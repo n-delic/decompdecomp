@@ -43,8 +43,9 @@ STALL_BUDGET = ((32, 3), (64, 4), (128, 6), (256, 8))
 STALL_BUDGET_BIGGEST = 10
 STALL_LOOKBACK = 16  # compiles stall_note reads back: more than the biggest budget
 # The game's own code (an SQL condition on `functions`): not what the project sets aside as library code, middleware
-# or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code)
-GAME_CODE = "json_extract(meta, '$.set_aside') IS NULL"
+# or the C runtime (config/<version>/set_aside.json, objdiff.game_measures; while its scope is the game's own code).
+# (meta's set_aside, as store.py's triggers copy it: the counts' index holds it)
+GAME_CODE = "aside_mark IS NULL"
 # Set aside, for either reason (an SQL condition on `functions`): no C makes it (status asm: hand-written assembly, a
 # piece of a function, agents' verdict) or it isn't the game's own (GAME_CODE). Every count takes it off the total
 # and off what matched, so a matched library function doesn't count either.
@@ -55,8 +56,8 @@ PROGRESS_COLUMNS = (
     "SUM(CASE WHEN status='matched' AND NOT {a} THEN size ELSE 0 END) AS matched_bytes, SUM({a}) AS set_aside, "
     "SUM(CASE WHEN {a} THEN size ELSE 0 END) AS set_aside_bytes").format(a=SET_ASIDE)
 # The functions still in the game's build: not one a measure found gone (a piece joined to its function, kept for its
-# attempts and notes; ForkEngine.sync marks it), which the map and every count leave out
-IN_BUILD = "json_extract(meta, '$.gone') IS NULL"
+# attempts and notes; ForkEngine.sync marks it), which the map and every count leave out (meta's gone, copied too)
+IN_BUILD = "gone_mark IS NULL"
 BRIEF_NOTES = 8  # the newest notes on a function its brief shows
 REPEATS_KEPT = 4096  # compile results kept in memory for repeat_of
 # events after which earlier compile results don't stand for a repeat (bump_generation): a header, a source file, a

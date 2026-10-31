@@ -210,7 +210,7 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
     assert len(plans) >= 5
     for sql, plan in plans.items():
         steps = [step for step in plan if " functions" in step or " events" in step or " f " in step]
-        assert steps and all("COVERING INDEX" in step for step in steps), (sql, plan)
+        assert steps and all("COVERING INDEX" in step for step in steps), (f"SQLite {sqlite3.sqlite_version}", sql, plan)
 
 
 def test_agents_claims_and_attempts_leave_the_maps_signature_alone(tmp_path):
@@ -253,12 +253,21 @@ def test_a_live_poll_that_couldnt_bring_every_attempt_says_so(tmp_path):
     assert not net.live("game", 0, last - 3)["cut"]
 
 
-def test_a_database_with_a_function_whose_meta_isnt_json_still_opens(tmp_path):
-    """The counts' index reads each function's meta as JSON: one that isn't (none is written so) mustn't keep the app
-    from starting. It keeps the narrower index then."""
+def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_path):
+    """The counts read meta's set_aside and gone from columns of their own (an index holds them on every SQLite): they
+    follow every write of meta, an older database gets them for the functions it has, and a meta that isn't JSON
+    (none is written so) keeps the app from starting no more than it did."""
     store = Store(tmp_path / "app.db")
-    store.conn.execute("DROP INDEX idx_functions_counts")
-    store.conn.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'f', '{not json')")
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'lib', '{\"set_aside\": \"the C runtime\"}')")
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'own', NULL)")
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'odd', '{not json')")
+        db.execute("UPDATE functions SET meta=json_set(COALESCE(meta, '{}'), '$.gone', 1) WHERE name='own'")
+    marks = lambda s: {r["name"]: (r["aside_mark"], r["gone_mark"]) for r in s.all("SELECT * FROM functions")}  # noqa: E731
+    assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+    # a database from before the marks: its functions get theirs when it opens
+    store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
+                             "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
+                             "ALTER TABLE functions DROP COLUMN gone_mark")
     store.conn.close()
-    indexes = {r[0] for r in Store(tmp_path / "app.db").conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
-    assert "idx_functions_progress" in indexes and "idx_functions_counts" not in indexes
+    assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
