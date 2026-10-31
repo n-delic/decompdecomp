@@ -598,6 +598,22 @@ def test_a_fork_join_checks_the_name_before_asking_the_host():  # noqa: F811
     assert calls == []
 
 
+def test_a_fork_join_needs_git_before_asking_the_host(monkeypatch):
+    """A Windows member without git got "[WinError 2] The system cannot find the file specified" from the tree's
+    git init, after the host had already let them in."""
+    calls = []
+
+    class NoHost:
+        def post(self, *args, **kwargs):
+            calls.append(1)
+            raise AssertionError("joined without git")
+
+    monkeypatch.setattr(collab.shutil, "which", lambda cmd, *a, **k: None if cmd == "git" else "x")
+    with pytest.raises(NetworkError, match="needs git"):
+        collab._join_fork(object(), NoHost(), "url", "code", {}, "kim", b"", lambda *_: None, None, False)
+    assert calls == []
+
+
 def test_reconnect_says_when_the_room_gave_the_name_a_number(built, tmp_path):  # noqa: F811
     host, slug, room, code, client = _host(built, tmp_path)
     link = f"http://192.168.1.20:6481/join/{code}#room={slug}"

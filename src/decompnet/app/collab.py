@@ -1175,6 +1175,8 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
     from .. import consoles
 
     _check_name(name)  # the host would refuse it after the download: catch it before any of the work
+    if not shutil.which("git"):  # the tree comes as git history (forkroom.clone): Windows has no git of its own
+        raise NetworkError("joining this room needs git: install it from https://git-scm.com, then join again")
     tmp = None
     if not isinstance(game, Path):
         tmp = tempfile.NamedTemporaryFile(prefix="decomp-join-", suffix=".game", delete=False)
