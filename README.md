@@ -231,6 +231,7 @@ game's code is its rights holder's: keep it to yourself.
 | Nintendo 64 | Recommended |
 | PlayStation (PS1) | Beta |
 | PlayStation 2 | Beta |
+| PlayStation 3 | Beta (from your decrypted EBOOT.ELF; the free ps3dev GCC, or your own SDK's compiler) |
 | PSP | Beta |
 | GameCube, Wii | Beta |
 | Windows PC games | Beta |
