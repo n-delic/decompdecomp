@@ -12,8 +12,11 @@ convention and call sites (forks/convention.py).
 
 from __future__ import annotations
 
+import logging
+
 from capstone import x86
 
+from . import methods
 from .convention import Program, call_site, evidence, instructions
 
 _FLOAT = ("fld", "fst", "fstp", "fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr", "fcom", "fcomp", "movss",
@@ -103,6 +106,11 @@ def skeleton(prog: Program, unit: str) -> dict[str, str]:
         name = f"D_{base:08X}"
         lines.append(f"{decl.format(name=name)};  // {why}; used by {', '.join(users[base][:3])}")
         externs.append(f"extern {decl.format(name=name)};")
+    try:
+        objs = methods.recover(prog, True)  # (standins are for LTCG projects: `this` in any register)
+    except Exception:  # a heuristic: the skeleton is written without it
+        logging.getLogger("decompdecomp").exception("finding member functions failed")
+        objs = None
     if callees:
         lines += ["", "// ---- functions the unit calls (the original's convention for each, then a stub to shape)"]
     for target in sorted(callees):
@@ -121,10 +129,22 @@ def skeleton(prog: Program, unit: str) -> dict[str, str]:
         args += [f"int arg{n // 4}" for n in slots]
         params = ", ".join(args) or "void"
         todo = "TODO: the signature your source declares"
-        if "ecx" in conv.reads:
+        g = objs.of.get(target) if objs is not None else None
+        if g is not None:
+            mparams = methods.params(prog, target, g.methods[target])
+            lines.append(f"// looks like a member function of {g.keyword} {g.name} (`this` in {g.methods[target]}): "
+                         f"int {g.name}::{name}({mparams}) {{ return 0; }}")
+        elif "ecx" in conv.reads:
             todo += "; it takes ecx: `this` (a method) or __fastcall's first argument"
         lines.append(f"int {name}({params}) {{ return 0; }}  // {todo}")
         externs.append(f"int {name}({params});")
+    groups = []
+    for a in (sorted(mine) + sorted(callees)) if objs is not None else ():
+        g = objs.of.get(a)
+        if g is not None and g not in groups:
+            groups.append(g)
+    structs = "\n\n".join(f"// {g.keyword} {g.name}: {'; '.join(g.why)}\n{methods.declaration(prog, g)}"
+                          for g in groups[:12])
     if imports:
         lines += ["", f"// kernel or DLL imports (link them: // HARNESS-LINK: xboxkrnl.lib on Xbox): "
                       f"{', '.join(sorted(imports)[:12])}"]
@@ -141,7 +161,8 @@ def skeleton(prog: Program, unit: str) -> dict[str, str]:
             drv.append("    //   (only the unit's own functions call it: they keep it in the link)")
         drv.append(f"    // {name}(/* as the call sites above load it */);")
     drv.append("}")
-    return {"standins": "\n".join(lines) + "\n", "driver": "\n".join(drv) + "\n", "externs": "\n".join(externs) + "\n"}
+    return {"standins": "\n".join(lines) + "\n", "driver": "\n".join(drv) + "\n", "externs": "\n".join(externs) + "\n",
+            "structs": structs + "\n" if structs else ""}
 
 
 def render(prog: Program, unit: str) -> str:
@@ -151,4 +172,7 @@ def render(prog: Program, unit: str) -> str:
             f"edit_file (old=\"\" makes a new file), then shape them by hand:\n\n"
             f"### harness/{unit}.standins.cpp\n```cpp\n{s['standins']}```\n\n"
             f"### HarnessEntry for harness/{unit}.drv.cpp (replace the commented-out one)\n```cpp\n{s['driver']}```\n\n"
-            f"### Declarations for src/auto/{unit}.cpp (or a header it includes)\n```cpp\n{s['externs']}```")
+            f"### Declarations for src/auto/{unit}.cpp (or a header it includes)\n```cpp\n{s['externs']}```"
+            + (f"\n\n### Structs and classes its functions and callees look like member functions of (fields from "
+               f"the code: put them in a header the unit and its stand-ins both include, then write those functions "
+               f"as `int Struct::func_...(...)`, stand-ins too)\n```cpp\n{s['structs']}```" if s["structs"] else ""))
