@@ -185,6 +185,7 @@ def test_which_compilers_run_through_wine_is_each_packs_own(tmp_path):
     assert runners(None) == {"a": "wibo", "b": "wibo", "c": "wine"}
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows runs every Visual C++ itself")
 def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, monkeypatch):
     """Visual C++ 2015 and newer go through wine (wibo can't run them), older ones through wibo, file by file. cl.exe
     reads /home/... as a switch, so every path it's given is Z:\\..., or relative with backslashes; wine runs in the
@@ -217,7 +218,7 @@ def test_visual_cpp_2017_files_build_through_wine_with_windows_paths(tmp_path, m
         (packs / version / "Include").mkdir()
         (packs / version / "Bin" / "cl.exe").write_text("")
     sdk = tmp_path / "SDK ü" / "Include"  # (2017's headers are a toolchain of their own: its includes.txt says where)
-    (packs / "14.16" / "includes.txt").write_text("../../SDK ü/Include\n")
+    (packs / "14.16" / "includes.txt").write_text("../../SDK ü/Include\n", encoding="utf-8")
     sdk.mkdir(parents=True)
     record, fakes = root / "ran.txt", tmp_path / "fake wine"
     fakes.mkdir()
