@@ -554,8 +554,10 @@ blank).
 
 PC projects build with Visual C++ 6.0 to 2010 (phases B and C are done: Recently done). The import already tells a
 newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Visual C++ 2017's compilers are
-installed (`msvc2015`, Recently done) and can be chosen per file, but games built with 2017 and newer are still
-refused at import.
+installed (`msvc2015`, Recently done) and can be chosen per file. A game built with a Visual C++ no pack has (2012,
+2013, 2015, 2019, 2022, or another build of a packed version) builds with your own copy of it: the `visualcpp` kit
+(`kits/`), set up in Setup from your Visual Studio's VC folder, matched to the game's Rich header by build (2015 and
+newer through wine). Without a copy, games built with 2017 and newer are still refused at import.
 
 - **What 2005-2010 still lacks.** The newer exception-handling tables (`__CxxFrameHandler3`) need the stub rules
   tested again (a game rebuilt with 2010 tools: 6,583 stubs found; a 2005 game built without C++ exceptions: none).
