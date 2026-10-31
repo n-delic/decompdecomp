@@ -402,7 +402,14 @@ class ForkProject:
         # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
         # a compiler's error and pushed it out of the tail agents and the user read
         said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-        return code == 0, "\n".join(said[-60:])
+        tail = "\n".join(said[-60:])
+        if code:
+            from .buildhelp import explain
+
+            if hints := explain(self.root, executable, "\n".join(out)):
+                log(hints)
+                tail = tail + "\n\n" + hints
+        return code == 0, tail
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc
