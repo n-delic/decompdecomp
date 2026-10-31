@@ -35,7 +35,8 @@ compiles can't match those functions: note "LTCG register convention" and releas
   driver's call or a stand-in so it looks like the original's call site.
 - `standins_for(unit)` writes a starting point: stand-ins for what the unit's functions call or read elsewhere,
   with their conventions, a HarnessEntry with each function's call sites as comments to turn into calls, and the
-  declarations. Put them in with `edit_file` (`old=""` creates a file), then shape them.
+  declarations, and the structs its functions look like members of. Put them in with `edit_file` (`old=""`
+  creates a file), then shape them.
   - The driver calls the unit's functions the way the original's call sites do: what eax/esi/edi/ebx/ecx hold
     right before the call, which pushes are constants, what the result is used for.
   - `harness/<unit>.<name>.cpp` holds stand-ins shaped like the real ones (registers read, preserved, returned);
@@ -46,9 +47,14 @@ compiles can't match those functions: note "LTCG register convention" and releas
 - Adding a helper function or a call site changes conventions under LTCG. The linker specialises a callee with a
   single call site (arguments left where that caller has them, saves dropped); a second caller (a helper, a
   driver call, a stand-in) can make it standard again, or the reverse. After adding one, check the convention
-  evidence again (the brief's against your compile's), and keep the original's number of call sites.
-- `this` can arrive in any register: write a member function when its struct has other member functions
-  (`get_class`), a free function otherwise, and the linker still passes the pointer where the callers put it.
+  evidence again (the brief's against your compile's), and keep the original's number of call sites. When a
+  compile's result says the linker gave your function another convention than the original's, that is what
+  happened: remove the extra call site (or add the missing one) before touching the function's C.
+- Member functions: `this` can arrive in any register (a member function that adds to a field may get it in esi).
+  Write a member function when the brief says the function is one, and it still matches. A free function's
+  pointer can arrive the same way: prefer a member function when its struct has other member functions
+  (`get_class`, when the game has RTTI). A function using two registers at the same offsets is a function of two
+  objects (the brief's "Two objects alike"): neither is `this`.
 - Unresolved names: the harness link goes on without them (`/FORCE:UNRESOLVED`) and the judge writes the
   original's reference in their place. The brief and compile_and_diff list them by kind:
   - data (a global, a D_<address>, a pool constant): not always harmless. Under LTCG the compiler sees a global's
