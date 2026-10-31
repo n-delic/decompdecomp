@@ -26,7 +26,7 @@ from pathlib import Path
 
 from .. import arch, classes, consoles, similarity, structs, toolchains
 from ..forks import csource, datadiff, drafts, dtksplits, ghidra, objdiff
-from ..forks.objdiff import ObjdiffError
+from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject
 from ..hostenv import NO_WINDOW
 from ..network import (
@@ -2204,7 +2204,7 @@ class ForkEngine:
         try:
             d = fp.diff(unit, meta.get("symbol") or fn["name"])
             pct = ("not in your build yet" if d.match_percent is None else
-                   "every instruction matches, but loaded constants differ" if d.literals else
+                   d.why_not() if d.literals else
                    f"{percent_text(d.match_percent)} match")
             asm = d.target_asm().splitlines()
             if len(asm) > 500:
@@ -2730,7 +2730,10 @@ class ForkEngine:
             # the same file as an earlier compile of this function made, nothing it depends on changed since: that
             # compile's result, not another build
             agents_try = keep and quiet is None and not was_matched
-            key = self.net.compile_key(fn, unit.name, after)
+            # (an LTCG project's driver and stand-ins are part of what the unit builds with: harness/<unit>.*.cpp)
+            harness = "".join(p.read_text(errors="replace", encoding="utf-8")
+                              for p in sorted((fp.root / "harness").glob(f"{unit.name}.*.cpp")))
+            key = self.net.compile_key(fn, unit.name, after, harness)
             if agents_try and (again := self.net.repeat_of(key, agent, fn)) is not None:
                 return again
             renamed: dict[Path, str] = {}
@@ -3866,7 +3869,8 @@ class ForkEngine:
             return {"kind": None, "rows": None, "error": f"objdiff: {e}"}
         if d.match_percent is None:
             return {"kind": None, "rows": None}
-        problems = [f"a loaded constant differs: {m.describe()}" for m in d.literals]
+        problems = [f"{'a reference differs' if isinstance(m, MappingConflict) else 'a loaded constant differs'}: "
+                    f"{m.describe()}" for m in d.literals]
         problems += [f"refers to `{mine}` where the original refers to `{orig}`" for orig, mine in d.renamed]
         return {"kind": "matched" if fn["status"] == "matched" else "latest", "rows": [list(r) for r in d.rows],
                 "score": None, "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}

@@ -50,9 +50,9 @@ MAX_KERNEL_IMPORTS = 1024
 CL_FLAGS = ["/nologo", "/c", "/O2", "/G6", "/GF", "/Gy", "/arch:SSE", "/W3", "/D_XBOX"]
 
 
-def cl_flags(compiler: str) -> list[str]:
-    """CL_FLAGS for a game's compiler: Visual C++ 7.0 and the early XDKs' builds of it have no /arch (7.1's)."""
-    return CL_FLAGS if compiler == "7.1" else [f for f in CL_FLAGS if not f.startswith("/arch:")]
+def cl_flags(compiler: str, flags: list[str] = CL_FLAGS) -> list[str]:
+    """`flags` for a game's compiler: Visual C++ 7.0 and the early XDKs' builds of it have no /arch (7.1's)."""
+    return flags if compiler == "7.1" else [f for f in flags if not f.startswith("/arch:")]
 # Visual C++ by the XDK build that shipped it: XDK 5849 (2003 on) is Visual C++ 7.1 (13.10.3077, the msvc pack's
 # 7.1); the XDKs before it were Visual C++ 7.0's (XDK 4627's is 13.00.9466, the pack's 7.0; the first XDKs, 3911 to
 # 4361, had earlier 13.00 builds, of which 7.0 is the nearest decompdecomp has). Later builds than 5849 are 7.1's too.

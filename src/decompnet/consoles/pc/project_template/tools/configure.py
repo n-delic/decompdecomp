@@ -10,7 +10,8 @@ $DECOMPNET_WINE and $DECOMPNET_WINE_PREFIX, which decompdecomp sets): each file 
 config/VERSION/file_compilers.json names one, and with the more flags config/VERSION/file_flags.json gives it
 (/Oy-: the frame pointer kept). objdiff.json (for objdiff and decompdecomp) compares every source file's functions
 with the original's. `ninja rebuild` puts the whole program back together from them (tools/rebuild.py) and checks
-it against your copy. Made by decompdecomp.
+it against your copy. A game built with link-time code generation (LTCG = True: units with a driver in harness/)
+builds those units through tools/ltcg.py, whose linker runs through wine. Made by decompdecomp.
 """
 
 import argparse
@@ -26,6 +27,10 @@ import ninja_syntax
 # Settings (decompdecomp wrote these for this game; change them if the game was built differently)
 MSVC_VERSION = "6.0"  # every file's, unless config/<version>/file_compilers.json names another for it
 CL_FLAGS = ["/nologo", "/c", "/O2", "/W3", "/GX"]  # /GX: C++ exceptions, as games of the time were built
+# Link-time code generation (games built with /GL and /LTCG, many Xbox games): a unit whose driver in harness/ defines
+# HarnessEntry compiles with CL_FLAGS plus /GL and links in harness mode (tools/ltcg.py, run through wine); the rest
+# compile with CL_FLAGS alone.
+LTCG = False
 
 ROOT = Path(__file__).resolve().parent.parent
 os.chdir(ROOT)
@@ -120,7 +125,9 @@ def main() -> None:
     info = json.loads(CONFIG.read_text(encoding="utf-8"))
     units = info["units"]
     headers = [p.as_posix() for p in files("include", (".h", ".hpp"))]
-    with open("build.ninja", "w", encoding="utf-8") as f:
+    # written aside and put in place whole: a configure that stops half way (a driver it can't read) leaves the last
+    # build.ninja, so ninja runs this again and shows why
+    with open("build.ninja.tmp", "w", encoding="utf-8") as f:
         n = ninja_syntax.Writer(f)
         n.rule("delink", f"{PY} tools/delink.py {CONFIG.as_posix()} {(BUILD / 'target').as_posix()}", restat=True)
         compiler = [PYTHON, "tools/compile.py", "--config", CONFIG.as_posix()]
@@ -134,7 +141,22 @@ def main() -> None:
         n.build(targets, "delink", [CONFIG.as_posix(), "tools/delink.py"])
         objs = []
         versions, more = file_compilers(), file_flags()
+        harness, harness_files = set(), []
+        if LTCG:  # ---- harness mode (tools/ltcg.py, tools/dll2coff.py)
+            import ltcg
+
+            def compiler_of(source: str):
+                cl, includes = msvc(versions.get(source, MSVC_VERSION))
+                return cl, includes, [*CL_FLAGS, *more.get(source, [])]
+
+            harness, harness_files = ltcg.write_rules(
+                n, units=list(units), source_of=source_of, build=BUILD, config=CONFIG, compiler_of=compiler_of, py=PY,
+                wibo=args.wibo, headers=headers)
+            objs += [(BUILD / Path(s).with_suffix(".obj")).as_posix() for s in sorted(harness)]
+        # ---- end of harness mode
         for src in files("src", (".c", ".cpp")):
+            if src.as_posix() in harness:
+                continue
             obj = (BUILD / src.with_suffix(".obj")).as_posix()
             src_posix = src.as_posix()
             version = versions.get(src_posix, MSVC_VERSION)
@@ -159,8 +181,10 @@ def main() -> None:
         n.build("rebuild", "phony", programs)
         n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), *headers,
                                              *[s.as_posix() for s in files("src", (".c", ".cpp"))],
-                                             *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()]])
+                                             *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()],
+                                             *harness_files])
         n.default(["prepare"])
+    os.replace("build.ninja.tmp", "build.ninja")
 
     objdiff = {
         "$schema": "https://raw.githubusercontent.com/encounter/objdiff/main/config.schema.json",

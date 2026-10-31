@@ -1680,7 +1680,7 @@ def compiler_pack(version: str) -> str:
 
 # the lines of tools/configure.py a project keeps when its tools are brought up to date: what create (and the
 # Settings panel, set_own_compiler) wrote for the game, and the flags its README says the user may change
-KEPT_SETTINGS = (r'^MSVC_VERSION = "[^"]*"', r"^CL_FLAGS = \[[^\]]*\]")
+KEPT_SETTINGS = (r'^MSVC_VERSION = "[^"]*"', r"^CL_FLAGS = \[[^\]]*\]", r"^LTCG = (?:True|False)")
 
 
 def tools_version() -> str:
@@ -1994,12 +1994,15 @@ def _run(cmd: list[str], root: Path, what: str, log) -> None:
 
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print, info: dict | None = None,
            platform: str = "pc", what: str = "your copy of the game's program (.exe)",
-           cl_flags: list[str] | None = None, game_step: str = "", args: list[str] | None = None) -> dict:
+           cl_flags: list[str] | None = None, game_step: str = "", args: list[str] | None = None, plan=None) -> dict:
     """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game. Another
     console whose games are x86 programs in another format gives the program as a PE (`game`) and says what it is
-    (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`) and how the README's reader gets the
-    program into orig/ (`game_step`), and its configure.py arguments (`args`, with its kits' compilers:
-    own_compiler_args): consoles/xbox/."""
+    (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`), how the README's reader gets the
+    program into orig/ (`game_step`) and its configure.py arguments (`args`, with its kits' compilers:
+    own_compiler_args): consoles/xbox/. `plan(pe, functions)`, called once the functions are found:
+    {"cl_flags": ..., "prepare": fn(root, groups), "manifest": {...}}, the console's choices that depend on what the
+    program turned out to be (an Xbox game built with link-time code generation, forks/ltcg.py): other flags,
+    files and settings before the first build, and keys for the manifest."""
     from ...forks import ghidra
 
     info = info or game_info(game)
@@ -2040,6 +2043,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         log(f"{debug.source}: {debug.info.summary()}")
     groups = _program_units(pe, found, log, debug.info.units if debug is not None else None)
     log(f"{sum(map(len, groups.values()))} functions; {info['compiler_why']}: Visual C++ {compiler}")
+    plan = plan(pe, [f for fns in groups.values() for f in fns]) if plan is not None else {}
+    cl_flags = plan.get("cl_flags", cl_flags)
     pes, own = {"": pe}, {}
     debugs = [debug.info] if debug is not None else []
     real = debug_names(debug.info, [f for fns in groups.values() for f in fns]) if debug is not None else {}
@@ -2142,6 +2147,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
                  f"0x{fns[0].addr:08X} to 0x{fns[-1].addr + fns[-1].size:08X}, found by Ghidra")
         src.write_text(f"/* {len(fns)} function{'s' if len(fns) != 1 else ''} from {where}. */\n"
                        "#include \"common.h\"\n", encoding="utf-8")
+    if plan.get("prepare") is not None:
+        plan["prepare"](root, groups)
     log(f"{len(groups)} source files for agents to write into"
         + (f" (each DLL's in src/auto/<its name>/: {', '.join(m.name for m in modules)})" if modules else ""))
 
@@ -2161,7 +2168,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         "tools": tools_version(),
         "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
-        "rebuild": rebuild,
+        "rebuild": rebuild, **plan.get("manifest", {}),
     }, indent=2), encoding="utf-8")
     (root / ".gitignore").write_text("# made from your copy of the game, or by the build\norig/\nbuild/\nbuild.ninja\n"
                                      ".ninja_*\nobjdiff.json\n__pycache__/\n.decomp-wtf/\n", encoding="utf-8")
