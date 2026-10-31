@@ -12,11 +12,27 @@ esac
 ctx=$(mktemp -d); trap 'rm -rf "$ctx"' EXIT
 curl -fsSL -o "$ctx/src.tar.gz" "https://codeload.github.com/sagemono/ps3gcc/tar.gz/$commit"
 echo "$sha  $ctx/src.tar.gz" | sha256sum -c -
+# Only the GPL parts go into the pack. Sony's own files in the archive (its readme, its build scripts, and the vector
+# intrinsics headers it added to GCC's tree) say "SCE CONFIDENTIAL ... All Rights Reserved": they aren't GPL, so they
+# are left out, found by that notice. The build doesn't need the scripts (the Containerfile builds directly); GCC's
+# configuration lists the headers, so each becomes a stub that stops a file including it: that file needs the
+# header of the user's own SDK (decompdecomp's PS3 SDK kit).
+mkdir "$ctx/src" && tar xzf "$ctx/src.tar.gz" -C "$ctx/src" --strip-components=1 && rm "$ctx/src.tar.gz"
+removed=$(cd "$ctx/src" && grep -rl "SCE CONFIDENTIAL" . | sort)
+for f in $removed; do
+  case $f in
+    *.h) printf '#error "%s is Sony'"'"'s, not GPL: it is left out of this compiler. Use your own PS3 SDK'"'"'s."\n' \
+           "$(basename "$f")" > "$ctx/src/$f" ;;
+    *) rm "$ctx/src/$f" ;;
+  esac
+done
+tar czf "$ctx/src.tar.gz" -C "$ctx" --transform "s|^src|ps3gcc-$gen|" src && rm -rf "$ctx/src"
 cat > "$ctx/SOURCE.txt" <<EOT
-ppu-lv2-gcc, SDK generation $gen: GCC 4.1.1 and binutils 2.17 with Sony's changes, built unmodified from
-the GPL source Sony published (toolchain-src-$gen-GCC411), archived at
-https://github.com/sagemono/ps3gcc commit $commit.
-That exact source is in ps3gcc-source.tar.gz beside this file (sha256 $sha).
+ppu-lv2-gcc, SDK generation $gen: GCC 4.1.1 and binutils 2.17 with Sony's changes, built from the GPL source of
+Sony's toolchain-src-$gen-GCC411, archived at https://github.com/sagemono/ps3gcc commit $commit (sha256 $sha).
+That source is in ps3gcc-source.tar.gz beside this file, less Sony's own files marked "SCE CONFIDENTIAL" (not
+GPL; the headers among them are stubs that stop a file including them):
+$(echo "$removed" | sed 's|^\./|  |')
 GCC and binutils are free software under the GNU GPL (COPYING, COPYING.LIB, COPYING.binutils here); you may
 redistribute and change them under those terms. Built for decompdecomp by packaging/ps3-gcc/.
 EOT
