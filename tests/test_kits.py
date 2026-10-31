@@ -6,6 +6,7 @@ the version record a library carries)."""
 import json
 import re
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,93 @@ def test_setup_lists_every_kit_a_console_takes():
     from decompnet.app.engine import TOOLS
 
     assert {kid for c in consoles.CONSOLES for kid in c.kits} <= set(TOOLS)
+
+
+# ---- the PS3 SDK kit, and a kit's compiler in ROM mode (stand-ins: a shell script is the "compiler")
+
+STAMP = b"4.1.1 (SDK270, $Rev: 3019 $)"
+FAKE_GCC = (b"#!/bin/sh\n# " + STAMP + b"\nwhile [ $# -gt 0 ]; do [ \"$1\" = -o ] && out=$2; args=\"$args $1\"; shift; done\n"
+            b"echo \"ran from $0:$args\" > \"$out\"\n")
+
+
+def make_ps3sdk(top: Path, *, host: str = "linux", stamp: bytes = STAMP) -> Path:
+    """An SDK-shaped folder: top/cell with a stand-in PPU GCC for the host (a script that records how it was run),
+    the SDK's header folders and Sony's intrinsics header a free pack lacks."""
+    root = top / "cell"
+    exe = root / ("host-linux/ppu/bin/ppu-lv2-gcc" if host == "linux" else "host-win32/ppu/bin/ppu-lv2-gcc.exe")
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(FAKE_GCC.replace(STAMP, stamp))
+    exe.chmod(0o755)
+    (root / "target/ppu/include/sys").mkdir(parents=True)
+    (root / "target/ppu/include/sys/process.h").write_text("#define FROM_SDK 1\n")
+    (root / "target/common/include").mkdir(parents=True)
+    (root / "target/common/include/vmx2spu.h").write_text("")
+    return root
+
+
+@pytest.mark.parametrize("here", ["linux", "darwin", "win32"])
+def test_the_ps3_sdk_is_recognised_by_its_compiler_in_any_layout(tmp_path, monkeypatch, here):
+    from decompnet.kits import ps3sdk
+
+    kit = kits.get("ps3sdk")
+    linux, win = make_ps3sdk(tmp_path / "l"), make_ps3sdk(tmp_path / "w", host="win")
+    monkeypatch.setattr(ps3sdk.sys, "platform", here)  # (CI on macOS: a Linux host's copy said no build)
+    for top, copy in ((tmp_path / "l", linux), (tmp_path / "w", win)):
+        assert kit.locate(top) == kit.locate(copy) == copy.resolve()  # (the folder above, or the SDK itself)
+        assert kit.build(copy) == "SDK270" and kit.verify(copy) == "PlayStation 3 SDK SDK270"
+    assert kit.locate(tmp_path / "nothing") is None
+    [own] = kit.compilers(win)  # (a Windows host: wibo runs it)
+    assert own.version == "ps3sdk-270" and own.runner == "wibo" and own.build == "SDK270" and own.root == win
+    assert own.includes == (win / "target/ppu/include", win / "target/common/include") and own.args == ("-c",)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the stand-in compiler is a script of the Linux host")
+def test_a_rom_project_compiles_through_a_kit_compiler_from_the_users_copy(tmp_path, monkeypatch):
+    from decompnet.compiler import compile_source
+    from decompnet.project import compiler_config
+
+    _setup(monkeypatch, tmp_path)
+    sdk = make_ps3sdk(tmp_path / "sdk")
+    ps3 = consoles.get("ps3")
+    assert "ps3sdk-270" not in [c.id for c in ps3.compilers] and not toolchains.known("ps3sdk-270")
+    toolchains.install("ps3sdk", folder=sdk, accept_license=True, log=lambda *_: None)
+    # the console lists it with its own, and the registry knows it without installing anything
+    assert [c.id for c in ps3.compilers][-1] == "ps3sdk-270" and toolchains.known("ps3sdk-270")
+    assert toolchains.installed("ps3sdk-270") and toolchains.get("ps3sdk-270").flags == ["-O2"]
+    assert ps3.default_flags("ps3sdk-270", 0) == ["-O2", "-falign-functions=4"]
+    cfg = compiler_config(tmp_path, {"compiler": {"toolchain": "ps3sdk-270", "flags": ["-O1"]}})
+    assert str(sdk.resolve()) in cfg.ro_paths  # (the copy is read in the sandbox, never copied)
+    result = compile_source(cfg, "int x;", "int f(void) { return 1; }")
+    assert result.ok, result.log
+    ran = result.obj.decode()
+    assert f"ran from {sdk.resolve()}/host-linux/ppu/bin/ppu-lv2-gcc:" in ran
+    assert " -c -O1 " in ran and f"-I{sdk.resolve()}/target/ppu/include" in ran
+    assert not any(p.suffix in (".h", ".o") for p in (tmp_path / "toolchains").rglob("*"))
+    toolchains.remove_local("ps3sdk", sdk.resolve())  # (the copy is forgotten: so is its compiler)
+    assert not toolchains.known("ps3sdk-270") and toolchains.installed("ps3sdk-270") is None
+    with pytest.raises(toolchains.ToolchainError, match="isn't one decompdecomp has"):
+        compiler_config(tmp_path, {"compiler": {"toolchain": "ps3sdk-270"}})
+
+
+def test_a_ps3_game_takes_the_sdk_copy_whose_stamp_is_its_own_else_the_free_compiler_and_says_why(tmp_path, monkeypatch):
+    from decompnet.consoles.ps3 import elf
+    from tests.test_ps3 import program
+
+    _setup(monkeypatch, tmp_path)
+    ps3 = consoles.get("ps3")
+    for top, stamp in (("a", STAMP), ("b", b"4.1.1 (SDK360, $Rev: 3455 $)")):
+        toolchains.install("ps3sdk", folder=make_ps3sdk(tmp_path / top, host="win", stamp=stamp), accept_license=True,
+                           log=lambda *_: None)
+    assert {c.id for c in ps3.compilers} >= {"ps3sdk-270", "ps3sdk-360"}  # (two copies, both listed)
+
+    def info_of(stamp: bytes) -> dict:
+        return elf.read_elf(program(sections=True, comment=b"GCC: (GNU) " + stamp + b"\0"))[1]
+
+    info = info_of(b"4.1.1 (SDK360, $Rev: 3455 $)")
+    assert info["sdk"] == "SDK360" and info["compiler_guess"] == "PS3-GCC-4"
+    assert ps3.default_compiler(info, "") == "ps3sdk-360" and "your SDK copy" in info["compiler_why"]
+    assert info_of(b"4.1.1 (CELL 4.1.2.7, RTTI, $Rev: 1830 $)")["sdk"] == "CELL 4.1.2.7"
+    info = info_of(b"4.1.1 (SDK420, $Rev: 3547 $)")  # (a generation the user has no copy of)
+    assert ps3.default_compiler(info, "") == "ps3dev-gcc"
+    assert "SDK420" in info["compiler_why"] and "Setup" in info["compiler_why"]
+    assert ps3.default_compiler({"compiler_guess": "PS3DEV"}, "") == "ps3dev-gcc"  # (no stamp: as before)
