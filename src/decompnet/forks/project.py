@@ -359,12 +359,15 @@ class ForkProject:
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
         raise ForkError("decompdecomp can't tell how to build this project; follow its README, then refresh")
 
-    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None) -> tuple[bool, str]:
+    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None,
+            platform: str | None = None) -> tuple[bool, str]:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
-        are added to `failed`."""
+        are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
+        first build: a game built with Visual C++ 2017 then built without wine's settings)."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
-        if (platform := (self.manifest or {}).get("platform")):  # what its console's builds need (Console.build_env)
+        # what its console's builds need (Console.build_env)
+        if (platform := (self.manifest or {}).get("platform") or platform):
             from .. import consoles
 
             env.update(consoles.get(platform).build_env())
