@@ -18,6 +18,7 @@ import re
 import struct
 from dataclasses import dataclass, field
 
+from ...kits import ps3sdk
 from ...rom import RomError
 
 EM_PPC64 = 21
@@ -184,7 +185,7 @@ def read_elf(data: bytes, name: str = "") -> tuple[bytes, dict]:
     return data, {
         "title": title, "game_code": "", "region": "Unknown region", "version": 0, "entrypoint": elf.entry, "gp": 0,
         "crc1": 0, "crc2": 0, "size": len(data), "sha1": hashlib.sha1(data).hexdigest(), "byte_order": "elf",
-        "compiler_guess": guess_compiler(comment), "platform": "ps3", "small_data": False,
+        "compiler_guess": guess_compiler(comment), "sdk": ps3sdk.stamp(comment), "platform": "ps3", "small_data": False,
         "osabi": elf.osabi, "abi": descriptor.abi if descriptor else "ilp32",
         "toc": descriptor.toc if descriptor else 0, "descriptors": len(descriptor.functions) if descriptor else 0,
         "symbols": ".symtab" in elf.sections,

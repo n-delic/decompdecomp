@@ -161,6 +161,8 @@ class ImportMixin:
 
         chosen = bool(toolchain or flags or reimport is not None)  # a reimport keeps the project's compiler
         toolchain = toolchain or console.default_compiler(info, res.compiler)
+        if info.get("compiler_why") and not chosen:
+            log(f"Compiler {toolchain}: {info['compiler_why']}")
         cfg = {
             "kind": "rom", "platform": console.id, "big_endian": picked.big_endian, "gp": res.gp,
             "rom": {**info, "file": res.image or picked.filename, "program": picked.filename},
