@@ -532,7 +532,7 @@ Where to start on a gap:
 
 ## Next
 
-### Newer Windows games (Visual C++ 2012 to 2015)
+### Newer Windows games (Visual C++ 2012, 2013, 2015 and 2019+; 64-bit)
 
 PC projects build with Visual C++ 6.0 to 2010 and 2017 (phases B and C and 2017's games are done: Recently done).
 The import already tells a newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. A new
@@ -549,7 +549,11 @@ compiler instead of the nearest.
 - **D, 2012-2013, then 2015, then 2019 and newer.** The same, per generation: SSE2 float code by default from 2012,
   and one toolset for 2015's updates (Update 3 brought the new SSA optimizer). Until then 2015's games build with
   2017's 14.16, 2019 and newer's too, 2012-2013's with 2010 SP1. A game linking the C runtime from DLLs builds with
-  /MD from 2015 on; older games doing so (msvcrt.dll, msvcr71...) don't yet.
+  /MD from 2015 on; older games doing so (msvcrt.dll, msvcr71...) don't yet. /MD is the whole project's, from the
+  program: a DLL of the game's built the other way (/MT where the program has /MD, or the reverse) builds as the
+  program does, and its calls into the C runtime may not match; the import says which. Giving each program its
+  own needs per-file flags that a file keeps through split_file (it keeps its compiler, but not its flags: /Oy- is
+  lost the same way).
 - **E, whole-program optimisation.** With /GL the linker generates the code for the whole program, so one file's
   object says nothing about the program's bytes. Find out whether some functions can be judged by compiling their
   file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.

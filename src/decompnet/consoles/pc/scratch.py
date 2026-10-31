@@ -1727,20 +1727,35 @@ def set_frame_flags(root: Path, version: str, keep: set[str] = frozenset()) -> i
 # ---------------------------------------------------------------------------------------------------- the project
 
 
-def configure_settings(text: str, compiler: str, pe: PE, log=print) -> str:
+def configure_settings(text: str, compiler: str, pe: PE, log=print, modules: list[Module] = ()) -> str:
     """tools/configure.py's settings for the game (its `text`, the template's): the Visual C++ it builds with, and the
     flags that version and the program need: /EHsc for /GX from 2005 on (saying /GX warns on every file), and /MD
-    from 2015 on for a program that imports its C runtime from DLLs (dll_runtime: then the runtime's headers declare
-    its functions as imports, `call [__imp__strncpy]`, as the game's code calls them)."""
+    for a program built with /MD (builds_md: then the C runtime's headers declare its functions as imports, `call
+    [__imp__strncpy]`, as the game's code calls them). The flags are the whole project's, the game's own DLLs'
+    files too: one of `modules` built the other way is told, as its calls into the C runtime may not match."""
     text = text.replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
     if compiler_pack(compiler) != "msvc":
         text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
-    if (runtime := dll_runtime(pe)) and _version_key(re.match(r"\d+\.\d+", compiler).group()) >= DLL_RUNTIME_FROM:
+    md = builds_md(pe, compiler)
+    if md:
         text = text.replace('"/EHsc"]  # /EHsc', '"/EHsc", "/MD"]  # /MD: its C runtime is a DLL, as the program '
                             'imports it; /EHsc')
-        log(f"it imports its C runtime from {', '.join(runtime)}: it builds with /MD, so the C runtime's headers "
-            "declare their functions as imports")
+        log(f"it imports its C runtime from {', '.join(dll_runtime(pe))}: it builds with /MD, so the C runtime's "
+            "headers declare their functions as imports")
+    for m in modules:
+        if builds_md(m.pe, m.built.pack_version) != md:
+            how = f"from {', '.join(dll_runtime(m.pe))} (/MD)" if not md else "built in (/MT)"
+            log(f"{m.rel} takes its C runtime {how}, unlike the program: its files build {'with' if md else 'without'}"
+                " /MD all the same (a project's flags are the whole game's), so its calls into the C runtime may not "
+                "match (ROADMAP.md, Newer Windows games)")
     return text
+
+
+def builds_md(pe: PE, compiler: str) -> bool:
+    """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it was built
+    with Visual C++ 2015 or newer (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and msvcr71, aren't yet)."""
+    version = re.match(r"\d+\.\d+", compiler or "")
+    return bool(dll_runtime(pe)) and version is not None and _version_key(version.group()) >= DLL_RUNTIME_FROM
 
 
 def dll_runtime(pe: PE) -> list[str]:
@@ -2171,7 +2186,8 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (root / "include").mkdir()
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
-    cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log), encoding="utf-8")
+    cfg.write_text(configure_settings(cfg.read_text(encoding="utf-8"), compiler, pe, log=log, modules=modules),
+                   encoding="utf-8")
     conf = root / "config" / version
     conf.mkdir(parents=True)
     (conf / "functions.json").write_text(json.dumps({

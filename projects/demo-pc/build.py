@@ -45,6 +45,7 @@ import tempfile
 from pathlib import Path
 
 from decompnet import toolchains, wine
+from decompnet.app import cli
 from decompnet.consoles.pc.scratch import compiler_pack
 
 HERE = Path(__file__).resolve().parent
@@ -76,6 +77,9 @@ def runner(pack: str) -> tuple[list[str], dict | None]:
     if toolchains.get(pack).wine:
         if why := wine.problem():
             sys.exit(why)
+        # a checkout's prefix, as the app run from it uses (#146: toolchains/.wine-dev, apart from the installed app's,
+        # whose quit would stop this build's wine), or the one $DECOMPNET_WINE_PREFIX names (the tests')
+        cli.use_own_wine_prefix()
         return [wine.find()], wine.environment(wine.prepare())
     return [str(toolchains.binary("wibo"))], None
 

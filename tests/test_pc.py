@@ -815,22 +815,29 @@ def _wine_ready() -> bool:
     return toolchains.installed("msvc2015") is not None and wine.problem() is None
 
 
+@pytest.fixture
+def own_wine_prefix(tmp_path, monkeypatch):
+    """A wine prefix of the test's own, its server stopped after: $DECOMPNET_WINE_PREFIX, which wine.prefix(), prepare,
+    build_env and so the project's tools/compile.py follow (#146). Review of #138: three 2017 tests used the app's own
+    (toolchains/.wine) and left a wineserver running in it. (conftest.py gives every test one all the same.)"""
+    from decompnet import wine
+
+    where = tmp_path / "wine prefix"
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(where))
+    yield where
+    wine.stop(where)
+
+
 @needs_tools
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
-def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path, monkeypatch):
+def test_a_file_builds_with_visual_cpp_2017_chosen_in_settings(tmp_path, own_wine_prefix):
     """Visual C++ 2017's 32-bit and 64-bit compilers as a file's compiler: chosen in Settings while nothing in the file
     matches (each builds the file: an x86 object, an x64 one), tried by try_compiler with a real score, and refused
     in Settings once a function of the file matches with another compiler. A 32-bit game is offered only 32-bit
     compilers: the 64-bit one is a 64-bit game's (Console.target). Off Windows they run through wine, in a prefix of
     the test's own that has no server yet (stopped after): the services the first wine program starts outlive it,
     and given the build's output pipe they held it, so the build never ended."""
-    from decompnet import wine
-
-    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "wine prefix"))  # (never the app's own)
-    try:
-        _settings_choose_visual_cpp_2017(tmp_path)
-    finally:
-        wine.stop()
+    _settings_choose_visual_cpp_2017(tmp_path)
 
 
 def _settings_choose_visual_cpp_2017(tmp_path):
@@ -878,7 +885,7 @@ def _settings_choose_visual_cpp_2017(tmp_path):
 
 
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
-def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path, monkeypatch):
+def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(tmp_path, own_wine_prefix):
     """2017's Windows 10 SDK is a toolchain of its own (shared by the packs that use it): a project's file built with
     14.16 finds windows.h in it, through the folder's includes.txt, with the tools decompdecomp gives the build."""
     root = tmp_path / "project"
@@ -896,13 +903,7 @@ def test_a_file_built_with_visual_cpp_2017_reads_the_windows_headers_of_its_sdk(
     (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc"}))  # (its wine)
     subprocess.run([sys.executable, "tools/configure.py", "TEST", *scratch_pe.tool_args()], cwd=root, check=True,
                    capture_output=True, timeout=60)
-    from decompnet import wine
-
-    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "wine prefix"))  # (never the app's own)
-    try:
-        ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=300)
-    finally:
-        wine.stop()
+    ok, output = ForkProject(root).run(["ninja", "all_source"], log=lambda _: None, timeout=300)
     assert ok, output
     obj = (root / "build/TEST/src/auto/text_00401000.obj").read_bytes()
     assert struct.unpack_from("<H", obj)[0] == 0x14C and b"__imp__GetTickCount@0" in obj
@@ -917,7 +918,7 @@ int counter(void) { static int s = next_id(); return s; }
 
 
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
-def test_a_2017_games_files_build_with_visual_studio_2017s_release_defaults(tmp_path):
+def test_a_2017_games_files_build_with_visual_studio_2017s_release_defaults(tmp_path, own_wine_prefix):
     """The flags a game started from scratch builds with (configure.py's CL_FLAGS, /EHsc from 2005 on) give 2017's
     cl what a Visual Studio 2017 release build has without saying: /GS (a buffer's function checks its cookie), /Gy
     (/O2's: each function a section of its own), SSE2 floating point (/arch:SSE2, the default since 2012: no x87 or
@@ -945,7 +946,7 @@ def test_a_2017_games_files_build_with_visual_studio_2017s_release_defaults(tmp_
 
 @needs_tools
 @pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
-def test_a_game_of_2017_imports_with_its_own_visual_cpp_and_all_of_it_matches(tmp_path):
+def test_a_game_of_2017_imports_with_its_own_visual_cpp_and_all_of_it_matches(tmp_path, own_wine_prefix):
     """Games built with Visual C++ 2017: Demo Quest compiled and linked by 2017 (build.py 14.16) imports with 14.16,
     its very build, every function found (mix_score too, inlined everywhere and first in .text: nothing calls it), and
     rebuilds byte for byte. Split where game.c starts (2017 inlines what one file defines into its callers, as the
@@ -1155,6 +1156,59 @@ def test_a_game_whose_visual_cpp_is_not_installed_says_which_pack_to_install(tmp
     monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
     monkeypatch.setattr(wine, "needed", lambda: False)  # Windows: its compilers run themselves, nothing is set
     assert consoles.get("pc").build_env() == {}
+
+
+def test_the_demos_2017_build_uses_a_checkouts_own_wine_prefix(tmp_path, monkeypatch):
+    """projects/demo-pc/build.py runs Visual C++ 2017 through wine from a checkout: in the prefix the app run from a
+    checkout uses (#146: toolchains/.wine-dev), never the installed app's .wine, whose quit (`wineserver -k`) would
+    stop the build's compiles; one $DECOMPNET_WINE_PREFIX names (the tests') stays."""
+    import importlib.util
+
+    from decompnet import wine
+    from decompnet.app import edition
+
+    spec = importlib.util.spec_from_file_location("demo_pc_build", DEMO / "build.py")
+    build = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", ["build.py", "14.16"])
+    spec.loader.exec_module(build)
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(edition, "DEV", True)
+    monkeypatch.setattr(wine, "problem", lambda what="": None)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(wine, "prepare", lambda log=print, where=None: where or wine.prefix())  # (wineboot: not here)
+    monkeypatch.delenv("DECOMPNET_WINE_PREFIX")
+    assert build.runner("msvc2015")[1]["WINEPREFIX"] == str(toolchains.root() / ".wine-dev")
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path / "theirs"))
+    assert build.runner("msvc2015")[1]["WINEPREFIX"] == str(tmp_path / "theirs")
+
+
+def test_a_projects_first_build_has_its_consoles_build_environment(tmp_path, monkeypatch):
+    """The import's first builds run before the project's manifest is written, so the build runner didn't know the
+    project's console, and a 2017 game's first build had no wine settings (review of #138: it failed). The PC import
+    names its console for them (ForkProject.run's platform); a project's manifest says it from then on. Without a
+    compiler: what the runner gives a build, and what the import asks of it."""
+    from decompnet.consoles.pc import WindowsPC
+
+    monkeypatch.setattr(WindowsPC, "build_env", lambda self: {"DECOMP_TEST_BUILD_ENV": "pc's"})
+    root = tmp_path / "project"
+    root.mkdir()
+    show = ["python", "-c", "import os; print('seen:', os.environ.get('DECOMP_TEST_BUILD_ENV', 'none'))"]
+
+    def seen(**more) -> str:
+        ok, output = ForkProject(root).run(show, log=lambda _: None, timeout=30, **more)
+        assert ok, output
+        return output.splitlines()[-1]
+
+    assert seen() == "seen: none"  # (no manifest, no console named: nothing a console adds)
+    assert seen(platform="pc") == "seen: pc's"
+    (root / ".decomp.wtf.json").write_text(json.dumps({"created": "from scratch", "platform": "pc"}))
+    assert seen() == "seen: pc's"
+    asked = []
+    monkeypatch.setattr(ForkProject, "run", lambda self, cmd, **k: (asked.append(k.get("platform")), (True, ""))[1])
+    scratch_pe._run(["ninja", "prepare"], root, "the first build", log=lambda _: None)
+    assert scratch_pe._header_compiles(root, "TEST", "text_00401000", log=lambda _: None)
+    assert asked == ["pc", "pc"]  # (both builds the import runs before it writes the manifest)
 
 
 def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkeypatch):
@@ -1425,7 +1479,9 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     """What create writes into the project's tools/configure.py (configure_settings), read back as configure.py reads
     it: /MD for a 2015-and-newer game that imports its C runtime from DLLs, never for one with its own copy (/MT) or
     an older compiler's (msvcr71, older games: not yet), and /EHsc for /GX from 2005 on. Each change must find its
-    line in the template, or the project would quietly build without it (review of #138: no test called create)."""
+    line in the template, or the project would quietly build without it (review of #138: no test called create).
+    The flags are the whole game's: a DLL of the game's built the other way is told (review of #138), not quietly
+    built with its program's runtime."""
     template = (Path(scratch_pe.__file__).with_name("project_template") / "tools" / "configure.py").read_text()
     dll = scratch_pe.read_pe(_importing(["KERNEL32.dll", "VCRUNTIME140.dll", "api-ms-win-crt-string-l1-1-0.dll"]))
     own = scratch_pe.read_pe(_importing(["KERNEL32.dll", "USER32.dll"]))
@@ -1444,6 +1500,24 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     assert settings("7.1", old)[1] == ["/nologo", "/c", "/O2", "/W3", "/GX"]
     assert settings("10.0SP1", dll)[1] == ["/nologo", "/c", "/O2", "/W3", "/EHsc"]  # (2015 on only)
     assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
+
+    def module(pe, version: str, build: int) -> scratch_pe.Module:
+        return scratch_pe.Module(Path("game.dll"), "bin/game.dll", "game", pe, scratch_pe.Build(scratch_pe.X86, version,
+                                                                                               build), 0x10000000)
+
+    def told(compiler: str, pe, *dlls) -> list[str]:
+        said: list[str] = []
+        scratch_pe.configure_settings(template, compiler, pe, log=said.append, modules=list(dlls))
+        return [line for line in said if "bin/game.dll" in line]
+
+    assert told("14.16", dll, module(dll, "14.1", 27027)) == []  # (built as the program: nothing to say)
+    assert told("14.16", own, module(own, "10.0", 40219), module(dll, "10.0", 40219)) == []  # (/MD: 2015 on only)
+    assert told("14.16", dll, module(own, "14.1", 27027)) == [
+        "bin/game.dll takes its C runtime built in (/MT), unlike the program: its files build with /MD all the same (a "
+        "project's flags are the whole game's), so its calls into the C runtime may not match (ROADMAP.md, Newer "
+        "Windows games)"]
+    assert "takes its C runtime from VCRUNTIME140.dll, api-ms-win-crt-string-l1-1-0.dll (/MD), unlike the program: " \
+        "its files build without /MD" in told("14.16", own, module(dll, "14.1", 27027))[0]
 
 
 def test_a_function_found_in_a_gap_keeps_its_last_instruction_whole():
@@ -1922,7 +1996,7 @@ def _coff_sections(obj: bytes) -> list[tuple[str, bytes]]:
 
 
 @pytest.mark.parametrize("version", ["6.0", "7.0", "7.1", "14.16"])
-def test_the_stubs_visual_cpp_makes_are_found(tmp_path, version):
+def test_the_stubs_visual_cpp_makes_are_found(tmp_path, version, own_wine_prefix):
     """What each Visual C++ of the packs makes with /GX (/EHsc from 2005 on) for functions with local objects to
     destroy: the functions stay, every stub of their .text$x is found (cut as Ghidra cuts them, after each jmp or
     ret). 2017's handlers check the cookie of a function with an array first (/GS)."""

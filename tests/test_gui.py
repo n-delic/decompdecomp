@@ -216,10 +216,18 @@ def test_a_dropped_pc_game_is_offered_the_visual_cpp_pack_its_program_names(gui)
         built = scratch.describe(bytes.fromhex(head))
         assert pack == offered == scratch.compiler_pack(built.pack_version), (head, built)
         assert target == "x86"  # (a 32-bit program: its import lists 32-bit compilers only, next)
-    listed = gui["checks"]["pcCompilers"]  # (review of #138: it listed MSVC/14.16-x64 too)
-    assert "MSVC/6.0" in listed and "MSVC/14.16" in listed and not any(c.endswith("-x64") for c in listed)
     assert [p for _, p, _, _ in packs] == ["msvc2005", "msvc", "msvc", "msvc2005", "msvc2005", "msvc",
                                         "msvc2015", "msvc2015", "msvc2005", "msvc2015", "msvc2015"]
+
+
+def test_a_pc_game_dropped_before_the_page_loaded_is_offered_its_pack_and_32_bit_compilers(gui):
+    """Review of #138: the drop read a program before the page's state arrived, whose PC table names the pack (pcPack),
+    so a 2017 game dropped early was offered 6.0-7.1's; and the import's dialog listed MSVC/14.16-x64 for a 32-bit
+    program, which can never match it. Run through the page's own pickFile and setupCompilers."""
+    drop = gui["checks"]["pcDrop"]
+    assert drop["pack"] == "msvc2015"
+    assert "MSVC/6.0" in drop["options"] and "MSVC/14.16" in drop["options"], drop
+    assert not any(option.endswith("-x64") for option in drop["options"]), drop
 
 
 def test_the_drop_zone_knows_the_visual_cpp_ids_the_import_knows():

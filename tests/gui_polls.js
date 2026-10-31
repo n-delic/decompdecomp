@@ -124,6 +124,28 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
   await settle();
   const notes = vm.runInContext("N.live.map((x) => x.el.innerHTML.replace(/<[^>]+>/g, '').replace(/\\s+/g, ' ').trim())", ctx);
   const unread = vm.runInContext("N.unread", ctx);
+  // a 32-bit Windows program's first 0x400 bytes, made by hand: the DOS header, a Rich header of [product id, build,
+  // files] entries XORed with its key, the PE header with the linker's [major, minor] version (h.used: its length)
+  vm.runInContext(`function pcProgram(rich, linker) {
+    const key = [0x5a, 0x17, 0x3c, 0x91], bytes = [0x4d, 0x5a, ...new Array(0x3e + 0x40).fill(0)];
+    if (rich.length) {
+      const plain = [..."DanS"].map((c) => c.charCodeAt(0)).concat(new Array(12).fill(0));
+      for (const [product, build, count] of rich) {
+        const w = [((product << 16) | build) >>> 0, count];
+        for (const v of w) plain.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, v >>> 24);
+      }
+      bytes.push(...plain.map((b, i) => b ^ key[i % 4]), 0x52, 0x69, 0x63, 0x68, ...key);
+    }
+    while (bytes.length % 8) bytes.push(0);
+    const pe = bytes.length;
+    bytes.push(0x50, 0x45, 0, 0, 0x4c, 0x01, 3, 0, ...new Array(12).fill(0), 0xe0, 0, 0x02, 0x01);
+    bytes.push(0x0b, 0x01, ...linker, ...new Array(0xe0 - 4).fill(0));
+    const h = new Uint8Array(0x400);
+    h.set(bytes);
+    h[0x3c] = pe;
+    h.used = bytes.length;
+    return h;
+  }`, ctx);
   // the page's small pure helpers, for tests of their own
   const checks = vm.runInContext(`({
     repo: ["", "hello", "git@github.com:zeldaret/oot.git", "https://example.com/owner/repo", "https://github.com/zeldaret/oot",
@@ -171,30 +193,11 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
              [[0x105, 24210, 300], [0x102, 24210, 1]],  // 2015's: the nearest pack, 2017's
              [[0xe1, 40629, 300], [0xde, 40629, 1]],  // 2013's: still 2010's
              [], [[0x105, 30137, 300], [0x102, 30137, 1]]].map((rich, k) => {
-      const key = [0x5a, 0x17, 0x3c, 0x91], bytes = [0x4d, 0x5a, ...new Array(0x3e + 0x40).fill(0)];
-      if (rich.length) {
-        const plain = [..."DanS"].map((c) => c.charCodeAt(0)).concat(new Array(12).fill(0));
-        for (const [product, build, count] of rich) {
-          const w = [((product << 16) | build) >>> 0, count];
-          for (const v of w) plain.push(v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, v >>> 24);
-        }
-        bytes.push(...plain.map((b, i) => b ^ key[i % 4]), 0x52, 0x69, 0x63, 0x68, ...key);
-      }
-      while (bytes.length % 8) bytes.push(0);
-      const pe = bytes.length;
-      bytes.push(0x50, 0x45, 0, 0, 0x4c, 0x01, 3, 0, ...new Array(12).fill(0), 0xe0, 0, 0x02, 0x01);
-      // the linker's version
-      bytes.push(0x0b, 0x01, ...({ 4: [9, 0], 9: [14, 16] }[k] || [6, 0]), ...new Array(0xe0 - 4).fill(0));
-      const h = new Uint8Array(0x400);
-      h.set(bytes);
-      h[0x3c] = pe;
+      const h = pcProgram(rich, { 4: [9, 0], 9: [14, 16] }[k] || [6, 0]);
       const info = identifyHead(h, { name: "game.exe", size: 0x400 });
-      const hex = [...h.slice(0, bytes.length)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      const hex = [...h.slice(0, h.used)].map((b) => b.toString(16).padStart(2, "0")).join("");
       return [hex, info.pack, packOf(info), info.target];
     })),
-    // the compilers the import's dialog lists for a dropped 32-bit PC game (compilerFits), from the server's console
-    pcCompilers: (SERVER_CONSOLES.find((c) => c.id === "pc")?.compilers || [])
-      .filter((v) => compilerFits({ target: "x86" }, v)).map((v) => v.id),
     // a PSP's UMD image and programs are told apart from the PS2's; what can't be read yet says what to do instead
     psp: (() => {
       const head = (writes) => {
@@ -341,5 +344,25 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     }
   })()`, ctx);
   checks.advice = advice;
+  // a 2017 game's program dropped before the page's state arrived (review of #138): pickFile waits for the state,
+  // whose PC table names the pack (it was offered 6.0-7.1's), and the import's dialog lists that 32-bit program's
+  // own compilers, never the 64-bit one (setupCompilers, compilerFits)
+  const state = answers["/api/state"];
+  answers["/api/state"] = () => ({ ...state(), consoles: ctx.SERVER_CONSOLES });
+  checks.pcDrop = await vm.runInContext(`(async () => {
+    const was = S.st, original = document.getElementById, pick = { innerHTML: "" };
+    document.getElementById = (id) => (id === "compilerPick" ? pick : original(id));
+    try {
+      S.st = null;
+      const h = pcProgram([[0x105, 27027, 300], [0x102, 27027, 1]], [14, 16]);
+      await pickFile({ name: "game.exe", size: h.length, slice: () => ({ arrayBuffer: async () => h.buffer }) });
+      const options = [...String(pick.innerHTML).matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+      return { pack: picked.info.pack, options };
+    } finally {
+      document.getElementById = original;
+      S.st = was;
+    }
+  })()`, ctx);
+  answers["/api/state"] = state;
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

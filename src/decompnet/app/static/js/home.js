@@ -296,6 +296,9 @@ const NOT_A_GAME = "That isn't a game file decompdecomp can start from scratch (
 
 async function pickFile(file, extras = []) {
   const head = new Uint8Array(await file.slice(0, 0x9400).arrayBuffer());
+  // dropped before the page finished loading: the state first, as what the file is needs it (a PC program's pack is
+  // the server's table: pcPack), and so do the compiler lists
+  if (!S.st) await loadState().catch(() => {});
   let info = identifyHead(head, file), buf = file;
   if (!info) {
     const why = notSupported(head, file);
@@ -307,7 +310,6 @@ async function pickFile(file, extras = []) {
   }
   // only a PC game's import reads them (debuginfo.py): with another game they'd be uploaded for nothing
   picked = { buf, info, name: file.name, extras: info.platform === "win32" ? extras : [] };
-  if (!S.st) await loadState().catch(() => {});  // dropped before the page finished loading: the compiler lists
   $("romFile").textContent = file.name;
   $("romTitle").textContent = info.title;
   const p = info.platform;
