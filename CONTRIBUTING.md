@@ -71,7 +71,7 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2) and project mode (GameCube, Wii, PC, DS, public decomps) alike. When you add a feature:
+in ROM mode (N64, PS1, PS2, PSP, GBA) and project mode (GameCube, Wii, PC, DS, public decomps) alike. When you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
@@ -91,6 +91,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/n64/` | Nintendo 64 | ROM | `rom.py` the ROM file and its header · `code.py` code the game loads later, compressed code · `guides/` |
 | `consoles/ps1/` | PlayStation | ROM | `exe.py` the game's program (PS-X EXE) and the disc's BOOT line; its discs and overlays through the PS2's readers · `guides/` |
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
+| `consoles/gba/` | Game Boy Advance | ROM | `header.py` the cartridge header · `split.py` luvdis and the candidate finder, its editing and joining · `candidates.py`, `luvdis_run.py` · `export.py`, `export_build.py` · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
 | `consoles/nds/` | Nintendo DS | PROJECT | `scratch.py` a ds-decomp project for the ROM, a CodeWarrior version per source file · `project_template/` · `guides/` |
@@ -106,7 +107,7 @@ Around them:
 | `consoles/public.py` | Consoles only public decomps cover: a name, a processor, m2c's target, guides. |
 | `consoles/template/` | The package to copy for a new console. |
 | `arch/` | What depends only on the processor: `mips.py`, `ppc.py`, `x86.py`, `arm.py` (relocations, disassembly, hand-written assembly, which readers exist). |
-| `rom/` | ROM mode, shared: `split.py` (splat), `match.py` (the judge: link and compare), `export.py`. |
+| `rom/` | ROM mode, shared: `split.py` (splat), `match.py` (the MIPS judge: link and compare), `link.py` (what every judge shares), `export.py`. |
 | `forks/`, `app/forkengine.py` | PROJECT mode and public decomps, shared: the project's build, objdiff. |
 
 A console works in one of two modes:
@@ -129,8 +130,8 @@ A console works in one of two modes:
 
 1. **Copy the template.** `cp -r src/decompnet/consoles/template src/decompnet/consoles/<id>`. Rename the class and
    the object at the end of its `__init__.py`.
-2. **Pick its mode.** ROM if splat splits its programs (MIPS today). PROJECT if the community has a project layout
-   and a delinker for it, judged by objdiff (see `consoles/gc_wii/` and `consoles/pc/`).
+2. **Pick its mode.** ROM if a splitter reads its programs (splat for MIPS; luvdis for GBA). PROJECT if the
+   community has a project layout and a delinker for it, judged by objdiff (see `consoles/gc_wii/` and `consoles/pc/`).
 3. **Fill in its facts.** Each is one line in the `Console` class:
 
    | Fact | What it is |
@@ -160,6 +161,11 @@ A console works in one of two modes:
    | `default_compiler(info, splat_guess)` | Which compiler built the game. |
    | `default_flags(compiler, gp)` | A compiler's flags for a game of this console. |
    | `add_code(config, ...)` | ROM: code splat misses (segments loaded later, overlays), added before it splits. |
+   | `split_game(workdir, picked, symbols, log)` | ROM: split the program into functions and data (splat by default; GBA uses luvdis). |
+   | `target_from_row`, `target_from_split`, `target_object`, `link_function` | ROM: a function's target, its object for diffs, and the link-and-compare judge. |
+   | `function_asm`, `parse_function`, `function_insns`, `function_meta`, `function_status`, `target_arch` | ROM: how a function's assembly, instruction count, row metadata, status and Thumb/ARM mode are kept. |
+   | `instruction_size`, `function_from_row`, `split_function`, `function_at`, `join_saved_functions` | ROM: cutting, adding and joining functions at the console's instruction size (GBA: 2-byte Thumb). |
+   | `export_project(net, slug, out, log)` | ROM: write and check a tree that rebuilds the game. |
    | `find_gp(image, program, segments)` | ROM: `$gp` as the game sets it. |
    | `debug_info(program, known)`, `debug_brief(known)` | The game's own symbols and types, and their lines in a brief. |
    | `after_import(net, slug, chosen)`, `on_start(net, slug)` | Work a new project gets once; work each project gets at start. |

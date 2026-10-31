@@ -56,8 +56,9 @@ ARCHES = [
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
          field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),
-    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason),
-    Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason),
+    Arch("arm", "ARM", arm.CAPSTONE, arm.RELOC_MASKS, arm.asm_reason, features=frozenset({BOUNDARIES})),
+    Arch("thumb", "Thumb", arm.THUMB_CAPSTONE, arm.THUMB_RELOC_MASKS, arm.asm_reason,
+         features=frozenset({BOUNDARIES})),
 ]
 _BY_ID = {a.id: a for a in ARCHES}
 UNKNOWN = Arch("", "an unknown processor", {})

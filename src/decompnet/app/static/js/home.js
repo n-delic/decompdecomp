@@ -192,6 +192,13 @@ const isPspCiso = (head, magic = "CISO") => head.length >= 8 && String.fromCharC
   && PSP_CISO_HEADER_SIZES.includes(new DataView(head.buffer).getUint32(4, true));
 // a PSP's ELF: a PRX module by its type, or a program whose flags name the Allegrex (a PS2's name the R5900)
 const ELF_TYPE_PSP_PRX = 0xffa0, ELF_MACH_BITS = 0x00ff0000, ELF_MACH_ALLEGREX = 0x00a20000;
+// a GBA cartridge: an ARM `b` at 0, the fixed 0x96 at 0xB2, and the header's complement checksum at 0xBD
+function isGbaHead(head) {
+  if (head.length < 0xc0 || head[0xb2] !== 0x96 || head[3] !== 0xea) return false;
+  let sum = 0x19;
+  for (let i = 0xa0; i < 0xbd; i++) sum += head[i];
+  return ((-sum) & 0xff) === head[0xbd];
+}
 
 function identifyHead(head, file) {
   const dv = new DataView(head.buffer);
@@ -201,6 +208,7 @@ function identifyHead(head, file) {
   const base = { title: stem, size: file.size };
   const pe = text(0, 2) === "MZ" && head.length >= 0x40 ? dv.getUint32(0x3c, true) : 0;
   if (isNds(head, dv)) return { ...base, platform: "nds", order: "DS ROM", code: ascii(12, 16), title: ascii(0, 12) || stem, entry: dv.getUint32(0x24, true) };
+  if (isGbaHead(head)) return { ...base, platform: "gba", order: "GBA ROM", code: ascii(0xac, 0xb0), title: ascii(0xa0, 0xac) || stem, entry: dv.getUint32(0, true) };
   if (pe && pe + 0x1a <= head.length && text(pe, pe + 4) === "PE\0\0" && dv.getUint16(pe + 4, true) === 0x14c && dv.getUint16(pe + 24, true) === 0x10b)
     return { ...base, platform: "win32", order: "Windows program (.exe)", entry: dv.getUint32(pe + 52, true) + dv.getUint32(pe + 40, true), pack: pcPack(head, pe) };
   if (text(0, 8) === "PS-X EXE") return { ...base, platform: "ps", order: "PS-X EXE program", entry: dv.getUint32(0x10, true) };
@@ -245,7 +253,7 @@ function notSupported(head, file) {
     return "That's a DOS program, not a Windows one. decompdecomp starts PC games from their 32-bit Windows .exe.";
   }
   if (ext === "nds") return "That doesn't look like a DS ROM: its header's checksum is wrong. Try a clean dump of your cartridge.";
-  if (ext === "gba") return "Game Boy Advance games aren't supported in this version. For those, continue a public decomp.";
+  if (ext === "gba") return "That doesn't look like a Game Boy Advance ROM: its header's branch, fixed 0x96 byte or checksum is wrong. Try a clean dump of your cartridge.";
   if (text(0, 4) === "XEX2" || ext === "xex") return "That's an Xbox 360 program. Xbox 360 games aren't supported yet.";
   if (["nsp", "xci", "nso", "nro", "nca"].includes(ext) || text(0, 4) === "NSO0" || text(0, 4) === "PFS0") return "That's a Nintendo Switch file. Switch games aren't supported yet.";
   if (["sfc", "smc"].includes(ext)) return "That's a Super Nintendo ROM. SNES games were written in assembly, not compiled from C, so there's no C source to match.";

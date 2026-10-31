@@ -806,12 +806,41 @@ sha256 = "5917df26bffc05d4752276a2e0b1edd21bd6e920aabe1992be8a50efc9d10932"
 binary = "dsd.exe"
 platforms = ["windows-x86_64"]
 
+[luvdis]
+name = "Luvdis"
+kind = "tool"
+license = "MIT"
+source = "aarant/luvdis 0.9.0 @ ec3a4e3e (2026-09-07)"
+description = "Game Boy Advance disassembler: finds the functions in a ROM and writes assembly that rebuilds it. Also reads a ROM's header."
+git = "https://github.com/aarant/luvdis"
+commit = "ec3a4e3ee3afe3e9b4a9c7ae8fffc65e1ea2096c"
+# it imports pkg_resources, which setuptools 70 and newer no longer ship
+pip_extra = ["setuptools<70"]
+
+[agbcc]
+name = "agbcc"
+kind = "compiler"
+platform = "Game Boy Advance"
+arch = "arm"
+license = "GPL-2.0"
+source = "pret/agbcc release (2023-09-03)"
+description = "The GCC 2.95-based compiler behind most Game Boy Advance games, as rebuilt by the pret community: agbcc, old_agbcc (early games) and agbcc_arm (ARM code)."
+cc = ["{tc}/bin/agbcc"]
+flags = ["-mthumb-interwork", "-O2"]
+requires = ["arm-gnu"]
+# agbcc only compiles preprocessed C to assembly: preprocess, compile, assemble, like pret's builds
+cmd = ["/bin/sh", "-c", "src=\"$1\"; obj=\"$2\"; inc=\"$3\"; shift 3; \"{tc:arm-gnu}/bin/arm-none-eabi-cpp\" -nostdinc -undef -I \"{tc}/include\" -I \"$inc\" \"$src\" -o \"$obj.i\" && \"{tc}/bin/agbcc\" \"$@\" \"$obj.i\" -o \"$obj.s\" && \"{tc:arm-gnu}/bin/arm-none-eabi-as\" -mcpu=arm7tdmi -o \"$obj\" \"$obj.s\"", "agbcc", "{src}", "{obj}", "{include}", "{flags}"]
+[[agbcc.parts]]
+url = "https://github.com/pret/agbcc/releases/download/release/agbcc.tar.gz"
+sha256 = "bcf0197e3e27d8e08506a142e25fa68ea7f6679a98347a6406804eb3f9ff4d29"
+platforms = ["linux-x86_64"]  # (Windows runs it inside WSL 2; the release has no macOS build)
+
 [arm-gnu]
 name = "Arm GNU Toolchain (arm-none-eabi)"
 kind = "tool"
 license = "GPL-3.0"
 source = "Arm GNU Toolchain 14.3.Rel1 (developer.arm.com)"
-description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the DS demo game's start-up code; about 150 MB."
+description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the GBA and DS demo games' start-up code; about 150 MB."
 binary_name = "bin/arm-none-eabi-as"
 [[arm-gnu.parts]]
 url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"

@@ -210,6 +210,21 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       S.st = before;
       return out;
     })(),
+    // a GBA cartridge: the ARM branch at 0, the fixed 0x96 at 0xB2 and the complement checksum at 0xBD
+    gba: (() => {
+      const h = new Uint8Array(0x200), dv = new DataView(h.buffer);
+      dv.setUint32(0, 0xea00002e, true);  // b 0x080000C0
+      [..."DEMOQUEST\0\0\0"].forEach((c, i) => { h[0xa0 + i] = c.charCodeAt(0); });
+      [..."ADQE"].forEach((c, i) => { h[0xac + i] = c.charCodeAt(0); });
+      h[0xb2] = 0x96;
+      let sum = 0x19;
+      for (let i = 0xa0; i < 0xbd; i++) sum += h[i];
+      h[0xbd] = (-sum) & 0xff;
+      const file = { name: "game.gba", size: 0x200 };
+      const good = identifyHead(h, file);
+      h[0xbd] ^= 1;
+      return { good: good && [good.platform, good.code, good.title], broken: identifyHead(h, file), said: notSupported(h, file) };
+    })(),
     // tests/test_ds.py's header, whose checksum (0xB4DE) the server's crc16 computed: the page agrees on what's a DS ROM
     nds: (() => {
       const h = new Uint8Array(0x200), dv = new DataView(h.buffer);

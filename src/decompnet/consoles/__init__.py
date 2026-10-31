@@ -1,5 +1,6 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose `__init__.py` makes a `Console`
+consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose
+`__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
 console names. A person or an agent working on PS2 support reads consoles/ps2/ and this file, nothing else.
@@ -7,7 +8,8 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2 and PSP.
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PSP and GBA (whose
+  splitter and judge are still being ported: ROADMAP.md).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
   project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC and DS.
@@ -152,6 +154,99 @@ class Console:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
         return image
+
+    def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
+        """ROM mode: split the program into functions and data (splat, rom/split.py); a console whose games another
+        splitter finds overrides this."""
+        from ..rom import split
+
+        return split.split_rom(workdir, picked.filename, self, picked, log=log, symbols=symbols)
+
+    def target_from_row(self, fn: dict, cfg: dict):
+        """ROM mode: a function's target from what the project stored (its bytes, and the addresses it refers to)."""
+        import json
+
+        from ..rom import match
+
+        return match.RomTarget(fn["name"], fn["vram"], fn["target"],
+                               match.RomTarget.relocs_from_json(json.loads(fn["relocs"])),
+                               cfg.get("big_endian", True), cfg.get("gp", 0))
+
+    def target_from_split(self, fn, resolve, big_endian: bool, gp: int):
+        """ROM mode: a just-split function's target, with the address behind every reference its assembly names."""
+        from ..rom import match
+
+        return match.target_from_split(fn, resolve, big_endian, gp)
+
+    def target_object(self, fn: dict, cfg: dict, symbols):
+        """ROM mode: a function's target as the object the diff and look-alikes read, in its processor's terms."""
+        from ..rom import match
+
+        return match.canonical_target(self.target_from_row(fn, cfg), symbols)
+
+    def link_function(self, obj: bytes, name: str, target, symbols, read):
+        """ROM mode: link a compiled candidate at the function's address and compare it with the game's bytes."""
+        from ..rom import match
+
+        return match.link(obj, name, target, symbols, read)
+
+    def function_asm(self, fn) -> str:
+        """ROM mode: a function's assembly, as the project stores and shows it."""
+        from ..rom import split
+
+        return split.function_asm(fn)
+
+    def function_insns(self, fn) -> int:
+        """ROM mode: how many instructions a just-split function has."""
+        return len(fn.lines)
+
+    def function_meta(self, fn) -> dict:
+        """ROM mode: what a function's row must keep besides its bytes (GBA: whether it's Thumb)."""
+        return {}
+
+    def function_status(self, fn) -> str:
+        """ROM mode: the status a just-split function starts with (GBA: hand-written helpers are 'asm')."""
+        return "open"
+
+    def instruction_size(self, fn) -> int:
+        """ROM mode: how many bytes one of a function's instructions is (MIPS 4; GBA 2 in Thumb, 4 in ARM)."""
+        return 4
+
+    def function_from_row(self, row: dict):
+        """ROM mode: a stored function row as the splitter's function object."""
+        return self.parse_function(row["name"], row["asm"], row["unit"])
+
+    def parse_function(self, name: str, text: str, segment: str):
+        """ROM mode: a function from the assembly a project stored (function_asm's form)."""
+        from ..rom import split
+
+        return split.function_from_text(name, text, segment)
+
+    def split_function(self, fn: dict, at: int, new_name: str):
+        """ROM mode: cut a stored function in two at `at` (the head keeps the name, the tail gets `new_name`)."""
+        from ..rom import split
+
+        return split.split_function(self.function_from_row(fn), at, new_name)
+
+    def function_at(self, rom: bytes, addr: int, limit: int, name: str):
+        """ROM mode: a function the splitter missed, at `addr`, or None when the bytes there aren't code."""
+        return None
+
+    def join_saved_functions(self, rows: list[dict], start: int, end: int, read):
+        """ROM mode: join a saved layout's functions back into the first one (saves.py)."""
+        from ..rom import split
+
+        return split.join_saved_functions([self.function_from_row(row) for row in rows], start, end, read)
+
+    def target_arch(self, fn) -> str:
+        """ROM mode: the processor's mode a function's code is in (GBA: "thumb" or "arm"; else the console's)."""
+        return self.arch
+
+    def export_project(self, net, slug: str, out: Path, log=print) -> dict:
+        """ROM mode: write a tree that rebuilds the game and check it against the user's copy (rom/export.py)."""
+        from ..rom.export import export_rom
+
+        return export_rom(net, slug, out, self, log=log)
 
     def export_asm(self, text: str) -> str:
         """ROM mode's export: a file of spimdisasm's assembly as GNU as reads it. What it can't read as spimdisasm
@@ -414,6 +509,7 @@ class Console:
 
 
 def _registry() -> list[Console]:
+    from .gba import GBA
     from .gc_wii import GAMECUBE, WII
     from .n64 import N64
     from .nds import NDS
@@ -425,7 +521,7 @@ def _registry() -> list[Console]:
 
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF)
-    return [N64, PSP, PS1, PS2, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    return [N64, PSP, PS1, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

@@ -10,7 +10,6 @@ import secrets
 import time
 
 from ...network import NetworkError
-from ...rom import split
 from ...rom.symbols import Symbol
 
 
@@ -156,6 +155,7 @@ class RoomMixin:
         """Mirror the room's splits and names. The host already regression-tested them on the same ROM."""
         proj = self._project(slug)
         pid = proj["id"]
+        console = self.console(proj)
         local = {r["id"]: r for r in self.store.all("SELECT * FROM functions WHERE project_id=?", pid)}
         by_vram: dict[int, list] = {}
         for row in local.values():
@@ -171,9 +171,8 @@ class RoomMixin:
             if len(owners) != 1 or owners[0]["status"] == "matched":
                 continue
             owner = owners[0]
-            rf = self._parse_asm(owner["name"], owner["asm"], owner["unit"])
             try:
-                head, tail = split.split_function(rf, f["vram"], f["name"])
+                head, tail = console.split_function(owner, f["vram"], f["name"])
             except ValueError:
                 continue
             syms = self.symbols(pid)
@@ -181,12 +180,15 @@ class RoomMixin:
             th, tt = self._make_target(proj, head, syms), self._make_target(proj, tail, syms)
             with self.store.tx() as db:
                 db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL WHERE id=?",
-                           (head.size, len(head.lines), th.code, json.dumps(th.to_json()), self._asm_source(head), owner["id"]))
+                           (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                            console.function_asm(head), owner["id"]))
+                meta = console.function_meta(tail)
                 tail_id = db.execute(
-                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)", (pid, f["name"], tail.size, len(tail.lines), tt.code,
-                                                     json.dumps(tt.to_json()), self._asm_source(tail), None,
-                                                     owner["unit"], f["vram"], tail.rom)).lastrowid
+                    "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                    "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (pid, f["name"], tail.size, console.function_insns(tail), tt.code,
+                     json.dumps(tt.to_json()), console.function_asm(tail), None, owner["unit"], f["vram"], tail.rom,
+                     console.function_status(tail), json.dumps(meta) if meta else None)).lastrowid
                 db.execute("INSERT OR REPLACE INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
                            (pid, f["name"], f["vram"], tail.size, "func"))
             local[owner["id"]] = {**owner, "size": head.size}

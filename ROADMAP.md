@@ -15,41 +15,41 @@ Each feature and the platforms it covers today. A — is a gap: pick one up (the
 start). Keep this table true when a feature ships or reaches another platform. Each column's code is its console's
 folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTING.md, "Consoles").
 
-| Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
-| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
-| Status | recommended | beta | beta | beta | beta | beta | beta | the project's own |
-| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ | ✓ | ✓ | fork by address |
-| Judge | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
-| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ Ghidra | — | by architecture |
-| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
-| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
-| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
-| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
-| Pieces of functions joined to their function | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
-| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
-| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
-| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
-| Compiler map and the judge's survey | ✓ | ✓ | ✓ | ✓ | — | ✓ per source file, Rich header | — | — |
-| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | ✓ | — | ✓ over source files | — | — |
-| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (named by RTTI where the program has it) | — | — |
-| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | — |
-| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
-| Twins across your games | ✓ | ✓ | ✓ | ✓ | — | ✓ (between PC projects) | — | — |
-| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
-| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
-| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
-| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Feature | N64 | PS1 | PS2 | PSP | GBA | GameCube · Wii | Windows PC | DS | Public decomps |
+| :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Status | recommended | beta | beta | beta | beta | beta | beta | beta | the project's own |
+| Start from your own copy | ✓ | ✓ | ✓ | ✓ unencrypted or decrypted program and modules (ISO, CSO, CHD) | ✓ ROM | ✓ | ✓ | ✓ | fork by address |
+| Judge | link · compare | link · compare | link · compare | link · compare | link · compare | objdiff | objdiff | objdiff | objdiff |
+| Machine drafts (m2c, Ghidra for x86) | ✓ | ✓ | ✓ | ✓ | ✓ (m2c `gba-gcc-c`) | ✓ | ✓ Ghidra | — | by architecture |
+| Autopilot: free matches from drafts | ✓ | ✓ | ✓ | ✓ | ✓ (demo: 34 matches) | ✓ | ✓ exact drafts of tiny shapes; Ghidra's made compilable | — | — |
+| Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | ✓ (m2c and `redraft`) | — | ✓ Ghidra's | — | — |
+| C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
+| Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ (ran; no pairs in demo) | ✓ | ✓ | ✓ | ✓ |
+| Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ |
+| Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
+| Pieces of functions joined to their function | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
+| Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | — | — |
+| Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | — | — |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
+| Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (/Oy-, /O1, /Ob1) | the project's build | the project's build |
+| Compiler map and the judge's survey | ✓ | ✓ | ✓ | ✓ | — | — | ✓ per source file, Rich header | — | — |
+| Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | ✓ | — | — | ✓ over source files | — | — |
+| C++ classes from the code (`get_class`) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (named by RTTI where the program has it) | — | — |
+| Struct layouts from loads and stores (`guess_struct`) | ✓ | ✓ | ✓ | ✓ | — | — | ✓ | — | — |
+| The game's own debug symbols: names, types, prototypes | — | — | ✓ symbol table, STABS, DWARF 1; the compiler of each object file | ✓ symbol table, DWARF 1 | — | — | ✓ PDB (Visual C++ 6.0's PDB 2.0, MSF 7.00), linker map, COFF symbols | — | — |
+| Twins across your games | ✓ | ✓ | ✓ | ✓ | — | — | ✓ (between PC projects) | — | — |
+| Shared knowledge (two models agree) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ |
+| Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
+| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved |
+| Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | — | — |
+| Rebuildable export | ✓ | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project | the project |
+| Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 Where to start on a gap:
 - **PowerPC (GameCube, Wii) and x86 (PC)**: class recovery and the compiler map work on a project's objects in fork
@@ -465,7 +465,8 @@ Where to start on a gap:
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
 - **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1 and
-  GBA are public decomps only now; the git history keeps their code.
+  GBA were public decomps only after the rewrite; PS1 has its package, and GBA's is back with its header check, its demo, its splitter,
+  its judge and its export.
 - **macOS app**: a native Cocoa/WKWebView window with the private window user agent,
   native open/save panels, downloads, Edit/Reload/Quit menus and the page's close confirmation. A uv source
   installer creates a Finder app in `~/Applications`. Intel and Apple Silicon CI exercise portable regressions
@@ -508,6 +509,29 @@ Where to start on a gap:
   the time against 62% for the rest, because agents guessed the layouts.
 
 ## Next
+
+### Game Boy Advance from your own copy
+
+ROM mode, as 1.0.2 had it: luvdis (MIT) finds the functions, agbcc (pret's GCC 2.95 rebuild) compiles the C, the
+ARM/Thumb judge links each candidate at its address and compares the bytes, and the export rebuilds the cartridge.
+The console, its header check, its demo, the luvdis splitter, the ARM/Thumb judge, editing and the export are back
+(`consoles/gba/`, `projects/demo-gba`): the demo imports, all 123 functions are found after splitting/adding the
+merged ones, 107 of the 114 with C match through the engine, and the export rebuilds it byte for byte with 71
+functions as C. What's left:
+
+- **Compilers and ranges.** agbcc's release also has `old_agbcc` and `agbcc_arm`, but the console lists only `agbcc`:
+  selecting them per file and the compiler map/range checks/suggestions (`try_compiler`, `search_flags`) are MIPS
+  only. GBA games built with another of the three need them.
+- **Free matches.** ARM/Thumb look-alikes and twins, and the permuter's GBA weights (`agbcc` now maps to GCC's
+  weights, but it wasn't run here); twins across games need the per-function Thumb mode too.
+- **Code readers.** C++ classes (`get_class`), struct layouts (`guess_struct`, no `Arch.field_accesses` for ARM) and
+  the game's own debug symbols aren't GBA readers yet.
+- **Pieces.** The analyzer finds pieces (`arch.arm.piece`), but ROM projects have no join tool; `report_boundary` and
+  saved-layout joining work at 2-byte boundaries.
+- **Tidy** a source file is project mode only; a GBA ROM project's C is the database's.
+
+Only agbcc's free tools are needed; the BIOS, Nintendo's SDK and the cartridge logo never are (the demo's logo is
+blank).
 
 ### Newer Windows games (Visual C++ 2012 to 2015)
 

@@ -837,10 +837,9 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
     A join is planned for the layout entry's own function (same name and address, and only pieces in its own source
     unit), so two overlays that share an address are never joined. Every plan is checked before the first write; a gap
     or a matched function among the pieces refuses the whole layout instead of deleting work."""
-    from dataclasses import replace
-
     report = report or (lambda line: None)
     pid = proj["id"]
+    console = net.console(proj)
     plans = []
     for entry in layout:
         start, end = entry["vram"], entry["vram"] + entry["size"]
@@ -861,22 +860,11 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
             raise NetworkError(
                 f"The saved layout would join a function that already matches at 0x{start:08X}. "
                 "Reimport the game before continuing; nothing was changed.")
-        parts = [net._parse_asm(row["name"], row["asm"], row["unit"]) for row in rows]
-        lines = {line.vram: line for part in parts for line in part.lines if line.vram < end}
-        missing = set(range(start, end, 4)) - lines.keys()
-        if missing:
-            from ..rom.split import AsmLine
-            read = net.reader(proj)
-            for address in sorted(missing):
-                # split_function trims padding from the head; undoing that split must put its original NOPs back.
-                if read(address, 4) != b"\0\0\0\0":
-                    break
-                previous = lines[max(at for at in lines if at < address)]
-                lines[address] = AsmLine(previous.rom + address - previous.vram, address, 0, "nop", "")
-        if sorted(lines) != list(range(start, end, 4)):
-            raise NetworkError("The saved layout crosses a gap in this analysis. Reimport the game before continuing.")
-        joined = replace(parts[0], lines=[lines[address] for address in sorted(lines)],
-                         labels=set().union(*(part.labels for part in parts)))
+        try:
+            joined = console.join_saved_functions(
+                rows, start, end, lambda address, n: net.reader(proj)(address, n))
+        except ValueError:
+            raise NetworkError("The saved layout crosses a gap in this analysis. Reimport the game before continuing.") from None
         target = net._make_target(proj, joined, net.symbols(pid))
         plans.append((head, tails, joined, target))
     if not plans:
@@ -885,8 +873,8 @@ def _join_saved_layout(net, proj, layout: list[dict], report=None) -> None:
         for head, tails, joined, target in plans:
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,seed=NULL,attempts=attempts+? "
                        "WHERE id=?",
-                       (joined.size, len(joined.lines), target.code, json.dumps(target.to_json()),
-                        net._asm_source(joined), sum(tail["attempts"] or 0 for tail in tails), head["id"]))
+                       (joined.size, console.function_insns(joined), target.code, json.dumps(target.to_json()),
+                        console.function_asm(joined), sum(tail["attempts"] or 0 for tail in tails), head["id"]))
             moved = 0
             for tail in tails:
                 moved += db.execute("UPDATE attempts SET function_id=? WHERE function_id=?",

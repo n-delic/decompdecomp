@@ -50,6 +50,12 @@ def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     assert nds["broken"] is None and "checksum" in nds["said"]
 
 
+def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
+    gba = gui["checks"]["gba"]
+    assert gba["good"] == ["gba", "ADQE", "DEMOQUEST"]
+    assert gba["broken"] is None and "Game Boy Advance" in gba["said"]
+
+
 def test_an_effort_goes_only_to_an_agent_that_offers_it(gui):
     assert gui["checks"]["efforts"] == ["opus#xhigh", "deepseek/v4", "m"]
 
