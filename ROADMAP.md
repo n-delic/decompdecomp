@@ -525,7 +525,8 @@ descriptor (Sony's 8-byte pairs), its import stubs (all 194 named), its nameless
 are, and its functions matched through the judge with Sony's GCC rebuilt from its GPL source (SDK 2.5.0, the
 game's own), a getter of a global among them: that game reached its globals through GCC's minimal TOC (r30), which
 the import reads off the code and builds with (`-mminimal-toc`), and its linker didn't narrow any TOC load. What's left:
-- **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.7.0) from
+
+- **The period compiler without an SDK.** `packaging/ps3-gcc/` rebuilds Sony's `ppu-lv2-gcc` (SDK 1.9.0, 2.5.0, 2.7.0) from
   the GPL parts of its published source; its `toolchains.toml` entries wait for it to be published.
 - **Drafts.** m2c has no PPC64 target: a ROM-mode Ghidra draft (as PC's) would give PS3 drafts, autopilot's draft
   phase and `redraft`.
