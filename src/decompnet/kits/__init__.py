@@ -111,13 +111,14 @@ def file_version(path: Path) -> str:
     """A Windows program's file version ("13.10.3077.0"), from the VS_FIXEDFILEINFO of its version resource; "" when
     it has none (an empty stand-in, a program without one)."""
     try:
-        return _file_version(str(path), path.stat().st_mtime_ns)
+        stat = path.stat()  # (its size too: Windows' clock can give a file rewritten at once the same mtime)
+        return _file_version(str(path), stat.st_mtime_ns, stat.st_size)
     except OSError:
         return ""
 
 
 @functools.lru_cache(maxsize=64)
-def _file_version(path: str, mtime_ns: int) -> str:
+def _file_version(path: str, mtime_ns: int, size: int) -> str:
     data = Path(path).read_bytes()
     at = data.find("VS_VERSION_INFO".encode("utf-16-le"))
     sig = data.find(b"\xbd\x04\xef\xfe", at) if at >= 0 else -1  # (0xFEEF04BD: right after the key, padded)
