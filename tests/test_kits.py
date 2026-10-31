@@ -182,3 +182,21 @@ def test_setup_lists_every_kit_a_console_takes():
     from decompnet.app.engine import TOOLS
 
     assert {kid for c in consoles.CONSOLES for kid in c.kits} <= set(TOOLS)
+
+
+def test_visualcpp_reads_old_32_bit_copies_from_their_folders_and_refuses_16_bit_ones(tmp_path):
+    """#137: Visual C++ 2.x (MSVC20), 4.x (MSDEV) and 5.0 (DevStudio/VC) keep cl.exe and c2 in a bin folder; the
+    version is c2.dll's, else c2.exe's. 1.x (cl 8.x) is 16-bit."""
+    kit = kits.get("visualcpp")
+    two = make_vc(tmp_path / "a", "9.0.2196.0", "MSVC20/BIN")
+    four = make_vc(tmp_path / "b", "10.20.6166.0", "MSDEV/BIN")
+    five = make_vc(tmp_path / "c", "11.0.7022.0", "DevStudio/VC/BIN")
+    for copy, build in ((two, "9.0.2196.0"), (four, "10.20.6166.0"), (five, "11.0.7022.0")):
+        assert kit.locate(copy.parent) == copy.resolve()  # (the product's folder: MSVC20, MSDEV, DevStudio)
+        [own] = kit.compilers(copy)
+        assert own.build == build and own.runner == "wibo" and own.includes == (copy / "include",)
+    exe = make_vc(tmp_path / "d", "9.0.2196.0", "MSVC20/BIN")
+    (exe / "BIN" / "c2.dll").rename(exe / "BIN" / "c2.exe")
+    assert kit.build(exe) == "9.0.2196.0"
+    sixteen = make_vc(tmp_path / "e", "8.0.2000.0", "MSVC/BIN")
+    assert kit.compilers(sixteen) == [] and "16-bit" in kit.verify(sixteen)

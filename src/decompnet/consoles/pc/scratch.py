@@ -78,7 +78,7 @@ RICH_COMPILERS = (
 )
 # Visual C++ 2015 to 2026 share their tools' ids: the first build of each (comp_id.txt)
 VC14_BUILDS = ((35503, "14.5"), (30401, "14.3"), (27508, "14.2"), (25017, "14.1"), (0, "14.0"))
-VISUAL_STUDIO = {"6.0": "6.0", "7.0": ".NET 2002", "7.1": ".NET 2003", "8.0": "2005", "9.0": "2008", "10.0": "2010",
+VISUAL_STUDIO = {"2.0": "2.0", "4.0": "4.0", "4.1": "4.1", "4.2": "4.2", "5.0": "5.0", "6.0": "6.0", "7.0": ".NET 2002", "7.1": ".NET 2003", "8.0": "2005", "9.0": "2008", "10.0": "2010",
                  "11.0": "2012", "12.0": "2013", "14.0": "2015", "14.1": "2017", "14.2": "2019", "14.3": "2022",
                  "14.4": "2022", "14.5": "2026"}
 # the release each common build is (comp_id.txt), so the import says "2008 SP1": each update generates other code
@@ -384,6 +384,9 @@ class Build:
     def cannot_match(self) -> list[str]:
         """Why a program decompdecomp does start can't match (all of it, or some): none, it can."""
         out = []
+        if self.version is not None and self.own is None and _version_key(self.version) < (6, 0):
+            out.append(f"it was built with {self.compiler}, which the compiler packs don't have: nothing matches until "
+                       f"you set up your own Visual C++ {self.version} copy in Setup (the Visual C++ kit)")
         if self.newer_than_pack and self.own is None:
             out.append(f"it was built with {self.compiler}, and decompdecomp builds games with Visual C++ 6.0 to "
                        "2010 so far: 2012 to 2015 come next (ROADMAP.md, Newer Windows games; 2017's compiler can "
@@ -413,7 +416,13 @@ def rich_version(build: str) -> tuple[str, int]:
     major, minor, number = (int(part) for part in build.split(".")[:3])
     if major >= 19:
         return next(v for first, v in VC14_BUILDS if number >= first), number
-    return ("7.1" if minor else "7.0") if major == 13 else f"{major - 6}.0", number
+    if major == 13:
+        return ("7.1" if minor else "7.0"), number
+    if major == 9:  # Visual C++ 2.x (32-bit); 1.x (cl 8, 16-bit) has none
+        return "2.0", number
+    if major == 10:  # 4.0, 4.1, 4.2: cl 10.00, 10.10, 10.20
+        return f"4.{min(minor // 10, 2)}", number
+    return ("5.0" if major == 11 else f"{major - 6}.0"), number
 
 
 def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
@@ -464,7 +473,9 @@ def describe(data: bytes) -> Build:
         number = max(k[1] for k in files if k[0] == version and files[k] * MAIN_BUILD_SHARE >= by_version[version])
     else:  # no Rich header (stripped, or a store's signature in its place): the linker's version names the toolset
         major, minor = data[at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT:at + OPTIONAL_HEADER_AT + LINKER_VERSION_AT + 2]
-        version = {6: "6.0", 7: "7.1" if minor >= 10 else "7.0"}.get(major, f"{major}.{minor // 10 if major == 14 else 0}")
+        # (Visual C++ 2.x's linker is 2.5x, 4.x's 3.0 to 4.2, 5.0's 5.0; a Rich header began with 6.0's tools)
+        version = {2: "2.0", 3: "4.0", 4: f"4.{min(minor // 10, 2)}", 5: "5.0", 6: "6.0",
+                   7: "7.1" if minor >= 10 else "7.0"}.get(major, f"{major}.{minor // 10 if major == 14 else 0}")
         version, number = (version if version in VISUAL_STUDIO else None), None
     first = at + OPTIONAL_HEADER_AT + opt_size
     names = [data[first + SECTION_HEADER_BYTES * i:first + SECTION_HEADER_BYTES * i + 8].rstrip(b"\0").decode("latin-1")
@@ -515,8 +526,12 @@ def game_info(path: Path) -> dict:
         why = f"it was built with {built.compiler}"
     elif built.own is not None:  # a build of the user's own: the very one, or the nearest of that Visual C++
         same = rich_version(built.own.build)[1] == built.build
-        why = (f"it was built with {built.compiler}; {built.own.name} builds it" if same else
+        why = (f"it was built with {built.compiler}; your newest copy of it, {built.own.name}, builds it" if not built.build
+               else f"it was built with {built.compiler}; {built.own.name} builds it" if same else
                f"it was built with {built.compiler}; the nearest of your copies is {built.own.name}")
+    elif _version_key(built.version) < (6, 0):  # Visual C++ 2.x to 5.0: no pack, only the user's own copy (#137)
+        why = (f"it was built with {built.compiler}, and no compiler pack has that Visual C++: set up your own Visual "
+               f"C++ {built.version} copy in Setup (Visual C++, your own copy); until then the closest the packs have is")
     else:  # another update of its version (the packs have the common ones), or a version they don't have yet
         why = f"it was built with {built.compiler}; the closest the compiler packs have is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),

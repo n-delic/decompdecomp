@@ -879,7 +879,7 @@ def test_without_a_rich_header_the_linker_version_names_the_toolset():
     assert built((9, 0)).pack_version == "9.0SP1"  # the newest build of its version: the most games had it
     assert (built((7, 10)).version, built((7, 0)).version, built((10, 10)).version) == ("7.1", "7.0", "10.0")
     assert built((7, 10)).cannot_match() == [] and built((14, 29)).out_of_scope
-    unknown = built((2, 50))  # not a Microsoft linker's version
+    unknown = built((1, 0))  # not a Microsoft linker's version
     assert unknown.version is None and unknown.pack_version == "6.0" and unknown.blockers() == []
 
 
@@ -2505,8 +2505,31 @@ def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp
     ("12.0.8168.0", ("6.0", 8168)), ("13.0.9466.0", ("7.0", 9466)), ("13.10.3077.0", ("7.1", 3077)),
     ("14.0.50727.762", ("8.0", 50727)), ("15.0.30729.1", ("9.0", 30729)), ("16.0.40219.1", ("10.0", 40219)),
     ("17.0.61030.0", ("11.0", 61030)), ("18.0.40629.0", ("12.0", 40629)), ("19.0.24215.1", ("14.0", 24215)),
-    ("19.16.27023.0", ("14.1", 27023)), ("19.29.30137.0", ("14.2", 30137))])
+    ("19.16.27023.0", ("14.1", 27023)), ("19.29.30137.0", ("14.2", 30137)),
+    ("9.0.2196.0", ("2.0", 2196)), ("10.0.5270.0", ("4.0", 5270)), ("10.10.6038.0", ("4.1", 6038)),
+    ("10.20.6166.0", ("4.2", 6166)), ("11.0.7022.0", ("5.0", 7022))])
 def test_a_copys_compiler_build_is_read_as_the_rich_header_reads_it(build, version):
     """c2.dll's file version is cl.exe's (the msvc packs' 6.0 to 2010 say 12.0 to 16.0): a copy matches a game's
     Rich header only as its Visual C++ version."""
     assert scratch_pe.rich_version(build) == version
+
+
+@pytest.mark.parametrize("linker, version", [((2, 50), "2.0"), ((3, 0), "4.0"), ((4, 10), "4.1"), ((4, 20), "4.2"),
+                                            ((5, 0), "5.0")])
+def test_a_game_without_a_rich_header_names_old_visual_cpp_by_its_linker_and_takes_the_users_copy(
+        tmp_path, monkeypatch, linker, version):
+    """#137: a game built with Visual C++ 2.x to 5.0 has no Rich header; its linker's version says which. Without the
+    user's copy the packs' 6.0 stands in and the message names the copy to set up; with it, that copy builds the game."""
+    game = _windows_program(linker=linker)
+    plain = scratch_pe.describe(game)
+    assert (plain.version, plain.build, plain.own, plain.pack_version) == (version, None, None, "6.0")
+    assert version in plain.cannot_match()[0] and plain.blockers() == []
+    cl = {"2.0": "9.0.2196.0", "4.0": "10.0.5270.0", "4.1": "10.10.6038.0", "4.2": "10.20.6166.0", "5.0": "11.0.7022.0"}
+    _own_copies(tmp_path, monkeypatch, "15.0.30729.1", cl[version], "12.0.8168.0")
+    built = scratch_pe.describe(game)
+    assert built.own is not None and built.own.build == cl[version] and built.own.runner == "wibo"
+    assert built.cannot_match() == [] and built.pack_version == built.own.version
+    path = tmp_path / "old.exe"
+    path.write_bytes(game)
+    why = scratch_pe.game_info(path)["compiler_why"]
+    assert "your newest copy of it" in why and "by its linker's version" in why
