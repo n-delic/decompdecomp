@@ -442,6 +442,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                                                        new=st("replacement", True), message=st("why", True))),
         "file_status": ("How far a source file (or a function's file) is from being linked: functions left, its data "
                         "next to the original's, why the last link failed.", s(path=st("file or function", True))),
+        "standins_for": ("Games built with link-time code generation: a starting harness for a unit (stand-ins for what "
+                         "its functions use elsewhere, a HarnessEntry calling each function as the original's call sites "
+                         "do, declarations), to write into harness/ with edit_file.",
+                         s(what=st("unit, source file or function", True))),
         "join_functions": ("Forks: two functions are one the game's analysis cut (a piece with no prologue using registers "
                            "the code before set, an epilogue alone, a switch's cases in the next symbol); joined once "
                            "agents of two models agree and the game still builds byte for byte.",
