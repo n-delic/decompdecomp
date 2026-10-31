@@ -110,7 +110,7 @@ def test_zcode_prompt_reaches_it_by_file_never_as_argv(tmp_path, monkeypatch):
     work.mkdir()
     cmd, env, stdin = m._command(s, "tok", work)
     prompt = m.prompt(s)
-    assert stdin == ""  # nothing for stdin: the prompt is in the attached file
+    assert stdin is None  # nothing for stdin: the prompt is in the attached file
     assert (work / zcode.PROMPT_FILE).read_text(encoding="utf-8") == prompt
     assert not any(prompt in arg or "line one" in arg for arg in cmd)
     assert cmd[cmd.index("--attach") + 1] == str(work / zcode.PROMPT_FILE)
@@ -264,6 +264,47 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     cfg = json.loads((tmp_path / "agy2" / ".agents" / "mcp_config.json").read_text())
     assert cfg["mcpServers"]["decomp"] == {"serverUrl": "http://127.0.0.1:6464/mcp",
                                            "headers": {"Authorization": "Bearer tok"}}
+
+
+def test_the_windows_stdin_gate_survives_an_empty_prompt_but_not_a_prompt_file(tmp_path, monkeypatch):
+    """main always wrote (Windows' \\x01 gate +) the prompt, even when it was empty; winhelper.py waits for that gate
+    before starting the CLI. Only an agent that took its prompt by file writes nothing on stdin."""
+    class Stdin:
+        def __init__(self):
+            self.calls: list[str] = []
+            self.closed = False
+
+        def write(self, text):
+            self.calls.append(text)
+
+        def close(self):
+            self.closed = True
+
+    class Proc:
+        def __init__(self):
+            self.stdin = Stdin()
+
+    def written(prompt):
+        proc = Proc()
+        agents._feed_stdin(proc, prompt)
+        return "".join(proc.stdin.calls).encode("utf-8"), proc.stdin.closed
+
+    monkeypatch.setattr(agents.os, "name", "posix")
+    assert written("") == (b"", True)
+    assert written("line one\n") == (b"line one\n", True)
+    assert written(None) == (b"", True)  # a prompt-file agent: no prompt bytes, just close
+    monkeypatch.setattr(agents.os, "name", "nt")
+    assert written("") == (b"\x01", True)
+    assert written("line one\n") == (b"\x01line one\n", True)
+    assert written(None) == (b"\x01", True)  # the Windows gate only; zcode's prompt is in its file
+
+    # an empty prompt for a normal agent is a str (write the gate), not the None sentinel (no stdin)
+    m = _manager(tmp_path, monkeypatch, "claude")
+    m.prompt = lambda s: ""
+    work = tmp_path / "claude-empty"
+    work.mkdir()
+    _, _, stdin = m._command(agents.Session("claude-1", "claude", "c", "demo", "claude-1", {}), "tok", work)
+    assert stdin == ""
 
 
 def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_path, monkeypatch):

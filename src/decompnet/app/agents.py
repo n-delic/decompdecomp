@@ -300,6 +300,24 @@ def detect(quick: bool = False) -> list[dict]:
 
 # ---------------------------------------------------------------------------------- sessions
 
+def _stdin_payload(prompt: str | None) -> str | None:
+    """What to write to a helper's stdin. None means its prompt went in a file (zcode's --attach), so write no
+    prompt text and just close the pipe. On Windows, winhelper.py still needs its \x01 gate before it starts the
+    CLI; that gate is app plumbing, not prompt text, and must arrive even for an empty (or file) prompt."""
+    gate = "\x01" if os.name == "nt" else ""
+    if prompt is None:
+        return gate or None
+    return gate + prompt
+
+
+def _feed_stdin(proc: subprocess.Popen, prompt: str | None) -> None:
+    """Write `_stdin_payload(prompt)` and close the pipe, so the agent sees end of input."""
+    payload = _stdin_payload(prompt)
+    if payload is not None:
+        proc.stdin.write(payload)
+    proc.stdin.close()
+
+
 def _fresh_usage() -> dict:
     return {"usd": 0.0, "tokens": 0, "turns": 0, "tool_calls": 0} | {k: 0 for k in TOKEN_KINDS}
 
@@ -1101,9 +1119,9 @@ class Manager:
         return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
 
-    def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str]:
-        """The agent's command line, environment and what goes in on stdin (the prompt). Each helper connects only to
-        this app's own MCP server, with its own token."""
+    def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:
+        """The agent's command line, environment and what goes in on stdin (the prompt; None when its prompt went in
+        a file). Each helper connects only to this app's own MCP server, with its own token."""
         k = agents.get(s.kind)
         exe = _which(k.command)
         if not exe:
@@ -1122,7 +1140,7 @@ class Manager:
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
-        return cmd, env, "" if prompt_file is not None else k.stdin(prompt)
+        return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
@@ -1158,9 +1176,7 @@ class Manager:
 
         def feed_prompt():
             try:
-                if prompt:  # zcode's prompt is in its attached file; close an empty stdin so it sees end of input
-                    proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
-                proc.stdin.close()  # end of input: the agent works on this one prompt, then exits
+                _feed_stdin(proc, prompt)
             except OSError:  # it exited before reading (stderr says why)
                 pass
 
