@@ -257,16 +257,29 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
 1. **Copy `kits/xdk.py`** to `kits/<id>.py` and fill in its facts: `id` (its Setup entry), `name`, `platform`,
    `description`, `files` (what proves the folder: paths in it, any case), `places` (folders inside the one the
    user picks where it may be).
-2. **Its parts**, each optional: `build(folder)` (which build the copy is, read from its files), `compilers(folder)`
-   (`OwnCompiler`: a version name, the compiler, its headers, what runs it: wibo, wine or nothing) and `known_files`
-   + `known` (the SHA-256 of a file each build has, so Setup says "verified": a kit isn't pinned, this is how users
-   know their copy is the one the games were built with). Hashes are facts and may be shipped; the files never.
+2. **Its parts**, each optional: `locate(folder)` (the copy a folder is or holds, when its layouts are more than
+   `files` inside `places`: `kits/visualcpp.py` knows VC98, VC and `VC/Tools/MSVC/<version>`), `build(folder)` (which
+   build the copy is, read from its files: the XDK's from its libraries, Visual C++'s from c2.dll's version
+   resource, `kits.file_version`), `compilers(folder)` (`OwnCompiler`: a version name, the compiler, its headers,
+   what runs it: wibo, wine or nothing, and its exact `build`) and `known_files` + `known` (the SHA-256 of a file
+   each build has, so Setup says "verified": a kit isn't pinned, this is how users know their copy is the one the
+   games were built with). Hashes are facts and may be shipped; the files never.
+   **Several copies.** Setup records any number of copies of a kit (a manifest's `folders`; `Remove` forgets one, the
+   files stay), each checked when added, so a user with two XDKs or a Visual C++ 6.0 and a 2008 has both. Nothing
+   in a part may assume one copy: `compilers(folder)` reads that copy only, and its `version` name must be unique
+   per copy (`xdk-3911`, `own-9.0.30729`: configure.py `--own` takes any name, and a project stores
+   `MSVC/<name>`). `kits.folders(id)` lists the copies, `kits.compilers(ids)` the compilers of all of them.
 3. **Register it** in `_registry` at the end of `kits/__init__.py`. It shows in Setup as a toolchain of kind
    "local" (`toolchains.registry` adds it); it needs no entry in `toolchains.toml`.
-4. **The console takes it**: its `kits` names it, and the console asks the connector for it (`kits.folder`,
-   `kits.compilers`) where it's needed: the Xbox's `tool_args` passes the kits' compilers to the build
-   (`own_compiler_args`: configure.py's `--own VERSION=RUNNER,CL,INCLUDE`), and its `game_info` picks the kit's
-   compiler for a game of the kit's build. A project template other than PC's takes `--own` the same way.
+4. **The console takes it**: its `kits` names it, and the console asks the connector for it (`kits.folders`,
+   `kits.compilers`) where it's needed. A console that takes kits gets their compilers in `Console.compilers` (it
+   lists its own as `compilers`; the connector adds `kit_compilers()`, as `MSVC/<version>`), so a project can be
+   switched to one like any other. The PC's `tool_args` passes them to the build (`own_compiler_args`:
+   configure.py's `--own VERSION=RUNNER,CL,INCLUDE`). **Match by build, not by kit**: the console picks the copy
+   whose build is the game's (the Xbox's `game_info`: the XDK copy whose build equals the game's XDK build; the
+   PC's `own_copy`: the Rich header's version and build number against each copy's `build`, else the nearest build
+   of the same version, and it says so), and only when its packs don't have that build. A project template other
+   than PC's takes `--own` the same way.
 5. **Pass the tests**: `uv run pytest tests/test_kits.py -q`. It checks the facts, that it's a local toolchain
    nothing downloads, that a console takes it, and that no code outside `kits/` and that console names it. Test
    it with a homemade folder (empty stand-ins, never a file of the real kit).

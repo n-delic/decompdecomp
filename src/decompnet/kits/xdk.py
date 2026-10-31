@@ -10,10 +10,10 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
-from . import Kit, OwnCompiler, find
+from . import Kit, OwnCompiler, file_version, find
 
 XAPILIB = "lib/xapilib.lib"
-VERSION = "xdk"  # the compiler's version in a project's build (Xbox: the compiler MSVC/xdk)
+VERSION = "xdk"  # the compiler's version in a project's build, with the XDK's build after it (MSVC/xdk-3911)
 
 
 class Xdk(Kit):
@@ -44,8 +44,13 @@ class Xdk(Kit):
         include = find(folder, "include/xtl.h")
         if cl is None or include is None:
             return []
-        return [OwnCompiler(VERSION, f"XDK {self.build(folder) or ''}'s Visual C++".replace(" 's", "'s"), cl,
-                            (include.parent,))]
+        xdk = self.build(folder)
+        c2 = find(cl.parent, "c2.dll")
+        built = file_version(c2) if c2 else ""
+        name = f"XDK {xdk}'s Visual C++" if xdk else "your XDK's Visual C++"
+        # (one compiler per XDK build: two copies of different XDKs don't collide in a project's build)
+        return [OwnCompiler(f"{VERSION}-{xdk}" if xdk else VERSION, f"{name} ({built})" if built else name, cl,
+                            (include.parent,), build=built)]
 
 
 XDK = Xdk()

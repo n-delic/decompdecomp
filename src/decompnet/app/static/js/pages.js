@@ -80,18 +80,27 @@ function renderTools() {
   $("toolGrid").innerHTML = rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
       <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
+      ${(t.copies || []).map((c) => `<div class="row"><span class="ok-mark grow" title="${esc(c.folder)}">✓ ${esc(c.folder)}${c.build ? ` (${esc(c.build)})` : ""}${c.verified ? `<br><span class="muted small">${esc(c.verified)}</span>` : ""}</span>`
+        + `<button class="ghost small-btn" data-remove="${esc(t.id)}" data-folder="${esc(c.folder)}" type="button">Remove</button></div>`).join("")}
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
-        : t.local ? `${t.installed ? `<span class="ok-mark grow" title="${esc([t.folder, t.verified].filter(Boolean).join("\n"))}">✓ your copy${t.verified && !t.verified.startsWith("verified") ? " (unknown build)" : ""}</span>` : ""}`
-          + `<button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Change folder" : "Choose your folder"}</button>`
+        : t.local ? `<span class="grow"></span><button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Add a copy" : "Choose your folder"}</button>`
         : t.installed ? `<span class="ok-mark">✓ installed</span>`
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
           + `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}"`
           + ` type="button">${t.changed ? "Install again" : "Install"}</button>`}</div></div>`).join("");
   $("toolGrid").querySelectorAll("[data-tc]").forEach((b) => { b.onclick = () => { b.disabled = true; installToolchain(b.dataset.tc, !!b.dataset.prop).finally(() => { b.disabled = false; }); }; });
   $("toolGrid").querySelectorAll("[data-local]").forEach((b) => { b.onclick = () => useLocalToolchain(b.dataset.local); });
+  $("toolGrid").querySelectorAll("[data-remove]").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await api("/api/toolchain/remove", { method: "POST", body: { id: b.dataset.remove, folder: b.dataset.folder } }); await loadState(); renderTools(); }
+      catch (e) { toast(e.message, "err"); b.disabled = false; }
+    };
+  });
 }
-/* A local toolchain (the Xbox XDK): nothing is downloaded; decompdecomp checks the user's own folder and reads it
-   where it is. The folder and the licence are asked for in the tool's card (prompt() and confirm() are cramped for a
+/* A local toolchain (a kit: the Xbox XDK, Visual C++): nothing is downloaded; decompdecomp checks the user's own
+   folder and reads it where it is. Each copy is listed (its build, whether decompdecomp knows it) with Remove; "Add a
+   copy" adds another. The folder and the licence are asked for in the tool's card (prompt() and confirm() are cramped for a
    Windows path, and some browsers block them). */
 function useLocalToolchain(id) {
   const t = (S.st.toolchains || []).find((x) => x.id === id) || {};
@@ -99,8 +108,8 @@ function useLocalToolchain(id) {
   if (!card || card.querySelector(".local-form")) return;
   const form = document.createElement("form");
   form.className = "local-form";
-  form.innerHTML = `<label class="field"><span>The folder of your own copy (the one holding xbox/include and xbox/lib, or that folder itself)</span>
-      <input name="folder" type="text" spellcheck="false" placeholder="C:\\XDK" value="${esc(t.folder || "")}"></label>
+  form.innerHTML = `<label class="field"><span>The folder of your own copy (the one holding the files it needs, or the folder above it)</span>
+      <input name="folder" type="text" spellcheck="false" placeholder="C:\\Program Files\\Microsoft Visual Studio"></label>
     ${t.license === "proprietary" ? `<label class="check"><input type="checkbox" name="accept"><span>This is proprietary software. decompdecomp reads your copy where it is and never copies or uploads it. I accept that.</span></label>` : ""}
     <div class="row"><button class="small-btn" type="submit">Use this folder</button><button class="ghost small-btn" type="button" data-cancel>Cancel</button></div>
     <pre class="joblog" hidden></pre>`;

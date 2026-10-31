@@ -46,7 +46,7 @@ from capstone import x86
 
 from decompnet.hostenv import NO_WINDOW
 
-from ... import toolchains
+from ... import kits, toolchains
 from ...arch import x86 as x86_arch
 from ...forks.project import ForkError, ForkProject
 from . import debuginfo
@@ -96,7 +96,9 @@ RICH_BUILDS = {("6.0", 8168): "6.0", ("7.0", 9466): "7.0", ("7.1", 3077): "7.1",
 # toolchains.toml's packs, each named after its first version: 6.0-7.1, 2005-2010, and 2017 (msvc2015: 2015 is to
 # join it); each version in a folder of its pack
 MSVC_PACKS = ("msvc", "msvc2005", "msvc2015")
-LAST_IN_SCOPE = (14, 0)  # Visual C++ 2015: games built with 2017 and newer are out of decompdecomp's scope for now
+LAST_IN_SCOPE = (14, 0)  # Visual C++ 2015: games built with 2017 and newer are out of decompdecomp's scope for now,
+# unless the user has their own Visual C++ of the build (kits/visualcpp.py: Build.own)
+KIT = "visualcpp"  # the kit PC games take: the user's own Visual C++ copies
 LINKER_VERSION_AT = 2  # in the optional header: the linker's major and minor version, a byte each
 # DRM and packers, by the sections they add to a program, as Detect It Easy's rules find them (github.com/horsicq/
 # Detect-It-Easy, db/PE) and Steamless finds Steam's (github.com/atom0s/Steamless: a ".bind" section)
@@ -305,6 +307,7 @@ class Build:
     whole_program: int = 0  # compiled files built for link-time code generation (/GL)
     compiled: int = 0  # every compiled file the Rich header counts
     wrapper: str | None = None  # the DRM or packer it's recognised by
+    own: kits.OwnCompiler | None = None  # the user's own Visual C++ that builds it, when the packs' don't (own_copy)
 
     @property
     def compiler(self) -> str:
@@ -323,7 +326,7 @@ class Build:
 
     @property
     def out_of_scope(self) -> bool:
-        return self.version is not None and _version_key(self.version) > LAST_IN_SCOPE
+        return self.version is not None and self.own is None and _version_key(self.version) > LAST_IN_SCOPE
 
     @property
     def newer_than_pack(self) -> bool:
@@ -333,7 +336,10 @@ class Build:
     @property
     def pack_version(self) -> str:
         """The compiler packs' Visual C++ to build with: the program's own build, or the closest build of its version
-        (the newest, when only its linker's version names it), or the closest the packs have."""
+        (the newest, when only its linker's version names it), or the closest the packs have. The user's own copy of
+        the build, when the packs have none of it."""
+        if self.own is not None:
+            return self.own.version
         same = [(build, name) for (version, build), name in RICH_BUILDS.items() if version == self.version]
         if same:
             return min(same, key=lambda b: abs(b[0] - self.build) if self.build else -b[0])[1]
@@ -378,7 +384,7 @@ class Build:
     def cannot_match(self) -> list[str]:
         """Why a program decompdecomp does start can't match (all of it, or some): none, it can."""
         out = []
-        if self.newer_than_pack:
+        if self.newer_than_pack and self.own is None:
             out.append(f"it was built with {self.compiler}, and decompdecomp builds games with Visual C++ 6.0 to "
                        "2010 so far: 2012 to 2015 come next (ROADMAP.md, Newer Windows games; 2017's compiler can "
                        "already be chosen per file), so nothing matches until then")
@@ -398,6 +404,29 @@ def _newest_mapped() -> str:
     """The packs' Visual C++ for a game newer than any build RICH_BUILDS maps: the newest one it maps (2010 SP1). Not
     the packs' newest: 2017's can be chosen in Settings, but a game's Rich header doesn't lead to it yet."""
     return RICH_BUILDS[max(RICH_BUILDS, key=lambda vb: (_version_key(vb[0]), vb[1]))]
+
+
+def rich_version(build: str) -> tuple[str, int]:
+    """The Rich header's version and build number of a compiler's c2.dll file version, which is cl.exe's (Visual C++
+    6.0's is 12.0.8168, .NET 2003's 13.10.3077, 2008's 15.0.30729, 2017's 19.16.27023): ("6.0", 8168), ("7.1", 3077),
+    ("9.0", 30729), ("14.1", 27023), 2015 and newer by their build as the Rich header's are (VC14_BUILDS)."""
+    major, minor, number = (int(part) for part in build.split(".")[:3])
+    if major >= 19:
+        return next(v for first, v in VC14_BUILDS if number >= first), number
+    return ("7.1" if minor else "7.0") if major == 13 else f"{major - 6}.0", number
+
+
+def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:
+    """The user's own Visual C++ that should build a game the packs have no exact build for: the copy of its build,
+    else the nearest build of the same version (Visual Studio's, "9.0"); none: they have no copy of that version.
+    A game that names only its linker's version (number None) takes the newest copy of it."""
+    if version is None or (version, number) in RICH_BUILDS:
+        return None
+    same = [(rich_version(c.build)[1], c) for c in kits.compilers((KIT,)) if c.build
+            and rich_version(c.build)[0] == version]
+    if not same:
+        return None
+    return (min(same, key=lambda nc: (abs(nc[0] - number), -nc[0])) if number else max(same, key=lambda nc: nc[0]))[1]
 
 
 def is_windows_program(head: bytes) -> bool:
@@ -446,7 +475,7 @@ def describe(data: bytes) -> Build:
             len({n for n in names if DENUVO_SECTION.fullmatch(n)}) >= DENUVO_MIN_NAMES:
         wrapper = "Denuvo"
     return Build(MACHINES.get(machine_id, f"machine type {machine_id:#x}"), version, number, whole,
-                 sum(files.values()), wrapper)
+                 sum(files.values()), wrapper, own_copy(version, number))
 
 
 def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
@@ -462,9 +491,9 @@ def program_compilers(data: bytes) -> list[tuple[str, int, str, bool]]:
                 files[version, number] = files.get((version, number), 0) + n
     out = []
     for (version, number), n in sorted(files.items(), key=lambda item: -item[1]):
-        built = Build(X86, version, number)
+        built = Build(X86, version, number, own=own_copy(version, number))
         try:
-            installed = toolchains.installed(compiler_pack(built.pack_version)) is not None
+            installed = built.own is not None or toolchains.installed(compiler_pack(built.pack_version)) is not None
         except ForkError:
             installed = False
         out.append((f"MSVC/{built.pack_version}", n, built.compiler, installed))
@@ -484,11 +513,16 @@ def game_info(path: Path) -> dict:
         why = "the program doesn't say which Visual C++ built it; 6.0 built most games of its time"
     elif built.exact:
         why = f"it was built with {built.compiler}"
+    elif built.own is not None:  # a build of the user's own: the very one, or the nearest of that Visual C++
+        same = rich_version(built.own.build)[1] == built.build
+        why = (f"it was built with {built.compiler}; {built.own.name} builds it" if same else
+               f"it was built with {built.compiler}; the nearest of your copies is {built.own.name}")
     else:  # another update of its version (the packs have the common ones), or a version they don't have yet
         why = f"it was built with {built.compiler}; the closest the compiler packs have is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
-            "cannot_match": built.cannot_match()}
+            "cannot_match": built.cannot_match(), "modern_eh": built.own is not None
+            and _version_key(built.version) >= (8, 0)}
 
 
 # ---------------------------------------------------------------------------------------------------- the game's DLLs
@@ -1720,9 +1754,10 @@ def write_tools(root: Path, version: str) -> list[str]:
     return changed
 
 
-def tool_args() -> list[str]:
+def tool_args(kit_ids=()) -> list[str]:
     """configure.py arguments pointing at decompdecomp's pinned tools: every installed compiler pack, 6.0-7.1's
-    last, as an older project's configure.py keeps only the last --msvc (its projects build with 6.0 to 7.1).
+    last, as an older project's configure.py keeps only the last --msvc (its projects build with 6.0 to 7.1), and
+    the compilers in the user's copies of the kits `kit_ids` (the console's Console.kits: --own).
     Nothing about wine: a 2017 file finds it when it builds (WindowsPC.build_env), so no configure.py, older or
     new, is given an argument it doesn't know."""
     packs = [p for p in reversed(MSVC_PACKS) if toolchains.installed(p) is not None]
@@ -1733,7 +1768,7 @@ def tool_args() -> list[str]:
     if toolchains.get("wibo").supported and sys.platform != "win32":
         toolchains.ensure("wibo", log=lambda *_: None)
         args += ["--wibo", str(toolchains.binary("wibo"))]
-    return args
+    return [*args, *own_compiler_args(kits.compilers(kit_ids))]
 
 
 def own_compiler_args(compilers) -> list[str]:
@@ -2016,12 +2051,12 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         log(f"what can't match: {why}")
     if not info["cannot_match"]:
         log(f"it can match: decompdecomp builds with Visual C++ {compiler}")
-    own = compiler in own_versions(args or [])  # (a compiler of the user's own: in a kit, not a pack)
+    args = args or tool_args()
+    own = compiler in own_versions(args)  # (a compiler of the user's own: in a kit, not a pack)
     pack = "msvc" if own else compiler_pack(compiler)
     if not own and not (toolchains.path(pack) / compiler).is_dir():
         raise ForkError(f"this game builds with Visual C++ {compiler}, which comes in {toolchains.get(pack).name}: "
                         "install it in Setup (Compilers & tools) if you accept its licence, then try again")
-    args = args or tool_args()
     if not ghidra.available():
         if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
             log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
@@ -2086,7 +2121,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
                 named += key.startswith("func_")
         version_of = m.built.pack_version
         if version_of != compiler:  # a DLL built by another Visual C++ than the program builds with its own
-            if (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
+            if version_of in own_versions(args) or (toolchains.path(compiler_pack(version_of)) / version_of).is_dir():
                 own.update({f"src/auto/{u}.cpp": version_of for u in made})
             else:
                 log(f"{m.rel} was built with {m.built.compiler}: its files build with Visual C++ {compiler} until "
@@ -2110,7 +2145,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     text = cfg.read_text(encoding="utf-8").replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
     if cl_flags is not None:
         text = re.sub(r"^CL_FLAGS = \[[^\]]*\].*$", f"CL_FLAGS = {json.dumps(cl_flags)}", text, count=1, flags=re.M)
-    elif pack != "msvc":  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
+    elif pack != "msvc" or info.get("modern_eh"):  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
         text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
     cfg.write_text(text, encoding="utf-8")
     conf = root / "config" / version

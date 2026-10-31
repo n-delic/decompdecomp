@@ -55,7 +55,7 @@ users bring (`src/decompnet/kits/`, a connector like `consoles/` and `agents/`):
 that only came in them (the Xbox XDK and its early Visual C++ builds), which nobody may publish, so nothing can pin
 them. The user points Setup at their own copy; decompdecomp records the folder and reads it there, never copies or
 downloads it, and checks its files against the SHA-256 of the builds it knows (`Kit.known`). A console takes a kit
-by naming it (`Console.kits`); nothing outside `kits/` and that console names one (`tests/test_kits.py`). splat is a Python dependency in
+by naming it (`Console.kits`); the user may give several copies of one kit (two XDKs, a Visual C++ 6.0 and a 2008), and a console picks the copy whose build is the game's; nothing outside `kits/` and that console names one (`tests/test_kits.py`). splat is a Python dependency in
 `pyproject.toml`. Proprietary compilers are only installed after the user accepts that in Setup; don't add code that
 fetches them silently.
 

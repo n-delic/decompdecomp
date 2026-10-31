@@ -10,7 +10,7 @@ rest of the app (Setup, toolchains.py) sees a kit as a toolchain of kind "local"
 compares kit names, but the consoles that take them (tests/test_kits.py checks it).
 
 What a kit can give:
-- its folder, where the console reads what it needs from it (the XDK's libraries, which find its code in a game);
+- its folders (the user can give several copies: two XDKs, a Visual C++ 6.0 and a 2008), where the console reads what it needs from it (the XDK's libraries, which find its code in a game);
 - its compilers (`OwnCompiler`): what a project's build runs for a version of its own, with the kit's headers,
   through the runner the program needs (wibo or wine on Linux and macOS);
 - its build, read from its files (`build`), and whether those files are ones decompdecomp knows (`verify`: their
@@ -23,7 +23,9 @@ that take it, and pass tests/test_kits.py (CONTRIBUTING.md, "Adding a kit").
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,11 +33,12 @@ from pathlib import Path
 @dataclass(frozen=True)
 class OwnCompiler:
     """A compiler in the user's kit, as a project's build runs it."""
-    version: str  # what a project's build calls it (the compiler id is the console's: "MSVC/" + "xdk")
-    name: str  # what the app shows: "XDK 3911's Visual C++ (13.00.9254.1)"
+    version: str  # what a project's build calls it, unique per copy (the compiler id is "MSVC/" + "xdk-3911")
+    name: str  # what the app shows: "XDK 3911's Visual C++ (7.0.9254.0)"
     exe: Path
     includes: tuple[Path, ...]  # its headers, searched in this order
     runner: str = "wibo"  # what runs it on Linux and macOS: "wibo", "wine", or "" (a program of this computer)
+    build: str = ""  # the compiler's exact build, from its c2.dll's version resource ("13.10.3077.0"); "" if unreadable
 
 
 class Kit:
@@ -55,6 +58,17 @@ class Kit:
 
     def __repr__(self) -> str:
         return f"<kit {self.id}>"
+
+    def locate(self, folder: Path) -> Path | None:
+        """The folder of a copy that `folder` is or holds: it itself, or one of `places` inside it, with all `files`.
+        A kit whose copies come in more layouts than that overrides it."""
+        for base in (folder, *(folder / p for p in self.places)):
+            try:
+                if all(find(base, f) is not None for f in self.files):
+                    return base.resolve()
+            except OSError:
+                continue
+        return None
 
     def build(self, folder: Path) -> str | None:
         """Which build of the kit the copy is, read from its files ("3911"), or None."""
@@ -81,8 +95,8 @@ class Kit:
                 "local_files": list(self.files), "local_places": list(self.places)}
 
 
-def find(folder: Path, rel: str) -> Path | None:
-    """A file in a folder by its path, ignoring case."""
+def find(folder: Path, rel: str, dirs: bool = False) -> Path | None:
+    """A file (or with `dirs`, a folder) in a folder by its path, ignoring case."""
     at = folder
     for part in Path(rel).parts:
         if not at.is_dir():
@@ -90,28 +104,60 @@ def find(folder: Path, rel: str) -> Path | None:
         at = next((c for c in at.iterdir() if c.name.lower() == part.lower()), None)
         if at is None:
             return None
-    return at if at.is_file() else None
+    return at if at.is_file() or (dirs and at.is_dir()) else None
 
 
-def folder(kid: str) -> Path | None:
-    """Where the user's copy of a kit is, when it's set up in Setup (and still there); None: it isn't."""
+def file_version(path: Path) -> str:
+    """A Windows program's file version ("13.10.3077.0"), from the VS_FIXEDFILEINFO of its version resource; "" when
+    it has none (an empty stand-in, a program without one)."""
+    try:
+        return _file_version(str(path), path.stat().st_mtime_ns)
+    except OSError:
+        return ""
+
+
+@functools.lru_cache(maxsize=64)
+def _file_version(path: str, mtime_ns: int) -> str:
+    data = Path(path).read_bytes()
+    at = data.find("VS_VERSION_INFO".encode("utf-16-le"))
+    sig = data.find(b"\xbd\x04\xef\xfe", at) if at >= 0 else -1  # (0xFEEF04BD: right after the key, padded)
+    if sig < 0 or sig - at > 64 or sig + 16 > len(data):
+        return ""
+    ms, ls = struct.unpack_from("<II", data, sig + 8)
+    return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+
+
+def folders(kid: str) -> list[Path]:
+    """Where the user's copies of a kit are (Setup records any number), those still there; none: it isn't set up."""
     from .. import toolchains
 
     try:
-        return toolchains.local_folder(kid)
+        return toolchains.local_folders(kid)
     except toolchains.ToolchainError:
-        return None
+        return []
+
+
+def folder(kid: str) -> Path | None:
+    """The first of the user's copies of a kit, or None."""
+    return next(iter(folders(kid)), None)
 
 
 def compilers(kids) -> list[OwnCompiler]:
-    """The compilers of the kits `kids` (a console's Console.kits) the user has set up."""
-    return [c for k in kids if (at := folder(k)) is not None for c in get(k).compilers(at)]
+    """The compilers of every copy of the kits `kids` (a console's Console.kits) the user set up. Two copies of one
+    build give one compiler (the first copy's)."""
+    out: dict[str, OwnCompiler] = {}
+    for k in kids:
+        for at in folders(k):
+            for c in get(k).compilers(at):
+                out.setdefault(c.version, c)
+    return list(out.values())
 
 
 def _registry() -> list[Kit]:
+    from .visualcpp import VISUALCPP
     from .xdk import XDK
 
-    return [XDK]
+    return [XDK, VISUALCPP]
 
 
 KITS: list[Kit] = _registry()
