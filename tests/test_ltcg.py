@@ -357,3 +357,84 @@ def test_an_xbox_build_is_given_wine_where_it_is_and_a_pc_build_only_when_a_pack
     assert consoles.get("xbox").build_env() == {"DECOMPNET_WINE": "/usr/bin/wine", "DECOMPNET_WINE_PREFIX": str(tmp_path)}
     monkeypatch.setattr(toolchains, "installed", lambda tid: None)
     assert consoles.get("pc").build_env() == {}
+
+
+@pytest.fixture(scope="module")
+def fresh(demo, tmp_path_factory):
+    """Another import of the demo, whose driver nobody has written (the tests above write the first project's)."""
+    work = tmp_path_factory.mktemp("ltcg-agent")
+    net = RomNetwork(work / "app.db", work)
+    return net, net.import_rom(demo[0], confirmed=True, log=lambda *_: None)
+
+
+def test_an_agent_goes_from_the_brief_to_a_match_with_the_tools_it_has(demo, fresh):
+    """Claim, read the convention in the brief, ask standins_for for a starting harness, write the driver with
+    edit_file, and compile: the way an agent works an LTCG game's register-convention function."""
+    from decompnet.app import tools
+
+    net, slug = fresh
+    name, unit, address = _function(net, slug, demo[1], ABS_S32)
+    assert "standins_for" in tools.project_tools(net, slug)
+    agent, _ = net.local_agent("ltcg-agent")
+    brief = net.claim(agent, slug, name)
+    assert "reads before writing: eax" in brief and "register parameters of LTCG's choosing: eax" in brief
+    assert "called from" in brief and "builds plain, without /GL" in brief and "standins_for" in brief
+    starting = tools.HANDLERS["standins_for"](net, agent, slug, name)
+    assert f"harness/{unit}.drv.cpp" in starting and "func_%08X" % address in starting
+    assert "func_%08X: reads before writing: eax" % address in starting
+    alone = net.attempt(agent, name, ABS_C.format(address=address), slug)
+    assert not alone["matched"]
+    said = tools.HANDLERS["edit_file"](net, agent, slug, f"harness/{unit}.drv.cpp", "",
+                                       DRIVER.format(address=address).replace('#include "common.h"\n', ""), "driver")
+    assert not said.startswith("❌"), said
+    assert "already goes through the harness" in net.get_function(name, slug, agent)
+    right = net.attempt(agent, name, ABS_C.format(address=address), slug)
+    assert right["matched"], right["text"]
+    # the rebuild check puts the harness-made object back into the program, byte for byte
+    from decompnet import consoles
+
+    fp = net.forks.get(slug)[1]
+    rebuilt = consoles.get("xbox").check_rebuild(fp, fp.manifest["version"])
+    assert rebuilt["identical"] and "1 of them from C" in rebuilt["detail"], rebuilt
+    # what the harness link left unresolved reaches the agent by kind (here a made-up report of the unit's link)
+    built_unit = fp.unit(unit)
+    side = built_unit.base.with_suffix(".ltcg.json")
+    side.write_text(json.dumps({**json.loads(side.read_text()), "unresolved": ["_D_00013400", "_func_000113C0@8"]}))
+    row = net.forks._fn(slug, name)
+    text = "\n".join(net.forks._unresolved_lines(fp, net.forks._meta(row), row, built_unit,
+                                                 "void f() { D_00013400 = 1; func_000113C0(); }"))
+    assert "D_00013400 (data: may change this function's code under LTCG" in text
+    assert "func_000113C0 (" in text and "standins_for" in text
+
+
+def test_the_import_asks_whether_the_game_used_ltcg_through_the_consoles_options(tmp_path):
+    from decompnet import consoles
+    from decompnet.app import tools
+
+    xbox = consoles.get("xbox")
+    asked = xbox.describe()["import_options"]
+    assert [o["id"] for o in asked] == ["ltcg"] and [c["value"] for c in asked[0]["choices"]] == ["auto", "on", "off"]
+    assert consoles.get("pc").describe()["import_options"] == []
+
+    seen = {}
+
+    class Forks:
+        def create_scratch(self, path, console, **kwargs):
+            seen.update(kwargs)
+            return "slug"
+
+    net = type("Net", (), {"forks": Forks(), "saved_file": lambda self, data, name: tmp_path / name})()
+    xbox.import_game(net, tmp_path / "default.xbe", options={"ltcg": "off", "nonsense": "1"})
+    assert seen["options"] == {"ltcg": "off"}  # (answers to questions the console doesn't ask are dropped)
+    assert "standins_for" in tools.tool_names(True, xbox, ltcg=True)
+    assert "standins_for" not in tools.tool_names(True, xbox) and "standins_for" not in tools.tool_names(False)
+
+
+def test_the_user_can_say_the_game_did_not_use_ltcg(demo, tmp_path):
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    said: list[str] = []
+    slug = net.import_rom(demo[0], confirmed=True, log=said.append, options={"ltcg": "off"})
+    fp = net.forks.get(slug)[1]
+    assert not fp.manifest.get("ltcg") and "LTCG = False" in (fp.root / "tools" / "configure.py").read_text()
+    assert not any(line.startswith("link-time code generation? ") for line in said)  # (nothing to detect)
+    assert not list((fp.root / "harness").glob("*.drv.cpp"))

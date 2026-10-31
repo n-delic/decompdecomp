@@ -30,6 +30,9 @@ from . import convention
 # NDEBUG keeps the asserts of release builds out.
 XBOX_CL_FLAGS = ["/nologo", "/c", "/O2", "/Ob1", "/G6", "/GF", "/Gy", "/arch:SSE", "/W3", "/D_XBOX", "/DNDEBUG"]
 
+# tools/ltcg.py's ENTRY: a unit is built in harness mode once its driver defines HarnessEntry (not just mentions it)
+ENTRY = re.compile(r'^[ \t]*extern[ \t]+"C"[^\n;]*\bHarnessEntry[ \t]*\(', re.M)
+
 DRIVER = """// Harness driver for src/auto/{unit}.cpp. This game was built with link-time code generation (/GL, /LTCG).
 //
 // Under /LTCG a function's code depends on its callers: the linker passes `this` and arguments in whatever registers
@@ -50,6 +53,14 @@ DRIVER = """// Harness driver for src/auto/{unit}.cpp. This game was built with 
 // {{
 // }}
 """
+
+
+def has_entry(root: Path, unit: str) -> bool:
+    """Whether the unit's driver (harness/<unit>.drv.cpp) defines HarnessEntry: the unit is built in harness mode."""
+    try:
+        return bool(ENTRY.search((root / "harness" / f"{unit}.drv.cpp").read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return False
 
 
 def prepare(root: Path, groups: dict, library: set[int] = frozenset()) -> None:

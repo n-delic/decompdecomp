@@ -334,6 +334,8 @@ function setupCompilers(info) {
   $("allCompilers").hidden = true;
   // where the import recognises library code: the project covers the game's own code, or the whole program
   $("scopeRow").hidden = !con.sets_aside; $("scopePick").value = "game";
+  // the console's own import questions (Console.import_options: Xbox asks about link-time code generation)
+  $("importOptions").innerHTML = (con.import_options || []).map((o) => `<div class="row"><label class="field grow"><span>${esc(o.label)}</span><select data-option="${esc(o.id)}">${o.choices.map((c) => `<option value="${esc(c.value)}">${esc(c.text)}</option>`).join("")}</select></label></div>`).join("");
   if (con.mode === "rom" || p === "playstation") {
     // every compiler of its console first, so the import's test tries them all (a guess from the program can miss)
     const missing = missingCompilers(p), owned = missing.filter((t) => t.license === "proprietary");
@@ -469,7 +471,9 @@ $("analyse").onclick = async () => {
   const scope = $("scopeRow").hidden ? "" : $("scopePick").value;
   const all = !$("allCompilers").hidden && $("allAccept").checked ? "&all_compilers=1&accept=1" : "";
   const extras = picked.extras.length ? `&extras=${encodeURIComponent(JSON.stringify(picked.extras.map((f) => [f.name, f.size])))}` : "";
-  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${all}${extras}`, body, title, picked.name);
+  const chosen = Object.fromEntries([...$("importOptions").querySelectorAll("select[data-option]")].map((s) => [s.dataset.option, s.value]));
+  const options = Object.keys(chosen).length ? `&options=${encodeURIComponent(JSON.stringify(chosen))}` : "";
+  runImport(`confirmed=1${tc ? `&toolchain=${encodeURIComponent(tc)}` : ""}${scope ? `&scope=${scope}` : ""}${options}${all}${extras}`, body, title, picked.name);
 };
 $("pathPick").onclick = (e) => { e.stopPropagation(); askPath(); };
 function askPath(why = "") {
