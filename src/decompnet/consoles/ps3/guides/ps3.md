@@ -4,6 +4,13 @@ CPU: the Cell's PowerPC core (the PPU), a big-endian 64-bit PowerPC with AltiVec
 The program is an ELF64 whose registers are 64 bits wide; Sony's compilers keep **pointers and `long` 32 bits wide**
 (`lwz`/`stw` for a pointer, `ld`/`std` only for `long long` and register saves). `int` is 32-bit, `long long` 64.
 
+The compiler
+- Retail games were built with Sony's GCC 4.1.1 (or SN's SNC), one build per SDK generation; the program's `.comment`
+  says which ("SDK270"). The free ps3dev GCC makes a different (64-bit pointer) program, so it cannot match retail code
+  exactly. When the user has set up their own SDK, each copy is a compiler named `ps3sdk-<generation>` (`ps3sdk-270`)
+  and the game starts on the copy whose stamp equals its own; `try_compiler` can switch to another copy. Those run from
+  the user's copy, with the SDK's headers (`#include "sys/process.h"` style) and its libgcc and intrinsics headers.
+
 Calling convention
 - Arguments in r3-r10 (floats f1-f13), the result in r3 (f1). r14-r31 and f14-f31 belong to the caller: a function
   saves what it uses, usually `std r31, -8(r1)` below the stack pointer and `stdu r1, -n(r1)` for its frame, and

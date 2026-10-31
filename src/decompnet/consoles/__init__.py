@@ -66,8 +66,12 @@ class Console:
             cls.compilers = property(lambda self: (*self.fixed_compilers, *self.kit_compilers()))
 
     def kit_compilers(self) -> tuple[Compiler, ...]:
-        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them."""
-        return ()
+        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them (ROM
+        mode: by their version, which project.compiler_config runs from the user's copy; a PROJECT console's build
+        has its own naming and overrides this)."""
+        from .. import kits
+
+        return tuple(Compiler(c.version, c.name, "your own copy") for c in kits.compilers(self.kits))
 
     id = ""  # what project configs store as their platform ("n64")
     name = ""  # what the app calls it: "Nintendo 64"

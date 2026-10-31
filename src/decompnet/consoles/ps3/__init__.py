@@ -14,7 +14,13 @@ ROM mode, from the user's own decrypted `EBOOT.ELF`.
 Its demo game is projects/demo-ps3 (Demo Quest built with the free ps3dev GCC; the free compiler makes the usual
 64-bit ELFv1 program, where Sony's has 32-bit pointers and 8-byte descriptors: both are read).
 
-Not yet (ROADMAP.md): Sony's period GCC and SN's compiler, the SDK kit, imports named by NID and kernel calls by number,
+The compilers retail games were built with come in the user's own SDK (kits/ps3sdk.py, "ps3sdk"): its GCC (and SNC)
+are run from the user's copy, one compiler per SDK generation (`ps3sdk-270`); a game's `.comment` stamp ("SDK270")
+picks the copy whose build equals it (default_compiler), else the free compiler is used and the import says which SDK
+to set up. The free pack leaves out libgcc, the C runtime and Sony's intrinsics headers (si2vmx.h, vmx2spu.h,
+spu2vmx.h, spu_intrinsics.h, spu_mfcio.h): the SDK copy provides them.
+
+Not yet (ROADMAP.md): a real SDK's layout confirmed on one, imports named by NID and kernel calls by number,
 SPU programs and PRX modules, a rebuildable export, and C++ classes, struct layouts and the compiler map.
 """
 
@@ -40,6 +46,7 @@ class PlayStation3(Console):
         Compiler("ps3dev-gcc", "PS3 GCC (ps3dev)", "homebrew and the demo game (the free PPU GCC; not the period "
                  "compiler retail games used)", guess="PS3DEV"),
     )
+    kits = ("ps3sdk",)  # the user's own SDK: Sony's compilers, which the free pack can't give
     guides = ("ps3",)
     m2c = ""  # m2c has no 64-bit PowerPC target
     ram = (0x00010000, 0xD0000000)  # a program's code and data live in the first 256 MiB; the rest is video and I/O
@@ -63,6 +70,23 @@ class PlayStation3(Console):
             file = Path(file).read_bytes()
         program, info = elf.read_elf(bytes(file), name)
         return Picked(self.id, program, "game.elf", info, True)
+
+    def default_compiler(self, info: dict, splat_guess: str) -> str:
+        """The copy of the user's SDK whose compiler built the game (its .comment stamp, "SDK270", against each copy's
+        build); without one, the free compiler, and the reason says which SDK would build it exactly."""
+        from ... import kits
+
+        sdk = info.get("sdk", "")
+        if not sdk:
+            return super().default_compiler(info, splat_guess)
+        own = [c for c in kits.compilers(self.kits) if c.build == sdk]
+        if own:
+            info["compiler_why"] = f"the game's compiler stamp is {sdk}: your SDK copy's {own[0].name} built it"
+            return own[0].version
+        info["compiler_why"] = (f"the game's compiler stamp is {sdk} (Sony's GCC): set up your own PlayStation 3 SDK "
+                                f"of that generation in Setup, under Compilers & tools, to build with it; until then "
+                                f"{self.fixed_compilers[0].name} is used, which won't match Sony's code exactly")
+        return super().default_compiler({**info, "compiler_guess": ""}, splat_guess)
 
     def default_flags(self, toolchain: str, gp: int) -> list[str]:
         """Sony's PPU GCC aligns functions to 4 bytes (-falign-functions=4); pointers are 32 bits by the compiler's

@@ -280,6 +280,14 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
    PC's `own_copy`: the Rich header's version and build number against each copy's `build`, else the nearest build
    of the same version, and it says so), and only when its packs don't have that build. A project template other
    than PC's takes `--own` the same way.
+   **ROM mode runs a kit's compiler too.** A ROM project's compiler id may name an `OwnCompiler` (its `version`,
+   `ps3sdk-270`): `Console.kit_compilers` lists it with the console's own, `kits.own_compiler(id)` finds it, and
+   `project.compiler_config` runs its exe from the user's copy (through wibo off Windows when `runner` says, its
+   folder `root` and headers mounted read-only in the sandbox, nothing copied) with `args` and the console's flags,
+   in the same sandbox and limits as a pinned compiler; `toolchains.get/known/installed` answer for it while the copy
+   is set up. GCC-style arguments (`-c -I -o`) only so far; `runner = "wine"` is refused in ROM mode. Fill `root`
+   (the folder the compiler reads beside `bin/`), `args` and `flags` when you add one, and let the console's
+   `default_compiler` pick the copy by build, as the PS3's does by the `.comment` stamp.
 5. **Pass the tests**: `uv run pytest tests/test_kits.py -q`. It checks the facts, that it's a local toolchain
    nothing downloads, that a console takes it, and that no code outside `kits/` and that console names it. Test
    it with a homemade folder (empty stand-ins, never a file of the real kit).
