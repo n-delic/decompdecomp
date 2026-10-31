@@ -511,19 +511,23 @@ Where to start on a gap:
 
 ## Next
 
-### Xbox: link-time code generation, for agents
+### Xbox: what's left after link-time code generation
 
 The original Xbox is a beta PROJECT-mode console: decompdecomp reads your default.xbe (or an .xiso / Redump .iso),
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
 `ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
 `kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
-Three retail games imported and rebuilt byte for byte (thousands of functions each); all three were built with
-link-time code generation (/GL, /LTCG), as most Xbox games were.
+Three retail games imported and rebuilt byte for byte (thousands of functions each). All three were built with
+link-time code generation (/GL, /LTCG), as most Xbox games were: the import tells it from the program (or the import
+dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
+call sites do, and stand-ins, linked /LTCG by the compiler's own linker through wine), briefs show each function's
+convention, `standins_for` writes a starting harness, and a register-convention function of a retail game matched
+through its driver. Still to port from the prototype (`silvervest/xbox-1.0.5`):
 
-Their units build in harness mode (the PC template's `tools/ltcg.py`: the unit, a driver calling its functions as
-the game's call sites do, and stand-ins, linked with /LTCG by the compiler's own linker through wine), and the
-import tells such a game from the program. What's being finished: the briefs' convention evidence, the
-`standins_for` tool, which unresolved names in a harness link matter, the guide, and the import's LTCG switch.
+- **Member functions under LTCG.** `this` can arrive in any register; the prototype's `forks/methods.py` recovers
+  member functions and fields from register use, for briefs and `standins_for`'s declarations.
+- **Call sites that change conventions.** A helper or a driver call adds a call site, which can change the
+  linker's choice for the callee; the prototype warned when an attempt's convention differs from the original's.
 
 ### Game Boy Advance from your own copy
 
