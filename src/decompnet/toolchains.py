@@ -143,11 +143,22 @@ def registry() -> dict[str, Toolchain]:
 def known(tid: str) -> bool:
     """Whether the registry has this toolchain id. A project's config can name one it doesn't: the project was made
     with another tool (#118: a Windows project named a 64-bit Visual C++ one), and it must still open."""
-    return tid in _registry_data()
+    return tid in _registry_data() or _own(tid) is not None
+
+
+def _own(tid: str):
+    """A compiler of the user's own kit copies (kits.own_compiler) that a ROM project names as its toolchain; never
+    for a registry id (a kit's own id is one: looking its copies up would ask for it again)."""
+    from . import kits
+
+    return None if tid in _registry_data() else kits.own_compiler(tid)
 
 
 def get(tid: str) -> Toolchain:
     reg = registry()
+    if tid not in reg and (own := _own(tid)) is not None:
+        return Toolchain(id=tid, name=own.name, license="proprietary", source="your own copy: nothing is downloaded",
+                         description="A compiler in your own SDK copy.", flags=list(own.flags))
     if tid not in reg:
         raise ToolchainError(f"unknown toolchain {tid!r}; known: {', '.join(sorted(reg))}")
     return reg[tid]
@@ -179,6 +190,8 @@ def installed(tid: str, linux: bool | None = None) -> dict | None:
     changed since (changed()): every caller then offers to install it again, as for one never installed, and a free
     tool reinstalls by itself (ensure). Archives already downloaded aren't downloaded again (root()/.downloads)."""
     manifest = _manifest(tid, linux)
+    if manifest is None and _own(tid) is not None:
+        return {"own": True}  # (a compiler in a kit copy is there as long as the copy is: nothing was installed)
     if manifest is None or changed(tid, manifest, path(tid, linux)):
         return None
     tc = registry().get(tid)
