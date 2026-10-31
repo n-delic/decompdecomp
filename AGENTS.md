@@ -109,8 +109,8 @@ only, never copied into the repo. A break gets fixed in the shared code with a t
 and a ROADMAP.md item. Say in the pull request which features you ran and how.
 
 Reviewing a change (a pull request, an agent's branch): check the same list. Does the change reach every console and
-mode it can, does a new or changed console have each feature or a "—" with its ROADMAP item, and does the table
-still say what's true? A gap nobody wrote down is a finding.
+mode it can, does a new or changed console have each feature or a "—" with its ROADMAP item, and do the table and
+the site's cards still say what's true? A gap nobody wrote down is a finding.
 
 Improving a console, adding a console (copy `consoles/template/`, fill in the connector's parts, add a demo game,
 pass `tests/test_consoles.py`, add a ROADMAP.md column) and adding a compiler to a console: CONTRIBUTING.md,
@@ -178,6 +178,9 @@ linting). In short:
   update themselves; the Windows copy updates its bundled packages in place.
 - What's planned is in ROADMAP.md, with a table of which feature works on which platform: when a feature ships or
   reaches another platform, update the table and move its item to done.
+- A change that adds or changes a console's support, or how decompdecomp is installed or downloaded, also updates
+  `site/public/index.html` (the console's card and picker entry, the install section) in the same pull request;
+  reviewing a change checks it, like the ROADMAP table.
 
 ## Never
 

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from decompnet.app.engine import RomNetwork
+from decompnet.consoles import Console
 from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
 
@@ -54,7 +55,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     game = tmp_path / "selected.z64"
     game.write_bytes(b"new rom")
 
-    class TestConsole:
+    class TestConsole(Console):  # the connector's own split/judge/asm parts, with only the facts this test needs
         id = "n64"
         name = "Nintendo 64"
         arch = "mips"

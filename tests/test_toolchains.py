@@ -5,10 +5,30 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tomllib
+from pathlib import Path
 
 import pytest
 
 from decompnet import limits, toolchains
+
+# Archives _extract opens with a third-party module rather than the standard library.
+_EXTERNAL_EXTRACTORS = {".zst": "zstandard"}
+
+
+def _marker_environment(platform_name: str) -> dict[str, str]:
+    system = platform_name.split("-", 1)[0]
+    return {
+        "linux": {"sys_platform": "linux", "platform_system": "Linux", "os_name": "posix"},
+        "macos": {"sys_platform": "darwin", "platform_system": "Darwin", "os_name": "posix"},
+        "windows": {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"},
+        "wsl": {"sys_platform": "win32", "platform_system": "Windows", "os_name": "nt"},
+    }[system]
+
+
+def _marker_allows(marker: str, platform_name: str) -> bool:
+    """Whether a marker in pyproject.toml applies on `platform_name` (our markers are simple sys_platform ones)."""
+    return not marker.strip() or bool(eval(marker, {"__builtins__": {}}, _marker_environment(platform_name)))
 
 
 @pytest.fixture
@@ -26,6 +46,39 @@ def test_registry_is_pinned_and_labelled():
             assert all(p["sha256"] for p in tc.parts) or tc.commit, tc.id
     assert reg["ido-7.1"].proprietary and not reg["gcc-2.7.2-kmc"].proprietary
     assert reg["ee-gcc-2.96"].requires == ["runtime-i386"]
+
+
+@pytest.mark.parametrize("tid", ["ido-7.1", "ido-5.3"])
+def test_windows_ido_brings_the_msys_runtime_its_executables_import(tid):
+    """#130: ido-static-recomp's Windows builds are MSYS2 programs: cc.exe and its siblings import msys-2.0.dll,
+    which the release archive doesn't ship, so every compile failed with "msys-2.0.dll was not found". The pinned
+    MSYS2 runtime package puts the DLL beside cc.exe."""
+    parts = toolchains.get(tid).parts_for("windows-x86_64")
+    runtime = [p for p in parts if p.get("keep", {}).get("usr/bin/msys-2.0.dll") == "msys-2.0.dll"]
+    assert len(runtime) == 1
+    part = runtime[0]
+    assert part["platforms"] == ["windows-x86_64"] and "into" not in part
+    assert part["url"].startswith("https://repo.msys2.org/msys/x86_64/msys2-runtime-")
+    assert part["url"].endswith("-x86_64.pkg.tar.zst") and len(part["sha256"]) == 64
+    assert part["mkdir"] == ["tmp", "var/tmp"]  # its /tmp and /var/tmp, under the root the DLL makes
+
+
+def test_every_platform_that_unpacks_an_external_archive_form_has_its_extractor():
+    """#130: Windows IDO's MSYS2 runtime is a .pkg.tar.zst, and _extract imports zstandard for .zst. zstandard was a
+    Linux-only dependency, so the install broke on Windows, the only platform that downloads that part. Every
+    platform a part's archive form is for must have the module its extractor imports."""
+    pyproject = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    markers = {}
+    for requirement in pyproject["project"]["dependencies"]:
+        spec, _, marker = requirement.partition(";")
+        markers[spec.strip().split(">")[0].split("[")[0]] = marker
+    for suffix, dependency in _EXTERNAL_EXTRACTORS.items():
+        platforms = {platform for tc in toolchains.registry().values() for part in tc.parts
+                     if part["url"].endswith(suffix)
+                     for platform in part.get("platforms", [toolchains.current_platform()])}
+        for platform in platforms:
+            assert _marker_allows(markers[dependency], platform), \
+                f"{dependency} is needed on {platform} to unpack a {suffix} part"
 
 
 def test_an_unknown_toolchain_id_is_known_to_be_missing():
@@ -90,6 +143,16 @@ def test_install_records_a_manifest(tc_root, monkeypatch):
     m = json.loads((toolchains.path("fake") / toolchains.MANIFEST).read_text())
     assert m["parts"][0]["sha256"] == digest and (toolchains.path("fake") / "cc").exists()
     assert toolchains.require("fake") == toolchains.path("fake")
+
+
+def test_a_part_creates_the_folders_its_programs_temp_files_need(tc_root, monkeypatch):
+    """#130: an MSYS2 program's /tmp and /var/tmp are folders under its own root (beside msys-2.0.dll). Windows
+    IDO's cc.exe writes its temporary files there, so the runtime part creates them at install time."""
+    _fake(monkeypatch, tc_root, sha=None)
+    toolchains.registry()["fake"].parts[0]["mkdir"] = ["tmp", "var/tmp"]
+    toolchains.install("fake", log=lambda *_: None)
+    assert (toolchains.path("fake") / "tmp").is_dir()
+    assert (toolchains.path("fake") / "var" / "tmp").is_dir()
 
 
 def test_a_folder_of_scripts_gets_an_environment_for_what_it_imports(tc_root, monkeypatch):
@@ -390,6 +453,20 @@ def test_an_install_from_an_entry_that_changed_is_offered_again(tc_root, monkeyp
     toolchains.install("pack", accept_license=True, log=lambda *_: None)
     assert (toolchains.path("pack") / "1.0-x64" / "Bin" / "cl64.exe").exists() and toolchains.installed("pack")
     assert not any(r["changed"] for r in toolchains.status())
+
+
+def test_an_existing_windows_ido_install_is_offered_again_for_the_runtime(tc_root, monkeypatch):
+    """#130: a Windows install from the old entry has only the release archive, so it has no msys-2.0.dll. The entry
+    now has the runtime part: installed() sees the change, and Compilers & tools offers Install again."""
+    monkeypatch.setattr(toolchains, "current_platform", lambda: "windows-x86_64")
+    tc = toolchains.get("ido-7.1")
+    old = [{"url": p["url"], "sha256": p["sha256"]} for p in tc.parts_for()
+           if p.get("keep", {}).get("usr/bin/msys-2.0.dll") != "msys-2.0.dll"]
+    folder = toolchains.path(tc.id)
+    folder.mkdir(parents=True)
+    (folder / toolchains.MANIFEST).write_text(json.dumps({"id": tc.id, "parts": old, "commit": None, "wsl": False}))
+    assert toolchains.installed(tc.id) is None
+    assert {r["id"]: r["changed"] for r in toolchains.status()}[tc.id] is True
 
 
 def test_an_install_made_before_fingerprints_is_judged_by_its_archives(tc_root):

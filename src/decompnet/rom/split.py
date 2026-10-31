@@ -444,6 +444,32 @@ def parse_function(path: Path, segment: str, big_endian: bool = True) -> RomFunc
     return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, path, labels, piece)
 
 
+def function_asm(fn: RomFunction) -> str:
+    """A function's stored assembly, as the project keeps and shows it (spimdisasm's lines with their words)."""
+    out = [f"glabel {fn.name}"]
+    for ln in fn.lines:
+        if ln.vram in fn.labels and ln.vram != fn.vram:
+            out.append(f".L{ln.vram:08X}:")
+        out.append(f"/* {ln.rom:X} {ln.vram:08X} {ln.word:08X} */  {ln.mnemonic:<10} {ln.operands}".rstrip())
+    out.append(f"endlabel {fn.name}")
+    return "\n".join(out)
+
+
+def function_from_text(name: str, text: str, segment: str) -> RomFunction:
+    """A function from the assembly a project stored (function_asm's form): its lines, labels and words."""
+    lines, labels = [], set()
+    for raw in text.splitlines():
+        m = _INSN.match(raw)
+        if m:
+            rom, vram, word, mnem, ops = m.groups()
+            lines.append(AsmLine(int(rom, 16), int(vram, 16), int(word, 16), mnem, ops))
+            continue
+        m = _LABEL.match(raw)
+        if m:
+            labels.add(int(m.group(1).lstrip(".L"), 16))
+    return RomFunction(name, lines[0].vram, lines[0].rom, segment, lines, Path(), labels)
+
+
 def _trim_padding(lines: list[AsmLine]) -> None:
     """Alignment padding between source files shows up as nops after the last function of a file.
     A nop in a delay slot belongs to the function; any nop after that is padding."""
@@ -610,3 +636,26 @@ def split_rom(workdir: Path, rom_name: str = "rom.z64", console=None, picked: Pi
     gp = gp or console.find_gp(rom, (workdir / rom_name).read_bytes(), segments)
     log(f"found {len(unique)} functions and {len(data)} data symbols")
     return SplitResult(unique, data, segments, named_symbols(workdir), config, compiler, out, console.id, gp, image)
+
+
+def join_saved_functions(parts: list[RomFunction], start: int, end: int, read) -> RomFunction:
+    """Join stored functions back into the first one, filling any zero gap from the game's bytes (saves.py).
+
+    A saved layout can be older than the project's splits: this undoes a split whose pieces are consecutive. Every
+    place must be accounted for; a gap that isn't zero padding raises ValueError, so a layout that crosses a real
+    gap is refused rather than joining the wrong bytes."""
+    from dataclasses import replace
+
+    lines = {line.vram: line for part in parts for line in part.lines if line.vram < end}
+    missing = set(range(start, end, 4)) - lines.keys()
+    if missing:
+        for address in sorted(missing):
+            # split_function trims padding from the head; undoing that split must put its original NOPs back.
+            if read(address, 4) != b"\0\0\0\0":
+                raise ValueError("the saved layout crosses a gap in this analysis")
+            previous = lines[max(at for at in lines if at < address)]
+            lines[address] = AsmLine(previous.rom + address - previous.vram, address, 0, "nop", "")
+    if sorted(lines) != list(range(start, end, 4)):
+        raise ValueError("the saved layout crosses a gap in this analysis")
+    return replace(parts[0], lines=[lines[address] for address in sorted(lines)],
+                   labels=set().union(*(part.labels for part in parts)))

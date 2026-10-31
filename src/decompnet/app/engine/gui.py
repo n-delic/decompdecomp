@@ -33,10 +33,9 @@ class GuiMixin:
         """Write a rebuildable source tree (the base for ports and mods) and prove it rebuilds the game."""
         if self.fork_slug(slug):  # a fork's work is already in its source tree, committed
             return {"path": self._project(slug)["root"], "identical": None}
-        from ...rom.export import export_rom
 
         proj = self._project(slug)
-        res = export_rom(self, slug, Path(proj["root"]) / "source", self.console(proj), log=log)
+        res = self.console(proj).export_project(self, slug, Path(proj["root"]) / "source", log=log)
         with self.store.tx() as db:  # shown on the project page: what's in the tree and whether it rebuilds
             cfg = json.loads(db.execute("SELECT config FROM projects WHERE id=?", (proj["id"],)).fetchone()["config"])
             cfg["export"] = {"t": time.time(), "path": str(res["path"]), "identical": res.get("identical"),

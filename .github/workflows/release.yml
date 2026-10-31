@@ -99,3 +99,4 @@ jobs:
             gh release upload "$TAG" dist/*macos*.zip --clobber
           else
             gh release create "$TAG" dist/*macos*.zip --generate-notes --latest
+          fi

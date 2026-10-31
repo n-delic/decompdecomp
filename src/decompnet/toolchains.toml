@@ -485,7 +485,7 @@ name = "IDO 7.1 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "SGI's compiler used by most first-party N64 games. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul", "-woff", "649,838,712"]
@@ -501,13 +501,22 @@ platforms = ["macos-x86_64", "macos-arm64"]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-7.1-recomp-windows.tar.gz"
 sha256 = "28487a90a47d2565d8c38235750500f6fbd3479b758e966b529166825804c926"
 platforms = ["windows-x86_64"]
+[["ido-7.1".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
+platforms = ["windows-x86_64"]
 
 ["ido-5.3"]
 name = "IDO 5.3 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "The earlier SGI compiler used by early N64 titles. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul"]
@@ -522,6 +531,15 @@ platforms = ["macos-x86_64", "macos-arm64"]
 [["ido-5.3".parts]]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-5.3-recomp-windows.tar.gz"
 sha256 = "2268f64cab973750e78bdf7aa2ff3cccf78ad1d181507da6faeb61f3d22c2e1e"
+platforms = ["windows-x86_64"]
+[["ido-5.3".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
 platforms = ["windows-x86_64"]
 
 [m2c]
@@ -806,12 +824,41 @@ sha256 = "5917df26bffc05d4752276a2e0b1edd21bd6e920aabe1992be8a50efc9d10932"
 binary = "dsd.exe"
 platforms = ["windows-x86_64"]
 
+[luvdis]
+name = "Luvdis"
+kind = "tool"
+license = "MIT"
+source = "aarant/luvdis 0.9.0 @ ec3a4e3e (2026-09-07)"
+description = "Game Boy Advance disassembler: finds the functions in a ROM and writes assembly that rebuilds it. Also reads a ROM's header."
+git = "https://github.com/aarant/luvdis"
+commit = "ec3a4e3ee3afe3e9b4a9c7ae8fffc65e1ea2096c"
+# it imports pkg_resources, which setuptools 70 and newer no longer ship
+pip_extra = ["setuptools<70"]
+
+[agbcc]
+name = "agbcc"
+kind = "compiler"
+platform = "Game Boy Advance"
+arch = "arm"
+license = "GPL-2.0"
+source = "pret/agbcc release (2023-09-03)"
+description = "The GCC 2.95-based compiler behind most Game Boy Advance games, as rebuilt by the pret community: agbcc, old_agbcc (early games) and agbcc_arm (ARM code)."
+cc = ["{tc}/bin/agbcc"]
+flags = ["-mthumb-interwork", "-O2"]
+requires = ["arm-gnu"]
+# agbcc only compiles preprocessed C to assembly: preprocess, compile, assemble, like pret's builds
+cmd = ["/bin/sh", "-c", "src=\"$1\"; obj=\"$2\"; inc=\"$3\"; shift 3; \"{tc:arm-gnu}/bin/arm-none-eabi-cpp\" -nostdinc -undef -I \"{tc}/include\" -I \"$inc\" \"$src\" -o \"$obj.i\" && \"{tc}/bin/agbcc\" \"$@\" \"$obj.i\" -o \"$obj.s\" && \"{tc:arm-gnu}/bin/arm-none-eabi-as\" -mcpu=arm7tdmi -o \"$obj\" \"$obj.s\"", "agbcc", "{src}", "{obj}", "{include}", "{flags}"]
+[[agbcc.parts]]
+url = "https://github.com/pret/agbcc/releases/download/release/agbcc.tar.gz"
+sha256 = "bcf0197e3e27d8e08506a142e25fa68ea7f6679a98347a6406804eb3f9ff4d29"
+platforms = ["linux-x86_64"]  # (Windows runs it inside WSL 2; the release has no macOS build)
+
 [arm-gnu]
 name = "Arm GNU Toolchain (arm-none-eabi)"
 kind = "tool"
 license = "GPL-3.0"
 source = "Arm GNU Toolchain 14.3.Rel1 (developer.arm.com)"
-description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the DS demo game's start-up code; about 150 MB."
+description = "Arm's official assembler, linker and preprocessor for ARM and Thumb code: the GBA and DS demo games' start-up code; about 150 MB."
 binary_name = "bin/arm-none-eabi-as"
 [[arm-gnu.parts]]
 url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz"
