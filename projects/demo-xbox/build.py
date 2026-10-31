@@ -16,6 +16,13 @@ MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain instal
     uv run python projects/demo-xbox/build.py
         ->  build/demoquest.xbe (+ build/symbols.map with every symbol, build/demo.json, build/demoquest.exe)
 
+    uv run python projects/demo-xbox/build.py ltcg
+        ->  build/ltcg/demoquest.xbe (+ the same files): the program built as many Xbox games were, with /GL and linked
+            with /LTCG, so the linker gives its functions register conventions of its own (the argument in EAX...) and
+            the units of an import of it build in harness mode (forks/ltcg.py). 7.1's linker does that, through wine
+            (the one in $DECOMPNET_WINE or on the PATH, in a prefix of its own: $DECOMPNET_WINE_PREFIX, else
+            build/ltcg/.wine); wibo can't run it.
+
 The linker is 6.0's, as demo-pc's: wibo 1.2.0 stops 7.1's LINK.EXE at its first lstrcmpiA (missing import). The PE is
 only a step, and the 7.1 objects link the same.
 """
@@ -23,6 +30,7 @@ only a step, and the 7.1 objects link the same.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import struct
@@ -30,11 +38,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from decompnet import toolchains
+from decompnet import toolchains, wine
 from decompnet.consoles.xbox.scratch import BASE, CL_FLAGS, KEYS
+from decompnet.forks.ltcg import XBOX_CL_FLAGS
 
 HERE = Path(__file__).resolve().parent
-BUILD = HERE / "build"
+LTCG = "ltcg" in sys.argv[1:]
+BUILD = HERE / "build" / ("ltcg" if LTCG else "")
 GAME = HERE.parent / "demo-n64" / "original"
 TITLE_ID = 0x44510001  # "DQ-001"
 EXECUTABLE, PRELOAD, WRITABLE = 4, 2, 1
@@ -45,6 +55,23 @@ def run(argv, cwd=BUILD):
     res = subprocess.run([str(a) for a in argv], capture_output=True, text=True, cwd=cwd)
     if res.returncode != 0:
         sys.exit(f"failed: {' '.join(map(str, argv))}\n{res.stdout}{res.stderr}")
+
+
+def link_ltcg(msvc: Path, wibo: list) -> None:
+    """Link with 7.1's linker and /LTCG (it generates the code of the /GL objects), through wine."""
+    if sys.platform == "win32":
+        runner, env = [], None
+    else:
+        found = wine.find()
+        if found is None:
+            sys.exit(wine.problem("The linker of link-time code generation") or "no wine")
+        prefix = os.environ.get("DECOMPNET_WINE_PREFIX") or str(BUILD / ".wine")  # (never the app's prefix)
+        runner, env = [found], {**os.environ, **wine.QUIET, "WINEPREFIX": prefix}
+    res = subprocess.run([*runner, str(msvc / "link.exe"), "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE",
+                          "/FIXED", "/OPT:NOREF", "/LTCG", f"/BASE:0x{BASE:X}", "/MAP:symbols.map", "/OUT:demoquest.exe",
+                          "xboxmain.obj", "game.obj"], capture_output=True, text=True, cwd=BUILD, env=env)
+    if res.returncode != 0:
+        sys.exit(f"the LTCG link failed:\n{res.stdout}{res.stderr}")
 
 
 def write_key() -> None:
@@ -119,14 +146,17 @@ def main() -> None:
     link = toolchains.require("msvc") / "6.0" / "Bin"  # (7.1's linker stops under wibo, see the docstring)
     wibo = [str(toolchains.binary("wibo"))] if sys.platform != "win32" else []
     for src in ("game.c", "xboxmain.c"):
-        run([*wibo, msvc / "cl.exe", *CL_FLAGS, src])
-    run([*wibo, link / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED", "/OPT:NOREF",
-         f"/BASE:0x{BASE:X}", "/MAP:symbols.map", "/OUT:demoquest.exe", "xboxmain.obj", "game.obj"])
+        run([*wibo, msvc / "cl.exe", *(XBOX_CL_FLAGS + ["/GL"] if LTCG else CL_FLAGS), src])
+    if LTCG:
+        link_ltcg(msvc, wibo)
+    else:
+        run([*wibo, link / "LINK.EXE", "/nologo", "/NODEFAULTLIB", "/ENTRY:start", "/SUBSYSTEM:CONSOLE", "/FIXED",
+             "/OPT:NOREF", f"/BASE:0x{BASE:X}", "/MAP:symbols.map", "/OUT:demoquest.exe", "xboxmain.obj", "game.obj"])
     write_key()
     symbols = json.loads((BUILD / "demo.json").read_text(encoding="utf-8"))["symbols"]
     xbe = make_xbe((BUILD / "demoquest.exe").read_bytes(), symbols["_xboxkrnl_thunks"])
     (BUILD / "demoquest.xbe").write_bytes(xbe)
-    print(f"built build/demoquest.xbe ({len(xbe)} bytes)")
+    print(f"built {(BUILD / 'demoquest.xbe').relative_to(HERE)} ({len(xbe)} bytes)")
 
 
 if __name__ == "__main__":

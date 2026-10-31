@@ -12,9 +12,12 @@ What's the Xbox's is reading the game: the XBE, its disc image, its kernel impor
 - xdvdfs.py: files out of an Xbox disc image (XISO, or a full Redump dump), reading only their sectors.
 - guides/xbox.md: what agents read about Xbox games, beyond the x86 guide.
 
+Games built with link-time code generation (/GL, /LTCG: the linker gives functions register conventions of its own and
+inlines across files) are told at import (forks/ltcg.py, forks/convention.py), and their units build in harness mode
+(the PC template's tools/ltcg.py: Visual C++'s linker, through wine).
+
 Not yet (ROADMAP.md, Xbox): the XDK's library code linked into .text (the C runtime, XAPI) is the game's to agents,
-as telling it apart needs the user's XDK; games built with link-time code generation (/GL) don't match one file at a
-time; the export is the PE view rebuilt, not an XBE.
+as telling it apart needs the user's XDK; the export is the PE view rebuilt, not an XBE.
 
 Its demo game is projects/demo-xbox (Demo Quest built with Visual C++ 7.1, linked at 0x10000 and made an XBE).
 """
@@ -59,6 +62,13 @@ class Xbox(WindowsPC):
 
         return "default.xbe" if scratch.is_xbe(bytes(data[:scratch.HEAD_BYTES])) else "game.iso"
 
+    def build_env(self) -> dict[str, str]:
+        """Wine for the builds of games with link-time code generation, whose units link with Visual C++'s linker
+        (the PC template's tools/ltcg.py): wherever wine is, though no pack of the Xbox's needs it to compile."""
+        from ... import wine
+
+        return wine.build_env(always=True)
+
     def program_in(self, folder: Path) -> Path | None:
         return None  # an Xbox game is its default.xbe or its disc image, never a folder of DLLs
 
@@ -73,8 +83,11 @@ class Xbox(WindowsPC):
 
         return hashlib.sha1(scratch.pe_view(scratch.program_bytes(path))).hexdigest()
 
-    def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
-        """The PC path's project, from the XBE's PE view, then the XDK's library sections set aside."""
+    def create_project(self, root: Path, game: Path, *, compiler: str | None = None, ltcg: bool | None = None,
+                       log=print) -> dict:
+        """The PC path's project, from the XBE's PE view, then the XDK's library sections set aside. `ltcg`: whether
+        the game was built with link-time code generation (None: told from the program, forks/ltcg.py)."""
+        from ...forks import ltcg as ltcg_mode
         from ..pc import scratch as pc
         from . import scratch
 
@@ -82,8 +95,13 @@ class Xbox(WindowsPC):
         with tempfile.TemporaryDirectory(prefix="decomp-xbe-") as tmp:
             view = Path(tmp) / f"{info['id']}.exe"  # (alone in its folder: find_modules looks beside it for DLLs)
             view.write_bytes(scratch.pe_view(scratch.program_bytes(game)))
+            def plan(pe, functions) -> dict:  # (the XDK's library sections are set aside below: not looked at)
+                library = {f.addr for f in functions if (s := pe.section_at(f.addr)) is not None
+                           and s.name in info["library_sections"]}
+                return ltcg_mode.plan(pe, functions, library, scratch.CL_FLAGS, ltcg, log)
+
             made = pc.create(root, view, compiler=compiler, log=log, info=info, platform=self.id, what=WHAT,
-                             cl_flags=scratch.CL_FLAGS, game_step=GAME_STEP.format(version=info["id"]))
+                             cl_flags=scratch.CL_FLAGS, game_step=GAME_STEP.format(version=info["id"]), plan=plan)
         if n := scratch.set_aside_library_sections(root, info["id"], info["library_sections"]):
             log(f"{n} functions are the XDK's library code, in its own sections "
                 f"({', '.join(info['library_sections'])}): set aside")
