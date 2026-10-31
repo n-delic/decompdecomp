@@ -100,6 +100,20 @@ def test_the_xdks_library_sections_are_set_aside(demo, tmp_path):
     assert xbox.library_sections(xbe) == {"DSOUND"}
     xbe.sections[2].name = "XAPILIB"  # named after a library of the version table, but data: not code
     assert xbox.library_sections(xbe) == {"DSOUND"}
+    xbe.sections[0].name = "BINK32A"  # RAD's Bink video, licensed middleware, in sections of its own
+    assert xbox.library_sections(xbe) == {"BINK32A"}
+
+
+@pytest.mark.parametrize("build, compiler", [(5849, "7.1"), (5933, "7.1"), (4627, "7.0"), (3911, "7.0")])
+def test_the_xdk_build_names_the_compiler(demo, tmp_path, build, compiler):
+    data = bytearray(demo[0].read_bytes())
+    libs = xbox._u32(data, 0x164) - xbox.BASE
+    for i in range(xbox._u32(data, 0x160)):  # every library of the version table from that XDK
+        struct.pack_into("<H", data, libs + 16 * i + 12, build)
+    game = tmp_path / "default.xbe"
+    game.write_bytes(data)
+    info = xbox.game_info(game)
+    assert info["compiler"] == compiler and str(build) in info["compiler_why"]
 
 
 @pytest.fixture(scope="module")
@@ -126,3 +140,10 @@ def test_a_kernel_call_is_an_import_and_c_calling_it_matches(demo, project):
     net.claim(agent, slug, name)
     res = net.attempt(agent, name, KERNEL_CALL.format(name=name.lstrip("_")), slug)
     assert res["matched"], res["text"]
+
+
+def test_the_rebuild_gives_back_the_xbe(demo, project):
+    net, slug = project
+    assert net.forks.check_rom(slug, log=lambda *_: None)["identical"]
+    rebuilt = net.forks.get(slug)[1].root / "build" / "demoquest" / "default.xbe"
+    assert rebuilt.read_bytes() == demo[0].read_bytes()  # (your copy's XBE, byte for byte, its code from the C)

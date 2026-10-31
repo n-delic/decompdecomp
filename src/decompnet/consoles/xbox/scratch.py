@@ -46,9 +46,11 @@ MAX_KERNEL_IMPORTS = 1024
 # What the XDK's release projects build with: /G6 for the Pentium III, /arch:SSE, /Gy (a section per function) and
 # _XBOX, which the XDK's headers expect. The demo (projects/demo-xbox) is built with exactly these.
 CL_FLAGS = ["/nologo", "/c", "/O2", "/G6", "/GF", "/Gy", "/arch:SSE", "/W3", "/D_XBOX"]
-# Visual C++ by the XDK build that shipped it. shortcut: only XDK 5849 (its vc71 tools are Visual C++ 7.1 build 3077)
-# is checked; other builds default to 7.1, the compiler of most Xbox games' years. Add builds as someone checks them.
-XDK_COMPILERS = {5849: "7.1"}
+# Visual C++ by the XDK build that shipped it: XDK 5849 (2003 on) is Visual C++ 7.1 (13.10.3077, the msvc pack's
+# 7.1); the XDKs before it were Visual C++ 7.0's (XDK 4627's is 13.00.9466, the pack's 7.0; the first XDKs, 3911 to
+# 4361, had earlier 13.00 builds, of which 7.0 is the nearest decompdecomp has). Later builds than 5849 are 7.1's too.
+FIRST_71 = 5233  # the first XDK whose compiler is Visual C++ 7.1
+EXACT_70 = 4627  # the XDK whose compiler is the pack's 7.0 build
 DEFAULT_COMPILER = "7.1"
 # Data sections by name: the Xbox linker marks .rdata and .data executable too, so the flags don't tell code from data
 _DATA_NAME = re.compile(r"(?i)^(\.r?data\w*|\.bss|\.tls|\.xtlid|\$\$x\w*|\w+_RD)$")
@@ -190,11 +192,15 @@ def xdk_build(xbe: XBE) -> int | None:
     return builds[0] if builds else None
 
 
+MIDDLEWARE = re.compile(r"(?i)^BINK")  # RAD's Bink video: licensed middleware in sections of its own
+
+
 def library_sections(xbe: XBE) -> set[str]:
     """The program's code sections that are XDK libraries outright: the known ones, and any named after a library
     in its version table (`XGRPH` is xgraphics, `D3D` is d3d8: the table and the section can differ, hence the list)."""
     libs = {lib.name.upper() for lib in xbe.libraries}
-    return {s.name for s in xbe.sections if s.code and (s.name.upper() in LIBRARY_SECTIONS or s.name.upper() in libs)}
+    return {s.name for s in xbe.sections if s.code and (s.name.upper() in LIBRARY_SECTIONS or s.name.upper() in libs
+                                                        or MIDDLEWARE.match(s.name))}
 
 
 # ---------------------------------------------------------------------------------------------------- the PE view
@@ -204,6 +210,7 @@ FILE_ALIGN = 0x200
 SECTION_ALIGN = 0x1000
 CODE, DATA, BSS = 0x60000020, 0xC0000040, 0xC0000080  # section characteristics: code, data, uninitialised data
 KERNEL_DLL = b"xboxkrnl.exe\0"
+XBE_MARK = 0x28  # tools/rebuild.py reads the XBE's place in the view here
 
 
 def pe_view(data: bytes) -> bytes:
@@ -224,6 +231,8 @@ def pe_view(data: bytes) -> bytes:
         raise ForkError(f"this XBE has {len(xbe.sections)} sections, more than decompdecomp reads yet")
     head = bytearray(PE_HEADERS)
     head[:2], head[0x3C:0x40] = b"MZ", struct.pack("<I", 0x40)
+    # (in the DOS header's reserved words: where the XBE is, so the rebuild writes an XBE too: tools/rebuild.py)
+    head[XBE_MARK:XBE_MARK + 12] = MAGIC + struct.pack("<II", PE_HEADERS, len(data))
     struct.pack_into("<4sHHIIIHH", head, 0x40, b"PE\0\0", 0x14C, len(rows), xbe.timestamp, 0, 0, 0xE0, 0x0103)
     opt = 0x58
     struct.pack_into("<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII", head, opt, 0x10B, 7, 10, 0, 0, 0, xbe.entry - image, 0, 0, image,
@@ -280,11 +289,14 @@ def game_info(path: Path) -> dict:
     data = program_bytes(path)
     xbe = read_xbe(data)
     build = xdk_build(xbe)
-    compiler = XDK_COMPILERS.get(build, DEFAULT_COMPILER)
-    why = (f"its libraries come from XDK {build}, which ships Visual C++ {compiler}" if build in XDK_COMPILERS else
-           f"its libraries come from XDK {build}, whose compiler decompdecomp doesn't know yet: most Xbox games were "
-           f"built with Visual C++ {compiler}" if build else
-           f"the program has no library version table to say which XDK built it: most were Visual C++ {compiler}")
+    compiler = DEFAULT_COMPILER if build is None or build >= FIRST_71 else "7.0"
+    if build is None:
+        why = f"the program has no library version table to say which XDK built it: most were Visual C++ {compiler}"
+    elif build >= FIRST_71 or build == EXACT_70:
+        why = f"its libraries come from XDK {build}, which ships Visual C++ {compiler}"
+    else:
+        why = (f"its libraries come from XDK {build}, whose compiler is an early Visual C++ 7.0 build: the nearest "
+               "decompdecomp has is Visual C++ 7.0 (13.00.9466), so some functions may differ by an instruction")
     regions = ", ".join(n for bit, n in REGIONS.items() if xbe.region & bit) or "unknown region"
     title = xbe.title or path.stem
     return {"id": re.sub(r"[^a-z0-9]+", "", title.lower()) or "game", "title": title, "compiler": compiler,
@@ -310,7 +322,9 @@ def set_aside_library_sections(root: Path, version: str, sections: list[str]) ->
     marked = 0
     for fn in (fn for fns in info["units"].values() for fn in fns if not fn.get("generated")):
         if (s := pe.section_at(fn["addr"])) is not None and s.name in sections:
-            fn["generated"] = f"the XDK's library code (its {s.name} section): Microsoft's, not the game's"
+            fn["generated"] = (f"RAD's Bink video library (its {s.name} section): licensed middleware, not the "
+                               "game's" if MIDDLEWARE.match(s.name) else
+                               f"the XDK's library code (its {s.name} section): Microsoft's, not the game's")
             marked += 1
     if marked:
         path.write_text(json.dumps(info, indent=1), encoding="utf-8")
