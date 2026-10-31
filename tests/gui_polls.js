@@ -344,5 +344,24 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
     }
   })()`, ctx);
   checks.advice = advice;
+  // an Xbox program (XBEH, base address on a 4 KiB boundary), an XISO and a full dump's disc, and the 360's XEX2 refused
+  checks.xbox = await vm.runInContext(`(async () => {
+      const xbe = new Uint8Array(0x200), dv = new DataView(xbe.buffer);
+      [..."XBEH"].forEach((c, i) => { xbe[i] = c.charCodeAt(0); });
+      dv.setUint32(0x104, 0x10000, true);
+      const file = { name: "default.xbe", size: 0x200 };
+      const good = identifyHead(xbe, file);
+      dv.setUint32(0x104, 0x10001, true);
+      const disc = (at) => ({ name: "game.iso", size: at + 0x800, slice: (a, b) => ({ arrayBuffer: async () => {
+        const out = new Uint8Array(b - a);
+        if (a === at) [..."MICROSOFT*XBOX*MEDIA"].forEach((c, i) => { out[i] = c.charCodeAt(0); });
+        return out.buffer;
+      } }) });
+      const x360 = new Uint8Array(0x200);
+      [..."XEX2"].forEach((c, i) => { x360[i] = c.charCodeAt(0); });
+      return { good: good && [good.platform, good.order], misaligned: identifyHead(xbe, file),
+               iso: (await identifyXboxDisc(disc(0x10000)))?.platform, dump: (await identifyXboxDisc(disc(0x18310000)))?.platform,
+               plain: await identifyXboxDisc(disc(0x20000)), x360: notSupported(x360, { name: "a.xex" }) };
+    })()`, ctx);
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

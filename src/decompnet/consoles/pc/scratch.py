@@ -1981,11 +1981,16 @@ def _run(cmd: list[str], root: Path, what: str, log) -> None:
         raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
 
-def create(root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
-    """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game."""
+def create(root: Path, game: Path, *, compiler: str | None = None, log=print, info: dict | None = None,
+           platform: str = "pc", what: str = "your copy of the game's program (.exe)",
+           cl_flags: list[str] | None = None, game_step: str = "") -> dict:
+    """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game. Another
+    console whose games are x86 programs in another format gives the program as a PE (`game`) and says what it is
+    (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`) and how the README's reader gets the
+    program into orig/ (`game_step`): consoles/xbox/."""
     from ...forks import ghidra
 
-    info = game_info(game)
+    info = info or game_info(game)
     version = info["id"]
     compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
     log(f"the program: {info['summary']}")
@@ -2082,7 +2087,9 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
     cfg = root / "tools" / "configure.py"
     text = cfg.read_text(encoding="utf-8").replace(f'MSVC_VERSION = "{MSVC_DEFAULT}"', f'MSVC_VERSION = "{compiler}"')
-    if pack != "msvc":  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
+    if cl_flags is not None:
+        text = re.sub(r"^CL_FLAGS = \[[^\]]*\].*$", f"CL_FLAGS = {json.dumps(cl_flags)}", text, count=1, flags=re.M)
+    elif pack != "msvc":  # /GX is /EHsc from 2005 on, and saying /GX warns on every file
         text = text.replace('"/GX"]  # /GX:', '"/EHsc"]  # /EHsc (/GX before 2005):')
     cfg.write_text(text, encoding="utf-8")
     conf = root / "config" / version
@@ -2136,10 +2143,10 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
     rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
-        "created": "from scratch", "platform": "pc", "version": version, "compiler": f"MSVC/{compiler}",
+        "created": "from scratch", "platform": platform, "version": version, "compiler": f"MSVC/{compiler}",
         "analysis": 6,  # (WindowsPC.ANALYSIS: nothing to repair, stubs set aside, pieces joined, thunks named, frames read)
         "tools": tools_version(),
-        "game": {"what": "your copy of the game's program (.exe)", "path": f"orig/{version}.exe", "sha1": info["sha1"]},
+        "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],
         "rebuild": rebuild,
     }, indent=2), encoding="utf-8")
@@ -2150,7 +2157,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print) ->
 Started from scratch with [decompdecomp](https://github.com/n-delic/decompdecomp): the game's functions, found by Ghidra, are cut out of your
 copy of its program and compared with what `src/` compiles to, function by function, with objdiff.
 
-1. Put your own copy of the game's program here as `orig/{version}.exe` (never commit it).
+1. {game_step or f"Put your own copy of the game's program here as `orig/{version}.exe`"} (never commit it).
 2. `python tools/configure.py {version} --msvc <Visual C++ folder> [--wibo <wibo>]`, then `ninja`. A file built with
    Visual C++ 2017 on Linux or macOS runs it through wine: set `DECOMPNET_WINE` (or have wine on the PATH) and
    `DECOMPNET_WINE_PREFIX` (a wine prefix of its own) first.
@@ -2174,5 +2181,5 @@ one) is moved by its base relocations at build time, as Windows moves it.
                     ["git", "-c", "user.name=decompdecomp", "-c", "user.email=noreply@decompdecomp.invalid", "commit", "-q", "-m",
                      f"Start the {info['title']} decompilation (decompdecomp, Ghidra)"]):
             subprocess.run(cmd, cwd=root, capture_output=True, creationflags=NO_WINDOW)
-    return {"platform": "pc", "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
+    return {"platform": platform, "id": version, "title": info["title"], "compiler": f"MSVC/{compiler}",
             "sources": len(groups), "sha1": info["sha1"]}
