@@ -407,10 +407,13 @@ def _newest_mapped() -> str:
 
 
 def rich_version(build: str) -> tuple[str, int]:
-    """The Rich header's version and build number of a compiler's c2.dll file version ("14.16.27023.0" is ("14.1",
-    27023); "7.10.3077.0", ("7.1", 3077))."""
+    """The Rich header's version and build number of a compiler's c2.dll file version, which is cl.exe's (Visual C++
+    6.0's is 12.0.8168, .NET 2003's 13.10.3077, 2008's 15.0.30729, 2017's 19.16.27023): ("6.0", 8168), ("7.1", 3077),
+    ("9.0", 30729), ("14.1", 27023), 2015 and newer by their build as the Rich header's are (VC14_BUILDS)."""
     major, minor, number = (int(part) for part in build.split(".")[:3])
-    return f"{major}.{minor // 10 if major in (7, 14) else minor}", number
+    if major >= 19:
+        return next(v for first, v in VC14_BUILDS if number >= first), number
+    return ("7.1" if minor else "7.0") if major == 13 else f"{major - 6}.0", number
 
 
 def own_copy(version: str | None, number: int | None) -> kits.OwnCompiler | None:

@@ -2456,23 +2456,23 @@ def test_a_game_of_a_build_no_pack_has_builds_with_the_users_own_visual_cpp(tmp_
     plain = scratch_pe.describe(_windows_program(rich=rich_2008))
     assert plain.own is None and plain.pack_version == "9.0SP1"  # (no copy: today's)
     assert scratch_pe.describe(_windows_program(rich=rich_2019)).out_of_scope
-    _own_copies(tmp_path, monkeypatch, "9.0.30411.1", "9.0.21022.8", "14.29.30137.0")
+    _own_copies(tmp_path, monkeypatch, "15.0.30411.1", "15.0.21022.8", "19.29.30137.0")
     exact = scratch_pe.describe(_windows_program(rich=rich_2008))
-    assert exact.own.version == "own-9.0.30411" and exact.pack_version == "own-9.0.30411"
+    assert exact.own.version == "own-15.0.30411" and exact.pack_version == "own-15.0.30411"
     # its own build is the very one: the pack's nearest isn't used, and the game says so
     names = {c[0]: c for c in scratch_pe.program_compilers(_windows_program(rich=rich_2008))}
-    assert names["MSVC/own-9.0.30411"][3] is True
+    assert names["MSVC/own-15.0.30411"][3] is True
     # the newest 2019 build no pack has, and out of scope until now: in scope with a copy of its version
     new = scratch_pe.describe(_windows_program(rich=rich_2019))
     assert not new.out_of_scope and not new.blockers() and "2012 to 2015" not in " ".join(new.cannot_match())
-    assert new.pack_version == "own-14.29.30137" and new.own.runner == "wine"
+    assert new.pack_version == "own-19.29.30137" and new.own.runner == "wine"
     # another build of the same version: the nearest copy, never another version's
     near = scratch_pe.describe(_windows_program(rich=[(0x84, 30500, 300), (0x91, 30500, 1)]))
-    assert near.own.version == "own-9.0.30411"
+    assert near.own.version == "own-15.0.30411"
     assert scratch_pe.describe(_windows_program(rich=[(0x0B, 8047, 100)])).own is None  # (no 6.0 copy)
     # the console lists the copies' compilers, so a file can be switched to one (try_compiler)
     ids = {c.id for c in consoles.get("pc").compilers}
-    assert {"MSVC/own-9.0.30411", "MSVC/own-9.0.21022", "MSVC/own-14.29.30137", "MSVC/9.0"} <= ids
+    assert {"MSVC/own-15.0.30411", "MSVC/own-15.0.21022", "MSVC/own-19.29.30137", "MSVC/9.0"} <= ids
 
 
 def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp_path):
@@ -2489,7 +2489,7 @@ def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp
     (pack / "6.0" / "Bin").mkdir(parents=True)
     (pack / "6.0" / "Bin" / "CL.EXE").write_bytes(b"")
     (pack / "6.0" / "Include").mkdir()
-    a, b = make_vc(tmp_path / "a", "9.0.30411.1"), make_vc(tmp_path / "b", "10.0.30319.1")
+    a, b = make_vc(tmp_path / "a", "15.0.30411.1"), make_vc(tmp_path / "b", "16.0.30319.1")
     compilers = [c for copy in (a, b) for c in kits.get("visualcpp").compilers(copy)]
     config.with_name("file_compilers.json").write_text(json.dumps({"src/auto/one.cpp": compilers[0].version,
                                                                         "src/auto/two.cpp": compilers[1].version}))
@@ -2499,3 +2499,14 @@ def test_configure_names_each_of_two_own_copies_compilers_in_the_ninja_build(tmp
     ninja = (root / "build.ninja").read_text(encoding="utf-8")
     for c in compilers:
         assert str(c.exe) in ninja and str(c.includes[0]) in ninja
+
+
+@pytest.mark.parametrize("build, version", [
+    ("12.0.8168.0", ("6.0", 8168)), ("13.0.9466.0", ("7.0", 9466)), ("13.10.3077.0", ("7.1", 3077)),
+    ("14.0.50727.762", ("8.0", 50727)), ("15.0.30729.1", ("9.0", 30729)), ("16.0.40219.1", ("10.0", 40219)),
+    ("17.0.61030.0", ("11.0", 61030)), ("18.0.40629.0", ("12.0", 40629)), ("19.0.24215.1", ("14.0", 24215)),
+    ("19.16.27023.0", ("14.1", 27023)), ("19.29.30137.0", ("14.2", 30137))])
+def test_a_copys_compiler_build_is_read_as_the_rich_header_reads_it(build, version):
+    """c2.dll's file version is cl.exe's (the msvc packs' 6.0 to 2010 say 12.0 to 16.0): a copy matches a game's
+    Rich header only as its Visual C++ version."""
+    assert scratch_pe.rich_version(build) == version

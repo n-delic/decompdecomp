@@ -18,10 +18,10 @@ from pathlib import Path
 
 from . import Kit, OwnCompiler, file_version, find
 
-WINE_FROM = 14  # the first Visual Studio version (c2.dll's file version) wibo can't run: 2015, cl 19
-SDKS = {  # Visual Studio versions (c2.dll's major) -> (Windows Kits folder, the include folders it gives)
-    range(14, 99): ("10", ("ucrt", "um", "shared")),
-    range(11, 14): ("8.1", ("um", "shared")),
+WINE_FROM = 19  # the first compiler (c2.dll's file version, cl.exe's: 2015's is 19.0) wibo can't run
+SDKS = {  # compilers (c2.dll's major: cl.exe's) -> (Windows Kits folder, the include folders it gives)
+    range(19, 99): ("10", ("ucrt", "um", "shared")),  # 2015 and newer
+    range(17, 19): ("8.1", ("um", "shared")),  # 2012 and 2013
 }
 BIN = ("bin", "bin/Hostx86/x86", "bin/Hostx64/x86")  # (a 2017 copy's compiler for 32-bit programs, by host)
 

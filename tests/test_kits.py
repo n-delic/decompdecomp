@@ -150,8 +150,8 @@ def test_the_version_comes_from_the_version_resource(tmp_path):
 
 
 @pytest.mark.parametrize("layout,c2,runner", [
-    ("VC98/Bin", "6.0.8168.0", "wibo"), ("VC/bin", "10.0.40219.1", "wibo"),
-    ("VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86", "14.16.27023.0", "wine")])
+    ("VC98/Bin", "12.0.8168.0", "wibo"), ("VC/bin", "16.0.40219.1", "wibo"),
+    ("VC/Tools/MSVC/14.16.27023/bin/Hostx86/x86", "19.16.27023.0", "wine")])
 def test_visual_cpp_is_recognised_in_its_layouts_and_run_by_the_right_runner(tmp_path, layout, c2, runner):
     top = tmp_path / "vs"
     copy = make_vc(top, c2, layout)
@@ -166,11 +166,11 @@ def test_visual_cpp_is_recognised_in_its_layouts_and_run_by_the_right_runner(tmp
 
 def test_a_2017_copy_finds_the_windows_sdk_beside_it_and_says_when_it_cant(tmp_path):
     kit = kits.get("visualcpp")
-    copy = make_vc(tmp_path / "vs" / "VC" / "Tools" / "MSVC" / "14.16.27023", "14.16.27023.0", "bin/Hostx86/x86")
+    copy = make_vc(tmp_path / "vs" / "VC" / "Tools" / "MSVC" / "14.16.27023", "19.16.27023.0", "bin/Hostx86/x86")
     assert "no Windows SDK" in kit.verify(copy)
     inc = tmp_path / "vs" / "VC" / "Windows Kits" / "10" / "Include" / "10.0.17763.0"
     for sub in ("ucrt", "um", "shared"):
         (inc / sub).mkdir(parents=True)
     [own] = kit.compilers(copy)
     assert own.includes[1:] == (inc / "ucrt", inc / "um", inc / "shared")
-    assert kit.verify(copy) == "Visual C++ 14.16.27023.0"
+    assert kit.verify(copy) == "Visual C++ 19.16.27023.0"
