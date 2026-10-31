@@ -372,7 +372,7 @@ ROMs. [objdiff](https://github.com/encounter/objdiff) judges forks. [m2c](https:
 [decomp-permuter](https://github.com/simonlindholm/decomp-permuter) rewrites near misses. The
 [decompals](https://github.com/decompals) period compilers build the code.
 [decomp-toolkit](https://github.com/encounter/decomp-toolkit) splits GameCube and Wii games, and
-[wibo](https://github.com/decompals/wibo) runs the 32-bit Windows compilers on Linux/macOS, and
-[wine](https://www.winehq.org/) runs the 64-bit Visual C++ 2017 compiler.
+[wibo](https://github.com/decompals/wibo) runs Visual C++ 6.0 to 2010 on Linux/macOS, and
+[wine](https://www.winehq.org/) runs Visual C++ 2017 (32- and 64-bit).
 Thank you to the decomp community for these tools.
 decompdecomp is not related to these projects.

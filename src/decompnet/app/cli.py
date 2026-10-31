@@ -2,7 +2,7 @@
 
 That's the one way to run it. The other commands act on the app: `decomp stop`, `decomp update`, `decomp setup` (the
 free compilers and tools), `decomp shortcut` (the apps menu entry). A development copy (run from a git checkout) is
-a separate app with its own home and port, and never touches the installed one (edition.py).
+a separate app with its own home, port and wine prefix, and never touches the installed one (edition.py).
 """
 
 from __future__ import annotations
@@ -35,6 +35,17 @@ REQUEST_BODY_LIMIT = 80 * 1024 * 1024  # a game file sent by the GUI's import
 
 def home_dir() -> Path:
     return edition.home_dir()
+
+
+def use_own_wine_prefix() -> None:
+    """Give a development copy a wine prefix of its own. Both copies share the toolchains folder, so without this
+    they would share its `.wine`, and quitting one would run `wineserver -k` in the other's prefix, killing the
+    compiles it was running. A release keeps the prefix existing installs have; an explicit
+    $DECOMPNET_WINE_PREFIX (tests, a scratch home) stays."""
+    if edition.DEV and not os.environ.get("DECOMPNET_WINE_PREFIX"):
+        from .. import toolchains
+
+        os.environ["DECOMPNET_WINE_PREFIX"] = str(toolchains.root() / ".wine-dev")
 
 
 def _alive(port: int) -> bool:
@@ -148,6 +159,7 @@ def run(args) -> int:
     from .server import build
     from .support import file_log
 
+    use_own_wine_prefix()
     home = home_dir()
     internal = home / ".decomp"
     internal.mkdir(parents=True, exist_ok=True)
@@ -254,6 +266,7 @@ def setup(args) -> int:
     """Install what decompdecomp needs on this computer: the free compilers and the draft decompiler."""
     from .. import toolchains
 
+    use_own_wine_prefix()
     plat = toolchains.current_platform()
     print(f"Setting up decompdecomp tools for {plat}")
     if why := toolchains.unsupported_cpu():

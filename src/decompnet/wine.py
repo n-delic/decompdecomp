@@ -7,8 +7,9 @@ both targets correctly. So these compilers run through wine, which the user inst
 keeps it updated); a pack that needs it says how to get it before it's downloaded (toolchains.runtime_error).
 
 What's here is the app's own, never the user's ~/.wine:
-- a wine prefix in decompdecomp's data folder (prefix), created once when the pack is installed (prepare: wineboot
-  takes a few seconds to a minute), without the Mono and Gecko installers wine would offer;
+- a wine prefix in decompdecomp's data folder (prefix; a development copy's of its own, so the two never stop each
+  other's wine server), created once when the pack is installed (prepare: wineboot takes a few seconds to a minute),
+  without the Mono and Gecko installers wine would offer;
 - a wine server kept between compiles (`wineserver -p600`, started by the projects' tools/compile.py before a
   compile): a compile takes ~0.2 s instead of the ~2.7 s of starting wine each time. It leaves by itself ten
   minutes after its last compile, however the app ended, and at once when the app quits (stop). It's started with
@@ -104,7 +105,8 @@ def problem(what: str = "This compiler") -> str | None:
 def prefix() -> Path:
     """decompdecomp's own wine prefix (the C: drive and registry wine keeps), with its toolchains (as their
     downloads are: .downloads), so a scratch home's toolchains ($DECOMPNET_TOOLCHAINS) have their own; or the one
-    $DECOMPNET_WINE_PREFIX names (tests: a scratch one, never the app's)."""
+    $DECOMPNET_WINE_PREFIX names (tests and scratch homes: theirs, never the app's; the app sets it for a development
+    copy to .wine-dev, apart from the installed app's)."""
     from . import toolchains
 
     own = os.environ.get("DECOMPNET_WINE_PREFIX")

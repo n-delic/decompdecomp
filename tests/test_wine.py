@@ -86,6 +86,52 @@ def test_the_prefix_is_the_apps_own(tc_root):
     assert "mscoree" in env["WINEDLLOVERRIDES"]
 
 
+def test_a_development_copy_has_a_wine_prefix_of_its_own(tc_root, monkeypatch):
+    """Review of #136: both copies share the toolchains folder, so a development copy kept the installed app's
+    prefix and its quit stopped the installed app's compiles. A development copy uses another; a release keeps the
+    prefix existing installs have, and a prefix named in the environment (tests, a scratch home) stays."""
+    from decompnet.app import cli, edition
+
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", "")  # (unset for the app; the fixture undoes what the app sets)
+    monkeypatch.setattr(edition, "DEV", False)
+    cli.use_own_wine_prefix()
+    assert wine.prefix() == toolchains.root() / ".wine"
+    monkeypatch.setattr(edition, "DEV", True)
+    cli.use_own_wine_prefix()
+    assert wine.prefix() == toolchains.root() / ".wine-dev"
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tc_root / "scratch"))
+    cli.use_own_wine_prefix()
+    assert wine.prefix() == tc_root / "scratch"
+
+
+def test_quitting_one_copy_stops_only_its_own_wine_server(tc_root, monkeypatch):
+    """Review of #136: one prefix served both copies, so `wineserver -k` at a development copy's quit killed a
+    Visual C++ 2017 compile running in the installed app (and the other way around)."""
+    from decompnet.app import cli, edition
+
+    ran = []
+    monkeypatch.setattr(wine, "needed", lambda: True)
+    monkeypatch.setattr(wine, "find", lambda: "/opt/wine/bin/wine")
+    monkeypatch.setattr(wine, "server", lambda w: "/opt/wine/bin/wineserver")
+    monkeypatch.setattr(wine.subprocess, "run", lambda argv, **k: (ran.append((argv, k["env"]["WINEPREFIX"])),
+                                                                  subprocess.CompletedProcess(argv, 0))[1])
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", "")  # (unset for the app; the fixture undoes what the app sets)
+    monkeypatch.setattr(edition, "DEV", False)
+    cli.use_own_wine_prefix()
+    release = wine.prefix()
+    release.mkdir(parents=True)
+    monkeypatch.setattr(edition, "DEV", True)
+    cli.use_own_wine_prefix()
+    dev = wine.prefix()
+    dev.mkdir(parents=True)
+    assert dev == toolchains.root() / ".wine-dev" and dev != release
+    wine.stop()
+    assert ran == [(["/opt/wine/bin/wineserver", "-k"], str(dev))]
+    monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(release))
+    wine.stop()
+    assert ran[-1] == (["/opt/wine/bin/wineserver", "-k"], str(release))
+
+
 @pytest.mark.skipif(not wine.needed() or wine.problem() is not None, reason="needs wine (Linux, macOS)")
 def test_the_prefix_is_made_once_and_leaves_no_server(tc_root):
     """wineboot once (its registry written: its own server stopped first); a second prepare finds it made. No pipe of
