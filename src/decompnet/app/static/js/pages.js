@@ -82,7 +82,10 @@ function renderTools() {
   $("toolGrid").innerHTML = rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
       <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
-      ${(t.copies || []).map((c) => `<div class="row"><span class="ok-mark grow" title="${esc(c.folder)}">✓ ${esc(c.folder)}${c.build ? ` (${esc(c.build)})` : ""}${c.verified ? `<br><span class="muted small">${esc(c.verified)}</span>` : ""}</span>`
+      ${(t.copies || []).map((c) => `<div class="row copy"><span class="grow copy-text"><span class="ok-mark">✓ ${esc(c.build || "your copy")}</span>`
+        + `${c.verified ? `<span class="muted small">${esc(c.verified)}</span>` : ""}`
+        // (the folder's last parts: a full path is long; it's on hover)
+        + `<span class="muted small copy-path" title="${esc(c.folder)}">…/${esc(c.folder.split(/[\\/]/).slice(-3).join("/"))}</span></span>`
         + `<button class="ghost small-btn" data-remove="${esc(t.id)}" data-folder="${esc(c.folder)}" type="button">Remove</button></div>`).join("")}
       <div class="row">${!t.supported ? `<span class="muted small">not available for this computer</span>`
         : t.local ? `<span class="grow"></span><button class="ghost small-btn" data-local="${esc(t.id)}" type="button">${t.installed ? "Add a copy" : "Choose your folder"}</button>`
