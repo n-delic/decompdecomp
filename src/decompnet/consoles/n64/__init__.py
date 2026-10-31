@@ -53,6 +53,15 @@ class Nintendo64(Console):
             return None
         return result[0] if result else None
 
+    def library_candidate(self, path: Path, size: int) -> bool:
+        """Skip files outside cartridge sizes and without an N64 magic before hashing."""
+        from .rom import MAGIC, MAX_SIZE, MIN_SIZE
+
+        if not MIN_SIZE <= size <= MAX_SIZE or size % 4:
+            return False
+        with path.open('rb') as stream:
+            return stream.read(4) in MAGIC
+
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         if not target.lower().endswith(".z64"):
             return None

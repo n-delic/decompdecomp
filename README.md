@@ -29,6 +29,20 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
   stand-in for a model that hands in the demo's own C; the app compiles and judges every function for real.</sub>
 </p>
 
+## ROM library for imported projects
+
+In **Settings → ROM library**, choose a folder containing your extracted game files. On an imported project's setup
+page, click **Search ROM library**. When the project declares an expected SHA-1, decompdecomp searches that folder
+and its subfolders and fills in a verified match. N64 projects recognize `.z64`, `.v64`, and `.n64` byte orders
+regardless of filename. Confirm ownership and click **Use path** to continue. The search does not unpack archives,
+move files, or start a build. It stops after 5,000 files, 2 GiB read or 30 seconds; use a smaller folder or choose
+the file manually if it stops. Clear the folder setting to disable searches. If a verified game is already in the
+project, **Retry setup** reuses it.
+
+This works for public projects whose declared SHA-1 is the original file's hash. dtk and configure projects do not
+declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
+often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
+
 ## Install
 
 decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets

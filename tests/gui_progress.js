@@ -27,6 +27,7 @@ const cases = [
   ["project", 'body.querySelector("#rGo").onclick = async () => {', '\n  };', "rLog", "rGo"],
   ["project", 'body.querySelector("#jGo").onclick = async () => {', '\n  };', "jLog", "jGo"],
   ["project", 'async function installToolchain(id, proprietary) {', '\n}\n', "toolLog", null],
+  ["project", '$("fsFind").onclick = async () => {', '\n    };', "fsFindLog", "fsFind"],
   ["steering", '$("romCheck").onclick = async () => {', '\n    };', "sourceCheckLog", "romCheck"],
   ["steering", '$("forkMeasure").onclick = async () => {', '\n    };', "sourceCheckLog", "forkMeasure"],
   ["steering", 'async function exportNow() {', '\n}\n', "expLog", "srcExport"],
@@ -61,6 +62,10 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
       return start.promise;
     },
   };
+  ctx.setupSlug = "test";
+  ctx.searchToken = Symbol();
+  ctx.box._romSearch = ctx.searchToken;
+  ctx.usingGame = false;
   vm.createContext(ctx);
   const base = read("base");
   vm.runInContext(base.slice(base.indexOf("const JOB_POLL_MS"), base.indexOf("/* The map's still")), ctx);
@@ -113,7 +118,7 @@ async function main() {
     }
   }
   // Passive overview refreshes keep a pending check's panel and indicator intact.
-  for (const caseIndex of [0, 6]) {
+  for (const caseIndex of [0, 7]) {
     const test = setup(...cases[caseIndex]);
     const name = caseIndex === 0 ? "renderCompilerNotice" : "renderSource";
     const source = read(caseIndex === 0 ? "project" : "steering");
@@ -170,7 +175,7 @@ async function main() {
   finish();
   assert.equal(status.textContent, "Retry finished.");
   // A range-only compiler setting remains immediate and has no progress bar.
-  const range = setup(...cases[9], "0x1000-0x2000");
+  const range = setup(...cases[10], "0x1000-0x2000");
   const running = range.ctx.run();
   assert.equal(range.log.bar, undefined);
   range.start.resolve({}); await running;

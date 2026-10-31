@@ -133,6 +133,14 @@ async function showSettingsPage() {
   wireCopies($("setComputer"));
   $("themeSeg").querySelectorAll("[data-theme]").forEach((b) => { b.onclick = () => { setTheme(b.dataset.theme); $("themeSeg").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); }; });
   const save = (body, msg) => api("/api/settings", { method: "POST", body }).then((s) => { S.st.settings = s; toast(msg); }).catch((e) => toast(esc(e.message), "err"));
+  $("romLibrary").value = st.settings.rom_library || "";
+  $("romLibrarySave").onclick = () => save({ rom_library: $("romLibrary").value.trim() }, "ROM library saved.");
+  $("romLibraryPick").onclick = async () => {
+    try {
+      const { path } = await api("/api/pick", { method: "POST", body: { kind: "folder", title: "ROM library folder" } });
+      if (path) $("romLibrary").value = path;
+    } catch (e) { toast(esc(e.message), "err"); }
+  };
   $("perSession").onchange = () => save({ per_session: Number($("perSession").value) }, "Saved.");
   $("autopilotSet").onchange = () => save({ autopilot: $("autopilotSet").checked }, "Saved.");
   $("budgetSet").onchange = () => save({ budget_usd: Number($("budgetSet").value) || 0 }, "Budget saved.");

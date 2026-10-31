@@ -315,6 +315,10 @@ class Console:
         """Which game a file is (a sha1), when that isn't the file's own bytes: rooms check members have the same."""
         return None
 
+    def library_candidate(self, path: Path, size: int) -> bool:
+        """Whether a library file is plausible before the search hashes its contents."""
+        return True
+
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         """Console-specific guidance for supplying a game file to a public decomp, or None for its usual help."""
         return None

@@ -287,6 +287,10 @@ class ForkProject:
             from ..rom import RomError
 
             dest = self.root / need["path"]
+            if src.resolve() == dest.resolve():
+                if need.get('sha1') and _sha1(src) != need['sha1']:
+                    raise ForkError("the game already in this project does not match its expected SHA-1")
+                return dest
             try:
                 for console in self._game_consoles():
                     if console.prepare_fork_game(src, dest, need.get("sha1"), move=move):

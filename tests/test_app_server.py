@@ -989,3 +989,36 @@ def test_the_map_brings_polished_and_set_aside_and_changes_when_a_function_is_po
     assert {"polished", "not_c"} <= set(after["keys"]) and "same" not in after
     rows = {r[after["keys"].index("name")]: dict(zip(after["keys"], r)) for r in after["rows"]}
     assert rows["func_0"]["polished"] and not rows["func_1"]["polished"]
+
+
+def test_rom_library_setting_and_background_lookup(app, tmp_path, monkeypatch):
+    client, net, _ = app
+    from types import SimpleNamespace
+
+    from decompnet.app import romlibrary
+
+    library = tmp_path / 'library'
+    library.mkdir()
+    response = client.post('/api/settings', json={'rom_library': str(library)}, headers={'X-Decomp': '1'})
+    assert response.json()['rom_library'] == str(library)
+    assert client.get('/api/state').json()['settings']['rom_library'] == str(library)
+    monkeypatch.setattr(net, 'fork_slug', lambda slug: True)
+    monkeypatch.setattr(net, 'project_row', lambda slug: {'slug': slug})
+    p = SimpleNamespace(root=tmp_path)
+    monkeypatch.setattr(net.forks, 'get', lambda slug: (None, p, {}))
+    monkeypatch.setattr(net.forks, 'needs', lambda slug: {'sha1': 'a' * 40})
+    seen = []
+    def find(project, needs, folder, log):
+        seen.append((project, needs, folder))
+        return {'path': str(library / 'game.z64'), 'in_project': False}
+    monkeypatch.setattr(romlibrary, 'find', find)
+    assert client.post('/api/fork/find-rom', json={'slug': 'demo'}).status_code == 403
+    job = client.post('/api/fork/find-rom', json={'slug': 'demo'}, headers={'X-Decomp': '1'}).json()['job']
+    for _ in range(100):
+        result = client.get('/api/job', params={'id': job}).json()
+        if result['state'] in ('done', 'error'):
+            break
+        time.sleep(.01)
+    assert result['state'] == 'done' and result['result']['path'].endswith('game.z64')
+    assert seen == [(p, {'sha1': 'a' * 40}, str(library))]
+    assert client.post('/api/settings', json={'rom_library': ''}, headers={'X-Decomp': '1'}).json()['rom_library'] == ''

@@ -450,6 +450,11 @@
     <section class="panel"><header class="panel-head"><h2>Agents</h2></header><div class="pad" id="setAgents"></div></section>
     <div class="stack-col">
       <section class="panel"><header class="panel-head"><h2>This computer</h2></header><div class="pad" id="setComputer"></div></section>
+      <section class="panel"><header class="panel-head"><h2>ROM library</h2></header><div class="pad">
+        <p class="muted small">Imported projects search this folder and its subfolders for a game with the expected SHA-1. N64 byte orders are normalized for matching. Files stay on this computer; archives must be extracted first.</p>
+        <label class="field"><span>Folder path (leave empty to disable)</span><input id="romLibrary" class="mono" placeholder="/Volumes/Data/ROMs"></label>
+        <div class="row"><button class="ghost" id="romLibraryPick" type="button">Choose folder…</button><button class="primary" id="romLibrarySave" type="button">Save</button></div>
+      </div></section>
       <section class="panel"><header class="panel-head"><h2>About</h2></header><div class="pad" id="setAbout"></div></section>
     </div>
   </div>
