@@ -59,6 +59,7 @@ UNIT_BYTES = 0x1000
 FUNCTION_ALIGN, PADDING_BYTES, ALIGNED_SHARE = 16, (0xCC, 0x00, 0x90), 3
 TEMPLATE = Path(__file__).with_name("project_template")
 MSVC_DEFAULT = "6.0"
+OWN_COMPILER = "xdk"  # the version the user's own Xbox XDK's Visual C++ goes by (tools/configure.py --xdk)
 DIR32, REL32 = 0x06, 0x14
 PAD = 0x90  # what Visual C++ 6 pads a function's section with (the linker pads between objects with 0xCC or zeros)
 # Which Visual C++ built each part of the program, by the product ids its Rich header gives: every version numbers its
@@ -1983,11 +1984,12 @@ def _run(cmd: list[str], root: Path, what: str, log) -> None:
 
 def create(root: Path, game: Path, *, compiler: str | None = None, log=print, info: dict | None = None,
            platform: str = "pc", what: str = "your copy of the game's program (.exe)",
-           cl_flags: list[str] | None = None, game_step: str = "") -> dict:
+           cl_flags: list[str] | None = None, game_step: str = "", args: list[str] | None = None) -> dict:
     """Make the project in `root` (which must not exist yet) and build it once. Returns facts about the game. Another
     console whose games are x86 programs in another format gives the program as a PE (`game`) and says what it is
     (`info`, as game_info's; `platform`, `what`), its compiler flags (`cl_flags`) and how the README's reader gets the
-    program into orig/ (`game_step`): consoles/xbox/."""
+    program into orig/ (`game_step`), and its configure.py arguments (`args`, for a compiler of the user's own:
+    OWN_COMPILER): consoles/xbox/."""
     from ...forks import ghidra
 
     info = info or game_info(game)
@@ -1998,11 +2000,11 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
         log(f"what can't match: {why}")
     if not info["cannot_match"]:
         log(f"it can match: decompdecomp builds with Visual C++ {compiler}")
-    pack = compiler_pack(compiler)
-    if not (toolchains.path(pack) / compiler).is_dir():
+    pack = compiler_pack(compiler) if compiler != OWN_COMPILER else "msvc"
+    if compiler != OWN_COMPILER and not (toolchains.path(pack) / compiler).is_dir():
         raise ForkError(f"this game builds with Visual C++ {compiler}, which comes in {toolchains.get(pack).name}: "
                         "install it in Setup (Compilers & tools) if you accept its licence, then try again")
-    args = tool_args()
+    args = args or tool_args()
     if not ghidra.available():
         if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
             log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")

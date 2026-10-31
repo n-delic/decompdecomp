@@ -294,9 +294,12 @@ def game_info(path: Path) -> dict:
         why = f"the program has no library version table to say which XDK built it: most were Visual C++ {compiler}"
     elif build >= FIRST_71 or build == EXACT_70:
         why = f"its libraries come from XDK {build}, which ships Visual C++ {compiler}"
+    elif xdk_folder_build(xdk_folder()) == build:  # its own early Visual C++ 7.0 build, in the user's XDK
+        compiler, why = "xdk", f"its libraries come from XDK {build}: your XDK {build}'s own Visual C++ builds it"
     else:
         why = (f"its libraries come from XDK {build}, whose compiler is an early Visual C++ 7.0 build: the nearest "
-               "decompdecomp has is Visual C++ 7.0 (13.00.9466), so some functions may differ by an instruction")
+               f"decompdecomp has is Visual C++ 7.0 (13.00.9466), so some functions may differ by an instruction; "
+               f"set up your own XDK {build} in Setup to build with its own")
     regions = ", ".join(n for bit, n in REGIONS.items() if xbe.region & bit) or "unknown region"
     title = xbe.title or path.stem
     return {"id": re.sub(r"[^a-z0-9]+", "", title.lower()) or "game", "title": title, "compiler": compiler,
@@ -304,7 +307,38 @@ def game_info(path: Path) -> dict:
             "summary": f"an Xbox program ({xbe.title_code}, {regions}, {xbe.keys} keys, "
                        f"XDK {build or 'unknown'}, {len(xbe.sections)} sections, {len(xbe.imports)} kernel imports)",
             "sha1": hashlib.sha1(pe_view(data)).hexdigest(), "xbe_sha1": hashlib.sha1(data).hexdigest(),
-            "library_sections": sorted(library_sections(xbe))}
+            "library_sections": sorted(library_sections(xbe)), "libraries": [lib.name for lib in xbe.libraries]}
+
+
+def xdk_folder() -> Path | None:
+    """The user's own XDK (its xbox folder), where it's set up in Setup; None: it isn't."""
+    from ... import toolchains
+
+    try:
+        return toolchains.local_folder("xdk")
+    except toolchains.ToolchainError:
+        return None
+
+
+def xdk_folder_build(xdk: Path | None) -> int | None:
+    """The build of the user's XDK: its xapilib.lib holds the library version record every game copies into its XBE."""
+    lib = next(iter(sorted(xdk.glob("[Ll]ib/[Xx][Aa][Pp][Ii][Ll][Ii][Bb].[Ll][Ii][Bb]"))), None) if xdk else None
+    at = lib.read_bytes().find(b"XAPILIB\0") if lib else -1
+    return struct.unpack_from("<4H", lib.read_bytes(), at + 8)[2] if at >= 0 else None
+
+
+def set_aside_libraries(root: Path, info: dict) -> str | None:
+    """Set aside a project's library code: the XDK's and middleware's own sections, and with the user's own XDK (set
+    up in Setup) its functions linked into .text, found by its libraries' bytes (xdklib). Says what it set aside."""
+    from . import xdklib
+
+    said = []
+    if n := set_aside_library_sections(root, info["id"], info["library_sections"]):
+        said.append(f"{n} functions are library code in sections of its own ({', '.join(info['library_sections'])})")
+    lib = (xdk := xdk_folder()) and next(xdk.glob("[Ll]ib"), None)  # (none set up: .text's stay open to agents)
+    if lib is not None and (n := xdklib.set_aside_xdk_functions(root, info["id"], lib, info["libraries"])):
+        said.append(f"{n} functions in .text are the XDK's library code, as your XDK's libraries match them")
+    return "; ".join(said) + ": set aside" if said else None
 
 
 def set_aside_library_sections(root: Path, version: str, sections: list[str]) -> int:

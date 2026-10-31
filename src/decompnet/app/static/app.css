@@ -1006,3 +1006,5 @@ details.more[open] > summary::before { content: "− "; }
 
 /* the app has quit (pages.js, showStopped): nothing on the page answers any more */
 .stopped { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--ink); text-align: center; }
+.local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.local-form input[type=text] { width: 100%; box-sizing: border-box; }

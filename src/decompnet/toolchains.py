@@ -72,9 +72,16 @@ class Toolchain:
     # toolchains whose Include folder a pack's compilers search after their own, in order: a Windows SDK several packs
     # share, downloaded once (installed first, like `requires`; INCLUDES says where in each version's folder)
     headers: list[str] = field(default_factory=list)
+    # A local, user-supplied toolchain (kind = "local"): nothing is downloaded; the user points Setup at their own
+    # copy, which must hold these files (case doesn't matter, as on Windows). The Xbox XDK is one.
+    local_files: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
+
+    @property
+    def local(self) -> bool:
+        return bool(self.local_files)
 
     @property
     def proprietary(self) -> bool:
@@ -95,7 +102,7 @@ class Toolchain:
     @property
     def supported(self) -> bool:
         """Whether this toolchain can be installed on this computer (on Windows, Linux ones through WSL 2)."""
-        return bool(self.git) or bool(self.parts_for()) or self.via_wsl
+        return self.local or bool(self.git) or bool(self.parts_for()) or self.via_wsl
 
 
 def current_platform() -> str:
@@ -380,12 +387,75 @@ _INSTALLING = threading.Lock()
 _installs: dict[str, threading.RLock] = {}
 
 
-def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None) -> Path:
-    """Install a toolchain (and what it requires). `linux`: its Linux build, to run inside WSL (default: when
+def find_local(tc: Toolchain, folder: str | Path) -> Path | None:
+    """The folder that holds a local toolchain's files: the one given, or a folder inside it the user may have
+    meant (for the XDK: `xbox`, `XDK` or `XDK/xbox`, so the folder the installer unpacks works as it is). Names are
+    compared ignoring case: the XDK's are Windows names (`XTL.h`)."""
+    def has(base: Path, rel: str) -> bool:
+        at = base
+        for part in Path(rel).parts:
+            if not at.is_dir():
+                return False
+            at = next((c for c in at.iterdir() if c.name.lower() == part.lower()), None)
+            if at is None:
+                return False
+        return at.is_file()
+
+    root = Path(folder).expanduser()
+    for base in (root, root / "xbox", root / "XDK" / "xbox", root / "XDK"):
+        try:
+            if all(has(base, f) for f in tc.local_files):
+                return base.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def local_folder(tid: str) -> Path:
+    """Where the user's own copy of a local toolchain is (as Setup recorded it), or a clear error."""
+    m = installed(tid)
+    tc = get(tid)
+    if m is None or not m.get("folder"):
+        raise ToolchainError(f"{tc.name} isn't set up: in decompdecomp's Setup, under Compilers & tools, give the "
+                             "folder where your own copy is")
+    folder = Path(m["folder"])
+    if find_local(tc, folder) is None:
+        raise ToolchainError(f"{tc.name} isn't at {folder} any more (it needs {', '.join(tc.local_files)}): give "
+                             "its folder again in Setup")
+    return folder
+
+
+def _link_local(tc: Toolchain, folder: str | Path | None, accept_license: bool, log) -> Path:
+    """Record where the user's own copy of a local toolchain is. Nothing is copied or downloaded: decompdecomp reads
+    it where it is, so none of it ends up in projects or in the toolchains folder."""
+    if not folder:
+        raise ToolchainError(f"{tc.name} isn't downloaded: give the folder where your own copy is")
+    if tc.proprietary and not accept_license:
+        raise ToolchainError(f"{tc.id} ({tc.name}) is proprietary software. Using your copy is your own licensing "
+                             "decision; accept that to go on.")
+    found = find_local(tc, folder)
+    if found is None:
+        raise ToolchainError(f"{folder} doesn't look like {tc.name}: it should hold {', '.join(tc.local_files)} "
+                             "(give the folder that has them, or the one above it)")
+    dest = path(tc.id, False)
+    dest.mkdir(parents=True, exist_ok=True)
+    _write_manifest(dest, {"id": tc.id, "name": tc.name, "license": tc.license, "source": "local",
+                           "folder": str(found), "installed_at": time.time(),
+                           "license_accepted": bool(tc.proprietary and accept_license), "wsl": False})
+    log(f"{tc.id}: using your copy at {found}")
+    return found
+
+
+def install(tid: str, *, accept_license: bool = False, force: bool = False, log=print, linux: bool | None = None,
+            folder: str | Path | None = None) -> Path:
+    """Install a toolchain (and what it requires). A local toolchain (the Xbox XDK) is the user's own copy in
+    `folder`: checked and recorded, never copied. `linux`: its Linux build, to run inside WSL (default: when
     that's how it runs on this computer). One install of a toolchain at a time: a free tool's threads that all need
     it (ensure) install it once, and the others find it installed. When an update changed objdiff's entry, the
     project's indexing threads each started its download into the same file, and each found the others' bytes in
     it (checksum mismatch)."""
+    if get(tid).local:
+        return _link_local(get(tid), folder, accept_license, log)
     with _INSTALLING:
         lock = _installs.setdefault(tid, threading.RLock())
     with lock:
@@ -791,6 +861,6 @@ def status() -> list[dict]:
                      "installed": m is not None, "supported": tc.supported, "description": tc.description,
                      # installed from an entry that has changed since: Compilers & tools offers to install it again
                      "changed": m is None and _manifest(tc.id) is not None,
-                     "wsl": tc.via_wsl,
+                     "wsl": tc.via_wsl, "local": tc.local, **({"folder": m.get("folder")} if tc.local and m else {}),
                      "pinned": all(p.get("sha256") for p in tc.parts) or bool(tc.commit)})
     return rows

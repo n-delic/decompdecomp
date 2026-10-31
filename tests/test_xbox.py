@@ -147,3 +147,22 @@ def test_the_rebuild_gives_back_the_xbe(demo, project):
     assert net.forks.check_rom(slug, log=lambda *_: None)["identical"]
     rebuilt = net.forks.get(slug)[1].root / "build" / "demoquest" / "default.xbe"
     assert rebuilt.read_bytes() == demo[0].read_bytes()  # (your copy's XBE, byte for byte, its code from the C)
+
+
+def test_an_early_game_builds_with_its_own_xdks_compiler(demo, tmp_path, monkeypatch):
+    """Before XDK 5233 each XDK shipped a Visual C++ 7.0 build of its own (13.00.9254 in 3911, not the pack's 9466):
+    with the user's XDK of that build set up, the game builds with it."""
+    data = bytearray(demo[0].read_bytes())
+    libs = xbox._u32(data, 0x164) - xbox.BASE
+    for i in range(xbox._u32(data, 0x160)):
+        struct.pack_into("<H", data, libs + 16 * i + 12, 3911)
+    game = tmp_path / "default.xbe"
+    game.write_bytes(data)
+    xdk = tmp_path / "xdk"
+    (xdk / "lib").mkdir(parents=True)  # (a homemade stand-in: only the version record the XDK's libraries carry)
+    (xdk / "lib" / "xapilib.lib").write_bytes(b"!<arch>\n" + b"XAPILIB\0" + struct.pack("<4H", 1, 0, 3911, 0x4001))
+    monkeypatch.setattr(xbox, "xdk_folder", lambda: xdk)
+    assert xbox.game_info(game)["compiler"] == "xdk"
+    (xdk / "lib" / "xapilib.lib").write_bytes(b"XAPILIB\0" + struct.pack("<4H", 1, 0, 4361, 0x4001))
+    info = xbox.game_info(game)  # another XDK's: the nearest the pack has, and what to set up
+    assert info["compiler"] == "7.0" and "XDK 3911 in Setup" in info["compiler_why"]

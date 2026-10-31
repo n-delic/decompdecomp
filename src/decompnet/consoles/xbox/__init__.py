@@ -42,8 +42,10 @@ class Xbox(WindowsPC):
     aliases = ()
     status = BETA
     compilers = (Compiler("MSVC/7.1", "Visual C++ 7.1", "games made with the XDK from 2003 on"),
-                 Compiler("MSVC/7.0", "Visual C++ 7.0", "games made with earlier XDKs"))
+                 Compiler("MSVC/7.0", "Visual C++ 7.0", "games made with earlier XDKs"),
+                 Compiler("MSVC/xdk", "your XDK's own Visual C++", "early games: the build their XDK shipped"))
     packs = (("msvc", "Visual C++ 7.0 and 7.1, the compilers of Xbox games (proprietary)"),
+             ("xdk", "your own Xbox Development Kit folder: recognises the XDK's library code in a game (proprietary, never copied)"),
              ("ghidra", "finds an Xbox game's functions, and drafts of its code (540 MB, needs Java 21+)"))
     guides = ("x86", "xbox", "cpp")
     ram = (0x00010000, 0x80000000)  # an XBE loads at 0x10000; the kernel is above 0x80000000
@@ -61,6 +63,14 @@ class Xbox(WindowsPC):
 
     def program_in(self, folder: Path) -> Path | None:
         return None  # an Xbox game is its default.xbe or its disc image, never a folder of DLLs
+
+    def tool_args(self) -> list[str]:
+        """The PC's, and the user's own XDK where it's set up (its compiler, MSVC/xdk: scratch.own_compiler)."""
+        from ..pc import scratch as pc
+        from . import scratch
+
+        xdk = scratch.xdk_folder()
+        return [*pc.tool_args(), *(["--xdk", str(xdk)] if xdk else [])]
 
     def game_info(self, game: Path) -> dict:
         from . import scratch
@@ -83,10 +93,10 @@ class Xbox(WindowsPC):
             view = Path(tmp) / f"{info['id']}.exe"  # (alone in its folder: find_modules looks beside it for DLLs)
             view.write_bytes(scratch.pe_view(scratch.program_bytes(game)))
             made = pc.create(root, view, compiler=compiler, log=log, info=info, platform=self.id, what=WHAT,
-                             cl_flags=scratch.CL_FLAGS, game_step=GAME_STEP.format(version=info["id"]))
-        if n := scratch.set_aside_library_sections(root, info["id"], info["library_sections"]):
-            log(f"{n} functions are the XDK's library code, in its own sections "
-                f"({', '.join(info['library_sections'])}): set aside")
+                             cl_flags=scratch.CL_FLAGS, game_step=GAME_STEP.format(version=info["id"]),
+                             args=self.tool_args())
+        if said := scratch.set_aside_libraries(root, info):
+            log(said)
         return made
 
     def prepare_fork_game(self, src: Path, dest: Path, sha1: str | None, *, move: bool = False) -> bool:
@@ -111,7 +121,10 @@ class Xbox(WindowsPC):
         try:
             view = tmp / "game.exe"
             view.write_bytes(scratch.pe_view(scratch.program_bytes(game)))
-            return super().reimport(net, slug, view, log=log)
+            said = super().reimport(net, slug, view, log=log)
+            info = scratch.game_info(game)  # (the new analysis's functions: the libraries' found again)
+            more = net.forks.reanalyse(slug, lambda fp: scratch.set_aside_libraries(fp.root, info), log=log)
+            return "; ".join(s for s in (said, more) if s) or None
         except OSError as e:
             raise NetworkError(f"couldn't read {game.name}: {e}") from None
         finally:
