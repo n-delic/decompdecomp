@@ -63,6 +63,12 @@ def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     assert xbox["iso"] == xbox["dump"] == "xbox" and xbox["plain"] is None and "Xbox 360" in xbox["x360"]
 
 
+def test_a_ps3_program_is_taken_and_its_encrypted_eboot_says_what_to_do(gui):
+    ps3 = gui["checks"]["ps3"]
+    assert ps3["good"] == ["ps3", "ELF program", 0x13000] and ps3["self"] is None
+    assert "SELF" in ps3["said"] and "decrypt your own copy" in ps3["said"] and "EBOOT.ELF" in ps3["said"]
+
+
 def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     gba = gui["checks"]["gba"]
     assert gba["good"] == ["gba", "ADQE", "DEMOQUEST"]

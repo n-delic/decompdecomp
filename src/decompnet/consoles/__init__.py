@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
+consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
 consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
@@ -9,7 +9,7 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PSP and GBA (whose
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP and GBA (whose
   splitter and judge are still being ported: ROADMAP.md).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
@@ -529,14 +529,15 @@ def _registry() -> list[Console]:
     from .pc import PC
     from .ps1 import PS1
     from .ps2 import PS2
+    from .ps3 import PS3
     from .psp import PSP
     from .public import PUBLIC_ONLY
     from .xbox import XBOX
 
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
-    # starts with a DVD video partition)
-    return [N64, XBOX, PSP, PS1, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    # starts with a DVD video partition; the PS3 before the PS2 too, though the PS2 takes only 32-bit MIPS ELFs)
+    return [N64, XBOX, PSP, PS1, PS3, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()
