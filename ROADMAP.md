@@ -511,7 +511,7 @@ Where to start on a gap:
 
 ## Next
 
-### Xbox: what's left after link-time code generation
+### Xbox: what's next
 
 The original Xbox is a beta PROJECT-mode console: decompdecomp reads your default.xbe (or an .xiso / Redump .iso),
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
@@ -522,12 +522,10 @@ link-time code generation (/GL, /LTCG), as most Xbox games were: the import tell
 dialog says), units build in harness mode (`tools/ltcg.py`: the unit, a driver calling its functions as the game's
 call sites do, and stand-ins, linked /LTCG by the compiler's own linker through wine), briefs show each function's
 convention, `standins_for` writes a starting harness, and a register-convention function of a retail game matched
-through its driver. Still to port from the prototype (`silvervest/xbox-1.0.5`):
-
-- **Member functions under LTCG.** `this` can arrive in any register; the prototype's `forks/methods.py` recovers
-  member functions and fields from register use, for briefs and `standins_for`'s declarations.
-- **Call sites that change conventions.** A helper or a driver call adds a call site, which can change the
-  linker's choice for the callee; the prototype warned when an attempt's convention differs from the original's.
+through its driver.
+Briefs also say when a function is a member function (its `this` in any register) and of which struct, and an
+attempt whose function got another convention than the original's says which registers differ. What's next is real
+games: a whole one rebuilt from C, then the console's status can say recommended.
 
 ### Game Boy Advance from your own copy
 
