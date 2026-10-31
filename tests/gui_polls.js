@@ -233,6 +233,18 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       h[0xbd] ^= 1;
       return { good: good && [good.platform, good.code, good.title], broken: identifyHead(h, file), said: notSupported(h, file) };
     })(),
+    // a PS3's decrypted program is a big-endian ELF64 PowerPC executable; its encrypted EBOOT.BIN (a SELF) says what to do
+    ps3: (() => {
+      const h = new Uint8Array(0x9400), dv = new DataView(h.buffer);
+      [..."\x7fELF"].forEach((c, i) => { h[i] = c.charCodeAt(0); });
+      h[4] = 2; h[5] = 2;
+      dv.setUint16(16, 2); dv.setUint16(18, 21); dv.setBigUint64(24, 0x13000n);
+      const self = new Uint8Array(0x9400);
+      [..."SCE\0"].forEach((c, i) => { self[i] = c.charCodeAt(0); });
+      const good = identifyHead(h, { name: "EBOOT.ELF", size: 0x9400 });
+      return { good: good && [good.platform, good.order, good.entry], self: identifyHead(self, { name: "EBOOT.BIN", size: 0x9400 }),
+               said: notSupported(self, { name: "EBOOT.BIN", size: 0x9400 }) };
+    })(),
     // tests/test_ds.py's header, whose checksum (0xB4DE) the server's crc16 computed: the page agrees on what's a DS ROM
     nds: (() => {
       const h = new Uint8Array(0x200), dv = new DataView(h.buffer);

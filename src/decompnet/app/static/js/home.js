@@ -240,6 +240,9 @@ function identifyHead(head, file) {
     const prx = dv.getUint16(16, true) === ELF_TYPE_PSP_PRX, psp = prx || (dv.getUint32(36, true) & ELF_MACH_BITS) === ELF_MACH_ALLEGREX;
     return { ...base, platform: psp ? "psp" : "ps2", order: prx ? "PRX module" : "ELF program", entry: dv.getUint32(24, true) };
   }
+  // a PS3's program: a big-endian ELF64 executable for the 64-bit PowerPC (a retail EBOOT.BIN is a SELF: notSupported says so)
+  if (text(0, 4) === "\x7fELF" && head[4] === 2 && head[5] === 2 && head.length >= 0x20 && dv.getUint16(16) === 2 && dv.getUint16(18) === 21)
+    return { ...base, platform: "ps3", order: "ELF program", entry: Number(dv.getBigUint64(24)) };
   if (head.length > 0x60 && dv.getUint32(0x1c) === 0xc2339f3d) return { ...base, platform: "gc", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   if (head.length > 0x60 && dv.getUint32(0x18) === 0x5d1c9ea3) return { ...base, platform: "wii", order: "disc image", code: ascii(0, 6), title: ascii(0x20, 0x80) || stem };
   const packed = { "RVZ\x01": "RVZ", "WIA\x01": "WIA", WBFS: "WBFS", CISO: "CISO" }[text(0, 4)] || (dv.getUint32(0, true) === 0xb10bc001 ? "GCZ" : null);
@@ -280,6 +283,7 @@ function notSupported(head, file) {
   if (ext === "apk") return "Android apps aren't supported yet.";
   if (isPspCiso(head, "ZISO") || ext === "zso") return "That's a ZSO image (LZ4-compressed), which decompdecomp can't read yet: decompress it to .iso first (maxcso --decompress does that), then drop the .iso.";
   if (text(0, 4) === "\0PBP" || ext === "pbp") return "That's a PSP EBOOT.PBP, a container: its program (DATA.PSP inside) is encrypted. Drop the game's UMD image (.iso) instead, or extract and decrypt the program first and drop that (.elf or .prx).";
+  if (text(0, 4) === "SCE\0") return "That's a PlayStation 3 SELF (an encrypted EBOOT.BIN). decompdecomp never decrypts games: decrypt your own copy first with your own tools and keys (RPCS3 can do it for a game you installed), then drop the resulting EBOOT.ELF.";
   if (text(0, 4) === "~PSP") return "That's an encrypted PSP program. Decrypt it first and drop the decrypted .elf or .prx, or drop the game's UMD image (.iso).";
   return null;
 }
