@@ -92,7 +92,8 @@ class Xbox(WindowsPC):
             view = Path(tmp) / f"{info['id']}.exe"  # (alone in its folder: find_modules looks beside it for DLLs)
             view.write_bytes(scratch.pe_view(scratch.program_bytes(game)))
             made = pc.create(root, view, compiler=compiler, log=log, info=info, platform=self.id, what=WHAT,
-                             cl_flags=scratch.CL_FLAGS, game_step=GAME_STEP.format(version=info["id"]),
+                             cl_flags=scratch.cl_flags((compiler or info["compiler"]).removeprefix("MSVC/")),
+                             game_step=GAME_STEP.format(version=info["id"]),
                              args=self.tool_args())
         if said := scratch.set_aside_libraries(root, info):
             log(said)

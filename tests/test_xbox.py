@@ -166,3 +166,8 @@ def test_an_early_game_builds_with_its_own_xdks_compiler(demo, tmp_path, monkeyp
     (xdk / "lib" / "xapilib.lib").write_bytes(b"XAPILIB\0" + struct.pack("<4H", 1, 0, 4361, 0x4001))
     info = xbox.game_info(game)  # another XDK's: the nearest the pack has, and what to set up
     assert info["compiler"] == "7.0" and "XDK 3911 in Setup" in info["compiler_why"]
+
+
+def test_only_visual_cpp_71_builds_with_arch_sse():
+    assert "/arch:SSE" in xbox.cl_flags("7.1")
+    assert "/arch:SSE" not in xbox.cl_flags("7.0") and "/arch:SSE" not in xbox.cl_flags("xdk")
