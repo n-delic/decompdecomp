@@ -27,6 +27,10 @@ Reading the code
   listing names the datum the slot holds (`# D_00A12340`). A constant such as a float is sometimes stored in the TOC
   and loaded directly (`lfd f0, 16(r2)`).
 - A `bl` to an address that is not a function you can name may go through a stub the linker made; it is set aside.
+- A call into a system library (`cellSysutil_videoGetResolution`, `sysPrxForUser_...`) goes through an import stub the
+  loader links by the library's name and a NID; the import names those stubs (PSL1GHT's names, or `<library>_<NID>`
+  where it has none) and sets them aside. A kernel call is `li r11, N; sc` and is named `sys_...` from N. Call the name
+  you see in the listing; nobody writes the stub in C.
 - `sc` is a system call and `lwarx`/`stwcx.` are atomics: no C compiler emits them, so such a function is
   hand-written assembly and is set aside.
 - `rlwinm`, `rldicl` and `rldicr` are shifts and masks: `x >> 16 & 0xFF`, `(u8)x`; `extsw` widens an `int` to 64 bits
