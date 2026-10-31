@@ -207,9 +207,13 @@ def make_ps3sdk(top: Path, *, host: str = "linux", stamp: bytes = STAMP) -> Path
     return root
 
 
-def test_the_ps3_sdk_is_recognised_by_its_compiler_in_any_layout(tmp_path):
+@pytest.mark.parametrize("here", ["linux", "darwin", "win32"])
+def test_the_ps3_sdk_is_recognised_by_its_compiler_in_any_layout(tmp_path, monkeypatch, here):
+    from decompnet.kits import ps3sdk
+
     kit = kits.get("ps3sdk")
     linux, win = make_ps3sdk(tmp_path / "l"), make_ps3sdk(tmp_path / "w", host="win")
+    monkeypatch.setattr(ps3sdk.sys, "platform", here)  # (CI on macOS: a Linux host's copy said no build)
     for top, copy in ((tmp_path / "l", linux), (tmp_path / "w", win)):
         assert kit.locate(top) == kit.locate(copy) == copy.resolve()  # (the folder above, or the SDK itself)
         assert kit.build(copy) == "SDK270" and kit.verify(copy) == "PlayStation 3 SDK SDK270"

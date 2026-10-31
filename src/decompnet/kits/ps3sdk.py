@@ -61,13 +61,12 @@ class Ps3Sdk(Kit):
         return None
 
     def build(self, folder: Path) -> str | None:
-        """The SDK generation as the compiler stamps it ("SDK270"), read from its driver, else its cc1."""
-        gcc = _gcc(folder)
-        if gcc is None:
-            return None
-        for exe in (gcc, *sorted(gcc.parent.parent.glob("lib/gcc/ppu-lv2/*/cc1*"))):
-            if exe.is_file() and (s := stamp(exe.read_bytes())):
-                return s
+        """The SDK generation as the compiler stamps it ("SDK270"), read from its driver, else its cc1: from either
+        host's compiler, whichever runs here (a copy with only the Linux host's says its build on macOS too)."""
+        for gcc in (g for rel in GCC if (g := find(folder, rel)) is not None):
+            for exe in (gcc, *sorted(gcc.parent.parent.glob("lib/gcc/ppu-lv2/*/cc1*"))):
+                if exe.is_file() and (s := stamp(exe.read_bytes())):
+                    return s
         return None
 
     def verify(self, folder: Path) -> str:
