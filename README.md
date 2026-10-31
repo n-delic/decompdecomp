@@ -236,7 +236,7 @@ game's code is its rights holder's: keep it to yourself.
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
 | Game Boy Advance | Beta |
-| Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra) |
+| Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra; wine for games built with link-time code generation; your own XDK, optional, sets its library code aside) |
 | 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and

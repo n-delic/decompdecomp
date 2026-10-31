@@ -16,10 +16,10 @@ Games built with link-time code generation (/GL, /LTCG: the linker gives functio
 inlines across files) are told at import (forks/ltcg.py, forks/convention.py), and their units build in harness mode
 (the PC template's tools/ltcg.py: Visual C++'s linker, through wine).
 
-Not yet (ROADMAP.md, Xbox): the XDK's library code linked into .text (the C runtime, XAPI) is the game's to agents,
-as telling it apart needs the user's XDK; the export is the PE view rebuilt, not an XBE.
+The user's own XDK is a kit (kits/xdk.py, Console.kits): with it, the XDK's library code linked into .text (the C
+runtime, XAPI) is found by its libraries' bytes and set aside (xdklib.py), and a game of an early XDK builds with
+that XDK's own Visual C++ (MSVC/xdk). `ninja rebuild` writes the game's default.xbe back out of the PE view.
 
-Its demo game is projects/demo-xbox (Demo Quest built with Visual C++ 7.1, linked at 0x10000 and made an XBE).
 """
 
 from __future__ import annotations

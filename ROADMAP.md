@@ -32,7 +32,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | ✓ (2-byte boundaries) | — | ✓ (agents agree, the rebuild checks) | ✓ | — | — |
-| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1 | per source file (`try_compiler`, Settings) | the project's build |
+| Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | — | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings): Visual C++ 7.0 / 7.1, your XDK's own | per source file (`try_compiler`, Settings) | the project's build |
 | Flag search (`search_flags`) | ✓ | ✓ | ✓ | ✓ | — | the project's build | per source file (/Oy-, /O1, /Ob1) | per source file | the project's build | the project's build |
 | Compiler map and the judge's survey | ✓ | ✓ | ✓ | ✓ | — | — | ✓ per source file, Rich header | the XDK build's compiler (no Rich header: one per game) | — | — |
 | Range checks: a range applies after its neighbours confirm it | ✓ | ✓ | ✓ | ✓ | — | — | ✓ over source files | ✓ | — | — |
@@ -47,7 +47,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
-| Rebuildable export | ✓ | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` checks the PE view, not an XBE) | the project | the project |
+| Rebuildable export | ✓ | ✓ | ✓ | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
@@ -511,22 +511,19 @@ Where to start on a gap:
 
 ## Next
 
-### Xbox: what is still missing
+### Xbox: link-time code generation, for agents
 
 The original Xbox is a beta PROJECT-mode console: decompdecomp reads your default.xbe (or an .xiso / Redump .iso),
 makes it a Windows program at the same addresses, and from there it is the PC path (Ghidra, COFF objects, objdiff,
-`ninja rebuild`). Every feature of the table ran on its demo (projects/demo-xbox); it has not been tried on a real
-game yet. Planned:
+`ninja rebuild`, which writes your default.xbe back byte for byte). With your own XDK set up in Setup (a kit:
+`kits/`), its library code in .text is set aside and a game of an early XDK builds with that XDK's own Visual C++.
+Three retail games imported and rebuilt byte for byte (thousands of functions each); all three were built with
+link-time code generation (/GL, /LTCG), as most Xbox games were.
 
-- **XDK library code in .text.** The C runtime and XAPI are linked into the game's code and aren't told from the
-  game's own. Matching them against the XDK libraries you own would set them aside (a prototype exists on the
-  `silvervest/xbox-1.0.5` branch, `consoles/xbox/xdklib.py`).
-- **Link-time code generation (/GL, /LTCG).** Custom register conventions and cross-file inlining can't match one file
-  at a time; the same prototype has a whole-program harness mode for them.
-- **A real XBE in the export.** The export rebuilds the Windows-program view, not an XBE; a byte-identical XBE needs
-  the XDK's linker and imagebld, or an XBE writer that places code like they do.
-- **Early XDK compilers.** The XDK 3911 / 4627 era used Visual C++ 13.00.9254 / 9466, which aren't mapped; only
-  XDK 5849 -> Visual C++ 7.1 is checked.
+Their units build in harness mode (the PC template's `tools/ltcg.py`: the unit, a driver calling its functions as
+the game's call sites do, and stand-ins, linked with /LTCG by the compiler's own linker through wine), and the
+import tells such a game from the program. What's being finished: the briefs' convention evidence, the
+`standins_for` tool, which unresolved names in a harness link matter, the guide, and the import's LTCG switch.
 
 ### Game Boy Advance from your own copy
 
