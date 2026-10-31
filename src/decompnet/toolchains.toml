@@ -1028,3 +1028,44 @@ description = "The community's project template for GameCube and Wii decomps, us
 url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725a4ce73524470e7a02.tar.gz"
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
+
+# UNPUBLISHED DRAFT (commented out on purpose: the release below doesn't exist yet, so nothing may try to download it).
+# Sony's PS3 PPU compiler, built from the GPL sources Sony published (packaging/ps3-gcc/). To publish:
+#   packaging/ps3-gcc/build.sh 1.9.0 dist && packaging/ps3-gcc/build.sh 2.7.0 dist
+#   gh release create ps3-gcc-1.9.0 dist/ppu-lv2-gcc-1.9.0.tar.xz --title "PS3 ppu-lv2-gcc 1.9.0 (GPL build)" \
+#      --notes "GCC 4.1.1 + binutils 2.17 built from Sony's GPL source; the exact source is inside the archive."
+#   (same for 2.7.0), then sha256sum the uploaded files, fix the sha256 below if the rebuild differs, and uncomment.
+# The archive carries the source it was built from (share/doc/ppu-lv2-gcc/ps3gcc-source.tar.gz) and the GPL texts.
+# No libgcc, crt files or SDK headers: the app compiles to objects and links itself.
+#
+# ["ppu-lv2-gcc-1.9.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 1.9.0, CELL 4.1.2.7)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit 8bc057a8fb9e, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 1.9.0 (early PS3 games), rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-1.9.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-1.9.0/ppu-lv2-gcc-1.9.0.tar.xz"
+# sha256 = "8ad0d07500cdf4e5b2fe3e3dbabf1bce41e6928bd51d1edb3d3e42c51057f53b"
+# subdir = "ppu-lv2-gcc-1.9.0"
+# platforms = ["linux-x86_64"]
+#
+# ["ppu-lv2-gcc-2.7.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 2.7.0, $Rev: 3019 $)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit dc6c3b99344, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 2.7.0, rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-2.7.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-2.7.0/ppu-lv2-gcc-2.7.0.tar.xz"
+# sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
+# subdir = "ppu-lv2-gcc-2.7.0"
+# platforms = ["linux-x86_64"]
