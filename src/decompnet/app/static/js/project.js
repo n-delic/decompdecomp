@@ -108,7 +108,7 @@ async function refreshMap(force = true) {
    matches on the map. */
 let pollingGen = -1;
 async function poll() {
-  if (pollingGen === S.gen || !S.slug) return;
+  if (pollingGen === S.gen || !S.slug || (document.hidden && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
     const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
@@ -138,6 +138,7 @@ async function poll() {
     renderNow(live.claims);
     renderStats(live.overview);
     const claimSig = live.claims.map((c) => c.name + "\u0000" + c.agent).join("\n");
+    if (live.cut && !first) mapDirty = true;  // (attempts it didn't send: the map's counts come again)
     if (mapDirty || Date.now() - S.lastMapFetch > MAP_EVERY_MS) await refreshMap(mapDirty);
     else {
       applyClaims();
@@ -154,10 +155,15 @@ async function poll() {
   }
 }
 
+let statsLoading = null;
 async function loadStats() {
   // the overview's charts and the Agents tab's "N matched" per agent both come from these
-  if (!S.slug || (S.tab !== "overview" && S.tab !== "agents")) return;
-  try { S.stats = await api(`/api/stats?slug=${S.slug}`); } catch { return; }
+  if (!S.slug || (S.tab !== "overview" && S.tab !== "agents") || statsLoading === S.slug || document.hidden) return;
+  const slug = statsLoading = S.slug;
+  let stats;
+  try { stats = await api(`/api/stats?slug=${slug}`); } catch { return; } finally { if (statsLoading === slug) statsLoading = null; }
+  if (slug !== S.slug) return;  // (another project opened meanwhile)
+  S.stats = stats;
   if (S.tab === "overview") renderOverview();
   else renderSessions(S.sessions || []);
 }

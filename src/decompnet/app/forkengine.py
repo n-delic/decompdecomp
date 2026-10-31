@@ -90,6 +90,23 @@ def _rewrite(path: Path, text: str) -> None:
         path.write_bytes(data)
 
 
+def _config_stamp(root: Path, globs: tuple[str, ...]) -> tuple | None:
+    """When each file a project's compilers and file ranges are read from last changed: objdiff.json (its source
+    files) and the console's (Console.compiler_config). None while one changed just now: a second write within the
+    file system's clock tick could leave the same stamp (git's "racy" files)."""
+    out, recent = [], time.time_ns() - 2_000_000_000
+    for path in (root / "objdiff.json", *(p for glob in globs for p in sorted(root.glob(glob)))):
+        try:
+            info = path.stat()
+        except OSError:
+            out.append((path, None))
+            continue
+        if info.st_mtime_ns > recent:
+            return None
+        out.append((path, info.st_mtime_ns, info.st_size, info.st_ino))
+    return tuple(out)
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:40] or "fork"
 
@@ -445,6 +462,7 @@ class ForkEngine:
         self._linking: dict[str, dict] = {}  # slug -> background link run
         self._preflight_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
         self._preflighted: set[int] = set()  # projects checked since the app started (overview's check)
+        self._parts: dict[Path, tuple] = {}  # project root -> (its config files' stat, _file_parts' answer)
 
     # ------------------------------------------------------------------ pre-flight
 
@@ -3654,9 +3672,15 @@ class ForkEngine:
     def _file_parts(self, fp: ForkProject, cfg: dict) -> tuple[str, list[dict]] | None:
         """(the project's own compiler, the parts built with another: one per source file, with its address range),
         for a project whose files each have a compiler (Console.file_compiler: DS); None: its build decides."""
+        # the overview goes with every live poll (each second): reading a PC game's 1,300 files' compilers again each
+        # time took 300-400 ms. Read again when a file they come from changed (a new source file changes one too)
         console = consoles.get(cfg.get("platform"))
+        stamp = _config_stamp(fp.root, console.compiler_config) if console.compiler_config else None
+        if stamp is not None and (known := self._parts.get(fp.root)) is not None and known[0] == stamp:
+            return known[1]
         own = console.file_compiler(fp, "")
         if own is None:
+            self._parts[fp.root] = (stamp, None)
             return None
         ranges = console.file_ranges(fp)
         parts = []
@@ -3665,6 +3689,7 @@ class ForkEngine:
                 for start, end in ranges.get(source) or [(0, 0)]:
                     parts.append({"file": source, "start": start, "end": end, "toolchain": c,
                                   "name": consoles.compiler_name(c), "flags": []})
+        self._parts[fp.root] = (stamp, (own, parts))
         return own, parts
 
     def _compiler_facts(self, fp: ForkProject, cfg: dict) -> dict:

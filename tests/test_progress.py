@@ -356,6 +356,45 @@ def test_malformed_manifest_metadata_is_rejected_before_applying(project, field,
     assert path.read_bytes() == before
 
 
+def test_a_failed_sync_waits_for_a_change_before_reads_and_the_autosave_try_it_again(project, monkeypatch):
+    """Two projects whose game file was gone failed their sync on every read and every autosave pass: 1-2 s each,
+    every second, and the project list took 11 s. Reads and the autosave try again when the folder or the database
+    changed, or after RETRY_FAILED_SECONDS; a user's action (a forced sync) always does."""
+    net, folder, _ = project
+    tries = []
+
+    def gone(*args):
+        tries.append(args[1])
+        raise FileNotFoundError("game.rom")
+
+    monkeypatch.setattr(net, "attempt", gone)
+    (folder / "src").mkdir()
+    (folder / "src/f.c").write_text("good C", encoding="utf-8")
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)
+    assert tries == ["f"]
+    for _ in range(3):
+        assert saves.Autosave(net).run_once() == []
+        with pytest.raises(NetworkError, match="Could not read or write progress"):
+            net.summary("game")  # the project list still says why
+    assert tries == ["f"]
+    with pytest.raises(NetworkError):
+        net.progress.sync("game", force=True)  # Check again, an edit through the app, a compile
+    assert tries == ["f", "f"]
+    (folder / "src/f.c").write_text("good C, edited", encoding="utf-8")
+    saves.Autosave(net).run_once()
+    assert tries == ["f", "f", "f"]
+    # and a minute later, however often it was read meanwhile (its game file may be back)
+    clock = [time.monotonic()]
+    monkeypatch.setattr("decompnet.app.progress.time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    for _ in range(3):
+        clock[0] += 25
+        saves.Autosave(net).run_once()
+    assert tries == ["f", "f", "f", "f"]
+    saves.Autosave(net).run_once()
+    assert tries == ["f", "f", "f", "f"]
+
+
 def test_unchanged_progress_sync_skips_rendering(project, monkeypatch):
     net, _, _ = project
     monkeypatch.setattr(saves, "_render", lambda *args, **kwargs: pytest.fail("rendered an unchanged project"))

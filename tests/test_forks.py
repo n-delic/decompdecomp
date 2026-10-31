@@ -865,3 +865,51 @@ def test_a_sync_with_nothing_new_leaves_the_functions_alone(fork):
     net.forks.sync(slug, log=lambda *_: None)
     functions = net.store.one("SELECT COUNT(*) n FROM functions")["n"]
     assert net.store.conn.total_changes - before < functions
+
+
+def test_the_overview_reads_a_projects_file_compilers_again_only_when_a_file_changed(tmp_path, monkeypatch):
+    """The overview goes with every live poll (each second): a PC game's 1,300 source files' compilers were read
+    again each time (300-400 ms a poll). They're read again when one of the files they come from changed."""
+    import os
+    import time
+    from types import SimpleNamespace
+
+    from decompnet import consoles
+
+    root = tmp_path / "game"
+    (root / "config" / "v1").mkdir(parents=True)
+    manifest = {"version": "v1", "compiler": "MSVC/7.1"}
+    (root / ".decomp.wtf.json").write_text(json.dumps(manifest))
+    (root / "config/v1/functions.json").write_text(json.dumps({"units": {
+        "a": [{"name": "f", "addr": 0x1000, "size": 16}], "b": [{"name": "g", "addr": 0x2000, "size": 8}]}}))
+    compilers = root / "config/v1/file_compilers.json"
+    compilers.write_text(json.dumps({"src/auto/a.cpp": "6.0"}))
+    fp = SimpleNamespace(root=root, manifest=manifest,
+                         units=lambda: [SimpleNamespace(source=f"src/auto/{u}.cpp") for u in "ab"])
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    pc = consoles.get("pc")
+    asked = []
+    real = type(pc).file_compiler
+    monkeypatch.setattr(type(pc), "file_compiler", lambda self, fp, source: asked.append(source) or real(self, fp, source))
+
+    def aged(seconds):  # (a file changed in the last 2 s isn't trusted: a second write could keep its stamp)
+        for path in root.rglob("*"):
+            os.utime(path, (time.time() - seconds, time.time() - seconds))
+
+    def parts():
+        own, found = net.forks._file_parts(fp, {"platform": "pc"})
+        return own, [(p["file"], p["start"], p["toolchain"]) for p in found]
+
+    aged(60)
+    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
+    asked.clear()
+    assert parts() == ("MSVC/7.1", [("src/auto/a.cpp", 0x1000, "MSVC/6.0")])
+    assert asked == []  # nothing changed: nothing read again
+    compilers.write_text(json.dumps({"src/auto/b.cpp": "6.0"}))  # try_compiler, or an editor
+    assert parts() == ("MSVC/7.1", [("src/auto/b.cpp", 0x2000, "MSVC/6.0")])
+    assert parts() and len(asked) == 6  # changed just now: read every time until it's 2 s old
+    aged(30)
+    asked.clear()
+    parts()
+    parts()
+    assert len(asked) == 3

@@ -344,6 +344,10 @@ class Console:
         its own: then try_compiler can switch it. None: the project's build decides alone."""
         return None
 
+    # what file_compiler and file_ranges read (globs in the project): the overview, asked every second, reads them
+    # again only when one changed (forkengine._file_parts). None named: read again every time
+    compiler_config: tuple[str, ...] = ()
+
     splits_sources = False  # split_source divides a source file in its config (else forkengine's dtk-template way)
 
     def rename_symbol(self, fp, version: str, old: str, new: str) -> dict:

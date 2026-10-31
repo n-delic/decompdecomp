@@ -233,10 +233,21 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")
         # a function's events of one kind (polishing's tries on it: app/readable.py), without reading a game's whole feed
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_detail ON events(project_id, kind, detail)")
+        # a project's last activity, for the project list and its page: read every one of its events (9 ms for ten
+        # projects with 51,000 events, each sidebar ask; now 0.03)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_project_time ON events(project_id, created_at)")
         # the progress the GUI asks for every second (totals, the map's "anything new?"), answered from this narrow
         # index instead of reading every function's assembly and sources: 31 ms -> about 2 for 36,000 functions
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_progress ON functions(project_id, status, size, "
-                          "attempts, best_score, matched_at)")
+        # (with the set-aside and gone marks, whether it's polished and who matched it: the sidebar's and the project's
+        # counts read every function's whole row without them, 58 ms for a 28,900-function game; now 7)
+        try:
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_counts ON functions(project_id, status, size, "
+                              "attempts, best_score, matched_at, readable, matched_agent_id, "
+                              "json_extract(meta, '$.set_aside'), json_extract(meta, '$.gone'))")
+            self.conn.execute("DROP INDEX IF EXISTS idx_functions_progress")
+        except sqlite3.OperationalError:  # a function's meta that isn't JSON (none is written so): the app still opens
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_progress ON functions(project_id, status, "
+                              "size, attempts, best_score, matched_at)")
         # agents created before `origin` existed were all minted by the operator on the CLI
         self.conn.execute("UPDATE agents SET trusted = 1, origin = 'cli' WHERE origin IS NULL")
         # removing a project left its symbols behind before 0.10.3, and the next import (which may get the same id)

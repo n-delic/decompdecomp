@@ -266,7 +266,8 @@ def test_the_settings_compiler_panel_gets_a_scratch_projects_files(tmp_path):
         {"name": "auto/module/text_80006000", "metadata": {"source_path": "src/auto/module/text_80006000.c"}},
     ]}), encoding="utf-8")
     GAMECUBE.set_file_compiler(fp, "src/auto/text_80005000.c", "GC/1.2.5")
-    eng = ForkEngine.__new__(ForkEngine)  # (these two are pure: they ask the project and its console only)
+    eng = ForkEngine.__new__(ForkEngine)  # (these two ask the project and its console only, and keep the answer)
+    eng._parts = {}
     facts = eng._compiler_facts(fp, {"platform": "gc"})
     assert facts["compiler"]["toolchain"] == "GC/1.3.2"
     assert facts["compilers"] == [c.id for c in GAMECUBE.compilers]

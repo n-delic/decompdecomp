@@ -53,6 +53,7 @@ class GameCube(Console):
     demo_tools = ("mwcc", "dtk", "gc-wii-binutils", "objdiff-cli", "sjiswrap", "dtk-template", "wibo")
     own_features = frozenset({REBUILD_CHECK})
     usual = "GC/1.3.2"  # what most of its games were built with: the default until the game says otherwise
+    compiler_config = (".decomp.wtf.json", "configure.py", "config/**/*")  # Object(...) versions, splits.txt
     disc_kinds = ("gc", "packed")  # what scratch.disc_kind says its discs are (a compressed one can be either's)
 
     def sniff(self, head: bytes, file) -> bool:

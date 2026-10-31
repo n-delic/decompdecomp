@@ -95,13 +95,11 @@ function layoutMap() {
 
 function applyClaims(draw = true) {
   const working = new Map(S.claims.map((c) => [c.name, c.agent]));
-  let changed = false;
-  for (const f of S.map) {
+  S.map.forEach((f, i) => {
     const status = f.status === "matched" || f.status === "asm" ? f.status : working.has(f.name) ? "working" : "open";
-    if (status !== f.status) { f.status = status; changed = true; }
+    if (status !== f.status) { f.status = status; mapChanged(i); }
     f.agent = working.get(f.name) || null;
-  }
-  if (changed) mapChanged();
+  });
   if (draw) drawMap();
 }
 
@@ -112,7 +110,7 @@ function applyAttempts(attempts) {
     if (i == null) continue;
     const f = S.map[i];
     f.attempts = (f.attempts || 0) + 1;
-    if (at.score != null && (f.best == null || at.score < f.best)) { f.best = at.score; mapChanged(); }
+    if (at.score != null && (f.best == null || at.score < f.best)) { f.best = at.score; mapChanged(i); }
   }
 }
 
@@ -125,58 +123,86 @@ function cellColor(f) {
   return [colors.open, 1];
 }
 
-function drawBase() {
-  const { size, gap, cols, dpr } = geo;
-  base = base || document.createElement("canvas");
-  base.width = $("map").width; base.height = $("map").height;
-  const ctx = base.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+/* Cell i into `base`, over what it showed: a working one stays empty there (drawn every frame, pulsing). */
+function drawCell(ctx, i) {
+  const { size, gap, cols } = geo, f = S.map[i];
   const r = size >= 10 ? 2.5 : size >= 7 ? 1.5 : 1;
-  moving = [];
-  S.map.forEach((f, i) => {
-    if (f.status === "working") { moving.push(i); return; }  // drawn every frame, pulsing
-    const x = (i % cols) * (size + gap), y = Math.floor(i / cols) * (size + gap);
-    const [c, a] = cellColor(f);
-    ctx.fillStyle = rgb(c, a);
-    ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
-    if (S.mapView === "compiler" && f.ccx) {
-      ctx.strokeStyle = rgb(colors.ink, 1); ctx.lineWidth = size >= 10 ? 1.5 : 1;
-      ctx.beginPath(); ctx.roundRect(x + 0.75, y + 0.75, size - 1.5, size - 1.5, r); ctx.stroke();
-    }
-  });
-  baseDirty = false;
+  const x = (i % cols) * (size + gap), y = Math.floor(i / cols) * (size + gap);
+  ctx.clearRect(x - 0.5, y - 0.5, size + 1, size + 1);  // (the gap between cells is 2 px or more)
+  if (f.status === "working") return;
+  const [c, a] = cellColor(f);
+  ctx.fillStyle = rgb(c, a);
+  ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
+  if (S.mapView === "compiler" && f.ccx) {
+    ctx.strokeStyle = rgb(colors.ink, 1); ctx.lineWidth = size >= 10 ? 1.5 : 1;
+    ctx.beginPath(); ctx.roundRect(x + 0.75, y + 0.75, size - 1.5, size - 1.5, r); ctx.stroke();
+  }
 }
 
+/* `base` again: every cell, or (`cells`) the few that changed. */
+function drawBase(cells = null) {
+  const fresh = !cells;
+  if (fresh) {
+    base = base || document.createElement("canvas");
+    base.width = $("map").width; base.height = $("map").height;
+  }
+  const ctx = base.getContext("2d");
+  ctx.setTransform(geo.dpr, 0, 0, geo.dpr, 0, 0);
+  for (const i of cells || S.map.keys()) if (i < S.map.length) drawCell(ctx, i);
+  moving = [];
+  S.map.forEach((f, i) => { if (f.status === "working") moving.push(i); });
+  if (fresh) baseDirty = false;
+  dirtyCells.clear();
+}
+
+/* What the canvas shows besides `base`: a frame where only working cells pulse redraws just those, not the whole
+   canvas (megapixels for a big game, 30 times a second while agents work). */
+let shown = null;
 function drawMap() {
   if (!geo || S.tab !== "overview") return;
   if (!colors) readColors();
-  if (baseDirty || !base || base.width !== $("map").width || base.height !== $("map").height) drawBase();
+  let whole = !shown;
+  if (baseDirty || !base || base.width !== $("map").width || base.height !== $("map").height) { drawBase(); whole = true; }
+  else if (dirtyCells.size) { drawBase(dirtyCells); whole = true; }
   const ctx = $("map").getContext("2d");
   const { size, gap, cols, dpr } = geo;
   const now = performance.now();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, $("map").width, $("map").height);
-  ctx.drawImage(base, 0, 0);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const r = size >= 10 ? 2.5 : size >= 7 ? 1.5 : 1;
   const at = (i) => [(i % cols) * (size + gap), Math.floor(i / cols) * (size + gap)];
-  let live = moving.length > 0;
+  const sel = S.fn && S.byName ? S.byName.get(S.fn) : null;
+  whole = whole || shown.sel !== sel || shown.flash || S.flash.size > 0;  // (a flash's ring reaches over its neighbours)
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  if (whole) {
+    ctx.clearRect(0, 0, $("map").width, $("map").height);
+    ctx.drawImage(base, 0, 0);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // `base` over a square round a cell, inside the canvas (with a margin: an edge drawn over and over would darken)
+  const restore = (i, m) => {
+    const [x, y] = at(i), x0 = Math.max(0, x - m), y0 = Math.max(0, y - m);
+    const w = Math.min(geo.w, x + size + m) - x0, h = Math.min(geo.h, y + size + m) - y0;
+    ctx.clearRect(x0, y0, w, h);
+    ctx.drawImage(base, x0 * dpr, y0 * dpr, w * dpr, h * dpr, x0, y0, w, h);
+  };
+  if (!whole && sel != null) restore(sel, 3);  // its outline is drawn again last
+  const r = size >= 10 ? 2.5 : size >= 7 ? 1.5 : 1;
+  let live = moving.length > 0, flashed = false;
   for (const i of moving) {
     const [x, y] = at(i);
+    if (!whole) restore(i, 1);
     ctx.fillStyle = rgb(colors.work, 0.55 + 0.45 * Math.sin(now / 260 + i));
     ctx.beginPath(); ctx.roundRect(x, y, size, size, r); ctx.fill();
   }
   for (const [name, fl] of S.flash) {
     const i = S.byName && S.byName.get(name), t = (now - fl) / 1600;
     if (i == null || t >= 1) { S.flash.delete(name); continue; }
-    live = true;
+    live = flashed = true;
     const [x, y] = at(i), g = size * (0.6 + 1.8 * t);
     ctx.strokeStyle = rgb(colors.match, 1 - t);
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.roundRect(x - g / 2, y - g / 2, size + g, size + g, r + 2); ctx.stroke();
   }
-  const sel = S.fn && S.byName ? S.byName.get(S.fn) : null;
   if (sel != null) { const [x, y] = at(sel); ctx.strokeStyle = rgb(colors.ink, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - 1.5, size + 3, size + 3); }
+  shown = { sel, flash: flashed };
   if (live && !animating) {  // about 30 frames a second is plenty for a pulse
     animating = true;
     setTimeout(() => requestAnimationFrame(() => { animating = false; drawMap(); }), 33);

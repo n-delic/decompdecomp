@@ -266,6 +266,8 @@ class WindowsPC(Console):
         return scratch.cut_function(fp.root, (fp.manifest or {})["version"], symbol, at, keep=keep, why=why)
 
     splits_sources = True  # a source file is a unit of functions.json (scratch.split_unit)
+    # shortcut: a unit's .c renamed .cpp changes no file here (shows after the next change), name src/ if it matters
+    compiler_config = (".decomp.wtf.json", "config/**/*")  # file_compilers.json and functions.json
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         from . import scratch

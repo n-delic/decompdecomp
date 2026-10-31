@@ -173,6 +173,7 @@ A console works in one of two modes:
    | `tool_args()` | PROJECT: points the project's configure step at the pinned tools. |
    | `identity(path)`, `check_rebuild(fp, version)`, `read_data(fp, name, length)`, `upload_name(data)` | PROJECT: rooms' game check, the rebuild check, data the objects lack, an upload's file name. |
    | `file_compiler(fp, source)`, `set_file_compiler(fp, source, compiler)` | PROJECT: a compiler per source file, when the project's build allows it: then `try_compiler` switches it (DS, Windows PC). |
+   | `compiler_config` | PROJECT: the files (globs in the project) `file_compiler` and `file_ranges` read: the project's page reads them again only when one changed. None named: every second. |
    | `asm_reason(code)` | Why a function can't come from a compiler. The processor's check, with this console's facts. |
    | `up_front_guide(compiler)`, `m2c_target(compiler)` | The guide for a compiler's code; m2c's target for it. |
 

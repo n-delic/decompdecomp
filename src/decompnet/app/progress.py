@@ -31,6 +31,10 @@ from ..rom.symbols import IDENT
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
+# A sync that failed (its game file gone) is tried again by reads and the autosave only when what it reads changed, or
+# after this long. Retried on every one, two such projects cost 2.9 s each second in the autosave alone, and each try
+# claimed a function anew. A user's action or a compile (forced) always tries again: a compiler installed meanwhile.
+RETRY_FAILED_SECONDS = 60
 PARTIAL_FUNCTIONS = 256  # more changed functions than this: one full query beats this many per-name lookups
 
 
@@ -95,6 +99,10 @@ class _Dirty:
 
 class _FolderChanged(Exception):
     """The folder moved while a sync was applying its contribution; its transaction must roll back."""
+
+
+class _StillFailing(NetworkError):
+    """The last sync's failure again, nothing it reads having changed since (RETRY_FAILED_SECONDS)."""
 
 
 def _read(folder: Path) -> dict[str, str]:
@@ -299,6 +307,7 @@ class Progress:
         self.sync_changes: dict[str, int] = {}  # kept for restore, which drops every in-memory trace of a project
         self.adopting: set[str] = set()
         self.blocked: dict[str, tuple] = {}  # slug -> (folder, dirty token, settings) while a compiler waits
+        self.failed: dict[str, tuple] = {}  # slug -> ((dirty token, settings, folder), when) of the last failed sync
 
     @staticmethod
     def _signature(folder: Path, *, deep: bool = True) -> tuple:
@@ -525,7 +534,8 @@ class Progress:
             self.baselines.pop(project_id, None)
             self.states.pop(project_id, None)
             for cache in (self.disk, self.projected, self.checked, self.results, self.revisions,
-                          self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked):
+                          self.signatures, self.stamps, self.published, self.sync_changes, self.errors, self.blocked,
+                          self.failed):
                 cache.pop(slug, None)
 
     @contextmanager
@@ -589,13 +599,13 @@ class Progress:
     def applying(self) -> bool:
         return getattr(self.local, "busy", False)
 
-    def sync(self, slug: str, *, force: bool = False, logger=None) -> bool:
+    def sync(self, slug: str, *, force: bool = False, logger=None, retry: bool | None = None) -> bool:
         """Read contributions first, then publish only work changed locally since the last synchronization.
 
         A no-op non-forced check stats the manifest and the three folders; a forced check stats every file too, so an
         in-place edit an editor made (which leaves a directory's mtime alone) is never missed by judging, a tool call,
         the routes or the autosave. Nothing is rendered or written unless the folder or a column the render reads
-        changed."""
+        changed. `retry` (forced syncs by default): try again after a failure even when nothing it reads changed."""
         if self.applying or getattr(self.net.store._local, "in_tx", False):
             return False
         with self._project_lock(slug):
@@ -609,6 +619,10 @@ class Progress:
                     state = self._state(pid)
                     dirty = self._dirty(pid)
                     config_key = _config_key(proj, self.net.cfg(proj))
+                    failed = None if (force if retry is None else retry) else self.failed.get(slug)
+                    if (failed and slug in self.errors and time.monotonic() - failed[1] < RETRY_FAILED_SECONDS
+                            and failed[0] == (dirty.token, config_key, self._signature(folder))):
+                        raise _StillFailing(self.errors[slug])
                     changed_db = state is not None and (
                         dirty.token != state.dirty_token or dirty.functions or dirty.headers or dirty.metadata
                         or state.config_key is None or config_key != state.config_key)
@@ -654,16 +668,32 @@ class Progress:
                         self.stamps.pop(slug, None)
                 if not self.blocked.get(slug):
                     self.errors.pop(slug, None)
+                self.failed.pop(slug, None)
                 return result
+            except _StillFailing:
+                raise  # (when it failed stays when it first did: a read every second mustn't put the next try off)
             except (OSError, UnicodeError, json.JSONDecodeError) as e:
                 message = "Could not read or write progress. Finish the git operation and check the folder's permissions."
                 self.errors[slug] = message
+                self._failed(slug)
                 raise NetworkError(message) from e
             except NetworkError as e:
                 self.errors[slug] = str(e)
+                self._failed(slug)
                 raise
             finally:
                 self.local.busy = False
+
+    def _failed(self, slug: str) -> None:
+        """Remember what a failed sync read (after its own writes), so the next one waits for a change."""
+        try:
+            proj = self.net._project(slug)
+            if self.net.is_rom(proj):
+                folder = saves.default_folder(self.net, slug)
+                key = (self._dirty(proj["id"]).token, _config_key(proj, self.net.cfg(proj)), self._signature(folder))
+                self.failed[slug] = (key, time.monotonic())
+        except (NetworkError, OSError):  # (a project removed meanwhile: nothing to wait for)
+            self.failed.pop(slug, None)
 
     def _publish_initial(self, slug: str, proj, folder: Path, disk: dict[str, str], dirty: _Dirty,
                          config_key: str) -> bool:
