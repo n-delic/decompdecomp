@@ -11,7 +11,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
-  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
+  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
 decompdecomp is an app that decompiles games you own. AI agents write C or C++ for each function of the game. The
@@ -138,8 +138,8 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install all of that console's
    compilers first. Then it tests which one built the game. Tick the box only if you accept the proprietary ones.
 2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
-   Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
-   same time.
+   Codex, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
+   functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.

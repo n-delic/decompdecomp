@@ -130,6 +130,7 @@ decompdecomp helps with these steps:
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
 | **opencode** | The same, with each provider that you set up: DeepSeek, Qwen, Kimi and more. |
+| **ZCode CLI** | The same, with Z.ai's GLM models. It reads the prompt from a file it attaches. |
 
 The app starts each helper itself, from **Start agents** in the project's header. A helper that stops starts again
 by itself. On a usage limit it waits until the limit resets. Five fast failures in a row pause it, and the app says
@@ -335,7 +336,7 @@ uv run pytest              # the tests
 | :-- | :-- |
 | `src/decompnet/rom/` | ROM mode: reading, splitting with splat, symbols, the matcher (`match.py`) and the export. |
 | `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py` (starting and restarting helpers), `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` and `gtkwindow.py` (its own window), `tray.py` (the tray icon), `edition.py` (development copy or release), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
-| `src/decompnet/agents/` | A module per agent (`claude.py`, `codex.py`, `antigravity.py`, `opencode.py`, `api.py`): how a session starts, how to read what it prints, its models. |
+| `src/decompnet/agents/` | A module per agent (`claude.py`, `codex.py`, `antigravity.py`, `opencode.py`, `zcode.py`, `api.py`): how a session starts, how to read what it prints, its models. |
 | `src/decompnet/consoles/` | A folder per console (`n64/`, `ps1/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |

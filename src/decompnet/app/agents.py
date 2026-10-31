@@ -168,12 +168,13 @@ AUTH_WAIT = 60  # seconds before the first try again, doubling
 _NO_CREDIT = re.compile(r"insufficient[ _](?:balance|credits?|funds|quota)|exceeded your current quota|"
                         r"credit balance is too low|payment required|out of credits?", re.I)
 # and when it's asked too much at once (HTTP 429): it works again in a while
-THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency limit|\b429\b|overloaded", re.I)
+THROTTLED = re.compile(r"too many requests|rate[ _-]?limit|concurrency[ _-]?limit|\b429\b|overloaded", re.I)
 # and when a subscription's allowance is used up for now (Claude Code: "usage limit reached", "You've hit your
 # session limit", Codex: "You've hit your usage limit", Antigravity: RESOURCE_EXHAUSTED, OpenCode Go: "quota
 # exceeded"): it resets by itself in hours, so a helper waits for it instead of stopping (a night's run lost most of
 # its helpers that way; Claude Code's "session limit" wording once paused them as five fast failures)
-LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate_)limit (?:reached|exceeded)|"
+LIMIT = re.compile(r"(?:usage|session|weekly) limit|(?<!rate )(?<!rate-)(?<!rate_)(?<!concurrency )"
+                    r"(?<!concurrency-)(?<!concurrency_)limit (?:reached|exceeded)|"
                     r"hit your (?:(?!rate\b)[\w-]+ )?limit|quota[ _](?:exceeded|exhausted)|resource[ _]exhausted|"
                     r"out of (?:usage|messages)", re.I)
 # When a limit resets, as agents say it. Claude Code: "usage limit reached|1792140000" (seconds since 1970), or
@@ -1107,12 +1108,21 @@ class Manager:
         exe = _which(k.command)
         if not exe:
             raise RuntimeError(f"{k.name} is not installed")
+        # zcode has no stdin prompt: its session command attaches a file, and this writes the prompt into it. Every
+        # other agent leaves prompt_file at None and keeps getting the prompt on stdin. Written before the command:
+        # a prompt zcode cannot attach fails the session before its settings file exists, and pauses the helper
+        # instead of retrying a prompt only the user can shorten.
+        prompt = self.prompt(s)
+        try:
+            prompt_file = k.prompt_file(workdir, prompt)
+        except ValueError as e:
+            raise Fatal(str(e)) from e
         cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
         cmd = agents.cli_argv(cmd)
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
-        return cmd, env, k.stdin(self.prompt(s))
+        return cmd, env, "" if prompt_file is not None else k.stdin(prompt)
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
@@ -1148,7 +1158,8 @@ class Manager:
 
         def feed_prompt():
             try:
-                proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
+                if prompt:  # zcode's prompt is in its attached file; close an empty stdin so it sees end of input
+                    proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
                 proc.stdin.close()  # end of input: the agent works on this one prompt, then exits
             except OSError:  # it exited before reading (stderr says why)
                 pass

@@ -1,14 +1,16 @@
 """The connector: how decompdecomp talks to a helper agent. Every agent the app can start is a module in this folder
-(agents/claude.py, codex.py, antigravity.py, opencode.py, api.py) that makes an `Agent` below and fills in its parts;
-the list at the end of this file registers them. The rest of the app (the helpers' manager in app/agents.py, the
-routes, the GUI) asks the agent of a helper, `agents.get(kind)`, and never compares agent names. A person or an agent
-adding support for another agent reads its module and this file, nothing else.
+(agents/claude.py, codex.py, antigravity.py, opencode.py, zcode.py, api.py) that makes an `Agent` below and fills in
+its parts; the list at the end of this file registers them. The rest of the app (the helpers' manager in
+app/agents.py, the routes, the GUI) asks the agent of a helper, `agents.get(kind)`, and never compares agent names.
+A person or an agent adding support for another agent reads its module and this file, nothing else.
 
 An agent is one of two sorts:
-- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode). The app runs it
-  headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on 127.0.0.1
-  with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in on stdin
-  (`stdin`); what it prints, one JSON object a line, is read into the helper's feed (`parse`).
+- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI). The app
+  runs it headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on
+  127.0.0.1 with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in
+  on stdin (`stdin`), or in a file the agent is given by path when its CLI has no stdin prompt (`prompt_file`,
+  zcode's `--attach`), never as text on the command line; what it prints, one JSON object a line, is read into the
+  helper's feed (`parse`).
 - An agent built into the app (the API helper): no program, a loop in the app that talks to a model's API itself and
   calls the tools directly (`run`).
 
@@ -189,6 +191,11 @@ class Agent:
         nothing in it is parsed."""
         return prompt
 
+    def prompt_file(self, workdir: Path, prompt: str) -> Path | None:
+        """The file holding the prompt for an agent that reads it by path (zcode's `--attach`), or None: the prompt
+        goes in on stdin, as it does for every other agent. The prompt's text never goes on the command line."""
+        return None
+
     def parse_line(self, line: str, state: dict | None = None) -> list[tuple[str, str]]:
         """(type, text) items for the helper's feed from one line the agent printed: the same for every agent (a line
         that isn't JSON is shown as it is), with `parse` reading each JSON object."""
@@ -299,9 +306,10 @@ def _registry() -> list[Agent]:
     from .claude import CLAUDE
     from .codex import CODEX
     from .opencode import OPENCODE
+    from .zcode import ZCODE
 
     # the order the Agents page lists them in (the launcher puts the recommended one first)
-    return [CLAUDE, CODEX, ANTIGRAVITY, OPENCODE, API]
+    return [CLAUDE, CODEX, ANTIGRAVITY, OPENCODE, ZCODE, API]
 
 
 AGENTS: list[Agent] = _registry()
