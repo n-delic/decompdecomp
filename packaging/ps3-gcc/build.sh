@@ -1,11 +1,12 @@
 #!/bin/sh
-# Usage: packaging/ps3-gcc/build.sh 1.9.0|2.7.0 [outdir]  -> outdir/ppu-lv2-gcc-<gen>.tar.xz (default: ./dist)
+# Usage: packaging/ps3-gcc/build.sh 1.9.0|2.5.0|2.7.0 [outdir]  -> outdir/ppu-lv2-gcc-<gen>.tar.xz (default: ./dist)
 # Needs podman (or docker: DOCKER=docker). Downloads Sony's published GPL source from the sagemono/ps3gcc archive
 # at a pinned commit, checks its sha256, then builds in the container (Containerfile).
 set -eu
-gen=${1:?generation: 1.9.0 or 2.7.0}; out=${2:-dist}; here=$(cd "$(dirname "$0")" && pwd)
+gen=${1:?generation: 1.9.0, 2.5.0 or 2.7.0}; out=${2:-dist}; here=$(cd "$(dirname "$0")" && pwd)
 case $gen in
   1.9.0) commit=8bc057a8fb9e554bafffe2fffe2b4aebb2a42128 sha=9a83d9624e36d833146e8d01a309ddfd48f85145f66bc7fae635052b56f8b952 ;;
+  2.5.0) commit=7dbd09a3f40e1e3db0b435cbdb0c6750e923f834 sha=505af001ca4d218c7bd1180848887a9b497a7aba1056eda41be09ad50ed238f8 ;;
   2.7.0) commit=dc6c3b99344249e292e03354f8d8d20d225b0f50 sha=04adc105babd4a7919423f7cb52ac1409b3ab2671e00484a026e56e6afcfa322 ;;
   *) echo "unknown generation $gen" >&2; exit 1 ;;
 esac

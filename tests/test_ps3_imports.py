@@ -180,3 +180,18 @@ def test_the_title_comes_from_the_discs_param_sfo(tmp_path):
     picked = ps3.PS3.read_game(usrdir / "EBOOT.ELF")
     assert (picked.info["title"], picked.info["game_code"], picked.info["region"]) == ("Demo Quest", "BCUS00000",
                                                                                     "North America")
+
+
+def test_a_game_built_with_a_minimal_toc_builds_with_it_and_search_flags_tries_it():
+    """A retail game's globals were reached through a table of each file's own in r30 (`std r30,-16(r1); lwz r30,N(r2)`,
+    GCC's -mminimal-toc): a getter matched only with the flag. The import reads it off the code."""
+    from decompnet import consoles
+    from decompnet.app.engine.compilers import CompilerMixin
+
+    getter = words(0xFBC1FFF0, 0x83C28000, 0x813E8000, 0xEBC1FFF0, 0x80690000, 0x7C6307B4, BLR)
+    elf = ps3elf.Ps3Elf(0, [ps3elf.Segment(1, 5, 0, 0x10000, len(getter) * 8, len(getter) * 8)], {}, 0x66)
+    assert ps3elf.minimal_toc(getter * 8, elf) and not ps3elf.minimal_toc(getter * 7 + bytes(len(getter)), elf)
+    cfg = {"platform": "ps3", "rom": {"minimal_toc": True}}
+    assert "-mminimal-toc" in consoles.default_flags(cfg, "ps3dev-gcc")
+    assert "-mminimal-toc" not in consoles.default_flags({"platform": "ps3", "rom": {}}, "ps3dev-gcc")
+    assert ["-O2", "-mminimal-toc"] in CompilerMixin.flag_variants(None, "ps3dev-gcc", ["-O2"], ps3.PS3.flag_extras)

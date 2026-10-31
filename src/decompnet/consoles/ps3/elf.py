@@ -183,6 +183,24 @@ def sdk_version(data: bytes, elf: Ps3Elf) -> str:
     return f"{v >> 20 & 0xF}.{v >> 16 & 0xF}.{v >> 12 & 0xF}" if v else ""
 
 
+MINIMAL_TOC_SAVE, MINIMAL_TOC_LOAD = 0xFBC10000, 0x83C20000  # std r30,N(r1) / lwz r30,N(r2): -mminimal-toc's
+MINIMAL_TOC_FUNCTIONS = 8  # this many functions that set it up: the game was built with -mminimal-toc
+
+
+def minimal_toc(data: bytes, elf: Ps3Elf) -> bool:
+    """Whether the program was built with GCC's -mminimal-toc: its functions keep each file's own table of addresses in
+    r30, saving r30 (`std r30,N(r1)`) and loading it from the TOC (`lwz r30,N(r2)`) before reaching a global."""
+    code = elf.code
+    words = struct.unpack_from(f">{code.filesz // 4}I", data, code.offset)
+    seen = 0
+    for k in range(len(words) - 1):
+        if words[k] & 0xFFFF0000 == MINIMAL_TOC_SAVE and words[k + 1] & 0xFFFF0000 == MINIMAL_TOC_LOAD:
+            seen += 1
+            if seen >= MINIMAL_TOC_FUNCTIONS:
+                return True
+    return False
+
+
 def guess_compiler(comment: bytes) -> str:
     return next((guess for pattern, guess in _COMPILERS if re.search(pattern, comment)), "")
 
@@ -210,7 +228,7 @@ def read_elf(data: bytes, name: str = "") -> tuple[bytes, dict]:
         "platform": "ps3", "small_data": False,
         # the compiler's stamp ("SDK270"), else the SDK the process parameters record, written as the stamp is
         "sdk": ps3sdk.stamp(comment) or (f"SDK{sdk.replace('.', '')}" if sdk else ""),
-        "sdk_version": sdk,
+        "sdk_version": sdk, "minimal_toc": minimal_toc(data, elf),
         "osabi": elf.osabi, "abi": descriptor.abi if descriptor else "ilp32",
         "toc": descriptor.toc if descriptor else 0, "descriptors": len(descriptor.functions) if descriptor else 0,
         "symbols": ".symtab" in elf.sections,

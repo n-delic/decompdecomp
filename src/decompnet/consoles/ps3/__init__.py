@@ -102,6 +102,14 @@ class PlayStation3(Console):
         flags = super().default_flags(toolchain, gp)
         return flags + [f for f in ("-falign-functions=4",) if f not in flags]
 
+    # GCC's -mminimal-toc: a file's globals reached through a table of its own, its address kept in r30 (a retail game
+    # built with it: `std r30,-16(r1); lwz r30,N(r2); lwz r9,-32768(r30)`); the import reads it off the code
+    flag_extras = ("-mminimal-toc",)
+
+    def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
+        """-mminimal-toc for a game the import saw built with it (elf.minimal_toc), on a GCC: SN's SNC has no such flag."""
+        return ["-mminimal-toc"] if (cfg.get("rom") or {}).get("minimal_toc") and "snc" not in toolchain else []
+
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         from . import split
 

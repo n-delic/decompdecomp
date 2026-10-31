@@ -174,6 +174,14 @@ class Console:
         $gp-relative: small_gp)."""
         return list(toolchains.get(toolchain).flags)
 
+    # flags search_flags tries on its games beyond what its compiler family's search does ("-mminimal-toc")
+    flag_extras: tuple[str, ...] = ()
+
+    def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
+        """More flags a game of it was built with, as its import read them from the program (cfg["rom"]): a PS3 game
+        whose code keeps a minimal TOC. None by default."""
+        return []
+
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
         Returns the image splat reads."""
@@ -574,7 +582,9 @@ def of(cfg: dict) -> Console:
 
 def default_flags(cfg: dict, toolchain: str) -> list[str]:
     """A compiler's flags for a project's game: its console's, with small data as the game keeps it (small_gp)."""
-    return of(cfg).default_flags(toolchain, small_gp(cfg))
+    console = of(cfg)
+    flags = console.default_flags(toolchain, small_gp(cfg))
+    return flags + [f for f in console.game_flags(cfg, toolchain) if f not in flags]
 
 
 def small_gp(cfg: dict) -> int:
