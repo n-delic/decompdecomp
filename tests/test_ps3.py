@@ -334,3 +334,36 @@ def test_without_section_headers_the_demo_splits_the_same_way():
     # what only the section headers know: functions nothing calls and no prologue shows (leaf libc code); the
     # descriptor lists just the entry, so calls and prologues must find most of the rest
     assert len(found & have) >= 0.8 * len(have), sorted(have - found)
+
+
+# ---------------------------------------------------------------------------------- the program's own symbols
+
+def test_the_programs_own_names_name_what_the_splitter_finds():
+    from decompnet.consoles.ps3 import symbols
+
+    names, functions = symbols.from_lines(["f_leaf = 0x00011000; // type:func size:0x8", "g = 0x00013200; // size:0x4"])
+    assert names == {F_LEAF: "f_leaf", GLOBAL: "g"} and functions == {F_LEAF}
+    found, data, _ = ps3split.split(program(), log=lambda *_: None, names=names, named=functions)
+    assert [f.name for f in found][:1] == ["f_leaf"] and [d.name for d in data] == ["g"]
+    call = next(f for f in found if f.vram == F_CALL)
+    assert "bl f_leaf" in call.asm and ps3split.code_from_asm(call.asm) == (F_CALL, call.code)
+
+
+def test_a_demo_that_kept_its_symbols_imports_with_their_names(tmp_path):
+    """A function's symbol points at its descriptor in .opd, not at its code (symbols.py): the import names the
+    functions and data by them."""
+    from decompnet.app.engine import RomNetwork
+    from decompnet.consoles.ps3 import symbols
+
+    key = ROOT / "projects" / "demo-ps3" / "build" / "demo.json"
+    elf = key.parent / "demoq_ps3.elf"
+    if not elf.exists():
+        pytest.skip("build projects/demo-ps3 first (needs the ps3dev toolchain)")
+    expected = json.loads(key.read_text())["symbols"]
+    named = {n.name: n.address for n in symbols.read(elf.read_bytes())}
+    assert named["abs_s32"] == expected["abs_s32"] and named["g_toc_probe"] == expected["g_toc_probe"]
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    slug = net.import_rom(elf, confirmed=True, log=lambda *_: None)
+    row = net.store.one("SELECT name FROM functions WHERE project_id=? AND vram=?", net.project_row(slug)["id"],
+                        expected["abs_s32"])
+    assert row["name"] == "abs_s32"

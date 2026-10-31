@@ -6,6 +6,9 @@ ROM mode, from the user's own decrypted `EBOOT.ELF`.
   and the refusal of a retail SELF (decompdecomp never decrypts a game: the user does that with their own tools).
 - split.py: the splitter (no tool reads a linked PowerPC64 program): descriptor functions, `bl` targets and
   prologues; assembly with calls and data named by address; the functions' references the judge compares with.
+- imports.py + nids.py (nids.json, from PSL1GHT): the import tables a program carries, its import stubs and kernel calls
+  named (`<library>_<function>`, `sys_...`) and the stubs set aside, at import and Check again (`name_system_calls`).
+- symbols.py: the program's own symbol table, when it kept one (a function's symbol points at its descriptor).
 - guides/ps3.md: what agents read about matching PS3 code.
 - The judge is arch/ppc64.py's (`PpcTarget`, `link`): descriptors, the TOC and the linker's choices are judged by what
   the code refers to, then the game's bytes are compared. See its docstring for what a retail program must still
@@ -20,8 +23,9 @@ picks the copy whose build equals it (default_compiler), else the free compiler 
 to set up. The free pack leaves out libgcc, the C runtime and Sony's intrinsics headers (si2vmx.h, vmx2spu.h,
 spu2vmx.h, spu_intrinsics.h, spu_mfcio.h): the SDK copy provides them.
 
-Not yet (ROADMAP.md): a real SDK's layout confirmed on one, imports named by NID and kernel calls by number,
-SPU programs and PRX modules, a rebuildable export, and C++ classes, struct layouts and the compiler map.
+Not yet (ROADMAP.md): a real SDK's layout confirmed on one, the retail import stubs' exact shape (imports.py reads the
+PSL1GHT shape: a stub that reaches its slot through the TOC isn't recognised), SPU programs and PRX modules, a rebuildable export, and C++ classes, struct layouts and the
+compiler map.
 """
 
 from __future__ import annotations
@@ -97,7 +101,16 @@ class PlayStation3(Console):
     def split_game(self, workdir: Path, picked: Picked, *, symbols: list[str] | None = None, log=print):
         from . import split
 
-        return split.split_result(picked.data, log=log)
+        return split.split_result(picked.data, log=log, symbols=symbols)
+
+    def debug_info(self, program: bytes, known: set[str]):
+        """The game's own names, when it kept its symbol table (symbols.py): its functions and data are named by them,
+        as the PS2's are. Types and prototypes (DWARF) aren't read yet."""
+        from ..ps2 import debuginfo
+        from . import symbols
+
+        named = symbols.read(program)
+        return debuginfo.DebugInfo(named=named) if named else None
 
     def function_insns(self, fn) -> int:
         return fn.n_insns if hasattr(fn, "n_insns") else fn.get("n_insns") or 1
@@ -158,9 +171,46 @@ class PlayStation3(Console):
 
         return ppc64.link(obj, name, target, symbols, read)
 
+    def after_import(self, net, slug: str, *, chosen: bool, log=print) -> None:
+        name_system_calls(net, slug, log=log)
+
+    def on_start(self, net, slug: str, log=print) -> None:
+        name_system_calls(net, slug, log=log)  # projects imported before their imports were named
+
     def export_project(self, net, slug: str, out: Path, log=print) -> dict:
         raise RomError("a PlayStation 3 project can't be exported as a rebuildable tree yet (ROADMAP.md): the matched "
                        "C is saved with the project")
+
+
+def name_system_calls(net, slug: str, log=print) -> int:
+    """The program's import stubs and kernel calls get their names (imports.py), once per project: at import, and for
+    projects imported before this existed, when the app starts. An import stub is set aside too: the loader links it
+    to a system function, so no C is behind it. Returns how many were named."""
+    from . import imports
+
+    proj = net.project_row(slug)
+    cfg = net.cfg(proj)
+    program = Path(proj["root"]) / cfg.get("rom", {}).get("program", "")
+    if cfg.get("kind") != "rom" or cfg.get("system_calls_named") or net._link(slug) or not program.is_file():
+        return 0  # (a room's guest: the host names them; the game's files gone: they may come back)
+    rows = net.store.all("SELECT id, name, target, meta, status FROM functions WHERE project_id=? ORDER BY vram", proj["id"])
+    pairs, stubs = imports.names([(r["name"], r["target"]) for r in rows], imports.read_imports(program.read_bytes()),
+                                 set(net.symbols(proj["id"]).by_name))
+    why = "an imported system function's stub: the loader links it to the library function its NID names, so no C is behind it"
+    with net.store.tx() as db:
+        db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'",
+                       [(json.dumps({**json.loads(r["meta"] or "{}"), "asm_code": why}), r["id"])
+                        for r in rows if r["name"] in stubs])
+    named = False
+    if pairs:
+        agent, _ = net.local_agent("autopilot")
+        said = net.rename_symbols(agent, slug, pairs, f"name the {len(pairs)} import stubs and kernel calls")
+        named = said.startswith("✅")
+        log(f"named {len(pairs)} imported functions and kernel calls (sys_process_getpid, ...)" if named
+            else f"the imports keep their names: {said}")
+    # once either way: a check that fails (it compiles every matched function again) would fail at every start
+    net._update_cfg(slug, lambda c: c.__setitem__("system_calls_named", True))
+    return len(pairs) if named else 0
 
 
 PS3 = PlayStation3()

@@ -183,6 +183,7 @@ class ImportMixin:
             cfg.pop("export", None)
             cfg.pop("autopilot", None)
             cfg.pop("kernel_calls_named", None)
+            cfg.pop("system_calls_named", None)
         header = BASE_HEADER.format(title=info["title"]) + (GP_NOTE if consoles.small_gp(cfg) else "")
         header += self._debug_types(debug, cfg, workdir, log)
         symbols = SymbolTable()

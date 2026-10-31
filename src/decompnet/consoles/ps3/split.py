@@ -56,9 +56,12 @@ class Ps3Function:
 
 # ------------------------------------------------------------------------------------------------------ assembly
 
-def render_asm(name: str, vram: int, code: bytes, refs: list[tuple[int, int, int, int]]) -> str:
+def render_asm(name: str, vram: int, code: bytes, refs: list[tuple[int, int, int, int]],
+               names: dict[int, str] | None = None) -> str:
     """capstone's listing of a function, one `/* address word */ instruction` per line (the word lets the function be
-    rebuilt from this text), calls and data named by address, branches inside it by local labels."""
+    rebuilt from this text), calls and data named by address (or by the program's own symbols, `names`), branches
+    inside it by local labels."""
+    names = names or {}
     by_insn = {r[0] & ~3: r for r in refs}
     targets: set[int] = set()
     insns = list(_CS.disasm(code, vram))
@@ -75,13 +78,13 @@ def render_asm(name: str, vram: int, code: bytes, refs: list[tuple[int, int, int
         text = f"{i.mnemonic} {i.op_str}".strip()
         ref = by_insn.get(i.address - vram)
         if ref is not None and ref[1] == R_PPC64_REL24:
-            text = f"{i.mnemonic} func_{ref[2] & 0xFFFFFFFF:08X}"
+            text = f"{i.mnemonic} {names.get(ref[2] & 0xFFFFFFFF) or f'func_{ref[2] & 0xFFFFFFFF:08X}'}"
         elif i.mnemonic.startswith("b") and i.op_str:
             m = re.fullmatch(r"((?:.*, )?)0x([0-9a-f]+)", i.op_str)
             if m and int(m.group(2), 16) in targets:
                 text = f"{i.mnemonic} {m.group(1)}.L{int(m.group(2), 16):08X}"
         elif ref is not None:
-            text += f"  # D_{ref[2] & 0xFFFFFFFF:08X}"
+            text += f"  # {names.get(ref[2] & 0xFFFFFFFF) or f'D_{ref[2] & 0xFFFFFFFF:08X}'}"
         word = int.from_bytes(i.bytes, "big")
         lines.append(f"/* {i.address:08X} {word:08X} */\t{text}")
     return "\n".join(lines) + "\n"
@@ -156,12 +159,13 @@ def code_ranges(program: bytes, elf: ps3elf.Ps3Elf, descriptor=None) -> list[tup
     return [(code.vaddr + skip, code.offset + skip, code.filesz - skip)]
 
 
-def find_starts(program: bytes, elf: ps3elf.Ps3Elf, descriptor, log=print) -> list[int]:
-    """Every function start found, sorted: the descriptor's, the program's own `.opd`, the targets of `bl`, and the
-    prologues that follow a return."""
+def find_starts(program: bytes, elf: ps3elf.Ps3Elf, descriptor, log=print, named: set[int] = frozenset()) -> list[int]:
+    """Every function start found, sorted: the descriptor's, the program's own `.opd`, the functions its symbols name
+    (`named`), the targets of `bl`, and the prologues that follow a return."""
     ranges = code_ranges(program, elf, descriptor)
     lo, hi = min(r[0] for r in ranges), max(r[0] + r[2] for r in ranges)
     found: set[int] = set(descriptor.functions) if descriptor else set()
+    found |= {a for a in named if a % 4 == 0 and any(r[0] <= a < r[0] + r[2] for r in ranges)}
     from_descriptor = len(found)
 
     def inside(addr: int) -> bool:
@@ -233,7 +237,11 @@ def _last_end(program: bytes, offset: int, length: int) -> int:
 
 # ----------------------------------------------------------------------------------------------------- the split
 
-def split(program: bytes, log=print) -> tuple[list[Ps3Function], list[DataSymbol], ps3elf.Ps3Elf]:
+def split(program: bytes, log=print, names: dict[int, str] | None = None,
+          named: set[int] = frozenset()) -> tuple[list[Ps3Function], list[DataSymbol], ps3elf.Ps3Elf]:
+    """The program's functions and data. `names`: the program's own symbols (address -> name), `named` the addresses
+    of its functions among them (symbols.py): they name what the splitter finds, and a named function starts one."""
+    names = names or {}
     elf = ps3elf.parse(program)
     descriptor = ps3elf.module_descriptor(program, elf)
     if descriptor is None:
@@ -241,7 +249,7 @@ def split(program: bytes, log=print) -> tuple[list[Ps3Function], list[DataSymbol
     ptr = 4 if descriptor is None or descriptor.abi == "ilp32" else 8
     toc = descriptor.toc if descriptor else 0
     ranges = code_ranges(program, elf, descriptor)
-    starts = find_starts(program, elf, descriptor, log)
+    starts = find_starts(program, elf, descriptor, log, named)
     if not starts:
         raise RomError("found no functions in this PlayStation 3 program: is it the game's main executable (EBOOT.ELF)?")
 
@@ -275,14 +283,15 @@ def split(program: bytes, log=print) -> tuple[list[Ps3Function], list[DataSymbol
             continue
         unit = unit_of.get(start, unit)
         refs = scan_refs(code, start, tocs.get(start, toc), ptr, read, inside)
-        name = f"func_{start:08X}"
-        functions.append(Ps3Function(name, start, offset, code, render_asm(name, start, code, refs), len(code) // 4,
+        name = names.get(start) or f"func_{start:08X}"
+        functions.append(Ps3Function(name, start, offset, code, render_asm(name, start, code, refs, names), len(code) // 4,
                                      refs, ptr, tocs.get(start, toc), unit))
     log(f"found {len(functions)} functions")
-    return functions, data_symbols(program, elf, functions, inside_code), elf
+    return functions, data_symbols(program, elf, functions, inside_code, names), elf
 
 
-def data_symbols(program: bytes, elf: ps3elf.Ps3Elf, functions: list[Ps3Function], inside_code) -> list[DataSymbol]:
+def data_symbols(program: bytes, elf: ps3elf.Ps3Elf, functions: list[Ps3Function], inside_code,
+                 names: dict[int, str] | None = None) -> list[DataSymbol]:
     """A symbol for every address the functions' instructions refer to outside the code (a datum, a string, a TOC
     slot's target), sized to the next one: the program has no data sizes, so these are labels more than objects."""
     addrs: set[int] = set()
@@ -306,13 +315,16 @@ def data_symbols(program: bytes, elf: ps3elf.Ps3Elf, functions: list[Ps3Function
             nul = head.find(b"\0")
             if nul > 1 and all(32 <= c < 127 or c in (9, 10, 13) for c in head[:nul]):
                 kind, size = "string", nul + 1
-        out.append(DataSymbol(f"{'STR' if kind == 'string' else 'B' if kind == 'bss' else 'D'}_{addr:08X}", addr, rom,
-                              size, kind))
+        label = (names or {}).get(addr) or f"{'STR' if kind == 'string' else 'B' if kind == 'bss' else 'D'}_{addr:08X}"
+        out.append(DataSymbol(label, addr, rom, size, kind))
     return out
 
 
-def split_result(program: bytes, log=print) -> SplitResult:
-    functions, data, elf = split(program, log=log)
+def split_result(program: bytes, log=print, symbols: list[str] | None = None) -> SplitResult:
+    from . import symbols as own
+
+    names, named = own.from_lines(symbols)
+    functions, data, elf = split(program, log=log, names=names, named=named)
     segments = [Segment(f"seg{k}", s.offset, s.offset + s.filesz, s.vaddr) for k, s in enumerate(elf.loads) if s.filesz]
     return SplitResult(functions, data, segments, {}, None, "", "", "ps3", 0, "")
 
