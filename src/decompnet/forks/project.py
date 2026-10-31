@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, console_python
+from decompnet.hostenv import NO_WINDOW, console_python, stop_process_tree
 
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
@@ -95,6 +95,7 @@ _CHECK = re.compile(r"^build (\S+[/\\]ok): check\b")  # dtk-template writes buil
 _NINJA_PROGRAM = re.compile(r"^(?:([A-Za-z_][\w.-]*)|\s+command)\s*=\s*(.*)$")
 # A target the build couldn't make: ninja's "FAILED: out.o", make's "make: *** [Makefile:12: out.o] Error 1"
 _FAILED = re.compile(r"^FAILED: (.+)$|^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]]+)\] Error")
+BUILD_OUTPUT_GRACE = 5  # seconds to wait for the last of a build's output once it has ended or been stopped
 # CodeWarrior's linker warns about every FORCEACTIVE symbol and unknown section: harmless, and thousands of lines
 _NOISE = re.compile(r"^#{1,3}\s*(mwldeppc\.exe Linker Warning:|FORCEACTIVE symbol|(doesn't )?exist\.\s+Ignored\.|"
                     r"Section '\.note\.split' is unknown)")
@@ -379,21 +380,38 @@ class ForkProject:
         except FileNotFoundError:
             return False, f"{cmd[0]} isn't installed"
         out, seen, quiet = [], collections.Counter(), 0
-        for line in proc.stdout:
-            line = line.rstrip()
-            out.append(line)
-            if failed is not None and (m := _FAILED.match(line)):
-                failed.extend(t for t in (m.group(1) or m.group(2)).split() if t not in failed and not t.startswith("[code="))
-            seen[line] += 1
-            if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
-                quiet += 1
-            elif len(out) <= 400 or len(out) % 50 == 0:
-                log(line)
+
+        def read() -> None:
+            nonlocal quiet
+            for line in proc.stdout:
+                line = line.rstrip()
+                out.append(line)
+                if failed is not None and (m := _FAILED.match(line)):
+                    failed.extend(t for t in (m.group(1) or m.group(2)).split() if t not in failed and not t.startswith("[code="))
+                seen[line] += 1
+                if seen[line] > 2 or _NOISE.match(line):  # the same line again, or CodeWarrior's linker chatter
+                    quiet += 1
+                elif len(out) <= 400 or len(out) % 50 == 0:
+                    log(line)
+
+        # The output is read beside the build, so the timeout counts while the build is still running. When it was read
+        # to the end first, a compiler that never finished on an agent's code (CodeWarrior looping on one #pragma) kept
+        # ninja and the pipe open: the timeout was never reached, the build kept the project's build lock, and every
+        # compile_and_diff after it waited behind it for hours, with the agent's change never undone.
+        reader = threading.Thread(target=read, daemon=True, name="build-output")
+        reader.start()
         try:
             code = proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            return False, "timed out"
+            stop_process_tree(proc)  # ninja and the compiler it started: killing ninja alone leaves the compiler
+            reader.join(BUILD_OUTPUT_GRACE)
+            said = [ln for ln in list(out) if not _NOISE.match(ln)][-40:]
+            return False, "\n".join([*said, f"stopped: the build didn't finish in {timeout:.0f} seconds, so it was "
+                                            "stopped with everything it started. A compiler that never finishes on "
+                                            "this code is the usual cause: change the code that was just added."])
+        # a program the build left running (a compiler's helper server) can keep the pipe open after the build ends
+        reader.join(BUILD_OUTPUT_GRACE)
+        out = list(out)
         if quiet:
             log(f"({quiet} repeated lines and linker warnings not shown)")
         if killed_for_memory(code):
