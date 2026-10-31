@@ -125,6 +125,22 @@ def test_the_theme_button_goes_round_system_light_and_dark(gui):
     assert gui["checks"]["systemThemes"] == ["", "light", "dark", ""]
 
 
+def test_model_advice_is_dismissed_by_model_for_a_day_and_stays_hidden_as_its_counts_move(gui):
+    """#131: the advice box came back on every poll, with every model's paragraph, and pushed the helpers off the
+    screen. Its close button remembers the models it dismissed for that project: their advice stays away while its
+    live counts change, another model's advice still shows, another project has its own dismissals, and after a day
+    the advice may show again."""
+    advice = gui["checks"]["advice"]
+    assert advice["shown"]["hidden"] is False and "100 compiles" in advice["shown"]["text"]
+    assert advice["dismissed"]["hidden"] is True
+    assert list(advice["dismissed"]["stored"]) == ["model-a"]
+    assert isinstance(advice["dismissed"]["stored"]["model-a"], (int, float))
+    assert advice["sameModel"] == {"hidden": True, "text": ""}
+    assert advice["otherProject"]["hidden"] is False and "900 compiles" in advice["otherProject"]["text"]
+    assert advice["otherModel"]["hidden"] is False and "stronger model" in advice["otherModel"]["text"]
+    assert advice["expired"]["hidden"] is False and "900 compiles" in advice["expired"]["text"]
+
+
 def test_an_unknown_compiler_says_the_project_was_made_with_another_tool(gui):
     """#118: a project from another tool names a compiler decompdecomp doesn't have. The banner called it a compiler
     with no build for this computer; it says what it is and where to pick one decompdecomp has."""

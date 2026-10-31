@@ -36,15 +36,22 @@ function fetch(url) {
 }
 
 const toasts = [], errors = [];
+const savedLocal = new Map();  // localStorage: the GUI keeps its own choices there (base.js, pages.js, agents.js)
 process.on("unhandledRejection", (e) => errors.push(String(e && e.stack || e)));
 const ctx = {
   console, fetch, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, Uint8Array, URLSearchParams,
   setTimeout: () => 0, clearTimeout: () => {}, setInterval: () => 0, clearInterval: () => {},
-  requestAnimationFrame: () => 0, performance: { now: () => 0 }, localStorage: stub(), navigator: stub(), URLSearchParams,
+  requestAnimationFrame: () => 0, performance: { now: () => 0 }, navigator: stub(), URLSearchParams,
+  localStorage: {
+    getItem: (key) => (savedLocal.has(String(key)) ? savedLocal.get(String(key)) : null),
+    setItem: (key, value) => savedLocal.set(String(key), String(value)),
+    removeItem: (key) => savedLocal.delete(String(key)),
+  },
   matchMedia: () => stub(), getComputedStyle: () => stub(), location: { hash: "", href: "" }, confirm: () => false,
   addEventListener: () => {}, scrollTo: () => {}, devicePixelRatio: 1, document: stub(),
 };
 ctx.window = ctx;
+ctx.costs = [];  // /api/modelcosts rows: the model advice check below sets them
 const now = Date.now() / 1000;
 const overview = (slug) => ({
   slug, title: slug, kind: "rom", platform: "ps2", platform_name: "PlayStation 2", ready: true, rom: { game_code: "X" },
@@ -61,6 +68,7 @@ answers["/api/agents/detected"] = () => [];
 answers["/api/mapcolumns"] = () => ({ keys: ["vram", "cc", "ccx"], rows: [] });
 answers["/api/knowledge"] = () => ({ auto: false, items: [] });
 answers["/api/stats"] = () => ({ agents: [], matches_per_hour: new Array(24).fill(0), compiles_last_hour: 0 });
+answers["/api/modelcosts?slug="] = () => ctx.costs;
 answers["/api/project?slug="] = (url) => overview(url.split("=")[1]);
 answers["/api/map?slug="] = () => ({ sig: "s", keys: ["name", "vram"], rows: [] });
 answers["/api/live?slug=a"] = () => live("a", []);
@@ -283,5 +291,43 @@ const settle = async () => { for (let i = 0; i < SETTLE_TICKS; i++) await tick()
       return { ownOnly, outside, nameless, flipped, again, rows };
     })(),
   })`, ctx);
+  // #131: model advice shows, can be dismissed by model, stays hidden when its counts move, returns for another
+  // model or after a day, and is remembered per project
+  const advice = await vm.runInContext(`(async () => {
+    const was = { slug: S.slug, costsAt: S.costsAt, costsSlug: S.costsSlug, modelAdvice: S.modelAdvice };
+    const box = { hidden: null };
+    const text = { innerHTML: "", _html: null };
+    const close = { onclick: null };
+    const original = document.getElementById;
+    const realNow = Date.now;
+    let now = 1_700_000_000_000;
+    Date.now = () => now;
+    document.getElementById = (id) => id === "modelAdvice" ? box : id === "modelAdviceText" ? text : id === "modelAdviceClose" ? close : original(id);
+    close.onclick = dismissModelAdvice;
+    try {
+      const render = async (slug, model, sentence) => {
+        S.slug = slug;
+        costs = [{ kind: "api", model, matches: 1, usd: 1, tokens: 10, compiles: 100, advice: sentence, advice_model: model }];
+        S.costsAt = 0; S.costsSlug = "";
+        await renderCosts(true);
+        return { hidden: box.hidden, text: text.innerHTML };
+      };
+      const shown = await render("advice-a", "model-a", "model-a: 100 compiles, give it fewer helpers");
+      close.onclick();
+      const dismissed = { hidden: box.hidden, stored: dismissedModelAdvice("advice-a") };
+      const sameModel = await render("advice-a", "model-a", "model-a: 900 compiles, give it fewer helpers");
+      const otherProject = await render("advice-b", "model-a", "model-a: 900 compiles, give it fewer helpers");
+      const otherModel = await render("advice-a", "model-b", "model-b: a stronger model could get further");
+      now += MODEL_ADVICE_MS + 1;
+      const expired = await render("advice-a", "model-a", "model-a: 900 compiles, give it fewer helpers");
+      return { shown, dismissed, sameModel, otherProject, otherModel, expired };
+    } finally {
+      Date.now = realNow;
+      document.getElementById = original;
+      costs = [];
+      Object.assign(S, was);
+    }
+  })()`, ctx);
+  checks.advice = advice;
   process.stdout.write(JSON.stringify({ toasts, notes, unread, errors, checks }));
 })().catch((e) => { console.error(e); process.exit(1); });

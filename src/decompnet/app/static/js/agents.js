@@ -57,6 +57,36 @@ function helperState(s, claim) {
 
 /* What each model cost on this game (helper_sessions), now and then: which models to run more of. */
 const COSTS_EVERY_MS = 30000;
+const MODEL_ADVICE_KEY = "decomp-wtf-model-advice-";  // a project's dismissed models, by slug
+const MODEL_ADVICE_MS = 24 * 60 * 60 * 1000;  // the advice covers the last day: a dismissal lasts as long
+const MODEL_ADVICE_KEPT = 50;  // at most this many models remembered for a project
+function dismissedModelAdvice(slug = S.slug, now = Date.now()) {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MODEL_ADVICE_KEY + slug) || "{}");
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    const fresh = {};
+    for (const [model, at] of Object.entries(saved)) {
+      if (typeof at === "number" && Number.isFinite(at) && now - at < MODEL_ADVICE_MS) fresh[model] = at;
+    }
+    return fresh;
+  } catch { return {}; }
+}
+function rememberDismissedModelAdvice(advice, slug = S.slug, now = Date.now()) {
+  try {
+    const dismissed = dismissedModelAdvice(slug, now);
+    for (const { model } of advice) if (model) dismissed[model] = now;
+    const kept = Object.entries(dismissed).sort(([, a], [, b]) => b - a).slice(0, MODEL_ADVICE_KEPT);
+    localStorage.setItem(MODEL_ADVICE_KEY + slug, JSON.stringify(Object.fromEntries(kept)));
+  } catch { /* storage off: it stays dismissed for this opening only */ }
+}
+function dismissModelAdvice() {
+  if (!S.modelAdvice || !S.modelAdvice.length) return;
+  rememberDismissedModelAdvice(S.modelAdvice);
+  S.modelAdvice = [];
+  $("modelAdvice").hidden = true;
+  setHtml($("modelAdviceText"), "");
+}
+$("modelAdviceClose").onclick = dismissModelAdvice;
 async function renderCosts(force = false) {
   if (!force && S.costsAt && Date.now() - S.costsAt < COSTS_EVERY_MS && S.costsSlug === S.slug) return;
   S.costsAt = Date.now(); S.costsSlug = S.slug;
@@ -67,10 +97,15 @@ async function renderCosts(force = false) {
   const per = (r) => r.matches ? (r.usd ? `${money(r.usd / r.matches)} a match` : `${Math.round(r.tokens / r.matches / 1000)}k tokens a match`) : "no match yet";
   setHtml(box, `<ul class="mini-list">${rows.map((r) => `<li><b>${esc(r.model || r.kind)}</b> <span class="muted small">${esc(r.kind)}</span>
       <span class="small">${r.matches.toLocaleString()} ${r.matches === 1 ? "match" : "matches"} · ${per(r)}${r.usd ? ` · ${money(r.usd)} in all` : ""}</span></li>`).join("")}</ul>`);
-  // a model spinning here lately (agents.py spin_advice): advice to weigh, above the helpers it's about
-  const advice = rows.filter((r) => r.advice).map((r) => r.advice);
-  $("modelAdvice").hidden = !advice.length;
-  setHtml($("modelAdvice"), advice.map((a) => `<p>${esc(a)}</p>`).join(""));
+  // a model spinning here lately (agents.py spin_advice): advice to weigh, above the helpers it's about. #131: its
+  // sentence carries counts that change as helpers work, so dismiss it by the model it is about; another model's
+  // advice still shows, and after a day this model's may show again if it still applies.
+  const advice = rows.filter((r) => r.advice && r.advice_model)
+    .map((r) => ({ model: r.advice_model, text: r.advice }));
+  const dismissed = dismissedModelAdvice();
+  S.modelAdvice = advice.filter((a) => !(a.model in dismissed));
+  $("modelAdvice").hidden = !S.modelAdvice.length;
+  setHtml($("modelAdviceText"), S.modelAdvice.map((a) => `<p>${esc(a.text)}</p>`).join(""));
 }
 
 /* #99: helpers go between waiting and working all the time (compiling), and the rows swapped under the user's eye:

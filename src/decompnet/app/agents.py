@@ -717,8 +717,10 @@ class Manager:
     def costs(self, slug: str) -> list[dict]:
         """What each model's helpers spent on a project and what they matched (helper_sessions): which models to run
         more of. Cheapest per match first; models with no match last. A model spinning in the last SPIN_WINDOW gets
-        `advice` (spin_advice), from its decompiling sessions only: polishing compiles matched code and matches nothing
-        new, so a model run only to polish an Xbox game was told its 1,282 compiles of a day had made no match."""
+        `advice` (spin_advice) and the `advice_model` it is about, from its decompiling sessions only: polishing
+        compiles matched code and matches nothing new, so a model run only to polish an Xbox game was told its 1,282
+        compiles of a day had made no match. The GUI dismisses advice by model (#131): its sentence carries counts that
+        change as helpers work."""
         query = ("SELECT kind, model, COUNT(*) AS sessions, SUM(usd) AS usd, SUM(tokens) AS tokens, SUM(matches) AS "
                  "matches, SUM(compiles) AS compiles FROM helper_sessions WHERE project=? AND started_at >= ? {} "
                  "GROUP BY kind, model")
@@ -726,8 +728,11 @@ class Manager:
         recent = [dict(r) for r in self.net.store.all(query.format("AND task != 'readable'"), slug,
                                                       time.time() - SPIN_WINDOW)]
         advice = spin_advice(recent)
-        out = [dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
-                          "advice": advice.get((r["kind"], r["model"]), "")} for r in rows]
+        out = []
+        for r in rows:
+            said = advice.get((r["kind"], r["model"]), "")
+            out.append(dict(r) | {"usd": r["usd"] or 0.0, "tokens": r["tokens"] or 0, "matches": r["matches"] or 0,
+                                  "advice": said, "advice_model": (r["model"] or r["kind"]) if said else ""})
         # a model without a price (the API helper counts only tokens) isn't free: priced models by dollars a match,
         # then the rest by tokens a match, then those that matched nothing
         return sorted(out, key=lambda r: (r["matches"] == 0, r["usd"] == 0,

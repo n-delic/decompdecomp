@@ -772,11 +772,12 @@ def test_a_model_spinning_on_a_game_gets_advice_to_weigh_not_an_order(tmp_path, 
                        "matches) VALUES(1, 'game', 'claude', ?, 'a', ?, ?, ?, ?)", (model, at, usd, compiles, matches))
     rows = {r["model"]: r for r in m.costs("game")}
     said = rows["claude-haiku"]["advice"]
+    assert rows["claude-haiku"]["advice_model"] == "claude-haiku"  # the GUI dismisses this model's advice by name
     assert said.startswith("In the last day claude-haiku's helpers here made 5,741 compiles for 10 matches, $13.81 a match")
     assert "claude-opus's needed about 46 compiles a match, $7.67 a match" in said
     assert "may be past what claude-haiku does well: claude-opus could get further, for less" in said
     assert "You might give claude-haiku fewer helpers here." in said
-    assert rows["claude-opus"]["advice"] == ""
+    assert rows["claude-opus"]["advice"] == "" and rows["claude-opus"]["advice_model"] == ""
     # one model alone: no comparison, a stronger one in general; a model that does fine alone: nothing
     alone = agents.spin_advice([{"kind": "claude", "model": "claude-haiku", "usd": 30.0, "compiles": 900, "matches": 0}])
     assert alone[("claude", "claude-haiku")].endswith("for no matches. What's left of this game may be past what "
