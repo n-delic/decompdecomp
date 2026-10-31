@@ -56,6 +56,19 @@ class Console:
     """One console: the facts below, and the parts the app calls. A part a console doesn't need keeps the default
     here, which does nothing or says the console can't do it."""
 
+    def __init_subclass__(cls, **kw) -> None:
+        """A console that takes kits lists the compilers it has itself (`fixed_compilers`) and gets those of the
+        user's copies besides, so `compilers` is the list for the computer it runs on (every caller then sees a project's
+        MSVC/own-9.0.30729 as a compiler of its console, with no caller knowing about kits)."""
+        super().__init_subclass__(**kw)
+        if "compilers" in cls.__dict__ and cls.kits:
+            cls.fixed_compilers = cls.compilers
+            cls.compilers = property(lambda self: (*self.fixed_compilers, *self.kit_compilers()))
+
+    def kit_compilers(self) -> tuple[Compiler, ...]:
+        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them."""
+        return ()
+
     id = ""  # what project configs store as their platform ("n64")
     name = ""  # what the app calls it: "Nintendo 64"
     short = ""  # where space is short (the sidebar): "N64"

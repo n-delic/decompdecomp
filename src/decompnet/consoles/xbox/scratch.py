@@ -291,6 +291,12 @@ def program_bytes(path: Path) -> bytes:
     raise ForkError("this isn't an original Xbox program (default.xbe) or disc image")
 
 
+def _xdk_compiler(build: int | None) -> kits.OwnCompiler | None:
+    """The Visual C++ of the user's copy of XDK `build` (of their XDK copies, the one that is that build)."""
+    kit = kits.get(KIT)
+    return next((c for at in kits.folders(KIT) if kit.build(at) == str(build) for c in kit.compilers(at)), None)
+
+
 def game_info(path: Path) -> dict:
     """What PC's create reads of a game (consoles/pc/scratch.py game_info), from the XBE."""
     data = program_bytes(path)
@@ -301,8 +307,8 @@ def game_info(path: Path) -> dict:
         why = f"the program has no library version table to say which XDK built it: most were Visual C++ {compiler}"
     elif build >= FIRST_71 or build == EXACT_70:
         why = f"its libraries come from XDK {build}, which ships Visual C++ {compiler}"
-    elif (xdk := kits.folder(KIT)) is not None and kits.get(KIT).build(xdk) == str(build):  # (its own 7.0 build)
-        compiler, why = "xdk", f"its libraries come from XDK {build}: your XDK {build}'s own Visual C++ builds it"
+    elif (own := _xdk_compiler(build)) is not None:  # (its own 7.0 build)
+        compiler, why = own.version, f"its libraries come from XDK {build}: your XDK {build}'s own Visual C++ builds it"
     else:
         why = (f"its libraries come from XDK {build}, whose compiler is an early Visual C++ 7.0 build: the nearest "
                f"decompdecomp has is Visual C++ 7.0 (13.00.9466), so some functions may differ by an instruction; "
@@ -310,7 +316,7 @@ def game_info(path: Path) -> dict:
     regions = ", ".join(n for bit, n in REGIONS.items() if xbe.region & bit) or "unknown region"
     title = xbe.title or path.stem
     return {"id": re.sub(r"[^a-z0-9]+", "", title.lower()) or "game", "title": title, "compiler": compiler,
-            "compiler_why": why, "cannot_match": [],
+            "compiler_why": why, "cannot_match": [], "xdk_build": build,
             "summary": f"an Xbox program ({xbe.title_code}, {regions}, {xbe.keys} keys, "
                        f"XDK {build or 'unknown'}, {len(xbe.sections)} sections, {len(xbe.imports)} kernel imports)",
             "sha1": hashlib.sha1(pe_view(data)).hexdigest(), "xbe_sha1": hashlib.sha1(data).hexdigest(),
@@ -325,7 +331,9 @@ def set_aside_libraries(root: Path, info: dict) -> str | None:
     said = []
     if n := set_aside_library_sections(root, info["id"], info["library_sections"]):
         said.append(f"{n} functions are library code in sections of its own ({', '.join(info['library_sections'])})")
-    lib = (xdk := kits.folder(KIT)) and kits.find(xdk, xdklib.XAPILIB).parent  # (none: .text's stay open to agents)
+    # the copy of the game's own XDK build, else the first (none: .text's stay open to agents)
+    xdk = next((f for f in kits.folders(KIT) if kits.get(KIT).build(f) == str(info.get("xdk_build"))), kits.folder(KIT))
+    lib = xdk and kits.find(xdk, xdklib.XAPILIB).parent
     if lib is not None and (n := xdklib.set_aside_xdk_functions(root, info["id"], lib, info["libraries"])):
         said.append(f"{n} functions in .text are the XDK's library code, as your XDK's libraries match them")
     return "; ".join(said) + ": set aside" if said else None

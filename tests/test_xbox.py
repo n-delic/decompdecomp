@@ -18,6 +18,7 @@ from decompnet.consoles.pc import scratch as pc
 from decompnet.consoles.xbox import XBOX, xdvdfs
 from decompnet.consoles.xbox import scratch as xbox
 from decompnet.forks.project import ForkError
+from tests.test_kits import make_xdk
 
 DEMO = Path(__file__).resolve().parent.parent / "projects" / "demo-xbox"
 KERNEL_CALL = """extern "C" __declspec(dllimport) long __stdcall NtClose(void *handle);
@@ -158,16 +159,18 @@ def test_an_early_game_builds_with_its_own_xdks_compiler(demo, tmp_path, monkeyp
         struct.pack_into("<H", data, libs + 16 * i + 12, 3911)
     game = tmp_path / "default.xbe"
     game.write_bytes(data)
-    xdk = tmp_path / "xdk"
-    (xdk / "lib").mkdir(parents=True)  # (a homemade stand-in: only the version record the XDK's libraries carry)
-    (xdk / "lib" / "xapilib.lib").write_bytes(b"!<arch>\n" + b"XAPILIB\0" + struct.pack("<4H", 1, 0, 3911, 0x4001))
-    monkeypatch.setattr(xbox.kits, "folder", lambda kid: xdk if kid == xbox.KIT else None)
-    assert xbox.game_info(game)["compiler"] == "xdk"
-    (xdk / "lib" / "xapilib.lib").write_bytes(b"XAPILIB\0" + struct.pack("<4H", 1, 0, 4361, 0x4001))
-    info = xbox.game_info(game)  # another XDK's: the nearest the pack has, and what to set up
+    monkeypatch.setenv("DECOMPNET_TOOLCHAINS", str(tmp_path / "toolchains"))
+    for build in (4361, 3911):  # (two XDKs set up: the game's is the one picked, whichever was added first)
+        toolchains.install("xdk", folder=make_xdk(tmp_path / f"xdk{build}", build), accept_license=True,
+                           log=lambda *_: None)
+    info = xbox.game_info(game)
+    assert info["compiler"] == "xdk-3911" and "XDK 3911" in info["compiler_why"] and info["xdk_build"] == 3911
+    assert {c.id for c in consoles.get("xbox").compilers} >= {"MSVC/xdk-3911", "MSVC/xdk-4361"}
+    toolchains.remove_local("xdk", (tmp_path / "xdk3911" / "xbox").resolve())
+    info = xbox.game_info(game)  # no copy of the game's XDK: the nearest the pack has, and what to set up
     assert info["compiler"] == "7.0" and "XDK 3911 in Setup" in info["compiler_why"]
 
 
 def test_only_visual_cpp_71_builds_with_arch_sse():
     assert "/arch:SSE" in xbox.cl_flags("7.1")
-    assert "/arch:SSE" not in xbox.cl_flags("7.0") and "/arch:SSE" not in xbox.cl_flags("xdk")
+    assert "/arch:SSE" not in xbox.cl_flags("7.0") and "/arch:SSE" not in xbox.cl_flags("xdk-3911")

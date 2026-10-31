@@ -18,7 +18,7 @@ inlines across files) are told at import (forks/ltcg.py, forks/convention.py), a
 
 The user's own XDK is a kit (kits/xdk.py, Console.kits): with it, the XDK's library code linked into .text (the C
 runtime, XAPI) is found by its libraries' bytes and set aside (xdklib.py), and a game of an early XDK builds with
-that XDK's own Visual C++ (MSVC/xdk). `ninja rebuild` writes the game's default.xbe back out of the PE view.
+that XDK's own Visual C++ (MSVC/xdk-3911, one per XDK copy). `ninja rebuild` writes the game's default.xbe back out of the PE view.
 
 """
 
@@ -45,8 +45,7 @@ class Xbox(WindowsPC):
     aliases = ()
     status = BETA
     compilers = (Compiler("MSVC/7.1", "Visual C++ 7.1", "games made with the XDK from 2003 on"),
-                 Compiler("MSVC/7.0", "Visual C++ 7.0", "games made with earlier XDKs"),
-                 Compiler("MSVC/xdk", "your XDK's own Visual C++", "early games: the build their XDK shipped"))
+                 Compiler("MSVC/7.0", "Visual C++ 7.0", "games made with earlier XDKs"))  # (+ your XDKs': kit_compilers)
     packs = (("msvc", "Visual C++ 7.0 and 7.1, the compilers of Xbox games (proprietary)"),
              ("ghidra", "finds an Xbox game's functions, and drafts of its code (540 MB, needs Java 21+)"))
     kits = ("xdk",)  # the user's own XDK: its libraries' code set aside, its compiler for early games
@@ -79,11 +78,10 @@ class Xbox(WindowsPC):
         return None  # an Xbox game is its default.xbe or its disc image, never a folder of DLLs
 
     def tool_args(self) -> list[str]:
-        """The PC's, and the compilers of the kits the user set up (the XDK's own Visual C++: MSVC/xdk)."""
-        from ... import kits
+        """The PC's, and the compilers of the kits the user set up (each XDK's own Visual C++: MSVC/xdk-3911)."""
         from ..pc import scratch as pc
 
-        return [*pc.tool_args(), *pc.own_compiler_args(kits.compilers(self.kits))]
+        return pc.tool_args(self.kits)
 
     def game_info(self, game: Path) -> dict:
         from . import scratch
