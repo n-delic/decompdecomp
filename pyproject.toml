@@ -20,7 +20,7 @@ dependencies = [
     "httpx>=0.28",
     "uvicorn>=0.30",
     "ninja>=1.11",  # builds GameCube/Wii (dtk) and other ninja-based decomp projects
-    "zstandard>=0.23; sys_platform == 'linux'",  # the .zst runtime old compilers need, without the zstd command
+    "zstandard>=0.23; sys_platform == 'linux' or sys_platform == 'win32'",  # .zst toolchains: Linux's 32-bit runtime and Windows IDO's MSYS2 runtime, without the zstd command
     "pywebview>=6.2.1; sys_platform == 'win32'",  # the tested WinForms/WebView2 bridge and native shortcut support
     "pyobjc-framework-Cocoa>=11.0; sys_platform == 'darwin'",  # native macOS window, dialogs, and Finder launcher
     "pyobjc-framework-WebKit>=11.0; sys_platform == 'darwin'",  # WKWebView with the private window user agent

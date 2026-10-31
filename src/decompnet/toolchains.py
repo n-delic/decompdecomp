@@ -462,6 +462,8 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
                 into = dest / part.get("into", "")  # a pack of several versions: each in its own folder
                 into.mkdir(parents=True, exist_ok=True)
                 _extract(archive, into, part.get("subdir"), part.get("keep"))
+                for folder in part.get("mkdir", ()):  # the POSIX root of an MSYS2 program needs them (#130)
+                    (into / folder).mkdir(parents=True, exist_ok=True)
                 if part.get("executable"):  # archives that don't record the executable bit
                     for f in dest.rglob("*"):
                         if f.is_file():

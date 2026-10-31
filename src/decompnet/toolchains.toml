@@ -485,7 +485,7 @@ name = "IDO 7.1 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "SGI's compiler used by most first-party N64 games. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul", "-woff", "649,838,712"]
@@ -501,13 +501,22 @@ platforms = ["macos-x86_64", "macos-arm64"]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-7.1-recomp-windows.tar.gz"
 sha256 = "28487a90a47d2565d8c38235750500f6fbd3479b758e966b529166825804c926"
 platforms = ["windows-x86_64"]
+[["ido-7.1".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
+platforms = ["windows-x86_64"]
 
 ["ido-5.3"]
 name = "IDO 5.3 (static recompilation)"
 platform = "N64"
 arch = "mips"
 license = "proprietary"
-source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows)"
+source = "decompals/ido-static-recomp v1.2 (SGI IRIX Development Option, recompiled for Linux, macOS and Windows); MSYS2 msys2-runtime 3.6.12 for the Windows build (GPL-3.0-or-later with the Cygwin linking exception)"
 description = "The earlier SGI compiler used by early N64 titles. Proprietary: install only if you accept the licensing risk."
 cc = ["{tc}/cc", "-c"]
 flags = ["-O2", "-mips2", "-G", "0", "-non_shared", "-Xcpluscomm", "-Wab,-r4300_mul"]
@@ -522,6 +531,15 @@ platforms = ["macos-x86_64", "macos-arm64"]
 [["ido-5.3".parts]]
 url = "https://github.com/decompals/ido-static-recomp/releases/download/v1.2/ido-5.3-recomp-windows.tar.gz"
 sha256 = "2268f64cab973750e78bdf7aa2ff3cccf78ad1d181507da6faeb61f3d22c2e1e"
+platforms = ["windows-x86_64"]
+[["ido-5.3".parts]]
+# #130: the Windows build is an MSYS2 program: every .exe imports msys-2.0.dll, which its release archive doesn't ship.
+# The runtime comes from MSYS2's own package repository (GPL-3.0-or-later, with the Cygwin linking exception) and
+# goes beside cc.exe, where Windows looks for it. Its /tmp and /var/tmp are folders under that root.
+url = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst"
+sha256 = "c0dbaa624e29be6d08cf5c65609dca6c749431109e4572bf446a3ca9b4c4fd7c"
+keep = { "usr/bin/msys-2.0.dll" = "msys-2.0.dll" }
+mkdir = ["tmp", "var/tmp"]
 platforms = ["windows-x86_64"]
 
 [m2c]
