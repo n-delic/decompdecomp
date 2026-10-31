@@ -1022,3 +1022,14 @@ def test_polishing_started_before_a_pull_cannot_replace_the_contribution(project
             assert not worker.is_alive()
             net.readability._readable(net._project("game"), net._function("f", "game"), agent, "stale polish")
     assert net._function("f", "game")["matched_source"] == "good PR"
+
+
+def test_a_rejected_manifest_says_which_part_it_rejected(project):
+    """#158: one sentence for every reason left a user with a large manifest nowhere to look."""
+    net, folder, _ = project
+    manifest(folder, symbols=[{"name": "bad-name", "address": 4, "size": 1, "kind": "func"}])
+    with pytest.raises(NetworkError, match=r"symbol 'bad-name'"):
+        net.progress.sync("game", force=True)
+    (folder / saves.MANIFEST).write_text('{"format": 1,', encoding="utf-8")
+    with pytest.raises(NetworkError, match=r"reference existing headers \(Expecting"):
+        net.progress.sync("game", force=True)
