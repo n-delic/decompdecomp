@@ -89,10 +89,18 @@ class Xbox(WindowsPC):
         return scratch.game_info(game)
 
     def identity(self, path: Path) -> str | None:
-        """The PE view's SHA-1: a disc image and the default.xbe out of it are the same game."""
+        """The PE view's SHA-1: a disc image and the default.xbe out of it are the same game. None for a file that
+        isn't an XBE or an Xbox disc image, or that is one too damaged to read (rooms and the ROM library ask every
+        console in turn, so it mustn't raise: the PC's games come after the Xbox's)."""
+        from ...forks.project import ForkError
         from . import scratch
 
-        return hashlib.sha1(scratch.pe_view(scratch.program_bytes(path))).hexdigest()
+        if not (scratch.is_xbe(_head(path)) or _is_disc(path)):
+            return None
+        try:
+            return hashlib.sha1(scratch.pe_view(scratch.program_bytes(path))).hexdigest()
+        except ForkError:
+            return None
 
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, ltcg: bool | None = None,
                        log=print) -> dict:
