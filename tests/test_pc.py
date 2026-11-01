@@ -1220,8 +1220,9 @@ def test_the_demos_2017_build_needs_only_visual_cpp_2017(tmp_path, monkeypatch):
     monkeypatch.setattr(build, "HERE", tmp_path)  # (its build folder: never the checkout's)
     monkeypatch.setattr(build, "BUILD", tmp_path / "out")
     build.main()
-    assert [argv[:2] for argv in ran] == [["wine", str(pack / "14.16/Bin/cl.exe")]] * 2 + \
-        [["wine", str(pack / "14.16/Bin/link.exe")]]
+    # (lower case: on a Mac's case-insensitive disk build.py finds cl.exe as CL.EXE, the name it looks for first)
+    assert [[a.lower() for a in argv[:2]] for argv in ran] == [["wine", str(pack / "14.16/bin/cl.exe").lower()]] * 2 + \
+        [["wine", str(pack / "14.16/bin/link.exe").lower()]]
 
 
 def test_a_projects_first_build_has_its_consoles_build_environment(tmp_path, monkeypatch):
