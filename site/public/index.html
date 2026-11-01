@@ -74,6 +74,7 @@
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
+    <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
     <label><input type="radio" name="platform" value="nds"><span>Nintendo DS</span></label>
     <label><input type="radio" name="platform" value="gba"><span>Game Boy Advance</span></label>
   </fieldset>
@@ -115,7 +116,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>Disc or PS-X EXE</b><span>BIN, ISO or CHD; the game's main program and its overlays</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
-        <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.6.3, 2.7.2 or 2.8.1, through maspsx for Sony's assembler; C</span></li>
+        <li><small>Built by</small><b>PSY-Q's GCC</b><span>2.5.7 to 2.95.2, EGCS 2.91.66 included, through maspsx for Sony's assembler; C</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
@@ -145,7 +146,17 @@
       <ol class="stations">
         <li><small>Your file</small><b>Program</b><span>a 32-bit x86 .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe</span></li>
-        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); C and C++</span></li>
+        <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS); any other, from your own copy; C and C++</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="xbox" data-file="default.xbe">
+      <h3><span class="pl-name">Xbox</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>Program or disc</b><span>default.xbe, an .xiso or a Redump .iso</span></li>
+        <li><small>Split by</small><b>Ghidra</b><span>after decompdecomp makes the XBE a Windows program at the same addresses</span></li>
+        <li><small>Built by</small><b>Visual C++ 7.0 / 7.1</b><span>the XDK's compilers; your own XDK optional; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
         <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
       </ol>
@@ -173,7 +184,7 @@
   </div>
 
   <p class="fineprint">1.0.3 rewrote most of the app, so every platform needs testing again. Try it on a game you own and <a href="https://github.com/n-delic/decompdecomp/issues">tell us how it went</a>.</p>
-  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox, through a fork of a community decomp repository.</p>
+  <p class="fineprint">Proprietary compilers (IDO, CodeWarrior, SN Systems, Visual C++) install only after you accept them in Setup. Also: 3DS, Switch and Xbox 360, through a fork of a community decomp repository.</p>
 </section>
 
 <!-- 3 · the proof -->
@@ -218,7 +229,7 @@ jr      $ra
   <h2 id="yours-h">Yours.</h2>
   <ol class="yours-list">
     <li><b>Your game</b> stays on your computer. No account, no telemetry, nothing uploaded. decompdecomp supplies no games.</li>
-    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. The app starts them and restarts them. You pay your own provider.</li>
+    <li><b>Your agents</b> do the work: any model with an API key, Claude Code, Codex, opencode, Antigravity CLI or ZCode CLI. The app starts them and restarts them. You pay your own provider.</li>
     <li><b>Your code</b> comes out as a project that builds your game again, byte for byte: the start of a port or a mod.</li>
   </ol>
   <p class="yours-note">The code from a game belongs to its rights holder. Keep it to yourself.</p>
@@ -239,7 +250,7 @@ jr      $ra
     </div>
     <div class="step">
       <p class="step-n">2 · Open your game</p>
-      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, opencode or Antigravity CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
+      <p class="step-note">Pick your own copy of the game in the app, then click <b>Start agents</b>: any model with an API key, Claude Code, Codex, opencode, Antigravity CLI or ZCode CLI. Run several: they work on different functions at the same time. Or open Demo Quest 64 and watch first.</p>
     </div>
   </div>
 </section>

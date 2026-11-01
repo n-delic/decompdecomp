@@ -130,6 +130,7 @@ decompdecomp helps with these steps:
 | **Codex CLI** | The same. It can approve only the tools of decompdecomp. |
 | **Antigravity CLI** | The same, through the MCP configuration of the workspace (`agy`). |
 | **opencode** | The same, with each provider that you set up: DeepSeek, Qwen, Kimi and more. |
+| **ZCode CLI** | The same, with Z.ai's GLM models. It reads the prompt from a file it attaches. |
 
 The app starts each helper itself, from **Start agents** in the project's header. A helper that stops starts again
 by itself. On a usage limit it waits until the limit resets. Five fast failures in a row pause it, and the app says
@@ -186,14 +187,15 @@ the game.
 | Platform | Status | From scratch | Compilers | Rebuildable project | Public decomps |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | **Nintendo 64** | ★ **Recommended** | ✓ ROM | KMC GCC 2.7.2 · IDO 5.3 / 7.1 | ✓ export | ✓ |
-| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.6.3 · 2.7.2 · 2.8.1 (PSY-Q), with maspsx | ✓ export | ✓ |
+| **PlayStation** | Beta | ✓ disc (BIN, ISO, CHD) or PS-X EXE | GCC 2.5.7 · 2.6.0 · 2.6.3 · 2.7.2 (and CDK) · 2.8.0 · 2.8.1 · EGCS 2.91.66 · 2.95.2 (PSY-Q), with maspsx | ✓ export | ✓ |
 | **PlayStation 2** | Beta | ✓ disc or ELF | EE-GCC 2.9 · 2.95.2/2.95.3 (SN) · 2.96 · 3.2 · CodeWarrior 2.3.3 / 3.0.1 | ✓ export | ✓ |
 | **PSP** | Beta | ✓ UMD image (ISO, CSO, CHD) with its other modules, or ELF/PRX, unencrypted or decrypted | CodeWarrior for PSP 3.0.1 · PSP SDK GCC 3.3.3 · SN pspsnc | ✓ export | ✓ |
 | **GameCube · Wii** | Beta | ✓ disc (ISO, RVZ, WBFS…) or DOL | CodeWarrior GC 1.0 – Wii 1.7 | ✓ dtk-template | ✓ |
-| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine) | — | ✓ |
+| **Windows PC** | Beta | ✓ program (32-bit x86 .exe) | Visual C++ 6.0 · 7.0 · 7.1 · 2005 · 2008 · 2010 · 2017 (wine); any other, from your own copy (Setup) | — | ✓ |
 | **Nintendo DS** | Beta | ✓ ROM (.nds) | CodeWarrior for DS 1.2 – DSi 1.6 (24 versions), one per source file | ✓ ds-decomp | ✓ |
 | **Game Boy Advance** | Beta | ✓ ROM (.gba) | agbcc | ✓ luvdis export | ✓ |
-| **3DS · Switch · Xbox · Xbox 360** | Public decomps only | | | | ✓ |
+| **Xbox** | Beta | ✓ default.xbe, .xiso or Redump .iso (as a Windows program; Ghidra finds the functions) | Visual C++ 7.0 · 7.1 (the XDK's); your own XDK's for early games, and to set its library code aside | ✓ (`ninja rebuild` writes your default.xbe back) | |
+| **3DS · Switch · Xbox 360** | Public decomps only | | | | ✓ |
 
 [ROADMAP.md](../ROADMAP.md) has a table of which feature works on which platform.
 
@@ -337,7 +339,7 @@ uv run pytest              # the tests
 | :-- | :-- |
 | `src/decompnet/rom/` | ROM mode: reading, splitting with splat, symbols, the matcher (`match.py`) and the export. |
 | `src/decompnet/app/` | The app: `engine/` (ROM projects, a module per topic), `forkengine.py` (forks), `tools.py` (MCP tools), `agents.py` (starting and restarting helpers), `server.py` and `routes/` (the GUI's API, a module per part of the app), `collab.py` (rooms), `window.py` and `gtkwindow.py` (its own window), `tray.py` (the tray icon), `edition.py` (development copy or release), `static/` (GUI; its script is `static/js/`, a file per part), `guide/` (guides for agents). |
-| `src/decompnet/agents/` | A module per agent (`claude.py`, `codex.py`, `antigravity.py`, `opencode.py`, `api.py`): how a session starts, how to read what it prints, its models. |
+| `src/decompnet/agents/` | A module per agent (`claude.py`, `codex.py`, `antigravity.py`, `opencode.py`, `zcode.py`, `api.py`): how a session starts, how to read what it prints, its models. |
 | `src/decompnet/consoles/` | A folder per console (`n64/`, `ps1/`, `ps2/`, `gc_wii/`, `pc/`): its facts, its importer (`gc_wii/scratch.py` and `pc/scratch.py` start a project from scratch), its guides for agents. |
 | `src/decompnet/forks/` | Fork mode: forks by repository address, project setup, objdiff, drafts and linked files. |
 | `src/decompnet/network.py` | Claims, attempts, notes and the shared header. |

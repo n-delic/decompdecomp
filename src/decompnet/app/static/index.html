@@ -82,7 +82,7 @@
         <div class="cart" aria-hidden="true"><span></span></div>
         <p class="drop-title">Drop a game here</p>
         <p class="muted small">ROM, disc image or program file (a PC game's .pdb or .map with it) · or <span class="link">choose a file</span></p>
-        <div class="plat-row" id="platRow"><span data-p="n64">N64</span><span data-p="ps">PS1</span><span data-p="ps2">PS2</span><span data-p="psp">PSP</span><span data-p="gc">GameCube</span><span data-p="wii">Wii</span><span data-p="pc">PC</span><span data-p="nds">DS</span></div>
+        <div class="plat-row" id="platRow"><span data-p="n64">N64</span><span data-p="ps">PS1</span><span data-p="ps2">PS2</span><span data-p="psp">PSP</span><span data-p="gc">GameCube</span><span data-p="wii">Wii</span><span data-p="pc">PC</span><span data-p="xbox">Xbox</span><span data-p="nds">DS</span><span data-p="gba">GBA</span></div>
         <p class="plat-legend muted small" id="platLegend" hidden><span class="rec-mark">★</span> recommended: the most tested path to a full decomp you can port and mod · the rest are beta</p>
         <button class="link-btn" id="pathPick" type="button">Big disc, or a PC game with its DLLs? Use its path or folder instead</button>
       </div>
@@ -105,6 +105,7 @@
             <option value="program">The whole program: every function is decompiled and counted</option>
           </select></label>
         </div>
+        <div id="importOptions"></div>
         <label class="check" id="mwConsent" hidden><input type="checkbox" id="mwAccept"><span id="mwText"></span></label>
         <div class="row">
           <button class="primary" id="analyse" type="button" disabled>Start decompiling</button>

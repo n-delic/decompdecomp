@@ -911,7 +911,7 @@ class Autosave:
         saved = []
         for row in self.net.store.all("SELECT slug FROM projects"):
             try:
-                if self.net.progress.sync(row["slug"], force=True):
+                if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
             except Exception:  # never stands between the user and their work
                 log.exception("saving %s failed", row["slug"])

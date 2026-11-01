@@ -598,6 +598,22 @@ def test_a_fork_join_checks_the_name_before_asking_the_host():  # noqa: F811
     assert calls == []
 
 
+def test_a_fork_join_needs_git_before_asking_the_host(monkeypatch):
+    """A Windows member without git got "[WinError 2] The system cannot find the file specified" from the tree's
+    git init, after the host had already let them in."""
+    calls = []
+
+    class NoHost:
+        def post(self, *args, **kwargs):
+            calls.append(1)
+            raise AssertionError("joined without git")
+
+    monkeypatch.setattr(collab.shutil, "which", lambda cmd, *a, **k: None if cmd == "git" else "x")
+    with pytest.raises(NetworkError, match="needs git"):
+        collab._join_fork(object(), NoHost(), "url", "code", {}, "kim", b"", lambda *_: None, None, False)
+    assert calls == []
+
+
 def test_reconnect_says_when_the_room_gave_the_name_a_number(built, tmp_path):  # noqa: F811
     host, slug, room, code, client = _host(built, tmp_path)
     link = f"http://192.168.1.20:6481/join/{code}#room={slug}"
@@ -735,3 +751,18 @@ def test_members_stay_in_the_room_when_their_app_restarts(built, tmp_path):  # n
     again.links[gslug].stop()
     again.links[gslug].sync()
     assert [m["name"] for m in room._members_now()] == ["sam"]
+
+
+def test_the_hosts_layout_applies_when_a_local_function_has_the_name_it_gives_a_split(built, tmp_path):  # noqa: F811
+    """#107: a member's own function already named like the host's new tail half (at another address) made the
+    INSERT fail on functions.name, and the link retried the same failure forever."""
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    clash = net._function("func_80000808", slug)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='func_800007D0', matched_source='/* mine */' WHERE id=?", (clash["id"],))
+    net.apply_remote_layout(slug, [{"name": "func_800007D0", "vram": 0x800007D0, "size": 4}], [])
+    tail = net.store.one("SELECT * FROM functions WHERE vram=? AND project_id=?", 0x800007D0, clash["project_id"])
+    assert tail["name"] == "func_800007D0" and tail["id"] != clash["id"]
+    mine = net.store.one("SELECT * FROM functions WHERE id=?", clash["id"])
+    assert mine["name"] != "func_800007D0" and mine["matched_source"] == "/* mine */"

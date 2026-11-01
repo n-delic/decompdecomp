@@ -27,7 +27,7 @@ says how to send a change. Examples point at real code by file and name: search 
 | What agents learn, shared once two models agree | `app/knowledge.py` |
 | Saving a ROM project as plain files, and restoring one | `app/saves.py` |
 | Helper agents: starting and restarting them, their records | `app/agents.py`; their prompt: `WORK_PROMPT` in `app/tools.py` |
-| One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `api` |
+| One agent (its command line, reading what it prints, its models; the API helper's own loop) | `agents/<id>.py`: `claude`, `codex`, `antigravity`, `opencode`, `zcode`, `api` |
 | What every agent has to say, and the list of agents | `agents/__init__.py`, the connector |
 | Look-alikes (`find_similar`) | `similarity.py` |
 | Decompiling together | `app/collab.py`, `app/engine/rooms.py`, `app/routes/rooms.py` |

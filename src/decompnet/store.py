@@ -105,7 +105,22 @@ MIGRATIONS = [
     ("progress_state", "projected_manifest", "TEXT"),          # the database manifest it was published with
     ("progress_state", "config_key", "TEXT"),                  # the settings the projected manifest was rendered from
     ("progress_state", "dirty_token", "TEXT"),  # the progress_dirty token the last publish acknowledged
+    ("functions", "aside_mark", "TEXT"),                       # meta's set_aside (MARK_TRIGGERS: network.GAME_CODE)
+    ("functions", "gone_mark", "TEXT"),                        # meta's gone (network.IN_BUILD)
 ]
+
+# What the counts ask of each function's meta, copied into columns of their own: an index can hold a column, and
+# answer the counts alone. An index on json_extract(meta, ...) does that from SQLite 3.50 (3.47 doesn't): older ones
+# (Python 3.12.10's and before, a CI runner's) read every function's whole row, assembly and sources included. Not
+# JSON (none is written so): no mark, as before a project's set-aside list.
+MARKS = ("aside_mark=CASE WHEN json_valid(NEW.meta) THEN json_extract(NEW.meta, '$.set_aside') END, "
+         "gone_mark=CASE WHEN json_valid(NEW.meta) THEN json_extract(NEW.meta, '$.gone') END")
+MARK_TRIGGERS = f"""
+CREATE TRIGGER IF NOT EXISTS functions_marks_insert AFTER INSERT ON functions WHEN NEW.meta IS NOT NULL
+BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS functions_marks_update AFTER UPDATE OF meta ON functions
+BEGIN UPDATE functions SET {MARKS} WHERE id=NEW.id; END;
+"""
 
 # Created after the migrations above: they name columns older databases get from MIGRATIONS. A trigger only marks what
 # a progress folder's render actually reads (saves._render), so work that stays in the database costs nothing.
@@ -218,11 +233,16 @@ class Store:
         self.conn.execute(f"PRAGMA journal_size_limit={WAL_SIZE_LIMIT_BYTES}")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.executescript(SCHEMA)
+        added = set()
         for table, column, ddl in MIGRATIONS:
             cols = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
             if column not in cols:
                 self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+                added.add(column)
         self.conn.executescript(DIRTY_TRIGGERS)
+        self.conn.executescript(MARK_TRIGGERS)
+        if "aside_mark" in added:  # once: the marks of every function there is
+            self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
         # the room looks a function up by its address for every match, best attempt and note the host sends: without
@@ -233,10 +253,17 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")
         # a function's events of one kind (polishing's tries on it: app/readable.py), without reading a game's whole feed
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_detail ON events(project_id, kind, detail)")
+        # a project's last activity, for the project list and its page: read every one of its events (9 ms for ten
+        # projects with 51,000 events, each sidebar ask; now 0.03)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_project_time ON events(project_id, created_at)")
         # the progress the GUI asks for every second (totals, the map's "anything new?"), answered from this narrow
         # index instead of reading every function's assembly and sources: 31 ms -> about 2 for 36,000 functions
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_progress ON functions(project_id, status, size, "
-                          "attempts, best_score, matched_at)")
+        # (with the set-aside and gone marks, whether it's polished and who matched it: the sidebar's and the project's
+        # counts read every function's whole row without them, 58 ms for a 28,900-function game; now 7)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_tally ON functions(project_id, status, size, "
+                          "attempts, best_score, matched_at, readable, matched_agent_id, aside_mark, gone_mark)")
+        for old in ("idx_functions_progress", "idx_functions_counts"):  # (the second: this index on json_extract)
+            self.conn.execute(f"DROP INDEX IF EXISTS {old}")
         # agents created before `origin` existed were all minted by the operator on the CLI
         self.conn.execute("UPDATE agents SET trusted = 1, origin = 'cli' WHERE origin IS NULL")
         # removing a project left its symbols behind before 0.10.3, and the next import (which may get the same id)

@@ -191,3 +191,83 @@ def test_what_briefs_read_from_the_whole_game_is_built_once_per_layout(tmp_path,
                    "VALUES(?,'func_9',8,2,?,?,'[]')", (proj["id"], 0x100100, bytes(8)))
     net.warm_briefs(proj)
     assert built == ["classes", "classes"] and prints == [1, 1]
+
+
+def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tmp_path, monkeypatch):
+    """The project list (every 5 s, every project) and the project's page (every second) count a game's functions:
+    those counts read every function's whole row, assembly and sources included (58 ms for a 28,900-function game,
+    and seconds when the rows weren't in memory). Every query they make on functions and events reads an index alone."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    asked = []
+    read = net.store._read
+    monkeypatch.setattr(net.store, "_read", lambda sql, args, single: asked.append((sql, args)) or read(sql, args, single))
+    net.summary("game")
+    net.overview("game")
+    net.map_signature("game")
+    plans = {sql: [row[3] for row in net.store.conn.execute(f"EXPLAIN QUERY PLAN {sql}", args)]
+             for sql, args in asked if " functions" in sql or " events" in sql}
+    assert len(plans) >= 5
+    for sql, plan in plans.items():
+        steps = [step for step in plan if " functions" in step or " events" in step or " f " in step]
+        assert steps and all("COVERING INDEX" in step for step in steps), (f"SQLite {sqlite3.sqlite_version}", sql, plan)
+
+
+def test_agents_claims_and_attempts_leave_the_maps_signature_alone(tmp_path):
+    """The GUI asks "anything new on the map?" every 20 s. Its signature summed every attempt and claim, which the live
+    poll brings each second anyway: with agents at work it changed every time, and a big game's whole map (3 MB) came
+    again. A better score, a match, a new function, polishing or a function set aside still change it."""
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    pid = tiny_game(net)["id"]
+    fid = net.store.one("SELECT id FROM functions WHERE name='func_1'")["id"]
+    sig = net.map_signature("game")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO claims(function_id, agent_id, claimed_at, expires_at) VALUES(?, 1, 0, 1e12)", (fid,))
+        db.execute("INSERT INTO attempts(function_id, agent_id, score, compiled, created_at) VALUES(?, 1, NULL, 0, 0)",
+                   (fid,))
+        db.execute("UPDATE functions SET attempts=attempts+1 WHERE id=?", (fid,))
+    assert net.map_signature("game") == sig
+    for change in ("best_score=7", "status='matched', matched_at=5", "readable=1", "status='asm'"):
+        with net.store.tx() as db:
+            db.execute(f"UPDATE functions SET {change} WHERE id=?", (fid,))
+        assert net.map_signature("game") != sig, change
+        sig = net.map_signature("game")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id, name, size, n_insns, vram) VALUES(?, 'new', 4, 1, 0)", (pid,))
+    assert net.map_signature("game") != sig
+
+
+def test_a_live_poll_that_couldnt_bring_every_attempt_says_so(tmp_path):
+    """Without the attempts and claims in the map's signature, the page counts attempts from the live poll: a poll with
+    more than it sends (a window minimised for a while) says so, and the page fetches the whole map again."""
+    from decompnet.app.engine.gui import LIVE_ATTEMPTS
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path)
+    tiny_game(net)
+    fid = net.store.one("SELECT id FROM functions WHERE name='func_1'")["id"]
+    with net.store.tx() as db:
+        db.executemany("INSERT INTO attempts(function_id, agent_id, score, compiled, created_at) VALUES(?, 1, NULL, 0, 0)",
+                       [(fid,)] * (LIVE_ATTEMPTS + 1))
+    assert net.live("game")["cut"]
+    last = net.store.one("SELECT MAX(id) AS n FROM attempts")["n"]
+    assert not net.live("game", 0, last - 3)["cut"]
+
+
+def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_path):
+    """The counts read meta's set_aside and gone from columns of their own (an index holds them on every SQLite): they
+    follow every write of meta, an older database gets them for the functions it has, and a meta that isn't JSON
+    (none is written so) keeps the app from starting no more than it did."""
+    store = Store(tmp_path / "app.db")
+    with store.tx() as db:
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'lib', '{\"set_aside\": \"the C runtime\"}')")
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'own', NULL)")
+        db.execute("INSERT INTO functions(project_id, name, meta) VALUES(1, 'odd', '{not json')")
+        db.execute("UPDATE functions SET meta=json_set(COALESCE(meta, '{}'), '$.gone', 1) WHERE name='own'")
+    marks = lambda s: {r["name"]: (r["aside_mark"], r["gone_mark"]) for r in s.all("SELECT * FROM functions")}  # noqa: E731
+    assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+    # a database from before the marks: its functions get theirs when it opens
+    store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
+                             "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
+                             "ALTER TABLE functions DROP COLUMN gone_mark")
+    store.conn.close()
+    assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}

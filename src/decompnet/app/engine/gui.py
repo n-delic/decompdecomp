@@ -148,7 +148,7 @@ class GuiMixin:
             "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
-            f"WHERE f.project_id=? AND {IN_BUILD.replace('meta', 'f.meta')} ORDER BY f.vram, f.unit, f.id", proj["id"])
+            f"WHERE f.project_id=? AND f.{IN_BUILD} ORDER BY f.vram, f.unit, f.id", proj["id"])
         link = self.links.get(slug)
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
@@ -190,19 +190,17 @@ class GuiMixin:
                 for r in cfg.get("compiler_ranges", [])]
 
     def map_signature(self, slug: str) -> str:
-        """What the function map shows, summed up: it changes when a function is added, matched, tried, claimed, polished
-        or set aside. A few sums over indexed rows, so the GUI can ask "anything new?" every few seconds without
-        fetching tens of thousands of functions (renames and splits come with events, which refetch anyway)."""
+        """What the function map shows, summed up: it changes when a function is added, matched, tried better,
+        polished or set aside. A few sums over indexed rows, so the GUI can ask "anything new?" every few seconds
+        without fetching tens of thousands of functions (renames and splits come with events, which refetch anyway).
+        Not the claims or how many attempts: the live poll brings both every second and the GUI applies them; with them
+        here, agents at work changed it every few seconds and a big game's whole map (3 MB) came again each time."""
         proj = self._project(slug)
-        f = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, COALESCE(SUM(attempts), 0) AS at, "
+        f = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, "
                            "COALESCE(SUM(status='matched'), 0) AS m, COALESCE(SUM(best_score), 0) AS bs, "
                            "COALESCE(MAX(matched_at), 0) AS ma, COALESCE(SUM(readable), 0) AS rd, "
                            "COALESCE(SUM(status='asm'), 0) AS sa FROM functions WHERE project_id=?", proj["id"])
-        c = self.store.one("SELECT COUNT(*) AS n, COALESCE(SUM(c.function_id * 31 + c.agent_id), 0) AS k FROM claims c "
-                           "JOIN functions f ON f.id=c.function_id WHERE f.project_id=?", proj["id"])
-        link = self.links.get(slug)
-        remote = sorted(str(x.get("vram") or x.get("name")) + x.get("agent", "") for x in (link.claims if link else []))
-        return f"{f['n']}.{f['hi']}.{f['at']}.{f['m']}.{f['bs']}.{f['ma']}.{f['rd']}.{f['sa']}.{c['n']}.{c['k']}.{hash(tuple(remote)) & 0xFFFFFF}"
+        return f"{f['n']}.{f['hi']}.{f['m']}.{f['bs']}.{f['ma']}.{f['rd']}.{f['sa']}"
 
     def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest
@@ -319,8 +317,9 @@ class GuiMixin:
                                      proj["id"], c["vram"])
                 if row:
                     claims.append(dict(row) | {"agent": "@" + c["agent"], "claimed_at": None})
+        # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
         return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
-                "claims": claims, "overview": self.overview(slug)}
+                "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug)}
 
     def events_after(self, after: int | None, limit: int = EVENTS_PER_ASK) -> dict:
         """The notification centre's feed, for every project at once: what happened after event `after`, oldest

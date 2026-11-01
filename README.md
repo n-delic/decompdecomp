@@ -11,7 +11,7 @@
   <img alt="macOS" src="https://img.shields.io/badge/platform-macOS%20Intel%20%2F%20Apple%20Silicon-15140f?style=flat-square">
   <img alt="Windows" src="https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-15140f?style=flat-square">
   <a href="https://discord.gg/hhEm3zZagB"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white"></a>
-  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20API%20models-157a49?style=flat-square">
+  <img alt="Agents: Claude Code, Codex, opencode, Antigravity, ZCode, any API model" src="https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex%20%C2%B7%20opencode%20%C2%B7%20Antigravity%20%C2%B7%20ZCode%20%C2%B7%20API%20models-157a49?style=flat-square">
 </p>
 
 decompdecomp is an app that decompiles games you own. AI agents write C or C++ for each function of the game. The
@@ -98,8 +98,8 @@ The installer uses uv and Python 3.12, installs the Cocoa/WebKit bridge, gets th
 `~/Applications/decompdecomp.app`. Open it from Finder or run `decomp`. Projects stay in `~/Decomp`;
 toolchains live in `~/Library/Application Support/decompnet/toolchains`. Xcode Command Line Tools
 (`xcode-select --install`) are needed on Intel Macs for N64's MIPS binutils, and on both Mac architectures to
-build PS1 GCC 2.6.3 from pinned source on first use. The ready-made 2.7.2 and 2.8.1 compiler binaries are for
-Apple Silicon. Finder launches preserve the PATH
+build PS1 GCC 2.6.3 from pinned source on first use. The other PS1 compilers' ready-made binaries are for Linux and
+Windows (through WSL 2); 2.7.2, 2.7.2 CDK and 2.8.1 also have pinned Apple Silicon builds. Finder launches preserve the PATH
 from installation so your installed Node and helper CLIs remain available; rerun `decomp shortcut` after
 changing their locations. This source install uses an external uv installation.
 
@@ -116,7 +116,7 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Mac capability | Availability |
 | --- | --- |
 | N64 ROM import, compile, match and export | KMC GCC via Rosetta on Apple Silicon; directly on Intel |
-| PS1 GCC 2.6.3, 2.7.2 and 2.8.1, with maspsx | All three run natively on Apple Silicon; GCC 2.6.3 builds from pinned source on both Mac architectures |
+| PS1 GCC 2.5.7 to 2.95.2 and EGCS 2.91.66, with maspsx | GCC 2.7.2, 2.7.2 CDK and 2.8.1 run natively on Apple Silicon; GCC 2.6.3 builds from pinned source on both Mac architectures; the others are Linux/Windows (WSL) builds |
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
@@ -138,8 +138,8 @@ Type `decomp`, or open decompdecomp from your apps menu. It opens in a window of
    Demo Quest 64. For an N64, PlayStation or PlayStation 2 game, the app offers to install all of that console's
    compilers first. Then it tests which one built the game. Tick the box only if you accept the proprietary ones.
 2. **Start agents.** Any model with an API key (DeepSeek, OpenRouter, OpenAI, a local model), or Claude Code,
-   Codex, opencode and Antigravity CLI. Run several, and different models: they work on different functions at the
-   same time.
+   Codex, opencode, Antigravity CLI and ZCode CLI. Run several, and different models: they work on different
+   functions at the same time.
 3. **Watch the map.** Each square is a function. It turns green when its function matches. The autopilot matches
    the easy ones for free, before any agent starts.
 4. **Export** (in the project's header). You get a decomp project that builds your game again, byte for byte.
@@ -236,16 +236,20 @@ game's code is its rights holder's: keep it to yourself.
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
 | Game Boy Advance | Beta |
-| 3DS, Switch, Xbox, Xbox 360 | Community decomps only |
+| Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra; wine for games built with link-time code generation; your own XDK, optional, sets its library code aside) |
+| 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
 [tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes from beta to
 recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
-Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you
-install yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs
-Rosetta 2 on Apple Silicon): the app says so when you install that pack. The older Visual C++ run without it.
+
+Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install
+yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple
+Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
+packs don’t have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
+(it’s read where it is, never copied).
 
 ## Questions people ask
 

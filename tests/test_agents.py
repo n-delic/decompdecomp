@@ -13,7 +13,7 @@ import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity, opencode
+from decompnet.agents import antigravity, opencode, zcode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -67,6 +67,135 @@ def test_opencode_errors_say_what_failed():
     assert kinds.get("antigravity").clean_stderr(agy) == "quota exhausted"
 
 
+def test_zcode_stream_json_is_read():
+    """zcode's --output-format stream-json: reasoning and text in deltas, a tool call, a failed tool result,
+    turn.failed, and the final result whose inputTokens include the cached input and cache writes."""
+    state: dict = {}
+    lines = [
+        {"type": "session.created", "sessionId": "sess_1", "payload": {"mode": "yolo"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": "The user wants"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": " to claim."}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_end"}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "Claiming "}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "the next one."}},
+        {"type": "model.streaming", "payload": {"kind": "text_end"}},
+        {"type": "model.streaming", "payload": {"kind": "tool_call", "toolName": "mcp__decomp__claim_function",
+                                                "input": {"count": 4}}},
+        {"type": "tool.updated", "payload": {"kind": "result", "result": {"success": False,
+                                                                           "error": "tool exploded"}}},
+        {"type": "turn.failed", "payload": {"error": {"message": "usage limit reached"}}},
+        {"type": "result", "sessionId": "sess_1", "usage": {"inputTokens": 100, "outputTokens": 10,
+                                                            "cacheReadTokens": 40, "cacheWriteTokens": 10,
+                                                            "modelRequestCount": 2}},
+    ]
+    out = [item for line in lines for item in kinds.get("zcode").parse_line(json.dumps(line), state)]
+    assert out == [("think", "The user wants to claim."), ("text", "Claiming the next one."),
+                   ("tool", "claim_function(4)"), ("error", "tool exploded"), ("error", "usage limit reached"),
+                   ("usage", json.dumps({"input": 50, "output": 10, "cache_read": 40, "cache_write": 10,
+                                         "turns": 2}))]
+    assert state["zcode_session"] == "sess_1"
+    assert kinds.get("zcode").parse_line(json.dumps({"type": "session.updated", "payload": {}})) == []
+    assert kinds.get("zcode").clean_stderr("Error: Model access is not configured. Run /login.") == \
+        "Model access is not configured. Run /login."
+    assert kinds.get("zcode").fatal("Unsupported reasoning effort: xhigh")
+
+
+def test_zcode_prompt_reaches_it_by_file_never_as_argv(tmp_path, monkeypatch):
+    """zcode has no stdin prompt: its prompt is a Markdown file the session attaches, so the text is never an
+    argument (and zcode cannot parse it as a slash command). Its settings file names only the app's MCP server."""
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    s = agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1",
+                       {"model": "account:zai-start-plan/GLM-5.3#high"})
+    work = tmp_path / "zcode"
+    work.mkdir()
+    cmd, env, stdin = m._command(s, "tok", work)
+    prompt = m.prompt(s)
+    assert stdin is None  # nothing for stdin: the prompt is in the attached file
+    assert (work / zcode.PROMPT_FILE).read_text(encoding="utf-8") == prompt
+    assert not any(prompt in arg or "line one" in arg for arg in cmd)
+    assert cmd[cmd.index("--attach") + 1] == str(work / zcode.PROMPT_FILE)
+    assert cmd[cmd.index("-p") + 1] == zcode.PROMPT_TEXT
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert cmd[cmd.index("--mode") + 1] == "yolo"
+    denied = set(cmd[cmd.index("--disallowed-tools") + 1].split())
+    assert {"Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"} <= denied
+    assert cmd[cmd.index("--model") + 1] == "account:zai-start-plan/GLM-5.3"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    assert not any("tok" in arg for arg in cmd)
+    settings = json.loads((work / zcode.SETTINGS_FILE).read_text(encoding="utf-8"))
+    assert list(settings["mcp"]["servers"]) == [zcode.MCP_SERVER]
+    assert settings["mcp"]["servers"][zcode.MCP_SERVER] == {
+        "type": "http", "url": "http://127.0.0.1:6464/mcp",
+        "headers": {"Authorization": "Bearer tok"}}
+    assert settings["plugins"]["enabled"] is False and settings["skills"]["enabled"] is False
+    assert env["ZCODE_CLI_SETTINGS_FILE"] == str(work / zcode.SETTINGS_FILE)
+
+
+def test_zcode_refuses_a_prompt_it_cannot_attach(tmp_path, monkeypatch):
+    """Past zcode's 25,000-token / 256 KiB attachment caps it stops inlining the prompt and gives the model a
+    path placeholder or a partial view; Read is disallowed, so the helper would work without its instructions.
+    Just under the cap the prompt is written and attached; over it, the session start fails before writing."""
+    under = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS - zcode.TOKEN_CHARS)
+    over = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS + zcode.TOKEN_CHARS)
+    assert zcode.estimated_tokens(under) == zcode.ATTACHMENT_TOKENS - 1
+    assert zcode.estimated_tokens(over) == zcode.ATTACHMENT_TOKENS + 1
+    under_work = tmp_path / "zcode-under"
+    under_work.mkdir()
+    path = zcode.ZCODE.prompt_file(under_work, under)
+    assert path == under_work / zcode.PROMPT_FILE and path.read_text(encoding="utf-8") == under
+    cmd, _ = zcode.ZCODE.session_command("zcode", under_work, "http://127.0.0.1:1/mcp", "tok", "")
+    assert cmd[cmd.index("--attach") + 1] == str(path)
+    over_work = tmp_path / "zcode-over"
+    over_work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(over_work, over)
+    assert not (over_work / zcode.PROMPT_FILE).exists()
+    # the session start itself raises Fatal with the same sentence, before a process is launched
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    m.prompt = lambda session: over
+    command_work = tmp_path / "zcode-command"
+    command_work.mkdir()
+    with pytest.raises(agents.Fatal, match="too long for zcode"):
+        m._command(agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1", {}), "tok", command_work)
+    assert not any(command_work.iterdir())  # no prompt, no settings: the session start wrote nothing
+
+
+def test_zcode_refuses_a_prompt_over_its_byte_cap(tmp_path, monkeypatch):
+    """The 256 KiB cap is separate from the token cap: zcode would read only a 2000-line partial view."""
+    monkeypatch.setattr(zcode, "ATTACHMENT_TOKENS", 10**9)  # isolate the byte guard
+    work = tmp_path / "zcode-bytes"
+    work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(work, "x" * (zcode.ATTACHMENT_BYTES + 1))
+    assert not (work / zcode.PROMPT_FILE).exists()
+
+
+def test_an_over_long_zcode_prompt_pauses_without_retrying(tmp_path, monkeypatch):
+    """The guard raises Fatal from _command: the runner pauses with the sentence instead of counting fast failures
+    and starting again."""
+    _no_agent_settings(monkeypatch)
+    fake = tmp_path / "bin" / "zcode"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(agents, "_which", lambda cmd: str(fake))
+    net = _game(tmp_path)
+    m = agents.Manager(net, tmp_path, URL)
+    over = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS + zcode.TOKEN_CHARS)
+    m.prompt = lambda s: over
+    s = m._record("game", "zcode", "zcode-1", "zcode-1", {})
+    s.stop = Quick()
+    m._run(s)
+    assert s.state == "paused"
+    assert "too long for zcode" in s.why and "shorten" in s.why
+    assert s.runs == 1 and s.restarts == 0
+    assert s.stop.waits == []  # no backoff wait: Fatal broke the loop
+    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
+    assert [r["outcome"] for r in rows] == ["paused"]
+    assert net.store.one("SELECT state FROM helpers WHERE id=?", s.id)["state"] == "paused"
+    assert any("paused:" in f["text"] and "too long for zcode" in f["text"] for f in s.feed)
+
+
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
     """opencode 2.0 takes `--log-level error` only, earlier versions `ERROR` only, and either stops the other at once
     (an `InvalidValue` stack trace, shown with "run opencode auth login" though the user was signed in). The command
@@ -91,9 +220,18 @@ def test_a_used_up_plan_waits_instead_of_stopping():
     assert agents.no_credit("Insufficient Balance") and not agents.LIMIT.search("Insufficient Balance")
 
 
+def test_a_concurrency_limit_is_a_throttle_not_a_plan_limit():
+    """Z.ai's Start Plan takes one request at a time: a second zcode helper, or the ZCode app in use, gets
+    "concurrency limit exceeded". It clears in a minute, so it waits THROTTLE_WAIT, not the plan's 15 minutes."""
+    said = "concurrency limit exceeded"
+    assert agents.THROTTLED.search(said) and not agents.LIMIT.search(said)
+    assert agents.THROTTLED.search("concurrency-limit exceeded") and not agents.LIMIT.search("concurrency-limit exceeded")
+
+
 def _manager(tmp_path, monkeypatch, kind):
     (tmp_path / "bin").mkdir(exist_ok=True)
-    exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode"}[kind]
+    exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode",
+                              "zcode": "zcode"}[kind]
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
@@ -105,7 +243,8 @@ def _manager(tmp_path, monkeypatch, kind):
 
 def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     """On Windows, npm installs agents as .cmd scripts: cmd.exe cuts a multi-line argument at its first line break
-    and caps the command line at 8191 characters."""
+    and caps the command line at 8191 characters. zcode has no stdin prompt: its prompt is a file, checked in
+    test_zcode_prompt_reaches_it_by_file_never_as_argv."""
     for kind in ("claude", "codex", "antigravity", "opencode"):
         m = _manager(tmp_path, monkeypatch, kind)
         s = agents.Session(f"{kind}-1", kind, kind, "demo", f"{kind}-1", {"model": "some-model"})
@@ -125,6 +264,47 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     cfg = json.loads((tmp_path / "agy2" / ".agents" / "mcp_config.json").read_text())
     assert cfg["mcpServers"]["decomp"] == {"serverUrl": "http://127.0.0.1:6464/mcp",
                                            "headers": {"Authorization": "Bearer tok"}}
+
+
+def test_the_windows_stdin_gate_survives_an_empty_prompt_but_not_a_prompt_file(tmp_path, monkeypatch):
+    """main always wrote (Windows' \\x01 gate +) the prompt, even when it was empty; winhelper.py waits for that gate
+    before starting the CLI. Only an agent that took its prompt by file writes nothing on stdin."""
+    class Stdin:
+        def __init__(self):
+            self.calls: list[str] = []
+            self.closed = False
+
+        def write(self, text):
+            self.calls.append(text)
+
+        def close(self):
+            self.closed = True
+
+    class Proc:
+        def __init__(self):
+            self.stdin = Stdin()
+
+    def written(prompt):
+        proc = Proc()
+        agents._feed_stdin(proc, prompt)
+        return "".join(proc.stdin.calls).encode("utf-8"), proc.stdin.closed
+
+    monkeypatch.setattr(agents.os, "name", "posix")
+    assert written("") == (b"", True)
+    assert written("line one\n") == (b"line one\n", True)
+    assert written(None) == (b"", True)  # a prompt-file agent: no prompt bytes, just close
+    monkeypatch.setattr(agents.os, "name", "nt")
+    assert written("") == (b"\x01", True)
+    assert written("line one\n") == (b"\x01line one\n", True)
+    assert written(None) == (b"\x01", True)  # the Windows gate only; zcode's prompt is in its file
+
+    # an empty prompt for a normal agent is a str (write the gate), not the None sentinel (no stdin)
+    m = _manager(tmp_path, monkeypatch, "claude")
+    m.prompt = lambda s: ""
+    work = tmp_path / "claude-empty"
+    work.mkdir()
+    _, _, stdin = m._command(agents.Session("claude-1", "claude", "c", "demo", "claude-1", {}), "tok", work)
+    assert stdin == ""
 
 
 def test_opencode_free_models_keep_their_tools_but_never_get_to_use_them(tmp_path, monkeypatch):
@@ -236,12 +416,16 @@ def test_claude_offers_each_version_as_well_as_the_latest():
     assert agents.helper_name("claude", "opus", set()) == "claude-opus-1"  # the alias keeps its old record
 
 
-def test_every_helper_with_an_effort_offers_medium_to_max(tmp_path):
+def test_every_helper_with_an_effort_offers_the_levels_its_cli_supports(tmp_path):
     """The launcher offered max for opencode but not xhigh, xhigh for Codex but not max, and neither for the API
-    helper (a local llama.cpp model's template wants xhigh): each one that takes an effort offers all four now."""
+    helper (a local llama.cpp model's template wants xhigh): those offer all four now. zcode's GLM models offer
+    low/high/max only, so offering xhigh there would make every session fail on an unsupported effort."""
     for kind in kinds.AGENTS:
         if kind.takes_effort:
-            assert {"medium", "high", "xhigh", "max"} <= set(kind.describe()["efforts"]), kind.id
+            assert {"low", "high", "max"} <= set(kind.describe()["efforts"]), kind.id
+    for kind in ("claude", "codex", "opencode", "api"):
+        assert {"medium", "xhigh"} <= set(kinds.get(kind).efforts), kind
+    assert kinds.get("zcode").efforts == ("low", "high", "max")
     cmd, _ = kinds.get("codex").session_command("codex", tmp_path, URL, "token", "gpt-5.5#max")
     assert 'model_reasoning_effort="max"' in cmd
 

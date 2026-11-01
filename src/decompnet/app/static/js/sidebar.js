@@ -9,11 +9,19 @@ function markNav() {
   document.querySelectorAll(".nav [data-route]").forEach((a) => a.classList.toggle("on", a.dataset.route === route));
   document.querySelectorAll(".nav-proj").forEach((a) => a.classList.toggle("on", a.dataset.slug === S.slug && route === "project"));
 }
-async function loadNav() {
+/* One ask at a time: when the list took longer than 5 s (11 s with two projects whose game file was gone), the
+   timer's asks piled up and kept the app's workers busy. One asked for meanwhile (a project renamed) goes after it. */
+let navLoading = false, navAgain = false;
+async function loadNav(timer = false) {
   if (document.hidden && S.projects.length) return;  // the window is minimised: nobody sees the list
+  if (navLoading) { navAgain = navAgain || !timer; return; }
+  navLoading = true;
   try { S.projects = await api("/api/projects"); } catch (e) {
     if (!S.projects?.length) $("navProjects").innerHTML = `<p class="nav-empty">Couldn't load your projects: ${esc(e.message)}</p>`;
     return;
+  } finally {
+    navLoading = false;
+    if (navAgain) { navAgain = false; loadNav(); }
   }
   renderNav();
 }
@@ -45,7 +53,7 @@ function renderNav() {
   setWidths(box);
   markNav();
 }
-setInterval(loadNav, 5000);
+setInterval(() => loadNav(true), 5000);
 function openNav() { document.body.classList.add("nav-open"); $("navShade").hidden = false; }
 function closeNav() { document.body.classList.remove("nav-open"); $("navShade").hidden = true; }
 $("navOpen").onclick = openNav;

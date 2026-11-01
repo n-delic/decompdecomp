@@ -46,7 +46,8 @@ def wine_setup() -> tuple[str, dict]:
     the prefix $DECOMPNET_WINE_PREFIX names, decompdecomp's own (it sets both for its builds). Never ~/.wine."""
     wine = os.environ.get("DECOMPNET_WINE") or shutil.which("wine")
     if not wine:
-        sys.exit("compile.py: Visual C++ 2015 and newer run through wine on Linux and macOS, and this computer has no "
+        sys.exit("compile.py: Visual C++ 2015 and newer, and the linker of link-time code generation (/GL, /LTCG), run "
+                 "through wine on Linux and macOS, and this computer has no "
                  "wine: decompdecomp's Compilers & tools says how to get it")
     prefix = os.environ.get("DECOMPNET_WINE_PREFIX")
     if not prefix:

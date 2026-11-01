@@ -167,9 +167,11 @@ function showJobError(logEl, message) {
 
 /* The map's still cells are drawn once into `base` (again only when one of them changes); a frame copies it and
    draws just what moves on top: the functions being worked on, fresh matches, the selection. A big game is tens of
-   thousands of cells, and redrawing them all 60 times a second while agents or autopilot work made the app lag. */
-let base = null, baseDirty = true, moving = [];
-function mapChanged() { baseDirty = true; }
+   thousands of cells, and redrawing them all 60 times a second while agents or autopilot work made the app lag.
+   `mapChanged(i)`: only cell i changed (a claim, a better score), redrawn alone: all 28,900 of a big game were
+   redrawn after each poll that brought one. */
+let base = null, baseDirty = true, moving = [], dirtyCells = new Set();
+function mapChanged(i) { if (i == null) baseDirty = true; else dirtyCells.add(i); }
 
 /* ------------------------------------------------------------------ theme */
 const THEME_KEY = "decomp-wtf-theme";

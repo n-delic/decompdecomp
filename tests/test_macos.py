@@ -249,7 +249,7 @@ def test_demo_prerequisites_distinguish_path_tools_from_unavailable_compilers(mo
     assert test_consoles._missing(demo) == ["ee-gcc-2.96"]
 
 
-@pytest.mark.parametrize("tid", ["gcc-2.7.2-psx", "gcc-2.8.1-psx"])
+@pytest.mark.parametrize("tid", ["gcc-2.7.2-psx", "gcc-2.7.2-cdk-psx", "gcc-2.8.1-psx"])
 def test_ps1_mac_archives_are_native_arm64_only(tid, monkeypatch):
     """The published PS1 Mac archives are arm64, so never offer them to Intel Macs or Linux hosts."""
     monkeypatch.setattr(toolchains.wsl, "wanted", lambda: False)
@@ -257,14 +257,15 @@ def test_ps1_mac_archives_are_native_arm64_only(tid, monkeypatch):
     tc = toolchains.get(tid)
     assert tc.supported and not tc.proprietary and toolchains.runtime_error(tid) is None
     parts = tc.parts_for()
-    assert len(parts) == 1 and parts[0]["url"].endswith("-psx-macos.tar.gz")
+    assert len(parts) == 1 and parts[0]["platforms"] == ["macos-arm64"]
+    assert parts[0]["url"].endswith("-macos.tar.gz")
     assert len(parts[0]["sha256"]) == 64 and not parts[0].get("rosetta")
     for dep in tc.requires:
         assert toolchains.get(dep).supported
     monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-x86_64")
     assert not tc.supported
     assert toolchains.get("maspsx").supported  # its Python source works on either Mac architecture
-    assert tc.parts_for("linux-x86_64")[0]["url"].endswith("-psx.tar.gz")
+    assert tc.parts_for("linux-x86_64")[0]["url"].endswith(("-psx.tar.gz", "-cdk.tar.gz"))
 
 
 @pytest.mark.parametrize("cpu", ["arm64", "x86_64"])

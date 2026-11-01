@@ -38,9 +38,15 @@ class PlayStation(Console):
     mode = ROM
     layout = "splat"
     compilers = (
-        Compiler("gcc-2.7.2-psx", "GCC 2.7.2 (PSY-Q 4.0-4.3)", "most PlayStation games (1996-1998)", guess="PSYQ"),
-        Compiler("gcc-2.6.3-psx", "GCC 2.6.3 (PSY-Q 3.5-3.6)", "early PlayStation games (1995-1996)"),
-        Compiler("gcc-2.8.1-psx", "GCC 2.8.1 (PSY-Q 4.4+)", "late PlayStation games (1998-2000)"),
+        Compiler("gcc-2.7.2-psx", "GCC 2.7.2 (PSY-Q 4.0-4.1)", "most PlayStation games (1996-1998)", guess="PSYQ"),
+        Compiler("gcc-2.6.3-psx", "GCC 2.6.3 (early PSY-Q)", "early PlayStation games (1995-1996)"),
+        Compiler("gcc-2.5.7-psx", "GCC 2.5.7", "early PlayStation games (1995)"),
+        Compiler("gcc-2.6.0-psx", "GCC 2.6.0 (PSY-Q 3.3-3.5)", "early PlayStation games (1995-1996)"),
+        Compiler("gcc-2.7.2-cdk-psx", "GCC 2.7.2 CDK (PSY-Q 4.1)", "games that mixed the CDK with PSY-Q 4.3 (1997)"),
+        Compiler("gcc-2.8.0-psx", "GCC 2.8.0 (PSY-Q 4.3)", "PlayStation games of 1997-1998"),
+        Compiler("gcc-2.8.1-psx", "GCC 2.8.1 (PSY-Q 4.4)", "PlayStation games of 1998-1999"),
+        Compiler("gcc-2.91.66-psx", "EGCS 2.91.66 (PSY-Q 4.5)", "late PlayStation games (1999)"),
+        Compiler("gcc-2.95.2-psx", "GCC 2.95.2 (PSY-Q 4.6)", "late PlayStation games (1999-2000)"),
     )
     guides = ("mips", "ps1")
     compiler_guide = "ps1"

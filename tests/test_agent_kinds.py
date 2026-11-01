@@ -119,6 +119,7 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
     assert network.model_family("claude-opus-4-6-1") == "claude" and network.model_family("codex-1") == "gpt"
     assert network.model_family("gemini-2") == network.model_family("antigravity-1") == "gemini"
     assert network.model_family("opencode-deepseek-v4.1-flash-1") == "deepseek"  # the model in its name says
+    assert network.model_family("zcode-glm-5.3-1") == "glm"
 
 
 def test_antigravity_loads_decomps_tools_up_front():

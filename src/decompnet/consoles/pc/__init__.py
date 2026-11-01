@@ -1,7 +1,11 @@
 """Windows PC games: 32-bit x86 programs (.exe) built with Microsoft Visual C++ 6.0 to 2010 and 2017 (2015's and
 newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows program: decompdecomp runs on Linux and
 macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
-Visual C++ 2017's 64-bit compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games).
+Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
+compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games). The user's own Visual C++ copies
+(kits/visualcpp.py, any number, any version from 6.0 on) build a game whose compiler build the packs don't have:
+its Rich header's build picks the copy (scratch.own_copy), the project stores MSVC/own-<version>, and such a game
+is in scope even when built with 2017 or newer.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object
@@ -69,6 +73,7 @@ class WindowsPC(Console):
              ("msvc2015", "Visual C++ 2017, 32- and 64-bit, with its Windows 10 SDK (proprietary, 220 MB; runs "
                           "through wine on Linux and macOS, which you install)"),
              ("ghidra", "finds a PC game's functions, and drafts for platforms m2c can't read (540 MB, needs Java 21+)"))
+    kits = ("visualcpp",)  # the user's own Visual C++ copies: games built with a build the packs don't have
     guides = ("x86", "cpp")
     compiler_guide = "x86"
     ram = (0x00400000, 0x80000000)  # a 32-bit program's address space above its usual image base
@@ -132,7 +137,7 @@ class WindowsPC(Console):
     def create_project(self, root: Path, game: Path, *, compiler: str | None = None, log=print) -> dict:
         from . import scratch
 
-        return scratch.create(root, game, compiler=compiler, log=log)
+        return scratch.create(root, game, compiler=compiler, log=log, args=self.tool_args())
 
     def game_info(self, game: Path) -> dict:
         from . import scratch
@@ -142,7 +147,12 @@ class WindowsPC(Console):
     def tool_args(self) -> list[str]:
         from . import scratch
 
-        return scratch.tool_args()
+        return scratch.tool_args(self.kits)
+
+    def kit_compilers(self) -> tuple[Compiler, ...]:
+        from ... import kits
+
+        return tuple(Compiler(f"MSVC/{c.version}", c.name, "your own copy") for c in kits.compilers(self.kits))
 
     def build_env(self) -> dict[str, str]:
         """Where wine and the app's prefix are, which tools/compile.py reads when a Visual C++ 2015+ file builds: read
@@ -294,6 +304,8 @@ class WindowsPC(Console):
         return scratch.cut_function(fp.root, (fp.manifest or {})["version"], symbol, at, keep=keep, why=why)
 
     splits_sources = True  # a source file is a unit of functions.json (scratch.split_unit)
+    # shortcut: a unit's .c renamed .cpp changes no file here (shows after the next change), name src/ if it matters
+    compiler_config = (".decomp.wtf.json", "config/**/*")  # file_compilers.json and functions.json
 
     def split_source(self, fp, version: str, source: str, at: str, new: str) -> dict:
         from . import scratch

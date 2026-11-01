@@ -113,25 +113,29 @@ def prefix() -> Path:
     return Path(own) if own else toolchains.root() / ".wine"
 
 
-def build_env() -> dict[str, str]:
+def build_env(always: bool = False) -> dict[str, str]:
     """What a project's build needs to run its Visual C++ 2015+ files through wine, read by its tools/compile.py when
     such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX); and, for its
     tools/configure.py, which installed packs wine runs, not wibo ($DECOMPNET_WINE_PACKS: their folders, joined by
     os.pathsep), as toolchains.toml's `wine` says. Only where a pack that needs wine is installed and wine is here
-    (never on Windows, which runs the compilers itself); it starts nothing (the first such compile starts the
-    server). In the environment, not configure.py's arguments: an older project's configure.py ran by its stored
-    setup commands before its tools are brought up to date would refuse an argument it doesn't know."""
+    (never on Windows, which runs the compilers itself), or `always`: wherever wine is, for a console whose builds
+    run Visual C++'s linker through it (an Xbox game built with link-time code generation); it starts nothing (the
+    first such compile or link after a while starts the server). In the environment, not configure.py's arguments:
+    an older project's configure.py ran by its stored setup commands before its tools are brought up to date would
+    refuse an argument it doesn't know."""
     if not needed():
         return {}
     from . import toolchains
 
     packs = [toolchains.path(tid) for tid, tc in toolchains.registry().items()
              if tc.wine and toolchains.installed(tid) is not None]
-    wine = find() if packs else None
+    wine = find() if packs or always else None
     if not wine:
         return {}
-    return {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix()),
-            "DECOMPNET_WINE_PACKS": os.pathsep.join(str(p) for p in packs)}
+    env = {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix())}
+    if packs:
+        env["DECOMPNET_WINE_PACKS"] = os.pathsep.join(str(p) for p in packs)
+    return env
 
 
 def environment(where: Path | None = None) -> dict[str, str]:
