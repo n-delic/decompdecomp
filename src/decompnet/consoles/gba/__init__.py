@@ -43,6 +43,7 @@ class GameBoyAdvance(Console):
     compilers = (
         Compiler("agbcc", "agbcc", "most Game Boy Advance games (pret's rebuild of GCC 2.95)", guess="AGBCC"),
     )
+    kits = ("own-gba",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("arm", "gba")
     compiler_guide = "agbcc"
     m2c = "gba-gcc"  # m2c's GBA target, whose compiler defaults to gcc (seeds.m2c_target adds "-c")

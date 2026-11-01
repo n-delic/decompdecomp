@@ -790,9 +790,11 @@ async function renderForkSetup() {
   const facts = `<dl class="facts one">${[["Repository", (S.ov.repo_url || "").replace(/^https?:\/\//, "") || "made by decompdecomp"], ["Layout", kinds[n.kind] || n.kind], ["Version", n.version || "—"], ["Game goes to", n.path || "see the README"]]
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join("")}</dl>
     <div class="row"><button class="ghost small-btn" id="fsFolder" type="button">Open project folder</button></div>`;
+  let usingGame = false;
   const run = async (start) => {
+    usingGame = true;
     showJobError($("fsLog"), "");
-    const work = box.querySelector(".workbar");
+    const work = box.querySelector('[aria-label="Building project"]');
     if (work) work.hidden = false;
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
@@ -807,6 +809,7 @@ async function renderForkSetup() {
       showJobError($("fsLog"), e.message);
       box.querySelectorAll("button, input").forEach((b) => { b.disabled = false; });
       if ($("fsOwn")) $("fsGo").disabled = !$("fsOwn").checked;
+      usingGame = false;
     }
   };
   if (n.auto) {
@@ -817,6 +820,7 @@ async function renderForkSetup() {
         <label class="check"><input type="checkbox" id="fsOwn"><span>This is my own copy of this game, obtained legally (for example, dumped from my console). The results stay with me for my own use.</span></label>
         <div class="row"><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
           <span class="muted small">or</span><input id="fsPath" class="mono grow" placeholder="paste its path on this computer"><button class="ghost" id="fsPathGo" type="button">Use path</button></div>
+        <div class="row"><button class="ghost small-btn" id="fsFind" type="button">Search ROM library</button><p class="muted small" id="fsFound"></p></div><pre class="joblog" id="fsFindLog" hidden></pre>
         <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
         <pre class="joblog tall" id="fsLog" hidden></pre>
         <p class="muted small">Then decompdecomp runs the project's setup and build, which can download the project's own tools and take a few minutes. Put the game in place yourself? <button class="link-btn" id="fsBuild" type="button">Just build</button></p>
@@ -838,6 +842,25 @@ async function renderForkSetup() {
     };
     $("fsPathGo").onclick = usePath;
     $("fsBuild").onclick = () => run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug } }));
+    const setupSlug = S.slug, searchToken = Symbol();
+    box._romSearch = searchToken;
+    $("fsFind").onclick = async () => {
+      const logEl = $("fsFindLog"), statusEl = $("fsFound"), input = $("fsPath");
+      const finish = beginWork(logEl, "Looking for your ROM", [$("fsFind")], "ROM search finished.");
+      try {
+        const { job } = await api("/api/fork/find-rom", { method: "POST", body: { slug: setupSlug } });
+        const found = await followJob(job, logEl);
+        if (S.slug !== setupSlug || box._romSearch !== searchToken || usingGame) return;
+        if (found.path) {
+          if (found.in_project) input.value = "";
+          else if (!input.value.trim()) input.value = found.path;
+          statusEl.textContent = found.in_project ? "Your verified ROM is already in the project. Retry setup without choosing it again." : "Found a ROM with the expected SHA-1. Confirm ownership above, then click Use path.";
+          if (found.in_project) { $("fsBuild").textContent = "Retry setup"; $("fsBuild").className = "primary"; }
+        } else statusEl.textContent = found.reason || "No matching ROM found.";
+      } catch (e) {
+        if (S.slug === setupSlug && box._romSearch === searchToken) showJobError(logEl, e.message);
+      } finally { finish(); }
+    };
   } else {
     box.innerHTML = `<div class="fs-main">
         <p class="eyebrow">Last step</p>

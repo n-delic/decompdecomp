@@ -3,9 +3,9 @@ newer's with 2017's, the nearest), PROJECT mode. Only the game is a Windows prog
 macOS, and so do the compilers (through wibo; Visual C++ 2017's, which wibo can't run, through wine: wine.py).
 Visual C++ 2017 (its 32-bit and 64-bit compilers) can also be chosen for a source file in Settings; its 64-bit
 compiler is for 64-bit games, which come next (ROADMAP.md, Newer Windows games). The user's own Visual C++ copies
-(kits/visualcpp.py, any number, any version from 6.0 on) build a game whose compiler build the packs don't have:
-its Rich header's build picks the copy (scratch.own_copy), the project stores MSVC/own-<version>, and such a game
-is in scope even when built with 2017 or newer.
+(kits/visualcpp.py, any number, any version from 2.0 on) build a game whose compiler build the packs don't have:
+its Rich header's build picks the copy (scratch.own_copy) before the nearest pack's, and the project stores
+MSVC/own-<version>.
 
 - scratch.py: a project for the user's .exe: Ghidra finds its functions, decompdecomp joins the pieces Ghidra cut
   off them back to them (merge_pieces, by arch/x86.piece) and cuts each one out of the program into a COFF object

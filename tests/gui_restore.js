@@ -17,7 +17,10 @@ const ctx = {
     return elements.dialogBody;
   },
   closeDialog() { elements = {}; ctx.S.dialogKind = ""; },
-  showJobError(el, message) { el.error = message; },
+  showJobError(el, message) {
+    el.error = message;
+    if (message && !el.textContent.includes(message)) el.textContent += `\n${message}`;
+  },
   toast() {}, loadNav() {}, plural: () => "",
   sleep: () => new Promise(() => {}),
   api(url, options) {
@@ -65,7 +68,7 @@ async function main() {
   assert.equal(elements.rsWork.hidden, true);
   assert.equal(elements.rsLog.error, "Cancelled");
   assert.match(elements.rsStatus.textContent, /Cancelled/);
-  assert.equal(elements.rsLog.textContent, "checking");
+  assert.match(elements.rsLog.textContent, /checking\nCancelled/);
   assert.equal(elements.rsGo.disabled, false);
   // A reopened terminal dialog still has working handlers, including retry.
   const retry = elements.rsGo.onclick();
@@ -84,6 +87,7 @@ async function main() {
   assert.equal(elements.rsWork.hidden, true);
   assert.equal(elements.rsGo.disabled, false);
   assert.match(elements.rsStatus.textContent, /Missing save/);
+  assert.match(elements.rsLog.textContent, /failed\nMissing save/);
   await elements.rsCancel.onclick();
   ctx.openRestore();
   assert.equal(elements.rsSource.value, "");

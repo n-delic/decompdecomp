@@ -113,9 +113,10 @@ def tick(_timer):
             evaluate('var a=document.createElement("a");a.href="/native-export";a.download="export.zip";a.click();true',
                      lambda _: None)
         elif phase == 11:
-            if not downloaded.exists():
+            # The destination file is there before its bytes have landed (slow Intel CI): wait until they match,
+            # like the reloaded page is waited for below.
+            if not downloaded.exists() or downloaded.read_bytes() != b"native export bytes":
                 return
-            assert downloaded.read_bytes() == b"native export bytes"
             state["phase"] = 1
         elif phase == 1:
             state["phase"] = 2
@@ -124,8 +125,8 @@ def tick(_timer):
         elif phase == 2:
             if not external:
                 return
-            assert external == ["https://example.invalid/external"]
-            assert "native-mac-test-secret" not in external[0]
+            assert external == ["https://example.invalid/external"], external
+            assert "native-mac-test-secret" not in external[0], external[0]
             state["phase"] = 21
             state["requests_before"] = len(headers)
             evaluate('window.nativeBeforeReload=true;'

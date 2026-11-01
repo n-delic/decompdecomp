@@ -123,7 +123,7 @@ def test_mips_code_in_a_forks_object_isnt_judged_without_its_console():
 # missing, where a compiler or tool isn't installed: CI installs the free ones (N64's KMC GCC, the PS2's EE-GCC).
 
 DEMO_GAME = ROOT / "projects" / "demo-n64" / "original" / "game.c"  # the Demo Quest game every demo is built from
-ZLIB = ROOT / "projects" / "zlib-n64" / "original"  # downloaded by projects/zlib-n64/prepare.py
+ZLIB = ROOT / "projects" / "zlib-n64" / "original"  # zlib 1.1.4's sources, in git
 # needs nothing but s32, which every project's first header has (clamp_s32 before it runs into the N64's exit())
 FUNCTION = "abs_s32"
 WRONG = ("-v : v", "-v : v + 1")  # still compiles, other code

@@ -1,4 +1,4 @@
-"""The processors decompdecomp reads: one module each (mips.py, ppc.py, x86.py, arm.py) with what depends on the
+"""The processors decompdecomp reads: one module each (mips.py, ppc.py, ppc64.py, x86.py, arm.py) with what depends on the
 processor alone, whatever the console: the relocations a match ignores the bits of, how capstone disassembles it,
 how to tell code no compiler makes, and which of decompdecomp's readers exist for it.
 
@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import arm, mips, mips_fields, ppc, x86, x86_fields
+from . import arm, mips, mips_fields, ppc, ppc64, x86, x86_fields
 
 # What decompdecomp's readers can do with a processor's code (each is a module of its own that reads MIPS, and some
 # x86):
@@ -53,6 +53,7 @@ ARCHES = [
          frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
          variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
+    Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),
     Arch("x86", "x86", x86.CAPSTONE, x86.RELOC_MASKS, features=frozenset({CLASSES, STRUCTS}),
          field_accesses=x86_fields.read_facts, float_operands=x86.float_operands, method_draft=x86.method_draft),
     Arch("x86_64", "x86-64", x86.CAPSTONE_64, x86.RELOC_MASKS_64),

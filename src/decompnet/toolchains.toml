@@ -970,6 +970,32 @@ url = "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/ar
 sha256 = "864c0c8815857d68a1bbba2e5e2782255bb922845c71c97636004a3d74f60986"
 platforms = ["windows-x86_64"]  # the Windows zip has bin/, lib/, ... at its top, no folder around them
 
+["ps3dev-gcc"]
+cplusplus = true
+name = "PS3 GCC 7.2 (ps3dev)"
+platform = "PS3"
+arch = "ppc64"
+license = "GPL-3.0"
+source = "ps3dev/ps3toolchain release nightly-2026-09-12 (GCC 7.2.0 and binutils for the PlayStation 3's PPU)"
+description = "The free PPU compiler of the PlayStation 3 homebrew toolchain (about 150 MB): it makes the usual 64-bit PowerPC program, not Sony's 32-bit-pointer one, so it builds the demo game and homebrew, not retail games."
+cc = ["{tc}/ppu/bin/ppu-gcc", "-c"]
+flags = ["-O2", "-mtraceback=no"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-linux-X64.tar.gz"
+sha256 = "5c1c252b72dfcedb1859618006015c1184b1e1b79e457693fde9f6f0f7807cba"
+subdir = "ps3dev"
+platforms = ["linux-x86_64"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-macos-ARM64.tar.gz"
+sha256 = "0e5b028fdadfd521405361565f378e56f4e76cae9e728eea16893642250ed2c8"
+subdir = "ps3dev"
+platforms = ["macos-arm64"]
+[["ps3dev-gcc".parts]]
+url = "https://github.com/ps3dev/ps3toolchain/releases/download/nightly-2026-09-12/ps3dev-macos-X64.tar.gz"
+sha256 = "cf6ec90a9d299643e8a087e387c4de27645767094fa11317ad3a02b976ab8071"
+subdir = "ps3dev"
+platforms = ["macos-x86_64"]
+
 [msvc]
 name = "Microsoft Visual C++ 6.0, 7.0 and 7.1 (PC)"
 kind = "compiler-pack"
@@ -1123,3 +1149,44 @@ description = "The community's project template for GameCube and Wii decomps, us
 url = "https://github.com/encounter/dtk-template/archive/95a941f755919ebe50c1725a4ce73524470e7a02.tar.gz"
 sha256 = "c49f889a4e092388beef4867340887ec6f0410bd1055d79a8f8850bea89ada61"
 subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
+
+# UNPUBLISHED DRAFT (commented out on purpose: the release below doesn't exist yet, so nothing may try to download it).
+# Sony's PS3 PPU compiler, built from the GPL sources Sony published (packaging/ps3-gcc/). To publish:
+#   packaging/ps3-gcc/build.sh 1.9.0 dist && packaging/ps3-gcc/build.sh 2.7.0 dist
+#   gh release create ps3-gcc-1.9.0 dist/ppu-lv2-gcc-1.9.0.tar.xz --title "PS3 ppu-lv2-gcc 1.9.0 (GPL build)" \
+#      --notes "GCC 4.1.1 + binutils 2.17 built from Sony's GPL source; the exact source is inside the archive."
+#   (same for 2.7.0), then sha256sum the uploaded files, fix the sha256 below if the rebuild differs, and uncomment.
+# The archive carries the source it was built from (share/doc/ppu-lv2-gcc/ps3gcc-source.tar.gz) and the GPL texts.
+# No libgcc, crt files or SDK headers: the app compiles to objects and links itself.
+#
+# ["ppu-lv2-gcc-1.9.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 1.9.0, CELL 4.1.2.7)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit 8bc057a8fb9e, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 1.9.0 (early PS3 games), rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-1.9.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-1.9.0/ppu-lv2-gcc-1.9.0.tar.xz"
+# sha256 = "8ad0d07500cdf4e5b2fe3e3dbabf1bce41e6928bd51d1edb3d3e42c51057f53b"
+# subdir = "ppu-lv2-gcc-1.9.0"
+# platforms = ["linux-x86_64"]
+#
+# ["ppu-lv2-gcc-2.7.0"]
+# cplusplus = true
+# name = "PPU GCC 4.1.1 (SDK 2.7.0, $Rev: 3019 $)"
+# platform = "PS3"
+# arch = "ppc64"
+# license = "GPL-2.0-or-later"
+# source = "Sony's published GPL toolchain source, sagemono/ps3gcc commit dc6c3b99344, built by packaging/ps3-gcc"
+# description = "The PS3 SDK's PowerPC compiler, generation 2.7.0, rebuilt from its GPL source."
+# cc = ["{tc}/bin/ppu-lv2-gcc", "-c"]
+# flags = ["-O2"]
+# [["ppu-lv2-gcc-2.7.0".parts]]
+# url = "https://github.com/n-delic/decompdecomp/releases/download/ps3-gcc-2.7.0/ppu-lv2-gcc-2.7.0.tar.xz"
+# sha256 = "be179831ffde0bc185c68939dd43213d05afd4a502de6f56c8b6e6f5f3fc651c"
+# subdir = "ppu-lv2-gcc-2.7.0"
+# platforms = ["linux-x86_64"]

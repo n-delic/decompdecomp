@@ -1,6 +1,6 @@
 """Build Demo Quest 64, a small but real N64 ROM image made only from code we may share:
 the Demo Quest game (CC0, ../demo-n64/original), a tiny libc and main loop (CC0, src/), and
-zlib 1.1.4 (Zlib license, ../zlib-n64/original; run ../zlib-n64/prepare.py first).
+zlib 1.1.4 (Zlib license, ../zlib-n64/original).
 
 Everything is compiled with the pinned KMC-compatible GCC 2.7.2, exactly like a period N64 game,
 and linked to run from 0x80000400. The boot code area (IPL3) is left empty: this ROM exists to be

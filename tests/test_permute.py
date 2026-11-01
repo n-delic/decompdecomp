@@ -223,6 +223,7 @@ def test_compilers_pick_decomp_permuters_weights():
     assert weight_family(kmc, 0x80000400, False) == "gcc"
     assert weight_family({"compiler": {"toolchain": "ido-7.1"}}, None, False) == "ido"
     assert [weight_family(gta, vram, False) for vram in (0x100000, 0x200010)] == ["gcc", "mwcc"]
+    assert [weight_family({"compiler": {"toolchain": t}}, None, False) for t in ("ps3dev-gcc", "ps3sdk-270")] == ["gcc"] * 2
     assert weight_family({"compiler": {"cmd": ["cc"]}}, None, False) == "base"
     assert weight_family({"platform": "gc"}, None, True) == "mwcc" and weight_family({"platform": "win32"}, None, True) == "base"
 

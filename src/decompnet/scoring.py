@@ -27,7 +27,7 @@ _CS = arch.capstone_modes()  # (arch, big-endian) -> capstone's (architecture, m
 
 _REG = re.compile(
     r"^\$?(r[a-z0-9]+|e[a-z]{2}|[a-d][lhx]|[sd]il?|[bs]pl?|[xyz]mm\d+|r\d+[dwb]?"  # x86
-    r"|zero|at|v[01]|a[0-3]|t\d|s[0-8]|k[01]|gp|fp|ra|f\d+|[SCRME]\d{3}"  # mips (the last: the Allegrex's VFPU)
+    r"|zero|at|v\d+|a[0-3]|t\d|s[0-8]|k[01]|gp|fp|ra|f\d+|[SCRME]\d{3}"  # mips (the last: the Allegrex's VFPU)
     r"|cr\d|lr|pc|ip|sb|sl|d\d+|s\d+)$"  # ppc / arm
 )
 _NUM = re.compile(r"^-?(0x[0-9a-f]+|\d+)$", re.I)

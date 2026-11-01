@@ -48,6 +48,7 @@ class PlayStation(Console):
         Compiler("gcc-2.91.66-psx", "EGCS 2.91.66 (PSY-Q 4.5)", "late PlayStation games (1999)"),
         Compiler("gcc-2.95.2-psx", "GCC 2.95.2 (PSY-Q 4.6)", "late PlayStation games (1999-2000)"),
     )
+    kits = ("own-ps1",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips", "ps1")
     compiler_guide = "ps1"
     m2c = "mipsel-gcc"

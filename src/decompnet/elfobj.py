@@ -20,7 +20,8 @@ from elftools.elf.sections import SymbolTableSection
 from . import arch
 
 # e_machine -> arch key used throughout decompnet
-MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_ARM": "arm"}
+MACHINES = {"EM_X86_64": "x86_64", "EM_386": "x86", "EM_MIPS": "mips", "EM_PPC": "ppc", "EM_PPC64": "ppc64",
+            "EM_ARM": "arm"}
 
 # (arch, reloc type) -> (byte offset from r_offset, length, big-endian bitmask to clear), from each processor's
 # module in arch/. Anything not listed masks the 4 bytes at r_offset, which is right for most absolute/PC32 relocs.

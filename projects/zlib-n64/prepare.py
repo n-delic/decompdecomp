@@ -1,40 +1,22 @@
-"""Fetch zlib 1.1.4 from zlib.net (pinned sha256) into original/, and build the shared headers
-(context.h) for the two DecompNet projects made from it: zlib-deflate and zlib-inflate.
+"""Build the shared headers (include/context.h, units/) from zlib 1.1.4's sources in original/, for the two
+DecompNet projects made from it: zlib-deflate and zlib-inflate. Both are in git: run this only after changing it.
 
 zlib's license allows use, alteration and redistribution (see LICENSE.zlib). The original source stays
 on the coordinator to build the target objects; agents only see compiled code and context.h.
-Run once before importing:  python3 -I projects/zlib-1.1.4/prepare.py
 """
 
-import hashlib
-import io
 import pathlib
 import re
-import tarfile
-import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
-URL = "https://zlib.net/fossils/zlib-1.1.4.tar.gz"
-SHA256 = "9e3e973174f9910fd51539ef9ce94c86a3943d4f897fab8e9adf4b19e6a8291e"
 CORE = ["adler32.c", "compress.c", "crc32.c", "deflate.c", "infblock.c", "infcodes.c", "inffast.c", "inflate.c",
         "inftrees.c", "infutil.c", "trees.c", "uncompr.c", "zutil.c"]
 # zlib has two different `struct internal_state`s (compression vs decompression) and per-file macros and
 # typedefs, so each source file (unit) gets its own header: the headers it includes plus its declarations.
 
 def fetch() -> pathlib.Path:
-    out = HERE / "original"
-    if (out / "zlib.h").exists():
-        return out
-    data = urllib.request.urlopen(URL, timeout=60).read()
-    if hashlib.sha256(data).hexdigest() != SHA256:
-        raise SystemExit("checksum mismatch: refusing to use this archive")
-    out.mkdir(exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-        for m in tar.getmembers():
-            name = pathlib.PurePosixPath(m.name).name
-            if m.isfile() and (name.endswith((".c", ".h")) or name == "README"):
-                (out / name).write_bytes(tar.extractfile(m).read())
-    return out
+    # zlib 1.1.4's release archive's .c, .h and README (sha256 9e3e973174f9910fd51539ef9ce94c86a3943d4f897fab8e9adf4b19e6a8291e)
+    return HERE / "original"
 
 
 def strip_comments(text: str) -> str:

@@ -121,7 +121,8 @@ def per_file(tmp_path, monkeypatch):
         state["compiler"] = compiler
         state["sets"].append(compiler)
         return "build.ninja"
-    monkeypatch.setattr(N64, "compilers", (Compiler(GOOD, "the game's"), Compiler(BAD, "-O0")))
+    # (its own list: `compilers` adds the kits' to it, the N64 taking one)
+    monkeypatch.setattr(type(N64), "fixed_compilers", (Compiler(GOOD, "the game's"), Compiler(BAD, "-O0")))
     monkeypatch.setattr(N64, "file_compiler", lambda fp, source: state["compiler"] if source in ("", "src/game.c") else None)
     monkeypatch.setattr(N64, "set_file_compiler", set_file_compiler)
     agent, _ = net.local_agent("claude-1")

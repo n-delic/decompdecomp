@@ -29,6 +29,7 @@ class Nintendo64(Console):
         Compiler("ido-7.1", "IDO 7.1", "most later first-party N64 games", guess="IDO"),
         Compiler("ido-5.3", "IDO 5.3", "early N64 games (1996-97)"),
     )
+    kits = ("own-n64",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips",)
     m2c = "mips-gcc"
     ram = (0x80000400, 0x80800000)  # KSEG0 above the exception vectors, up to the Expansion Pak's 8 MiB
@@ -52,6 +53,15 @@ class Nintendo64(Console):
         except RomError:  # an incomplete cartridge is not an N64 game identity
             return None
         return result[0] if result else None
+
+    def library_candidate(self, path: Path, size: int) -> bool:
+        """Skip files outside cartridge sizes and without an N64 magic before hashing."""
+        from .rom import MAGIC, MAX_SIZE, MIN_SIZE
+
+        if not MIN_SIZE <= size <= MAX_SIZE or size % 4:
+            return False
+        with path.open('rb') as stream:
+            return stream.read(4) in MAGIC
 
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         if not target.lower().endswith(".z64"):

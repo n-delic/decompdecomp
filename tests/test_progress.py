@@ -395,6 +395,38 @@ def test_a_failed_sync_waits_for_a_change_before_reads_and_the_autosave_try_it_a
     assert tries == ["f", "f", "f", "f"]
 
 
+def test_a_folder_an_older_version_wrote_opens_its_header_rebuilt_and_its_leftovers_set_aside(project):
+    """#167: a PS2 project's folder from before the folder was read back stopped opening. Its include/ had no header
+    the manifest named, and src/ and best/ kept thousands of functions' files under the game's symbol names, which
+    the layout no longer had. The header is written again from the project; the leftovers move to unlisted/, kept."""
+    net, folder, judged = project
+    header = json.loads((folder / saves.MANIFEST).read_text())["headers"][""]
+    (folder / "include" / header).unlink()
+    for name in ("src/AddPlay__9VIHSpriteiR7VIScene.c", "best/AbortOpen__9VIObjFile.c"):
+        (folder / name).parent.mkdir(exist_ok=True)
+        (folder / name).write_text("a draft under an old name", encoding="utf-8")
+    (folder / "src/f.c").write_text("good C", encoding="utf-8")
+    net.progress.sync("game", force=True)  # (it opens: no "Fix progress/decompdecomp.json")
+    assert (folder / "include" / header).read_text() == net._context(net.project_row("game")["id"])["header"]
+    assert (folder / "unlisted/src/AddPlay__9VIHSpriteiR7VIScene.c").read_text() == "a draft under an old name"
+    assert (folder / "unlisted/best/AbortOpen__9VIObjFile.c").exists()
+    assert not (folder / "src/AddPlay__9VIHSpriteiR7VIScene.c").exists()
+    assert judged == [("f", "good C")] and net._function("f", "game")["status"] == "matched"
+    assert not net.progress.sync("game", force=True)
+
+
+def test_the_autosave_logs_a_failing_sync_once_not_every_second(project, monkeypatch, caplog):
+    """#167: a project whose folder was rejected logged the same traceback once a second, 211 times in minutes."""
+    net, folder, _ = project
+    monkeypatch.setattr(net, "attempt", lambda *args: (_ for _ in ()).throw(FileNotFoundError("game.rom")))
+    (folder / "src").mkdir(exist_ok=True)
+    (folder / "src/f.c").write_text("good C", encoding="utf-8")
+    with caplog.at_level("ERROR", logger=saves.log.name):
+        for _ in range(4):
+            saves.Autosave(net).run_once()
+    assert sum("saving game failed" in r.getMessage() for r in caplog.records) == 1
+
+
 def test_unchanged_progress_sync_skips_rendering(project, monkeypatch):
     net, _, _ = project
     monkeypatch.setattr(saves, "_render", lambda *args, **kwargs: pytest.fail("rendered an unchanged project"))
