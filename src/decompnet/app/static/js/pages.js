@@ -4,6 +4,7 @@ async function showAgentsPage() {
   show("agentsPage");
   $("agList").innerHTML = `<p class="muted small">Looking for your agents…</p>`;
   await loadState();
+  loadManualMcp();
   renderAgentsPage();  // again when the search for agents ends (base.js agentsFound)
 }
 function renderAgentsPage() {
@@ -345,3 +346,53 @@ route();
 pollEvents();  // where the notification centre's feed starts: nothing from before is news
 setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
+
+/* Manual clients have project-scoped credentials, independent of managed helper processes. */
+let manualMcpRead = 0;
+async function loadManualMcp() {
+  const select = $("mcpProject"), previous = select.value;
+  select.innerHTML = S.projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join("");
+  if (S.projects.some(p => p.slug === previous)) select.value = previous;
+  $("mcpCreate").disabled = !select.value;
+  select.onchange = () => { $("mcpConfig").replaceChildren(); refreshManualMcp(); };
+  $("mcpRefresh").onclick = refreshManualMcp;
+  $("mcpCreate").onclick = async () => {
+    const slug = select.value, button = $("mcpCreate"), log = $("mcpLog");
+    const finish = beginWork(log, "Creating MCP connection", [], "Connection created.");
+    button.disabled = true;
+    try {
+      const connection = await api("/api/manual-mcp", {method:"POST", body:{action:"create", slug}});
+      if (select.value !== slug) return;
+      const config = JSON.stringify({mcpServers:{decompdecomp:{type:"http",url:connection.url,headers:{Authorization:`Bearer ${connection.token}`}}}}, null, 2);
+      $("mcpConfig").innerHTML = `<h3>Configure your AI tool</h3><ol class="steps"><li>Add a remote MCP server using Streamable HTTP at the URL below.</li><li>Set the Authorization header to the bearer value in this configuration. Some clients use different configuration keys; use their remote MCP settings.</li><li>Connect, then ask the AI to read project_info and follow the server instructions before claiming work.</li></ol><p class="small">This credential can read and change this project's work. Keep it private. It is shown only now; create another connection if you lose it. Connections survive app restarts; if the server port changes, update the URL.</p>${cmdBox(config)}<details><summary>Instructions for your AI tool</summary>${cmdBox(connection.instructions)}</details>`;
+      wireCopies($("mcpConfig"));
+      await refreshManualMcp();
+    } catch(e) { showJobError(log,e.message); }
+    finally { finish(); button.disabled = !select.value; }
+  };
+  await refreshManualMcp();
+}
+async function refreshManualMcp() {
+  const read = ++manualMcpRead, slug = $("mcpProject").value, log = $("mcpLog");
+  const finish = beginWork(log, "Reading MCP server information", [], "MCP server information loaded.");
+  try {
+    const info = await api(`/api/manual-mcp${slug ? `?slug=${encodeURIComponent(slug)}` : ""}`);
+    if (read !== manualMcpRead) return;
+    const port = new URL(info.url).port;
+    $("mcpStatus").innerHTML = `<p><b>Running locally</b> · ${esc(info.transport)} · Port ${esc(port)}</p>${cmdBox(info.url)}<p class="small muted">Local clients only (127.0.0.1). No public endpoint or OAuth sign-in. Choose a project to see its tools.</p>`;
+    wireCopies($("mcpStatus"));
+    $("mcpToolCount").textContent = `(${info.tools.length})`;
+    $("mcpTools").innerHTML = info.tools.map(t => `<details class="mcp-tool"><summary><code>${esc(t.name)}</code></summary><p>${esc(t.description || "")}</p><details><summary>Input schema</summary><pre class="joblog">${esc(JSON.stringify(t.inputSchema,null,2))}</pre></details></details>`).join("");
+    $("mcpConnections").innerHTML = info.connections.length ? info.connections.map(c => `<div class="row mcp-connection"><code class="grow">${esc(c.name)} · ${esc(c.slug)}</code><button class="ghost small-btn" data-revoke-mcp="${c.id}" type="button">Revoke</button></div>`).join("") : `<p class="muted small">No manual connections yet.</p>`;
+    $("mcpConnections").querySelectorAll("[data-revoke-mcp]").forEach(button => { button.onclick = async () => {
+      button.disabled = true;
+      const done = beginWork(log,"Revoking MCP connection",[],"Connection revoked.");
+      try {
+        await api("/api/manual-mcp",{method:"POST",body:{action:"revoke",id:Number(button.dataset.revokeMcp)}});
+        $("mcpConfig").replaceChildren(); await refreshManualMcp();
+      } catch(e) { showJobError(log,e.message); button.disabled=false; }
+      finally { done(); }
+    }; });
+  } catch(e) { if(read === manualMcpRead) showJobError(log,e.message); }
+  finally { finish(); }
+}

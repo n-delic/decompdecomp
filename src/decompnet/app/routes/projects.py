@@ -121,6 +121,9 @@ def register(app: App) -> None:
         proj = net.project_row(slug)
         net.knowledge.forget(slug)
         net.remove_project(slug)
+        from .. import manual_mcp
+        settings.data['manual_mcp'] = [c for c in manual_mcp.connections(settings) if c['slug'] != slug]
+        settings.save()
         if data.get("files"):
             shutil.rmtree(proj["root"], ignore_errors=True)
         if settings.data.get("last_project") == slug:

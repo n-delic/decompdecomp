@@ -1011,3 +1011,10 @@ details.more[open] > summary::before { content: "− "; }
 .copy-path { overflow-wrap: anywhere; }
 .local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .local-form input[type=text] { width: 100%; box-sizing: border-box; }
+
+.manual-mcp { margin: 24px 0; }
+.manual-mcp .pad { display: grid; gap: 16px; }
+.manual-mcp .cmd { align-items: flex-start; }
+.manual-mcp .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.manual-mcp details { border-top: 1px solid var(--line-soft); padding-top: 12px; }
+.manual-mcp .mcp-tool, .mcp-connection { padding: 12px 0; }

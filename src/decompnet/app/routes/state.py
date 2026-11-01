@@ -95,6 +95,32 @@ def register(app: App) -> None:
     async def api_state(request: Request) -> Response:
         return guard(request) or JSONResponse(await call(state))
 
+    @mcp.custom_route("/api/manual-mcp", methods=["GET", "POST"])
+    async def manual_mcp_connection(request: Request) -> Response:
+        from .. import manual_mcp, tools
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                if data.get('action') == 'revoke':
+                    await call(manual_mcp.revoke, settings, int(data['id']))
+                    return JSONResponse({'ok': True})
+                if data.get('action') != 'create':
+                    raise ValueError('Choose create or revoke.')
+                item = await call(manual_mcp.create, net, settings, str(data.get('slug') or ''))
+                return JSONResponse({**item, 'url': mcp_url, 'instructions': tools.INSTRUCTIONS})
+            slug = request.query_params.get('slug')
+            if slug:
+                await call(net.project_row, slug)
+            keep = set(tools.project_tools(net, slug)) if slug else set()
+            definitions = await mcp.list_tools()
+            return JSONResponse({'url': mcp_url, 'transport': 'Streamable HTTP',
+                                 'connections': manual_mcp.connections(settings),
+                                 'tools': [t.model_dump(mode='json', by_alias=True) for t in definitions if t.name in keep]})
+        except (NetworkError, ValueError, KeyError) as e:
+            return fail(e)
+
     @mcp.custom_route("/api/restore", methods=["POST"])
     async def api_restore(request: Request) -> Response:
         """A project rebuilt from a save (a folder, or a git repository's address) and the user's own copy of the
