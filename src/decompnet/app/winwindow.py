@@ -39,6 +39,26 @@ def navigation(event, origin: str) -> None:
         webbrowser.open(uri)
 
 
+def process_failed(sender, event) -> None:
+    """#154: a WebView2 process that dies leaves the window black and says nothing (the log held only startup lines).
+    Say which one died; a page's renderer is reloaded, a dead browser process can't be, so the window ends and the app
+    (which keeps its jobs running) opens a new one from the tray."""
+    kind = str(event.ProcessFailedKind)
+    logging.getLogger("decompdecomp").warning("WebView2 process failed: %s, reason %s, exit code %s", kind,
+                                              getattr(event, "Reason", "?"), getattr(event, "ExitCode", "?"))
+    if kind.startswith("Browser"):
+        os._exit(1)
+    if "Render" in kind:
+        sender.Reload()
+
+
+def watch_webview(webview) -> None:
+    """Attach process_failed once WebView2 exists (it starts after the window shows)."""
+    def ready(sender, _event):
+        sender.CoreWebView2.ProcessFailed += process_failed
+    webview.CoreWebView2InitializationCompleted += ready
+
+
 def app_id(window_class: str) -> None:
     """Keep the installed app and the development copy separate on the taskbar."""
     import ctypes
@@ -134,6 +154,7 @@ def main() -> int:
     def chrome():
         api._chrome = _install_chrome(view)
         view.native.webview.NavigationStarting += lambda _sender, event: navigation(event, args.url)
+        watch_webview(view.native.webview)
 
     view.events.before_show += chrome
     closing = threading.Event()

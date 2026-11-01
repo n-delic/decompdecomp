@@ -1,5 +1,5 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
+consoles/ps1/, consoles/ps2/, consoles/ps3/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
 consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
@@ -9,7 +9,7 @@ console names. A person or an agent working on PS2 support reads consoles/ps2/ a
 A console works in one of two modes:
 - ROM: decompdecomp splits the game itself (splat, rom/split.py), and the judge links each compiled candidate at the
   function's real address and compares the bytes (rom/match.py). The console reads its file (`read_game`), names its
-  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PSP and GBA (whose
+  compilers and flags, and may add code splat's own look misses (`add_code`). N64, PS1, PS2, PS3, PSP and GBA (whose
   splitter and judge are still being ported: ROADMAP.md).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
@@ -66,8 +66,12 @@ class Console:
             cls.compilers = property(lambda self: (*self.fixed_compilers, *self.kit_compilers()))
 
     def kit_compilers(self) -> tuple[Compiler, ...]:
-        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them."""
-        return ()
+        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them (ROM
+        mode: by their version, which project.compiler_config runs from the user's copy; a PROJECT console's build
+        has its own naming and overrides this)."""
+        from .. import kits
+
+        return tuple(Compiler(c.version, c.name, "your own copy") for c in kits.compilers(self.kits))
 
     id = ""  # what project configs store as their platform ("n64")
     name = ""  # what the app calls it: "Nintendo 64"
@@ -169,6 +173,14 @@ class Console:
         """A compiler's flags for a game of this console (`gp`: the game's $gp value, 0 when it keeps no data
         $gp-relative: small_gp)."""
         return list(toolchains.get(toolchain).flags)
+
+    # flags search_flags tries on its games beyond what its compiler family's search does ("-mminimal-toc")
+    flag_extras: tuple[str, ...] = ()
+
+    def game_flags(self, cfg: dict, toolchain: str) -> list[str]:
+        """More flags a game of it was built with, as its import read them from the program (cfg["rom"]): a PS3 game
+        whose code keeps a minimal TOC. None by default."""
+        return []
 
     def add_code(self, config: Path, workdir: Path, image: str, picked: Picked, log=print) -> str:
         """Before splat splits: code its own look misses (segments loaded later, overlays), added to its config.
@@ -542,14 +554,15 @@ def _registry() -> list[Console]:
     from .pc import PC
     from .ps1 import PS1
     from .ps2 import PS2
+    from .ps3 import PS3
     from .psp import PSP
     from .public import PUBLIC_ONLY
     from .xbox import XBOX
 
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
     # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
-    # starts with a DVD video partition)
-    return [N64, XBOX, PSP, PS1, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    # starts with a DVD video partition; the PS3 before the PS2 too, though the PS2 takes only 32-bit MIPS ELFs)
+    return [N64, XBOX, PSP, PS1, PS3, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()
@@ -569,7 +582,9 @@ def of(cfg: dict) -> Console:
 
 def default_flags(cfg: dict, toolchain: str) -> list[str]:
     """A compiler's flags for a project's game: its console's, with small data as the game keeps it (small_gp)."""
-    return of(cfg).default_flags(toolchain, small_gp(cfg))
+    console = of(cfg)
+    flags = console.default_flags(toolchain, small_gp(cfg))
+    return flags + [f for f in console.game_flags(cfg, toolchain) if f not in flags]
 
 
 def small_gp(cfg: dict) -> int:

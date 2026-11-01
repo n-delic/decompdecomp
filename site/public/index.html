@@ -72,6 +72,7 @@
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
     <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
     <label><input type="radio" name="platform" value="xbox"><span>Xbox</span></label>
@@ -129,6 +130,16 @@
         <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2, CodeWarrior 2.3.3 / 3.0.1; C and C++; one compiler per address range when a game mixes them</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
+      </ol>
+    </article>
+    <article class="pipeline" data-platform="ps3" data-file="EBOOT.ELF">
+      <h3><span class="pl-name">PlayStation 3</span> <span class="status beta">Beta</span></h3>
+      <ol class="stations">
+        <li><small>Your file</small><b>The program, decrypted</b><span>EBOOT.ELF from your own copy; decompdecomp never decrypts</span></li>
+        <li><small>Split by</small><b>decompdecomp</b><span>the program's own function list first, then its calls; imports named</span></li>
+        <li><small>Built by</small><b>GCC</b><span>the free ps3dev GCC, or your own SDK's compiler; C and C++</span></li>
+        <li><small>Judged by</small><b>Linking</b><span>at the function's real address, every reference checked</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C sources</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="psp" data-file="game.iso">

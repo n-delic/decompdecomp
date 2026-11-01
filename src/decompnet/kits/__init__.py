@@ -39,6 +39,11 @@ class OwnCompiler:
     includes: tuple[Path, ...]  # its headers, searched in this order
     runner: str = "wibo"  # what runs it on Linux and macOS: "wibo", "wine", or "" (a program of this computer)
     build: str = ""  # the compiler's exact build, from its c2.dll's version resource ("13.10.3077.0"); "" if unreadable
+    # ROM mode (project.compiler_config runs it as a command): the folder it must read whole inside the sandbox (its
+    # libexec, specs and libgcc sit beside bin/), the arguments before the flags ("-c"), and the console's default flags
+    root: Path | None = None
+    args: tuple[str, ...] = ()
+    flags: tuple[str, ...] = ()
 
 
 class Kit:
@@ -154,11 +159,19 @@ def compilers(kids) -> list[OwnCompiler]:
     return list(out.values())
 
 
+def own_compiler(cid: str) -> OwnCompiler | None:
+    """The compiler of the user's copies that a ROM project's compiler id names (OwnCompiler.version), or None: the
+    id is a pinned toolchain's, or a copy that isn't set up here. This is how project.compiler_config, and the
+    toolchains registry's get/known/installed, find a kit's compiler beside the pinned ones."""
+    return next((c for c in compilers(k.id for k in KITS) if c.version == cid), None)
+
+
 def _registry() -> list[Kit]:
+    from .ps3sdk import PS3SDK
     from .visualcpp import VISUALCPP
     from .xdk import XDK
 
-    return [XDK, VISUALCPP]
+    return [XDK, VISUALCPP, PS3SDK]
 
 
 KITS: list[Kit] = _registry()

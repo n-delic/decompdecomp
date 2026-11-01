@@ -71,7 +71,7 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When you add a feature:
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
@@ -91,6 +91,7 @@ through one file: the connector, `consoles/__init__.py`.
 | `consoles/n64/` | Nintendo 64 | ROM | `rom.py` the ROM file and its header · `code.py` code the game loads later, compressed code · `guides/` |
 | `consoles/ps1/` | PlayStation | ROM | `exe.py` the game's program (PS-X EXE) and the disc's BOOT line; its discs and overlays through the PS2's readers · `guides/` |
 | `consoles/ps2/` | PlayStation 2 | ROM | `elf.py` the game's program · `disc.py`, `chd.py` disc images · `overlays.py` code in the disc's other files · `syscalls.py` kernel calls · `symtab.py`, `mdebug.py`, `stabs.py`, `cheader.py`, `debuginfo.py` the game's own debug symbols · `guides/` |
+| `consoles/ps3/` | PlayStation 3 | ROM | `elf.py` the decrypted program, its descriptor and `.opd` · `split.py` the program's function list, calls and prologues · `imports.py`, `nids.py` imports and kernel calls named · `symbols.py` its own symbols · `guides/` (the processor: `arch/ppc64.py`) |
 | `consoles/gba/` | Game Boy Advance | ROM | `header.py` the cartridge header · `split.py` luvdis and the candidate finder, its editing and joining · `candidates.py`, `luvdis_run.py` · `export.py`, `export_build.py` · `guides/` |
 | `consoles/gc_wii/` | GameCube, Wii | PROJECT | `scratch.py` a dtk-template project for the game · `guides/` |
 | `consoles/pc/` | Windows PC | PROJECT | `scratch.py` Ghidra finds the functions, decompdecomp cuts them out of the .exe · `project_template/` · `guides/` |
@@ -280,6 +281,14 @@ records the folder, and reads it there. Nothing of it is copied, downloaded or p
    PC's `own_copy`: the Rich header's version and build number against each copy's `build`, else the nearest build
    of the same version, and it says so), and only when its packs don't have that build. A project template other
    than PC's takes `--own` the same way.
+   **ROM mode runs a kit's compiler too.** A ROM project's compiler id may name an `OwnCompiler` (its `version`,
+   `ps3sdk-270`): `Console.kit_compilers` lists it with the console's own, `kits.own_compiler(id)` finds it, and
+   `project.compiler_config` runs its exe from the user's copy (through wibo off Windows when `runner` says, its
+   folder `root` and headers mounted read-only in the sandbox, nothing copied) with `args` and the console's flags,
+   in the same sandbox and limits as a pinned compiler; `toolchains.get/known/installed` answer for it while the copy
+   is set up. GCC-style arguments (`-c -I -o`) only so far; `runner = "wine"` is refused in ROM mode. Fill `root`
+   (the folder the compiler reads beside `bin/`), `args` and `flags` when you add one, and let the console's
+   `default_compiler` pick the copy by build, as the PS3's does by the `.comment` stamp.
 5. **Pass the tests**: `uv run pytest tests/test_kits.py -q`. It checks the facts, that it's a local toolchain
    nothing downloads, that a console takes it, and that no code outside `kits/` and that console names it. Test
    it with a homemade folder (empty stand-ins, never a file of the real kit).
