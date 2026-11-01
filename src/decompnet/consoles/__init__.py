@@ -1,5 +1,6 @@
 """The connector: how decompdecomp talks to a console. Every console is a package in this folder (consoles/n64/,
-consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/nds/) whose
+consoles/ps1/, consoles/ps2/, consoles/psp/, consoles/gba/, consoles/gc_wii/, consoles/pc/, consoles/xbox/,
+consoles/nds/) whose
 `__init__.py` makes a `Console`
 below and fills in its parts; the list at the end of this file registers them. The rest of the app (the engine, briefs, twins, the agents' tools
 and prompts, the export, the GUI's API) asks the console of a project, `consoles.get(platform)`, and never compares
@@ -12,7 +13,7 @@ A console works in one of two modes:
   splitter and judge are still being ported: ROADMAP.md).
 - PROJECT: decompdecomp generates the community's kind of project for the game (a git tree with an objdiff.json),
   and objdiff judges each function in the project's own build (forks/, app/forkengine.py). The console makes the
-  project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC and DS.
+  project (`create_project`) and points its build at the pinned tools (`tool_args`). GameCube, Wii, PC, Xbox and DS.
 
 What's the processor's and not the console's (relocations, disassembly, hand-written assembly, the readers for the
 compiler map and C++ classes) is in arch/. Adding a console: copy consoles/template/, fill in its parts, add a demo
@@ -55,6 +56,19 @@ class Console:
     """One console: the facts below, and the parts the app calls. A part a console doesn't need keeps the default
     here, which does nothing or says the console can't do it."""
 
+    def __init_subclass__(cls, **kw) -> None:
+        """A console that takes kits lists the compilers it has itself (`fixed_compilers`) and gets those of the
+        user's copies besides, so `compilers` is the list for the computer it runs on (every caller then sees a project's
+        MSVC/own-9.0.30729 as a compiler of its console, with no caller knowing about kits)."""
+        super().__init_subclass__(**kw)
+        if "compilers" in cls.__dict__ and cls.kits:
+            cls.fixed_compilers = cls.compilers
+            cls.compilers = property(lambda self: (*self.fixed_compilers, *self.kit_compilers()))
+
+    def kit_compilers(self) -> tuple[Compiler, ...]:
+        """The compilers in the copies of its kits the user set up (kits.compilers), as its projects name them."""
+        return ()
+
     id = ""  # what project configs store as their platform ("n64")
     name = ""  # what the app calls it: "Nintendo 64"
     short = ""  # where space is short (the sidebar): "N64"
@@ -67,6 +81,7 @@ class Console:
     layout = ""  # what a game started from scratch becomes, for the GUI: "splat", "dtk-template"
     compilers: tuple[Compiler, ...] = ()  # the first is the default, unless default_compiler says another
     packs: tuple[tuple[str, str], ...] = ()  # (toolchain, what it's for): more that Setup offers for it
+    kits: tuple[str, ...] = ()  # the kits users bring that it takes (kits/: an SDK, a compiler only it came in)
     guides: tuple[str, ...] = ()  # guide topics worth reading first (files in its guides/ folder or app/guide/)
     m2c = ""  # m2c's target for drafts of its code, without the language ("mipsee-gcc"); "" when m2c can't read it
     compiler_guide = ""  # the guide on matching what most of its games were built with ("mwcc"): see up_front_guide
@@ -78,6 +93,9 @@ class Console:
     # PROJECT mode: its import recognises code that isn't the game's own (library code, an SDK, the C runtime) and
     # sets it aside, so the import asks what the project covers and create_project takes `scope` (forks/project.py)
     sets_aside = False
+    # PROJECT mode: choices the import asks about besides the compiler and scope, as (id, question, ((value, text), ...))
+    # with the first value the default; create_project takes each as a keyword (Xbox: ltcg)
+    import_options: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = ()
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
@@ -112,16 +130,18 @@ class Console:
         return False
 
     def import_game(self, net, file: bytes | Path, *, toolchain: str | None = None, flags: list[str] | None = None,
-                    name: str = "", log=print, scope: str | None = None) -> str:
+                    name: str = "", log=print, scope: str | None = None, options: dict | None = None) -> str:
         """Start a project from the user's own copy of the game; returns its slug. The mode's way by default.
-        `scope`: what the project covers, where the console sets library code aside (`sets_aside`); else ignored."""
+        `scope`: what the project covers, where the console sets library code aside (`sets_aside`); else ignored.
+        `options`: answers to `import_options` (others are ignored)."""
         if self.mode == ROM:
             return net.import_split(self, self.read_game(file, name), toolchain=toolchain, flags=flags, log=log)
         if self.mode == PROJECT:
             path = Path(file) if isinstance(file, (str, Path)) else net.saved_file(file, name or self.upload_name(file))
             known = toolchain if toolchain in {c.id for c in self.compilers} else None  # (a ROM console's id: not ours)
+            chosen = {k: v for k, v in (options or {}).items() if k in {o[0] for o in self.import_options}}
             return net.forks.create_scratch(path, self, compiler=known, log=log,
-                                            scope=scope if self.sets_aside else None)
+                                            scope=scope if self.sets_aside else None, options=chosen)
         raise RomError(f"{self.name or 'these'} games can't be started from scratch in this version: continue a public "
                        "decomp of the game instead")
 
@@ -504,11 +524,13 @@ class Console:
         """What the GUI shows about it (the `consoles` list of /api/state)."""
         return {"id": self.id, "name": self.name, "short": self.short or self.name, "aliases": list(self.aliases),
                 "status": self.status, "arch": self.arch, "mode": self.mode, "judge": self.judge, "layout": self.layout,
-                "features": sorted(self.features), "packs": [tool for tool, _ in self.packs],
+                "features": sorted(self.features), "packs": [*(tool for tool, _ in self.packs), *self.kits],
                 "compilers": [{"id": c.id, "name": c.name, "built": c.built} for c in self.compilers],
                 "installable": self.installable_compilers(),
                 "default_compiler": self.default_compiler({}, "") if self.mode else "",
                 "sets_aside": self.mode == PROJECT and self.sets_aside,
+                "import_options": [{"id": i, "label": q, "choices": [{"value": v, "text": t} for v, t in c]}
+                                   for i, q, c in self.import_options] if self.mode == PROJECT else [],
                 "games_in_folders": type(self).program_in is not Console.program_in}  # (a dropped file comes alone)
 
 
@@ -522,10 +544,12 @@ def _registry() -> list[Console]:
     from .ps2 import PS2
     from .psp import PSP
     from .public import PUBLIC_ONLY
+    from .xbox import XBOX
 
     # the order sniff is asked in: a file is the first console's that says it's its own (the PSP and the PS1 before
-    # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF)
-    return [N64, PSP, PS1, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
+    # the PS2, whose sniff takes any ISO 9660 disc and any MIPS ELF; the Xbox before them all: a full Xbox disc dump
+    # starts with a DVD video partition)
+    return [N64, XBOX, PSP, PS1, PS2, GBA, GAMECUBE, WII, PC, NDS, *PUBLIC_ONLY]
 
 
 CONSOLES: list[Console] = _registry()

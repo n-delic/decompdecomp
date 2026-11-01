@@ -126,37 +126,37 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
         if manifest["format"] != saves.FORMAT or manifest["game"]["sha1"] != cfg["rom"]["sha1"]:
-            raise ValueError
+            raise ValueError("it is another game, or not format %d" % saves.FORMAT)
         for file in (manifest.get("headers") or {}).values():
             if Path(file).name != file or "include/" + file not in files:
-                raise ValueError
+                raise ValueError(f"header {file!r} is not a file in include/")
         layout = {f["name"]: f for f in manifest.get("layout", [])}
         if len(layout) != len(manifest.get("layout", [])):
-            raise ValueError
+            raise ValueError("a function is listed twice in layout")
         for name, entry in layout.items():
             if (not IDENT.fullmatch(name) or not isinstance(entry["vram"], int)
                     or not isinstance(entry["size"], int) or entry["size"] <= 0
                     or entry.get("status", "open") not in ("open", "asm")):
-                raise ValueError
+                raise ValueError(f"layout entry {name!r} needs a name, an integer vram and a size above 0")
         compiler = manifest.get("compiler")
         if compiler is not None and not isinstance(compiler, dict):
-            raise ValueError
+            raise ValueError("compiler is not an object")
         if not isinstance(manifest.get("symbols", []), list) or not isinstance(manifest.get("notes", []), list) \
                 or not isinstance(manifest.get("knowledge", []), list) \
                 or not isinstance(manifest.get("set_aside", []), list):
-            raise ValueError
+            raise ValueError("symbols, notes, knowledge and set_aside must be lists")
         for symbol in manifest.get("symbols", []):
             if (not isinstance(symbol, dict) or not IDENT.fullmatch(symbol.get("name", ""))
                     or not isinstance(symbol.get("address"), int) or not isinstance(symbol.get("size", 0), int)
                     or symbol.get("kind", "data") not in ("func", "data", "string", "jtbl", "bss")):
-                raise ValueError
+                raise ValueError(f"symbol {symbol.get('name')!r} has an invalid name, address, size or kind")
         for note in manifest.get("notes", []):
             if (not isinstance(note, dict) or not isinstance(note.get("text"), str)
                     or note.get("function") is not None and not isinstance(note.get("function"), str)
                     or not isinstance(note.get("by", ""), str)):
-                raise ValueError
+                raise ValueError("a note is malformed")
         if any(not isinstance(item, str) for item in manifest.get("knowledge", [])):
-            raise ValueError
+            raise ValueError("knowledge must be a list of text")
         for item in manifest.get("set_aside", []):
             if (not isinstance(item, dict) or not IDENT.fullmatch(item.get("name", ""))
                     or not isinstance(item.get("vram"), int)
@@ -166,16 +166,16 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                                or not all(isinstance(value.get(field), str if field != "t" else (int, float))
                                           for field in ("model", "why", "t"))
                                for value in item["not_c"].values()))):
-                raise ValueError
+                raise ValueError(f"set_aside entry {item.get('name')!r} is malformed")
         if "" not in (manifest.get("headers") or {}):
-            raise ValueError
+            raise ValueError("headers must name the project-wide header (the empty name)")
         for name in files:
             if name.startswith(("src/", "best/")) and Path(name).stem not in layout:
                 raise NetworkError(f"Add {Path(name).stem} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
         for name, info in layout.items():
             if Path(name).name != name or "\\" in name or "/" in name:
-                raise ValueError
+                raise ValueError(f"layout name {name!r} is not a function name")
             previous = manifest.get("functions", {}).get(name, {})
             if f"src/{name}.c" in files:
                 functions[name] = {"vram": info["vram"], "matched_by": previous.get("matched_by", ""),
@@ -184,8 +184,10 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                 functions[name] = {"vram": info["vram"], "best_by": previous.get("best_by", "")}
         manifest["functions"] = functions
         return manifest
-    except (KeyError, TypeError, ValueError, AttributeError):
-        raise NetworkError("Fix progress/decompdecomp.json: it must describe this game and reference existing headers.") from None
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        # #158: the one sentence alone gave no way to see which part of a big manifest was rejected.
+        why = e.args[0] if isinstance(e, ValueError) and e.args else f"{type(e).__name__} {e}"
+        raise NetworkError(f"Fix progress/decompdecomp.json: it must describe this game and reference existing headers ({why}).") from None
 
 
 def _merge_manifest(old, new, current, key: str = ""):

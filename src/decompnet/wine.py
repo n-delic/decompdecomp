@@ -113,15 +113,17 @@ def prefix() -> Path:
     return Path(own) if own else toolchains.root() / ".wine"
 
 
-def build_env() -> dict[str, str]:
+def build_env(always: bool = False) -> dict[str, str]:
     """What a project's build needs to run its Visual C++ 2015+ files through wine, read by its tools/compile.py when
     such a file builds: wine ($DECOMPNET_WINE) and the app's prefix ($DECOMPNET_WINE_PREFIX). Only where a pack that
-    needs wine is installed and wine is here; it starts nothing (the first such compile starts the server)."""
+    needs wine is installed and wine is here (`always`: wherever wine is, for a console whose builds run Visual C++'s
+    linker through it: an Xbox game built with link-time code generation); it starts nothing (the first compile or
+    link after a while starts the server)."""
     if not needed():
         return {}
     from . import toolchains
 
-    if not any(tc.wine and toolchains.installed(tid) is not None for tid, tc in toolchains.registry().items()):
+    if not always and not any(tc.wine and toolchains.installed(tid) is not None for tid, tc in toolchains.registry().items()):
         return {}
     wine = find()
     return {"DECOMPNET_WINE": wine, "DECOMPNET_WINE_PREFIX": str(prefix())} if wine else {}

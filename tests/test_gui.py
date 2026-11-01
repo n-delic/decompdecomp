@@ -58,6 +58,9 @@ def test_a_ds_rom_is_told_by_its_header_as_the_server_tells_it(gui):
     nds = gui["checks"]["nds"]
     assert nds["good"] == ["nds", "ADQE", "DEMOQUESTDS"]
     assert nds["broken"] is None and "checksum" in nds["said"]
+    xbox = gui["checks"]["xbox"]
+    assert xbox["good"] == ["xbox", "Xbox program (XBE)"] and xbox["misaligned"] is None
+    assert xbox["iso"] == xbox["dump"] == "xbox" and xbox["plain"] is None and "Xbox 360" in xbox["x360"]
 
 
 def test_a_gba_rom_is_told_by_its_header_as_the_server_tells_it(gui):

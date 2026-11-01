@@ -236,7 +236,8 @@ game's code is its rights holder's: keep it to yourself.
 | Windows PC games | Beta |
 | Nintendo DS | Beta |
 | Game Boy Advance | Beta |
-| 3DS, Switch, Xbox, Xbox 360 | Community decomps only |
+| Original Xbox | Beta (from your default.xbe, .xiso or Redump .iso; needs Visual C++ 7.0/7.1 and Ghidra; wine for games built with link-time code generation; your own XDK, optional, sets its library code aside) |
+| 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
 [tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
@@ -245,7 +246,9 @@ from beta to recommended.
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
 Visual C++ 2017 runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install yourself (your distribution's `wine`
 package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple Silicon): the app says
-so when you install that pack. The older Visual C++ run without it.
+so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the packs don't
+have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder (it's
+read where it is, never copied).
 
 ## Questions people ask
 

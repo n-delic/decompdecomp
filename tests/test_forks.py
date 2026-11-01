@@ -554,7 +554,7 @@ def test_a_project_made_from_scratch_builds_with_this_computers_tools(tmp_path, 
     (tmp_path / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": "win32", "version": "game",
         "setup": [["python", "tools/configure.py", "game", "--msvc", "/elsewhere/msvc"], ["ninja", "prepare"]]}))
-    monkeypatch.setattr(scratch_pe, "tool_args", lambda: ["--msvc", "/here/msvc", "--wibo", "/here/wibo"])
+    monkeypatch.setattr(scratch_pe, "tool_args", lambda kit_ids=(): ["--msvc", "/here/msvc", "--wibo", "/here/wibo"])
     cmds = ForkProject(tmp_path).setup_commands("game")
     assert cmds[0][1:] == ["tools/configure.py", "game", "--msvc", "/here/msvc", "--wibo", "/here/wibo"]
     assert cmds[1] == ["ninja", "prepare"]

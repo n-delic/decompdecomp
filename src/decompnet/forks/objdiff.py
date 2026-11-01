@@ -62,7 +62,7 @@ def report(project: Path, out: Path) -> dict:
     missing = [u for u in cfg.get("units", []) if u.get("base_path") and not (project / u["base_path"]).is_file()]
     if not missing:
         _run(["report", "generate", "-p", str(project), "-o", str(out)], cwd=project, timeout=1800)
-        return json.loads(out.read_text(encoding="utf-8"))
+        return subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8")))
     for unit in cfg.get("units", []):
         for key in ("target_path", "base_path"):
             if unit.get(key):
@@ -72,7 +72,7 @@ def report(project: Path, out: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="decompwtf-report-") as tmp:
         (Path(tmp) / "objdiff.json").write_text(json.dumps(cfg), encoding="utf-8")
         _run(["report", "generate", "-p", tmp, "-o", str(out.resolve())], cwd=project, timeout=1800)
-    return json.loads(out.read_text(encoding="utf-8"))
+    return subtract_conflicts(project, json.loads(out.read_text(encoding="utf-8")))
 
 
 @dataclass
@@ -94,9 +94,26 @@ class FunctionDiff:
     def matched(self) -> bool:
         return self.match_percent is not None and self.match_percent >= 100.0 and not self.literals
 
+    def why_not(self) -> str:
+        """Why a function every instruction of which matches isn't a match, in a few words."""
+        if self.literals and all(isinstance(m, MappingConflict) for m in self.literals):
+            return "every instruction matches, but it refers to other globals or callees than the original"
+        return "every instruction matches, but loaded constants differ"
+
     def literals_note(self) -> str:
         if not self.literals:
             return ""
+        if all(isinstance(m, MappingConflict) for m in self.literals):  # an LTCG unit's address and data checks
+            listing = "\n".join(f"- {m.describe()}" for m in self.literals[:6])
+            kinds = []
+            if any(not isinstance(m, DataConflict) for m in self.literals):
+                kinds.append("one original address pairs with two of yours, or the other way round")
+            if any(isinstance(m, DataConflict) for m in self.literals):
+                kinds.append("a reference names another original address than the one the original uses there, "
+                             "or a literal has another value")
+            return (f"NOT A MATCH YET: {self.why_not()} ({'; '.join(kinds)}):\n{listing}\n"
+                    "Use the same global, literal or callee where the original does (in the source, or in the driver "
+                    "and stand-ins).")
         listing = "\n".join(f"- {m.describe()}" for m in self.literals[:6])
         return ("NOT A MATCH YET: every instruction matches, but constants it loads differ from the original's:\n"
                 f"{listing}\nWrite the literal with the original's value (float vs double, the exact digits).")
@@ -163,6 +180,100 @@ def game_measures(rep: dict, aside: set[str]) -> dict:
              matched_functions_percent=100.0 * done_fns / fns if fns else 0.0,
              matched_code_percent=100.0 * done_code / code if code else 0.0, set_aside_functions=left)
     return m
+
+
+@dataclass
+class MappingConflict:
+    """A 100% function whose references don't map one to one onto the original's (tools/dll2coff.py, LTCG units):
+    objdiff, as decompdecomp runs it, doesn't compare what relocations point at, so swapped or split globals and
+    callees would pass. Kept with the literal mismatches, the other '100% but not a match' finding."""
+
+    text: str
+
+    def describe(self) -> str:
+        return self.text
+
+
+@dataclass
+class DataConflict(MappingConflict):
+    """A 100% function with a reference that stands for another original address than the original's reference
+    there (a D_<address>, func_<address> or `// GLOBAL:` global), or a literal of another value (dll2coff's data
+    check): two globals used once each and swapped keep the mapping one to one, and only this sees them."""
+
+
+def _sidecar(base: Path) -> dict:
+    try:
+        return json.loads(base.with_suffix(".ltcg.json").read_text(encoding="utf-8")).get("functions", {}) or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def ltcg_problems(base: Path | None) -> list[str]:
+    """What dll2coff said about an LTCG unit's harness link (<object>.ltcg.json `problems`: a function it couldn't
+    find in the map, an annotation of another unit's function...); none for other units."""
+    if base is None:
+        return []
+    try:
+        found = json.loads(base.with_suffix(".ltcg.json").read_text(encoding="utf-8")).get("problems") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [str(p) for p in found]
+
+
+def mapping_conflicts(base: Path | None, symbol: str | None) -> list[MappingConflict]:
+    """The address mapping and data checks dll2coff wrote next to an LTCG unit's object (<object>.ltcg.json), for
+    a function."""
+    if base is None or symbol is None:
+        return []
+    found = _sidecar(base).get(symbol) or {}
+    return [MappingConflict(c) for c in found.get("conflicts", [])] + [DataConflict(c) for c in found.get("data", [])]
+
+
+def subtract_conflicts(project: Path, rep: dict) -> dict:
+    """The progress report with LTCG functions that fail the mapping or data check counted as not matched:
+    `report generate` counts objdiff's 100% alone. Each such function's match drops just below 100%, and the
+    unit's and the report's matched counts and code lose it."""
+    try:
+        cfg = json.loads((project / "objdiff.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return rep
+    bases = {u.get("name"): project / u["base_path"] for u in cfg.get("units", []) if u.get("base_path")}
+    lost_fns, lost_code = 0, 0
+    for unit in rep.get("units", []):
+        base = bases.get(unit.get("name"))
+        if base is None or not base.with_suffix(".ltcg.json").is_file():
+            continue
+        side = _sidecar(base)
+        u_fns, u_code = 0, 0
+        for f in unit.get("functions", []):
+            bad = side.get(f.get("name")) or {}
+            if (bad.get("conflicts") or bad.get("data")) and float(f.get("fuzzy_match_percent") or 0) >= 100.0:
+                f["fuzzy_match_percent"] = 99.99
+                u_fns, u_code = u_fns + 1, u_code + int(f.get("size") or 0)
+        if u_fns:
+            _lose(unit.get("measures"), u_fns, u_code)
+            lost_fns, lost_code = lost_fns + u_fns, lost_code + u_code
+    if lost_fns:
+        _lose(rep.get("measures"), lost_fns, lost_code)
+    return rep
+
+
+def _lose(measures: dict | None, fns: int, code: int) -> None:
+    """Take matched functions and code off a report's measures (proto JSON writes 64-bit counts as strings)."""
+    if not measures:
+        return
+
+    def less(key: str, n: int) -> None:
+        if key in measures:
+            value = max(0, int(measures[key]) - n)
+            measures[key] = str(value) if isinstance(measures[key], str) else value
+
+    less("matched_functions", fns)
+    less("matched_code", code)
+    for count, total, pct in (("matched_functions", "total_functions", "matched_functions_percent"),
+                              ("matched_code", "total_code", "matched_code_percent")):
+        if pct in measures and int(measures.get(total) or 0):
+            measures[pct] = 100.0 * int(measures.get(count) or 0) / int(measures[total])
 
 
 def _sym(obj: dict | None, name: str | None) -> dict | None:
@@ -281,6 +392,7 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
                 insns.append((at, ins["formatted"].split(None, 1)[0]))
             at += int(ins.get("size") or 4)
         wrong = literals.mismatches(target, base, symbol, insns)
+        wrong += mapping_conflicts(base, symbol)  # (an LTCG unit's address and data checks, tools/dll2coff.py)
     refs = list(dict.fromkeys(n for lr in lrows if (n := _reloc_name(data.get("left"), lr))))
     return FunctionDiff(symbol, float(pct) if pct is not None else None, rows, int(left.get("size", 0)), scores, order, ops,
                         renamed, wrong, refs)

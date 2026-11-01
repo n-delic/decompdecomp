@@ -1006,3 +1006,9 @@ details.more[open] > summary::before { content: "− "; }
 
 /* the app has quit (pages.js, showStopped): nothing on the page answers any more */
 .stopped { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: var(--bg); color: var(--ink); text-align: center; }
+/* a kit's copies (the user's own folders): build, whether it's one decompdecomp knows, where; long paths wrap */
+.tool-card .copy { align-items: start; min-width: 0; }
+.copy-text { display: grid; gap: 3px; min-width: 0; }
+.copy-path { overflow-wrap: anywhere; }
+.local-form { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.local-form input[type=text] { width: 100%; box-sizing: border-box; }
