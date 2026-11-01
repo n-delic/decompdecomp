@@ -56,7 +56,8 @@ Where to start on a gap:
   mode, not on a ROM; the readers are the part to write (CodeWarrior's vtable pointer is often not at offset 0). x86
   has its reader (`arch/x86_fields.py`): PC classes and struct layouts come from it (`Console.classes`,
   `Console.structs`); a PowerPC reader would give GameCube and Wii the same through those parts.
-- **Xbox** shares the Windows PC column's code (`consoles/xbox/` only makes the program); a gap there is usually a PC gap.
+- **Xbox** shares the Windows PC column's code (`consoles/xbox/` only makes the program); a gap there is usually
+  a PC gap.
 - **Windows PC**: autopilot's Ghidra drafts compile, but rarely match beyond the tiny shapes exact drafts cover:
   Ghidra drafts a delinked object without its callees' prototypes, so a method call loses `this` and a callee's
   arguments are guessed (a draft fed the project's headers, through a Ghidra script that applies them, is the next
@@ -169,19 +170,19 @@ Where to start on a gap:
   the files that keep frames with /Oy- (`config/<version>/file_flags.json`, `scratch.frame_flags`); projects made
   before get it when the app starts, but for files with matched code. `search_flags` tries a file's flags (/Oy-, /O1,
   /Ob1) and keeps what matches, as `try_compiler` keeps a compiler.
-- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in DLLs
-  of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by path,
-  a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
-  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its
-  export table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per
-  source file), its calls into other programs through its import table. DLLs are relocatable and many prefer
-  0x10000000: the first keeps its address, a later one that would overlap is moved by its base relocations, as
-  Windows moves it (delink.py does the same at build time), so func_/D_<address> stay names no two programs share.
-  `ninja rebuild` and the rebuild check put each DLL back together against that DLL, and the import's other steps
-  (thunks by its own import table, its debug symbols, classes, Reimport) read each program. Left out, each with why in the
-  import's log: the C runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins,
-  ones the import can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py`
-  (find_modules), `Console.program_in` (a game that is a folder).
+- **Windows PC games bring their own DLLs.** Only the .exe was read, but many games keep much of their code in
+  DLLs of their own (#12: a 2010 racing game's .exe is small; an engine and its game logic are two DLLs). Given by
+  path, a game's folder or its .exe brings the DLLs beside it (two folders down, not in a launcher's or tool's own folder):
+  each is a program of the project, its source files in `src/auto/<its name>/`, its functions named from its export
+  table (functions.json's "names"), built with the Visual C++ its own Rich header names (the compiler per source file),
+  its calls into other programs through its import table. DLLs are relocatable and many prefer 0x10000000: the first
+  keeps its address, a later one that would overlap is moved by its base relocations, as Windows moves it (`delink.py`
+  does the same at build time), so `func_/D_<address>` stay names no two programs share. `ninja rebuild` and the
+  rebuild check put each DLL back together against that DLL, and the import's other steps (thunks by its own import
+  table, its debug symbols, classes, Reimport) read each program. Left out, each with why in the import's log: the C
+  runtime, Windows' own names (a wrapper's ddraw.dll), middleware, copy protection, ASI plugins, ones the import
+  can't start, and ones built a year or more after the program (mods). `consoles/pc/scratch.py` (find_modules),
+  `Console.program_in` (a game that is a folder).
 - **A Windows PC project rebuilds the whole game.** A PC project compiled each function and compared it with the one
   cut out of the user's .exe, but nothing put the program back together: its export was "—". `ninja rebuild`
   (tools/rebuild.py, standard library only) writes the whole .exe again, every function at its address from what
@@ -398,12 +399,13 @@ Where to start on a gap:
 - **PlayStation (PS1) games from your own copy** (beta): a disc image (BIN, ISO or CHD; SYSTEM.CNF says which
   program it boots) or its PS-X EXE, with the disc's overlays. Functions are built as PSY-Q games were: GCC 2.5.7,
   2.6.0, 2.6.3, 2.7.2 (or its CDK build), 2.8.0, 2.8.1, EGCS 2.91.66 or GCC 2.95.2, then maspsx, which does what
-  Sony's assembler ASPSX did, then GNU as; the import tries them on the game's code. BIOS call stubs and GTE code are set aside as assembly. The demo game matches function by function
-  and rebuilds byte for byte; no real game is tested from start to end yet. A disc whose boot program is a loader
-  gives the program it loads (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a
-  loader that is mostly a picture: 1 function found), .text is where the code's returns and frames are (137).
-  Overlays inside an archive file (a game's areas, each with its code, one after another) are found too
-  (`overlays.embedded`): on one PS1 game, 77 overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
+  Sony's assembler ASPSX did, then GNU as; the import tries them on the game’s code. BIOS call stubs and GTE
+  code are set aside as assembly. The demo game matches function by function and rebuilds byte for byte; no real
+  game is tested from start to end yet. A disc whose boot program is a loader gives the program it loads
+  (`exe.loaded_program`), and where splat's guess at the code misses the entry point (a loader that is mostly a
+  picture: 1 function found), .text is where the code's returns and frames are (137). Overlays inside an archive file (a
+  game's areas, each with its code, one after another) are found too (`overlays.embedded`): on one PS1 game, 77
+  overlays in a 68 MB file, 26,483 functions besides the program's 2,398.
 - **Nintendo DS games from your own copy again** (beta, #23): a ds-decomp project for the ROM, as in 1.0.2, now with
   all 24 CodeWarrior for DS versions and a version per source file (`config/<version>/arm9/file_compilers.json`, as
   DS decomps keep it). `try_compiler` switches a function's file to another version, or tries them `"all"`, and
@@ -489,8 +491,8 @@ Where to start on a gap:
 - **PS2 kernel calls named**: the stubs (`addiu v1, N; syscall; jr ra`) get the kernel call's name: 154 in GTA San
   Andreas, 129 in Ridge Racer V.
 - **Consoles as packages**: one folder per console (`consoles/<id>/`), a template and a conformance test. PS1 and
-  GBA were public decomps only after the rewrite; PS1 has its package, and GBA's is back with its header check, its demo, its splitter,
-  its judge and its export.
+  GBA were public decomps only after the rewrite; PS1 has its package, and GBA's is back with its header check,
+  its demo, its splitter, its judge and its export.
 - **macOS app**: a native Cocoa/WKWebView window with the private window user agent,
   native open/save panels, downloads, Edit/Reload/Quit menus and the page's close confirmation. A uv source
   installer creates a Finder app in `~/Applications`. Intel and Apple Silicon CI exercise portable regressions
@@ -616,10 +618,9 @@ carry them, so the user imports a decrypted copy (PPSSPP can save one). A pinned
 from Setup, like a compiler, would let a UMD image import as it is, and its encrypted modules with it (left out
 now). Also: a module's own $gp isn't the judge's (one per project: a module that keeps small data where the main
 program doesn't gets its own flags, but its $gp-relative data is named from the main program's $gp), its imported
-variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no SN-built game was at hand: the
-readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some games were built with isn't
-archived (3.0.1 matches small functions;
-bigger ones unverified).
+variables (.rodata.sceVstub) aren't named, ZSO images (LZ4) aren't read, SN's pspsnc is tested on the demo only (no
+SN-built game was at hand: the readable one is CodeWarrior's, the others encrypted), and the 2.4.1 CodeWarrior some
+games were built with isn’t archived (3.0.1 matches small functions; bigger ones unverified).
 
 ### PSP drafts: the Allegrex's own instructions
 m2c has no Allegrex target: the EE's reads PSP code, and knows `seb`, `seh` and `madd` but not `min`, `max`, `ext` or
