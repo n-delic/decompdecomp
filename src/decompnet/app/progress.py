@@ -122,6 +122,45 @@ def _read(folder: Path) -> dict[str, str]:
     return files
 
 
+def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[str, str]:
+    """What a folder an older version wrote lacks, put right before it's checked (#167: a PS2 project's folder, kept
+    since before the folder was read back, stopped opening):
+    - a header its manifest names but include/ lacks is written again from the project: it's the app's own output;
+    - a source in src/ or best/ of no function in its layout nor in the project (a function's file under a name it
+      no longer has) moves to unlisted/, kept as it is and not judged, so it stops the project no more. One the
+      project still has (a layout edit renamed it) is left: `_manifest` refuses that edit.
+    A manifest it can't read, or one with no layout, is left to `_manifest` to say what's wrong."""
+    try:
+        manifest = json.loads(disk[saves.MANIFEST])
+        headers = dict(manifest.get("headers") or {})
+        layout = {entry["name"] for entry in manifest.get("layout") or []}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return disk
+    if not layout:
+        return disk
+    disk = dict(disk)
+    for unit, file in headers.items():
+        name = f"include/{file}"
+        if isinstance(unit, str) and isinstance(file, str) and Path(file).name == file and file.endswith(".h") \
+                and name not in disk:
+            disk[name] = net._context(pid, unit)["header"]
+            (folder / "include").mkdir(exist_ok=True)
+            (folder / name).write_text(disk[name], encoding="utf-8")
+            report(f"{name} was missing: written again from the project")
+    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).stem not in layout)
+    if left:
+        known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
+        left = [name for name in left if Path(name).stem not in known]
+    for name in left:
+        (folder / "unlisted" / name).parent.mkdir(parents=True, exist_ok=True)
+        os.replace(folder / name, folder / "unlisted" / name)
+        del disk[name]
+    if left:
+        report(f"{len(left)} file(s) in src/ and best/ are of no function of the project (a function's file under a "
+               "name it no longer has): moved to unlisted/, kept and not judged")
+    return disk
+
+
 def _manifest(files: dict[str, str], cfg: dict) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
@@ -820,8 +859,9 @@ class Progress:
                                            or disk or (folder / ".git").exists()):
             raise NetworkError("Restore progress/decompdecomp.json before continuing this project.")
         if saves.MANIFEST in disk and (before is None or snapshot.files != before.files):
-            manifest = _manifest(disk, cfg)
             report = logger or (lambda line: saves.log.info("%s: %s", slug, line))
+            disk = _repair(net, pid, folder, disk, report)
+            manifest = _manifest(disk, cfg)
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
