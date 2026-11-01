@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _manifest, _read, _repair
+from decompnet.app.progress import Progress, _initial_merge, _manifest, _read, _repair
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -1205,3 +1205,24 @@ def test_a_piece_named_by_its_label_saves_and_opens_again(project):
     net.progress.sync("game", force=True)
     names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert ".L00001004" in names
+def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
+    """Overlays load different functions at one address. A function the database gained at an address another
+    overlay's function already has in the folder's layout joins the layout (and its source is published): the
+    folder no longer refuses it with "Add ... to the function layout". A saved function under a name the database
+    doesn't have is a rename, and the database's old name is still not added back."""
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "layout": layout, "headers": {"": "common.h"}}
+        return {saves.MANIFEST: json.dumps(manifest)} | {f"src/{name}.c": "int x;" for name in sources}
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
+    disk = files([disp], ["ovl_a_disp_004BF720"])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending
+
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}
+    disk = files([renamed])
+    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([disp]), disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite"]

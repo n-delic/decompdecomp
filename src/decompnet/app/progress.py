@@ -294,12 +294,16 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     identities = {"layout": lambda item: item.get("name"), "symbols": lambda item: item.get("name"),
                   "notes": lambda item: (item.get("function"), item.get("text"), item.get("by", "")),
                   "knowledge": lambda item: item, "set_aside": lambda item: item.get("vram")}
+    # A saved function at a database function's address is that function renamed only when the database no longer
+    # has the saved name: overlays load different functions at one address (a PS2 game's ovl_* units).
+    local_names = {item.get("name") for item in local.get("layout") or []}
     for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
         for item in local.get(key) or []:
             ident = identity(item)
-            if ident not in known and (key != "layout" or not any(row.get("vram") == item.get("vram") for row in current)):
+            if ident not in known and (key != "layout" or not any(
+                    row.get("vram") == item.get("vram") and row.get("name") not in local_names for row in current)):
                 current.append(item)
                 known.add(ident)
         manifest[key] = current
