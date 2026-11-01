@@ -363,12 +363,13 @@ An agent is one of two sorts:
 
    | Part | What it does |
    | :-- | :-- |
-   | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
+   | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. An agent that `uses_endpoints` also gets `options=`: the helper's endpoint. |
    | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
    | `prompt_file(workdir, prompt)` | The prompt as a file, for a CLI with no stdin prompt (zcode's `--attach`); None means stdin. |
    | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. |
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
    | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
+   | `end_leftovers(env)` | End what a session leaves running outside its process group (Hermes' daemonised gateway). |
    | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |
    | `config_model()` | The default model in the agent's own settings. |
    | `version(path)` | Its version (`--version` by default). |
