@@ -533,19 +533,21 @@ def game_info(path: Path) -> dict:
     pe = read_pe(data)
     stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower()) or "game"
     version = built.pack_version
+    exact = built.exact  # (the packs' very build, or a copy of the user's own of it)
     if built.version is None:
         why = "the program doesn't say which Visual C++ built it; 6.0 built most games of its time"
     elif built.exact:
         why = f"it was built with {built.compiler}"
     elif built.own is not None:  # a build of the user's own: the very one, or the nearest of that Visual C++
         same = rich_version(built.own.build)[1] == built.build
+        exact = same
         why = (f"it was built with {built.compiler}; {built.own.name} builds it" if same else
                f"it was built with {built.compiler}; the nearest of your copies is {built.own.name}")
     else:  # another update of its version (the packs have the common ones), or a version they don't have yet
         why = f"it was built with {built.compiler}; the closest the compiler packs have is"
     return {"platform": "pc", "id": stem, "title": path.stem, "region": "PC", "sha1": hashlib.sha1(data).hexdigest(),
             "timestamp": pe.timestamp, "compiler": version, "compiler_why": why, "summary": built.summary(),
-            "cannot_match": built.cannot_match(), "exact": built.exact,
+            "cannot_match": built.cannot_match(), "exact": exact,
             "modern_eh": built.own is not None and _version_key(built.version) >= (8, 0),
             "target": "x64" if built.machine == MACHINES[X64_MACHINE] else "x86"}
 
@@ -1796,10 +1798,14 @@ def configure_settings(text: str, compiler: str, pe: PE, log=print, modules: lis
 
 
 def builds_md(pe: PE, compiler: str) -> bool:
-    """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it was built
-    with Visual C++ 2015 or newer (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and msvcr71, aren't yet)."""
-    version = re.match(r"\d+\.\d+", compiler or "")
-    return bool(dll_runtime(pe)) and version is not None and _version_key(version.group()) >= DLL_RUNTIME_FROM
+    """Whether a program's files build with /MD: it imports its C runtime from DLLs (dll_runtime), and it builds
+    with Visual C++ 2015 or newer, a pack's or the user's own (DLL_RUNTIME_FROM: older ones' runtimes, msvcrt and
+    msvcr71, aren't yet)."""
+    if own := re.fullmatch(r"own-(\d+\.\d+\.\d+)", compiler or ""):  # (a copy's: its cl.exe's, "own-19.29.30137")
+        version = rich_version(own.group(1))[0]
+    else:
+        version = m.group() if (m := re.match(r"\d+\.\d+", compiler or "")) else None
+    return bool(dll_runtime(pe)) and version is not None and _version_key(version) >= DLL_RUNTIME_FROM
 
 
 def dll_runtime(pe: PE) -> list[str]:
@@ -1961,11 +1967,11 @@ def debug_of(root: Path, version: str, symbol: str) -> dict | None:
     return known.get(m.group(0)[:5] + m.group(0)[5:].upper()) if m else None
 
 
-def _header_compiles(root: Path, version: str, unit: str, log) -> bool:
+def _header_compiles(root: Path, version: str, unit: str, log, platform: str = "pc") -> bool:
     """Whether a source file that includes common.h, with the game's types, builds: a header that doesn't would fail
-    every attempt in every file."""
+    every attempt in every file. `platform`: the project's console (at create, before its manifest says)."""
     obj = (Path("build") / version / _source(root, unit)).with_suffix(".obj").as_posix()
-    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS, platform="pc")[0]  # (at create too)
+    return ForkProject(root).run(["ninja", obj], log=log, timeout=TOOL_SECONDS, platform=platform)[0]
 
 
 _PROGRAMS: dict[tuple, list[PE]] = {}  # (paths, mtimes) -> the parsed programs, for data_bytes
@@ -2124,8 +2130,10 @@ def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
              "source": "DEFAULT"} for r in ghidra.functions(module)]
 
 
-def _run(cmd: list[str], root: Path, what: str, log) -> None:
-    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS, platform="pc")  # (the first: no manifest yet)
+def _run(cmd: list[str], root: Path, what: str, log, platform: str = "pc") -> None:
+    """A step of the import's, before the project's manifest names its console (`platform`: what its builds need,
+    Console.build_env: an Xbox game's link-time code generation runs Visual C++'s linker through wine)."""
+    ok, tail = ForkProject(root).run(cmd, log=log, timeout=TOOL_SECONDS, platform=platform)
     if not ok:
         raise ForkError(f"{what} failed:\n{tail[-ERROR_TAIL:]}")
 
@@ -2146,22 +2154,24 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     info = info or game_info(game)
     version = info["id"]
     compiler = (compiler or f"MSVC/{info['compiler']}").removeprefix("MSVC/")
-    from . import X64_SUFFIX
+    from . import X64_SUFFIX, WindowsPC
 
-    if (theirs := "x64" if compiler.endswith(X64_SUFFIX) else "x86") != info["target"]:
+    target = info.get("target", "x86")  # (another console's info may not say: its programs are 32-bit x86 ones)
+    if (theirs := "x64" if compiler.endswith(X64_SUFFIX) else "x86") != target:
         # (review of #138: the import's list offered MSVC/14.16-x64 for a 32-bit game, whose project then built x64
         # objects that can never match its code)
-        raise ForkError(f"Visual C++ {compiler} makes {theirs} code, and this game is an {info['target']} program: "
-                        f"none of its functions could match. Choose a compiler for {info['target']} (or let "
-                        "decompdecomp pick from the program)")
+        raise ForkError(f"Visual C++ {compiler} makes {theirs} code, and this game is an {target} program: none of "
+                        f"its functions could match. Choose a compiler for {target} (or let decompdecomp pick from "
+                        "the program)")
     log(f"the program: {info['summary']}")
     for why in info["cannot_match"]:
         log(f"what can't match: {why}")
-    if not info["cannot_match"]:
-        # (a console that doesn't track "exact" (consoles/xbox: always its own compiler) gets the plain word)
-        log(f"it can match: decompdecomp builds with Visual C++ {compiler}" if info.get("exact", True) else
-            f"much of it can match: {info['compiler_why']} Visual C++ {compiler}")
     own = compiler in own_versions(args or ())  # (a compiler of the user's own: in a kit, not a pack)
+    if not info["cannot_match"]:
+        # (a console that doesn't track "exact" (consoles/xbox: always its own compiler) gets the plain word; a
+        # copy of the user's own that's another build of the game's version says so whole in compiler_why)
+        log(f"it can match: decompdecomp builds with Visual C++ {compiler}" if info.get("exact", True) else
+            f"much of it can match: {info['compiler_why']}" + ("" if own else f" Visual C++ {compiler}"))
     pack = "msvc" if own else compiler_pack(compiler)
     # (installed() is None too when a pack's headers aren't installed, or toolchains.toml changed it: install again)
     if not own and (toolchains.installed(pack) is None or not (toolchains.path(pack) / compiler).is_dir()):
@@ -2300,19 +2310,20 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     log(f"{len(groups)} source files for agents to write into"
         + (f" (each DLL's in src/auto/<its name>/: {', '.join(m.name for m in modules)})" if modules else ""))
 
-    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log)
-    if (root / "include" / DEBUG_TYPES).exists() and not _header_compiles(root, version, next(iter(groups)), log):
+    _run([sys.executable, "tools/configure.py", version, *args], root, "the first build", log, platform)
+    if (root / "include" / DEBUG_TYPES).exists() and \
+            not _header_compiles(root, version, next(iter(groups)), log, platform):
         log(f"the game's types don't compile with Visual C++ {compiler} as written: they're in include/{DEBUG_TYPES} "
             "for agents to fix, and common.h doesn't include it yet")
         (root / "include" / "common.h").write_text(TYPES_H, encoding="utf-8")
-    _run(["ninja", "prepare"], root, "the first build", log)
+    _run(["ninja", "prepare"], root, "the first build", log, platform)
     if not (root / "objdiff.json").exists():
         raise ForkError("the first build finished without writing objdiff.json")
     rebuild = check_code(root, version, log=log)
 
     (root / ".decomp.wtf.json").write_text(json.dumps({
         "created": "from scratch", "platform": platform, "version": version, "compiler": f"MSVC/{compiler}",
-        "analysis": 6,  # (WindowsPC.ANALYSIS: nothing to repair, stubs set aside, pieces joined, thunks named, frames read)
+        "analysis": WindowsPC.ANALYSIS,  # (all of it: nothing to repair, stubs set aside, pieces joined, thunks named...)
         "tools": tools_version(),
         "game": {"what": what, "path": f"orig/{version}.exe", "sha1": info["sha1"]},
         "setup": [["python", "tools/configure.py", version, *args], ["ninja", "prepare"]],

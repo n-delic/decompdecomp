@@ -947,8 +947,8 @@ def test_a_2017_games_files_build_with_visual_studio_2017s_release_defaults(tmp_
     assert b"_Init_thread_header" in obj  # /Zc:threadSafeInit
 
 
-@needs_tools
-@pytest.mark.skipif(not _wine_ready(), reason="needs Visual C++ 2017 (msvc2015, proprietary) and, off Windows, wine")
+@pytest.mark.skipif(not _wine_ready() or toolchains.installed("objdiff-cli") is None or not ghidra.available(),
+                    reason="needs Visual C++ 2017 (msvc2015, proprietary), wine off Windows, Ghidra and objdiff")
 def test_a_game_of_2017_imports_with_its_own_visual_cpp_and_all_of_it_matches(tmp_path, own_wine_prefix):
     """Games built with Visual C++ 2017: Demo Quest compiled and linked by 2017 (build.py 14.16) imports with 14.16,
     its very build, every function found (mix_score too, inlined everywhere and first in .text: nothing calls it), and
@@ -1186,6 +1186,44 @@ def test_the_demos_2017_build_uses_a_checkouts_own_wine_prefix(tmp_path, monkeyp
     assert build.runner("msvc2015")[1]["WINEPREFIX"] == str(tmp_path / "theirs")
 
 
+def test_the_demos_2017_build_needs_only_visual_cpp_2017(tmp_path, monkeypatch):
+    """build.py 14.16 compiles and links with 2017's own cl.exe and link.exe through wine: a 2017-only setup (no
+    `msvc` pack, no wibo) builds it (review of #138: it required 6.0's pack, whose linker it doesn't use). Without a
+    compiler: what it runs, with every other toolchain missing."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("demo_pc_build", DEMO / "build.py")
+    build = importlib.util.module_from_spec(spec)
+    monkeypatch.setattr(sys, "argv", ["build.py", "14.16"])
+    spec.loader.exec_module(build)
+    pack = tmp_path / "msvc2015"
+    (pack / "14.16" / "Bin").mkdir(parents=True)
+    (pack / "14.16" / "Bin" / "cl.exe").write_text("")
+
+    def require(tid: str) -> Path:
+        if tid != "msvc2015":
+            raise toolchains.ToolchainError(f"{tid} isn't installed")
+        return pack
+
+    ran = []
+
+    def run(argv, cwd=None, env=None):
+        ran.append([str(a) for a in argv])
+        (tmp_path / "out" / "demoquest.exe").write_bytes(b"MZ")
+
+    monkeypatch.setattr(build.toolchains, "require", require)
+    monkeypatch.setattr(build.toolchains, "binary", require)
+    monkeypatch.setattr(build, "runner", lambda tid: (["wine"], {}) if tid == "msvc2015" else require(tid))
+    monkeypatch.setattr(build, "run", run)
+    monkeypatch.setattr(build, "write_key", lambda: None)
+    shutil.copy(DEMO / "pcmain.c", tmp_path)
+    monkeypatch.setattr(build, "HERE", tmp_path)  # (its build folder: never the checkout's)
+    monkeypatch.setattr(build, "BUILD", tmp_path / "out")
+    build.main()
+    assert [argv[:2] for argv in ran] == [["wine", str(pack / "14.16/Bin/cl.exe")]] * 2 + \
+        [["wine", str(pack / "14.16/Bin/link.exe")]]
+
+
 def test_a_projects_first_build_has_its_consoles_build_environment(tmp_path, monkeypatch):
     """The import's first builds run before the project's manifest is written, so the build runner didn't know the
     project's console, and a 2017 game's first build had no wine settings (review of #138: it failed). The PC import
@@ -1212,6 +1250,19 @@ def test_a_projects_first_build_has_its_consoles_build_environment(tmp_path, mon
     scratch_pe._run(["ninja", "prepare"], root, "the first build", log=lambda _: None)
     assert scratch_pe._header_compiles(root, "TEST", "text_00401000", log=lambda _: None)
     assert asked == ["pc", "pc"]  # (both builds the import runs before it writes the manifest)
+    # another console's import (an Xbox game's: pc.create(platform="xbox")) gets its own console's: wine for its
+    # link-time code generation, which the PC's gives only when a pack needs it. Every first build create runs
+    # names the console it was called for.
+    scratch_pe._run(["ninja", "prepare"], root, "the first build", log=lambda _: None, platform="xbox")
+    assert scratch_pe._header_compiles(root, "TEST", "text_00401000", log=lambda _: None, platform="xbox")
+    assert asked[2:] == ["xbox", "xbox"]
+    create = next(n for n in ast.walk(ast.parse(Path(scratch_pe.__file__).read_text(encoding="utf-8")))
+                  if isinstance(n, ast.FunctionDef) and n.name == "create")
+    calls = [c for c in ast.walk(create) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+             and c.func.id in ("_run", "_header_compiles")]
+    named = [[*c.args[4:], *(k.value for k in c.keywords if k.arg == "platform")] for c in calls]
+    assert len(calls) >= 3 and all(len(n) == 1 and isinstance(n[0], ast.Name) and n[0].id == "platform"
+                                   for n in named), "create runs a first build without its console (platform)"
 
 
 def test_a_project_with_older_tools_sets_up_with_wine_installed(tmp_path, monkeypatch):
@@ -1508,6 +1559,11 @@ def test_a_projects_flags_follow_its_compiler_and_how_it_takes_its_c_runtime():
     assert settings("7.1", old)[1] == ["/nologo", "/c", "/O2", "/W3", "/GX"]
     assert settings("10.0SP1", dll)[1] == ["/nologo", "/c", "/O2", "/W3", "/EHsc"]  # (2015 on only)
     assert settings("6.0", own) == ("6.0", ["/nologo", "/c", "/O2", "/W3", "/GX"])
+    # a copy of the user's own (kits/visualcpp.py) is named by its cl.exe's version: 19.x is 2015 and newer, 15.0 is
+    # 2008 (whose msvcr90 isn't yet), as the Rich header names them (rich_version)
+    assert scratch_pe.builds_md(dll, "own-19.29.30137") and not scratch_pe.builds_md(dll, "own-15.0.30411")
+    text = scratch_pe.configure_settings(template, "own-19.29.30137", dll, log=lambda _: None, ehsc=True)
+    assert re.search(r'^CL_FLAGS = .*"/EHsc", "/MD"\]', text, re.M), text
 
     def module(pe, version: str, build: int) -> scratch_pe.Module:
         return scratch_pe.Module(Path("game.dll"), "bin/game.dll", "game", pe, scratch_pe.Build(scratch_pe.X86, version,
@@ -2121,18 +2177,20 @@ def test_a_project_without_the_program_in_it_waits_for_it(tmp_path, monkeypatch)
     assert net._function(stubs[0], "p")["status"] == "open"
 
 
-def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str] | None = None):
+def _project_made_before(tmp_path, monkeypatch, level: int, tools: dict[str, str] | None = None,
+                         head: tuple[bytes, list[dict]] = (PROGRAM, ROWS)):
     """A PC project as a decompdecomp of analysis `level` left it: a function with a lone epilogue Ghidra cut off
-    (PROGRAM), a function with a frame, then Visual C++'s stubs; below 2 one function with a jump table's entries
-    relocated twice, from 3 its stubs marked. Its build is the delinked objects, rebuilt for each check. `tools`: its
-    tools/ files, as an older template made them (else its tools are the template's, and the manifest says so)."""
+    (PROGRAM: `head`, its code and Ghidra's rows), a function with a frame, then Visual C++'s stubs; below 2 one
+    function with a jump table's entries relocated twice, from 3 its stubs marked. Its build is the delinked objects,
+    rebuilt for each check. `tools`: its tools/ files, as an older template made them (else its tools are the
+    template's, and the manifest says so)."""
     from decompnet.app.engine import RomNetwork
     from decompnet.consoles.pc import WindowsPC
     from decompnet.forks.project import Unit
 
     framed = [FRAME_RET] * (scratch_pe.EH_STUB_GAP + 1)  # (the main body's end: no stub's shape in a row)
-    program = PROGRAM.ljust(0x30, b"\x90") + b"".join(framed + EH_STUBS)
-    rows, at = list(ROWS), 0x401030
+    program = head[0].ljust(0x30, b"\x90") + b"".join(framed + EH_STUBS)
+    rows, at = list(head[1]), 0x401030
     for stub in framed + EH_STUBS:
         rows.append(_row(at, at + len(stub)))
         at += len(stub)
@@ -2207,6 +2265,27 @@ def test_a_project_made_before_is_brought_up_one_analysis_step_at_a_time(tmp_pat
     assert note.startswith("decompdecomp joined _func_0040100F to this function")
     consoles.get("pc").on_start(net, "p", log=lambda *_: None)  # (done: nothing new)
     assert net.store.one("SELECT COUNT(*) AS n FROM events WHERE project_id=? AND kind='analysis'", pid)["n"] == len(said)
+
+
+def test_a_project_made_before_2017s_rules_gets_them_at_start(tmp_path, monkeypatch):
+    """Review of #138: the rules 2017 brought reached new imports and Reimports only, as a project at analysis 6
+    was done. Step 7 runs the stubs and the joins again: a `catch (...) {}` block a project made before kept as a
+    function of its own is joined to its function, with a note, and the project is at the newest level."""
+    owner = PUSH_FRAME + bytes.fromhex("33c08be55dc3")
+    catch = bytes.fromhex("b8") + struct.pack("<I", TEXT + len(owner) + 6) + b"\xc3"  # mov eax, <the next>; ret
+    rest = bytes.fromhex("83c8ff") + EH_EPILOGUE
+    rows = [_row(TEXT, TEXT + len(owner)), _row(TEXT + len(owner), TEXT + len(owner) + 6),
+            _row(TEXT + len(owner) + 6, TEXT + len(owner) + 6 + len(rest))]
+    net, root, stubs = _project_made_before(tmp_path, monkeypatch, 6, head=(owner + catch + rest, rows))
+    pid = net.project_row("p")["id"]
+    consoles.get("pc").on_start(net, "p", log=lambda *_: None)
+    said = [r["detail"] for r in net.store.all("SELECT detail FROM events WHERE project_id=? AND kind='analysis'", pid)]
+    assert len(said) == 1 and said[0].startswith("2 more pieces of functions Ghidra cut off (a catch block"), said
+    units = json.loads((root / "config" / "game" / "functions.json").read_text())["units"]["u"]
+    assert units[0]["addr"] == TEXT and units[1]["addr"] == 0x401030  # (the catch block and the rest: in the first)
+    assert [fn["name"] for fn in units if fn.get("generated")] == stubs
+    assert json.loads((root / ".decomp.wtf.json").read_text())["analysis"] == consoles.get("pc").ANALYSIS == 7
+    assert net.store.one("SELECT text FROM notes WHERE project_id=?", pid)["text"].startswith("decompdecomp joined")
 
 
 def test_joins_that_break_the_rebuild_are_taken_back_without_notes(tmp_path, monkeypatch):
@@ -2894,6 +2973,13 @@ def test_a_game_of_a_build_no_pack_has_builds_with_the_users_own_visual_cpp(tmp_
     # its own build is the very one: the pack's nearest isn't used, and the game says so
     names = {c[0]: c for c in scratch_pe.program_compilers(_windows_program(rich=rich_2008))}
     assert names["MSVC/own-15.0.30411"][3] is True
+    # and it matches as the packs' very build does (game_info's "exact": the import says "it can match"); another
+    # build of the version, with the nearest copy, says "much of it" as a pack's nearest does
+    game = tmp_path / "game.exe"
+    game.write_bytes(_windows_program(rich=rich_2008))
+    assert scratch_pe.game_info(game)["exact"]
+    game.write_bytes(_windows_program(rich=[(0x84, 30500, 300), (0x91, 30500, 1)]))
+    assert not scratch_pe.game_info(game)["exact"]
     # the newest 2019 build no pack has: in scope with a copy of its version, or with 2017's as the nearest
     new = scratch_pe.describe(_windows_program(rich=rich_2019))
     assert not new.blockers() and "2012 to 2015" not in " ".join(new.cannot_match())

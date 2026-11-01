@@ -4,7 +4,8 @@ Microsoft Visual C++ 6.0 (/O2, the usual release flags of the time) and linked b
 0x400000, without relocations, like PC games of the late 1990s; every function is kept (/OPT:NOREF), even ones
 nothing calls, so the demo has all of Demo Quest to decompile. No C runtime: the demo needs none.
 
-MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain install msvc --accept-license).
+MSVC is proprietary: this needs the `msvc` toolchain (decompnet toolchain install msvc --accept-license), and wibo
+off Windows; a 14.16 build needs only `msvc2015` (and wine off Windows).
 
     uv run python projects/demo-pc/build.py    ->  build/demoquest.exe (+ build/symbols.map with every symbol)
     uv run python projects/demo-pc/build.py 10.0SP1    ->  build/10.0SP1/demoquest.exe
@@ -84,6 +85,11 @@ def runner(pack: str) -> tuple[list[str], dict | None]:
     return [str(toolchains.binary("wibo"))], None
 
 
+def msvc_bin() -> Path:
+    """Visual C++ 6.0's Bin folder (the `msvc` pack): its linker links every build but 2017's."""
+    return toolchains.require("msvc") / "6.0" / "Bin"
+
+
 def write_key() -> None:
     """build/demo.json: the game this build made and the address of every symbol in the linker's map, so
     tests/test_consoles.py knows which of the project's functions is which."""
@@ -103,11 +109,10 @@ def main() -> None:
         shutil.copy(src, BUILD / src.name)
     pack = compiler_pack(VERSION)
     cl = toolchains.require(pack) / VERSION / "Bin"
-    wibo = [str(toolchains.binary("wibo"))] if sys.platform != "win32" else []
     runs, env = runner(pack)
-    msvc = toolchains.require("msvc") / "6.0" / "Bin"
-    # 6.0's linker, but for 2017's: its own, under the same wine
-    link = [*runs, cl / "link.exe"] if toolchains.get(pack).wine else [*wibo, msvc / "LINK.EXE"]
+    # 2017's own linker, under the same wine: then neither 6.0's pack nor wibo is needed (review of #138); for every
+    # other version, 6.0's linker, under wibo
+    link = [*runs, cl / "link.exe"] if toolchains.get(pack).wine else [*runs, msvc_bin() / "LINK.EXE"]
     if PDB and VERSION != "6.0":
         sys.exit("--pdb builds with Visual C++ 6.0 only (see this file's docstring)")
     debug = (["/Zi", "/Fdvc60.pdb"], ["/DEBUG", "/PDB:demoquest.pdb"]) if PDB else ([], [])
@@ -119,6 +124,7 @@ def main() -> None:
         objs = BUILD / "dll_objs"  # (a folder without a program of its own: the import looks in it, and finds .obj)
         objs.mkdir(exist_ok=True)
         dll_cl = toolchains.require(compiler_pack(DLL_VERSION)) / DLL_VERSION / "Bin"
+        wibo, msvc = runner(compiler_pack(DLL_VERSION))[0], msvc_bin()
         for src in ("game.c", "pcmain.c"):
             run([*wibo, next(p for p in (dll_cl / "CL.EXE", dll_cl / "cl.exe") if p.exists()), *CFLAGS,
                  f"/Fo{objs.name}/{Path(src).stem}.obj", src])

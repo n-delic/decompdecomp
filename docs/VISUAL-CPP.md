@@ -14,9 +14,11 @@ A program says which Visual C++ made it in its Rich header: the version, and the
 import reads it and picks a compiler:
 
 1. The build the program names, if decompdecomp has it.
-2. Otherwise, the closest build of the same version. Every 2017 update builds with 14.16 (15.9), the one 2017 build
+2. Otherwise, your own copy of that Visual C++, if you set one up in Setup (your Visual Studio's VC folder): the very
+   build, or the nearest of your copies of the same version.
+3. Otherwise, the closest build of the same version. Every 2017 update builds with 14.16 (15.9), the one 2017 build
    decompdecomp has.
-3. A game built with a version decompdecomp doesn't have yet builds with the nearest version it has, by year, and
+4. A game built with a version decompdecomp doesn't have yet builds with the nearest version it has, by year, and
    the import says so: 2012 and 2013 with 2010 SP1, 2015 and 2019 or newer with 2017. Its functions match only where
    the two compilers make the same code, which "Where the code changes" below says something about: little of a
    2012 or 2013 game, more of a 2015 one. Its own version, once decompdecomp has it, matches the rest.

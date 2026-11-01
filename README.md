@@ -248,8 +248,8 @@ Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after yo
 Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install
 yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple
 Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
-packs don’t have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
-(it’s read where it is, never copied).
+packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
+(it's read where it is, never copied).
 
 ## Questions people ask
 

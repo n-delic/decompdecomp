@@ -89,9 +89,14 @@ class WindowsPC(Console):
     # 4 the pieces of functions Ghidra cut off joined to them (scratch.merge_pieces), never a stub; 5 the import thunks
     # functions of their own, named after their imports and set aside (scratch.name_import_thunks); 6 the files whose
     # functions keep an ebp frame built with /Oy- (scratch.set_frame_flags), but for files with matched code: after
-    # the thunks, which keep no frame and would count against their file's. Its build tools have a version of their
-    # own (the manifest's "tools": scratch.tools_version), so each change to them reaches it
-    ANALYSIS = 6
+    # the thunks, which keep no frame and would count against their file's; 7 the stubs and joins again, by the rules
+    # Visual C++ 2017 brought (#138: a handler that checks its function's /GS cookie first is a stub, a `catch (...)
+    # {}` block that only says where to go on is joined to its function: x86.resumes), which games of any version
+    # have. (Two more rules of #138 read where a function starts and ends, the code before the first function
+    # Ghidra found and, from 2015 on, the int3 after a call that never returns: they come from Ghidra's list, so they
+    # reach a project made before them by Reimport.) Its build tools have a version of their own (the manifest's "tools":
+    # scratch.tools_version), so each change to them reaches it
+    ANALYSIS = 7
 
     def target(self, fp) -> str:
         """The project's program's processor: x86 (a 32-bit program: every game started so far), or x64."""
@@ -214,6 +219,18 @@ class WindowsPC(Console):
             joined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
             n = sum(len(v) for v in joined.values())
             return f"{n} pieces of functions Ghidra cut off are part of the function they belong to again" if n else None
+        rejoined: dict[str, list[str]] = {}
+
+        def newer_rules(fp):
+            n = scratch.mark_exception_stubs(fp.root, version)
+            rejoined.update(scratch.merge_project_pieces(fp.root, version, keep=matched(), log=log))
+            said = [f"{n} more functions are exception-handling code Visual C++ makes from the function they belong to "
+                    "(a handler that checks the function's /GS cookie first): set aside"] if n else []
+            if rejoined:
+                said.append(f"{sum(len(v) for v in rejoined.values())} more pieces of functions Ghidra cut off (a catch "
+                            "block that only says where the function goes on) are part of their function again")
+            return "; ".join(said) or None
+
         def thunks(fp):
             n = scratch.name_import_thunks(fp.root, version, keep=matched())
             return (f"{n} functions are import thunks the linker adds for calls to DLLs' functions: named after the "
@@ -232,18 +249,22 @@ class WindowsPC(Console):
                     if changed else None)
         # (fix for the stubs: a step that changes no code can't break the rebuild, so it's kept where the rebuild
         # isn't identical yet too)
-        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (thunks, False), 6: (frames, True)}
+        steps = {2: (repairs, False), 3: (stubs, True), 4: (pieces, False), 5: (thunks, False), 6: (frames, True),
+                 7: (newer_rules, False)}
         kept = {}
         for level, (step, fix) in steps.items():
             if manifest.get("analysis", 1) < level:
-                kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
+                if not (level == 7 and 4 in kept):  # (7 is 3 and 4 again, by their rules now: not when they just ran)
+                    kept[level] = net.forks.reanalyse(slug, step, fix=fix, log=log)
                 net.forks.get(slug)[1].update_manifest(analysis=level)  # tried: a step taken back isn't tried again
         if manifest.get("tools") != scratch.tools_version():
             net.forks.reanalyse(slug, tools, paths=("tools",), log=log)
             net.forks.get(slug)[1].update_manifest(tools=scratch.tools_version())  # (tried: not again until they change)
-        if kept.get(4):  # (taken back: nothing was joined)
+        # (a step taken back joined nothing)
+        grew = {**(joined if kept.get(4) else {}), **(rejoined if kept.get(7) else {})}
+        if grew:
             agent, _ = net.local_agent("decompdecomp")
-            for name, took in joined.items():
+            for name, took in grew.items():
                 net.joined(name, slug)
                 try:
                     net.add_note(agent, slug, f"decompdecomp joined {', '.join(took)} to this function: it's the whole "

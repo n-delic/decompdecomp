@@ -100,22 +100,23 @@ Where to start on a gap:
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
   it, said as the closest). A game of a version the packs don't have builds with the nearest by year, and the import
   says so: 2015's with 2017's (the same toolset's next version), 2019 and newer with 2017's, with a line that their
-  compilers' own code can't match until they come, 2012-2013 with 2010 SP1 as before. A 32-bit game never builds with
-  or is offered the 64-bit compiler (a compiler's target): not in the import's list of compilers, which refuses one
-  for another processor, nor in Settings, try_compiler "all", suggest or the agents' project info. The drop zone
-  offers the pack the import will ask for from the server's table, so a new pack needs nothing in its script. Demo Quest
-  built by 2017 and linked by its own linker under wine (`projects/demo-pc/build.py 14.16`) imports with every
-  function, rebuilds byte for byte, and all of it matches from its C but the hand-written `_ftol` (split where `game.c`
-  starts: 2017 inlines a file's functions into each other). What 2017 showed, fixed for every game: code before the first
-  function Ghidra found (a function inlined everywhere, first in `.text`) is a function too; a `catch (...) {}` block
-  (only `mov eax, <where to go on>; ret`) is joined to its function; from 2015 on, the int3 after a call that never
-  returns is the function's own; 2017's exception handlers that check the function's /GS cookie first are set aside as
-  stubs; a game that imports its C runtime from DLLs (vcruntime140, the Universal CRT) builds with /MD, so the runtime's
-  calls go through its imports; and a split moves a PC program's functions with their rows (they were added anew, their
-  names ending in `'`). Which packs run through wine is each pack's own (toolchains.toml's `wine`, given to the build as
-  `$DECOMPNET_WINE_PACKS` beside wine itself), not a version number, so a 2012-2013 pack can run under either. Visual
-  Studio 2017's release defaults (/GS, /Gy, SSE2, thread-safe statics) are what the project's flags give 2017's compiler
-  (a test checks each).
+  compilers' own code can't match until they come, 2012-2013 with 2010 SP1 as before. A 32-bit game never builds
+  with or is offered the 64-bit compiler (a compiler's target): not in the import's list of compilers, which refuses one for
+  another processor, nor in Settings, try_compiler "all", suggest or the agents' project info. The drop zone offers the
+  pack the import will ask for from the server's table, so a new pack needs nothing in its script. Demo Quest built by
+  2017 and linked by its own linker under wine (`projects/demo-pc/build.py 14.16`) imports with every function,
+  rebuilds byte for byte, and all of it matches from its C but the hand-written `_ftol` (split where `game.c` starts: 2017
+  inlines a file's functions into each other). What 2017 showed, fixed for every game: code before the first function
+  Ghidra found (a function inlined everywhere, first in `.text`) is a function too; a `catch (...) {}` block (only `mov
+  eax, <where to go on>; ret`) is joined to its function; from 2015 on, the int3 after a call that never returns is the
+  function's own; 2017's exception handlers that check the function's /GS cookie first are set aside as stubs; a game
+  that imports its C runtime from DLLs (vcruntime140, the Universal CRT) builds with /MD, so the runtime's calls go
+  through its imports; and a split moves a PC program's functions with their rows (they were added anew, their names
+  ending in `'`). A project made before gets the handlers and the catch blocks at its next start (analysis step 7); the
+  leading function and the int3 are read from Ghidra's list, so they reach it by Reimport. Which packs run through wine
+  is each pack's own (toolchains.toml's `wine`, given to the build as `$DECOMPNET_WINE_PACKS` beside wine itself), not a
+  version number, so a 2012-2013 pack can run under either. Visual Studio 2017's release defaults (/GS, /Gy, SSE2,
+  thread-safe statics) are what the project's flags give 2017's compiler (a test checks each).
 
 - **Visual C++ 2017 for Windows PC, through wine.** The `msvc2015` pack (proprietary, installed after the user
   accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used
@@ -125,7 +126,7 @@ Where to start on a gap:
   archives, or its files laid out another way) counts as not installed, and Compilers & tools offers to install
   it again from the archives already downloaded; installs made before installs recorded their entry are judged by
   the archives they record. Two compilers, chosen per file in Settings or tried by try_compiler: `MSVC/14.16` (32-bit)
-  and `MSVC/14.16-x64` (64-bit, the 32-bit host’s program database DLLs beside it, so it runs by itself). wibo can't
+  and `MSVC/14.16-x64` (64-bit, the 32-bit host's program database DLLs beside it, so it runs by itself). wibo can't
   run them (under a patched wibo a hello world exited 99 and `#include <windows.h>` failed without a word), so on
   Linux and macOS they run through wine, which the user installs; the pack says how before downloading (`wine.py`).
   The app keeps its own prefix beside its toolchains and a wine server for it between compiles (0.2 s a compile instead
@@ -133,7 +134,7 @@ Where to start on a gap:
   (the app's build steps say where: `Console.build_env`), so a project configured before wine or the pack was
   installed builds one as soon as they are, and no older configure.py is given an argument it doesn't know. The build
   passes every path as `Z:\...`, and wine's output goes through a file: the services the first wine program starts
-  outlive it and, given the build’s pipe, held the build open for as long as the server ran. The older packs stay on wibo.
+  outlive it and, given the build's pipe, held the build open for as long as the server ran. The older packs stay on wibo.
 - **PSP.** A UMD image (read in place, also as a CSO) or the game's program, with its title and product code from
   PARAM.SFO. A PRX is placed at 0x08804000 the way the PSP loads it, then split by splat like any MIPS program; its
   import stubs are set aside and get the system functions' names (`sceIoOpen`) from the open-source PSP SDK's NID
@@ -580,7 +581,7 @@ blank).
 
 PC projects build with Visual C++ 6.0 to 2010 and 2017 (phases B and C are done, and 2017's games: Recently done). The
 import already tells a newer game apart (its build, /GL, 64-bit, DRM); what's left, one phase at a time. Visual C++ 2017's
-compilers are installed (`msvc2015`, Recently done), build 2015’s and newer's games (the nearest the packs have), and can
+compilers are installed (`msvc2015`, Recently done), build 2015's and newer's games (the nearest the packs have), and can
 be chosen per file. A game built with a Visual C++ no pack has (2012, 2013, 2019, 2022, or another build of a packed
 version) builds with your own copy of it when you have one: the `visualcpp` kit (`kits/`), set up in Setup from your Visual
 Studio's VC folder, matched to the game's Rich header by build (2015 and newer through wine); without one it builds
