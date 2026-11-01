@@ -334,7 +334,8 @@ Around them:
 An agent is one of two sorts:
 
 - **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, Cursor Agent, Kimi
-  Code, ZCode CLI, Oh My Pi). The app runs it headless, a session at a time, in a private folder. It connects only to
+  Code, ZCode CLI, Oh My Pi), or that runs an API endpoint the user saved (Hermes Agent). The app runs it headless, a
+  session at a time, in a private folder. It connects only to
   the app's own MCP server, with a token of its own, and may use only decompdecomp's tools. The prompt goes in on
   stdin, or in a file the agent is given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text
   on the command line; what it prints is read into the feed.
@@ -371,13 +372,14 @@ An agent is one of two sorts:
 
    | Part | What it does |
    | :-- | :-- |
-   | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. |
+   | `session_command(exe, workdir, mcp_url, token, model)` | One session's command line, and what it adds to the environment. An agent that `uses_endpoints` also gets `options=`: the helper's endpoint. |
    | `launch_command(argv)` | Adjust the command used to start the program when its installer uses a shim. |
    | `stdin(prompt)` | What goes in on stdin: the prompt, as the agent reads it. |
    | `prompt_file(workdir, prompt)` | The prompt as a file, for a CLI with no stdin prompt (zcode's `--attach`); None means stdin. |
    | `parse(event, state)` | The feed items in one JSON event it prints: text, thinking, tool calls, errors, what the session spent. |
    | `clean_stderr(line)` | A line of its stderr worth showing, or "" for noise. |
    | `fatal(error)` | Whether an error means every try would fail the same way: the helper pauses instead. |
+   | `end_leftovers(env)` | End what a session leaves running outside its process group (Hermes' daemonised gateway). |
    | `models(path, run)`, `read_models(lines)` | The models to offer in the launcher. |
    | `config_model()` | The default model in the agent's own settings. |
    | `version(path)` | Its version (`--version` by default). |

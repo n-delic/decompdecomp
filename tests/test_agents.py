@@ -14,7 +14,7 @@ import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity, ohmy, opencode, zcode
+from decompnet.agents import antigravity, hermes, ohmy, opencode, zcode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -413,10 +413,119 @@ def test_a_concurrency_limit_is_a_throttle_not_a_plan_limit():
     assert agents.THROTTLED.search("concurrency-limit exceeded") and not agents.LIMIT.search("concurrency-limit exceeded")
 
 
+def test_hermes_stream_json_is_read():
+    """Hermes Agent's --format stream-json: init, text in pieces (gathered until a tool call), a tool call, a failed
+    tool result, and the result with the session's tokens."""
+    state: dict = {}
+    lines = [
+        {"type": "system", "subtype": "init", "model": "GLM-5.3-Flash", "session_id": ""},
+        {"type": "text", "text": "Claiming "},
+        {"type": "text", "text": "the next one."},
+        {"type": "tool_use", "name": "mcp_decomp_claim_function", "tool_call_id": "c1", "input": {"count": 4}},
+        {"type": "tool_result", "name": "mcp_decomp_claim_function", "tool_call_id": "c1", "output": "ok",
+         "duration_ms": 30, "is_error": False},
+        {"type": "tool_use", "name": "mcp_decomp_compile_and_diff", "input": {"name": "f", "source": "int f;\n"}},
+        {"type": "tool_result", "name": "mcp_decomp_compile_and_diff", "output": "tool exploded", "is_error": True},
+        {"type": "text", "text": "Done."},
+        {"type": "result", "session_id": "s1", "exit_code": 0, "text": "Done.",
+         "tokens": {"input": 120, "output": 15, "total": 135, "cache_read": 40, "cache_write": 0}},
+    ]
+    out = [item for line in lines for item in kinds.get("hermes").parse_line(json.dumps(line), state)]
+    assert out == [("text", "Claiming the next one."), ("tool", "claim_function(4)"),
+                   ("tool", "compile_and_diff(f, 1 lines of C)"), ("error", "tool exploded"), ("text", "Done."),
+                   ("usage", json.dumps({"input": 120, "output": 15, "cache_read": 40}))]
+    failed = {"type": "result", "exit_code": 1, "error": "endpoint unreachable", "tokens": {}}
+    assert kinds.get("hermes").parse_line(json.dumps(failed), {}) == [("error", "endpoint unreachable")]
+
+
+def test_hermes_runs_the_helpers_endpoint_with_only_decomps_tools(tmp_path, monkeypatch):
+    """A Hermes helper runs the endpoint picked for it in the launcher: its own HERMES_HOME names that endpoint and
+    only the app's MCP server (the token in a header, never on the command line), with Hermes' own tools off. The
+    prompt goes in on stdin."""
+    m = _manager(tmp_path, monkeypatch, "hermes")
+    s = agents.Session("hermes-1", "hermes", "h", "demo", "hermes-1",
+                       {"endpoint": "e2", "provider": "custom", "base_url": "http://127.0.0.1:18083/v1/",
+                        "model": "GLM-5.3-Flash", "api_key": "sk-box", "effort": "high"})
+    work = tmp_path / "hermes"
+    work.mkdir()
+    cmd, env, stdin = m._command(s, "tok", work)
+    assert "line one" in stdin and not any("line one" in arg for arg in cmd)
+    assert cmd[1:6] == ["chat", "--query-file", "-", "--format", "stream-json"]
+    assert cmd[cmd.index("-m") + 1] == "GLM-5.3-Flash" and cmd[cmd.index("--reasoning") + 1] == "high"
+    assert not any("tok" in arg or "sk-box" in arg for arg in cmd)
+    assert env["HERMES_HOME"] == str(work / ".hermes")
+    # the endpoint and key are bound in the environment Hermes reads, so nothing inherited can redirect it: a local
+    # (non-OpenRouter) endpoint's key goes in OPENAI_API_KEY, and the OpenRouter variable is blanked
+    assert env["CUSTOM_BASE_URL"] == "http://127.0.0.1:18083/v1"
+    assert env["OPENAI_API_KEY"] == "sk-box" and env["OPENROUTER_API_KEY"] == ""
+    assert env["OPENROUTER_BASE_URL"] == "" and env["OPENAI_BASE_URL"] == ""
+    config = (work / ".hermes" / "config.yaml").read_text(encoding="utf-8")
+    assert 'base_url: "http://127.0.0.1:18083/v1"' in config and 'api_key: "sk-box"' in config
+    assert "platform_toolsets:\n  cli: []\n" in config
+    assert 'url: "http://127.0.0.1:6464/mcp"' in config and 'Authorization: "Bearer tok"' in config
+    assert config.count("url:") == 2  # the endpoint and the app's MCP server: no other server
+
+
+def test_hermes_binds_the_endpoint_over_an_inherited_one(tmp_path, monkeypatch):
+    """The review's P1: Hermes v0.22.5 prefers an inherited CUSTOM_BASE_URL over the config's base_url, so an
+    endpoint left in the app's own environment would redirect the helper. session_command must pin the selected
+    endpoint (and blank the rival OPENROUTER_BASE_URL) in the environment it returns, so the overlay wins."""
+    monkeypatch.setenv("CUSTOM_BASE_URL", "http://127.0.0.1:9999/v1")
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "http://inherited.example/v1")
+    cmd, env = hermes.HERMES.session_command("hermes", tmp_path, "http://127.0.0.1:6464/mcp", "tok", "m",
+                                             options={"base_url": "http://127.0.0.1:18083/v1/", "api_key": "sk-box"})
+    assert env["CUSTOM_BASE_URL"] == "http://127.0.0.1:18083/v1"  # the selection, not the inherited 9999
+    assert env["OPENROUTER_BASE_URL"] == ""                        # the inherited rival is neutralised
+
+
+def test_hermes_puts_the_key_in_the_variable_its_host_reads(tmp_path):
+    """The review's P2: Hermes picks the key variable by the endpoint's host (OpenRouter -> OPENROUTER_API_KEY, else
+    OPENAI_API_KEY), not from model.api_key, and never on the command line. The saved key must land in the right one."""
+    cmd, env = hermes.HERMES.session_command("hermes", tmp_path, "http://127.0.0.1:6464/mcp", "tok", "m",
+                                             options={"base_url": "https://openrouter.ai/api/v1", "api_key": "sk-or"})
+    assert env["OPENROUTER_API_KEY"] == "sk-or" and env["OPENAI_API_KEY"] == ""
+    assert not any("sk-or" in arg for arg in cmd)              # the key is never on the command line
+    cmd2, env2 = hermes.HERMES.session_command("hermes", tmp_path, "http://127.0.0.1:6464/mcp", "tok", "m",
+                                               options={"base_url": "http://localhost:1234/v1", "api_key": "sk-lo"})
+    assert env2["OPENAI_API_KEY"] == "sk-lo" and env2["OPENROUTER_API_KEY"] == ""
+    assert not any("sk-lo" in arg for arg in cmd2)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="read from /proc")
+def test_hermes_ends_what_its_session_left_running(tmp_path, monkeypatch):
+    """Hermes' gateway daemonises and outlives its session: the Linux fallback SIGTERMs every process carrying the
+    session's HERMES_HOME, and no other session's. (The cross-platform `gateway stop` is skipped here so the test
+    doesn't shell out to a real Hermes; test_hermes_end_leftovers_runs_gateway_stop covers that.)"""
+    monkeypatch.setattr(hermes.shutil, "which", lambda _cmd: None)
+    home = str(tmp_path / "h1" / ".hermes")
+    left = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home), start_new_session=True)
+    other = subprocess.Popen(["sleep", "60"], env=dict(os.environ, HERMES_HOME=home + "2"))
+    try:
+        hermes.HERMES.end_leftovers({"HERMES_HOME": home})
+        assert left.wait(timeout=5) is not None
+        assert other.poll() is None
+    finally:
+        for proc in (left, other):
+            proc.kill()
+            proc.wait()
+
+
+def test_hermes_end_leftovers_runs_gateway_stop(tmp_path, monkeypatch):
+    """The review's medium point: Hermes detaches its gateway on macOS and Windows too, where the /proc sweep can't
+    reach it. end_leftovers runs Hermes' own cross-platform `gateway stop` for the session's HERMES_HOME."""
+    calls = []
+    monkeypatch.setattr(hermes.shutil, "which", lambda _cmd: "/fake/hermes")
+    monkeypatch.setattr(hermes.subprocess, "run",
+                        lambda argv, **kw: calls.append((argv, kw.get("env", {}).get("HERMES_HOME"))))
+    home = str(tmp_path / "h1" / ".hermes")
+    hermes.HERMES.end_leftovers({"HERMES_HOME": home})
+    assert (["/fake/hermes", "gateway", "stop"], home) in calls
+
+
 def _manager(tmp_path, monkeypatch, kind):
     (tmp_path / "bin").mkdir(exist_ok=True)
     exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode",
-                              "zcode": "zcode", "omp": "omp"}[kind]
+                              "zcode": "zcode", "omp": "omp", "hermes": "hermes"}[kind]
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
@@ -431,7 +540,7 @@ def test_prompts_go_in_on_stdin_never_the_command_line(tmp_path, monkeypatch):
     """On Windows, npm installs agents as .cmd scripts: cmd.exe cuts a multi-line argument at its first line break
     and caps the command line at 8191 characters. zcode has no stdin prompt: its prompt is a file, checked in
     test_zcode_prompt_reaches_it_by_file_never_as_argv."""
-    for kind in ("claude", "codex", "antigravity", "opencode", "omp"):
+    for kind in ("claude", "codex", "antigravity", "opencode", "omp", "hermes"):
         m = _manager(tmp_path, monkeypatch, kind)
         s = agents.Session(f"{kind}-1", kind, kind, "demo", f"{kind}-1", {"model": "some-model"})
         work = tmp_path / kind
