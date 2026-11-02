@@ -248,3 +248,25 @@ an adjacent copy and increment of identically typed locals. Cross-branch lifetim
 still need investigation. Preserve a distinct allocation candidate even if its numeric
 score is worse. Optional GCC diagnostics expose loop notes and legacy reference weights;
 use them as leads only when diagnostic flags leave output unchanged.
+
+For mixed allocator/scheduling misses, inspect the compact first-differing-block
+report before requesting another full diff. Local search now interleaves block and
+whole-function repair priorities and bounds combinations of regional improvements.
+This does not prove a lifetime conflict: the frozen score-520 regression remained
+unresolved after 128 candidate compiles. Captured single/pair edit subsets can help
+separate sufficient changes from accumulated experiments under the same compiler.
+
+For repeated halfword subtractions with correct instruction structure but swapped operand registers,
+try `paired_operand_reuse`: stage both operands through the same pair of existing dead word locals.
+Use CFG liveness across branches/backedges, not textual last-use guesses. Unsigned halfword staging
+is only a modular-store hypothesis; keep signed operands for a full-width difference.
+
+A remaining initialization-order miss can originate in induction-variable creation. Try deriving an
+independent positive-stride counter from a zero-based unit-step index before its reads. The bounded
+`affine_counter_guard` family also removes one identical-arm scalar guard at a time; another guard
+may still be necessary for allocation. It rejects incoming jumps, escaped/mutated/live-out counters,
+and unsupported loop shapes. Pure scheduling and mixed register/order clues prioritize these families.
+A private 48-trial replay recovered the historical exact result from score 160 in 43 trials (~33 s),
+and from score 60 in one trial (~3.2 s), while main recovered neither. These are rediscoveries;
+ordinary linked-byte/data verification is still required. See the 2 November paired-operand case
+in `docs/COMPILER_MATCHING_LEARNINGS.md` for the compiler profile, failed alternatives and limits.
