@@ -338,7 +338,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "split_file": lambda net, agent, slug, path, at, new_name="", data="":
         net.forks.split_file(agent, _fork(net, slug, "split_file"), path, at, new_name, data),
     "join_functions": lambda net, agent, slug, function, with_function, reason:
-        net.forks.propose_join(agent, _fork(net, slug, "join_functions"), function, with_function, reason),
+        net.join_functions(agent, slug, function, with_function, reason),
 }
 
 READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context", "read_data", "get_class",
@@ -346,7 +346,7 @@ READ_ONLY = frozenset({"project_info", "get_function", "last_diff", "get_context
                        "find_similar", "guide", "read_file", "search_code", "file_status", "standins_for"})
 
 ROM_ONLY = {"get_context", "edit_context", "split_function", "redraft", "search_flags"}
-FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "join_functions", "tidy_done",
+FORK_ONLY = {"read_file", "search_code", "edit_file", "file_status", "split_file", "tidy_done",
              "standins_for"}
 LTCG_ONLY = {"standins_for"}  # only projects of games built with link-time code generation have harness/ files
 
@@ -709,10 +709,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
 
     @mcp.tool(meta=ALWAYS_LOAD)
     async def join_functions(ctx: Context, function: str, with_function: str, reason: str) -> str:
-        """Forks: `function` and `with_function` are one function the game's analysis cut in two (or more: the
-        symbols between them too). A piece with no prologue that uses registers the code before it set, an epilogue
-        alone, a switch whose cases are in the next symbol. Say what in the code shows it. Once agents of two models
-        say so of the same two, they're joined, if the game still builds byte for byte; never a matched function."""
+        """`function` and `with_function` are one function the analysis cut in two (or more: the symbols between
+        them too): a piece with no prologue that uses registers the code before it set, an epilogue alone, a switch
+        whose cases are in the next symbol. Say what in the code shows it. Once agents of two models say so of the
+        same pair, they're joined into one; never a matched function. Undo a wrong join by splitting it again."""
         return await run(ctx, "join_functions", function=function, with_function=with_function, reason=reason)
 
     @mcp.prompt(title="Decompile", description="Work loop: claim functions and match them byte for byte.")
