@@ -297,3 +297,21 @@ facts. Try it with `loop_weight_scope`: the bounded iterative search reserves co
 follow-ups without increasing the phase budget. Saved-case output replays recovered a
 previous long-running near miss in 17 or 29 candidate compiles; this is regression
 evidence, not a guarantee for other functions.
+
+Use Finish near matches for a budgeted GCC value trace when a register-only plateau has no promising
+first edit. GCC's instruction IDs, line notes, def/use/death records and explicit register dispositions
+can narrow candidate lifetimes; a reused register can still correspond to several values. The trace
+must preserve normal allocated output. It costs up to two compiler runs from the same CPU budget,
+not an AI request, and cached traces reject changed source/header/settings. Small traced two-edit
+bundles and actual verified same-unit private helper/static-constant definitions are ordinary judged
+hypotheses. The latter recovered a homemade inline-helper test, not an additional game function.
+Do not infer private calling conventions or object definitions from an extern. Experimental priority
+boosts need exact-throughput wins on disjoint-target held-out replay; plausible source shapes alone
+are insufficient. See `docs/repair-replay.md` for limits and the reviewed promotion workflow.
+
+If the original materializes the same address twice while the candidate derives it from
+a nearby pointer, try `independent_address_materialization`. It uses a fresh automatic
+symbol resolving to the same address to keep the compiler expressions independent.
+The target must support the repeated address pairs, and the normal linked judge still
+settles the result. A frozen case improved from 155 to 25; its remaining register miss
+was not solved by the tested local variants or scheduler toggles.

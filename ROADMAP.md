@@ -1742,3 +1742,21 @@ functions retain reviewable skip reasons, and applied outcomes are saved with co
 The comparison action toggles to Stop while running. Its two determinate progress bars replace the
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
+
+Finish near matches now has bounded, output-preserving native-GCC def/use traces and six-candidate
+traced bundles, plus verified same-unit private-helper/static-constant trials in its MIPS ROM adapter.
+Stored traces also feed local repair batches. Held-out replay approvals gate experimental adaptive
+boosts and broad focus promotion. Remaining: imported-unit verification/file-context adapters,
+non-native/non-GCC dump readers, full translation-unit/private-clobber context, initialized arrays and
+exact original physical helper-line provenance. These gaps do not permit guessed layouts or ABI types.
+
+- Target-backed independent-address materialization is available to MIPS ROM iterative
+  search, local agent repairs and the bounded pre-permuter pass. Imported project builds
+  need a build-owned alias/link adapter; other architectures need their address-pair
+  reader before this hypothesis can reach them. The first six-case controlled cohort
+  gained one closer draft, with no newly exact function.
+## Headless browser serving
+
+Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.
+
+Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.

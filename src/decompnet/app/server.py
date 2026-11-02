@@ -1,7 +1,7 @@
 """The local decompdecomp server: the GUI, its API, and the MCP endpoint agents connect to.
 
 It listens on 127.0.0.1 only. The GUI answers only the app's own window, whose user agent carries the per-launch
-secret (window.py); managed and manual agents need their own project-scoped bearer token. Host headers are checked on every request, so web
+secret (window.py), or an authenticated browser session in opt-in `decomp serve` mode; managed and manual agents need their own project-scoped bearer token. Host headers are checked on every request, so web
 pages can't reach it through DNS rebinding.
 
 build() sets up what the routes share (the engine, helper agents, jobs, settings, the request checks) and hands it to
@@ -31,7 +31,7 @@ from .routes import browser_bridge, forks, life, pages, projects, repair_feedbac
 from .support import Jobs, Settings, session_options
 
 
-def build(net: RomNetwork, home: Path, port: int, secret: str):
+def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool = False):
     mcp_url = f"http://127.0.0.1:{port}/mcp"
     from . import build_info
     build_id = (build_info.commit() or updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
@@ -85,6 +85,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     from .agent_local_pass import configure as configure_local_repairs
     configure_local_repairs(net,settings.data)
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
+    from .web_login import WebLogin
+    net.web_login = WebLogin(port) if headless else None
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     from . import manual_mcp
@@ -202,9 +204,11 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     def guard(request: Request, write: bool = False) -> Response | None:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.request_token(request), secret):
-            return JSONResponse({"error": "decompdecomp only answers its own window: open it with `decomp`"},
+        if not secrets.compare_digest(window.request_token(request), secret) and not (net.web_login and net.web_login.authorized(request)):
+            return JSONResponse({"error": "Sign in at /login to use this server." if net.web_login else "decompdecomp only answers its own window: open it with `decomp`"},
                                 status_code=401)
+        if net.web_login and request.headers.get('origin') and not net.web_login.same_origin(request):
+            return JSONResponse({'error':'Use this server’s own browser page.'}, status_code=403)
         if write and request.headers.get("x-decomp") != "1":
             return JSONResponse({"error": "missing header"}, status_code=403)
         return None
@@ -239,7 +243,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
                      guard, body, call, fail, ui_call=ui_call, updater=updates.Updater(before_restart, port, secret),
-                     busy=busy, quit_app=quit_app)
+                     busy=busy, quit_app=quit_app, web_login=net.web_login)
+    from . import web_login
+    web_login.register(app)
     for part in (pages, state, projects, repair_feedback, repository_sync, forks, setup, life, rooms, pairing, browser_bridge):
         part.register(app)
 

@@ -268,3 +268,58 @@ improvements**. Search time was 33.2 seconds without focus and 32.2 seconds with
 that difference is timing noise, not evidence of a speedup. Fresh linked baselines,
 not historical displayed percentages, were used for comparison. Larger budgets or new
 repair families may be needed; this result does not establish general effectiveness.
+
+### GCC value traces, private unit context and promotion gates
+
+Finish near matches can capture one initial native-GCC value trace for a register-only baseline,
+including a cached baseline. It reserves two compiler slots and a 40-second deadline margin from
+that pass's existing allowance; unsupported adapters release unused reservations. This does not run
+an AI agent. Ordinary autopilot does not pay for the extra initial trace. Existing improved-candidate
+phase comparisons remain separately capped. Stop, per-function quotas and the exact judge still apply.
+
+Complete bounded RTL/flow/global-allocation dumps supply instruction IDs, definitions/uses,
+`REG_DEAD`/`REG_EQUAL` notes, explicit calls-crossed counts, source-line notes and register dispositions.
+Only the requested function is joined within one compilation. A physical register reused for several
+pseudos gives several candidate values, not an inferred C variable or an assembly-address map.
+Diagnostic flags must preserve normal allocated output. Source/header/profile hashes, truncation and
+user line directives constrain reuse. Full dumps stay private; stored summaries are bounded.
+
+A six-candidate bundle pool combines an existing lifetime hypothesis with a disjoint operand/scope
+edit near explicitly traced lines. It uses original-source spans, rejects overlapping physical lines
+and spends the normal search budget. The same stored trace can supply `value_trace_bundle` to local
+repair batches without recapturing it or adding a provider request. Changed settings invalidate it.
+
+`verified_unit_helpers` reads at most 24 current exact donors in the recipient's known unit and
+compiler profile. It transfers at most four unambiguous static helper/simple static-const scalar
+bodies into a private candidate namespace. It never manufactures a definition from an extern,
+changes shared headers, or assumes a private calling convention. Unknown units, stale verification,
+regressions, conflicting bodies and identity-sensitive helper uses are rejected. The recipient is
+always compiled/judged again. Imported-project unit/verification adapters, object arrays, original
+helper line fidelity and full translation-unit/clobber experiments remain planned.
+
+New bundle/context families cannot earn an adaptive boost without a current replay approval. Broad
+first-difference reordering also requires approval; established operand-supported ordering remains.
+The review tool is:
+
+```sh
+python -m decompnet.app.repair_promotion training.json heldout.json --output decision.json
+```
+
+Each envelope contains `profile`, `family`, `rules`, `control`, `treatment` and `groups`: the reports
+use the ordinary equal-budget `repair_benchmark` format, while `groups` maps each frozen case ID to
+its target identity. All checkpoints of a target must share its group. Training and held-out target
+groups must be disjoint and both envelopes must isolate the same family/profile/rules. Review the
+compiler evaluator and frozen-input provenance; caller-supplied metadata is not independent proof.
+
+Promotion needs an exact-recovery/first-exact compile improvement in **both** splits, no increased
+total compile cost, no lost recovery, score regression or unscored case. Score-only gains and timing
+noise cannot promote. The CLI emits a source-free decision and exits nonzero for a rejected gate;
+it does not change app policy. `repair_promotion.install(net, training, heldout)` is the explicit
+reviewed developer import. Rejection revokes an earlier approval; compiler/profile or repair-rule
+changes prevent reuse. Candidates remain available for ordinary exploration without a boost.
+
+The residual-cohort investigation added one target-backed independent-address family.
+An equal-budget on/off replay of six frozen cases (96 candidates per run) improved one
+case from linked score 155 to 25, with no score regressions and no new exact matches.
+Five register-only cases remained unchanged. See COMPILER_MATCHING_LEARNINGS.md for the
+controlled settings and failed probes; timing changes were not a demonstrated speedup.

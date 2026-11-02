@@ -8,7 +8,7 @@ import mimetypes
 import secrets
 
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ... import __version__, hostenv
 from .. import edition, window
@@ -33,9 +33,16 @@ def register(app: App) -> None:
     async def index(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:
             return JSONResponse({"error": "bad host"}, status_code=403)
-        if not secrets.compare_digest(window.request_token(request), secret):
+        if app.web_login and not (app.web_login.authorized(request) or secrets.compare_digest(window.request_token(request), secret)):
+            return RedirectResponse('/login', status_code=303, headers={'Cache-Control':'no-store'})
+        if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
-        return HTMLResponse(static_file("index.html").decode(), headers={"Cache-Control": "no-store"})
+        page=static_file("index.html").decode()
+        if app.web_login:
+            page=page.replace("form-action 'none'", "form-action 'self'").replace('<body>', '<body data-server-mode="1">')
+            page=page.replace('</aside>', '<form class="web-session" method="post" action="/logout"><span>Server mode</span><button type="submit">Sign out</button></form></aside>', 1)
+            page=page.replace('</head>', '<link rel="stylesheet" href="/assets/server.css"></head>')
+        return HTMLResponse(page, headers={"Cache-Control": "no-store", 'Referrer-Policy':'same-origin', 'X-Frame-Options':'DENY'})
 
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:
@@ -51,4 +58,4 @@ def register(app: App) -> None:
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "app": "decomp-wtf", "edition": edition.NAME, "version": __version__,
-                             "build": build_id})
+                             "build": build_id, "mode":"serve" if app.web_login else "desktop"})

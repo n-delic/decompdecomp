@@ -1,5 +1,6 @@
 """Optional installed-GCC phase summaries, isolated from match adoption and compiler settings."""
 import hashlib
+import json
 import re
 from dataclasses import replace
 from io import BytesIO
@@ -36,7 +37,8 @@ def allocated_output(raw):
     return hashlib.sha256(repr((sections,relocations)).encode()).hexdigest()
 
 
-def phase_summary(work):
+def phase_summary(work, name=None):
+    texts = {}
     result = {}; remaining = 4*1024*1024
     for path in sorted(Path(work).glob('func.*')):
         phase = path.suffix[1:]
@@ -47,6 +49,7 @@ def phase_summary(work):
             raw = stream.read(limit)
         remaining -= len(raw)
         text = raw.decode(errors='replace')
+        if name and path.stat().st_size<=len(raw):texts[phase]=text
         registers = sorted(set(map(int,re.findall(r'\(reg(?:/[^:\s()]*)?:\w+\s+(\d+)',text))))
         lifetimes = []
         for match in re.finditer(r'^Register (\d+) used (\d+) times across (\d+) insns([^\n]*)',text,re.M):
@@ -66,7 +69,9 @@ def phase_summary(work):
     retired = sorted(set(result.get('flow',{}).get('registers',[]))-set(result.get('combine',{}).get('registers',[])))
     for row in result.values():
         row['register_count'] = len(row.pop('registers'))
-    return {'phases':result,'removed_between_flow_and_combine':retired[:24]}
+    from . import rtl_value_trace
+    return {'phases':result,'removed_between_flow_and_combine':retired[:24],
+            **({'value_trace':rtl_value_trace.summarize(texts,name)} if name else {})}
 
 
 def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None):
@@ -87,7 +92,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         baseline_obj = baseline.obj
     captured = {}
     def collect(work):
-        captured.update(phase_summary(work))
+        captured.update(phase_summary(work,name))
     with capture_artifacts(collect):
         on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)
@@ -101,6 +106,10 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         return {'skipped':'Unsupported diagnostic object format: '+str(error)[:150]}
     if not captured.get('phases'):
         return {'skipped':'No supported legacy GCC phase dumps were produced.','output_unchanged':equal}
+    if 'value_trace' in captured:
+        captured['value_trace']['source_sha256']=hashlib.sha256(source.encode()).hexdigest()
+        captured['value_trace']['header_sha256']=hashlib.sha256(header.encode()).hexdigest()
+        captured['value_trace']['profile_sha256']=hashlib.sha256(json.dumps(profile,sort_keys=True,default=str).encode()).hexdigest()
     return {'toolchain':tid,'original_flags':profile.get('flags',[]),'diagnostic_flags':['-da'],
             'output_unchanged':equal,**captured,
             'note':'Isolated diagnostic compilation; no settings or progress changed. Removed pseudos and empty conflict lists are investigation leads, not proof of a spill cause. Phase evidence is comparable only when output_unchanged is true.'}

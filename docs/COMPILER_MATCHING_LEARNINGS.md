@@ -2049,6 +2049,85 @@ can spend more trials on source shapes with identical immediate output; this cor
 match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
 equal-value priorities fixed two integration test failures without dropping either family group.
 
+### 2 November: GCC def/use tracing, verified unit context and held-out gates
+
+Compiler: pinned native KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+Its real dumps expose stable instruction IDs within one compilation, `func.c` line notes, pseudo
+register definitions/uses, death/equality notes and a global register-dispositions table. These can
+join a value to a candidate physical register and source lines. Several values can reuse that
+register; neither a C name nor a target assembly address is established by that join. Complete dumps
+only, per-function selection and ordinary-output preservation are required. Traces are bounded at
+4 MiB input, 4096 flow instructions and 512 pseudo summaries, with source/header/profile invalidation.
+
+Initial register-only tracing now spends at most two reserved compiler runs in the explicit Finish
+near matches pass, even for a cached baseline. Six bounded combinations join proven existing source
+hypotheses on disjoint lines near trace evidence. They are trials, not semantic/register identity
+proofs; no result is adopted without the unchanged linked-byte/data judge.
+
+A small homemade pinned-GCC check recovered the exact ordinary function-object fingerprint by adding
+an actual same-unit `static inline` helper and initialized static-const scalar. The starting extern
+form differed. The transferred definitions use a private namespace to avoid shared-header/linkage
+collisions. This demonstrates that verified unit context can matter; it is **not a new retail match**
+or evidence for inventing definitions, private types, original helper line numbers or caller clobbers.
+
+Priority changes now require reviewed equal-budget training **and disjoint-target held-out** results:
+exact recovery or cheaper first exact in both splits, no total compile increase, score regression,
+lost recovery or unscored input. Timing differences and score-only gains do not qualify. New families
+remain available without a boost. Approval expires with profile/rules changes and cannot weaken the
+judge. The first broad-focus experiment recovered an older historical input at trial 56, compared
+with trial 35 in an earlier pre-focus revision. The current-main control also needs 56; that slowdown
+must not be attributed to value tracing. Broader ordering therefore remains gated, with established
+operand-supported priority retained and the explicit focus-disable flag honored.
+
+Equal-budget copied-input validation against main `302cb35`: five frozen inputs, 96 compiler slots
+and 120 search seconds per input. Both versions recovered historical cases at trials 56 and 1; three
+fresh unresolved scores stayed 10/15/15. Each used 345 candidate/diagnostic compiler runs (350 with
+normal baselines). Six diagnostic runs were charged inside those allowances, leaving 94 ordinary
+candidate trials for each traced unresolved input. Complete traces captured 21/60/137 values; two
+traced bundles ran on the smallest input without improving it. No new recovery, score improvement,
+regression or compile-count saving. The held-out promotion gate therefore remains closed. These
+five-input replays do not exercise donor-context transfer; that path has separate stale/conflict
+rejection tests and the pinned-GCC homemade context check above. No live project adoption occurred.
+
+### Independent address materialization after near-miss triage
+
+A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
+changed instruction rows) and one mixed address/register miss. The pinned compiler was
+`gcc-2.7.2-kmc`, with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` and the exact captured unit header.
+In the mixed case, deriving an address from another pointer let GCC replace a second
+LUI/ADDIU materialization with an ADDIU from the existing base. Replacing the arithmetic
+with the already-used canonical symbol changed allocation elsewhere and worsened the
+score to 895. A fresh automatic alias resolving to that same target address retained
+independent compiler expressions and reduced the linked judge's score from 155 to 25.
+Only three register-difference rows remained; it was not an exact match.
+
+`independent_address_materialization` now proposes this bounded hypothesis when the
+original has repeated adjacent full-address pairs and the candidate has fewer. A single
+unescaped byte pointer must have one literal-address definition and a straight-line
+literal offset use. Unknown writes, control flow, macros and other architectures are
+excluded. The existing ROM linker resolves the fresh automatic alias; no symbol table,
+shared header, object bytes or judge rules are changed. It reaches iterative repairs,
+agent local families and the existing eight-candidate pre-permuter allowance. Imported
+builds need their own owned symbol/link adapter before automatic aliases can be used.
+
+Controlled copied-ROM replay used identical six sources/headers/targets and 16 candidates,
+30 seconds per function. With only this family disabled: 96 candidates, zero improvements,
+zero exact matches, 34.7 seconds. Enabled: 96 candidates, one improvement (155 to 25),
+zero exact matches, 38.8 seconds. These timings do not demonstrate a throughput improvement. The improvement appeared
+on candidate 2 through an existing neutral shape plus the new family; the standalone
+new family also improved the original source. Five cases did not improve; no live work
+was changed and no fresh full-ROM match is claimed.
+
+Failed probes worth avoiding: plain pointer/index commutation, fresh block pointer locals,
+constant-store staging, simple assignment-chain reversal, signedness changes, one-shot
+scopes around the local stores, volatile-load qualifications and record/integer pointer
+views did not improve the register-only cases. A 52-instruction case exhausted 129 existing
+bounded candidates and 251 traced random candidates without improving score 10. A
+124-instruction case exhausted 215 existing candidates and 254 traced random candidates
+without improving score 15. Disabling either scheduler worsened the three tested cases;
+several other GCC optimization toggles left them unchanged. These are negative results
+for frozen inputs, not claims that all possible C shapes have been exhausted.
+
 ## Repeated copy helpers and room repair history (November 2026)
 
 Recent examples motivated three bounded shared-pipeline hypotheses:
@@ -2108,3 +2187,9 @@ and unsuitable build flags do not count as no-C votes. They leave review evidenc
 notes; legacy note-based voting applies the same exclusion. Genuine assembly/boundary evidence still
 uses the existing multi-model verdict and normal judge. Existing set-aside functions are not reopened
 silently by this change.
+The same five inputs were replayed again after merging main `ccebd5b` (headless serving, ROM audit,
+independent address materialization and copy-shape repairs retained). Against that latest-main control,
+recoveries remain at 56/1 and unresolved scores at 10/15/15, with 350 total compiler invocations on
+both sides. No recovery was lost and no additional match or compile saving was demonstrated. The
+combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
+unapproved rather than treating the homemade context success as held-out game evidence.

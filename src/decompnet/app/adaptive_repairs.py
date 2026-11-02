@@ -86,7 +86,8 @@ def factors(net, key, focus):
         throughput = math.sqrt(exact_rate / reference) if exact_rate and reference else 1
         result[row['family']] = max(MIN_FACTOR, min(MAX_FACTOR,
             min(2, math.sqrt(rate * MIN_TRIALS)) * speed * max(.5, min(2, throughput))))
-    return result
+    from . import repair_promotion
+    return repair_promotion.cap(net,key,result)
 
 
 def boosts(net, proj, fn, rows, defaults):
