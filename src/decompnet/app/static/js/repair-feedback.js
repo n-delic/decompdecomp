@@ -88,8 +88,9 @@ $("repairExamples").onclick = async () => {
         const pre = document.createElement('pre'); pre.className = 'repair-diff'; pre.setAttribute('tabindex', '0'); pre.setAttribute('aria-label', 'Source changes');
         const change = document.createElement('p'); change.className = 'muted small';
         change.textContent = data.evidence.source_change_label || '';
+        if (data.evidence.worker_baseline) change.textContent += ` Room worker reported baseline score: ${data.evidence.worker_baseline.score}. ${data.evidence.worker_baseline.verification}`;
         const view = document.createElement('select'); view.setAttribute('aria-label', 'Repair diff scope');
-        const choices = [['function_diff', 'Target function'], ['supporting_diff', 'Declarations and neighbouring functions'], ['diff', 'Full source']];
+        const choices = [['function_diff', 'Target function'], ['supporting_diff', 'Declarations and neighbouring functions'], ['diff', 'Full source'], ['worker_diff', 'Room worker before → matched (baseline not host-verified)']];
         for (const [value, label] of choices) {
           const option = document.createElement('option'); option.value = value; option.textContent = label;
           option.disabled = data.evidence[value] == null; view.append(option);

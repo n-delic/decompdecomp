@@ -265,6 +265,14 @@ class RepairFeedback:
                 value['header'] = header['header'] if header else None
             else:
                 value.pop('source', None)
+        worker = evidence.get('worker_baseline')
+        if worker:
+            if include_source:
+                evidence['worker_diff'] = ''.join(difflib.unified_diff((worker.get('source') or '').splitlines(True),
+                    (evidence['after'].get('source') or '').splitlines(True),fromfile='worker-before.c',tofile='matched.c'))
+            else:
+                worker.pop('source', None)
+                worker.pop('header', None)
         if not include_source:
             evidence.pop('target_asm', None)
         if include_source:

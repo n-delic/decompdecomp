@@ -192,3 +192,34 @@ def test_room_profiles_reject_command_and_plugin_injection(pair):
         room_matches.settings(host,host.project_row(slug),{'toolchain':'gcc-2.7.2-kmc','flags':[],'cmd':['evil']})
     with pytest.raises(NetworkError,match='flags not offered'):
         room_matches.settings(host,host.project_row(slug),{'toolchain':'gcc-2.7.2-kmc','flags':['-fplugin=/tmp/evil.so']})
+
+
+def test_worker_failed_baseline_travels_without_becoming_host_trial(pair):
+    host,slug,guest,gslug=pair
+    worker,_=guest.local_agent('client')
+    bad=DAMAGE.replace('= 60;', '= 61;')
+    assert not guest.attempt(worker,'func_80000808',bad,gslug)['matched']
+    assert guest.attempt(worker,'func_80000808',DAMAGE,gslug)['matched']
+    evidence=room_matches.packet(guest,gslug,'func_80000808',DAMAGE)
+    baseline=evidence['repair_baseline']
+    assert baseline['source']==bad and baseline['score']>0 and baseline['header'] is not None
+    remote,_=host.local_agent('room-worker')
+    result=room_matches.verify(host,slug,remote,'func_80000808',DAMAGE,evidence)
+    assert result['matched']
+    fn=host._function('func_80000808',slug)
+    row=host.store.one('SELECT id FROM repair_examples WHERE function_id=?',fn['id'])
+    detail=host.repair_feedback.detail(slug,row['id'])['evidence']
+    assert detail['worker_baseline']['source']==bad
+    assert 'not rejudged' in detail['worker_baseline']['verification']
+    assert 'worker-before.c' in detail['worker_diff']
+    summary=host.repair_feedback.detail(slug,row['id'],include_source=False)['evidence']
+    assert 'source' not in summary['worker_baseline'] and 'header' not in summary['worker_baseline']
+    assert not host.store.one('SELECT 1 FROM attempts WHERE function_id=? AND source=?',fn['id'],bad)
+    # Invalid advisory history cannot invalidate an otherwise host-verified exact candidate.
+    evidence['repair_baseline']['source_sha256']='wrong'
+    with host.store.tx() as db:
+        case=db.execute('SELECT evidence FROM repair_examples WHERE id=?',(row['id'],)).fetchone()
+        saved=json.loads(case['evidence']);saved.pop('worker_baseline')
+        db.execute('UPDATE repair_examples SET evidence=? WHERE id=?',(json.dumps(saved),row['id']))
+    room_matches.attach_baseline(host,fn,remote,DAMAGE,evidence)
+    assert 'worker_baseline' not in host.repair_feedback.detail(slug,row['id'])['evidence']

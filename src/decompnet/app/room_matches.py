@@ -12,7 +12,7 @@ from . import prepared_evidence, source_preparation
 PREFIX = 'room-match:'
 
 
-def packet(net, slug, function, source):
+def _packet(net, slug, function, source):
     fn = net._function(function, slug)
     proj = net.project_row(slug)
     if net.fork_slug(slug):
@@ -30,6 +30,62 @@ def packet(net, slug, function, source):
             'abi':match_bundle.abi(proj,cfg),'vram':fn['vram'],
             'target_sha256':match_bundle.digest(fn['target'] or b''),'source_sha256':match_bundle.digest(source),
             'header_sha256':match_bundle.digest(net._context(proj['id'],fn['unit'])['header'])}
+
+
+def packet(net, slug, function, source):
+    result = _packet(net, slug, function, source)
+    if result is None:
+        return None
+    fn = net._function(function, slug)
+    if net.store.one("SELECT 1 FROM sqlite_master WHERE name='repair_examples'"):
+        row = net.store.one("SELECT evidence FROM repair_examples WHERE function_id=? AND json_extract(evidence,'$.after.source_sha256')=? ORDER BY id DESC LIMIT 1",
+                            fn['id'], match_bundle.digest(source))
+        if row:
+            case = json.loads(row['evidence'])
+            before = case.get('before') or {}
+            attempt = net.store.one('SELECT source,function_id FROM attempts WHERE id=?', before.get('attempt_id')) if before.get('attempt_id') else None
+            if attempt and attempt['function_id'] == fn['id'] and match_bundle.digest(attempt['source'] or '') == before.get('source_sha256'):
+                settings_before = before.get('settings') or {}
+                unit = settings_before.get('context_unit', fn['unit'])
+                context = net.store.one('SELECT header FROM context_versions WHERE project_id=? AND unit=? AND version=?',
+                                        fn['project_id'], unit, before.get('context_version'))
+                baseline = {'source':attempt['source'], 'source_sha256':before['source_sha256'],
+                            'score':before.get('score'), 'settings':settings_before,
+                            'header':context['header'] if context else None}
+                # Optional research evidence is bounded independently of the successful match packet.
+                if (len(json.dumps(baseline).encode()) <= 350000
+                    and len(json.dumps(result | {'repair_baseline':baseline}).encode()) <= 1200000):
+                    result['repair_baseline'] = baseline
+    return result
+
+
+def attach_baseline(net, fn, agent, source, evidence):
+    """Keep client history separate from host-scored trials; never fabricate host attempts/scores."""
+    if not isinstance(evidence, dict):
+        return
+    baseline = evidence.get('repair_baseline')
+    if not isinstance(baseline, dict) or len(json.dumps(baseline).encode()) > 350000:
+        return
+    text = baseline.get('source')
+    score = baseline.get('score')
+    header = baseline.get('header')
+    if (not isinstance(text, str) or not text.strip() or len(text.encode()) > 262144
+        or not isinstance(score, (int, float)) or isinstance(score, bool) or not 0 < score < 1e12
+        or baseline.get('source_sha256') != match_bundle.digest(text)
+        or not isinstance(baseline.get('settings'), dict)
+        or header is not None and (not isinstance(header, str) or len(header.encode()) > source_preparation.MAX_HEADER)
+        or evidence.get('source_sha256') != match_bundle.digest(source)
+        or evidence.get('target_sha256') != match_bundle.digest(fn['target'] or b'')
+        or evidence.get('vram') != fn['vram']):
+        return
+    with net.store.tx() as db:
+        row = db.execute("SELECT id,evidence FROM repair_examples WHERE function_id=? AND agent_id=? AND json_extract(evidence,'$.after.source_sha256')=? ORDER BY id DESC LIMIT 1",
+                         (fn['id'], agent.id, match_bundle.digest(source))).fetchone()
+        if row:
+            case = json.loads(row['evidence'])
+            case['worker_baseline'] = {k:baseline.get(k) for k in ('source','source_sha256','score','settings','header')}
+            case['worker_baseline']['verification'] = 'Worker-reported failed baseline; not rejudged by the host.'
+            db.execute('UPDATE repair_examples SET evidence=? WHERE id=?', (json.dumps(case), row['id']))
 
 
 def save(net, slug, direction, agent, function, source, evidence, room=''):
@@ -176,6 +232,7 @@ def retry(net,slug,key, *, recover_profiles=True):
     except (NetworkError,ValueError,toolchains.ToolchainError) as error:
         item['reason']=str(error)
     if result['matched']:
+        attach_baseline(net,fn,agent,item['source'],item.get('evidence'))
         item.update(status='accepted',reason='Host verified exact bytes',source='',evidence=None,tried=[])
         result['pending']=False
     update(net,key,item)
