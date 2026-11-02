@@ -226,6 +226,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
+| Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | — | — |

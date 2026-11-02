@@ -10,7 +10,8 @@ from decompnet.network import NetworkError
 from decompnet.rom import Picked, split
 
 
-def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_reset",[False,True])
+def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, monkeypatch, legacy_reset):
     root = tmp_path / "game"
     root.mkdir()
     (root / "old.z64").write_bytes(b"old")
@@ -55,6 +56,10 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     with net.store.tx() as db:
         db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) VALUES(?,2,'private types','source',2,'local_source_test')",(pid,))
         db.execute("UPDATE functions SET unit='local_source_test' WHERE id=?",(unchanged_id,))
+        if legacy_reset:
+            db.execute("UPDATE functions SET unit='original_segment' WHERE id=?",(unchanged_id,))
+            db.execute("INSERT INTO attempts(function_id,score,compiled,context_version,source,created_at) VALUES(?,0,1,2,?,2)",
+                       (unchanged_id,"void clamp_s32(void) {}"))
         db.execute('UPDATE functions SET meta=? WHERE id=?',
                    (json.dumps({'naming':{'method':'operator'},'reopened':True}),unchanged_id))
 
