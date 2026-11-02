@@ -323,3 +323,49 @@ An equal-budget on/off replay of six frozen cases (96 candidates per run) improv
 case from linked score 155 to 25, with no score regressions and no new exact matches.
 Five register-only cases remained unchanged. See COMPILER_MATCHING_LEARNINGS.md for the
 controlled settings and failed probes; timing changes were not a demonstrated speedup.
+
+
+## Recover historical exact source
+
+For local ROM projects, **Recover saved matches** beside Finish near recompiles saved exact C,
+including verified bundles across function renames and unit changes. It checks the target bytes,
+relocations, ROM/architecture identity, then tries current and recorded headers. Legacy same-function
+score-zero attempts are only hypotheses. Every restoration requires the ordinary current linked
+code/data exact verdict, a held claim and atomically unchanged source/context/configuration.
+Old scores never establish progress. This explicit, cancellable pass has its own selected time/compile
+limits; misses are input-scoped, tool failures remain retryable, and candidate cursors rotate between
+runs. Imported builds need archived build inputs and are not supported by this pass.
+
+Minimization reports now include a narrow `recipe_candidate` when the token change can be expressed
+by the existing expression grammar. It is a review candidate, never automatically enabled.
+`minimized_recipes.propose` checks failed/successful controls and reverifies the minimized result;
+its ablation budget excludes the three possible control checks. `validate` reserves two compiler
+trials per applicable independent target: an unmatched scored baseline and its freshly exact rewrite.
+Training and held-out groups must be disjoint. Only an explicit reviewed `learn` import with the same
+profile and recipe digest can store it. Caller-provided groups/judges require provenance review;
+this is a developer gate, not a trusted receipt from arbitrary JSON. All subsequent uses are judged.
+
+GCC diagnostic comparisons align values only at unique unchanged token-line anchors under the same
+header/profile, with unchanged diagnostic output. Pseudo IDs are compilation-local. Multiple values
+at an anchor are omitted, not guessed; changed registers/def-use counts are advisory.
+
+MIPS iterative/frontier region scoring uses decoded target-text control-flow blocks and explicit
+within-block register chains when supported, keeping delay slots with branches. It declines unknown
+transfers, out-of-range destinations and incoming delay-slot edges. Other architectures and unsupported
+MIPS streams retain the fixed 16-instruction fallback. Calls/unknown operations clear dependency state;
+there is no memory-alias or cross-block value proof. These hints affect bounded search retention only.
+
+## Isolate local-pair and output-diversity search
+
+`repair_benchmark.run(..., paired_search=False, output_diversity=False)` supplies explicit developer
+ablation switches. Defaults enable the bounded paths used by iterative autopilot. Keep source,
+compiler/profile, headers, target groups, per-case trial and time budgets identical when comparing
+main, pairs-only, diversity-only and the combined treatment. Pairs are composed from freshly scored
+non-improving siblings, spend ordinary candidate slots and never accept a score-only result.
+
+Reports now include `residual_diagnosis`, `search_policy`, `paired_proposals` and `paired_evaluations`.
+Queued proposals are not claimed as evaluations. Evaluations can use an input-scoped cached verdict; they are not automatically fresh compiler invocations. The comparison records recovered **cases**, total
+candidate compiles and first-exact compile savings for shared recoveries. Several checkpoints of
+one function still count as one target for the separate held-out promotion gate. Timing alone is
+not a win. The existing reviewed promotion workflow remains the gate for learned priority boosts;
+adding bounded hypotheses does not approve a learned boost or weaken later destination judging.

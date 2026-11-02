@@ -121,6 +121,9 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
                         and measured.get('data')==control.get('data'))
         report['minimization'] = ablate(before['source'],after['source'],preserves,
                                        trials=trials if ablation_only else max(1,trials//2),stopped=lambda:time.monotonic()>=deadline)
+        from .expression_recipes import template
+        report['recipe_candidate']=template(before['source'],report['minimization']['source'])
+        report['recipe_status']='Review candidate only; independent held-out exact validation required before learning.'
         for row in report['minimization']['trials']:
             forward = row.get('direction')=='forward'
             outcome = ('subset_preserved' if row['preserves_output'] else 'subset_failed') if forward else ('edit_reverted' if row['preserves_output'] else 'edit_retained')

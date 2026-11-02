@@ -31,6 +31,7 @@ from . import (
     mmio_repairs,
     pattern_repairs,
     pointer_cast_repairs,
+    pointer_index_scope,
     prototype_reuse,
     register_repairs,
     register_reuse_repairs,
@@ -158,6 +159,9 @@ def _available(net, agent, slug, fn, source, revision, requested):
         header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
         for family,candidate in _generated(independent_address_repairs.variants, source,fn['name'],proj['arch'],repair_ranking.evidence(net,fn['id'],agent.id),header):
             pools[family].append(candidate)
+    if pointer_index_scope.FAMILY in pools:
+        ctx=net._context(proj['id'],fn['unit'])
+        pools[pointer_index_scope.FAMILY]=[s for _,s in pointer_index_scope.variants(source,fn['name'],ctx['header'] if ctx else '')]
     if prototype_reuse.FAMILY in pools:
         pools[prototype_reuse.FAMILY]=[s for _,s in _generated(prototype_reuse.variants, net,proj,fn,source)]
     if 'verified_unit_helpers' in pools:

@@ -286,7 +286,7 @@
         <div class="settings-content">
         <p class="muted small">Try local repairs on the closest saved C. No AI tokens. Pending searches resume next time; busy functions are skipped. Available for MIPS ROM projects.</p>
         <div class="row"><label>Seconds<input id="finishNearSeconds" type="number" min="1" max="600" value="120"></label><label>Compile budget<input id="finishNearAttempts" type="number" min="1" max="1024" value="128"></label></div>
-        <div class="row"><button id="finishNearStart" class="primary" type="button">Finish near matches</button><button id="finishNearStop" type="button" hidden>Stop</button><span id="finishNearSummary" role="status"></span></div>
+        <div class="row"><button id="finishNearStart" class="primary" type="button">Finish near matches</button><button id="recoverSavedMatches" class="ghost" type="button">Recover saved matches</button><button id="finishNearStop" type="button" hidden>Stop</button><span id="finishNearSummary" role="status"></span></div>
         <pre id="finishNearLog" class="joblog" hidden></pre>
         </div>
       </details>
@@ -544,7 +544,7 @@
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
             <div id="codeAuditPanel" hidden>
-              <p class="muted small">Audit binary gaps for incoming transfers and possible code. This reads original bytes without changing targets or using AI. Patterns need review; data and microcode can resemble code.</p>
+              <p class="muted small">Audit binary gaps for incoming transfers and possible code. This reads original bytes without changing targets or using AI. Save evidence and review states here; confirming a lead does not import it. Data and microcode can resemble code.</p>
               <button class="ghost small-btn" id="codeAuditBtn" type="button">Audit unanalysed code</button>
               <pre class="joblog" id="codeAuditLog" hidden></pre>
               <div id="codeAuditResult" aria-live="polite"></div>
@@ -812,6 +812,7 @@
 <script src="/assets/js/function.js"></script>
 <script src="/assets/js/compiler-progress.js"></script>
 <script src="/assets/js/compiler-groups.js"></script>
+<script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/pages.js"></script>
 </body>

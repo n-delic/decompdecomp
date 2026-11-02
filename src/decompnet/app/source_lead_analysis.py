@@ -222,8 +222,19 @@ def rank_pairs(net, proj, fn, pairs, families):
     """Use local measured family yield after 32 trials; interleave the original order for exploration."""
     from itertools import zip_longest
     own=compiler_for(json.loads(proj['config']),fn['vram'])
-    groups=[g for g in listing(net,proj)['families'] if g['profile']==own and g['tested']>=32]
+    evidence=listing(net,proj)
+    groups=[g for g in evidence['families'] if g['profile']==own and g['tested']>=32]
     weights={g['family']:(g['improved']+3*g['matched']+1)/(g['tested']+32) for g in groups}
-    if not weights:return pairs
     ranked=sorted(pairs,key=lambda pair:-weights.get(families.get(pair,'original-context'),1/32))
-    return list(dict.fromkeys(pair for both in zip_longest(pairs,ranked) for pair in both if pair is not None))
+    interleaved=list(dict.fromkeys(pair for both in zip_longest(pairs,ranked) for pair in both if pair is not None))
+    # Identity evidence is specific to a compiled source/header/profile. Preserve
+    # unexplored leads, but stop a historically wrong mapping taking first place.
+    scope=destination(net,proj,fn)
+    measured={(e['source_sha256'],e['header_sha256']):e['comparison']
+              for e in reversed(evidence.get('leads',[])) if e['function']==fn['name'] and e['scope']==scope and e['profile']==own}
+    from .source_context_diagnostics import identity
+    def priority(pair):
+        hashes=tuple(hashlib.sha256(text.encode()).hexdigest() for text in pair)
+        comparison=measured.get(hashes)
+        return (bool(identity(comparison)), -comparison.get('support',0)) if comparison else (False,0)
+    return sorted(interleaved,key=priority)

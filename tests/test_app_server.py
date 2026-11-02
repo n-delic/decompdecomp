@@ -1752,3 +1752,23 @@ def test_finish_near_starts_a_cancellable_budgeted_job(app,monkeypatch):
         time.sleep(.01)
     assert result['state']=='done' and result['result']['matched']==1
     assert checked==[('near-game',30,12)]
+
+
+def test_reconcile_matches_starts_a_cancellable_budgeted_job(app,monkeypatch):
+    from decompnet.app import match_reconciliation
+    client,_,_=app
+    checked=[]
+    monkeypatch.setattr(match_reconciliation,'validate',lambda *args:checked.append(args[1:]))
+    def run(net,slug,seconds,attempts,log):
+        assert hasattr(log,'cancel_event')
+        log.progress({'matched':1,'attempts':3,'matches_per_minute':2})
+        return {'matched':1,'resumable':True}
+    monkeypatch.setattr(match_reconciliation,'run',run)
+    response=client.post('/api/reconcile-matches',json={'slug':'near-game','seconds':30,'attempts':12},headers={'X-Decomp':'1'})
+    assert response.status_code==200
+    for _ in range(100):
+        result=client.get('/api/job?id='+response.json()['job']).json()
+        if result['state']!='running':break
+        time.sleep(.01)
+    assert result['state']=='done' and result['result']['matched']==1
+    assert checked==[('near-game',30,12)]

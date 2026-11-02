@@ -1545,7 +1545,7 @@ class Network:
 
     def _record(self, fn, agent: Agent, score: int | None, source: str, ctx_version: int, matched: bool = False,
                 compiled: bool | None = None, via: str = "agent", effective_settings=None,
-                prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None):
+                prepared_header=None, prepared_inputs=None, prepared_compiler=None, before_record=None, restoring_exact=False):
         now = time.time()
         compiled = score is not None if compiled is None else compiled
         improved = False
@@ -1564,9 +1564,12 @@ class Network:
             used = (effective_settings or {}).get("compiler")
             own = compiler_for(config, current["vram"]) if used else None
             stale = bool(score is not None and used and any(used.get(k) != own.get(k) for k in ("toolchain", "flags")))
+            if restoring_exact and not (matched and score==0 and prepared_header is not None and prepared_inputs is not None):
+                raise NetworkError('Saved-match restoration requires a fresh exact source/header verdict.')
             if prepared_header is not None:
                 from .app.source_preparation import promote_context
-                if stale or score is None or (current['best_score'] is not None and score >= current['best_score']):
+                if stale or score is None or (current['best_score'] is not None and score >= current['best_score']
+                        and not (restoring_exact and current['status']=='open' and matched and score==0)):
                     raise NetworkError("The prepared candidate no longer improves this function. Run the pass again.")
                 ctx_version = promote_context(self, db, current, prepared_inputs, prepared_header, agent)
                 current = db.execute("SELECT * FROM functions WHERE id=?", (fn['id'],)).fetchone()

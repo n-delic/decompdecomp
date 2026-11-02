@@ -79,3 +79,62 @@ The helper rejects missing, short, out-of-image and conflicting mappings. It doe
 infer a ROM/RAM delta from an address-looking constant. Normal per-function checking
 and the complete image comparison are still required. Other object formats and
 unverified runtime-only pools remain unsupported.
+
+## Saved review decisions
+
+Settings → Audit unanalysed code retains the latest report locally for this project.
+Each lead has **Not reviewed**, **Needs investigation**, **Confirmed code**, and
+**Dismissed** states, plus evidence/next-step notes. Confirming and dismissing require
+notes. Confirmed/dismissed rows are hidden by default; use **Show confirmed and dismissed
+reviews** to revisit or reset them. Saving one row preserves unsaved edits in other rows.
+
+These are review decisions, not code adoption or function scheduling. They never pause
+functions, shrink coverage, edit targets, or bypass a compiler/link comparison. Decisions
+are bound to the image and examined extent. Changed ROM/layout results are marked stale
+until another audit runs; changed images/extents do not inherit a dismissal. State is
+local app metadata, not part of the portable C progress snapshot.
+
+Unresolved indirect transfers now show their address and register, rather than only
+"flow unresolved". A privately reviewed large function used a bounds-checked 24-entry
+jump table, and all 24 table values fell within its measured body. Direct-only closure
+could not prove this switch. Another balanced-frame lead appeared in repeating records
+with four code-like addresses; the actual table consumer/runtime mapping still needed
+confirmation. Both remained investigation leads; neither was automatically adopted.
+
+Constant-read export errors identify the function and up to 16 distinct missing address
+ranges, with byte sizes and exclusive ends. Conflicting mappings identify the precise
+address too. The build still rejects unverified data; these messages do not propose or
+install an inferred mapping.
+
+## Bounded jump tables and callback consumers
+
+The MIPS audit recognizes a tightly bounded scalar pattern: unsigned index check,
+default branch, shift by two, LUI/base addition, word load and indirect jump with a
+NOP delay slot. It rejects other entries into the guarded dispatch, tables above
+256 entries, ambiguous mappings, unaligned/out-of-candidate targets and unresolved
+case paths. At most eight tables per candidate are examined; the ordinary 4,096-step
+flow budget still applies. Every distinct reachable case is traversed.
+
+A declared code/data mapping is required to follow table edges. An established code
+address delta can identify a possible raw ROM table, but its report says **mapping
+hypothesis** and keeps flow unresolved. Use reviewed `data_mappings` in an exported
+`build.json`, or `audit_data_mappings` in a ROM project's config, with integer
+`rom_start`, `rom_end`, `vram` fields. Mappings are never installed from hypotheses.
+These input changes invalidate the saved audit. `direct_flow_closed` remains distinct
+from `flow_closed` using reviewed indirect edges, so importer rules do not widen.
+
+Callback tracing connects straight-line affine address calculations, word loads and
+JALR instructions. A direct cell load/call with declared mapping is stronger evidence.
+Static cell evidence does not prove runtime table contents or execution. An indexed
+cell remains a hypothesis: a possible index/stride does not prove it is
+reachable. Known-code mapping deltas also remain hypotheses for raw data. Unknown
+instructions and calls/branches (including their delay slots) invalidate register
+facts. Handwritten sources are excluded. The pass is capped at 500,000 words, 512
+traces and eight consumer links per candidate; incomplete scans are flagged.
+
+A copied private project exposed a 24-entry switch automatically. With a separately
+reviewed table mapping all case paths closed; without it the table stayed a mapping
+hypothesis. The existing callback lead had no supported consumer trace and remained
+unconfirmed. All existing targets, statuses and saved matching source were unchanged.
+Closed bounded flow is analysis evidence, not termination proof, a complete call graph,
+a C match or automatic permission to import a target.

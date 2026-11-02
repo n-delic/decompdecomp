@@ -57,10 +57,10 @@ def test_entry_extraction_refuses_unmapped_or_ambiguous_pool_reads(tmp_path,monk
         read(0x80001000,8)
         return LinkResult(None,True,[],{'.rodata':{0:0x80001000}},linked_code=bytes.fromhex('03e0000800000000'))
     monkeypatch.setattr(export_entry.match,'link',linked)
-    with pytest.raises(ValueError,match='reviewed data_mappings'):export_entry.write(tmp_path,manifest,fn,path)
+    with pytest.raises(ValueError,match='0x80001000.*0x80001008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
     # A one-byte mapping is insufficient to verify an eight-byte constant.
     manifest['data_mappings']=[dict(rom_start=0,rom_end=1,vram=0x80001000)]
-    with pytest.raises(ValueError,match='reviewed data_mappings'):export_entry.write(tmp_path,manifest,fn,path)
+    with pytest.raises(ValueError,match='0x80001000.*0x80001008.*8 bytes'):export_entry.write(tmp_path,manifest,fn,path)
     manifest['data_mappings']=[dict(rom_start=0,rom_end=8,vram=0x80001000)]
     export_entry.write(tmp_path,manifest,fn,path)
     path.write_bytes(object_file());manifest['data_mappings'].append(dict(rom_start=8,rom_end=16,vram=0x80001000))

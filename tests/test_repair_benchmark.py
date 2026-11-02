@@ -65,3 +65,15 @@ def test_exact_at_wave_end_does_not_drop_retained_combination_parents():
     assert iterative_repairs.advance(state,judge,variants,lambda:False,stop_on_match=False)
     assert calls == ['seed','bridge','exact','combo']
     assert len(state['exact']) == 2
+
+
+def test_comparison_reports_recoveries_and_compile_cost_without_counting_timing_as_a_win():
+    cases=[dict(source='seed',baseline_score=10,scope='target-a')]
+    def evaluate(case,s):return dict(score=0 if s=='done' else 10,matched=s=='done',outcome='matched' if s=='done' else 'miss')
+    old=repair_benchmark.batch(cases,evaluate,lambda c,s:[('one','miss'),('two','done')] if s=='seed' else [],trials=2,seconds=2)
+    new=repair_benchmark.batch(cases,evaluate,lambda c,s:[('two','done'),('one','miss')] if s=='seed' else [],trials=2,seconds=2)
+    result=repair_benchmark.compare(old,new)
+    assert result['before_recovered_cases']==result['after_recovered_cases']==1
+    assert result['before_candidate_compiles']==result['after_candidate_compiles']==2
+    assert result['shared_recovery_compile_saving']==1
+    assert result['newly_recovered']==result['lost_recoveries']==0

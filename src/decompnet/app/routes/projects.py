@@ -110,6 +110,14 @@ def register(app: App) -> None:
         from .. import rom_gap_audit
         return {"job": jobs.start("code-audit",lambda log:rom_gap_audit.run(net,slug,log))}
 
+    def g_code_audit(slug, request, data):
+        from ..code_audit_reviews import decorated, load
+        return decorated(load(net,net.project_row(slug)['id']))
+
+    def p_code_audit_review(slug, request, data):
+        from ..code_audit_reviews import review
+        return review(net,slug,data.get('review_id'),data.get('state'),data.get('notes',''))
+
     def p_reimport(slug, request, data):
         if not data.get("confirmed"):
             raise ValueError("confirm that this is your own legally obtained copy of the game")
@@ -350,6 +358,18 @@ def register(app: App) -> None:
             cancel_message='Near-match pass stopped. Verified matches and pending search paths are saved.')
         return {'job':active[slug]}
 
+    def p_reconcile_matches(slug, request, data):
+        from .. import match_reconciliation
+        seconds,attempts=data.get('seconds',120),data.get('attempts',128)
+        match_reconciliation.validate(net,slug,seconds,attempts)
+        active=getattr(net,'_finish_near_jobs',{})
+        net._finish_near_jobs=active
+        previous=active.get(slug)
+        if previous and jobs.jobs.get(previous,{}).get('state')=='running':return {'job':previous}
+        active[slug]=jobs.start('reconcile-matches',lambda log:match_reconciliation.run(net,slug,seconds,attempts,log),
+            cancel_message='Saved-match recovery stopped. Freshly verified matches are saved.')
+        return {'job':active[slug]}
+
     def p_permuter(slug, request, data):
         """Run free local permutations without starting a paid helper or the full autopilot."""
         net.project_row(slug)
@@ -472,10 +492,12 @@ def register(app: App) -> None:
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
+        "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/finish-near": (p_finish_near, ["POST"]),
+        "/api/reconcile-matches": (p_reconcile_matches, ["POST"]),
         "/api/permuter": (p_permuter, ["POST"]),
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),

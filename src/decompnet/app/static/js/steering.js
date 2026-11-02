@@ -232,14 +232,15 @@ async function togglePrio(name, on) {
 function renderFinishNear(ov) {
   const button = $("finishNearStart"), stop = $("finishNearStop"), log = $("finishNearLog");
   $("finishNearPanel").hidden = ov.kind === "fork";
-  button.onclick = async () => {
+  const recover = $("recoverSavedMatches");
+  const start = async (route, label) => {
     const slug = S.slug;
-    const finish = beginWork(log, "Finishing near matches", [button], "Near-match pass finished");
+    const finish = beginWork(log, label, [button, recover], "Match pass finished");
     log.hidden = false;
     $("finishNearSummary").textContent = "Preparing near-match queue…";
     stop.hidden = false; stop.disabled = true;
     try {
-      const result = await api("/api/finish-near", {method: "POST", body: {slug,
+      const result = await api(route, {method: "POST", body: {slug,
         seconds: Number($("finishNearSeconds").value), attempts: Number($("finishNearAttempts").value)}});
       stop.disabled = false;
       stop.onclick = async () => {
@@ -254,6 +255,8 @@ function renderFinishNear(ov) {
     } catch (e) { showJobError(log, e.message); }
     finally { finish(); stop.hidden = true; }
   };
+  button.onclick = () => start("/api/finish-near", "Finishing near matches");
+  recover.onclick = () => start("/api/reconcile-matches", "Recovering saved matches");
 }
 
 function renderAutopilot(ov) {
@@ -501,6 +504,7 @@ function projectCompilerFacts(ov) {
 
 async function renderProjectSettings() {
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
+  loadCodeAudit();
   const settingsGen = S.gen, settingsSlug = S.slug;
   renderDeepSweep();
   if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
@@ -1294,8 +1298,6 @@ $("codeAuditBtn").onclick = async () => {
     const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
     const result=await followJob(job,log);
     if (S.slug!==slug) return;
-    $("codeAuditResult").innerHTML=`<p><b>${result.candidates.length} candidates</b> across ${result.gaps} raw gaps and ${result.interior_regions || 0} unowned interior ranges. ${esc(result.note)}${result.pointer_probe_limit || result.candidate_limit || result.mapping_limit ? " The bounded audit reached a search limit; results are incomplete." : ""}</p>`+
-      result.candidates.map(r=>`<p><code>${hex8(r.vram)}</code> · ${esc(r.evidence)} · ${esc(r.region || "raw gap")} · ${(r.pointer_references || []).length} pointer-word references${(r.pointer_references || []).length ? " (ROM "+r.pointer_references.map(p=>hex8(p.rom_offset)).join(", ")+")" : ""} · ${r.decoded_instructions} decoded instructions · ${r.direct_flow_closed ? "direct flow closes" : "flow unresolved"}${r.incoming.length ? " · from "+r.incoming.map(i=>`<button class="link-btn" data-audit-source="${esc(i.function)}">${esc(i.function)}</button>`).join(", ") : ""}</p>`).join("");
-    $("codeAuditResult").querySelectorAll("[data-audit-source]").forEach(b=>b.onclick=()=>openFn(b.dataset.auditSource));
+    renderCodeAudit(result);
   } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
 };

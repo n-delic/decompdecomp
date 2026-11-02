@@ -79,3 +79,30 @@ def test_padded_original_definition_keeps_source_line_boundaries():
     source = padding + '#define LIMIT 1\nint original(void) { return LIMIT; }\n'
     span = find(source, 'original')
     assert span and 'int original(void)' in source[span[0]:span[1]]
+
+
+def test_new_prepared_context_tests_profiles_even_when_it_improves_best(tmp_path, monkeypatch):
+    import json
+
+    from decompnet.app import source_preparation as prep
+    from decompnet.app.permute import Permuter, State
+    from decompnet.network import Agent
+    from tests.test_source_preparation import config, prepared_net
+    net,proj,fn=prepared_net()
+    net.cfg=lambda p:json.loads(p['config'])
+    net.project_row=lambda s:net.store.one('SELECT * FROM projects WHERE id=1')
+    net.fork_slug=lambda s:None
+    net.links={}
+    net.local_agent=lambda n:(Agent(1,'autopilot',None),'')
+    cfg=config(tmp_path)
+    (tmp_path/'types.h').write_text('')
+    (tmp_path/'game.c').write_text('int original(void){return 1;}')
+    prep.configure(net,proj,cfg)
+    with net.store.tx() as db:
+        db.execute('DELETE FROM claims')
+        db.execute('UPDATE functions SET best_score=100')
+    calls=[]
+    monkeypatch.setattr(prep,'attempt',lambda *a:calls.append('improved') or 20)
+    monkeypatch.setattr(prep,'private_profiles',lambda *a:calls.append('profiles'))
+    prep.run(Permuter(net),proj,State(),budget=3)
+    assert calls==['improved','profiles']

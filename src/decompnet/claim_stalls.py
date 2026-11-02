@@ -16,8 +16,8 @@ def common_state(net, proj):
 def repair_rules():
     """Persist across restarts; invalidate when installed repair implementations change."""
     app = Path(__file__).parent / 'app'
-    paths = sorted(set(app.glob('*repairs.py')) | {app / 'first_difference.py', app / 'rtl_value_trace.py', app / 'verified_unit_context.py', app / 'repair_promotion.py', app / 'prototype_reuse.py', app / 'equal_value_flow.py', app / 'allocator_call_guards.py', app / 'initializer_clusters.py', app / 'local_experiments.py', app / 'loop_liveness.py', app / 'local_flow.py', app / 'repair_selection.py', app / 'operand_focus.py', app / 'repair_effects.py', app / 'lifetime_diagnostics.py', app / 'compiler_diagnostics.py', app / 'stack_layout.py', app / 'permuter_focus.py', app / 'search_frontier.py', app / 'allocation_evidence.py', app / 'repair_sequences.py', app / 'expression_recipes.py', app / 'repair_tokens.py', app / 'matching_preflight.py'})
-    paths += [Path(__file__).parent/'arch/mips_materializations.py']
+    paths = sorted(set(app.glob('*repairs.py')) | {app / 'pointer_index_scope.py', app / 'first_difference.py', app / 'match_reconciliation.py', app / 'minimized_recipes.py', app / 'rtl_value_trace.py', app / 'verified_unit_context.py', app / 'repair_promotion.py', app / 'prototype_reuse.py', app / 'equal_value_flow.py', app / 'allocator_call_guards.py', app / 'initializer_clusters.py', app / 'local_experiments.py', app / 'loop_liveness.py', app / 'local_flow.py', app / 'repair_selection.py', app / 'operand_focus.py', app / 'repair_effects.py', app / 'lifetime_diagnostics.py', app / 'compiler_diagnostics.py', app / 'stack_layout.py', app / 'permuter_focus.py', app / 'search_frontier.py', app / 'allocation_evidence.py', app / 'repair_sequences.py', app / 'expression_recipes.py', app / 'repair_tokens.py', app / 'matching_preflight.py'})
+    paths += [Path(__file__).parent/'arch/mips_materializations.py',Path(__file__).parent/'arch/mips_regions.py']
     return [(p.name,file_digest(p)) for p in paths]
 
 
