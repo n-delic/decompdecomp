@@ -785,6 +785,6 @@ The answer goes here: build it, build part of it, or not, and why.
   could tidy it, still matching.
 - **Polish in the drafts.** Methods of known classes are drafted as `Class::method` in the brief; the polishing pass
   doesn't use them yet.
-- A Flatpak on the GNOME runtime.
-- macOS signed/notarized distribution and a menu bar tray icon.
-- macOS memory, CPU and file-size caps for compiler processes (Linux currently uses systemd scopes).
+- **A Flatpak** on the GNOME runtime.
+- **macOS signed/notarized** distribution and a menu bar tray icon.
+- **macOS memory, CPU and file-size caps** for compiler processes (Linux currently uses systemd scopes).
