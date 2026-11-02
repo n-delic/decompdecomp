@@ -416,6 +416,23 @@ guest's own game is planned. Disc-project identities can refer to an extracted p
 rather than the disc image: use the exact program the host imported (up to 256 MiB), not
 an RVZ/compressed image. Projects without an identity retain the existing room join rules.
 
+## Install on your phone and use saved views offline
+
+Open the private HTTPS web interface in Safari on iPhone, sign in, then choose **Share → Add to Home Screen**.
+On Android, use the browser’s **Install app** or **Add to Home screen** action. The installed app opens in its own
+window with the decompdecomp icon.
+
+After opening the app online, its interface, project list and recently viewed project, agent and function data
+are saved on that device. Offline, you can reopen those saved views; a banner marks them as snapshots rather
+than live progress. New views need to be opened online first. Compiling, agents and project changes require the
+host Mac: offline actions are rejected and never queued or submitted later. Reconnecting resumes live reads.
+
+Sign-out and an online authentication failure clear saved data. **Settings → Clear offline data on this device**
+and the offline banner’s **Clear saved data** button clear it manually. Offline copies remain on the device until
+cleared; disabling access on the host cannot erase a disconnected phone. Sign-in codes, API keys, ROMs and
+uploads are not cached. Browser storage is bounded and may also be cleared by the operating system. A normal
+desktop app window does not register the service worker or store these browser snapshots.
+
 ## Run without a desktop window
 
 ```sh

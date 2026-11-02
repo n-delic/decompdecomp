@@ -251,6 +251,10 @@ async function showSettingsPage() {
         catch(error) { toast(esc(error.message), 'err'); }
       };
     }
+    if (info.enabled && window.clearDecompOffline) {
+      $("webInterfaceDetails").insertAdjacentHTML('beforeend', '<p class="small muted">Install on iPhone: open this address in Safari, tap Share, then Add to Home Screen. Recently opened views are saved on this device for offline reading; compiling and changes need your Mac. Offline copies remain on this device until cleared or you sign out.</p><button type="button" class="ghost small-btn" id="clearOfflineData">Clear offline data on this device</button>');
+      $("clearOfflineData").onclick = async () => { await window.clearDecompOffline(); toast('Offline data cleared.'); };
+    }
     wireCopies($("webInterfaceDetails"));
   };
   renderWebInterface(await api('/api/web-interface'));

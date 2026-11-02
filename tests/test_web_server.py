@@ -209,3 +209,27 @@ def test_remote_origin_rejects_unsafe_addresses(url):
     from decompnet.app.web_login import remote_origin
     with pytest.raises(ValueError):
         remote_origin(url)
+
+
+def test_installable_web_assets_and_offline_worker(web):
+    import json
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    client,_,login=web
+    sign_in(client,login)
+    page=client.get('/').text
+    assert 'rel="manifest"' in page and 'apple-touch-icon' in page
+    manifest=client.get('/assets/manifest.webmanifest').json()
+    assert manifest['display']=='standalone' and manifest['start_url']=='/'
+    for icon in manifest['icons']:
+        assert client.get(icon['src']).content.startswith(b'\x89PNG')
+    worker=client.get('/sw.js')
+    assert worker.status_code==200 and worker.headers['service-worker-allowed']=='/'
+    assert '__BUILD__' not in worker.text
+    assert client.get('/sw.js',headers={'Host':'evil.example'}).status_code==403
+    assert login.code not in worker.text and login.code not in json.dumps(manifest)
+    node=shutil.which('node')
+    if node:
+        subprocess.run([node,str(Path(__file__).with_name('gui_pwa.js'))],check=True,capture_output=True,text=True,timeout=30)
