@@ -116,5 +116,8 @@ async function handle(request) {
   }
 }
 self.addEventListener('fetch', event => {
-  if (new URL(event.request.url).origin === self.location.origin) event.respondWith(handle(event.request));
+  const url = new URL(event.request.url);
+  // OAuth redirects and Set-Cookie must be handled by the browser itself, especially on iOS.
+  if (url.origin !== self.location.origin || url.pathname.startsWith('/login/github')) return;
+  event.respondWith(handle(event.request));
 });

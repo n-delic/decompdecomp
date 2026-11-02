@@ -32,6 +32,7 @@ const context = vm.createContext({URL,Response,Request,Headers,TextDecoder,Set,D
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/sw.js','utf8'),context);
 const request = path => new Request(origin+path);
 (async()=>{
+  handlers.fetch({request:request('/login/github/callback?code=private&state=private'),respondWith:()=>{throw new Error('OAuth must bypass the worker');}});
   await context.handle(request('/api/state'));
   await context.handle(request('/api/project?slug=game'));
   await context.handle(request('/api/web-interface')); // Never stored.

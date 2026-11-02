@@ -41,6 +41,7 @@ class WebLogin:
         if remote_url:
             self.origins.add(remote_origin(remote_url))
         self.sessions = {}
+        self.oauth_states = {}
         self.failures = []
         self.lock = threading.Lock()
 
@@ -64,12 +65,19 @@ class WebLogin:
             if not isinstance(code, str) or not secrets.compare_digest(code.encode(), self.code.encode()):
                 self.failures.append(now)
                 return None, 401
-            token = secrets.token_urlsafe(32)
-            self.sessions = {key:end for key,end in self.sessions.items() if end > now}
-            if len(self.sessions) >= MAX_SESSIONS:
-                self.sessions.pop(next(iter(self.sessions)))
-            self.sessions[hashlib.sha256(token.encode()).hexdigest()] = now + SESSION_SECONDS
-            return token, 303
+            return self._issue_session(now), 303
+
+    def _issue_session(self, now):
+        token = secrets.token_urlsafe(32)
+        self.sessions = {key:end for key,end in self.sessions.items() if end > now}
+        if len(self.sessions) >= MAX_SESSIONS:
+            self.sessions.pop(next(iter(self.sessions)))
+        self.sessions[hashlib.sha256(token.encode()).hexdigest()] = now + SESSION_SECONDS
+        return token
+
+    def issue_session(self):
+        with self.lock:
+            return self._issue_session(time.monotonic())
 
     def sign_out(self, request):
         token = request.cookies.get(self.cookie, '')
@@ -77,25 +85,30 @@ class WebLogin:
             self.sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)
 
 
-def login_page(error=''):
-    # Only fixed application strings are supplied as error; never reflect the submitted code.
+def login_page(error='', github=False):
+    # Only fixed application strings are supplied as error; never reflect provider/query input.
+    form = ("<p>Continue with the GitHub account approved by the desktop app.</p>"
+            "<a class='github-login' href='/login/github'>Sign in with GitHub</a>") if github else (
+            "<p>Enter the sign-in code shown in the desktop app’s Settings, or printed by <code>decomp serve</code>.</p>"
+            "<form action='/login' method='post'><label>Sign-in code<input name='code' type='password' "
+            "autocomplete='off' required maxlength='128' autofocus></label><button type='submit'>Sign in</button></form>")
     return ("<!doctype html><html lang='en'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Sign in · decompdecomp</title><link rel='stylesheet' href='/assets/server.css'>"
             "<body class='web-login-page'><main class='web-login'><h1>decomp<span>decomp</span></h1><h2>Sign in to your server</h2>"
-            "<p>Enter the sign-in code shown in the desktop app’s Settings, or printed by <code>decomp serve</code>.</p>"
-            f"<p role='status'>{error}</p><form action='/login' method='post'>"
-            "<label>Sign-in code<input name='code' type='password' autocomplete='off' required maxlength='128' autofocus></label>"
-            "<button type='submit'>Sign in</button></form><p>Your session lasts up to 12 hours. Restarting the server requires signing in again.</p></main></body></html>")
+            f"<p role='status'>{error}</p>{form}<p>Your session lasts up to 12 hours. Restarting the server requires signing in again.</p></main></body></html>")
 
 
 def register(app):
+    from . import web_github
+    web_github.register(app)
     def details(request):
         from . import window
         login = app.web_login
         native = secrets.compare_digest(window.request_token(request), app.secret)
         return {'enabled': login is not None, 'url': f'http://127.0.0.1:{app.port}/',
-                'code': login.code if login and native else None,
-                'remote_url': app.settings.data.get('web_remote_url', '')}
+                'code': login.code if login and native and not web_github.enabled(app) else None,
+                'remote_url': app.settings.data.get('web_remote_url', ''),
+                'auth_method': 'github' if web_github.enabled(app) else 'code'}
 
     @app.mcp.custom_route('/api/web-interface', methods=['GET', 'POST'])
     async def interface(request):
@@ -141,7 +154,9 @@ def register(app):
         if request.method == 'GET':
             if login.authorized(request):
                 return RedirectResponse('/', status_code=303, headers=LOGIN_HEADERS)
-            return HTMLResponse(login_page(), headers=LOGIN_HEADERS)
+            return HTMLResponse(login_page(github=web_github.enabled(app)), headers=LOGIN_HEADERS)
+        if web_github.enabled(app):
+            return HTMLResponse(login_page('Use GitHub to sign in.', github=True), status_code=403, headers=LOGIN_HEADERS)
         if not login.same_origin(request):
             return HTMLResponse(login_page('Sign in from this server’s own page.'), status_code=403, headers=LOGIN_HEADERS)
         # Small bounded form, independent of the much larger ROM upload allowance.
