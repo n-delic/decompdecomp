@@ -1689,3 +1689,35 @@ adapter is synthesized. Full translation-unit/clobber adapters remain planned. G
 reaches applicable source preparation; private header publication remains ROM-only. Extra-normalization and
 private-entry readers currently cover MIPS; other processor readers are planned. Controlled replays are not
 new coverage and do not guarantee that every archived source difference is automatically recoverable.
+
+### Bounded pointer-call and mixed-initializer allocation repairs
+
+A previously verified 739-instruction menu formatter used KMC GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Reusing a heading total, separating a later
+integer/address phase, and using equivalent formatter-call branches changed allocation before
+GCC merged the identical branch bodies. The final difference was the order of two independent
+instructions. Ordering four local initializers recovered it. These are reconstruction choices,
+not evidence of the original source spelling. The game match and complete cartridge build were
+verified separately before these app changes.
+
+Shared generators now offer CFG-dominated, single-definition pointer guards, including
+pointer-to-array locals and two-level identical-call branches. They do not read buffer contents.
+The initializer family can extract independent comma resets from a call, group three or four
+mixed pointer/scalar initializers, and delay a private constant address only when the reached call
+dominates all pointer uses. Scope boundaries, pointer-storage escape, hidden macro access,
+unknown control flow and alternative reaching definitions prevent these transformations.
+A paired family combines a proven integer value-phase split with a disjoint-lifetime merge.
+
+Search still uses its existing compile/time allowance. A measured regional recovery with no
+instruction-count growth can occupy one iterative frontier slot even beyond the ordinary 1.25x
+score ceiling, capped at 8x. Numeric and regional alternatives stay separate; no search score
+or displayed-row classification can accept C. ROM linked-byte/data checks and project objdiff
+remain the only match verdicts.
+
+Private controlled replays against the original ROM recovered the final initializer checkpoint
+(score 160) in 17 candidate compiles, about 17 seconds. A preceding pointer-allocation checkpoint
+(score 725) recovered exact output in 108 candidate compiles, about 101 seconds, through
+`initialization_cluster`, `balanced_pointer_calls`, and `allocation_initialization_order`.
+These recover an existing match, not additional game progress. A broader 520 checkpoint did not
+improve in an initial 128-trial run or a targeted 218-trial, four-stage run. Full rediscovery from
+that earlier shape is not demonstrated. Inputs and captured game code remain private.

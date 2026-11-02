@@ -130,6 +130,7 @@ def test_targeted_phase_respects_lease_and_trial_budget(tmp_path,monkeypatch):
 def test_agent_release_runs_phase_only_after_accepted_tried_release(tmp_path,monkeypatch,mode):
     net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a')
     with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,best_score=10',('void f(){}',))
+    net.claim_row(a,'game','f')
     monkeypatch.setattr(net,'claim_progress',lambda *a:{'compiles':1})
     monkeypatch.setattr(net,'_push_back',lambda *a:None)
     monkeypatch.setattr(net,'release',lambda *a:'Released')

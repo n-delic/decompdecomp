@@ -8,6 +8,23 @@ import hashlib
 from . import allocation_evidence, permuter_focus, region_repairs
 
 WIDTH = 6
+REGIONAL_SLOTS = 2
+
+
+def regional_choices(nodes):
+    """Reserve different recovered target regions, even when allocation signatures coincide."""
+    selected, shapes = [], set()
+    for node in sorted(nodes,key=lambda n:(-n.get('region_gain',0),n.get('damage',n.get('region_damage',0)),n['score'])):
+        regions = node.get('regions')
+        if not regions or node.get('region_gain',0)<=0:
+            continue
+        shape = tuple(sorted(regions['losses'].items()))
+        if shape not in shapes:
+            selected.append(node)
+            shapes.add(shape)
+        if len(selected)==REGIONAL_SLOTS:
+            break
+    return selected
 
 
 def structure(rows):
@@ -52,6 +69,7 @@ class Frontier:
                 'frame_distance': permuter_focus.stack_distance(rows),
                 'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows),
                 'allocation': allocation_evidence.signature(rows,arch),
+                'region_gain': region_repairs.gain(region_repairs.snapshot(baseline),region_repairs.snapshot(rows)),
                 'damage': region_repairs.damage(region_repairs.snapshot(baseline), region_repairs.snapshot(rows)),
                 'output': hashlib.sha256(repr(rows or source).encode()).hexdigest()}
         pool = [n for n in self.nodes if n['source'] != source]+[node]
@@ -59,6 +77,7 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        selected += [n for n in regional_choices(pool) if n not in selected]
         positioned = [n for n in pool if n['summary']['position_differences'] is not None]
         if positioned:
             candidate = min(positioned, key=lambda n:(n['summary']['position_differences'],n['score']))
