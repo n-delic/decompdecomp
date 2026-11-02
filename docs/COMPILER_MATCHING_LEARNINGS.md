@@ -2157,3 +2157,10 @@ They are explicitly worker-reported, not host-rejudged failures, and never becom
 scores or automatically comparable replay inputs. Host verification of the successful candidate
 is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
 without a failed baseline continue to work.
+
+The same five inputs were replayed again after merging main `ccebd5b` (headless serving, ROM audit,
+independent address materialization and copy-shape repairs retained). Against that latest-main control,
+recoveries remain at 56/1 and unresolved scores at 10/15/15, with 350 total compiler invocations on
+both sides. No recovery was lost and no additional match or compile saving was demonstrated. The
+combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
+unapproved rather than treating the homemade context success as held-out game evidence.
