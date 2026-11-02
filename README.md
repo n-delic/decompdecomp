@@ -381,6 +381,32 @@ If setup fails after accepting your ROM, reopen the project or retry: its verifi
 selection. Clear the folder setting to disable library searches. On POSIX systems, hashes are cached in memory until files change
 or the app restarts. Windows rehashes files because timestamps may not reliably reflect overwrites; original files are never moved by the search.
 
+## Invite browser contributors
+
+In a project's **Decompile together** section, start sharing and copy its invite link.
+Friends open that link in a browser; no app installation or `serve` flag is needed.
+**Open browser workspace** previews the same page. Keep the host app running and sharing.
+A quick tunnel provides an HTTPS address; your own address works for reachable LAN/VPN peers.
+
+Guests enter a name and select their own matching game file. Its hash is checked locally;
+the file is never uploaded. Host approval, invite rotation and member removal use the
+existing room controls. Browser sessions survive a page reload in the same tab.
+
+The workspace lists functions, loads saved C and read-only shared declarations, and runs
+**Compile & check on host** through the ordinary ROM or imported-project judge. Better
+attempts and exact matches are recorded on the host under the guest's browser identity.
+Other agents' claims are respected; release a function before checking another one.
+Only one browser check runs in a room at a time. Unsent edits live only in the tab: copy
+them before closing or disconnecting.
+
+This is a contribution workspace, not remote access to the host's administration or agent
+controls. It sends saved C and numeric verdicts, never game bytes or target assembly.
+Compiler failure details remain on the host. Assembly inspection, context editing and
+starting agents still require the desktop workflow. Browser-side disassembly from each
+guest's own game is planned. Disc-project identities can refer to an extracted program
+rather than the disc image: use the exact program the host imported (up to 256 MiB), not
+an RVZ/compressed image. Projects without an identity retain the existing room join rules.
+
 ## Run without a desktop window
 
 ```sh

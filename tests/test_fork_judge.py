@@ -271,3 +271,21 @@ def test_rom_donor_into_imported_project_uses_real_objdiff_judge(fork, monkeypat
     assert net.twins.across_games(slug, Job()) == 1
     assert net._function('scale', slug)['status'] == 'matched'
     assert net.twins.cross_game_results(slug)['counts'] == {'miss': 1, 'match': 1}
+
+
+def test_browser_room_contribution_uses_real_project_judge(fork):
+    from starlette.testclient import TestClient
+
+    from decompnet.app import collab, forkroom
+    net, slug, _ = fork
+    room = collab.Room(net, slug)
+    room.open_invite()
+    token, _ = room.join('browserguest', forkroom.project_identity(room.cfg) or '')
+    headers = {'Authorization': 'Bearer ' + token}
+    client = TestClient(collab.host_app(net, {slug: room}))
+    task = client.get('/collab/browser/task?function=offset', headers=headers).json()
+    assert 'double offset' in task['source'] and 'asm' not in task
+    result = client.post('/collab/browser/compile', headers=headers,
+                         json={'function': 'scale', 'source': SCALE}).json()
+    assert result['matched'] and result['score'] == 0, result
+    assert _status(net, slug, 'scale') == 'matched' and _status(net, slug, 'offset') == 'matched'

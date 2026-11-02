@@ -1035,6 +1035,21 @@ and report every address that is still hard-coded ("93% movable, 41 addresses le
 it is. A Windows PC project's rebuild puts each function back at the game's address in the user's copy
 (tools/rebuild.py): moving code there needs its data delinked too, and a linker that lays the program out.
 
+### Browser room contributions
+
+Delivered: normal GUI hosts serve a member-authorized browser workspace from the existing
+restricted room server; no headless command is required. Saved C, read-only context,
+claims and host-judged checks use the common ROM/imported-project pipeline. The browser
+never receives target bytes or disassembly, private app APIs, file browsing or MCP access.
+
+Remaining: local target disassembly/diffs from each guest's own file across processors,
+browser context editing, compiler diagnostics that exclude target data, streamed identity
+checking for large disc images and console-specific extracted-program identities. These
+browser-only features are **—** across consoles until their adapters are implemented;
+desktop rooms retain their existing support. Current browser identity checking handles
+raw files up to 256 MiB and cartridge byte-order normalization; compressed discs need the
+host's matching extracted program instead.
+
 ### A list of open rooms (to investigate)
 
 Asked for by a user: a page where you see the rooms running now and join one. Hosts would still host their own
