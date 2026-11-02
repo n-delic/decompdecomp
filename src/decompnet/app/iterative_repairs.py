@@ -13,6 +13,7 @@ from ..network import NetworkError
 from ..project import compiler_for
 from . import allocation_evidence, first_difference, region_repairs, repair_selection, search_frontier, workers
 
+_PHASE_LOCKS_GUARD = threading.Lock()
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
 DETOUR_RATIO = 1.25
 REGION_DETOUR_RATIO = 8
@@ -278,9 +279,10 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
 
 def run(twins, slug, job):
     """One iterative phase per project owns its persisted frontier at a time."""
-    locks=getattr(twins.net,'_iterative_phase_locks',{})
-    twins.net._iterative_phase_locks=locks
-    lock=locks.setdefault(slug,threading.Lock())
+    with _PHASE_LOCKS_GUARD:
+        locks=getattr(twins.net,'_iterative_phase_locks',{})
+        twins.net._iterative_phase_locks=locks
+        lock=locks.setdefault(slug,threading.Lock())
     if not lock.acquire(blocking=False):return 0
     try:
         return _run(twins,slug,job)
