@@ -623,5 +623,8 @@ def test_compact_compile_feedback_preserves_line_mapping(tmp_path):
     text = 'score 10\nmarkers: i=operand\nlisting'+note+'\ncompiler output:\na warning'
     for previous in (None,rows):
         out = agent_tokens.feedback(net,agent,'game','f',text,previous)
-        assert note in out and out.count('C line 2:') == 1
+        if previous is None:
+            assert note in out and out.count('C line 2:') == 1
+        else:
+            assert note not in out and 'repeated C-line table omitted' in out
         assert 'a warning' in out
