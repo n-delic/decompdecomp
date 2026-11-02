@@ -1708,3 +1708,10 @@ adapter; these source families do not change that limitation or any match verdic
   alignment after the last detected return. Recovery is bounded to valid instructions,
   a matching stack-pop return and the next known ROM/RAM segment; reimport preserves
   unchanged target metadata and progress. It is not arbitrary binary-gap code discovery.
+
+- CPU source-context follow-up: existing same-file definitions precede extern-only variants;
+  measured private ABI/extra epilogue routes and implicit-int/source identity warnings are available.
+  Supplied raw guard fields can use actual simple scalar record layouts. Complete source literal/target ROM-string disagreement is also advisory. Complex nested compiler-backed
+  member layout recovery, source candidate ranking by string identity, and compile/extract of whole translation
+  units with private entry/clobber conventions remain planned. Imported builds retain header ownership;
+  their whole-unit integration must preserve their build's judge rather than the ROM single-entry path.

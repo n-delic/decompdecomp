@@ -47,7 +47,7 @@ def object_hints(rows, header):
         externs.extend(names)
         if re.search(r'\b(?:u64|s64|uint64_t|int64_t|OSTime|double)\b|\blong\s+long\b',match[1]):wide.update(names)
     result=[]
-    for name in externs:
+    for name in sorted(set(externs),key=lambda n:-(candidate[n]-target[n])):
         aliases={name}
         # An externally declared wide object can appear as base and base+4 assembler symbols.
         # This only groups diagnostic loads; it does not assert an object's size or placement.

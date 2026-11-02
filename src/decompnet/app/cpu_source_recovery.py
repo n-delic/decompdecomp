@@ -12,6 +12,8 @@ def proposals(net, proj, fn, source, header, measurement):
     from .retail_context_repairs import commented_conditions, draft_prefix, pointer_lifetimes
     proof=arch.source_pointer_lifetime(fn['asm'] or '') if arch.source_pointer_lifetime else []
     result=draft_prefix(source,fn['name'],header,dict(fn).get('best_source'),rows,proj['arch'])
+    from .typed_draft_repairs import variants as typed_fields
+    result=[p for _,s,h in result for p in typed_fields(s,fn['name'],h)]+result
     result+=pointer_lifetimes(source,fn['name'],header,proof,rows)
     import re
     result+=commented_conditions(source,header,re.findall(r'\bD_[0-9A-Fa-f]{8}\b',fn['asm'] or ''))
@@ -35,6 +37,10 @@ def proposals(net, proj, fn, source, header, measurement):
     tables=read(net,proj,fn) if hasattr(net,'reader') else []
     result+=cpu_switch_repairs.variants(source,fn['name'],header,tables,cpu_switch_repairs.read_blocks(net,proj,fn,tables))
     # Share the existing bounded stack/declaration/helper families, not a second random search.
+    from .source_context_diagnostics import route
+    if route(fn['asm'] or '',rows,proj['arch']):
+        # Keep targeted repairs; ordinary shapes cannot model private callee clobbers.
+        return list(dict.fromkeys(result))[:MAX_PAIRS]
     rows=measurement.get('rows',[])
     marks={r[0] for r in rows if r[0]!=' '}
     if marks and marks<={'r','s'}:
@@ -61,7 +67,7 @@ def extend(net, proj, fn, variants, origins, source, header, measurement, lead):
 
 def trial_key(state, source, header, cfg):
     import hashlib
-    return 'local-source-v10:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
+    return 'local-source-v11:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
 
 
 def pending(net, fn, state, cfg, variants, origins, exclude):
