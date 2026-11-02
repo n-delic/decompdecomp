@@ -1065,3 +1065,16 @@ def test_a_rejected_manifest_says_which_part_it_rejected(project):
     (folder / saves.MANIFEST).write_text('{"format": 1,', encoding="utf-8")
     with pytest.raises(NetworkError, match=r"reference existing headers \(Expecting"):
         net.progress.sync("game", force=True)
+
+
+def test_a_piece_named_by_its_label_saves_and_opens_again(project):
+    """#158: spimdisasm names a piece that starts at a jump target by its label (`.L80129B10`); the folder the app
+    wrote with it must read back."""
+    net, folder, _ = project
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name='.L00001004' WHERE name='g'")
+    net.progress.sync("game", force=True)
+    manifest(folder, instructions="edited in the folder")
+    net.progress.sync("game", force=True)
+    names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
+    assert ".L00001004" in names
