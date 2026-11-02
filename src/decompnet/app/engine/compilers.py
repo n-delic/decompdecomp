@@ -233,7 +233,7 @@ class CompilerMixin:
             result["default"] = result["toolchain"] == default["toolchain"] and result["flags"] == default["flags"]
         return {"completed_at": row["completed_at"], "stale": digest != row["input_digest"], "comparison": comparison}
 
-    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False):
+    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False, auto_apply=False):
         lock = self._compiler_comparison_locks.setdefault(slug, threading.Lock())
         if not lock.acquire(blocking=False):
             raise NetworkError("A compiler comparison is already running for this project. Wait for it to finish.")
@@ -243,16 +243,19 @@ class CompilerMixin:
                 if check:
                     check()
                 return self.survey_compilers(slug, log=log, all_installed=True, function=function,
-                                             untested_only=untested_only and not function, flags_only=flags_only)
+                                             untested_only=untested_only and not function, flags_only=flags_only, auto_apply=auto_apply)
         finally:
             lock.release()
 
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
-                         all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False) -> dict:
+                         all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
+                         auto_apply: bool = False) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
         compiler for its function. Contradicted functions first, then the closest attempts; C already tried is
         skipped. Then each run of the map with confirmations becomes a suggestion, checked like an agent's."""
+        if type(auto_apply) is not bool or auto_apply and not all_installed:
+            raise NetworkError("Auto-apply requires an installed-compiler comparison and a boolean option.")
         if not isinstance(function, str):
             raise NetworkError("Choose a function by name.")
         self._rom_only(slug, "the compiler survey")
@@ -284,7 +287,7 @@ class CompilerMixin:
         check_cancel = getattr(log, "check_cancel", lambda: None)
         improvements = []
         results = []
-        n = found = skipped = 0
+        n = found = skipped = applied_count = 0
         available_candidates = candidates
         if flags_only:
             log("Flag variations only: each function uses its currently selected compiler; other compilers are skipped.")
@@ -345,7 +348,7 @@ class CompilerMixin:
                             "before": baseline, "best": best, "profile": best_profile,
                             "total": total, "remaining": total - (n - 1), "deferred": deferred,
                             "completed": n - 1, "improved": len(improvements), "exact": found,
-                            "skipped": skipped, "results": list(results)}
+                            "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "applied_count": applied_count}
                 report(progress)
                 for index, (tc, flags) in enumerate(candidates, 1):
                     check_cancel()
@@ -389,8 +392,32 @@ class CompilerMixin:
                 with self.store.tx() as db:
                     db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
                                (fn["id"], input_digest, time.time(), json.dumps(completed)))
+                applied = False
+                apply_error = ""
+                if auto_apply and best_profile and (improved or matches):
+                    check_cancel()
+                    try:
+                        current = self._function(fn["name"], slug)
+                        current_proj = self._project(slug)
+                        if (self._comparison_source(current) != source or
+                                self._comparison_digest(current_proj, current, source, candidates) != input_digest):
+                            raise NetworkError("Code or build inputs changed during comparison; review a fresh result before applying.")
+                        self.apply_function_compiler(slug, fn["name"], best_profile[0], best_profile[1])
+                        applied = True
+                        applied_count += 1
+                        log(f"{fn['name']}: best settings applied and rechecked.")
+                        fresh = self._function(fn["name"], slug)
+                        input_digest = self._comparison_digest(self._project(slug), fresh, self._comparison_source(fresh), candidates)
+                    except NetworkError as error:
+                        apply_error = str(error)
+                        log(f"{fn['name']}: auto-apply skipped: {error}")
+                    completed.update(applied=applied, apply_error=apply_error)
+                    with self.store.tx() as db:
+                        db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",
+                                   (fn["id"], input_digest, time.time(), json.dumps(completed)))
                 results.append({"function": fn["name"], "before": baseline, "best": best,
-                                "profile": best_profile, "improved": improved, "exact": bool(matches)})
+                                "profile": best_profile, "improved": improved, "exact": bool(matches),
+                                "applied": applied, "apply_error": apply_error})
                 if function:
                     comparison = completed
                 if matches:
@@ -402,7 +429,7 @@ class CompilerMixin:
                         "before": baseline, "best": best, "profile": best_profile,
                         "total": total, "remaining": total - n, "deferred": deferred,
                         "completed": n, "improved": len(improvements), "exact": found, "skipped": skipped,
-                        "results": list(results)})
+                        "results": list(results), "auto_apply": auto_apply, "applied": applied, "applied_count": applied_count})
                 state.update(tried=n, confirmed=found)
                 if n % 25 == 0:
                     log(f"{n} functions tried, {found} with exact matches")
@@ -421,15 +448,16 @@ class CompilerMixin:
             if n % 25 == 0:
                 log(f"{n} functions tried, {found} confirmed")
         if all_installed:
-            # An explicit comparison is a report, even when automatic compiler changes are enabled.
+            # Auto-apply is explicit for this run; the compiler-map agreement preference is separate.
             log(f"Finished: {n} functions tested; {len(improvements)} have better tested settings; "
-                f"{found} have exact matches. Project settings unchanged.")
+                f"{found} have exact matches. {applied_count} function profiles applied and rechecked.")
             if not n:
                 log("All eligible saved attempts already have up-to-date comparisons." if skipped else
                     "No eligible unmatched C attempts yet. Run the free matching pass or agents first.")
             return {"tried": n, "skipped": skipped, "total": total, "remaining": max(0, total - n),
                     "deferred": deferred, "confirmed": found, "matches": confirmed, "comparison": comparison,
-                    "improvements": sorted(improvements, key=lambda r: -r["best"]), "results": results}
+                    "improvements": sorted(improvements, key=lambda r: -r["best"]), "results": results,
+                    "auto_apply": auto_apply, "applied_count": applied_count}
         self._update_cfg(slug, lambda c: c.__setitem__("compiler_survey", {"tried": tried, "confirmed": confirmed,
                                                                            "t": time.time()}))
         suggested = self._suggest_from_map(proj, confirmed)
