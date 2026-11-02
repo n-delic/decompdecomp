@@ -1857,3 +1857,5 @@ non-MIPS/object audit adapters and explicit reviewed target adoption.
   replay, plus recovered-case and first-exact compile-cost comparisons.
 - Planned: independent-target evidence of additional retail recoveries before approving learned
   priority boosts; broader local grammars and other architecture adapters need separate validation.
+
+Callback audit now tracks agreeing scalar MIPS paths, stack spills and field-load evidence. Runtime pointer contents, interprocedural alias analysis and non-MIPS callback dataflow remain planned; no targets are automatically adopted.
