@@ -478,7 +478,12 @@ def register(app: App) -> None:
             raise ValueError("functions must be a list of names")
         return {"message": net.join_rom_functions(slug, names, str(data.get("reason") or "operator boundary correction"))}
 
+    def g_generation_metrics(slug,request,data):
+        from ..repair_generation import measurements
+        return measurements(net)
+
     routes = {
+        '/api/repair-generation-metrics': (g_generation_metrics, ['GET']),
         "/api/project": (p_overview, ["GET"]),
         "/api/split-rom": (p_split_rom, ["POST"]),
         "/api/join-rom": (p_join_rom, ["POST"]),

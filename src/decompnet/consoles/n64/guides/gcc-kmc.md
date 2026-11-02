@@ -342,3 +342,11 @@ shift-chain rewrites, command-accumulator/tail combinations and one-shot scope a
 Consult the negative-results table in `docs/COMPILER_MATCHING_LEARNINGS.md` before repeating
 these families. Multiple pseudos can share `v0`; use GCC instruction IDs/source notes,
 not a physical register name alone, to select a lifetime hypothesis.
+
+
+Macro-safe pairing can now work outside unchanged simple defines, with source and header macro
+dependencies protected. It will not move edits across opaque macro effects. In a tiny register-only
+constant-store residual, a small local expression is not always enough: the remaining CFG and value
+lifetimes can determine allocation. A reduced compiler reproducer is diagnostic evidence, not a
+semantics-preserving game repair. Neither this investigation nor the broader five-profile replay
+established another automatic match, so no new priority recipe was learned.

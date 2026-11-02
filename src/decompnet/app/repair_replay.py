@@ -153,7 +153,7 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
                 selection=selection,pool_cache=pool_cache)
         result = repair_benchmark.run(before['source'], baseline_score, evaluate, generate, trials=trials,
                                       deadline=deadline, check_cancel=check_cancel, progress=progress,
-                                      generate_report=True, arch=platform.arch)
+                                      generate_report=True, arch=platform.arch,header=after['header'])
         return report | result | {'control_compiles': 2, 'search_mode': 'bounded_combinations',
                                   'elapsed_seconds': time.monotonic()-started}
     labels = {}

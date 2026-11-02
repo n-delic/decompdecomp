@@ -87,7 +87,7 @@ def children(state, parent, variants, *, priority=0):
     return len(new)
 
 
-def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True):
+def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True, header=''):
     """Resume a bounded beam with one reserved slot for a temporarily worse source shape.
 
     Detours spend the same phase budget and never replace saved best C. A later repair may need
@@ -122,7 +122,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             if not state['pending']:
                 expand_wave(state, variants, arch)
             continue
-        paired_local_repairs.offer(state,node,report,arch)
+        paired_local_repairs.offer(state,node,report,arch,header)
         score = report.get('score')
         regional = regional_detour(node,report,arch)
         allocation = allocation_detour(node,report,arch)
@@ -511,7 +511,7 @@ def _run(twins, slug, job):
                                       for item in group if item is not None), more=getattr(targeted, 'more', False))
 
         before_counts = Counter(state.get('counts', {}))
-        if advance(state, evaluate, variants, stopped, arch=proj['arch']):
+        if advance(state, evaluate, variants, stopped, arch=proj['arch'],header=header):
             with guard:
                 matched[0] += 1
                 job.reuse_matched += 1
