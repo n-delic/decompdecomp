@@ -1804,7 +1804,7 @@ Done for supported ROM audit adapters: local per-project review states and evide
 image/extent-bound identity, stale-layout rejection, and hidden-by-default confirmed /
 dismissed rows. Decisions never pause functions or adopt targets. Indirect transfers
 show their register/address; constant-mapping export errors show missing ranges and
-sizes. Portable audit-review history, reviewed adoption, bounded switch-table closure,
+sizes. Portable audit-review history, reviewed adoption, additional switch-table idioms,
 and proof of callback-table consumers remain planned, alongside the existing non-MIPS
 and object-project audit adapter gaps.
 
