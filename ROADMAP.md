@@ -1832,7 +1832,7 @@ and proof of callback-table consumers remain planned, alongside the existing non
 and object-project audit adapter gaps.
 
 Source-preparation context recovery now includes actual small getters and bounded
-helper definition order. ROM-mode MIPS entries can retain up to two contiguous,
+helper definition order. ROM-mode MIPS entries can retain up to three contiguous,
 already-matched predecessor definitions as compiler context after independently
 rejudging every body. Matching-only entry extraction prevents duplicate exports;
 PROJECT builds continue using their own translation units and build judge. Other
@@ -1878,3 +1878,11 @@ Callback audit now tracks agreeing scalar MIPS paths, stack spills and field-loa
   held-out other-game subset. No additional retail match or compile saving over main was established.
 - Planned: solve the remaining context-sensitive allocation residuals and validate narrower recipes;
   larger budgets and additional independent games before promoting learned priorities.
+
+### Private compiler-unit verification
+
+Done for MIPS ROM entries with explicit ECOFF procedure metadata: bounded real
+caller/callee units, independently exact code/data for each known body, and
+freshly judged matching-only entry export. Ordinary inline-return placeholders
+retain their prior prefix-normalization behavior. Other processor metadata
+adapters remain planned; PROJECT mode retains its ordinary whole-project judge.

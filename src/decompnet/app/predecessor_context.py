@@ -11,7 +11,7 @@ from elftools.elf.elffile import ELFFile
 from ..elfobj import _function_symbols
 from ..rom import match
 
-MAX_FUNCTIONS=3
+MAX_FUNCTIONS=4
 
 
 def entries(obj):

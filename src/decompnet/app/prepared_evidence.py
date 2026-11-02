@@ -56,7 +56,7 @@ def publish_profile(net, db, fn, expected, settings, agent):
 
 
 def apply(net, proj, key, log, refresh=False):
-    from .predecessor_context import acceptable
+    from .compiler_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Prepared profile bundles are available for local ROM projects; imported builds own their headers and compiler settings.')
     if refresh:
@@ -98,7 +98,7 @@ def try_pair(net, proj, function, source, header, log, settings=None):
     """Explicit local API candidate: keep body/header separate and rejudge before atomic promotion."""
     from .. import scoring, toolchains
     from ..project import compiler_for
-    from .predecessor_context import acceptable
+    from .compiler_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Private source/header pairs require a local ROM project. Imported projects use their build headers.')
     if not source.strip() or max(len(source.encode()),len(header.encode()))>prep.MAX_HEADER:
@@ -176,7 +176,7 @@ def recheck_exact(net, proj, log, limit=20):
 
 def promote_measured(net, proj, fn, source, header, settings, agent, expected):
     """Caller holds the claim. Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
-    from .predecessor_context import acceptable
+    from .compiler_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')
     current=net._function(fn['name'],proj['slug']);fresh=net.project_row(proj['slug'])

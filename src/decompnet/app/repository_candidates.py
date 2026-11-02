@@ -55,7 +55,7 @@ def select(net, proj, row):
         if not compiled.ok:
             reason='Saved C does not compile with these declarations. Restore its verified private header before export. '+compiled.log[-600:]
             continue
-        from .predecessor_context import verified
+        from .compiler_context import verified
         predecessor=None if _single_definition(compiled.obj,row['name']) else verified(net,proj,row,compiled.obj)
         if not _single_definition(compiled.obj,row['name']) and not predecessor:
             isolated=single_source(source,compiled.obj,row['name'])
