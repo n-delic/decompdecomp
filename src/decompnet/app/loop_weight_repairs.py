@@ -5,6 +5,7 @@ iteration. Only plain scalar updates are wrapped, so control transfers cannot ch
 """
 import re
 
+from .equal_value_flow import macros_safe
 from .integer_repair_support import IDENT, edit, locals_for, view
 
 FAMILIES = ('loop_weight_scope', 'equal_value_increment')
@@ -16,16 +17,13 @@ def variants(source, name, header=''):
     if not part or '__repair_loop_weight' in source or '__repair_equal_value' in source or re.search(r'\b(?:volatile|asm|__asm__)\b', part.clean):
         return []
     # Unknown macros can hide control transfers, writes or address escapes.
-    macros = set(re.findall(r'^\s*#\s*define\s+('+IDENT+r')',source+'\n'+header,re.M))
-    if any(re.search(r'\b'+re.escape(m)+r'\b',part.body) for m in macros):
-        return []
     declarations = {d['name']:d['type'] for d in locals_for(part)}
+    if not macros_safe(source,header,part.body,declarations):return []
     updates = []
-    pattern = rf'(?<=[;{{}}])\s*(?:\+\+(?P<pre>{IDENT})|(?P<post>{IDENT})\+\+|(?P<add>{IDENT})\s*\+=\s*(?P<rhs>{IDENT}|1))\s*;'
+    pattern = rf'(?<=[;{{}}])\s*(?:\+\+(?P<pre>{IDENT})|(?P<post>{IDENT})\+\+|(?P<add>{IDENT})\s*\+=\s*(?P<rhs>{IDENT}|1)|(?P<self>{IDENT})\s*=\s*(?P=self)\s*\+\s*(?P<value>{IDENT}|1))\s*;'
     for hit in re.compile(pattern).finditer(part.clean,part.opening,part.end-1):
-        variable = hit['pre'] or hit['post'] or hit['add']
-        rhs = hit['rhs']
-        if variable not in declarations or (rhs and rhs!='1' and rhs not in declarations):
+        variable = hit['pre'] or hit['post'] or hit['add'] or hit['self']
+        if variable not in declarations:
             continue
         updates.append(hit)
     out = []

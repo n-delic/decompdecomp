@@ -1916,3 +1916,37 @@ exist in the original image; 24,376 bytes had been classified as binary data. A 
 split preserves every existing matched target. These are recovered matching targets,
 not new C matches or evidence that any compiler flag changed. Check surrounding original
 bytes before declaring a fall-through fragment handwritten assembly.
+
+### CFG equality and scope composition replay
+
+The next follow-up adds `cfg_equal_value_increment`: a must-equal analysis over the
+existing local CFG. It intersects reachable predecessors, tracks same-type scalar copies
+and modular unsigned +/-1 updates, and invalidates unknown writes. Calls preserve only
+unescaped locals. Signed nonzero offsets, address-taken values, uncertain macros,
+unsupported syntax and excessive analysis work receive no advice. Literal-zero do-loop
+latches are recognized as one-shot; arbitrary loop conditions remain conservative.
+Read-only expression macros may be inspected, but hidden writes, calls, control flow,
+local aliases and nested macro expansion are excluded.
+
+Scope/value families are complementary in the ordinary paged iterative selector. A
+bounded scope detour can exceed the usual 25% scalar ceiling (up to twice its parent
+ceiling) when register-only evidence changes, code growth is at most one instruction,
+and frame evidence is unchanged. At most three such bursts share the existing depth,
+compile and time allowances. Identical measured compiler outputs from two siblings
+demote that parent/family behind fresh families, without deleting pending candidates.
+The build/rule-scoped frontier includes the new analysis in cache invalidation.
+
+Private frozen-output replays used the installed pinned `gcc-2.7.2-kmc` with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` and the exact saved header. The control was the
+previously independently verified successful source, including allocated sections and
+relocations. No live project was modified.
+
+| Starting checkpoint (historical linked score) | Replay baseline score | Candidate compiles to control recovery | Time including two control compiles | Winning families |
+| --- | --- | --- | --- | --- |
+| Later scope checkpoint (390) | 230 | 17 | 21.1 seconds | cfg_equal_value_increment |
+| Earlier checkpoint (275) | 115 | 29 | 30.3 seconds | cfg_equal_value_increment, loop_weight_scope |
+
+Replay scores compare compiler objects to the frozen successful output; they are not
+the historical linked-byte scores. These are rediscovery regressions, not new game
+matches or a general speed guarantee. The same paged selector supplies replay and the
+live iterative search; replay reports candidate counts, winning paths and time.

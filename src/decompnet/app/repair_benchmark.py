@@ -8,7 +8,7 @@ from . import iterative_repairs, repair_selection
 
 
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,
-        progress=lambda value: None, collect_exact=False, generate_report=False):
+        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None):
     """Measure rediscovery effort, including failures; evaluator must supply its exact control verdict."""
     started = time.monotonic()
     state = dict(pending=[dict(source=source, depth=0, ceiling=baseline_score)], next=[], seen=[source], explore_plateaus=True)
@@ -45,7 +45,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     def stopped():
         check_cancel()
         return len(results) >= trials or time.monotonic() >= deadline
-    matched = iterative_repairs.advance(state, judge, variants, stopped, stop_on_match=not collect_exact)
+    matched = iterative_repairs.advance(state, judge, variants, stopped, stop_on_match=not collect_exact, arch=arch)
     reason = ('control_output_recovered' if matched else 'time_budget' if time.monotonic() >= deadline
               else 'trial_budget' if len(results) >= trials and state['pending'] else state['reason'])
     return {'baseline_score': baseline.get('score'), 'baseline_exact': bool(baseline.get('matched')),
@@ -57,7 +57,8 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'first_exact_trial': next((i+1 for i, r in enumerate(results) if r['exact']), None),
             'exact_alternatives': len(state.get('exact', [])), 'winning_path': state.get('winning_path'),
             'search_counts': state.get('counts', {}), 'regional_combination_bursts':state.get('regional_bursts',0),
-            'productive_followups':state.get('productive_bursts',0), 'deferred_pages':len(state.get('deferred',[]))}
+            'productive_followups':state.get('productive_bursts',0), 'allocation_followups':state.get('allocation_bursts',0),
+            'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[]))}
 
 
 def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lambda: None, generate_report=False):

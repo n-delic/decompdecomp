@@ -440,3 +440,29 @@ def test_frontier_prioritizes_novel_output_before_equal_score_plateau():
     state = dict(next=nodes, pending=[], seen=['plateau','novel'])
     search.expand_wave(state, lambda source, report: expanded.append(source) or [], None)
     assert expanded == ['novel', 'plateau']
+
+
+def test_scope_detour_beyond_scalar_cutoff_gets_lifetime_followup():
+    state=dict(pending=[dict(source='seed',depth=0,ceiling=275)],next=[],seen=['seed'])
+    before=[(' ','addiu $sp, $sp, -32','addiu $sp, $sp, -32'),('r','move $s1, $a0','move $s2, $a0')]
+    after=[(' ','addiu $sp, $sp, -32','addiu $sp, $sp, -32'),('r','move $s1, $a0','move $s3, $a0')]
+    calls=[]
+    def judge(source):
+        calls.append(source)
+        return dict(score={'seed':275,'scope':390,'exact':0}[source],matched=source=='exact',rows=before if source=='seed' else after)
+    def variants(source,report):
+        return {'seed':[('loop_weight_scope','scope')],'scope':[('cfg_equal_value_increment','exact')]}.get(source,[])
+    assert search.advance(state,judge,variants,lambda:False,arch='mips')
+    assert calls==['seed','scope','exact']
+    assert state['allocation_bursts']==1
+
+
+def test_unchanged_family_moves_behind_fresh_work_without_losing_siblings():
+    state=seed();calls=[]
+    def judge(source):
+        calls.append(source)
+        return dict(score=20,matched=False,candidate_target=b'unchanged')
+    def variants(source,report):
+        return [('flat',s) for s in ('a','b','c')]+[('fresh','other')] if source=='seed' else []
+    search.advance(state,judge,variants,lambda:len(calls)>=5)
+    assert calls==['seed','a','b','other','c']
