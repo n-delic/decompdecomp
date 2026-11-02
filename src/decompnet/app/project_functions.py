@@ -1,7 +1,8 @@
 """Read-only exact-byte peers and bounded instruction-pattern naming leads."""
 from functools import lru_cache
 
-from .. import arch as processors, scoring, similarity
+from .. import arch as processors
+from .. import scoring, similarity
 from ..elfobj import FunctionObj
 from ..network import IN_BUILD
 
