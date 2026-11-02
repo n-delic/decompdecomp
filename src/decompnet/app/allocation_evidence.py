@@ -39,7 +39,10 @@ def diagnose(rows, arch=None):
     target_count=sum(bool(r[1]) for r in rows);candidate_count=sum(bool(r[2]) for r in rows)
     merging=bool(target_count and .8*target_count<=candidate_count<target_count and
                  any(n>=3 and candidate_calls[c]<n for c,n in target_calls.items()))
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'register_only': bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
+    copy_near=bool(changed) and sum(r[0]=='>' for r in changed)==1 and all(
+        (m=='r' and REGISTER.sub('$reg',a)==REGISTER.sub('$reg',b)) or
+        (m=='>' and not a and re.fullmatch(r'move\s+\$\w+,\s*\$\w+',b)) for m,a,b in changed)
+    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 

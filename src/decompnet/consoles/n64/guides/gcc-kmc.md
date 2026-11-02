@@ -288,3 +288,12 @@ judge. After two unchanged code/relocation outputs, iterative search now defers 
 on the same parent while retaining exploration; changed output or a different parent gets fresh evidence.
 A promising improved candidate may receive one budgeted installed-GCC phase comparison. Phase dumps
 must preserve normal allocated output with `-da`; scheduling/lifetime leads do not prove register identity.
+
+
+`cfg_equal_value_increment` now tries earlier equal locals across proven CFG joins and
+calls when neither address escapes. It handles modular unsigned increment/decrement
+restoration and literal-zero do latches. Unknown writes and uncertain paths discard
+facts. Try it with `loop_weight_scope`: the bounded iterative search reserves complementary
+follow-ups without increasing the phase budget. Saved-case output replays recovered a
+previous long-running near miss in 17 or 29 candidate compiles; this is regression
+evidence, not a guarantee for other functions.

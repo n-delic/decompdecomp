@@ -238,3 +238,12 @@ compiles spend those reserved slots; unsupported adapters release the unused res
 and comparison remain advisory, stored on the frontier with a short activity note. No diagnostics
 run for exact matches. Diagnostic builds never adopt code, accept a match or change settings, and
 phase comparisons require `-da` to preserve each normal object's allocated code, data and relocations.
+
+
+Combination replay uses the same paged, mismatch-guided candidate selector as iterative
+search, including scope/value complements and bounded allocation detours. Reports include
+candidate compiles, first exact trial, winning family path, elapsed time,
+`allocation_followups` and `no_effect_families`. The latter counts parent/family groups
+with two identical measured outputs, which move behind fresh families without being
+removed. Replays compare against the frozen successful compiler output; they do not
+adopt C or establish a new linked-byte game match.

@@ -5,15 +5,17 @@ import hashlib
 def key(node):
     if not node.get('parent_source') or not node.get('path'):
         return None
-    return hashlib.sha256(node['parent_source'].encode()).hexdigest()+':'+node['path'][-1]
+    return hashlib.sha256(repr((node['parent_source'], node['path'][-1])).encode()).hexdigest()
 
 
 def observe(state, node, output):
     scope = key(node)
     if scope is None or output is None or node.get('parent_output') is None:
         return
-    history = state.setdefault('family_effects', {})
+    history = state.setdefault('family_no_effect', {})
     history[scope] = history.get(scope, 0)+1 if output == node['parent_output'] else 0
+    while len(history) > 256:
+        del history[next(iter(history))]
 
 
 def rotate(state):
@@ -22,7 +24,7 @@ def rotate(state):
     Only already queued siblings of this exact parent are affected. Persist the count with the
     frontier, whose outer scope includes compiler, flags, target, headers and repair rules.
     """
-    history = state.get('family_effects', {})
+    history = state.get('family_no_effect', {})
     pending = state['pending']
     ordinary = [n for n in pending if history.get(key(n), 0) < 2]
     deferred = [n for n in pending if history.get(key(n), 0) >= 2]

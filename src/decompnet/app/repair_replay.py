@@ -141,13 +141,16 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
                     'candidate_target': repr((obj.fingerprint(), measured.get('data'))),
                     'outcome': 'control_output_recovered' if exact else 'improved' if diff.score < baseline_score
                     else 'neutral' if diff.score == baseline_score else 'regressed'}
-        def generate(source):
-            labels = {}
-            candidates = draft_repairs.variants(source, name, platform.arch, evidence.get('target_asm') or '',
-                                                profile.get('flags', []), labels, limit=None, header=after['header'])
-            return [(labels.get(c, 'source_shape'), c) for c in candidates]
+        from . import iterative_repairs
+        selection, pool_cache = {}, {}
+        def generate(source, measured):
+            return iterative_repairs.targeted_variants(source,measured,
+                {'name':name,'asm':evidence.get('target_asm') or ''},platform.arch,
+                profile.get('flags',[]),header=after['header'],tagged=True,
+                selection=selection,pool_cache=pool_cache)
         result = repair_benchmark.run(before['source'], baseline_score, evaluate, generate, trials=trials,
-                                      deadline=deadline, check_cancel=check_cancel, progress=progress)
+                                      deadline=deadline, check_cancel=check_cancel, progress=progress,
+                                      generate_report=True, arch=platform.arch)
         return report | result | {'control_compiles': 2, 'search_mode': 'bounded_combinations',
                                   'elapsed_seconds': time.monotonic()-started}
     labels = {}

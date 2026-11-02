@@ -11,6 +11,9 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'loop_weight_scope': ('cfg_equal_value_increment', 'equal_value_increment'),
+    'cfg_equal_value_increment': ('loop_weight_scope',),
+    'equal_value_increment': ('loop_weight_scope',),
     'paired_operand_reuse': ('affine_counter_guard', 'affine_counter'),
     'affine_counter': ('paired_operand_reuse', 'affine_counter_guard'),
     'affine_counter_guard': ('paired_operand_reuse',),

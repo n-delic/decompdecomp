@@ -35,6 +35,19 @@ def regional_detour(node, report):
     return region_repairs.gain(node.get('region_baseline'),region_repairs.snapshot(rows))>0
 
 
+def allocation_detour(node, report, arch=None):
+    """One scope step may worsen the score before a complementary lifetime repair."""
+    if (node.get('path') or [''])[-1] != 'loop_weight_scope':return False
+    score=report.get('score')
+    before=allocation_evidence.diagnose(node.get('baseline_rows'),arch)
+    after=allocation_evidence.diagnose(report.get('rows'),arch)
+    return bool(isinstance(score,(int,float)) and 0<score<=node['ceiling']*2
+                and before['register_only'] and after['target_instructions']
+                and abs(after['candidate_instructions']-after['target_instructions'])<=1
+                and before['target_frame']==before['candidate_frame']==after['candidate_frame']
+                and allocation_evidence.signature(node.get('baseline_rows'),arch)!=allocation_evidence.signature(report.get('rows'),arch))
+
+
 def children(state, parent, variants, *, priority=0):
     """Keep the pending wave, but reserve a tiny burst for a structurally promising two-step repair."""
     if parent['depth'] >= DEPTH or parent['source'] in state.setdefault('expanded', []):
@@ -98,7 +111,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             continue
         score = report.get('score')
         regional = regional_detour(node,report)
-        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional)
+        allocation = allocation_detour(node,report,arch)
+        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation)
                 and (regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
             # Keep two source shapes per identical output at each depth: a later source edit can distinguish them.
             # This only prunes search branches, never supplies a match verdict.
@@ -112,6 +126,9 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 regions = region_repairs.snapshot(report.get('rows'))
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
                                       'region_gain': region_repairs.gain(node.get('region_baseline'), regions)})
+                if allocation and node['depth'] < DEPTH and state.get('allocation_bursts',0)<3:
+                    if children(state,state['next'][-1],variants,priority=2):
+                        state['allocation_bursts']=state.get('allocation_bursts',0)+1
                 state['next'][-1]['region_damage'] = region_repairs.damage(node.get('region_baseline'), regions)
                 if (score < node['ceiling'] and node.get('path') and node.get('baseline_rows')
                         and report.get('rows') and node['depth'] < DEPTH
