@@ -177,14 +177,28 @@ class EditMixin:
             if f["status"] == "matched" or f["matched_source"]:
                 raise NetworkError(f"{f['name']} is matched: a join would change it, so it can't be one")
         first, last = sorted((a, b), key=lambda f: (f["vram"] if f["vram"] is not None else 0, f["id"]))
-        if first["unit"] != last["unit"]:
-            raise NetworkError(f"{first['name']} and {last['name']} are in different units; a join is within one")
         if first["vram"] is None or not first["size"] or last["vram"] < first["vram"] + first["size"]:
             nxt = (first["vram"] or 0) + (first["size"] or 0)
             raise NetworkError(f"{last['name']} isn't after {first['name']} (which ends at 0x{nxt:08X}): "
                                "name them in order, the earlier one first")
-        if self.store.one("SELECT 1 FROM functions WHERE project_id=? AND unit=? AND vram>? AND vram<?",
-                          proj["id"], first["unit"], first["vram"], last["vram"]):
+        # Same unit is the simple case. Overlays break it: an over-split cut can leave the head resolved to its
+        # source file while the orphaned tail keeps only the overlay label, so the two carry different unit strings
+        # though they are one run of the same overlay. ROM contiguity tells that apart from overlay *aliasing*
+        # (many overlays mapped to the same vram): a real continuation advances in rom_offset exactly as it does in
+        # vram, while an aliased sibling at the same address sits in a wholly different ROM region.
+        same_unit = first["unit"] == last["unit"]
+        rom_contiguous = (first["rom_offset"] is not None and last["rom_offset"] is not None
+                          and last["rom_offset"] - first["rom_offset"] == last["vram"] - first["vram"])
+        if not same_unit and not rom_contiguous:
+            raise NetworkError(f"{first['name']} and {last['name']} are in different units and not one run in the "
+                               "ROM (different overlays at the same address); a join is within one function")
+        if same_unit:
+            between = self.store.one("SELECT 1 FROM functions WHERE project_id=? AND unit=? AND vram>? AND vram<?",
+                                     proj["id"], first["unit"], first["vram"], last["vram"])
+        else:  # overlay case: the overlay's own ROM run, not the vram window, is what excludes aliased siblings
+            between = self.store.one("SELECT 1 FROM functions WHERE project_id=? AND rom_offset>? AND rom_offset<?",
+                                     proj["id"], first["rom_offset"], last["rom_offset"])
+        if between:
             raise NetworkError(f"{last['name']} isn't the next function after {first['name']}: a join is to the "
                                "very next symbol; join the nearer pair first for a longer run")
         key = f"{first['name']}+{last['name']}"
@@ -209,8 +223,14 @@ class EditMixin:
         console = self.console(proj)
         pid = proj["id"]
         start, end = first["vram"], last["vram"] + last["size"]
-        rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
-                              "ORDER BY vram, id", pid, start, end, first["unit"])
+        if first["unit"] == last["unit"]:
+            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND vram>=? AND vram<? AND unit=? "
+                                  "ORDER BY vram, id", pid, start, end, first["unit"])
+        else:  # overlay over-split: head and tail carry different unit labels, so select the overlay's own ROM run
+               # (aliased overlays share this vram window but not the rom_offset range)
+            rows = self.store.all("SELECT * FROM functions WHERE project_id=? AND rom_offset>=? AND rom_offset<? "
+                                  "ORDER BY rom_offset, id", pid, first["rom_offset"],
+                                  last["rom_offset"] + last["size"])
         if len(rows) < 2 or rows[0]["id"] != first["id"]:
             raise NetworkError("the functions between them changed; look again and report the pair afresh")
         tails = rows[1:]

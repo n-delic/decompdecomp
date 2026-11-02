@@ -66,3 +66,41 @@ def test_refuses_non_adjacent(net):
     agent, _ = net.local_agent("tester")
     with pytest.raises(NetworkError):                           # func_80000808 is far away, not the next symbol
         net.join_functions(agent, SLUG, FN, "func_80000808", "not adjacent")
+
+
+def _relabel(net, name, unit, rom_offset=None):
+    with net.store.tx() as db:
+        if rom_offset is None:
+            db.execute("UPDATE functions SET unit=? WHERE name=?", (unit, name))
+        else:
+            db.execute("UPDATE functions SET unit=?, rom_offset=? WHERE name=?", (unit, rom_offset, name))
+
+
+def test_join_across_overlay_units_when_rom_contiguous(net):
+    # An over-split cut can leave head and tail in different unit strings though they are one run of an overlay:
+    # the head resolves to its source file, the orphaned tail keeps only the overlay label. ROM contiguity proves
+    # they are the same run, so the join is allowed across the unit mismatch.
+    agent, _ = net.local_agent("tester")
+    orig = net._function(FN, SLUG)
+    orig_size, orig_target = orig["size"], orig["target"]
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    _relabel(net, TAIL, "ovl_demo_fragment")                    # tail now a different unit; rom_offset unchanged
+    assert net._function(FN, SLUG)["unit"] != net._function(TAIL, SLUG)["unit"]
+    out = _agree(net, FN, TAIL)
+    assert out.startswith("✅"), out                             # rom-contiguous => allowed
+    joined = net._function(FN, SLUG)
+    assert joined["size"] == orig_size, (joined["size"], orig_size)
+    assert joined["target"] == orig_target                      # original bytes restored
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?",
+                         orig["project_id"], TAIL) is None       # tail merged in, removed
+
+
+def test_refuses_cross_unit_when_not_rom_contiguous(net):
+    # Different unit AND a different ROM region = overlay aliasing (two overlays at one vram), not a continuation.
+    agent, _ = net.local_agent("tester")
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    tail = net._function(TAIL, SLUG)
+    _relabel(net, TAIL, "ovl_elsewhere", rom_offset=(tail["rom_offset"] or 0) + 0x40000)
+    ag, _ = net.local_agent("solo-1")
+    with pytest.raises(NetworkError):
+        net.join_functions(ag, SLUG, FN, TAIL, "aliased, not a continuation")
