@@ -44,16 +44,25 @@ def write(root, manifest, fn, path):
                       [Symbol(f['name'],f['vram'],0,'func') for f in manifest['functions']])
     target=match.target_from_split(split.parse_function(root/fn['asm'],fn['seg'],manifest['big_endian']),table.resolve,
                                    manifest['big_endian'],manifest.get('gp') or 0)
+    # Some old exports kept readonly pools as raw blobs, outside their code
+    # parents. Only explicit reviewed mappings may expose those bytes; never
+    # guess an address delta merely to make the judge accept a constant.
+    ranges=[dict(rom_start=s['start'],rom_end=s['end'] or len(image),vram=s['vram'])
+            for s in manifest['segments'] if s['kind']=='code']+manifest.get('data_mappings',[])
+    for s in ranges:
+        if not 0<=s['rom_start']<s['rom_end']<=len(image):raise ValueError('A reviewed data mapping exceeds the verified image.')
     missed=[]
     def read(addr,n):
-        for s in manifest['segments']:
-            if s['kind']=='code' and s['vram']<=addr and addr+n<=s['vram']+(s['end'] or len(image))-s['start']:
-                at=s['start']+addr-s['vram'];return image[at:at+n]
+        hits=[s for s in ranges if s['vram']<=addr and addr+n<=s['vram']+s['rom_end']-s['rom_start']]
+        offsets={s['rom_start']+addr-s['vram'] for s in hits}
+        if len(offsets)>1:raise ValueError('Overlapping image mappings disagree about a constant address.')
+        if offsets:
+            at=offsets.pop();return image[at:at+n]
         missed.append((addr,n))
         return None
     obj=path.read_bytes();linked=match.link(obj,fn['name'],target,table,read)
     if not linked.exact or linked.linked_code is None:
         raise ValueError('Entry extraction requires freshly verified exact code and data: '+'; '.join(linked.problems))
     if missed:
-        raise ValueError('Entry extraction cannot verify a constant pool outside mapped image data.')
+        raise ValueError('Entry extraction cannot verify a constant pool outside mapped image data. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
     path.write_bytes(object_for(obj,fn['name'],linked.linked_code))
