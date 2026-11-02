@@ -6,6 +6,11 @@ and sync compiler ranges/private contexts to clients. Pending submissions show r
 retry; upgraded clients recover saved local matches, and hosts can recover older source-only submissions
 with bounded installed-profile searches. Imported projects retain their existing build/tree verification;
 portable per-file profile/header adapters remain planned.
+Implemented: private same-file static-helper discovery with original line directives, bounded source-boolean
+configuration alternatives, include ABI correction, and consensus exact-neighbour callback hypotheses.
+Explicit matched-ROM export repair tries ROM-proven scalar references and retained-pool alternatives, caches
+misses and publishes only after linked-byte/data plus export-layout checks. Imported build-owned contexts and
+export adapters remain planned; scalar-load symbol reading currently covers MIPS only.
 
 Implemented: lightweight authenticated helper connection checks retry temporary transport failures with
 capped backoff before any model call. Configuration/authentication failures retain phase, duration and

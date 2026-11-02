@@ -300,6 +300,9 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
         add(prepare(reader,{**cfg,'header':str(reader.root/header)},origin,{**aliases,symbol:dest},fallback),origin)
         count+=1
         if count>=2:break
+    from .reference_context_recovery import configurations
+    for family,s,h in configurations(reader,cfg,mapping,aliases,fallback,prepare):
+        add((s,h),mapping);reader.origins[(s,h)]['family']=family
     from . import source_conditions
     from .source_predicates import variants as predicate_contexts
     from .source_signedness import variants as signed_contexts
@@ -313,6 +316,15 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
             reader.advisories.append('Predicate helper context unavailable; retaining the original candidate. '+str(error))
         from .cpu_source_context import variants as reference_trials
         hypotheses=[(family,(s,h)) for family,s,h in reference_trials(pair[0], pair[1], reference, cfg.get('_target_calls',[]))] if reference else []
+        if cfg.get('header') and '#include' in reader.file(reader.root/mapping[2]):
+            try:
+                included,_=source_conditions.select(reader.flatten(reader.root/mapping[2]),macrovalues,reader.overrides)
+                included=rename(included,aliases)
+                hypotheses += [(family,(s,h)) for family,s,h in reference_trials(pair[0],pair[1],included,cfg.get('_target_calls',[]))]
+            except NetworkError as error:
+                reader.advisories.append('Include ABI recovery unavailable: '+str(error))
+        from .reference_context_recovery import static_helpers
+        hypotheses += [(family,(s,h)) for family,s,h in static_helpers(pair[0],pair[1],reference)]
         from .retail_source_repairs import commented_calls
         hypotheses += [(family,(s,h)) for family,s,h in commented_calls(pair[0],pair[1],cfg.get('_target_calls',[]))]
         hypotheses += [('predicate-helper-context',candidate) for candidate in predicate_contexts(pair[0],mapping[0],pair[1],reference)]
@@ -475,6 +487,12 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                     target_calls=features([line.split('*/',1)[-1].strip() for line in (fn['asm'] or '').splitlines()], fresh['arch'])['calls']
                     for body, context in list(variants)[:2]:
                         for family,s,h in call_contexts(body,context,'',target_calls):
+                            pair=(s,h)
+                            if pair not in variants:
+                                variants.append(pair);reader.origins[pair]={**reader.origins[(body,context)],'family':family}
+                    from .reference_context_recovery import neighbours
+                    for body,context in list(variants)[:2]:
+                        for family,s,h in neighbours(net,fresh,fn,body,context):
                             pair=(s,h)
                             if pair not in variants:
                                 variants.append(pair);reader.origins[pair]={**reader.origins[(body,context)],'family':family}
