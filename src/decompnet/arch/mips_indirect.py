@@ -37,10 +37,10 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
     default=guard+8+signed(branch)*4
     if not start<=default<end or guard<default<=at+4:return None
     address=(((hi&0xffff)<<16)+signed(load))&0xffffffff
-    result={'address':vram+at-start,'table_address':address,'entry_count':count,'state':'unresolved'}
+    result={'guard_address':vram+guard-start,'address':vram+at-start,'table_address':address,'entry_count':count,'state':'unresolved'}
     for p in range(start,end-3,4):
         w=int.from_bytes(image[p:p+4],order);op=w>>26
-        if op in (1,4,5,6,7,20,21,22,23):target=p+4+signed(w)*4
+        if op in (1,4,5,6,7,20,21,22,23) or (op==17 and (w>>21)&31==8):target=p+4+signed(w)*4
         elif op in (2,3):target=start+((((vram+p-start+4)&0xf0000000)|((w&0x3ffffff)<<2))-vram)
         else:continue
         if guard<target<=at and not guard<=p<=at:return {**result,'reason':'an incoming edge bypasses the guard'}
@@ -49,7 +49,7 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
     valid=[]
     for offset,verified in choices:
         targets=[int.from_bytes(image[p:p+4],order) for p in range(offset,offset+count*4,4)]
-        if all(t%4==0 and vram<=t<vram+end-start for t in targets):valid.append((offset,verified,targets))
+        if all(t%4==0 and vram<=t<vram+end-start and not vram+guard-start<t<=vram+at-start+4 for t in targets):valid.append((offset,verified,targets))
     if len(valid)!=1:return {**result,'reason':'no unique mapped table with all targets inside the candidate'}
     offset,verified,targets=valid[0]
     return {**result,'rom_offset':offset,'mapping_verified':verified,'targets':targets,

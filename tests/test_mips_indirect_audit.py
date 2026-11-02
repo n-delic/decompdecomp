@@ -96,3 +96,21 @@ def test_scan_budget_is_explicit_and_does_not_claim_complete_tracing(monkeypatch
     monkeypatch.setattr(mips_indirect,'MAX_WORDS',1)
     image=bytes(0x1100)
     assert calls(image,[dict(name='f',rom=0x1000,size=16,vram=0x80001000)],'big')==([],True)
+
+
+def test_floating_branch_and_table_cases_cannot_bypass_index_guard():
+    image,ranges=fixture();image[0x1034:0x1038]=(0x4501fff5).to_bytes(4,'big')
+    assert 'bypasses' in jump_table(image,0x1000,0x103c,0x80001000,0x101c,'big',ranges)['reason']
+    image,ranges=fixture();image[0x1100:0x1104]=(0x8000100c).to_bytes(4,'big')
+    assert not extent(image,0x1000,0x103c,0x80001000,'big',table_ranges=ranges)['flow_closed']
+
+
+def test_one_switch_cannot_enter_another_switch_after_its_guard():
+    image,ranges=fixture();image[0x1040:0x107c]=image[0x1000:0x103c]
+    image[0x1058:0x105c]=(0x8c221120).to_bytes(4,'big')
+    image[0x1100:0x1104]=(0x8000104c).to_bytes(4,'big')
+    image[0x1120:0x1128]=struct.pack('>2I',0x80001064,0x8000106c)
+    ranges.append(dict(rom_start=0x1120,rom_end=0x1128,vram=0x80001120))
+    result=extent(image,0x1000,0x107c,0x80001000,'big',table_ranges=ranges)
+    assert not result['flow_closed']
+    assert any(t.get('reason')=='a table edge bypasses this guard' for t in result['jump_tables'])

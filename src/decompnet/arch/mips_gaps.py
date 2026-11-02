@@ -51,6 +51,14 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
             target=at+4+delta*4
             pending.append(at+8)
         pending.append(target)
+    # A case from one resolved table must not enter another dispatch after its
+    # bound check. Those indirect edges are absent from the static branch scan.
+    validated=[t for t in tables if t['state']=='validated']
+    for target_table in validated:
+        if any(target_table['guard_address']<dest<=target_table['address']+4
+               for source_table in validated for dest in source_table['targets']):
+            unknown=True;target_table['state']='unresolved'
+            target_table['reason']='a table edge bypasses this guard'
     return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending and not tables),
             'flow_closed':bool(returns and not unknown and not pending),'jump_tables':tables,
             'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
