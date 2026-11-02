@@ -268,3 +268,9 @@ improvements**. Search time was 33.2 seconds without focus and 32.2 seconds with
 that difference is timing noise, not evidence of a speedup. Fresh linked baselines,
 not historical displayed percentages, were used for comparison. Larger budgets or new
 repair families may be needed; this result does not establish general effectiveness.
+
+The residual-cohort investigation added one target-backed independent-address family.
+An equal-budget on/off replay of six frozen cases (96 candidates per run) improved one
+case from linked score 155 to 25, with no score regressions and no new exact matches.
+Five register-only cases remained unchanged. See COMPILER_MATCHING_LEARNINGS.md for the
+controlled settings and failed probes; timing changes were not a demonstrated speedup.

@@ -1743,6 +1743,11 @@ The comparison action toggles to Stop while running. Its two determinate progres
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
 
+- Target-backed independent-address materialization is available to MIPS ROM iterative
+  search, local agent repairs and the bounded pre-permuter pass. Imported project builds
+  need a build-owned alias/link adapter; other architectures need their address-pair
+  reader before this hypothesis can reach them. The first six-case controlled cohort
+  gained one closer draft, with no newly exact function.
 ## Headless browser serving
 
 Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.

@@ -233,10 +233,11 @@ def output_key(report):
 
 
 def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True):
-    from . import draft_repairs, normalization_repairs, stack_padding_repairs
+    from . import draft_repairs, independent_address_repairs, normalization_repairs, stack_padding_repairs
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
-    focused = draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
+    focused = independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
     proposals = list(dict.fromkeys([text for _, text in focused]+proposals))
     labels.update({text: family for family, text in focused})
     for text in stack_padding_repairs.grow(source, fn['name'], arch, report.get('rows') or []):
