@@ -153,9 +153,11 @@ neighbours may come along in one claim; one function back is normal.)
 6. compile_and_diff says when to move on ({budget}): then
    release_function with precise notes (what you tried, what is left) and claim the next. Before that,
    compile the next step instead of releasing; sure that no C makes its code at all (hand-written
-   assembly): not_c=true, saying why. Part of another function the analysis cut (no prologue, registers
-   the code before set, a switch's cases in the next symbol)? join_functions(it, the other part, why), so it
-   becomes one whole function. Very large functions: get the structure right first; a near miss
+   assembly): not_c=true, saying why. A piece of another function the analysis cut (no prologue and it uses
+   registers the code before set, an epilogue or a non-returning tail that runs into the next symbol, a
+   switch's cases in the next symbol)? Don't body or stub it — join_functions(it, the other part, why), even
+   across overlays when the two are ROM-adjacent and their names differ; a note alone won't rejoin them.
+   Very large functions: get the structure right first; a near miss
    is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
    helper): release_function(needs=that one) hands it to you.
 
@@ -710,9 +712,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     @mcp.tool(meta=ALWAYS_LOAD)
     async def join_functions(ctx: Context, function: str, with_function: str, reason: str) -> str:
         """`function` and `with_function` are one function the analysis cut in two (or more: the symbols between
-        them too): a piece with no prologue that uses registers the code before it set, an epilogue alone, a switch
-        whose cases are in the next symbol. Say what in the code shows it. Once agents of two models say so of the
-        same pair, they're joined into one; never a matched function. Undo a wrong join by splitting it again."""
+        them too): a piece with no prologue that uses registers the code before it set, an epilogue alone, a tail
+        that never returns and runs straight into the next symbol, a switch whose cases are in the next symbol.
+        Such a piece cannot match on its own, so don't body it, stub it or compile it alone, and don't just say so
+        in a note — call this. Works across overlays too: if the two are adjacent in the ROM they join even when
+        their names or units differ. Say what in the code shows they are one. It takes effect once agents of two
+        models say so of the same pair (never a matched function), so if a note already calls a function a piece of
+        the one before it, add your vote here rather than re-noting it. Undo a wrong join by splitting it again."""
         return await run(ctx, "join_functions", function=function, with_function=with_function, reason=reason)
 
     @mcp.prompt(title="Decompile", description="Work loop: claim functions and match them byte for byte.")

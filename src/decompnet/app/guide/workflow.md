@@ -17,6 +17,18 @@ Goal: C that the game's own compiler turns into exactly the bytes in the ROM. No
    Then `release_function` with specific notes (what you tried, what the remaining diff is, what you
    suspect). The next agent starts from your best attempt.
 
+## Over-split functions
+Sometimes a symbol is not a whole function but a piece the analysis cut off the one before it: it has no
+prologue and uses registers or a stack frame set up before it; it is an epilogue, or a tail that never
+returns and runs straight into the next symbol; or a switch's cases sit in the next symbol. Such a piece can
+never match on its own — don't body it, stub it or compile it alone. Call `join_functions(the piece, the
+symbol before it, why)` to make them one function again. This works across overlays too: if the two are
+adjacent in the ROM they join even when their names or units differ (a source-file name on one, an overlay
+label on the other). A join takes effect once agents of two models agree on the same pair, so if a note
+already calls a function a piece of the one before it, cast your vote with join_functions instead of
+re-noting it or retrying a standalone match. When it lands, the earlier symbol is the whole function: claim
+it and match that.
+
 ## Reading the diff
 - `<` / `>`: an instruction is missing / extra. Control flow or expression structure differs.
 - `r`: same instruction, different registers. Statement order, temporaries, signedness, variable
