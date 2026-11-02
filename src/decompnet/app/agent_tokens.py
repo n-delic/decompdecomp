@@ -365,11 +365,14 @@ def assembly(net, slug, function, start=0, limit=60, focus="", agent=None):
         if not hits:
             return 'No target region located for this focus. Use paged get_assembly or compile a candidate before focus="mismatch".'
         start=max(0,hits[0]-8);limit=min(40,max(1,int(limit)))
-        prefix=f'Focus at target line {hits[0]}; matching lines: '+', '.join(map(str,hits[:10]))+'. Use start/limit without focus to page.\n'
+        prefix=f'Focus at target line {hits[0]}; matching lines: '+', '.join(map(str,hits[:10]))+'. Use focus="page" with start/limit for exact paging; mismatch:N selects another differing instruction.\n'
     else:
         prefix=''
     start, limit = max(0, int(start)), max(1, min(200, int(limit)))
-    return prefix+f'Target assembly lines {start}:{min(start+limit,len(lines))} of {len(lines)}\n'+assembly_text(net, slug, agent, '\n'.join(lines[start:start+limit]))
+    end=min(start+limit,len(lines))
+    next_page=(f'Next page: get_assembly(function="{fn["name"]}", start={end}, limit={limit}, focus="page").'
+               if end<len(lines) else 'End of target assembly.')
+    return prefix+f'Target assembly lines {start}:{end} of {len(lines)} (zero-based, end exclusive). '+next_page+'\n'+assembly_text(net, slug, agent, '\n'.join(lines[start:end]))
 
 
 def diff_page(net, agent, slug, function, context=1, start=0, limit=40):
@@ -422,6 +425,15 @@ def feedback(net, agent, slug, function, text, previous):
         return text
     head = text.split('markers:', 1)[0]
     from .efficiency_feedback import mismatch
+    from .permuter_focus import normalized
+    diagnostic=normalized(rows)
+    rendering=sum(a[0]!=' ' and b[0]==' ' for a,b in zip(rows,diagnostic))
+    if rendering:
+        head=re.sub(r'\nThe first [^\n]*target instructions match; the first difference[^\n]*', '', head)
+        head=re.sub(r'(?m)^Mismatch categories[^\n]*\n?|^\d+ (?:regalloc|operand|stack|extra|missing|different|reordered)[^\n]*\n?', '', head)
+        head+=f'\n{rendering} relocation-rendering differences omitted from advice; score and exact-byte verdict unchanged.\n'
+        if not any(r[0]!=' ' for r in diagnostic):
+            head+='No instruction differences remain in this normalized listing; rendering equivalence alone does not prove an exact byte match.\n'
     head += mismatch(rows)+'\n'
     positions = [text.index(marker) for marker in ('\ncompiler output:', '\nwhen linking your code') if marker in text]
     warn = text[min(positions):] if positions else ''
@@ -444,10 +456,12 @@ def feedback(net, agent, slug, function, text, previous):
     else:
         getattr(net, '_agent_unchanged', {}).pop((agent.id, fn['id']), None)
         # Show newly changed differing rows first, with ordinary first-region fallback.
-        changed = [(r[0], f'[{i}] {r[1]}', r[2]) for i,r in enumerate(rows) if r[0]!=' ' and (previous is None or i>=len(previous) or r!=previous[i])]
+        changed = [(r[0], f'[{i}] {r[1]}', r[2]) for i,r in enumerate(diagnostic) if r[0]!=' ' and (previous is None or i>=len(previous) or r!=previous[i])]
         detail = 'Changed differing rows (first 12):\n' + scoring.render_rows(changed[:12], 0, max_rows=18, legend=legend, more_hint=False)
     from ..source_lines import feedback_note
-    return head + detail + feedback_note(text) + warn + '\nFull/paged instructions: last_diff(function, start=0, limit=40).'
+    mapping = ('\nInstruction differences unchanged; repeated C-line table omitted. Source line numbers may have shifted; get_candidate supplies current C.'
+               if previous == rows else feedback_note(text, rendering_rows=[a for a,b in zip(rows,diagnostic) if a[0]!=' ' and b[0]==' ']))
+    return head + detail + mapping + warn + '\nFull/paged instructions: last_diff(function, start=0, limit=40).'
 
 
 def function_view(net, agent, slug, function, section='all'):
@@ -833,7 +847,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
         current_source, current = candidate(net, agent, slug, function)
         current_index = next((i for i, src in enumerate(candidates, 1) if src == current_source), None)
         results.insert(0, f'Current candidate revision {current}; last submitted variant {last}; current source variant {current_index or "retained candidate"}. '
-                       'Patch this continuation. Discard the starting revision and revisions shown inside individual variant results. '
+                       'Use the continuation state below to decide the next action. Discard the starting revision and revisions shown inside individual variant results. '
                        'last_diff follows it when available; get_candidate recovers C.')
         from .efficiency_feedback import continuation, mismatch
         results.append(continuation(net,agent,slug,function,applied=[current_index] if current_index and current_source!=source else [],base=revision))

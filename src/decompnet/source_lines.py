@@ -181,20 +181,12 @@ def render(info, source, limit=8):
     source_lines = source.splitlines()
     changes = {'r':'Register', 's':'Stack offset', 'i':'Operand', '|':'Instruction',
                'o':'Reordered', '<':'Missing', '>':'Extra'}
-    def code(value, bound):
-        value = value.strip()
-        if len(value)>bound:value = value[:bound-1]+'…'
-        if not value:return '—'
-        value = value.replace('|', r'\|').replace('\n',' ')
-        runs = re.findall(r'`+',value)
-        fence = '`' * (max(map(len,runs),default=0)+1)
-        return fence + (' '+value+' ' if runs else value) + fence
     omitted_instructions = 0
     limit = max(0,limit)
     for entry in info['lines'][:limit]:
-        c = code(source_lines[entry['line']-1],160)
+        c = _code(source_lines[entry['line']-1],160)
         for index,ins in enumerate(entry['instructions'][:2]):
-            text.append(f"| {entry['line']} | {c if index == 0 else '↳'} | {changes.get(ins['marker'],'Difference')} | {code(ins['target'],120)} | {code(ins['compiled'],120)} |")
+            text.append(f"| {entry['line']} | {c if index == 0 else '↳'} | {changes.get(ins['marker'],'Difference')} | {_code(ins['target'],120)} | {_code(ins['compiled'],120)} |")
         omitted_instructions += max(0,len(entry['instructions'])-2)
     if len(info['lines']) > limit or omitted_instructions or info['unmapped']:
         text.append('')
@@ -207,7 +199,17 @@ def render(info, source, limit=8):
     return '\n'.join(text)
 
 
-def feedback_note(text):
+def _code(value, bound):
+    value = value.strip()
+    if len(value)>bound:value = value[:bound-1]+'…'
+    if not value:return '—'
+    value = value.replace('|', r'\|').replace('\n',' ')
+    runs = re.findall(r'`+',value)
+    fence = '`' * (max(map(len,runs),default=0)+1)
+    return fence + (' '+value+' ' if runs else value) + fence
+
+
+def feedback_note(text, rendering_rows=()):
     """Retain bounded source locations when compact tool feedback replaces the assembly listing."""
     lines = text.splitlines()
     for index, line in enumerate(lines):
@@ -219,6 +221,11 @@ def feedback_note(text):
                 if not (following.startswith(('  ', '|', 'Debug-line associations,', 'Mapped lines omitted:',
                                               'Additional instruction rows omitted:', 'Unmapped differences:')) or not following):
                     break
+                # Label only operand pairs proven equivalent by the caller's resolver.
+                for _, target, compiled in rendering_rows:
+                    suffix=f"| {_code(target,120)} | {_code(compiled,120)} |"
+                    if following.endswith(suffix):
+                        following=following.replace('| Operand |', '| Rendering only |')
                 selected.append(following)
             return '\n' + '\n'.join(selected).rstrip()
     return ''

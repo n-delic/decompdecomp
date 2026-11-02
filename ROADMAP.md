@@ -1656,3 +1656,9 @@ remain planned: the initial browser toolchain has no matching build-context adap
 - Done: repeating completed deep passes binds the project ID correctly, avoiding a server error on start. Regression coverage verifies only open-function pass records in the selected project are reset; saved improvements and other projects remain intact.
 
 - Done: progress manifests round-trip compiler assembly-local labels such as .L00100380 in symbol metadata. C function/layout names remain strict identifiers; path-like or malformed symbols are rejected before files are changed.
+
+Agent transcript follow-ups: late release notes are retained after automatic handoff without changing
+another worker's claim; continuation instructions respect claim ownership. Compact feedback omits repeated
+C-line tables for unchanged instruction diffs and labels proven relocation-rendering pairs separately from
+instruction mismatches. Target assembly pages provide explicit end-exclusive ranges and next-page calls.
+Reference typedef extraction excludes masked preprocessor prefixes to keep supplied declarations intact.

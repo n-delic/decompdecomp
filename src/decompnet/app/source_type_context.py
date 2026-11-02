@@ -19,7 +19,11 @@ def referenced(text, source, header):
             part=masked[start:i+1]
             if re.match(r'\s*typedef\b',part):
                 alias=re.search(r'\b('+IDENT+r')\s*;\s*$',part)
-                if alias:blocks.append((alias[1],start,i+1))
+                if alias:
+                    # Preprocessor lines were masked for parsing, but must not leak back
+                    # through the original text slice (or overlap separately chosen macros).
+                    first=start+len(part)-len(part.lstrip())
+                    blocks.append((alias[1],first,i+1))
             start=i+1
         elif c=='}' and depth==0 and ')' in masked[start:i]:
             start=i+1  # function definitions are not declarations

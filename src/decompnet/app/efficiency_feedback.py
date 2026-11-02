@@ -27,4 +27,6 @@ def continuation(net,agent,slug,function,*,applied=None,base=None):
         text+=f'; base_revision={base}'
     if applied is not None:
         text+='; applied_patch_ids='+(','.join(map(str,applied)) or 'none (baseline retained)')
+    if not held:
+        return text+'. Do not patch without a claim. Save findings with add_note(function=...), then claim another eligible function.'
     return text+'. Patch this revision only.'+(' Batch patches are independent, not cumulative.' if applied is not None else '')

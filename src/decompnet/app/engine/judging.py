@@ -251,6 +251,14 @@ class JudgeMixin:
         if move_on and not notes.strip():
             raise NetworkError("Explain what you tried and why you need to move on.")
         fn = self._function(function, project)
+        if not not_c and not needs.strip() and not self.store.one(
+                'SELECT 1 FROM claims WHERE function_id=? AND agent_id=?', fn['id'], agent.id):
+            # A local pass can release on its move-on limit before the model sends its findings.
+            # Notes need no lease; never release or change another worker's claim here.
+            if notes.strip():
+                self.add_note(agent, project, notes, fn['name'])
+            return f"{fn['name']} is already released from your claims. " + (
+                'Findings saved. ' if notes.strip() else '') + 'Claim another eligible function.'
         need = self._prerequisite(agent, fn, needs, project) if needs.strip() else None
         progress = self.claim_progress(agent, fn)
         if not move_on and not not_c and need is None and progress is not None and \
