@@ -52,6 +52,7 @@ class App:
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server
     # what one part of the app lends another (set by the module that defines it)
-    web_login: Any = None  # only decomp serve: localhost cookie sessions, separate from window/agent auth
+    web_login: Any = None  # optional localhost cookie sessions, separate from window/agent auth
+    headless: bool = False
     autopilot: Callable[[str], None] | None = None  # state: start autopilot on a project
     with_project: Callable[..., Any] | None = None  # projects: a project route from fn(slug, request, data)

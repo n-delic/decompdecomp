@@ -86,7 +86,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     configure_local_repairs(net,settings.data)
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
     from .web_login import WebLogin
-    net.web_login = WebLogin(port) if headless else None
+    net.web_login = WebLogin(port) if headless or settings.data.get('web_interface_enabled', False) else None
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
 
     from . import manual_mcp
@@ -243,7 +243,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
                      guard, body, call, fail, ui_call=ui_call, updater=updates.Updater(before_restart, port, secret),
-                     busy=busy, quit_app=quit_app, web_login=net.web_login)
+                     busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless)
     from . import web_login
     web_login.register(app)
     for part in (pages, state, projects, repair_feedback, repository_sync, forks, setup, life, rooms, pairing, browser_bridge):
