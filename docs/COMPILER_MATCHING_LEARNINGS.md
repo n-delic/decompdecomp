@@ -2053,7 +2053,7 @@ equal-value priorities fixed two integration test failures without dropping eith
 
 A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
 changed instruction rows) and one mixed address/register miss. The pinned compiler was
-`gcc-2.7.2-kmc`, with each copied export's recorded flags and exact captured unit header.
+`gcc-2.7.2-kmc`, with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` and the exact captured unit header.
 In the mixed case, deriving an address from another pointer let GCC replace a second
 LUI/ADDIU materialization with an ADDIU from the existing base. Replacing the arithmetic
 with the already-used canonical symbol changed allocation elsewhere and worsened the
@@ -2072,8 +2072,8 @@ builds need their own owned symbol/link adapter before automatic aliases can be 
 
 Controlled copied-ROM replay used identical six sources/headers/targets and 16 candidates,
 30 seconds per function. With only this family disabled: 96 candidates, zero improvements,
-zero exact matches, 44.1 seconds. Enabled: 96 candidates, one improvement (155 to 25),
-zero exact matches, 43.7 seconds. The timing difference is noise. The improvement appeared
+zero exact matches, 34.7 seconds. Enabled: 96 candidates, one improvement (155 to 25),
+zero exact matches, 38.8 seconds. These timings do not demonstrate a throughput improvement. The improvement appeared
 on candidate 2 through an existing neutral shape plus the new family; the standalone
 new family also improved the original source. Five cases did not improve; no live work
 was changed and no fresh full-ROM match is claimed.

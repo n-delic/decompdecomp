@@ -1742,3 +1742,9 @@ functions retain reviewable skip reasons, and applied outcomes are saved with co
 The comparison action toggles to Stop while running. Its two determinate progress bars replace the
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
+
+- Target-backed independent-address materialization is available to MIPS ROM iterative
+  search, local agent repairs and the bounded pre-permuter pass. Imported project builds
+  need a build-owned alias/link adapter; other architectures need their address-pair
+  reader before this hypothesis can reach them. The first six-case controlled cohort
+  gained one closer draft, with no newly exact function.
