@@ -225,7 +225,9 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
-| Read-only binary-gap audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
+| Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | — | — |
@@ -1743,6 +1745,20 @@ The comparison action toggles to Stop while running. Its two determinate progres
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
 
+### ROM reference audits and export context retention
+
+- Done: MIPS read-only pointer-word evidence and unowned mapped-segment interiors;
+  incoming references are reported separately from pointer hypotheses. Probe limits
+  are visible; no pointer or interior lead is auto-adopted.
+- Done: narrowly bounded N64 direct-call, whole-gap, balanced-frame recovery;
+  unchanged private compiler contexts survive reimport, including recorded-history
+  recovery when the historical header is still current for its private unit.
+- Done: ROM repository sync rechecks exact-attempt header alternatives and isolates
+  plain independent helper bodies. Matching-only ELF32 MIPS entry extraction handles
+  scattered pools; every compile is rejudged and complete-image verification remains.
+- Planned: non-MIPS entry extraction and equivalent conservative import recovery for
+  other consoles, richer callback/table provenance, instruction-level data references,
+  overlay-bank identity and explicit reviewed adoption of weaker audit candidates.
 Finish near matches now has bounded, output-preserving native-GCC def/use traces and six-candidate
 traced bundles, plus verified same-unit private-helper/static-constant trials in its MIPS ROM adapter.
 Stored traces also feed local repair batches. Held-out replay approvals gate experimental adaptive

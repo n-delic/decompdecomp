@@ -308,6 +308,23 @@ class ImportMixin:
                             (pid, fn.name, fn.size, n_insns, target.code, relocs, asm, None, unit, fn.vram,
                              fn.rom, meta, status))
                     elif same_target:
+                        # A source-prepared function can own private SDK/types. The
+                        # new disassembler's segment is not its compiler context.
+                        if old['unit'] and db.execute('SELECT 1 FROM context_versions WHERE project_id=? AND unit=? LIMIT 1',
+                                                      (pid,old['unit'])).fetchone():
+                            unit=old['unit']
+                        elif old['matched_source']:
+                            # Repair the legacy reset only when the identical saved
+                            # source has an exact attempt whose header is still the
+                            # current version of that private unit.
+                            ctx=db.execute('SELECT c.unit,c.header FROM attempts a JOIN context_versions c '
+                                           'ON c.project_id=? AND c.version=a.context_version '
+                                           'WHERE a.function_id=? AND a.score=0 AND a.compiled=1 AND a.source=? ORDER BY a.id DESC LIMIT 1',
+                                           (pid,old['id'],old['matched_source'])).fetchone()
+                            if ctx and ctx['unit']:
+                                latest=db.execute('SELECT header FROM context_versions WHERE project_id=? AND unit=? ORDER BY version DESC LIMIT 1',
+                                                  (pid,ctx['unit'])).fetchone()
+                                if latest and latest['header']==ctx['header']:unit=ctx['unit']
                         db.execute(
                             "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=? "
                             "WHERE id=?",

@@ -2158,6 +2158,27 @@ scores or automatically comparable replay inputs. Host verification of the succe
 is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
 without a failed baseline continue to work.
 
+### 2 November: preserved declarations and scattered pools are export concerns
+
+A copied N64 project retained all 1,962 exact records while recovering two directly
+called, balanced-frame functions (4,304 and 3,500 bytes). No compiler flag change
+was needed. Reimport had reset four private source units to disassembly segments;
+the saved exact attempts' real headers compiled and passed the normal byte judge.
+Preserve private units on unchanged targets. Header history is a compile hypothesis,
+not a stale exact verdict: current source/header/settings must be rechecked.
+
+Two current KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` candidates emitted
+several independent plain C definitions. Replacing the other bodies with their
+actual prototypes, preserving line breaks and the target body, produced exact
+single-entry objects. Static/inline and K&R helpers remain outside this bounded rule.
+
+Another exact candidate's compiler-generated double constants occupied offsets 0
+and 8, but their verified image addresses were 16 bytes apart. A minimum section
+base cannot describe that layout. The matching-only exporter now offers verified
+entry extraction: compile again, run the full code/data relocation judge, emit only
+the compiler's relocated entry, and retain already verified image data. This is not
+a target-byte fallback. Source changes that fail the byte judge stop the build.
+A complete cartridge comparison remains mandatory before accepting repository C.
 ## Agent transcript follow-ups (November 2026)
 
 The latest 60-session audit found claim/release-only sessions counted as productive, nine sessions

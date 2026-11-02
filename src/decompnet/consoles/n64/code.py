@@ -121,7 +121,10 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         accept(start, end, start + mapping)
     from .code_tails import complete
 
-    return complete(rom,sorted(found),taken)
+    found=complete(rom,sorted(found),taken)
+    from .code_references import complete as referenced_gaps
+
+    return sorted(found+referenced_gaps(rom,sorted(taken+found)))
 
 
 # ---------------------------------------------------------------------------------------------- compressed code

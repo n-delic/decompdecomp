@@ -1200,3 +1200,10 @@ naming provenance survive when their complete targets are unchanged.
 compile/time budget on your closest saved C, without starting AI agents. Stop whenever
 you like; verified matches are kept and pending paths resume on the next run. The panel
 reports matches per minute. The dedicated pass currently supports MIPS ROM projects.
+
+ROM code audits also show possible function-pointer references and unowned bytes inside
+mapped segments. These are review leads. N64 reimport can recover narrowly proven
+whole gaps without losing verified sources or their private headers. Repository sync
+can recheck historical exact headers and isolate plain helper definitions; new matching
+exports include a build-time verified-entry helper for scattered constant pools.
+See [the audit guide](docs/ROM_CODE_AUDIT.md).

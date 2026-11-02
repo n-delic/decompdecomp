@@ -100,3 +100,43 @@ def test_agent_cannot_turn_incomplete_target_into_assembly_even_before_refresh(t
             result=net._not_c(db,fn,agent,'no C makes it: no return')
             assert 'No assembly verdict recorded' in result
     assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='open'
+
+
+def test_pointer_and_unowned_data_interiors_are_review_only():
+    image=bytearray(0x1200)
+    image[0x1000:0x1010]=words(0x03e00008,0,0,0)
+    image[0x1040:0x1050]=words(0x27bdffe8,0,0x03e00008,0x27bd0018)
+    image[0x1100:0x1104]=words(0x80001040)
+    segments=[dict(rom_start=0x1000,rom_end=0x1080,vram=0x80001000)]
+    fs=[dict(name='known',rom=0x1000,size=16,vram=0x80001000)]
+    result=audit(bytes(image),segments,fs)
+    row=next(r for r in result['candidates'] if r['rom_offset']==0x1040)
+    assert row['region']=='unowned segment interior' and row['review_only']
+    assert row['pointer_references']==[{'rom_offset':0x1100,'value':0x80001040}]
+    assert not row['incoming'] and result['interior_regions']==1
+    # An address embedded in known instructions is not a data-pointer reference.
+    image[0x1100:0x1104]=words(0);image[0x1000:0x1004]=words(0x80001040)
+    assert not audit(bytes(image),segments,fs)['pointer_references']
+
+
+def test_pointer_audit_respects_little_endian_and_rejects_unclosed_destination():
+    image=bytearray(0x1200)
+    image[0x1040:0x1050]=struct.pack('<4I',0x27bdffe8,0,0x03e00008,0x27bd0018)
+    image[0x1100:0x1104]=struct.pack('<I',0x80001040)
+    segments=[dict(rom_start=0x1000,rom_end=0x1010,vram=0x80001000)]
+    assert audit(bytes(image),segments,[],big_endian=False)['pointer_references']==1
+    image[0x1048:0x104c]=struct.pack('<I',0x00400008)
+    assert not audit(bytes(image),segments,[],big_endian=False)['pointer_references']
+
+
+def test_n64_only_recovers_whole_called_balanced_gaps():
+    from decompnet.consoles.n64.code_references import complete
+    image=bytearray(0x1100)
+    image[0x1000:0x1010]=words(0x0c000404,0,0x03e00008,0)
+    image[0x1010:0x1020]=words(0x27bdffe8,0,0x03e00008,0x27bd0018)
+    known=[(0x1000,0x1010,0x80001000),(0x1020,0x1030,0x80001020)]
+    assert complete(bytes(image),known)==[(0x1010,0x1020,0x80001010)]
+    image[0x101c:0x1020]=words(0x27bd0020)
+    assert not complete(bytes(image),known)  # mismatched frame restoration
+    image[0x101c:0x1020]=words(0x27bd0018);image[0x1000:0x1004]=words(0)
+    assert not complete(bytes(image),known)  # a frame/return alone is not enough

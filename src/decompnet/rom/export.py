@@ -257,9 +257,14 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             continue
         bases, problem = _section_bases(linked.placements)
         if problem:
-            as_fallback.append((f["name"], problem))
-            f["kind"] = "asm"
-            continue
+            # Recompile and judge this entry every build; the builder can retain
+            # scattered original pools without pretending they share one base.
+            from .export_entry import object_for
+            try:object_for(compiled.obj,row['name'],linked.linked_code)
+            except (ValueError,TypeError):
+                as_fallback.append((f['name'],problem));f['kind']='asm';continue
+            f['entry_only']=True
+            bases={}
         src = out / "src" / f["seg"] / f"{f['name']}.{'cpp' if compiled.language == 'c++' else 'c'}"  # as it compiled
         src.parent.mkdir(parents=True, exist_ok=True)
         include = "common.h" if not unit else f"common_{unit}.h"
@@ -348,6 +353,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         entry = {"name": f["name"], "seg": f["seg"], "vram": f["vram"], "rom": f["rom"], "asm": f["asm"]}
         if f["kind"] == "c":
             entry["c"] = f["src"]
+            if f.get('entry_only'):entry['entry_only']=True
             entry["own"] = {sec: base for (obj, sec, base) in private if obj == f["obj"]}
         fn_json.append(entry)
 
@@ -389,6 +395,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
         build["cartridge"] = {"image": cartridge, "sha1": hashlib.sha1(original).hexdigest(), "blocks": blocks}
     (out / "build.json").write_text(json.dumps(build, indent=1), encoding="utf-8")
     shutil.copyfile(Path(__file__).with_name("export_build.py"), out / "build.py")
+    shutil.copyfile(Path(__file__).with_name("export_entry.py"), out / "export_entry.py")
     units_json = []
     for f in functions:
         unit = {"name": f"{f['seg']}/{f['name']}", "target_path": f["obj_asm"],

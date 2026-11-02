@@ -1293,8 +1293,8 @@ $("codeAuditBtn").onclick = async () => {
     const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
     const result=await followJob(job,log);
     if (S.slug!==slug) return;
-    $("codeAuditResult").innerHTML=`<p><b>${result.candidates.length} candidates</b> across ${result.gaps} gaps. ${esc(result.note)}</p>`+
-      result.candidates.map(r=>`<p><code>${hex8(r.vram)}</code> · ${esc(r.evidence)} · ${r.decoded_instructions} decoded instructions · ${r.direct_flow_closed ? "direct flow closes" : "flow unresolved"}${r.incoming.length ? " · from "+r.incoming.map(i=>`<button class="link-btn" data-audit-source="${esc(i.function)}">${esc(i.function)}</button>`).join(", ") : ""}</p>`).join("");
+    $("codeAuditResult").innerHTML=`<p><b>${result.candidates.length} candidates</b> across ${result.gaps} raw gaps and ${result.interior_regions || 0} unowned interior ranges. ${esc(result.note)}${result.pointer_probe_limit || result.candidate_limit || result.mapping_limit ? " The bounded audit reached a search limit; results are incomplete." : ""}</p>`+
+      result.candidates.map(r=>`<p><code>${hex8(r.vram)}</code> · ${esc(r.evidence)} · ${esc(r.region || "raw gap")} · ${(r.pointer_references || []).length} pointer-word references${(r.pointer_references || []).length ? " (ROM "+r.pointer_references.map(p=>hex8(p.rom_offset)).join(", ")+")" : ""} · ${r.decoded_instructions} decoded instructions · ${r.direct_flow_closed ? "direct flow closes" : "flow unresolved"}${r.incoming.length ? " · from "+r.incoming.map(i=>`<button class="link-btn" data-audit-source="${esc(i.function)}">${esc(i.function)}</button>`).join(", ") : ""}</p>`).join("");
     $("codeAuditResult").querySelectorAll("[data-audit-source]").forEach(b=>b.onclick=()=>openFn(b.dataset.auditSource));
   } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
 };
