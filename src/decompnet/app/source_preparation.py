@@ -323,6 +323,8 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
                 hypotheses += [(family,(s,h)) for family,s,h in reference_trials(pair[0],pair[1],included,cfg.get('_target_calls',[]))]
             except NetworkError as error:
                 reader.advisories.append('Include ABI recovery unavailable: '+str(error))
+        from .reference_stage_repairs import stages
+        hypotheses += [(family,(s,h)) for family,s,h in stages(pair[0],mapping[0],pair[1],reference,cfg.get('_target_calls',[]))]
         from .reference_context_recovery import static_helpers
         hypotheses += [(family,(s,h)) for family,s,h in static_helpers(pair[0],pair[1],reference)]
         from .retail_source_repairs import commented_calls
@@ -606,6 +608,11 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 permuter._let_go(agent, fn)
             if improved_source and not fork and hasattr(net, '_comparison_digest'):
                 followup(net, proj, fn, st, report, log_line, budget, deadline)
+                if hasattr(net,'_candidate_checks') and net._function(fn['name'],proj['slug'])['status']=='matched':
+                    from .export_source_recovery import run as repair_export
+                    result=repair_export(net,proj,{fn['name']},st,log_line,
+                                         budget=max(0,budget-report['tested']),deadline=deadline)
+                    report['tested']+=result['tested']
     except (NetworkError, OSError, ValueError) as exc:
         report['errors'].append(str(exc))
         log_line(str(exc))

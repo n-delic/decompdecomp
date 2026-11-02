@@ -613,6 +613,11 @@ def run(net, slug, name, minutes, max_variants, log):
                 # Notes are advisory; a disconnected host must not mask the search verdict/error.
                 pass
     search.report()
+    if reason=='Matched' and hasattr(net,'_candidate_checks') and slug not in net.links:
+        from .export_source_recovery import run as repair_export
+        export_report=repair_export(net,net.project_row(slug),{name},state,log,
+                                    budget=min(4,max(0,max_variants-search.tested)),deadline=search.deadline)
+        search.tested+=export_report['tested']
     log(f'{reason}: {search.tested} candidates tested, {search.skipped} cached misses skipped, {search.rejected} invalid calls skipped. Verified improvements are saved immediately.')
     result = {'function': name, 'reason': reason, 'tested': search.tested, 'skipped': search.skipped,
               'rejected': search.rejected, 'refinement_rounds': search.refinement_rounds,

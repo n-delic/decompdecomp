@@ -37,7 +37,7 @@ def value(text, macros, depth=0):
     return result
 
 
-def variants(source, header, asm, read, resolve, order='big'):
+def scalars(source, header, asm, read, resolve, order='big'):
     """Try one complete substitution and bounded keep-one-pool alternatives; judge every result."""
     macros=dict(re.findall(r'(?m)^\s*#define\s+('+ID+r')[ \t]+([^\n]+)',_blank(header)))
     # Only symbol-labelled floating loads in the target authorize reading a constant.
@@ -48,8 +48,9 @@ def variants(source, header, asm, read, resolve, order='big'):
     if not symbols:return []
     clean=_blank(source);candidates=[]
     # Whole parenthesized arithmetic before bare literals; no calls, casts or side effects.
-    atom=r'(?:'+NUMBER+'|'+ID+')'
-    pattern=r'\(\s*'+atom+r'(?:\s*[+*/-]\s*'+atom+r')+\s*\)|(?<![\w.])'+NUMBER+r'(?![\w.])'
+    macro=r'(?:'+'|'.join(re.escape(n) for n in sorted(macros))+r')' if macros else r'(?!)'
+    numeric=r'(?:'+NUMBER+'|'+macro+r')'
+    pattern=r'(?<![\w.])'+numeric+r'(?:\s*[+*/-]\s*'+numeric+r')*(?![\w.])'
     for match in re.finditer(pattern,clean):
         # Never touch directives, array extents or declaration initializers outside the body.
         line=clean[clean.rfind('\n',0,match.start())+1:match.start()]
@@ -64,7 +65,13 @@ def variants(source, header, asm, read, resolve, order='big'):
             try:payload=struct.pack(('>' if order=='big' else '<')+('f' if kind=='float' else 'd'),number)
             except (OverflowError,struct.error):continue
             if read(address,len(payload))==payload:matches.append((symbol,kind))
-        if len(matches)==1:candidates.append((match.start(),match.end(),*matches[0]))
+        if len(matches)==1:
+            a,b=match.start(),match.end()
+            # Preserve call parentheses; remove only an enclosing arithmetic grouping pair.
+            left=clean[:a].rstrip();right=clean[b:].lstrip()
+            if left.endswith('(') and right.startswith(')') and not re.search(r'[\w)]\s*\($',left):
+                a=len(left)-1;b=len(clean)-len(right)+1
+            candidates.append((a,b,*matches[0]))
     groups=sorted({symbol for _,_,symbol,_ in candidates})
     if not 1<=len(groups)<=8:return []
     out=[]
@@ -80,3 +87,41 @@ def variants(source, header, asm, read, resolve, order='big'):
             else:declarations.append('extern const '+kind+' '+symbol+';')
         else:out.append(('cpu-rom-scalar-pools','\n'.join(declarations)+'\n'+body,private))
     return out
+
+
+def strings(source, header, asm, read, resolve):
+    """Only a unique target-labelled address containing the complete actual literal plus NUL."""
+    from ..repair_changes import without_comments
+    clean=without_comments(source);edits=[]
+    symbols=sorted(set(re.findall(r'%lo\((D_[0-9A-Fa-f]{8})\)',asm)))[:128]
+    for match in re.finditer(r'"(?:[^"\\\n]|\\.)*"',clean):
+        line=clean[clean.rfind('\n',0,match.start())+1:match.start()]
+        if '#' in line or re.search(r'[\w"]\s*$',line):continue
+        if re.match(r'\s*"',clean[match.end():]):continue
+        try:text=ast.literal_eval(match[0]);payload=text.encode('ascii')+b'\0'
+        except (ValueError,SyntaxError,UnicodeEncodeError):continue
+        if not 2<=len(payload)<=256 or '\0' in text:continue
+        matches=[]
+        for name in symbols:
+            address=resolve(name)
+            if address is not None and read(address,len(payload))==payload:matches.append(name)
+        if len(matches)==1:edits.append((match.start(),match.end(),matches[0]))
+        if len(edits)>=8:break
+    if not edits:return []
+    names=sorted({name for _,_,name in edits});body=source
+    for a,b,name in reversed(edits):body=body[:a]+name+body[b:]
+    declarations=[]
+    for name in names:
+        if re.search(r'\b'+name+r'\b',_blank(header)):
+            if not re.search(r'\bextern\s+(?:const\s+)?char\s+'+name+r'\s*\[\s*\]\s*;',_blank(header)):return []
+        else:declarations.append('extern const char '+name+'[];')
+    return [('cpu-rom-string-pools','\n'.join(declarations)+'\n'+body,header)]
+
+
+def variants(source, header, asm, read, resolve, order='big'):
+    """Strings first, then scalar alternatives that retain one scheduling-sensitive pool."""
+    string_pairs=strings(source,header,asm,read,resolve)
+    out=[]
+    for _,body,private in string_pairs:
+        out+=scalars(body,private,asm,read,resolve,order)
+    return list(dict.fromkeys(out+string_pairs+scalars(source,header,asm,read,resolve,order)))[:8]

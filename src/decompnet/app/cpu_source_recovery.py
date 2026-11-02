@@ -9,12 +9,19 @@ def proposals(net, proj, fn, source, header, measurement):
     from .measured_source_repairs import narrowing_casts, statement_lines
     arch=arches.get(proj['arch'])
     rows=measurement.get('rows',[])
-    result=statement_lines(source,fn['name'],header,rows)
+    from .retail_context_repairs import commented_conditions, pointer_lifetimes
+    proof=arch.source_pointer_lifetime(fn['asm'] or '') if arch.source_pointer_lifetime else []
+    result=pointer_lifetimes(source,fn['name'],header,proof,rows)
+    import re
+    result+=commented_conditions(source,header,re.findall(r'\bD_[0-9A-Fa-f]{8}\b',fn['asm'] or ''))
+    result+=statement_lines(source,fn['name'],header,rows)
     if arch.source_extra_narrowing:result+=narrowing_casts(source,header,arch.source_extra_narrowing(rows))
     result+=cpu_source_repairs.variants(source,header,proj['arch'],measurement.get('rows',[]),measurement.get('lines',{}))
     from .retail_source_repairs import data_bindings, terminal_branch
     if hasattr(net,"symbols"):
         result += data_bindings(source,header,measurement.get("rows",[]),net.symbols(proj["id"]).resolve)
+        from .retail_context_repairs import array_indices
+        result += array_indices(source,header,rows,net.symbols(proj['id']).resolve)
     from .. import arch as arches
     reader=arches.get(proj["arch"]).source_tail_branch
     if reader:
@@ -53,7 +60,7 @@ def extend(net, proj, fn, variants, origins, source, header, measurement, lead):
 
 def trial_key(state, source, header, cfg):
     import hashlib
-    return 'local-source-v9:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
+    return 'local-source-v10:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
 
 
 def pending(net, fn, state, cfg, variants, origins, exclude):
