@@ -1239,3 +1239,8 @@ whole gaps without losing verified sources or their private headers. Repository 
 can recheck historical exact headers and isolate plain helper definitions; new matching
 exports include a build-time verified-entry helper for scattered constant pools.
 See [the audit guide](docs/ROM_CODE_AUDIT.md).
+
+Code audit results and evidence can be reviewed in Settings, with saved confirmation,
+dismissal and investigation states. Reviews never adopt code or pause functions;
+changed ROM/layout results require a fresh audit. Export mapping errors identify the
+missing constant ranges and sizes. See [the audit guide](docs/ROM_CODE_AUDIT.md).

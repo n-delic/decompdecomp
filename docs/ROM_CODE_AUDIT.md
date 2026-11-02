@@ -79,3 +79,29 @@ The helper rejects missing, short, out-of-image and conflicting mappings. It doe
 infer a ROM/RAM delta from an address-looking constant. Normal per-function checking
 and the complete image comparison are still required. Other object formats and
 unverified runtime-only pools remain unsupported.
+
+## Saved review decisions
+
+Settings → Audit unanalysed code retains the latest report locally for this project.
+Each lead has **Not reviewed**, **Needs investigation**, **Confirmed code**, and
+**Dismissed** states, plus evidence/next-step notes. Confirming and dismissing require
+notes. Confirmed/dismissed rows are hidden by default; use **Show confirmed and dismissed
+reviews** to revisit or reset them. Saving one row preserves unsaved edits in other rows.
+
+These are review decisions, not code adoption or function scheduling. They never pause
+functions, shrink coverage, edit targets, or bypass a compiler/link comparison. Decisions
+are bound to the image and examined extent. Changed ROM/layout results are marked stale
+until another audit runs; changed images/extents do not inherit a dismissal. State is
+local app metadata, not part of the portable C progress snapshot.
+
+Unresolved indirect transfers now show their address and register, rather than only
+"flow unresolved". A privately reviewed large function used a bounds-checked 24-entry
+jump table, and all 24 table values fell within its measured body. Direct-only closure
+could not prove this switch. Another balanced-frame lead appeared in repeating records
+with four code-like addresses; the actual table consumer/runtime mapping still needed
+confirmation. Both remained investigation leads; neither was automatically adopted.
+
+Constant-read export errors identify the function and up to 16 distinct missing address
+ranges, with byte sizes and exclusive ends. Conflicting mappings identify the precise
+address too. The build still rejects unverified data; these messages do not propose or
+install an inferred mapping.

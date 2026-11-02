@@ -55,7 +55,7 @@ def write(root, manifest, fn, path):
     def read(addr,n):
         hits=[s for s in ranges if s['vram']<=addr and addr+n<=s['vram']+s['rom_end']-s['rom_start']]
         offsets={s['rom_start']+addr-s['vram'] for s in hits}
-        if len(offsets)>1:raise ValueError('Overlapping image mappings disagree about a constant address.')
+        if len(offsets)>1:raise ValueError(f'Overlapping image mappings disagree about constant 0x{addr:08X} ({n} bytes).')
         if offsets:
             at=offsets.pop();return image[at:at+n]
         missed.append((addr,n))
@@ -64,5 +64,6 @@ def write(root, manifest, fn, path):
     if not linked.exact or linked.linked_code is None:
         raise ValueError('Entry extraction requires freshly verified exact code and data: '+'; '.join(linked.problems))
     if missed:
-        raise ValueError('Entry extraction cannot verify a constant pool outside mapped image data. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
+        details=', '.join(f'0x{addr:08X}–0x{addr+n:08X} ({n} bytes)' for addr,n in sorted(set(missed))[:16])
+        raise ValueError(f'{fn["name"]}: unverified constant reads: {details}. End addresses are exclusive. Supply reviewed data_mappings in build.json; do not guess a ROM address delta.')
     path.write_bytes(object_for(obj,fn['name'],linked.linked_code))

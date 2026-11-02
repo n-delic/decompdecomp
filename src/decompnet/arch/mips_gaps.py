@@ -12,7 +12,7 @@ def extent(image, start, end, vram, order, cpu=""):
     """Follow direct control flow inside a gap; indirect branches remain unresolved."""
     import rabbitizer
 
-    pending=[start];seen=set();returns=0;unknown=False;highest=start
+    pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[]
     while pending and len(seen)<MAX_STEPS:
         at=pending.pop()
         if at in seen:continue
@@ -33,6 +33,7 @@ def extent(image, start, end, vram, order, cpu=""):
         if op==3 or (op==0 and w&63==9):  # calls return; the callee is a separate audit seed
             pending.append(at+8);continue
         if op==0:
+            if len(indirect)<8:indirect.append({'address':vram+at-start,'register':(w>>21)&31})
             unknown=True;continue
         if op==2:
             pc=vram+at-start
@@ -43,7 +44,7 @@ def extent(image, start, end, vram, order, cpu=""):
             pending.append(at+8)
         pending.append(target)
     return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending),
-            'extent_bytes':highest-start,'step_limit':bool(pending)}
+            'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
 
 
 def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None):

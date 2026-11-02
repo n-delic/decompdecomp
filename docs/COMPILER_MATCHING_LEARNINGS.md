@@ -2215,6 +2215,16 @@ both sides. No recovery was lost and no additional match or compile saving was d
 combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
 unapproved rather than treating the homemade context success as held-out game evidence.
 
+### 2 November: indirect dispatch is not a failed compiler match
+
+A private unresolved MIPS gap contained a `jr` through a computed register after a
+24-entry unsigned bound check and scaled table load. All 24 table values pointed
+inside the measured function extent. A direct-only CFG audit correctly left it open;
+there was no evidence here for changing compiler flags or permuting C. A second large
+lead had a balanced frame and appeared among repeated callback-like records, but its
+table consumer/runtime mapping remained unproven. Save that distinction in review
+notes; a human "confirmed" review is not an import action or a byte-identical match.
+No source match or additional recovered-code bytes are claimed from these investigations.
 
 ## Complete typed context before repeated profile search (2 November 2026)
 
