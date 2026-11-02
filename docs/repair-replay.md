@@ -230,3 +230,24 @@ candidate compiles, first exact trial, winning family path, elapsed time,
 with two identical measured outputs, which move behind fresh families without being
 removed. Replays compare against the frozen successful compiler output; they do not
 adopt C or establish a new linked-byte game match.
+
+## Compare a frozen near-match suite
+
+`linked_repair_benchmark.suite(copied_root, cases, trials=16, seconds=30, focused=True)`
+benchmarks a list of `{name, source, header}` cases from a private copied ROM export.
+Run again with `focused=False` and compare the reports with `repair_benchmark.compare`.
+Every case gets the same candidate/time budget. Each baseline is recompiled and must
+remain unresolved. Scope hashes cover the copied manifest, target, header and pinned
+compiler identity. Results contain hashes and measurements, not source text.
+
+The focus is advisory: explicit symbols and numeric operands around the first mismatch
+rank overlapping source edits. There is no invented mapping from registers to C locals.
+Only 128 proposals are inspected; every fourth position reserves ordinary exploration,
+and no proposals are deleted.
+
+A six-case MIPS/GCC near-miss snapshot was tested with 16 candidates and 30 seconds per
+function. Both orders used 96 candidate compiles and produced **zero new matches or
+improvements**. Search time was 33.2 seconds without focus and 32.2 seconds with focus;
+that difference is timing noise, not evidence of a speedup. Fresh linked baselines,
+not historical displayed percentages, were used for comparison. Larger budgets or new
+repair families may be needed; this result does not establish general effectiveness.

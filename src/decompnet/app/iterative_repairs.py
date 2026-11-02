@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ..network import NetworkError
 from ..project import compiler_for
-from . import allocation_evidence, region_repairs, repair_selection, search_frontier, workers
+from . import allocation_evidence, first_difference, region_repairs, repair_selection, search_frontier, workers
 
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
 DETOUR_RATIO = 1.25
@@ -232,7 +232,7 @@ def output_key(report):
     return hashlib.sha256(repr((report['candidate_target'], report.get('candidate_relocs'))).encode()).hexdigest()
 
 
-def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees=''):
+def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True):
     from . import draft_repairs, normalization_repairs, stack_padding_repairs
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
@@ -250,16 +250,17 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     families = repair_selection.order(families, report.get('repair_path', []))
     pools = [[p for p in proposals if labels[p]==family] for family in families]
     result = list(dict.fromkeys(p for row in zip_longest(*pools) for p in row if p is not None))
-    return [(labels[p], p) for p in result]
+    tagged=[(labels[p],p) for p in result]
+    return first_difference.order(source,tagged,report.get('rows')) if focused else tagged
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
-                      selection=None, limit=20, pool_cache=None):
+                      selection=None, limit=20, pool_cache=None, focused=True):
     key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), fn['name'], fn['asm'],
-                              arch, flags, header, tables, callees)).encode()).hexdigest()
+                              arch, flags, header, tables, callees, focused)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
     if result is None:
-        result = targeted_pool(source, report, fn, arch, flags, header, tables, callees)
+        result = targeted_pool(source, report, fn, arch, flags, header, tables, callees, focused=focused)
         if pool_cache is not None:
             pool_cache[key] = result
             while len(pool_cache) > 2:
@@ -302,13 +303,19 @@ def run(twins, slug, job):
     matched = [0]
     reasons = Counter()
     diagnostics = Counter()
+    from . import prototype_reuse
     rules = repair_rules()
     rows = net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' AND best_source IS NOT NULL "
                          "AND best_score>0 AND best_score<=?*MAX(1,n_insns) "
                          "ORDER BY id", proj['id'], 100 - similar_matches.REPAIR_PERCENT)
     cursor = net.store.one('SELECT function_id FROM repair_cursors WHERE project_id=?', proj['id'])
     last = cursor['function_id'] if cursor else 0
-    rows.sort(key=lambda fn: (fn['id'] <= last, fn['id']))
+    if getattr(job,'finish_near',False):
+        from . import finish_near
+        rows=finish_near.ordered(net,proj,rows)
+    else:
+        rows.sort(key=lambda fn: (fn['id'] <= last, fn['id']))
+    completed=[0]
     guard = threading.Lock()  # (the job's counters are shared by every thread's function)
 
     def visit(fn):
@@ -318,10 +325,12 @@ def run(twins, slug, job):
             db.execute('INSERT OR REPLACE INTO repair_cursors VALUES(?,?)', (proj['id'], fn['id']))
         if net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
             return
+        if getattr(job,'finish_near',False):finish_near.visited(net,proj,fn)
         header = net._context(proj['id'], fn['unit'])['header']
         settings = compiler_for(cfg, fn['vram'])
+        donor_signature=prototype_reuse.signature(net,proj,fn['best_source'])
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:
@@ -374,6 +383,8 @@ def run(twins, slug, job):
 
         pool_cache = {}  # Ephemeral, bounded proposal reuse; compiler verdict caches remain separate.
         def variants(source, report):
+            from . import prototype_reuse
+            shared = prototype_reuse.variants(net,proj,fn,source)
             guided = address_repairs.variants(source, report, fn, bool(proj['big_endian']), known)
             if report.get('candidate_target'):
                 compiled = dict(target=bytes.fromhex(report['candidate_target']), relocs=report.get('candidate_relocs', '[]'))
@@ -386,7 +397,7 @@ def run(twins, slug, job):
             targeted.sort(key=lambda item: ordered.index(item[0]))
             # Interleave pools so address proposals cannot starve targeted families (or vice versa).
             learned = expression_recipes.variants(net, recipe_profile, source)
-            pools = [[('address_or_literal', s) for s in guided[:4]], targeted,
+            pools = [shared, [('address_or_literal', s) for s in guided[:4]], targeted,
                      [('similar_repair', s) for s in similar_matches.repair_variants(source, report)[:4]],
                      [('learned_expression', s) for s in learned[:2]]]
             return repair_selection.Page(dict.fromkeys(item for group in zip_longest(*pools)
@@ -404,10 +415,12 @@ def run(twins, slug, job):
         with guard:
             reasons[state.get('reason', 'busy_or_paused')] += 1
             diagnostics.update(Counter(state.get('counts', {}))-before_counts)
+            completed[0]+=1
+            if getattr(job,'near_progress',None):job.near_progress(completed[0],len(rows),fn['name'])
 
     # One thread to a function at a time (Settings: "Iterative repairs: threads"), on a pool of their own: this
     # runs on one of the shared workers, which would wait for the very threads it is waiting on.
-    threads = workers.clamp(getattr(getattr(net, 'cascades', None), 'iterative_threads', 0))
+    threads = 1 if getattr(job,'finish_near',False) else workers.clamp(getattr(getattr(net, 'cascades', None), 'iterative_threads', 0))
     with ThreadPoolExecutor(threads, thread_name_prefix='iterative-repair', initializer=workers.lower_priority) as pool:
         list(pool.map(visit, rows))
     if reasons:

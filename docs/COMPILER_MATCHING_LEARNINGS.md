@@ -1972,3 +1972,18 @@ Measured private temporary-register entry and retained-register ABI cases route 
 context, and suppress only generic declaration/stack-shape follow-ups, retaining targeted repairs.
 An extra restore/return epilogue receives a separate route; target extents and byte judgment are unchanged.
 Cache version 11 includes the same complete candidate, header, settings and destination inputs.
+
+### Current exact callers as prototype hypotheses
+
+A current exact caller's candidate-owned plain scalar prototype can seed another caller
+in the same game and compiler profile. Only donors with unchanged recorded exact inputs
+and no verification regression are considered. Conflicting declarations in the bounded
+donor pool are rejected; macros, static helpers, variadics and uncertain declarations
+receive no advice. The recipient's own declaration is changed only in a candidate.
+Every recipient must pass the normal judge; shared headers are never changed by this
+feature. An exact caller does not establish the callee's original C signature.
+
+Relevant donor evidence/header changes invalidate exhausted recipient frontiers. Matches
+unrelated to the referenced callees do not reset those searches. The first-difference
+suite in docs/repair-replay.md found no additional recovery in its six-case snapshot;
+no compiler-specific success is claimed from that benchmark.
