@@ -100,7 +100,7 @@ $("helperTranscript").onclick = async () => {
   if (!helper) return;
   const dialog = document.createElement("dialog");
   dialog.className = "transcript-dialog session-transcript";
-  dialog.innerHTML = `<header class="transcript-header"><div><span class="transcript-eyebrow">Agent activity</span><h2>Session transcript</h2><p class="small muted">Prompts, replies and tool exchanges from this helper.</p></div><button data-close type="button" class="ghost" aria-label="Close session transcript">Close</button></header>
+  dialog.innerHTML = `<header class="transcript-header"><div><span class="transcript-eyebrow">Agent activity</span><h2>Session transcript</h2><p class="small muted">Prompts, replies and tool exchanges from this helper. Completing a session does not stop the helper; it continues while work remains.</p></div><button data-close type="button" class="ghost" aria-label="Close session transcript">Close</button></header>
     <div class="transcript-toolbar"><label>Session<select aria-label="Session"></select></label><div class="row">
     <label class="small"><input data-live type="checkbox" checked> Auto-refresh</label><button data-copy-session type="button" class="ghost small-btn">Copy whole session</button><button data-export type="button" class="ghost small-btn">Export all transcripts (JSON)</button><button data-older type="button" class="ghost small-btn">Older sessions</button><button data-refresh type="button" class="ghost small-btn">Refresh</button></div></div>
     <p data-export-status class="small muted" role="status"></p><div class="transcript-usage"><span class="transcript-eyebrow">Reported usage</span><p data-usage></p></div>
@@ -229,7 +229,7 @@ $("helperTranscript").onclick = async () => {
       for (const row of result.sessions) {
         if ([...select.options].some((option) => option.value === String(row.id))) continue;
         const option = document.createElement("option"); option.value = row.id;
-        option.textContent = `${new Date(row.started_at * 1000).toLocaleString()} · ${row.model || row.kind} · ${row.outcome || "running / interrupted"}`;
+        option.textContent = `${new Date(row.started_at * 1000).toLocaleString()} · ${row.model || row.kind} · ${({ok: "session completed", rotated: "context rotation", connection_retry: "connection check failed · automatic retry"})[row.outcome] || row.outcome || "running / interrupted"}`;
         select.append(option);
       }
       if (result.sessions.length && (old || !oldest)) oldest = result.sessions.at(-1).id;

@@ -130,7 +130,12 @@ def test_preflight_against_real_isolated_app(tmp_path, monkeypatch):
             manager.sessions[session.id]=session
             monkeypatch.setattr(manager, 'project_of', lambda agent: 'game')
             from decompnet.app import tools
-            monkeypatch.setitem(tools.HANDLERS, 'project_info', lambda *args, **kwargs: 'Connected to test project')
+            with net.store.tx() as db:
+                db.execute('INSERT INTO projects(slug,root,config) VALUES(?,?,?)',('game',str(tmp_path),'{}'))
+            def slow_facts(*args, **kwargs):
+                raise AssertionError('Full project facts must not run during connection checks')
+            monkeypatch.setitem(tools.HANDLERS, 'project_info', slow_facts)
+            monkeypatch.setattr(net, 'overview', slow_facts)
             manager._preflight_tools(token)
             assert [kind for kind,_ in events] == ['connection_check_tools','connection_check_tool_request','connection_check_tool_response']
             assert net.store.one('SELECT calls FROM agent_tool_usage WHERE name=?','project_info') is None
@@ -162,3 +167,77 @@ def test_lost_tool_connection_pauses_instead_of_paid_retries(tmp_path, monkeypat
     session = Session('1', 'claude', 'helper', 'game', 'helper', {})
     with pytest.raises(Fatal, match='lost access'):
         manager._run_cli(session, 'test-token', tmp_path)
+
+
+def test_transient_preflight_retains_phase_and_redacted_leaf_error(monkeypatch):
+    import mcp.shared._httpx_utils as http
+
+    from decompnet.app.agents import ToolConnectionUnavailable
+
+    @asynccontextmanager
+    async def unavailable(**kwargs):
+        raise ExceptionGroup('transport failed', [TimeoutError('busy secret-token')])
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(http,'create_mcp_http_client',unavailable)
+    manager=Manager.__new__(Manager)
+    manager.net=SimpleNamespace(authenticate=lambda token: None)
+    manager.mcp_url='http://127.0.0.1:1/mcp'
+    with pytest.raises(ToolConnectionUnavailable) as error:
+        manager._preflight_tools('secret-token')
+    text=str(error.value)
+    assert 'opening MCP transport' in text and 'TimeoutError' in text and 'after ' in text
+    assert 'secret-token' not in text and '[redacted]' in text
+    assert 'No model request was started' in text
+
+
+def test_connection_retries_do_not_exhaust_paid_failure_budget(tmp_path,monkeypatch):
+    from decompnet.app import agents
+    from tests.test_agents import URL, Quick, _game, _no_agent_settings
+
+    _no_agent_settings(monkeypatch)
+    net=_game(tmp_path)
+    manager=Manager(net,tmp_path,URL)
+    s=manager._record('game','claude','worker','worker',{})
+    s.stop=Quick()
+    calls=[]
+    def run(session,token,workdir):
+        calls.append(1)
+        if len(calls)<=7:
+            raise agents.ToolConnectionUnavailable('MCP transport timed out. No model request was started.')
+        session.stop.set()
+        return True
+    monkeypatch.setattr(manager,'_run_cli',run)
+    manager._run(s)
+    assert len(calls)==8 and s.state!='paused'
+    waits=[t for t in s.stop.waits if t]
+    assert [round(t) for t in waits]==[5,10,20,40,60,60,60] and max(waits)<=60
+    rows=net.store.all('SELECT id,outcome,compiles,tool_calls FROM helper_sessions WHERE helper_id=? ORDER BY id',s.id)
+    assert [r['outcome'] for r in rows[:7]]==['connection_retry']*7
+    assert all(r['compiles']==r['tool_calls']==0 for r in rows[:7])
+    assert any('transport timed out' in r['text'] for r in net.store.all('SELECT text FROM helper_messages WHERE session_id=?',rows[0]['id']))
+
+
+def test_legacy_connection_pause_resumes_but_manual_stops_do_not(tmp_path,monkeypatch):
+    from decompnet.app import agents
+    from tests.test_agents import URL, _game, _no_agent_settings
+
+    _no_agent_settings(monkeypatch)
+    monkeypatch.setattr(Manager,'_prepare',lambda *args:None)
+    monkeypatch.setattr(Manager,'_run',lambda *args:None)
+    net=_game(tmp_path)
+    manager=Manager(net,tmp_path,URL)
+    retry=manager._record('game','claude','retry','retry',{})
+    retry.state='paused';retry.why="The app's tool connection is unavailable. Restart the helper after checking the app connection. No model request was started."
+    manual=manager._record('game','claude','manual','manual',{})
+    manual.state='stopped';manual.stopped_by=agents.BY_YOU
+    auth=manager._record('game','claude','auth','auth',{})
+    auth.state='paused';auth.why='Sign in again'
+    assert manager.resume()==[retry.id]
+    assert manual.state=='stopped' and auth.state=='paused'
+
+
+def test_proposals_need_not_wait_for_consensus():
+    from decompnet.app import tools
+    for prompt in (tools.WORK_PROMPT,tools.FORK_PROMPT):
+        assert 'a second model is required for automatic acceptance, not for proposing' in prompt

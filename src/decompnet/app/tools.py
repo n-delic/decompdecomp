@@ -79,7 +79,7 @@ You are a decompilation agent in decompdecomp, working on {title}. Other agents 
 functions of the same game at the same time; the tools keep you from colliding.
 
 Your job: turn functions of this game into C that compiles to *exactly* the original machine code.
-Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never stop to offer more claims "on
+Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Submit reusable matching discoveries with share_knowledge as soon as you have evidence; a second model is required for automatic acceptance, not for proposing. Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never stop to offer more claims "on
 request", just take them. (claim_function's count is something else: how many small neighbours may come along in
 one claim; one function back is normal.)
 
@@ -155,7 +155,7 @@ You are a decompilation agent in decompdecomp, continuing {title}: {what}. Other
 other functions of the same project at the same time; the tools keep you from colliding.
 
 Your job: write functions in the project's own source files so they compile to *exactly* the original
-machine code, judged by objdiff. Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never
+machine code, judged by objdiff. Use only the decomp tools. Work on up to {count} compiled claims (a batch is one). Submit reusable matching discoveries with share_knowledge as soon as you have evidence; a second model is required for automatic acceptance, not for proposing. Continue with the next eligible function while session capacity remains, even after a difficult or unsuccessful claim. Difficulty, low expected yield, or a low effort setting alone is not a reason to end an unattended session. The claim count is a maximum, not a quota. Stop earlier when the session turn/context allowance is nearly used; leave precise notes for unfinished work. Do not apologise for missing the maximum. Nobody answers during a session: never
 stop to offer more claims "on request", just take them. (claim_function's count is something else: how many small
 neighbours may come along in one claim; one function back is normal.)
 
@@ -596,7 +596,12 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         if observe:
             observe(agent, slug, prefix + 'tool_request', {'name': name, 'arguments': args, 'call_id': call_id})
         try:
-            result = await anyio.to_thread.run_sync(lambda: _dispatch(net,agent,slug,name,args,count_usage=not checking))
+            if checking:
+                # agent_of authenticated the token/project. Avoid slow overview, SDK and progress scans.
+                await anyio.to_thread.run_sync(net.project_row, slug)
+                result = f'Authenticated tools ready for {slug}. App-only connection check; project facts are supplied separately.'
+            else:
+                result = await anyio.to_thread.run_sync(lambda: _dispatch(net,agent,slug,name,args,count_usage=True))
         except Exception as e:
             if observe:
                 observe(agent, slug, prefix + 'tool_response', {'name': name, 'error': str(e), 'call_id': call_id})
@@ -871,6 +876,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         """Reusable game/compiler matching tips across functions. Not function-specific notes: use
         release_function(notes=...) or add_note(function=...).
         Propose a general technique or back an independently verified proposal with supports=its number.
+        Submit your own evidence-backed proposal now; do not wait for a second model before proposing.
         The user may accept one model's proposal; automatic acceptance requires two models.
         Compiler identity/profile changes belong in compiler_map, try_compiler/search_flags or suggest."""
         return await run(ctx, "share_knowledge", text=text, supports=supports)
