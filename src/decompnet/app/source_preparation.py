@@ -408,6 +408,9 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
         from .sdk_io_repairs import hints
         for hint in hints(source,dict(fn).get('asm',''),diff.rows):diagnostic(fn['name']+': '+hint)
     if diagnostic:
+        from .source_context_diagnostics import hints as context_hints
+        from .source_lead_analysis import compare
+        for hint in context_hints(source,compare(diff.rows,proj['arch']),fn['asm'] or '',diff.rows,proj['arch']):diagnostic(fn['name']+': '+hint)
         from .source_storage import object_hints, typed_object_hints
         for hint in object_hints(diff.rows,header)+typed_object_hints(diff.rows,source,header):diagnostic(fn['name']+': '+hint)
         if dict(proj).get('arch')=='mips':
