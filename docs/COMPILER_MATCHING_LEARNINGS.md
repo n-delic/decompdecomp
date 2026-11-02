@@ -2569,3 +2569,17 @@ that speedup. These are a few local repeats, not live-agent token or dollar meas
 still runs again; raw-stage reuse never substitutes for a compiler verdict or authorizes retransmission
 of an already tested candidate. Instrumentation distinguishes wrapped-stage generation, cache hits,
 first eligible candidate, and total session wall time, avoiding nested-stage double counting.
+
+
+### A third verified predecessor can restore internal entry alignment
+
+A second source-assisted IDO 5.3 O2 MIPS II entry differed only by four internal
+NOPs before its unreachable epilogue (score 400). Its real contiguous preceding
+functions were 788, 352 and 92 bytes. Preserving those three matched definitions
+produced a 288-byte exact entry; all four bodies independently passed code/data
+judging. Their combined prefix is 1,232 bytes, well within the existing 16 KiB
+bound. This is actual compiler context, not invented padding or newly recovered
+predecessors. The bounded context path now permits four total entries, still
+requiring the current entry last, exact known extents/order, already-matched
+auxiliary entries, and independent freshly linked byte/data proof for every body.
+Other processors and object-project builds retain their existing paths.

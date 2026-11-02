@@ -1832,7 +1832,7 @@ and proof of callback-table consumers remain planned, alongside the existing non
 and object-project audit adapter gaps.
 
 Source-preparation context recovery now includes actual small getters and bounded
-helper definition order. ROM-mode MIPS entries can retain up to two contiguous,
+helper definition order. ROM-mode MIPS entries can retain up to three contiguous,
 already-matched predecessor definitions as compiler context after independently
 rejudging every body. Matching-only entry extraction prevents duplicate exports;
 PROJECT builds continue using their own translation units and build judge. Other

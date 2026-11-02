@@ -40,7 +40,8 @@ def test_layout_or_identity_guess_never_authorizes_extra_bodies(monkeypatch,chan
     if change=='gap':found['second']=(4,40,40)
     if change=='different_section':found['second']=(5,36,40)
     if change=='not_last':found['first']=(4,900,36)
-    if change=='too_many':found['extra']=(4,892,8)
+    if change=='too_many':
+        found.update(extra=(4,892,8),another=(4,900,8))
     if change=='other_arch':proj['arch']='ppc'
     assert context.verified(net,proj,rows['entry'],b'object') is None
     assert calls==[]
@@ -51,3 +52,24 @@ def test_every_context_body_requires_exact_code_and_data(monkeypatch,failed):
     net,proj,rows,found,calls=setup(monkeypatch)
     monkeypatch.setattr(context.match,'link',lambda obj,name,*a:LinkResult(object(),name!=failed,[],{},linked_code=b'compiled'))
     assert context.verified(net,proj,rows['entry'],b'object') is None
+
+
+def test_three_real_predecessors_keep_the_same_individual_proof(monkeypatch):
+    net,proj,rows,found,calls=setup(monkeypatch)
+    rows['third']=dict(name='third',vram=0x8000104c,size=8,status='matched')
+    found['third']=(4,76,8)
+    found['entry']=(4,84,816)
+    rows['entry']['vram']=0x80001054
+    proof=context.verified(net,proj,rows['entry'],b'object')
+    assert proof['context_functions']==['first','second','third']
+    assert calls==['first','second','third','entry']
+
+
+def test_third_predecessor_cannot_be_unmatched(monkeypatch):
+    net,proj,rows,found,calls=setup(monkeypatch)
+    rows['third']=dict(name='third',vram=0x8000104c,size=8,status='open')
+    found['third']=(4,76,8)
+    found['entry']=(4,84,816)
+    rows['entry']['vram']=0x80001054
+    assert context.verified(net,proj,rows['entry'],b'object') is None
+    assert calls==[]
