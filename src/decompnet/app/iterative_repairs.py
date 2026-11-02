@@ -233,13 +233,21 @@ def output_key(report):
 
 
 def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees='', *, focused=True):
-    from . import draft_repairs, independent_address_repairs, normalization_repairs, stack_padding_repairs
+    from . import (
+        draft_repairs,
+        independent_address_repairs,
+        normalization_repairs,
+        stack_padding_repairs,
+        value_trace_repairs,
+    )
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
     independent=independent_address_repairs.variants(source,fn['name'],arch,report.get('rows') or [],header)
-    focused = independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
-    proposals = list(dict.fromkeys([text for _, text in focused]+proposals))
-    labels.update({text: family for family, text in focused})
+    operand_focused = independent + draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    proposals = list(dict.fromkeys([text for _, text in operand_focused]+proposals))
+    labels.update({text: family for family, text in operand_focused})
+    for family,text in value_trace_repairs.variants(source,fn['name'],report.get('value_trace'),report.get('rows'),header):
+        proposals.append(text);labels[text]=family
     for text in stack_padding_repairs.grow(source, fn['name'], arch, report.get('rows') or []):
         proposals.append(text)
         labels[text] = 'stack_padding'
@@ -252,12 +260,14 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     pools = [[p for p in proposals if labels[p]==family] for family in families]
     result = list(dict.fromkeys(p for row in zip_longest(*pools) for p in row if p is not None))
     tagged=[(labels[p],p) for p in result]
-    return first_difference.order(source,tagged,report.get('rows')) if focused else tagged
+    # Retain established operand-supported focus. Broad reordering needs held-out replay evidence.
+    use_focus=focused and bool(operand_focused or report.get('broad_focus_approved'))
+    return first_difference.order(source,tagged,report.get('rows')) if use_focus else tagged
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True):
-    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), fn['name'], fn['asm'],
+    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
     if result is None:
@@ -342,7 +352,9 @@ def _run(twins, slug, job):
         if getattr(job,'finish_near',False):finish_near.visited(net,proj,fn)
         header = net._context(proj['id'], fn['unit'])['header']
         settings = compiler_for(cfg, fn['vram'])
-        donor_signature=prototype_reuse.signature(net,proj,fn['best_source'])
+        from . import verified_unit_context
+        donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
+                         verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
         context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
@@ -352,11 +364,42 @@ def _run(twins, slug, job):
                          next=[], seen=[fn['best_source']], explore_plateaus=True)
         build_scope = candidate_scope.key(net, proj, fn)
         policy_profile = adaptive_repairs.profile(net, proj, fn)
+        from . import repair_promotion
+        broad_focus=repair_promotion.approved(net,policy_profile,'broad_first_difference')
         tries = [0]  # this function's own attempts: other threads are spending the job's at the same time
 
         def stopped():
             return (free_candidates.exhausted(job) or job.reuse_attempts >= limit or tries[0] >= PER_FUNCTION
                     or time.monotonic() >= deadline)
+
+        def initial_trace(source, report):
+            node=state['pending'][0] if state['pending'] else {}
+            trace=state.get('value_trace') or {}
+            if trace.get('source_sha256')==hashlib.sha256(source.encode()).hexdigest():
+                report['value_trace']=trace
+            from .permuter_focus import classify
+            # A baseline trace can direct the first repair, even when no prior edit improved.
+            if (not free_candidates.exhausted(job) and isinstance(report.get('score'),(int,float))
+                    and report['score']>0 and getattr(job,'finish_near',False) and not node.get('parent_source') and not state.get('initial_trace_attempted')
+                    and not report.get('matched') and classify(report.get('rows') or [])=='register'
+                    and tries[0]+2<=PER_FUNCTION and time.monotonic()+40<deadline):
+                with guard:
+                    reserved=job.reuse_attempts+2<=limit
+                    if reserved:job.reuse_attempts+=2
+                if reserved:
+                    from . import lifetime_diagnostics
+                    spent=[0]
+                    def trace_compile():spent[0]+=1
+                    state['initial_trace_attempted']=True
+                    try:
+                        state['value_trace']=lifetime_diagnostics.single(settings,header,source,fn['name'],on_compile=trace_compile)
+                    finally:
+                        tries[0]+=spent[0]
+                        with guard:job.reuse_attempts-=2-spent[0]
+                    state.setdefault('counts',{})['trace_compiles']=spent[0]
+                    report['value_trace']=state['value_trace']
+                    state['value_trace_rows']=report.get('rows') or []
+            return report
 
         def evaluate(source):
             # Only reuse reports under the full frozen input scope, never legacy partial keys.
@@ -365,7 +408,7 @@ def _run(twins, slug, job):
                 cached = net.store.one("SELECT feedback FROM reuse_trials WHERE function_id=? AND signature=? AND outcome='miss'",
                                        fn['id'], key)
                 if cached:
-                    return json.loads(cached['feedback'])
+                    return initial_trace(source,json.loads(cached['feedback']))
             key = similar_matches.trial_key(source, header, settings, fn, ['iterative-v2', build_scope, symbols])
             with guard:
                 job.reuse_attempts += 1
@@ -382,6 +425,7 @@ def _run(twins, slug, job):
                 (time.monotonic()-started)*1000, origin='iterative repairs', exact=bool(report.get('matched')))
             if report.get('matched') and state['pending'] and state['pending'][0].get('parent_source'):
                 expression_recipes.learn(net,recipe_profile,state['pending'][0]['parent_source'],source)
+            report=initial_trace(source,report)
             # At most one pair of optional phase captures per frozen function frontier.
             # Reserve their worst-case four compiler runs from this same phase budget.
             if (not state.get('lifetime_diagnostics_attempted') and not report.get('matched')
@@ -410,6 +454,11 @@ def _run(twins, slug, job):
                             job.reuse_attempts -= 4-spent[0]
                     state.setdefault('counts', {})['diagnostic_compiles'] = spent[0]
                     evidence = state['lifetime_diagnostics']
+                    after=evidence.get('after',{})
+                    if after.get('output_unchanged') and after.get('value_trace'):
+                        report['value_trace']=after['value_trace']
+                        state['value_trace']=after['value_trace']
+                        state['value_trace_rows']=report.get('rows') or []
                     note = evidence.get('comparison', {}).get('lead') or evidence.get('skipped') or 'No comparable allocation evidence.'
                     net.add_note(agent, slug, 'Optional compiler lifetime diagnostics: '+note,
                                  fn['name'])
@@ -430,6 +479,8 @@ def _run(twins, slug, job):
         def variants(source, report):
             from . import prototype_reuse
             shared = prototype_reuse.variants(net,proj,fn,source)
+            unit_candidates=verified_unit_context.variants(net,proj,fn,source)
+            report={**report,'broad_focus_approved':broad_focus}
             guided = address_repairs.variants(source, report, fn, bool(proj['big_endian']), known)
             if report.get('candidate_target'):
                 compiled = dict(target=bytes.fromhex(report['candidate_target']), relocs=report.get('candidate_relocs', '[]'))
@@ -444,7 +495,7 @@ def _run(twins, slug, job):
             learned = expression_recipes.variants(net, recipe_profile, source)
             pools = [shared, [('address_or_literal', s) for s in guided[:4]], targeted,
                      [('similar_repair', s) for s in similar_matches.repair_variants(source, report)[:4]],
-                     [('learned_expression', s) for s in learned[:2]]]
+                     [('learned_expression', s) for s in learned[:2]],unit_candidates]
             return repair_selection.Page(dict.fromkeys(item for group in zip_longest(*pools)
                                       for item in group if item is not None), more=getattr(targeted, 'more', False))
 

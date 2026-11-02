@@ -2049,6 +2049,46 @@ can spend more trials on source shapes with identical immediate output; this cor
 match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
 equal-value priorities fixed two integration test failures without dropping either family group.
 
+### 2 November: GCC def/use tracing, verified unit context and held-out gates
+
+Compiler: pinned native KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+Its real dumps expose stable instruction IDs within one compilation, `func.c` line notes, pseudo
+register definitions/uses, death/equality notes and a global register-dispositions table. These can
+join a value to a candidate physical register and source lines. Several values can reuse that
+register; neither a C name nor a target assembly address is established by that join. Complete dumps
+only, per-function selection and ordinary-output preservation are required. Traces are bounded at
+4 MiB input, 4096 flow instructions and 512 pseudo summaries, with source/header/profile invalidation.
+
+Initial register-only tracing now spends at most two reserved compiler runs in the explicit Finish
+near matches pass, even for a cached baseline. Six bounded combinations join proven existing source
+hypotheses on disjoint lines near trace evidence. They are trials, not semantic/register identity
+proofs; no result is adopted without the unchanged linked-byte/data judge.
+
+A small homemade pinned-GCC check recovered the exact ordinary function-object fingerprint by adding
+an actual same-unit `static inline` helper and initialized static-const scalar. The starting extern
+form differed. The transferred definitions use a private namespace to avoid shared-header/linkage
+collisions. This demonstrates that verified unit context can matter; it is **not a new retail match**
+or evidence for inventing definitions, private types, original helper line numbers or caller clobbers.
+
+Priority changes now require reviewed equal-budget training **and disjoint-target held-out** results:
+exact recovery or cheaper first exact in both splits, no total compile increase, score regression,
+lost recovery or unscored input. Timing differences and score-only gains do not qualify. New families
+remain available without a boost. Approval expires with profile/rules changes and cannot weaken the
+judge. The first broad-focus experiment recovered an older historical input at trial 56, compared
+with trial 35 in an earlier pre-focus revision. The current-main control also needs 56; that slowdown
+must not be attributed to value tracing. Broader ordering therefore remains gated, with established
+operand-supported priority retained and the explicit focus-disable flag honored.
+
+Equal-budget copied-input validation against main `302cb35`: five frozen inputs, 96 compiler slots
+and 120 search seconds per input. Both versions recovered historical cases at trials 56 and 1; three
+fresh unresolved scores stayed 10/15/15. Each used 345 candidate/diagnostic compiler runs (350 with
+normal baselines). Six diagnostic runs were charged inside those allowances, leaving 94 ordinary
+candidate trials for each traced unresolved input. Complete traces captured 21/60/137 values; two
+traced bundles ran on the smallest input without improving it. No new recovery, score improvement,
+regression or compile-count saving. The held-out promotion gate therefore remains closed. These
+five-input replays do not exercise donor-context transfer; that path has separate stale/conflict
+rejection tests and the pinned-GCC homemade context check above. No live project adoption occurred.
+
 ### Independent address materialization after near-miss triage
 
 A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
@@ -2117,3 +2157,10 @@ They are explicitly worker-reported, not host-rejudged failures, and never becom
 scores or automatically comparable replay inputs. Host verification of the successful candidate
 is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
 without a failed baseline continue to work.
+
+The same five inputs were replayed again after merging main `ccebd5b` (headless serving, ROM audit,
+independent address materialization and copy-shape repairs retained). Against that latest-main control,
+recoveries remain at 56/1 and unresolved scores at 10/15/15, with 350 total compiler invocations on
+both sides. No recovery was lost and no additional match or compile saving was demonstrated. The
+combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
+unapproved rather than treating the homemade context success as held-out game evidence.

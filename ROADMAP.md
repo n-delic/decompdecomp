@@ -1743,6 +1743,13 @@ The comparison action toggles to Stop while running. Its two determinate progres
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
 
+Finish near matches now has bounded, output-preserving native-GCC def/use traces and six-candidate
+traced bundles, plus verified same-unit private-helper/static-constant trials in its MIPS ROM adapter.
+Stored traces also feed local repair batches. Held-out replay approvals gate experimental adaptive
+boosts and broad focus promotion. Remaining: imported-unit verification/file-context adapters,
+non-native/non-GCC dump readers, full translation-unit/private-clobber context, initialized arrays and
+exact original physical helper-line provenance. These gaps do not permit guessed layouts or ABI types.
+
 - Target-backed independent-address materialization is available to MIPS ROM iterative
   search, local agent repairs and the bounded pre-permuter pass. Imported project builds
   need a build-owned alias/link adapter; other architectures need their address-pair
