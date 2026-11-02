@@ -279,6 +279,12 @@ def register(app: App) -> None:
         if data.get('action') == 'recheck-exact':
             from ..prepared_evidence import recheck_exact
             return {'job': jobs.start('prepared-bundles', lambda log: recheck_exact(net,proj,log,data.get('limit',20)))}
+        if data.get('action') == 'repair-export':
+            from ..export_source_recovery import run
+            names=data.get('functions',[])
+            if not isinstance(names,list) or not 1<=len(names)<=20 or not all(isinstance(n,str) for n in names):
+                raise ValueError('Choose between 1 and 20 matched functions for export repair.')
+            return {'job':jobs.start('export-source-recovery',lambda log:run(net,proj,names,State(),log))}
         if data.get('action') == 'try-pair':
             from ..prepared_evidence import try_pair
             return {'job': jobs.start('prepared-pair', lambda log: try_pair(net, proj, str(data.get('function','')),

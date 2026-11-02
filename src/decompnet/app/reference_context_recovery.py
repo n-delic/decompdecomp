@@ -1,0 +1,98 @@
+"""Private reference hypotheses before permutations; no guessed ABI or shared-header edits."""
+import re
+from collections import defaultdict
+
+from ..forks.csource import _blank, find
+from ..network import NetworkError
+from .source_next_steps import called
+
+ID=r'[A-Za-z_]\w*'
+
+
+def static_helpers(source, header, reference):
+    """Try actual same-file static definitions with their original physical line numbers."""
+    from .cpu_source_context import declarations
+    from .source_match_context import macro_context
+    selected=[];used=called(source);seen=set()
+    for _ in range(4):
+        pending=sorted(used-seen);seen.update(pending)
+        for name in pending:
+            span=find(reference,name)
+            if not span or find(header,name):continue
+            code=reference[span[0]:span[1]]
+            head=_blank(code).split('{',1)[0]
+            if not re.search(r'\bstatic\b',head) or ';' in head or len(code)>16000:continue
+            if len(selected)>=4:return []
+            selected.append((name,code,reference[:span[0]].count('\n')+1))
+            used.update(called(code)-{name})
+    if not selected:return []
+    private=header
+    for name,_,_ in selected:
+        # A stale external prototype conflicts with the real static definition.
+        pattern=r'(?m)^[ \t]*(?:(?:extern|static|inline)\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\([^(){};]*\)\s*;'
+        private=re.sub(pattern,lambda m:'\n'*m[0].count('\n'),private)
+    bodies='\n'.join(code for _,code,_ in selected)
+    private+=macro_context(reference,bodies,private)
+    for name,code,_ in selected:
+        declaration=declarations(code,{name}).get(name)
+        if not declaration:return []
+        private+='\nstatic '+declaration+'\n'
+    for _,code,line in selected:
+        private+=f'\n#line {line} "reference-static.c"\n'+code+'\n'
+    return [('cpu-reference-static-helpers',source,private)]
+
+
+def configurations(reader, cfg, mapping, aliases, fallback, prepare):
+    """One boolean source switch at a time, only if it reveals additional real calls."""
+    from .source_conditions import select
+    raw=reader.file(reader.root/mapping[2]);result=[]
+    guards=set(re.findall(r'(?m)^\s*#\s*(?:if|ifdef|ifndef)\s+('+ID+r')\s*$',_blank(raw)))
+    definitions=dict(re.findall(r'(?m)^\s*#\s*define\s+('+ID+r')\s+([01])\s*$',_blank(raw)))
+    try:baseline=prepare(reader,cfg,mapping,aliases,fallback)
+    except NetworkError:return []
+    for name in sorted(guards & definitions.keys()-reader.overrides.keys()):
+        value=str(1-int(definitions[name]))
+        overrides={**reader.overrides,name:value}
+        selected,_=select(raw,{},overrides)
+        span=find(selected,mapping[1])
+        if not span or not (called(selected[span[0]:span[1]])-{mapping[1]}):continue
+        # Use a private reader. Never mutate configured overrides, even on failure.
+        from .source_preparation import Reader
+        private=Reader({**cfg,'overrides':'\n'.join(k+' = '+v for k,v in overrides.items())})
+        try:pair=prepare(private,cfg,mapping,aliases,fallback)
+        except NetworkError:continue
+        if len(called(pair[0]))<=len(called(baseline[0])):continue
+        result.append(('cpu-reference-config-'+name,pair[0],pair[1]))
+        if len(result)>=2:break
+    return result
+
+
+def binding_variants(source, header, asm, references):
+    """Consensus from independent exact neighbours, anchored by target symbol operands."""
+    pattern=r'(?m)^\s*#define\s+('+ID+r')\s+(func_[0-9A-Fa-f]{8})\s*$'
+    votes=defaultdict(set);values=defaultdict(set)
+    for identity,text in references:
+        for name,target in re.findall(pattern,_blank(text)):
+            votes[name,target].add(identity);values[name].add(target)
+    used=set(re.findall(ID,_blank(source)));targets=set(re.findall(r'\bfunc_[0-9A-Fa-f]{8}\b',asm))
+    edits=[]
+    for match in re.finditer(pattern,_blank(header)):
+        name,old=match.groups()
+        if name not in used or len(values[name])!=1:continue
+        target=next(iter(values[name]))
+        if old==target or target not in targets or len(votes[name,target])<2:continue
+        edits.append((match.start(2),match.end(2),target))
+    if not 0<len(edits)<=4:return []
+    private=header
+    for a,b,target in reversed(edits):private=private[:a]+target+private[b:]
+    return [('cpu-verified-callback-bindings',source,private)]
+
+
+def neighbours(net, proj, fn, source, header):
+    """Bounded exact evidence lookup; conflicting identities remain a manual review."""
+    if not net.store.one("SELECT 1 FROM sqlite_master WHERE name='verified_matches'"):return []
+    rows=net.store.all("SELECT f.id,v.header FROM functions f JOIN verified_matches v ON v.function_id=f.id "
+                       "WHERE f.project_id=? AND f.status='matched' AND f.best_score=0 AND v.source=f.matched_source "
+                       "AND f.vram BETWEEN ? AND ? ORDER BY ABS(f.vram-?) LIMIT 16",
+                       proj['id'],fn['vram']-65536,fn['vram']+65536,fn['vram'])
+    return binding_variants(source,header,fn['asm'] or '',[(r['id'],r['header']) for r in rows if len(r['header'])<=1024*1024])

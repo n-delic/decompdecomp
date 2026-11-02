@@ -205,3 +205,18 @@ the explicit fresh action is `recheck-review`. Old exact bundles are listed befo
 Mapped preparation may also try up to two private headers captured from nearby exact functions when a
 record type and target call overlap. It uses same-project verified snapshots, not a mutable shared header.
 These remain ordinary candidates within the existing pass budget; type-name similarity is not a match.
+
+
+### CPU context and export recovery
+
+A local source preparation pass tries actual static helpers with original line numbers, private boolean source
+switches, include prototypes (including pointer returns and aggregate arguments), and consensus callback bindings
+from exact neighbours. Explicit source overrides always win. Failed source/header/profile trials remain cached.
+
+For an exact ROM function blocked by constant-pool placement, open source preparation, enter up to 20 matched
+function names, and choose **Repair export constant pools**. The API equivalent is POST
+`/api/source-preparation` with `slug`, `action: "repair-export"`, and `functions: ["func_80001000"]`. Follow the returned
+job. The bounded pass reads existing target constants, tries private scalar-reference alternatives, and keeps a
+rewrite only if linked bytes/data and export layout pass again. Coverage and readability do not increase.
+Retry repository sync afterwards: its complete original-image build is the final gate. Ambiguous pool values or
+unsupported arithmetic remain manual work. This pass needs the updated app; it does not restart an installed one.

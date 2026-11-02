@@ -1548,3 +1548,31 @@ Four private linked-byte/data replays reproduced known matches: commented calls 
 4088), missing float prototype (3024), timer field order (20), and the measured terminal branch
 (1680), each to exact. The terminal-branch replay uses explicit byte offsets, not inferred field
 names. These tests leave the live project untouched and keep game source/evidence outside Git.
+
+## Preserve source context before random trials
+
+IDO 5.3 with `-mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`:
+
+- At `-O3`, an actual static sorting helper with its original physical line directive recovered an exact function;
+  including the same helper at a different line still scored 660. Automatic preparation now tries bounded
+  same-file static definitions, retaining bodies and physical lines, without inferring implementations.
+- A mismapped pair of callback addresses left score 40 at `-O3`; verified callback identities recovered exact
+  code. Automatic hypotheses require two independent exact-neighbour contexts to agree and the replacement
+  symbol to appear in target operands. Consensus is a hypothesis, never identity proof.
+- At `-O2`, a real include prototype with a float argument removed implicit double promotion (score 650 to 10);
+  the correct function binding then recovered exact code. Preserve pointer returns and aggregate parameters too.
+  Preparation tries include declarations even when an explicit flattened header already has a conflicting ABI.
+- A disabled original boolean configuration hid a cinematic path. Private boolean alternatives are bounded to
+  switches actually defined in the mapped file and must reveal extra calls; explicit user overrides are retained.
+- At `-O2`, exact code with separated constant pools failed standalone export. Referencing all existing constants
+  changed scheduling (score 330); retaining one generated pool recovered exact code and a complete original
+  cartridge rebuild. Scalar repair uses labelled target floating loads, unique ROM-value matches, bounded numeric
+  arithmetic, and all/keep-one alternatives. Ambiguous equal-value addresses require human review.
+
+Evidence: the above are manually recovered original-source cases. The new automatic generators have synthetic
+regression coverage; their presence does not establish that they reproduce every original case. Export repair
+claims each exact function, recompiles and checks linked bytes, data and export layout, then publishes through
+normal attempt recording with a stale-input guard. It preserves coverage/readability and still requires a full
+repository rebuild. Unchanged failed trials are cached. Private context and export repair are ROM-only; imported
+builds retain their own headers and need an adapter. Target scalar-load reading currently supports MIPS;
+other processors need a connector reader. No game data belongs in regression fixtures.
