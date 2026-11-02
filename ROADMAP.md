@@ -1824,3 +1824,13 @@ config `audit_data_mappings` or exported manifest `data_mappings`.
 Planned: PIC/relative and 64-bit tables, other guard idioms, inter-block dominance and
 alias propagation, runtime callback reachability, overlay-bank-aware mapping identity,
 non-MIPS/object audit adapters and explicit reviewed target adoption.
+
+### Evidence-led iterative combinations
+
+- Done: bounded MIPS pairing of measured non-improving local edits, sharing existing iterative phase
+  budgets, persistent candidate state, cancellation and the ordinary match judge.
+- Done: equal-score measured-output reservation within the existing beam and equivalent-output caps.
+- Done: source-free residual diagnosis and explicit pairs/output-diversity ablation switches in frozen
+  replay, plus recovered-case and first-exact compile-cost comparisons.
+- Planned: independent-target evidence of additional retail recoveries before approving learned
+  priority boosts; broader local grammars and other architecture adapters need separate validation.
