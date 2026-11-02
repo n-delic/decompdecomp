@@ -73,3 +73,22 @@ def text(rows, arch=None):
     if d['scheduling']:
         hints.append('same displayed instruction multiset, different order; try dependency-safe initialization order')
     return 'Allocation clues (advisory): '+'; '.join(hints)+'.' if hints else ''
+
+
+def plan(rows, arch=None):
+    """Small evidence record for agents/replays; categories do not establish a compiler cause."""
+    d=diagnose(rows,arch)
+    if d['register_only']:
+        category='allocation';families=['allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
+    elif d['scheduling'] or d['allocation_schedule']:
+        category='scheduling';families=['initialization_cluster','paired_operand_reuse','affine_counter_guard']
+    elif d['spill_offsets'] or d['target_frame']!=d['candidate_frame']:
+        category='stack';families=['spill_normalization','local_declaration_order','stack_padding']
+    else:
+        category=permuter_focus.classify(rows);families=[]
+    first=next((i+1 for i,r in enumerate(permuter_focus.normalized(rows)) if r[0]!=' '),None)
+    return dict(category=category,first_difference_row=first,changed_rows=d['differences'],
+                target_instructions=d['target_instructions'],candidate_instructions=d['candidate_instructions'],
+                target_frame=d['target_frame'],candidate_frame=d['candidate_frame'],families=families,
+                context='Header/prototype correctness cannot be inferred from assembly rows.',
+                verdict='Advisory; register substitution is not permission to rename assembly registers.')

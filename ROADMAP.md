@@ -1806,3 +1806,14 @@ show their register/address; constant-mapping export errors show missing ranges 
 sizes. Portable audit-review history, reviewed adoption, bounded switch-table closure,
 and proof of callback-table consumers remain planned, alongside the existing non-MIPS
 and object-project audit adapter gaps.
+
+
+### Evidence-led iterative combinations
+
+- Done: bounded MIPS pairing of measured non-improving local edits, sharing existing iterative phase
+  budgets, persistent candidate state, cancellation and the ordinary match judge.
+- Done: equal-score measured-output reservation within the existing beam and equivalent-output caps.
+- Done: source-free residual diagnosis and explicit pairs/output-diversity ablation switches in frozen
+  replay, plus recovered-case and first-exact compile-cost comparisons.
+- Planned: independent-target evidence of additional retail recoveries before approving learned
+  priority boosts; broader local grammars and other architecture adapters need separate validation.

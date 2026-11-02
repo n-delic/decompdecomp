@@ -4,14 +4,15 @@ import time
 from collections import Counter
 from itertools import zip_longest
 
-from . import iterative_repairs, repair_selection
+from . import allocation_evidence, iterative_repairs, repair_selection
 
 
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,
-        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None):
+        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True):
     """Measure rediscovery effort, including failures; evaluator must supply its exact control verdict."""
+    if type(paired_search)!=bool or type(output_diversity)!=bool:raise ValueError('Search ablations must be boolean.')
     started = time.monotonic()
-    state = dict(pending=[dict(source=source, depth=0, ceiling=baseline_score)], next=[], seen=[source], explore_plateaus=True)
+    state = dict(pending=[dict(source=source, depth=0, ceiling=baseline_score)], next=[], seen=[source], explore_plateaus=True, paired_search=paired_search,output_diversity=output_diversity)
     results = []
     check_cancel()
     baseline = evaluate(source)
@@ -58,7 +59,9 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'exact_alternatives': len(state.get('exact', [])), 'winning_path': state.get('winning_path'),
             'search_counts': state.get('counts', {}), 'regional_combination_bursts':state.get('regional_bursts',0),
             'productive_followups':state.get('productive_bursts',0), 'allocation_followups':state.get('allocation_bursts',0),
-            'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[]))}
+            'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[])), 'paired_proposals':state.get('paired_trials',0), 'paired_evaluations':state.get('counts',{}).get('paired_evaluations',0),
+            'search_policy':dict(paired_search=paired_search,output_diversity=output_diversity),
+            'residual_diagnosis':allocation_evidence.plan(baseline.get('rows'),arch)}
 
 
 def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lambda: None, generate_report=False):
@@ -108,6 +111,12 @@ def compare(before, after):
                           before_seconds=old['elapsed_seconds'], after_seconds=new['elapsed_seconds']))
     scored = [r for r in cases if isinstance(r['before_best'], (int, float)) and isinstance(r['after_best'], (int, float))]
     return dict(cases=cases, unscored_cases=len(cases)-len(scored),
+                before_recovered_cases=sum(r['before_exact'] is not None for r in cases),
+                after_recovered_cases=sum(r['after_exact'] is not None for r in cases),
+                before_candidate_compiles=sum(r['before_compiles'] for r in cases),
+                after_candidate_compiles=sum(r['after_compiles'] for r in cases),
+                shared_recovery_compile_saving=sum(r['before_exact']-r['after_exact'] for r in cases
+                                                  if r['before_exact'] is not None and r['after_exact'] is not None),
                 score_improvements=sum(r['after_best'] < r['before_best'] for r in scored),
                 score_regressions=sum(r['after_best'] > r['before_best'] for r in scored), newly_recovered=sum(r['before_exact'] is None and r['after_exact'] is not None for r in cases),
                 lost_recoveries=sum(r['before_exact'] is not None and r['after_exact'] is None for r in cases),

@@ -321,3 +321,11 @@ has a block-local slot pointer. Splitting its pointer and index into typed local
 a one-shot scope recovered one 52-instruction KMC `-O2 -g3` case exactly. The split alone
 made that case worse: test the combined shape before discarding this lifetime hypothesis.
 The rule is bounded and retains the normal exact judge; it is not a general register fix.
+
+
+For a tiny register-only residual with identical instruction forms and frame, try existing
+`allocation_schedule_bridge` then `pointer_index_scope` before broad type/flag sweeps. This sequence
+recovers one frozen control in four trials on current main; it is not a universal recipe. Retain
+measured equal-score outputs, since different allocation shapes may enable the next repair. Small
+independent lifetime edits can also be paired within the iterative budget; the linked judge remains
+mandatory. If a register is reused across the function, a global rename map cannot identify a C value.
