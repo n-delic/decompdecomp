@@ -219,3 +219,14 @@ both all-shared and all-local forms. `branch_pointer_declarations` follows these
 plain declaration swaps; one private replay recovered the existing exact output on proposal 17. The shared
 frontier and failed-trial cache retain alternate shapes and avoid repeating unchanged proposals. Candidates
 still require the ordinary judge; matching one compiler output does not prove original source spelling.
+
+For a register-only miss with already-correct instruction structure, inspect allocation
+priority as well as interference. In one verified case, small nested single-execution
+`do { ... } while (0)` scopes changed loop-depth-weighted reference counts and recovered
+register choices. Placement also changed scheduling and introduced a copy, so scopes
+alone were insufficient. Restoring a coordinate from an existing equal saved value kept
+that value live after a conditional call and removed the final copy. Prove the equality
+on every path; preserve evaluation/call count, wrapping and object lifetimes. Never add
+such scopes around control transfers whose targets would change. This is a bounded
+KMC-specific hypothesis, not evidence that the original game used those wrappers.
+See the 2 November one-shot-scope case in `docs/COMPILER_MATCHING_LEARNINGS.md`.
