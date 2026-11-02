@@ -19,6 +19,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import threading
 import time
 from collections import defaultdict
@@ -26,20 +27,8 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
-from ..forks import (
-    convention,
-    csource,
-    datadiff,
-    drafts,
-    dtksplits,
-    ghidra,
-    ltcg,
-    methods,
-    objdiff,
-    standins,
-    unresolved,
-)
+from .. import arch, classes, consoles, similarity, structs, toolchains
+from ..forks import convention, csource, datadiff, drafts, dtksplits, ghidra, methods, objdiff, standins, unresolved
 from ..forks.objdiff import MappingConflict, ObjdiffError
 from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, ForkProject, project_macro
 from ..hostenv import NO_WINDOW
@@ -70,6 +59,7 @@ def _path_glob(glob: str) -> str:
     return re.sub(r"\*\*(?=[^/])", "**/*", glob)
 
 
+_HARNESS_ENTRY = re.compile(r'^[ \t]*extern[ \t]+"C"[^\n;]*\bHarnessEntry[ \t]*\(', re.M)  # tools/ltcg.py's ENTRY
 _CHEAT = re.compile(r"\b(__asm__|__asm|asm|_asm)\b|INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA|\.incbin|#\s*include\s*[\"<][^\">]*\.(s|S|asm|bin|inc\.c)[\">]")
 
 
@@ -347,6 +337,39 @@ _ASM_KEYS = ("asm_twin", "asm_code")  # meta saying a function is hand-written a
 _KEPT_KEYS = (*_ASM_KEYS, "not_c", "reopened")
 _ASM_DEF = re.compile(r"\s*(?:(?:static|inline|extern)\s+)*asm\b")
 _MSVC_C = re.compile(r"[_@]([A-Za-z_]\w*?)(?:@\d+)?")  # how MSVC decorates a C function's name (PC, Xbox)
+_FUNC_ADDRESS = re.compile(r"(?<![0-9A-Za-z])func_([0-9A-Fa-f]{8})(?![0-9A-Fa-f])")
+
+
+def _address(meta: dict, fn) -> int | None:
+    """The original's address of a function: a PC or Xbox project's symbol says it (`_func_0001A8F0@4`), else the
+    report's virtual address."""
+    if (m := _FUNC_ADDRESS.search(meta.get("symbol") or fn["name"])):
+        return int(m.group(1), 16)
+    try:
+        vram = fn["vram"]
+    except (IndexError, KeyError):
+        return None
+    return int(vram) if vram else None
+
+
+_DECORATED = re.compile(r"([_@])func_([0-9A-Fa-f]{8})(?:@(\d+))?")
+
+
+def _naming_hint(meta: dict, fn) -> str:
+    """How to write a PC or Xbox function (`_func_000115D0@8`) so the build pairs it with the original, or ''."""
+    m = _DECORATED.fullmatch(meta.get("symbol") or fn["name"])
+    if m is None:
+        return ""
+    name, pops = f"func_{m.group(2).upper()}", m.group(3)
+    how = ("__cdecl (the caller pops the arguments)" if m.group(1) == "_" and pops is None else
+           f"__stdcall, popping {pops} bytes of arguments (`ret {pops}`), or a class's method (__thiscall: `this` in "
+           f"ecx, then {pops} bytes of arguments)" if m.group(1) == "_" else
+           f"__fastcall (first two arguments in ecx and edx, {pops} bytes in all), or a method")
+    return (f"Naming: the original's symbol is {m.group(0)}: {how}. Name it {name}, as a free function with that "
+            f"convention or as a method (`int Shape::{name}(...)`): the build gives either the original's symbol. A "
+            f"real name works too with `// FUNCTION: 0x{m.group(2).upper()}` on the line before the definition.")
+
+
 # a source file that includes another source file: Mario Party 6's REL runtime.c files are one line,
 # #include "src/Runtime.PPCEABI.H/runtime.c" (its asm helpers, which every module links a copy of)
 _SOURCE_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+\.(?:c|cc|cp|cpp))"', re.M)
@@ -439,6 +462,68 @@ def _data_symbols(target: Path | None) -> set[str]:
 
 _QUOTED_INCLUDE = re.compile(r'^\s*#\s*include\s*"([^"]+)"', re.M)
 MAX_HEADERS = 64  # headers permuter_header follows from one file
+# a definition a macro writes without a body, on its own line: `HEADER_INLINE(bool C::Post(int a, bool b))`,
+# `HEADER_INLINE(float CVec4::GetX() const)`
+_BODILESS = re.compile(r"[ \t]*[A-Z_][A-Z0-9_]*[ \t]*\(([^()]*\(.*)\)[ \t]*;?[ \t]*")
+
+
+def _params(code: str, name: str) -> str:
+    """The parameter list after `name` in a declaration or definition, its spacing evened out: overloads apart."""
+    at = code.find("(", code.find(name.rsplit("::", 1)[-1]))
+    depth, k = 0, at
+    while 0 <= k < len(code):
+        depth += (code[k] == "(") - (code[k] == ")")
+        k += 1
+        if depth == 0:
+            break
+    return re.sub(r"\s+", " ", code[at:k]).replace("( ", "(").replace(" )", ")").replace(" ,", ",")
+
+
+def _inline_span(text: str, defined: str, decl: str) -> tuple[int, int] | None:
+    """Where a header defines `defined` (`C::Post`, `Clamp`) with a body: written out (`inline bool C::Post(...)
+    {`), or a method inside its class's body (`float GetX() const { return x; }`). Of overloads, the one whose
+    parameters are the marker's `decl`'s; else the first."""
+    def best(chunk: str, name: str, base: int) -> tuple[int, int] | None:
+        found, at = [], 0
+        while (span := csource.find(chunk[at:], name)) is not None and "{" in chunk[at + span[0]:at + span[1]]:
+            found.append((base + at + span[0], base + at + span[1]))
+            at += span[1]
+        want = _params(decl, defined)
+        return next((s for s in found if _params(text[s[0]:s[1]], name) == want), found[0] if found else None)
+
+    if (span := best(text, defined, 0)) is not None or "::" not in defined:
+        return span
+    owner, method = defined.rsplit("::", 1)
+    clean = csource._blank(text)
+    attrs = r"(?:__declspec\s*\((?:[^()]|\([^()]*\))*\)\s*)*"  # struct __declspec(align(16)) CVec4
+    for m in re.finditer(rf"\b(?:struct|class)\s+{attrs}{re.escape(owner.split('::')[-1])}\b[^;{{]*\{{", clean):
+        start, end = m.end(), csource._block_end(clean, m.end() - 1)
+        if (span := best(text[start:end], method, start)) is not None:
+            return span
+    return None
+
+
+def _inline_marker(text: str, names: list[str]) -> str | None:
+    """The declaration in a body-less marker for one of `names` (ForkEngine._names): under the `// FUNCTION: 0x<addr>`
+    annotation (before the next one) for an address_key, else the marker whose declaration names the function."""
+    for name in names:
+        if name.startswith(csource.ADDRESS_KEY):
+            addr = int(name[len(csource.ADDRESS_KEY):], 16)
+            found = list(csource._ANNOTATION.finditer(text))
+            for n, m in enumerate(found):
+                if int(m.group(1), 16) == addr:
+                    block = text[m.end():found[n + 1].start() if n + 1 < len(found) else len(text)]
+                    for line in block.splitlines():
+                        if (b := _BODILESS.fullmatch(line)) is not None:
+                            return b.group(1)
+            continue
+        for line in text.splitlines():
+            # (an operator's name is its whole demangled declaration: `public: struct CVec4 __thiscall
+            # CVec4::operator+=`)
+            if (b := _BODILESS.fullmatch(line)) is not None and \
+                    csource.defined_name(b.group(1), (0, len(b.group(1)))) in (name, name.rsplit(" ", 1)[-1]):
+                return b.group(1)
+    return None
 
 
 def _without_bodies(text: str) -> str:
@@ -637,7 +722,19 @@ class ForkEngine:
 
     def _build_units(self, proj, fp: ForkProject, units: list) -> list[tuple[bool, str]]:
         with self._build_locks[proj["id"]]:  # (and nothing changes the build's files meanwhile)
-            return fp.build_units(units)
+            results = fp.build_units(units)
+            if (fp.manifest or {}).get("created") == "from scratch" and \
+                    any(not ok and "unknown target" in log for ok, log in results):
+                # the build has no rule for it: configure stopped (a driver it can't read, say). Say why
+                why = ""
+                for cmd in (fp.manifest or {}).get("setup", [])[:1]:
+                    done, out = fp.run([sys.executable if cmd[0] == "python" else cmd[0], *cmd[1:]],
+                                       log=lambda *_: None)
+                    if not done:
+                        why = "\nconfigure (tools/configure.py) failed, so the build has no rule for this unit:\n" + \
+                            out[-2000:]
+                results = [(ok, log + why if not ok and "unknown target" in log else log) for ok, log in results]
+            return results
 
     def _build_all(self, proj, fp: ForkProject, failed: list[str] | None = None) -> tuple[bool, str]:
         with self._build_locks[proj["id"]]:
@@ -669,6 +766,18 @@ class ForkEngine:
                     hit = self._scores.get(key)
                     if self._build_unit(proj, fp, unit)[0] and hit and unit.base is not None and unit.base.exists():
                         self._scores[key] = (hit[0], unit.base.stat().st_mtime_ns, hit[2])
+
+    def _release_stuck(self, proj, fn, agent: Agent, unit: str, log: str) -> str:
+        """The unit doesn't build whatever this agent sends (its file, or its harness link, is broken): the agent's
+        claim on the function goes, with a note saying why, so the scheduler doesn't count a function nobody can
+        progress as taken. Returns what to tell the agent."""
+        first = next((ln.strip() for ln in log.splitlines() if re.search(r"\berror\b|FAILED", ln)), "")[:300]
+        with self.net.store.tx() as db:
+            db.execute("DELETE FROM claims WHERE function_id=? AND agent_id=?", (fn["id"], agent.id))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
+                       (proj["id"], fn["id"], agent.id, f"{unit} didn't build before this change either, so it was "
+                        f"left for now: {first or 'see the build log'}", time.time()))
+        return f"\n(Your claim on {fn['name']} was released with a note: the unit has to build again first.)"
 
     def _keep_scores(self, proj, unit, text: str, scores: dict) -> None:
         mtime = unit.base.stat().st_mtime_ns if unit.base is not None and unit.base.exists() else None
@@ -878,7 +987,8 @@ class ForkEngine:
 
     def check_rom(self, slug: str, log=print) -> dict:
         """A game started from scratch: rebuild its program and compare it with the user's copy (its console's
-        check_rebuild); what it says is kept in the project's .decomp.wtf.json and shown on the project."""
+        check_rebuild; PC and Xbox: the project's `ninja export`); what it says is kept in the project's
+        .decomp.wtf.json and shown on the project."""
         proj, fp, cfg = self.get(slug)
         manifest = fp.manifest or {}
         console = consoles.get(manifest.get("platform"))
@@ -1757,9 +1867,10 @@ class ForkEngine:
         checks = consoles.REBUILD_CHECK in console.features
         with self._tree(proj).exclusive(), self._build_locks[proj["id"]]:
             # read under the lock: eight polishing helpers renamed at once, each wrote back files it had read before
-            # the others' renames, and half of an Xbox game's renames were undone in some files and not others
-            files = sorted(p for d in ("src", "include") if (fp.root / d).is_dir() for p in (fp.root / d).rglob("*")
-                           if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
+            # the others' renames, and half of an Xbox game's renames were undone in some files and not others.
+            # (harness/: an LTCG unit's driver and stand-ins call its functions and read its globals by name)
+            files = sorted(p for d in ("src", "include", "harness") if (fp.root / d).is_dir()
+                           for p in (fp.root / d).rglob("*") if p.is_file() and p.suffix in self.SOURCE_SUFFIXES)
             texts = {p: p.read_text(errors="replace", encoding="utf-8") for p in files}
             if any(taken.search(t) for t in texts.values()):
                 raise NetworkError(f"{new} is used in the project already: pick another name")
@@ -1957,8 +2068,9 @@ class ForkEngine:
         if not unit.source or not (fp.root / unit.source).exists():
             return None
         names = self._names(self._meta(fn), fn)
-        todo, seen = [fp.root / unit.source], set()
-        while todo and len(seen) < 6:
+        todo, seen = [fp.root / r for r in fp.unit_files(unit)], set()  # (the files an LTCG unit is split over)
+        limit = 6 + len(todo)
+        while todo and len(seen) < limit:
             path = todo.pop(0)
             if path in seen:
                 continue
@@ -1972,6 +2084,52 @@ class ForkEngine:
                 return text[csource.comment_above(text, span[0]) if comment else span[0]:span[1]]
             for inc in _SOURCE_INCLUDE.findall(text):
                 todo += [p for p in (fp.root / inc, fp.root / "src" / inc, path.parent / inc) if p.is_file()][:1]
+        return None
+
+    def inline_definition(self, fp: ForkProject, fn) -> tuple[str, str] | None:
+        """(header, definition with the comment above it) of a function whose body is an inline in a header: its
+        unit's file has only a marker under the function's annotation (`HEADER_INLINE(bool C::Post(int a))`, a macro
+        that expands to nothing), so the out-of-line copy the linker kept can be matched to the original. None for
+        any other function. Polishing rewrites it there: written into the unit's file, every rewrite defined it twice
+        and failed to compile (174 times on an Xbox game)."""
+        if self._current_source(fp, fn) is not None:
+            return None
+        names = self._names(self._meta(fn), fn)
+        try:
+            unit, decl, seen = fp.unit(fn["unit"]), None, set()
+        except ForkError:  # a unit the project's objdiff.json no longer has: nothing to find
+            return None
+        texts = []
+        for rel in fp.unit_files(unit):
+            try:
+                texts.append((fp.root / rel, (fp.root / rel).read_text(errors="replace", encoding="utf-8")))
+            except OSError:
+                continue
+        for _, text in texts:
+            decl = decl or _inline_marker(text, names)
+        defined = decl and csource.defined_name(decl, (0, len(decl)))
+        if not defined:
+            return None
+
+        def look(text: str, folder: Path) -> tuple[str, str] | None:  # the headers `text` includes, depth first
+            for name in _QUOTED_INCLUDE.findall(text):
+                for base in (fp.root / "include", folder, fp.root / "src", fp.root):
+                    h = (base / name).resolve()
+                    if not h.is_file():
+                        continue
+                    if h not in seen and len(seen) < MAX_HEADERS and h.is_relative_to(fp.root.resolve()):
+                        seen.add(h)
+                        own = h.read_text(errors="replace", encoding="utf-8")
+                        if (span := _inline_span(own, defined, decl)) is not None:
+                            return (h.relative_to(fp.root.resolve()).as_posix(),
+                                    own[csource.comment_above(own, span[0]):span[1]])
+                        if (found := look(own, h.parent)) is not None:
+                            return found
+                    break
+            return None
+        for path, text in texts:
+            if (found := look(text, path.parent)) is not None:
+                return found
         return None
 
     def twin_source(self, proj, a, b, names: dict[str, str], includes: bool = False, theirs=None) -> str | None:
@@ -2169,9 +2327,15 @@ class ForkEngine:
 
     @staticmethod
     def _names(meta: dict, fn) -> list[str]:
-        """Ways the function may be spelled in source: its real name (a PC game's, Console.real_names), full C++
-        name, Class::method, then the plain symbol."""
-        out = [meta["real"]] if meta.get("real") else []
+        """Ways the function may be spelled in source: its `// FUNCTION: 0x<address>` annotation when the address is
+        known (decompilations of PC and Xbox games give functions real names, `CAIBehaviour::Update`, and say which
+        original function each is that way), its real name (a PC game's, Console.real_names), full C++ name,
+        Class::method, then the plain symbol."""
+        out = []
+        if (addr := _address(meta, fn)) is not None:
+            out.append(csource.address_key(addr))
+        if meta.get("real"):
+            out.append(meta["real"])
         dem = (meta.get("demangled") or "").split("(", 1)[0].strip()
         if dem:
             dem = dem.split(" ")[-1] if " " in dem and "operator" not in dem else dem
@@ -2234,6 +2398,34 @@ class ForkEngine:
             return None
         return csource.hidden_by(text, at, fp.never_defined(names))
 
+    def _home(self, fp: ForkProject, unit, names: list[str]) -> tuple[str, str]:
+        """(file, its text): the unit's file that defines one of `names` now, else its source file. An LTCG unit's code
+        can be split over files (ForkProject.unit_files); a function is rewritten where it is, never defined twice."""
+        texts = []
+        for rel in fp.unit_files(unit):
+            try:
+                text = (fp.root / rel).read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                text = ""
+            if self._find(text, names)[1]:
+                return rel, text
+            texts.append(text)
+        return unit.source, texts[0] if texts else ""
+
+    @staticmethod
+    def _unit_text(fp: ForkProject, unit, rel: str | None = None, text: str | None = None) -> str:
+        """All of a unit's files' text (unit_files), with `rel`'s replaced by `text`: what to look for its functions in."""
+        out = []
+        for r in fp.unit_files(unit):
+            if r == rel and text is not None:
+                out.append(text)
+                continue
+            try:
+                out.append((fp.root / r).read_text(errors="replace", encoding="utf-8"))
+            except OSError:
+                pass
+        return "\n".join(out)
+
     def _held(self, proj, unit: str, text: str | None = None) -> set[str]:
         """Functions of a unit whose source is still the very text judged to load the wrong constants: objdiff's
         progress rules count them, decompdecomp doesn't (see forks/literals.py)."""
@@ -2243,8 +2435,8 @@ class ForkEngine:
             return set()
         if text is None:
             try:
-                u = ForkProject(Path(proj["root"])).unit(unit)
-                text = (Path(proj["root"]) / u.source).read_text(errors="replace", encoding="utf-8") if u.source else ""
+                fp = ForkProject(Path(proj["root"]))
+                text = self._unit_text(fp, fp.unit(unit))
             except (ForkError, OSError):
                 return set()
         out = set()
@@ -2288,140 +2480,6 @@ class ForkEngine:
             return note + "."
         return (note + ":\n" + "\n".join(f"- {p}" for p in said[:4]) + "\nIf a helper sits between the function's "
                 "`// FUNCTION:` annotation and its definition, move the helper above the annotation (edit_file).")
-
-    def _program(self, fp: ForkProject):
-        """The original program and its functions, for a project built with link-time code generation (None: not
-        one, or it can't be read: a heuristic never stands between an agent and the function)."""
-        manifest = fp.manifest or {}
-        if not manifest.get("ltcg"):
-            return None
-        try:
-            return convention.load(fp.root, manifest)
-        except (OSError, KeyError, ValueError, ForkError):
-            return None
-
-    def _ltcg_brief(self, fp: ForkProject, meta: dict, fn, unit) -> list[str]:
-        """For a brief, in an LTCG project (forks/ltcg.py): how the original passes the function its arguments
-        (forks/convention.py), which the driver and stand-ins in harness/ must reproduce, and whether this unit's
-        compile already goes through a harness."""
-        if (prog := self._program(fp)) is None:
-            return []
-        try:
-            addr = prog.find(meta.get("symbol") or fn["name"])
-            found = convention.evidence(prog, addr) if addr is not None else []
-        except Exception:  # a heuristic: it never stands between an agent and the function
-            logging.getLogger("decompdecomp").exception("reading the function's convention failed")
-            return []
-        if not found:
-            return []
-        name = unit.name
-        if ltcg.has_entry(fp.root, name):
-            mode = [f"- Your compile already goes through the harness: {name} is built with /GL and linked with /LTCG "
-                    f"with harness/{name}.drv.cpp, whose calls make the linker pick these registers. Write the "
-                    "function as ordinary C/C++ and compile it: the convention is not a reason to release it. If "
-                    "what differs is the convention itself, make the driver's call (or a stand-in) look like the "
-                    "original's call site below. Functions are found in the link by func_<address> in their names, or "
-                    "by `// FUNCTION: 0x<address>` right above the definition (for a method or an operator: add the "
-                    "map symbol's substring after the address)."]
-        else:
-            mode = [f"- {name} builds plain, without /GL: harness/{name}.drv.cpp doesn't define HarnessEntry yet. "
-                    "That is right for code the game built without link-time code generation (a library piece, a "
-                    "file built /O2): write it as plain C. If this function's callers pass it registers (below), the "
-                    f"unit needs a driver first: standins_for(\"{name}\") writes a starting point (stand-ins "
-                    "for what the unit uses elsewhere, a HarnessEntry); put it in with edit_file."]
-        return ["", "### Calling convention in the original (link-time code generation: the linker picked it for its "
-                "callers; harness/ must call it the same way)", *mode,
-                *[f"- {line}" if not line.startswith("  ") else line for line in found]]
-
-    def _convention_warning(self, fp: ForkProject, meta: dict, fn, unit) -> list[str]:
-        """For an attempt's result in an LTCG project: when the function the harness link made differs in convention
-        from the original's, say so. A helper or driver call adds a call site, which can change what the linker picks
-        for the callee, and then the bytes differ for a reason the C doesn't show."""
-        if unit.base is None or (prog := self._program(fp)) is None:
-            return []
-        try:
-            symbol = meta.get("symbol") or fn["name"]
-            addr = prog.find(symbol)
-            if addr is None or not unit.base.exists():
-                return []
-            code = next((c for owner, c, _ in coffobj.sections(unit.base.read_bytes())
-                         if owner == symbol or coffobj.c_name(owner) == fn["name"]), None)
-            if not code:
-                return []
-            found = convention.differences(convention.analyse(prog.code(addr), addr), convention.analyse(code, addr))
-        except Exception:  # a heuristic: it never stands between an agent and the result
-            logging.getLogger("decompdecomp").exception("comparing the compiled convention failed")
-            return []
-        if not found:
-            return []
-        return ["", "The linker gave your function another convention than the original's (" + "; ".join(found) + "). "
-                "Under LTCG the callers decide it: keep the original's number of call sites (a helper, a stand-in or "
-                "a second driver call adds one), and check that the driver's calls load what the brief's call sites "
-                "load. The brief's convention evidence is the target."]
-
-    def _method_brief(self, fp: ForkProject, cfg: dict, meta: dict, fn) -> list[str]:
-        """For a brief, in an LTCG project: whether the function looks like a member function, of which struct, its
-        fields and the declaration to write (forks/methods.py: `this` can arrive in any register under LTCG, which the
-        ECX-only readers of structs.py and the RTTI classes miss). When RTTI already named the function's class
-        (`_class_brief`), only the register is added: the class's name is the game's own."""
-        if (prog := self._program(fp)) is None:
-            return []
-        try:
-            addr = prog.find(meta.get("symbol") or fn["name"])
-            if addr is None:
-                return []
-            objs = methods.recover(prog, True)
-            lines = methods.brief(prog, objs, addr, True, meta.get("demangled"))
-            if self._class_of(fp, cfg, fn)[1] is not None and addr in objs.of:
-                return ["", f"- `this` arrives in {objs.of[addr].methods[addr]} (the linker's choice under link-time "
-                            "code generation): a member function of the class above still matches"]
-            if lines and lines[1].startswith("### Looks like a member function"):
-                lines += ["```cpp", methods.declaration(prog, objs.of[addr]), "```"]
-            return lines
-        except Exception:  # a heuristic: it never stands between an agent and the function
-            logging.getLogger("decompdecomp").exception("finding member functions failed")
-            return []
-
-    def _unresolved_lines(self, fp: ForkProject, meta: dict, fn, unit, code: str | None,
-                          only_mattering: bool = False) -> list[str]:
-        """For a brief, a compile result or a release: the names the unit's last harness link left unresolved that
-        this function's code uses, which of them can change its code (forks/unresolved.py) and which are harmless.
-        A bare list read as a to-do, and agents released functions for references that change nothing."""
-        if unit.base is None or not (missing := ltcg_unresolved(unit.base)):
-            return []
-        prog = self._program(fp)
-        caller, library = None, set()
-        if prog is not None:
-            caller = prog.find(meta.get("symbol") or fn["name"])
-            library = {prog.by_name[x] for x in _set_aside(fp) if x in prog.by_name}
-        used = unresolved.used_by(code, missing) if code else []
-        found = [unresolved.classify(prog, caller, x, library) for x in used]
-        if only_mattering:
-            found = [u for u in found if u.matters is not False]
-            return unresolved.summary(found, unit.name) if found else []
-        return unresolved.summary(found, unit.name, len(missing) - len(used))
-
-    def standins_for(self, agent: Agent | None, slug: str, what: str) -> str:
-        """Stand-in and driver skeletons for a unit of an LTCG project (forks/standins.py): a unit, its source file
-        or one of its functions. What agents write into harness/."""
-        _, fp, _ = self.get(slug)
-        if (prog := self._program(fp)) is None:
-            raise NetworkError("standins_for is for projects of games built with link-time code generation (harness/ "
-                               "files): this project isn't one")
-        name = what.strip()
-        units = {f["unit"] for f in prog.functions.values()}
-        unit = next((u for u in (name, name.rsplit("/", 1)[-1], Path(name).stem) if u in units), None)
-        if unit is None and (addr := prog.find(name)) is not None:
-            unit = prog.functions[addr]["unit"]
-        if unit is None:
-            try:
-                row = self._fn(slug, name)
-            except NetworkError:
-                raise NetworkError(f"{what!r} isn't a unit, source file or function of this project") from None
-            if (addr := prog.find(self._meta(row).get("symbol") or row["name"])) is None:
-                raise NetworkError(f"{what!r} isn't in this project's functions.json")
-            unit = prog.functions[addr]["unit"]
-        return standins.render(prog, unit)
 
     def _apply_scores(self, proj, unit: str, scores: dict[str, float | None], skip: int | None = None,
                       agent: Agent | None = None, text: str | None = None, via: str = "unit diff") -> None:
@@ -2547,16 +2605,19 @@ class ForkEngine:
             lines.append(f"C++ name: {meta['demangled']}")
         if unit.scratch:
             lines.append(f"compiler: {unit.scratch.get('compiler', '?')} {unit.scratch.get('c_flags', '')}")
-        src_text = None
+        src_text, home = None, unit.source
         if unit.source:
             lines.append(f"source file: {unit.source}")
             if own := consoles.get(cfg.get("platform")).file_compiler(fp, unit.source):
                 lines.append(f"this file's compiler: {own} (try_compiler(\"{fn['name']}\", \"all\") tries the others)")
                 lines += self.net.filecompilers.brief(proj["slug"], fn, unit.source)
-            p = fp.root / unit.source
-            src_text = p.read_text(errors="replace", encoding="utf-8") if p.exists() else None
+            home, src_text = self._home(fp, unit, self._names(meta, fn))
+            if len(files := fp.unit_files(unit)) > 1:
+                lines.append(f"the unit's code is split over {', '.join(files)}; this function is in {home}")
+            src_text = src_text or None
         else:
             lines.append("this unit has no source file yet, so it can't be decompiled from here")
+        members = self._by_members(fp, cfg)  # whose reading of classes the brief gives (get_class's too)
         try:
             d = fp.diff(unit, meta.get("symbol") or fn["name"])
             pct = ("not in your build yet" if d.match_percent is None else
@@ -2568,18 +2629,22 @@ class ForkEngine:
             lines += [f"current state: {pct}", "", "### Target assembly", "```asm", *asm, "```"]
             if cfg.get("origin") == "scratch":
                 lines += self._data_used(proj, d.refs)
+            lines += self._convention_brief(fp, meta, fn)
+            if members:
+                lines += self._method_brief(fp, meta, fn)
             if d.literals:
                 lines += ["", d.literals_note()]
             elif d.match_percent is not None and not d.matched:
                 d.rows = with_constant_values(d.rows, consoles.get(cfg.get("platform")), fp)
                 lines += ["", "### Diff against the current build", d.render()]
+                lines += self._link_check_lines(fp, meta, fn, unit)  # (LTCG) before the first compile, too
         except (ObjdiffError, ForkError) as e:
             lines.append(f"(objdiff couldn't diff this function: {e})")
         _, span = self._find(src_text, self._names(meta, fn)) if src_text else (None, None)
         if span:
             lines += ["", "### Current source", "```c", src_text[span[0]:span[1]].strip(), "```"]
             if hidden := self._hidden(fp, src_text, span[0]):
-                lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {unit.source}), which the build leaves "
+                lines.append(f"⚠️ It's inside `{hidden[1]}` (line {hidden[0]} of {home}), which the build leaves "
                              "out: the state above is not this code's. compile_and_diff compiles yours where the build "
                              "sees it, without that copy; kept, the function is visible from then on.")
         else:
@@ -2596,10 +2661,9 @@ class ForkEngine:
             elif seed:
                 lines += ["", "### Machine draft: a starting point, often wrong in types and details", "```c",
                           self._method_draft(fp, cfg, fn, seed).strip(), "```"]
-        lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
+        if not members:  # (else _method_brief said it, above)
+            lines += self._class_brief(fp, cfg, fn) + self._struct_brief(fp, cfg, fn)
         lines += self._debug_brief(fp, cfg, fn)
-        lines += self._ltcg_brief(fp, meta, fn, unit)
-        lines += self._method_brief(fp, cfg, meta, fn)
         if found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None):
             lines += ["", f"### Unresolved in {unit.name}'s harness link (nothing in it defines them yet)", *found]
         twin = self._twin_brief(proj, fn) if fn["status"] != "matched" else []
@@ -2621,6 +2685,10 @@ class ForkEngine:
         if done:
             lines += ["", "Already matched in this file (read them for the codebase's style): "
                       + ", ".join(r["name"] for r in done)]
+        if (hint := _naming_hint(meta, fn)):
+            lines += ["", hint]
+        if (found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None)):
+            lines += ["", f"### Unresolved in {unit.name}'s harness link (nothing in it defines them yet)", *found]
         why = (cfg.get("link_failed") or {}).get(unit.source or "")
         if why and not unit.complete:
             lines += ["", f"### {unit.source} didn't link yet (file_status shows its data)", why]
@@ -2635,6 +2703,216 @@ class ForkEngine:
                       "with any #include \"...\", prototypes or #pragma lines it needs. Structs, globals and helper "
                       "functions go in with edit_file."]
         return "\n".join(lines)
+
+    def _unresolved_lines(self, fp: ForkProject, meta: dict, fn, unit, code: str | None,
+                          only_mattering: bool = False) -> list[str]:
+        """For a brief, a compile result or a release: the names the unit's last harness link left unresolved that
+        this function's code uses, which of them can change its code (forks/unresolved.py) and which are harmless.
+        Agents read the bare list as a to-do and released functions for data references that change nothing."""
+        if unit.base is None or not (missing := ltcg_unresolved(unit.base)):
+            return []
+        prog, caller, library = None, None, set()
+        manifest = fp.manifest or {}
+        if consoles.get(manifest.get("platform")).arch == "x86":
+            try:
+                prog = convention.load(fp.root, manifest)
+                caller = prog.find(meta.get("symbol") or fn["name"])
+                library = {prog.by_name[s] for s in _set_aside(fp) if s in prog.by_name}
+            except (OSError, KeyError, ValueError, ForkError):
+                prog = None
+        used = unresolved.used_by(code, missing) if code else []
+        found = [unresolved.classify(prog, caller, s, library) for s in used]
+        if only_mattering:
+            found = [u for u in found if u.matters is not False]
+            return unresolved.summary(found, unit.name) if found else []
+        return unresolved.summary(found, unit.name, len(missing) - len(used))
+
+    def standins_for(self, agent: Agent | None, slug: str, what: str) -> str:
+        """Stand-in and driver skeletons for a unit of a PC or Xbox project (forks/standins.py): a unit, its source
+        file or one of its functions. What agents write into harness/ for a game built with link-time code
+        generation."""
+        _, fp, _ = self.get(slug)
+        manifest = fp.manifest or {}
+        if consoles.get(manifest.get("platform")).arch != "x86" or manifest.get("created") != "from scratch":
+            raise NetworkError("standins_for is for PC and Xbox projects made from scratch (their harness/ files)")
+        try:
+            prog = convention.load(fp.root, manifest)
+        except (OSError, KeyError, ValueError) as e:
+            raise NetworkError(f"the project's functions.json or program can't be read: {e}") from None
+        name = what.strip()
+        units = {fn["unit"] for fn in prog.functions.values()}
+        unit = next((u for u in (name, name.rsplit("/", 1)[-1], Path(name).stem) if u in units), None)
+        if unit is None and (addr := prog.find(name)) is not None:
+            unit = prog.functions[addr]["unit"]
+        if unit is None:
+            try:
+                row = self._fn(slug, name)
+            except NetworkError:
+                raise NetworkError(f"{what!r} isn't a unit, source file or function of this project") from None
+            if (addr := prog.find(self._meta(row).get("symbol") or row["name"])) is None:
+                raise NetworkError(f"{what!r} isn't in config/{manifest['version']}/functions.json")
+            unit = prog.functions[addr]["unit"]
+        return standins.render(prog, unit)
+
+    @staticmethod
+    def _link_check_lines(fp: ForkProject, meta: dict, fn, unit) -> list[str]:
+        """For a compile result in an LTCG project: the convention the harness link gave the function, and the
+        functions it calls there, against the original's (convention.check_link). Of an Xbox racing game's near misses
+        at 80% or more, the 12% whose own convention differed had a median of 9.5 instructions left against 1-2 for
+        those whose calls all agreed, and nothing told the agent; and agents left most of the rest "for a harness pass"
+        when the calls were already right, so a check that passes says that too."""
+        manifest = fp.manifest or {}
+        if not manifest.get("ltcg") or unit.base is None:
+            return []
+        try:
+            report = json.loads(unit.base.with_suffix(".ltcg.json").read_text(encoding="utf-8"))
+            symbol = meta.get("symbol") or fn["name"]
+            mine = (report.get("functions") or {}).get(symbol)
+            prog = convention.load(fp.root, manifest)
+            addr = prog.find(symbol)
+            if not mine or addr is None or not report.get("dll"):
+                return []
+            dll_path = fp.root / report["dll"]
+            dll = convention.read_pe(dll_path.read_bytes())
+            functions = convention.link_functions(dll_path.with_suffix(".map").read_text(encoding="utf-8",
+                                                                                         errors="replace"))
+            found = convention.check_link(prog, addr, dll, int(mine["ours"], 16), int(mine["size"]), functions)
+        except Exception:  # a check: it never stands between an agent and its compile result
+            logging.getLogger("decompdecomp").exception("checking the link's conventions failed")
+            return []
+        name = unresolved.identifier(symbol)
+        files = [*(fp.root / "src" / "auto").glob(f"{unit.name}*.cpp"), *(fp.root / "harness").glob(f"{unit.name}.*.cpp")]
+        by_object = {p.stem.replace(".", "_").lower(): p.relative_to(fp.root).as_posix() for p in files}
+
+        def where(obj: str) -> str:  # tools/ltcg.py names each object <NN>_<file stem, dots as underscores>.obj
+            stem = re.sub(r"^\d+_", "", Path(obj).stem).lower()
+            return by_object.get(stem, obj)
+        return convention.link_lines(found, name, where)
+
+    @staticmethod
+    def _convention_brief(fp: ForkProject, meta: dict, fn) -> list[str]:
+        """For a brief, in a project built with link-time code generation: how the original passes the function its
+        arguments (forks/convention.py), which the driver and stand-ins in harness/ must reproduce."""
+        manifest = fp.manifest or {}
+        if not manifest.get("ltcg"):
+            return []
+        try:
+            prog = convention.load(fp.root, manifest)
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            if addr is None:
+                return []
+            found = convention.evidence(prog, addr)
+        except (OSError, KeyError, ValueError, ForkError):
+            return []
+        try:
+            objs = methods.recover(prog, True)
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("finding member functions failed")
+            objs = None
+        if objs is not None and addr in objs.of:
+            g = objs.of[addr]
+            found.insert(1, f"`this` arrives in {g.methods[addr]}: it's the base of the fields this function uses, "
+                            f"so it looks like a member function of {g.keyword} {g.name} (below); declare it as one "
+                            f"and the linker still passes `this` there")
+        unit = fn["unit"] if "unit" in fn.keys() else None
+        driver = fp.root / "harness" / f"{unit}.drv.cpp" if unit else None
+        try:
+            harnessed = driver is not None and bool(_HARNESS_ENTRY.search(driver.read_text(errors="replace",
+                                                                                         encoding="utf-8")))
+        except OSError:
+            harnessed = False
+        if harnessed:  # agents released these unworked, taking the convention for a reason a compile can't match
+            mode = [f"- Your compile already goes through the harness: {unit} is built with /GL and linked with "
+                    f"/LTCG with harness/{unit}.drv.cpp, whose calls make the linker pick these registers. Write the "
+                    "function as ordinary C/C++ (a normal member function for `this`, normal parameters) and "
+                    "compile it: the convention is not a reason to release it. If what differs is the convention "
+                    "itself, make the driver's call (or a stand-in) look like the original's call site below."]
+        elif unit is None:
+            mode = []
+        else:
+            # an Xbox game's voice-chat wrapper (/O2 code the game built without /GL) went from 20 matches to 7 in harness
+            # mode, and agents released its functions as "needs the LTCG harness driver" because this said so
+            mode = [f"- {unit} builds plain, without /GL (harness/{unit}.drv.cpp doesn't define HarnessEntry). That's "
+                    "right for code the game itself built without link-time code generation (a library or C runtime "
+                    "piece, a file built /O2): there VC 7.1 gives a register convention only to a function nobody "
+                    "outside the file calls, so write such a function `static` (no __fastcall) and it gets one; "
+                    "compile it as plain C. Only if this code was built with LTCG (its callers in other files pass it "
+                    "registers) does the unit need a driver first (standins_for writes a starting point)."]
+        return ["", "### Calling convention in the original (link-time code generation: the linker picked it for "
+                "its callers; harness/ must call it the same way, standins_for writes a starting point)",
+                *mode, *[f"- {line}" if not line.startswith("  ") else line for line in found]]
+
+    @staticmethod
+    def _objects(fp: ForkProject):
+        """(the program, its member functions and object types (forks/methods.py), whether it's LTCG) for a PC or
+        Xbox project made from scratch, or None."""
+        manifest = fp.manifest or {}
+        if consoles.get(manifest.get("platform")).arch != "x86":
+            return None
+        try:
+            prog = convention.load(fp.root, manifest)
+        except (OSError, KeyError, ValueError, ForkError):
+            return None
+        ltcg = bool(manifest.get("ltcg"))
+        return prog, methods.recover(prog, ltcg), ltcg
+
+    @classmethod
+    def _method_brief(cls, fp: ForkProject, meta: dict, fn) -> list[str]:
+        """For a brief: whether the function looks like a member function, of which struct or class, and how to
+        write it (an agent wrote Accum::Add as a free function taking an Accum * when nothing said so)."""
+        try:
+            found = cls._objects(fp)
+            if found is None:
+                return []
+            prog, objs, ltcg = found
+            addr = prog.find(meta.get("symbol") or fn["name"])
+            return methods.brief(prog, objs, addr, ltcg, meta.get("demangled")) if addr is not None else []
+        except Exception:  # a heuristic: it never stands between an agent and the function
+            logging.getLogger("decompdecomp").exception("finding member functions failed")
+            return []
+
+    def _by_members(self, fp: ForkProject, cfg: dict) -> bool:
+        """Whether an x86 project's classes come from its member functions (forks/methods.py) rather than the
+        console's reading of the program (Console.classes: PC's RTTI and vtables): under link-time code generation
+        `this` arrives in whatever register the linker chose, which only methods.py follows, and a console that reads
+        no classes itself (Xbox) gets them there too."""
+        return consoles.get(cfg.get("platform")).arch == "x86" and (
+            bool((fp.manifest or {}).get("ltcg")) or self._classes(fp, cfg) is None)
+
+    def _member_class(self, slug: str, what: str = "") -> str:
+        """get_class from the structs and classes found in an x86 program's member functions (forks/methods.py): all
+        of them, or the one a function, vtable or global object belongs to."""
+        _, fp, _ = self.get(slug)
+        found = self._objects(fp)
+        if found is None:
+            raise NetworkError("get_class reads PC and Xbox projects made from scratch (and MIPS ROM projects)")
+        prog, objs, _ = found
+        if not objs.groups:
+            return ("No member functions found: no function uses a register parameter as the base of field accesses, "
+                    "and no constructor stores a vtable.")
+        what = what.strip()
+        if not what:
+            return (f"{len(objs.groups)} structs and classes, found from functions that use `this` as the base of "
+                    f"field accesses (most functions first; get_class(function, vtable or D_ object) has one's fields, "
+                    f"functions and a declaration to start from):\n"
+                    + "\n".join(f"- {g.keyword} {g.name}: {len(g.methods)} member functions, {len(g.fields)} fields "
+                                f"seen, at least 0x{g.size_seen():X} bytes; {g.why[0]}" for g in objs.groups[:60]))
+        addr = prog.find(what)
+        if addr is None and (m := re.search(r"([0-9A-Fa-f]{5,8})(?![0-9A-Fa-f])", what)):
+            addr = int(m.group(1), 16)
+        if addr is None:
+            try:
+                row = self._fn(slug, what)
+                addr = prog.find(self._meta(row).get("symbol") or row["name"])
+            except NetworkError:
+                addr = None
+        g = objs.find(addr) if addr is not None else None
+        if g is None:
+            if addr is not None and addr in objs.ambiguous:
+                return "\n".join(methods.brief(prog, objs, addr, False)[1:])
+            raise NetworkError(f"`{what}` isn't a member function, vtable or global object of the {len(objs.groups)} "
+                               f"structs and classes found in this program's code: get_class() lists them")
+        return methods.describe(prog, g, focus=addr)
 
     def _twin_brief(self, proj, fn) -> list[str]:
         """For a brief: the matched function with the same code (relocations aside), and its code made into this
@@ -2826,8 +3104,11 @@ class ForkEngine:
 
     def get_class(self, slug: str, what: str = "") -> str:
         """get_class in a project: the classes the console reads from its program (PC: RTTI and code), by name, vtable
-        address or one of their functions (as the report, func_<address> or a real name spells it)."""
+        address or one of their functions (as the report, func_<address> or a real name spells it). An LTCG or Xbox
+        project's come from its member functions instead (_by_members)."""
         _, fp, cfg = self.get(slug)
+        if self._by_members(fp, cfg):
+            return self._member_class(slug, what)
         found = self._classes(fp, cfg)
         if found is None:
             raise NetworkError(classes.WHERE)
@@ -3007,9 +3288,12 @@ class ForkEngine:
             pass
 
     def _place(self, proj, fp: ForkProject, unit, fn, source: str, names: list[str], comment: bool = False,
-               prelude: str = "") -> tuple[str, str, Path, str]:
-        """`source`'s definition written into its unit's source file as it is now: (the code, the file after,
-        the file, the file before)."""
+               prelude: str = "") -> tuple[str, str, Path, str, str, dict[Path, tuple[str, str]]]:
+        """`source`'s definition written into its unit's file as it is now: (the code, the file after, the file,
+        the file before, the file's path in the project, the harness files to write with it: {file: (as it is,
+        as written)}). The file is the one of the unit's files that defines the function now (an LTCG unit's code
+        can be split over several, ForkProject.unit_files), else its source file. A try and the best attempt's
+        preview both place code here, so both write the same files."""
         _, span = self._find(source, names)
         if span is None:
             raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
@@ -3022,14 +3306,12 @@ class ForkEngine:
         commented = code.lstrip().startswith(("//", "/*"))
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
-        path = fp.safe_path(unit.source, write=True)
-        try:
-            before = path.read_text(errors="replace", encoding="utf-8")
-        except OSError:
-            before = ""
-        includes, before_lines, after_lines = _around(source, span, before, unit.source)
+        home, before = self._home(fp, unit, names)
+        path = fp.safe_path(home, write=True)
+        includes, before_lines, after_lines = _around(source, span, before, home)
         hit, old_span = self._find(before, names)
         base, carried = before, ""  # what the new definition goes into; what of the parked copy goes with it
+        lifted: dict[Path, tuple[str, str]] = {}  # harness files written as if the parked copy's flag were on
         parked = self._hidden(fp, before, old_span[0]) if old_span else None
         if parked and (seen := self._seen_beside(fp, before, old_span, hit, names)):
             # a draft parked in `#ifdef` before the build's own definition in its `#else`: the one the build sees
@@ -3046,6 +3328,15 @@ class ForkEngine:
             mark = csource.marker_above(before, lo)
             carried = before[mark:lo] + ("" if commented else before[lo:old_span[0]])
             base, old_span = before[:mark] + before[old_span[1]:], None
+            # An LTCG unit parks a draft under `#ifdef FLAG` while its harness defines a stand-in under `#ifndef
+            # FLAG` (so the matched callers link). Moved out alone, the draft was defined twice and every compile
+            # of it a link error (LNK2005), and an agent can't change both files in one step: its harness is
+            # compiled as if FLAG were on, the stand-in left out, and undone or kept with the draft
+            if (flag := csource.guard_macro(parked[1])) and (fp.root / "harness").is_dir():
+                for p in sorted((fp.root / "harness").glob(f"{unit.name}.*.cpp")):
+                    t = p.read_text(errors="replace", encoding="utf-8")
+                    if (lit := csource.as_defined(t, flag)) != t:
+                        lifted[p] = (t, lit)
         pre, post = "".join(ln + "\n" for ln in before_lines), "".join(ln + "\n" for ln in after_lines)
         if old_span:
             lo, hi = old_span
@@ -3065,7 +3356,7 @@ class ForkEngine:
             if base is not before and (span := self._find(after, names)[1]) and self._hidden(fp, after, span[0]):
                 after = base.rstrip("\n") + "\n\n" + placed  # (its neighbours are parked too: after them all)
         after = _with_includes(after, includes, prelude)
-        return code, after, path, before
+        return code, after, path, before, home, lifted
 
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
                  quiet: int | None = None, comment: bool = False) -> dict:
@@ -3090,15 +3381,24 @@ class ForkEngine:
                 given = console.real_names(fp, version).get(meta.get("symbol") or fn["name"])
                 names = [structor, *names, *([given] if given else [])]
                 _, span = self._find(source, names)
+        if span is None and (current := self._current_source(fp, fn)) is not None:
+            # sent without its `// FUNCTION:` annotation: the name its file's definition gives it
+            if (given := csource.defined_name(current, (0, len(current)))) and given not in names:
+                names.append(given)
+                _, span = self._find(source, names)
         if span is None:
-            raise NetworkError(f"send the complete definition of {names[0]} (with its body)")
+            shown = next((n for n in names if not n.startswith(csource.ADDRESS_KEY)), names[0])
+            hint = _naming_hint(meta, fn)
+            raise NetworkError(f"send the complete definition of {shown} (with its body)"
+                               + (f": no definition in what you sent has its name or annotation. {hint}" if hint else ""))
         unit = fp.unit(fn["unit"])
         if not unit.source:
             raise NetworkError(f"unit {unit.name} has no source file, so there's nowhere to write it")
         symbol = meta.get("symbol") or fn["name"]
         linked = unit.complete and fp.linkable()  # the game is built from this file: changes must keep it identical
         with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), self._unit_lock(proj, unit.name):
-            code, after, path, before = self._place(proj, fp, unit, fn, source, names, comment, prelude)
+            code, after, path, before, home, lifted = self._place(proj, fp, unit, fn, source, names, comment,
+                                                                  prelude)
             with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
                 self.net._expire_claims(db)
                 claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
@@ -3114,9 +3414,10 @@ class ForkEngine:
             # What matches in the file as it is now is what this change must keep (not the database's idea of it,
             # which a change outside decompdecomp or a different measurement can leave behind)
             scores, builds = self._baseline(proj, fp, unit, before)
-            held = self._held(proj, unit.name, before)
+            held = self._held(proj, unit.name, self._unit_text(fp, unit, home, before))
             if scores is not None:
-                self._apply_scores(proj, unit.name, scores, text=before, via="unit diff before a compile")
+                self._apply_scores(proj, unit.name, scores, text=self._unit_text(fp, unit, home, before),
+                                   via="unit diff before a compile")
                 protected = {n for n, pct in scores.items()
                              if n != symbol and n not in held and pct is not None and pct >= 100}
                 was_matched = (scores.get(symbol) or 0) >= 100 and symbol not in held
@@ -3152,8 +3453,14 @@ class ForkEngine:
                     for p, t in renamed.items():
                         p.write_text(t, encoding="utf-8")
 
-            committed = [unit.source, *(p.relative_to(fp.root).as_posix() for p in renamed)]
+            def unlift() -> None:
+                for p, (t, _) in lifted.items():
+                    _rewrite(p, t)
+
+            committed = [home, *(p.relative_to(fp.root).as_posix() for p in (*renamed, *lifted))]
             _rewrite(path, after)
+            for p, (_, t) in lifted.items():
+                _rewrite(p, t)
 
             def remembered(text: str, score: int | None, kept: bool = True) -> str:
                 """A result as repeat_of gives it back later (agents' tries only), plus the note when this variant
@@ -3166,6 +3473,7 @@ class ForkEngine:
 
             def undo() -> None:
                 _rewrite(path, before)
+                unlift()
                 unname()
                 if (proj["id"], unit.name) in self._trials and scores is not None and not renamed:
                     self._trials[(proj["id"], unit.name)] = True  # (a run of tries: built once, at its end)
@@ -3179,6 +3487,7 @@ class ForkEngine:
                 # is set up again in the background (one project spent five compiles on a build.ninja whose python
                 # was in another home, then the sessions quit)
                 _rewrite(path, before)
+                unlift()
                 unname()
                 threading.Thread(target=self.preflight, args=(slug,), daemon=True, name=f"preflight-{slug}").start()
                 return {"text": f"❌ The project's build is broken, not your code: {broken}. Your change was undone, "
@@ -3191,6 +3500,8 @@ class ForkEngine:
                     self.net._record(fn, agent, None, code, 0)
                 why = "" if builds else ("\n(The file didn't build before your change either, so the error may be in "
                                          "other code of the file: fix that with edit_file.)")
+                if not builds and quiet is None:
+                    why += self._release_stuck(proj, fn, agent, unit.name, log)
                 return {"text": f"❌ BUILD ERROR (your change was undone){why}\n{log[-3000:]}", "score": None,
                         "matched": False}
             try:
@@ -3224,7 +3535,7 @@ class ForkEngine:
                 else:
                     text = (f"❌ REJECTED and undone: your change breaks matched function(s) {listed}. {fn['name']} "
                             f"itself came out at {percent_text(d.match_percent)} (score {own}): recorded as an "
-                            f"attempt, not kept in {unit.source}. If they changed only because of how {fn['name']} "
+                            f"attempt, not kept in {home}. If they changed only because of how {fn['name']} "
                             "compiles into them (inlined, or whole-program optimisation choosing registers across "
                             f"functions), they match again once {fn['name']} matches exactly: work from the diff "
                             "below. Otherwise check you replaced the right definition (overloads?) and didn't change "
@@ -3235,7 +3546,7 @@ class ForkEngine:
                 undo()
                 if quiet is None:
                     self.net._record(fn, agent, None, code, 0, compiled=True)
-                return {"text": f"❌ REJECTED and undone: {unit.source} is linked into the game, and with your change "
+                return {"text": f"❌ REJECTED and undone: {home} is linked into the game, and with your change "
                                 f"the game no longer builds byte for byte:\n{_tail(ok[1])}", "score": None,
                         "matched": False}
             pct = d.match_percent if d.match_percent is not None else 0.0
@@ -3245,7 +3556,7 @@ class ForkEngine:
                 undo()
                 if quiet is None or score < quiet:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
-                return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
+                return {"text": f"{percent_text(pct)} match (score {score}); not kept in {home}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
             if (not matched and not was_matched and d.match_percent is not None and best is not None
@@ -3257,7 +3568,7 @@ class ForkEngine:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
                 stall = self.net.stall_note(fn["id"], agent.id)
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
-                                  f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
+                                  f"{best}), so {home} keeps what it had; your attempt is recorded.\n"
                                   f"{d.render()}", score)
                 return {"text": text + stall, "score": score, "matched": False, "percent": pct}
             self._keep_scores(proj, unit, after, d.unit_scores)
@@ -3267,7 +3578,8 @@ class ForkEngine:
                     self.net._record(fn, agent, score, code, 0)
                 if not matched:
                     undo()
-                    why = "loads other constants" if d.literals else f"is {percent_text(pct)}"
+                    why = (("refers to other globals or callees" if "refers" in d.why_not() else "loads other constants")
+                           if d.literals else f"is {percent_text(pct)}")
                     return {"text": f"❌ {fn['name']} already matches; your version {why}, so the matching one was "
                                     "kept. Call claim_function for a function that still needs work.",
                             "score": score, "matched": False}
@@ -3276,7 +3588,8 @@ class ForkEngine:
                 return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
             self.net._record(fn, agent, score, code, 0, matched=matched)
-            self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
+            self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent,
+                               text=self._unit_text(fp, unit, home, after),
                                via=f"unit diff after a compile of {fn['name']}")
             self._remember(proj, fp, unit, d)
             if matched:
@@ -3288,7 +3601,9 @@ class ForkEngine:
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
                         "matched": True}
         stall = self.net.stall_note(fn["id"], agent.id)
-        found = self._unresolved_lines(fp, meta, fn, unit, code) + self._convention_warning(fp, meta, fn, unit)
+        found = self._unresolved_lines(fp, meta, fn, unit, code)
+        if d.match_percent is not None:
+            found += self._link_check_lines(fp, meta, fn, unit)
         missing = ((self._missing_note(unit, fn) if d.match_percent is None else "")
                    + ("\n\n" + "\n".join(found) if found else ""))
         if d.literals:
@@ -3823,7 +4138,7 @@ class ForkEngine:
         proj, fp, _ = self.get(slug)
         name = what.strip().strip("`'\"")
         if (text := consoles.get((fp.manifest or {}).get("platform")).read_data(fp, name, length)) is not None:
-            return text  # the console reads it (PC: the program's data isn't in the target objects)
+            return text  # the console reads it (PC, Xbox: the program's data isn't in the target objects)
         held = agent and self.net.store.one("SELECT f.unit FROM claims c JOIN functions f ON f.id=c.function_id "
                                             "WHERE c.agent_id=?", agent.id)
         units = [held["unit"]] if held else []
@@ -3963,8 +4278,8 @@ class ForkEngine:
         if _CHEAT.search(_strip_comments(new)):
             raise NetworkError("inline assembly, asm functions and asm includes aren't allowed")
         rel = Path(os.path.relpath(p, fp.root)).as_posix()
-        units = [u for u in fp.units_for(rel) if u.base is not None]
-        if units:  # a unit's own source file: only that unit can change
+        units = [u for u in fp.units_built_from(rel) if u.base is not None]
+        if units:  # a unit's own source file (or harness), and the few units that include it: only they can change
             return self._edit_source(agent, proj, fp, p, rel, units, old, new, message)
         return self._edit_shared(agent, proj, fp, slug, p, rel, old, new, message)
 
@@ -4025,7 +4340,8 @@ class ForkEngine:
             for u in units:
                 if after[u.name] is not None:
                     self._keep_scores(proj, u, updated, after[u.name])
-                    self._apply_scores(proj, u.name, after[u.name], agent=agent, text=updated,
+                    self._apply_scores(proj, u.name, after[u.name], agent=agent,
+                                       text=self._unit_text(fp, u, rel, updated),
                                        via=f"unit diff after an edit of {rel}")
             self._commit(proj, fp, rel, f"{message.strip()}\n\nEdited by {agent.name} with decompdecomp.")
             with self.net.store.tx() as db:
@@ -4147,11 +4463,16 @@ class ForkEngine:
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
             "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,
-            "rebuild": (fp.manifest or {}).get("rebuild") if cfg.get("origin") == "scratch" else None,
             "reimports": cfg.get("origin") == "scratch" and consoles.get(cfg.get("platform")).reimports,
             **self._scope_facts(proj, fp, cfg),
             # why it doesn't build on this computer (preflight; checked once a run when its page first opens)
             "build_problem": cfg.get("build_problem") if cfg.get("ready") else None,
+            # (an x86 game, PC or Xbox, can always be rebuilt: its export runs on the button, so it shows before the
+            # first; a dtk project's build already rebuilds the game)
+            "rebuild": ((fp.manifest or {}).get("rebuild") or ({"identical": None, "detail": "not rebuilt yet"} if
+                        consoles.REBUILD_CHECK in (con := consoles.get(cfg.get("platform"))).features
+                        and con.arch == "x86" else None))
+                       if cfg.get("origin") == "scratch" else None,
         }
 
     def _scope_facts(self, proj, fp: ForkProject, cfg: dict) -> dict:
@@ -4376,13 +4697,16 @@ class ForkEngine:
         try:
             with self._tree(proj).exclusive() if linked else self._tree(proj).shared(), \
                     self._unit_lock(proj, unit.name):
-                _, after, path, before = self._place(proj, fp, unit, fn, source, names)
+                _, after, path, before, _, lifted = self._place(proj, fp, unit, fn, source, names)
                 existed = path.exists()
                 target = unit.target.stat().st_mtime_ns if unit.target is not None and unit.target.exists() else None
-                key = self.net.compile_key(fn, unit.name, source, after, before, str(target))
+                key = self.net.compile_key(fn, unit.name, source, after, before, str(target),
+                                           *(t for p in sorted(lifted) for t in (str(p), *lifted[p])))
                 if key in self._best_diffs:
                     return dict(self._best_diffs[key])
                 _rewrite(path, after)
+                for p, (_, t) in lifted.items():  # (a parked draft's harness stand-in left out, as for a try)
+                    _rewrite(p, t)
                 try:
                     ok, log = self._build_unit(proj, fp, unit)
                     if not ok:
@@ -4404,6 +4728,8 @@ class ForkEngine:
                         _rewrite(path, before)
                     else:  # a unit with no source file yet: leave none behind
                         path.unlink(missing_ok=True)
+                    for p, (t, _) in lifted.items():
+                        _rewrite(p, t)
                     self._build_unit(proj, fp, unit)  # the file's object is its own source's again
         except NetworkError as e:
             return {"kind": "best", "rows": None, "error": str(e)}

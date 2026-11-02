@@ -27,8 +27,85 @@ def is_stub(code: str) -> bool:
     return bool(re.match(r"\s*(?:#\s*pragma\s+)?(?:INCLUDE_ASM|GLOBAL_ASM|INCLUDE_RODATA_FN)\s*\(", code))
 
 
+ADDRESS_KEY = "// FUNCTION: 0x"  # find(text, address_key(va)): the definition annotated with the original's address
+_ANNOTATION = re.compile(r"^[ \t]*//[ \t]*FUNCTION:[ \t]*0x([0-9a-fA-F]+)\b[^\n]*(?:\n|$)", re.M)
+
+
+def address_key(addr: int) -> str:
+    """A name for find() meaning the definition after a `// FUNCTION: 0x<address>` annotation (reccmp's form, which
+    decompilations of PC and Xbox games put before each function: its own name can be anything)."""
+    return f"{ADDRESS_KEY}{addr:X}"
+
+
+def _block_end(clean: str, brace: int) -> int:
+    depth, k = 0, brace
+    while k < len(clean):
+        depth += (clean[k] == "{") - (clean[k] == "}")
+        k += 1
+        if depth == 0:
+            break
+    return k
+
+
+def _annotated(text: str, addr: int) -> tuple[int, int] | None:
+    """The first function definition after the annotation, before the next one: types and declarations the code
+    needs may come in between (`struct CRigOwner { ... };`)."""
+    found = list(_ANNOTATION.finditer(text))
+    clean = None
+    for n, m in enumerate(found):
+        if int(m.group(1), 16) != addr:
+            continue
+        clean = clean if clean is not None else _blank(text)
+        bound = found[n + 1].start() if n + 1 < len(found) else len(text)
+        pos = m.end()
+        while True:
+            brace = clean.find("{", pos, bound)
+            if brace < 0:
+                break  # only declarations up to the next annotation
+            head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
+            head = clean[head_at:brace]
+            if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
+                pos = _block_end(clean, brace)  # a type (or a brace initialiser): past it
+                continue
+            i = head_at
+            while i < brace:  # comments, blank and #pragma lines before the definition's first line
+                end = text.find("\n", i)
+                end = len(text) if end < 0 else end
+                line = text[i:end].strip()
+                if line and not line.startswith(("//", "#")):
+                    break
+                i = end + 1
+            k = _block_end(clean, brace)
+            if k < len(text) and text[k] == "\n":
+                k += 1
+            return min(i, brace), k
+    return None
+
+
+def defined_name(text: str, span: tuple[int, int]) -> str | None:
+    """The name a definition gives its function (`CAIBehaviour::Update` for `void CAIBehaviour::Update(int)`)."""
+    head = _blank(text[span[0]:span[1]]).split("(", 1)[0]
+    m = re.search(r"((?:[\w~<>]+::)*~?\w+|(?:[\w<>]+::)*operator\s*\S+)\s*$", head)
+    return m.group(1) if m else None
+
+
+def _unbalanced(between: str) -> bool:
+    """True when what lies between a parameter list and the next `{` closes a parenthesis it didn't open: the
+    parameter list was inside a macro call (`HEADER_INLINE(int Clamp(int x))`), and the `{` is another function's.
+    Qualifiers, `throw()` and a constructor's initialisers (`: m_a(0)`) open what they close."""
+    depth = 0
+    for c in between:
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            return True
+    return False
+
+
 def find(text: str, name: str) -> tuple[int, int] | None:
-    """(start, end) of the definition of `name`, or of its asm stub; None when absent."""
+    """(start, end) of the definition of `name`, or of its asm stub; None when absent. `name` may be an
+    address_key(): the definition annotated with that address."""
+    if name.startswith(ADDRESS_KEY):
+        return _annotated(text, int(name[len(ADDRESS_KEY):], 16))
     clean = _blank(text)
     simple = name.split("::")[-1]
     if "::" in name:  # Class::method: match it exactly
@@ -57,7 +134,10 @@ def find(text: str, name: str) -> tuple[int, int] | None:
                 j = len(clean)
                 break
             if nxt == -1 or brace < nxt:
-                j = brace
+                if _unbalanced(clean[j:brace]):  # inside a macro's parentheses: `MACRO(int f(int a))`, no body
+                    j = len(clean)
+                else:
+                    j = brace
                 break
             if any(c in clean[j:nxt] for c in "(){}="):
                 j = len(clean)
@@ -315,3 +395,54 @@ def _branches(text: str, pos: int, undefined: set[str]) -> list[list]:
         elif kind == "endif" and stack:
             stack.pop()
     return stack
+
+
+def _when_defined(kind: str, cond: str, macro: str) -> bool | None:
+    """Whether an `#if` line's first branch is compiled once `macro` is defined: only for a test of `macro` alone
+    (`#ifdef M`, `#ifndef M`, `#if defined(M)`, `#if !defined M`); None for any other condition."""
+    if kind in ("ifdef", "ifndef"):
+        return None if cond != macro else kind == "ifdef"
+    m = re.fullmatch(r"(!\s*)?defined\s*(?:\(\s*(\w+)\s*\)|(\w+))", cond)
+    if kind == "if" and m and (m.group(2) or m.group(3)) == macro:
+        return not m.group(1)
+    return None
+
+
+def guard_macro(directive: str) -> str | None:
+    """The macro whose definition compiles a branch that starts with `directive` (hidden_by's): M for `#ifdef M`
+    or `#if defined(M)`, else None."""
+    m = _CONDITIONAL.match(_blank(directive))  # (the line as written: `#ifdef M // parked`)
+    if m is None or m.group(1) not in ("if", "ifdef"):
+        return None
+    cond = m.group(2).strip()
+    name = cond if m.group(1) == "ifdef" else next(iter(_IDENTIFIER.findall(cond.replace("defined", ""))), None)
+    return name if name and _when_defined(m.group(1), cond, name) else None
+
+
+def as_defined(text: str, macro: str) -> str:
+    """The text as the build sees it once `macro` is defined, with only the conditionals that test `macro` alone
+    resolved: their directive lines go, and so do the branches it leaves out (a stand-in under `#ifndef M`). The
+    rest, other conditionals included, is untouched; so is the whole text if such a conditional has an #elif."""
+    clean = _blank(text)
+    events = {clean.count("\n", 0, m.start()): (m.group(1), m.group(2).strip()) for m in _CONDITIONAL.finditer(clean)}
+    stack: list[bool | None] = []  # per open #if: whether its current branch is compiled (None: not about macro)
+    out = []
+    for n, line in enumerate(text.splitlines(keepends=True)):
+        kind, cond = events.get(n, (None, ""))
+        if kind in ("if", "ifdef", "ifndef"):
+            stack.append(_when_defined(kind, cond, macro))
+            if stack[-1] is not None:
+                continue
+        elif kind in ("elif", "else", "endif") and stack:
+            mine = stack[-1] is not None
+            if kind == "elif" and mine:
+                return text
+            if kind == "else" and mine:
+                stack[-1] = not stack[-1]
+            elif kind == "endif":
+                stack.pop()
+            if mine:
+                continue
+        if all(v is not False for v in stack):
+            out.append(line)
+    return "".join(out)

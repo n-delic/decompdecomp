@@ -109,7 +109,9 @@ class Readability:
         """The C a matched function matches with: the database's in a ROM project, its source file's in a fork."""
         if self.net.is_rom(proj):
             return fn["matched_source"] or ""
-        return (self.net.forks._current_source(ForkProject(Path(proj["root"])), fn, comment=True)
+        fp = ForkProject(Path(proj["root"]))
+        inline = self.net.forks.inline_definition(fp, fn)  # (a header's inline: its file has only a marker)
+        return (self.net.forks._current_source(fp, fn, comment=True) or (inline[1] if inline else "")
                 or fn["matched_source"] or "")
 
     def counts(self, proj) -> dict:
@@ -254,6 +256,10 @@ class Readability:
         # picked its own style (Shape3_Init, Shape2_init, vec3_dot_product)
         names += ("- read_data a global before you name it: what it holds (a string, a table, a constant) says what it "
                   "is;\n- name things in the style the names around them already use.\n")
+        inline = self.net.forks.inline_definition(ForkProject(Path(proj["root"])), fn) if fork else None
+        if inline:
+            names += (f"- its body is an inline in {inline[0]} (its source file only marks where the original's copy "
+                      "sits): send the whole definition, still `inline`, and make_readable puts it there;\n")
         return (f"{given_up}MAKE READABLE: {fn['name']}{where}, {fn['n_insns']} instructions "
                 f"({counts['readable']} of {counts['matched']} matched functions are readable so far).\n\n"
                 f"It matches today with this C:\n```c\n{self._matching_c(proj, fn).strip()}\n```\n\n"
@@ -302,7 +308,16 @@ class Readability:
             raise NetworkError(f"{fn['name']} is held by {self.net._agent_name(claim['agent_id'])}")
         if " ".join(source.split()) == " ".join(self._matching_c(proj, fn).split()):
             raise NetworkError("that's the C it has already: rename, type and comment it first")
-        if not self.net.is_rom(proj):  # the project's own file, judged and committed (or put back) as any compile
+        fp = None if self.net.is_rom(proj) else ForkProject(Path(proj["root"]))
+        if fp is not None and (inline := self.net.forks.inline_definition(fp, fn)) is not None:
+            # a header's inline: rewritten in the header, which edit_file keeps only while every match holds (this one
+            # too); into its unit's file, every rewrite defined it twice
+            said = self.net.forks.edit_file(agent, proj["slug"], inline[0], inline[1].strip("\n"), source.strip("\n"),
+                                            f"Polish {fn['name']}")
+            if not said.startswith("✅"):
+                return said
+            return self._readable(proj, fn, agent, source)
+        if fp is not None:  # the project's own file, judged and committed (or put back) as any compile
             res = self.net.forks.attempt(agent, proj["slug"], fn["name"], source, comment=True)
             if not res.get("matched"):
                 return res["text"]

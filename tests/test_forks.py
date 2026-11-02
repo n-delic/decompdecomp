@@ -206,6 +206,27 @@ def test_near_miss_gets_a_diff_and_release_restores_the_best(fork):
 
 
 @needs_tools
+def test_a_brief_checks_the_conventions_of_the_current_link_after_its_diff(fork, monkeypatch):
+    """An LTCG project's brief says from the start whether the harness link gives the function and its callees the
+    original's conventions (ForkEngine._link_check_lines, tested in test_ltcg.py), so an agent knows before compiling
+    whether the driver or the code is what to work on."""
+    from decompnet.app.forkengine import ForkEngine
+
+    net, slug, agent = fork
+    seen = []
+
+    def check(fp, meta, fn, unit):
+        seen.append(fn["name"])
+        return ["", "LINK CHECK"]
+    monkeypatch.setattr(ForkEngine, "_link_check_lines", staticmethod(check))
+    fn = net.store.one("SELECT * FROM functions WHERE name='player_take_damage'")
+    assert fn["status"] == "open"
+    text = net.forks.brief(fn, agent, "CLAIMED")
+    assert seen == ["player_take_damage"]
+    assert text.index("### Diff against the current build") < text.index("LINK CHECK")
+
+
+@needs_tools
 def test_guards(fork):
     net, slug, agent = fork
     root = Path(net.project_row(slug)["root"])
@@ -356,6 +377,18 @@ def test_a_cpp_constructor_or_destructor_is_found_as_the_function_it_stands_for(
     assert csource.structor("A::CFoo::CFoo(int x) : y(x) {\n}\n") == "A::CFoo::CFoo"
     assert csource.structor("CFoo::CFoo() {}\nCFoo::~CFoo() {}\n") is None  # two: which one is the function?
     assert csource.structor("void CFoo::Update() {}\nCFoo::CFoo();\n" + c) is None
+
+
+def test_csource_takes_no_macro_written_prototype_for_a_definition():
+    """A function written inside a macro without a body (`HEADER_INLINE(int Clamp(int x))`, a project's marker for
+    a header inline) was found as a definition running to the next function's `{`: its brief showed the stretch in
+    between as its C, and a compile would have replaced it. Qualifiers, throw() and initialisers still count."""
+    src = ("// FUNCTION: 0x00013b80\nHEADER_INLINE(int Clamp(int x, int lo, int hi))\n\n// FUNCTION: 0x00013bd0\n"
+           "void Next(void)\n{\n}\nCFoo::CFoo(int a) : m_a(a), m_b(0) {\n}\nint Get() const throw() {\n    return 1;\n}\n")
+    assert csource.find(src, "Clamp") is None
+    assert csource.get(src, "Next").startswith("void Next(void)")
+    assert csource.get(src, "CFoo::CFoo").startswith("CFoo::CFoo(int a) : m_a(a)")
+    assert csource.get(src, "Get").startswith("int Get() const throw()")
 
 
 def test_clone_rejects_odd_sources(tmp_path):
@@ -1493,3 +1526,20 @@ def test_code_under_a_macro_the_compiler_defines_isnt_hidden(tmp_path, macro):
     text = f"#ifdef {macro}\nint f(void) {{ return 1; }}\n#endif\n"
     (tmp_path / "src" / "a.c").write_text(text)
     assert ForkEngine._hidden(ForkProject(tmp_path), text, text.index("int f")) is None
+
+
+def test_a_file_as_the_build_sees_it_once_one_flag_is_defined():
+    """An LTCG harness's stand-in under `#ifndef FLAG` goes when a draft parked under `#ifdef FLAG` comes out
+    (ForkEngine._attempt): only the conditionals testing FLAG alone are resolved; the rest stays as written."""
+    assert csource.guard_macro("#ifdef REAL // parked") == "REAL"
+    assert csource.guard_macro("#if defined( REAL )") == "REAL"
+    assert csource.guard_macro("#ifndef REAL") is None and csource.guard_macro("#if !defined(REAL)") is None
+    assert csource.guard_macro("#if defined(A) || defined(B)") is None and csource.guard_macro("#else") is None
+    text = ("int a;\n#ifndef REAL\nint stand_in(void) { return 0; }\n#if X\nint x;\n#endif\n#else\nint real;\n#endif\n"
+            "#if X\nint y;\n#else\nint z;\n#endif\n#if !defined REAL  /* x */\nint b;\n#endif\n"
+            "#if defined(REAL)\nint c;\n#endif\n/* #ifndef REAL */\nint d;\n")
+    assert csource.as_defined(text, "REAL") == ("int a;\nint real;\n#if X\nint y;\n#else\nint z;\n#endif\n"
+                                                "int c;\n/* #ifndef REAL */\nint d;\n")
+    assert csource.as_defined(text, "OTHER") == text
+    mixed = "#ifdef REAL\nint a;\n#elif X\nint b;\n#endif\n"
+    assert csource.as_defined(mixed, "REAL") == mixed  # an #elif: left as it is

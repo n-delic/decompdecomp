@@ -160,8 +160,9 @@ neighbours may come along in one claim; one function back is normal.)
    release_function with precise notes (what you tried, what is left) and claim the next. Before that,
    compile the next step instead of releasing; sure that no C makes its code at all (hand-written
    assembly): not_c=true, saying why. Very large functions: get the structure right first; a near miss
-   is worth the extra compiles. Another function of the game it needs done first (a callee, an inlined
-   helper): release_function(needs=that one) hands it to you.
+   is worth the extra compiles. What the function needs in harness/ (a stand-in, a driver call) you write
+   yourself with edit_file in the same claim; another function of the game it needs done first (a callee, an
+   inlined helper): release_function(needs=that one) hands it to you.
 
 Rules: C/C++ only (no inline asm, asm functions or asm includes); don't touch targets, configs or build
 scripts (the tools refuse). Never fetch or copy code from outside this project (another repository, a
@@ -599,8 +600,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     @mcp.tool(meta=ALWAYS_LOAD)
     async def get_class(ctx: Context, what: str = "") -> str:
         """C++ classes found in the game (MIPS games' and PC programs' code; a PC program's run-time type
-        information has the classes' own names): give a vtable address or a virtual function, constructor or destructor for its class's
-        fields (offset, type, which functions use them) and virtual functions by slot; nothing lists them all. A
+        information has the classes' own names; Xbox and link-time code generation projects also find structs with
+        member functions): give a vtable address or a virtual function, constructor or destructor (Xbox/LTCG: any
+        member function, or a global object) for its class's fields (offset, type, which functions use them), its
+        functions, virtual functions by slot and (Xbox/LTCG) a declaration to start from; nothing lists them all. A
         layout to write the class from: the judge still decides."""
         return await run(ctx, "get_class", what=what)
 
@@ -752,7 +755,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         return await run(ctx, "file_status", path=path)
 
     @mcp.tool(meta=ALWAYS_LOAD)
-    async def standins_for(ctx: Context, what: str) -> str:
+    async def standins_for(ctx: Context, what: str = "", unit: str = "", function: str = "", path: str = "") -> str:
         """Games built with link-time code generation (the brief's "Calling convention" section says so): a starting
         harness for a unit, from the original's references. `what`: a unit, its source file or one of its functions.
         Returns stand-ins for what the unit's functions call or read elsewhere (with their conventions), a
@@ -760,6 +763,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
         source. Write them into harness/<unit>.standins.cpp and harness/<unit>.drv.cpp with edit_file (old=""
         creates a file), then shape them: the stand-ins must read the registers the original reads and leave the
         ones its callers keep alive."""
+        # agents called it as standins_for(unit=...) / (function=...) and got "rejected arguments: ['what']"
+        what = what or unit or function or path
+        if not what:
+            return "standins_for needs `what`: a unit, its source file or one of its functions"
         return await run(ctx, "standins_for", what=what)
 
     @mcp.tool(meta=ALWAYS_LOAD)
