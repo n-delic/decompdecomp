@@ -2586,10 +2586,10 @@ Other processors and object-project builds retain their existing paths.
 
 ### IDO O3 private calling conventions require actual caller/callee context
 
-Fourteen previously unmatched N64 SDK/libc entries (8,208 bytes) were independently
+Thirty-one previously unmatched N64 SDK/libc entries (22,244 bytes) were independently
 recovered in read-only byte/data replay by compiling small actual caller/callee
 units at IDO 5.3 `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`.
-The cases cover decimal formatting, printf field handling and normal/compressed MIDI sequence readers.
+The cases cover formatting, normal/compressed MIDI readers, bank patching, sequence/sound players, the envelope mixer and ADPCM loading.
 Compiling helpers globally or alone had changed the private argument registers and
 callee clobber information; large scores were not evidence that their algorithms
 were missing from available source. These are new source-assisted candidates,
