@@ -9,6 +9,9 @@ from tests.test_permute import AGENT, ProjectStub, ScriptedPermuter
 
 @pytest.mark.parametrize('imported', [False, True])
 @pytest.mark.parametrize('family,source', [
+    ('store_value_lifetime', 'void f1(S *p){p->value=125;}'),
+    ('assignment_chain_lifetime', 'int f1(int *p){int a;int b;if ((a=b=p[1]<<4)>0) return a+b;return 0;}'),
+    ('pointer_index_order', 'void f1(S *p,int i){p->table+i;}'),
     ('inferred_record_layout', 'void f1(void*p){*(int*)((char*)p+20)=1;use(*(int*)((char*)p+20));*(short*)((char*)p+24)=2;}'),
     ('store_address_lifetime', 'void f1(void*p,int base){*((short *)((char *)((*(int *)p*20)+base)+12))=0;}'),
     ('stack_padding', 'void f1(void){int pad[4];work();}'),
