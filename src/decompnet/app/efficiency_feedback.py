@@ -12,7 +12,10 @@ def mismatch(rows):
         return ''
     index,row=different[0]
     category=LABELS.get(classify(rows),'instruction shape')
-    return (f'Mismatch focus: {category}; first differing row {index}; {len(different)} differing rows.\n'
+    from ..diff_summary import summarize
+    counts = summarize(rows)['counts']
+    categories = ', '.join(f'{n} {key.replace("_", " ")}' for key,n in counts.items() if n)
+    return (f'Mismatch focus: {category}; first differing row {index}; {len(different)} differing rows ({categories}; advisory).\n'
             f'Target: {row[1][:180]}\nCandidate: {row[2][:180]}\n'
             'Use get_assembly(focus="mismatch") for nearby instructions.')
 
@@ -30,3 +33,23 @@ def continuation(net,agent,slug,function,*,applied=None,base=None):
     if not held:
         return text+'. Do not patch without a claim. Save findings with add_note(function=...), then claim another eligible function.'
     return text+'. Patch this revision only.'+(' Batch patches are independent, not cumulative.' if applied is not None else '')
+
+
+def frontload(net, agent, slug, function, text):
+    """One authoritative continuation header after all automatic edits have finished."""
+    import re
+    if not function or ',' in function or not isinstance(text, str):
+        return text
+    state = continuation(net, agent, slug, function)
+    old = re.findall(r'(?m)^Continuation state:[^\n]*', text)
+    revision = re.search(r'; revision=([^;]+);', state)
+    # Batch continuation includes useful applied patch IDs; retain it only for the current revision.
+    if old and revision and '; revision='+revision[1]+';' in old[-1]:
+        extras = re.findall(r'; (?:base_revision=[^; .]+|applied_patch_ids=[^.\n]+)', old[-1])
+        if extras:
+            prefix, separator, suffix = state.partition('. ')
+            state = prefix + ''.join(extras) + separator + suffix
+            if 'applied_patch_ids=' in state:
+                state += ' Batch patches are independent, not cumulative.'
+    text = re.sub(r'(?m)^Continuation state:[^\n]*\n?', '', text).strip()
+    return state + '\n\n' + text

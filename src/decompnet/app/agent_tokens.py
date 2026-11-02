@@ -424,6 +424,9 @@ def feedback(net, agent, slug, function, text, previous):
     if 'markers:' not in text:
         return text
     head = text.split('markers:', 1)[0]
+    # Keep score/change/budget evidence; replace overlapping diagnostic summaries with one block.
+    head = re.sub(r'(?m)^Mismatch categories[^\n]*\n?|^\d+ (?:regalloc|operand|stack|extra|missing|different|reordered)[^\n]*\n?', '', head)
+    head = re.sub(r'\nThe first [^\n]*target instructions match; the first difference[^\n]*', '', head)
     from .efficiency_feedback import mismatch
     from .permuter_focus import normalized
     diagnostic=normalized(rows)
@@ -458,6 +461,7 @@ def feedback(net, agent, slug, function, text, previous):
         # Show newly changed differing rows first, with ordinary first-region fallback.
         changed = [(r[0], f'[{i}] {r[1]}', r[2]) for i,r in enumerate(diagnostic) if r[0]!=' ' and (previous is None or i>=len(previous) or r!=previous[i])]
         detail = 'Changed differing rows (first 12):\n' + scoring.render_rows(changed[:12], 0, max_rows=18, legend=legend, more_hint=False)
+        detail = re.sub(r'(?m)^\d+ (?:regalloc|operand|stack|extra|missing|different|reordered)[^\n]*\n?', '', detail)
     from ..source_lines import feedback_note
     mapping = ('\nInstruction differences unchanged; repeated C-line table omitted. Source line numbers may have shifted; get_candidate supplies current C.'
                if previous == rows else feedback_note(text, rendering_rows=[a for a,b in zip(rows,diagnostic) if a[0]!=' ' and b[0]==' ']))

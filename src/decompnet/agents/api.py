@@ -409,7 +409,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
     bo = lambda desc: {"type": "boolean", "description": desc}
     defs = {
         "project_info": ("Game, compiler and progress; detail=true includes all facts and suggestions.", s(detail=bo("full details"))),
-        "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base=st("current (default), saved_best, reported_corrected (agent-reported alternative, not verified) or last_compiling; explicitly selects continuation without judging"))),
+        "get_candidate": ("Read candidate C and its revision, without assembly or notes.", s(function=st("function", True), base={"type":"string","enum":["current","saved_best","last_compiling","reported_corrected"],"description":"Named recovery base, never a revision hash; selection does not judge source."})),
         "compile_patch": ("Compile one exact-text replacement against a candidate revision using the normal judge.",
                           s(function=st("function", True), revision=st("revision from get_candidate or compile feedback", True),
                             old=st("text occurring exactly once", True), new=st("replacement", True),
@@ -457,10 +457,10 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "release_function": ("Give up a function with notes for the next agent, once compile_and_diff says to move "
                              "on (before that it answers once with what to try; call again to release anyway).",
                              s(function=st("function", True), notes=st("what you tried, what is left", True),
-                               not_c=bo("true when you're sure no C makes its code (hand-written assembly); say why in notes"),
+                               not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
                                needs=st("Optional direct callee in original assembly; obeys pauses and allows one pivot per unchanged input. Explain inline/header concerns in notes."))),
-        "get_context": ("The shared header included in every compile.", s()),
+        "get_context": ("The header used by function; omit only for one held claim or a single-header project.", s(function=st("Function whose per-file header is needed"))),
         "edit_context": ("Replace `old` (exactly once) with `new` in the shared header, or append when old is empty.",
                          s(old=st("text to replace, or empty", True), new=st("replacement", True),
                            message=st("why", True))),
