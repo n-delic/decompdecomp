@@ -91,6 +91,8 @@ def test_serve_parses_port_and_preserves_legacy_cli(monkeypatch):
     monkeypatch.setattr(cli,'run',lambda args:calls.append(args) or 0)
     assert cli.main(['serve','--port','6492'])==0
     assert calls[-1].cmd=='serve' and calls[-1].port==6492
+    assert cli.main(['serve','--port','6492','--window'])==0
+    assert calls[-1].cmd=='serve' and calls[-1].window is True
     assert cli.main(['--no-browser','--port','6493'])==0
     assert calls[-1].cmd is None and calls[-1].port==6493
 
@@ -150,4 +152,35 @@ def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,ca
     import json
     state=json.loads((tmp_path/'.decomp/server.json').read_text())
     assert state['mode']=='serve'
+    assert 'Web sign-in code: test-code' in capsys.readouterr().out
+
+
+def test_serve_can_open_native_window_and_browser_for_the_same_app(tmp_path,monkeypatch,capsys):
+    import uvicorn
+
+    from decompnet.app import engine, server, tray
+    monkeypatch.setenv('DECOMP_SERVE','')
+    monkeypatch.setenv('DECOMP_WINDOW','0')
+    monkeypatch.setenv('DECOMP_TRAY','0')
+    calls=[]
+    monkeypatch.setattr(cli,'home_dir',lambda:tmp_path)
+    monkeypatch.setattr(cli,'use_own_wine_prefix',lambda:None)
+    monkeypatch.setattr(cli,'_restart_state',lambda:None)
+    monkeypatch.setattr(cli,'_state',lambda path:None)
+    monkeypatch.setattr(cli,'replace_older',lambda path:None)
+    monkeypatch.setattr(window,'missing',lambda:None)
+    monkeypatch.setattr(tray,'start',lambda *a:calls.append('tray') or False)
+    monkeypatch.setattr(cli,'_open_when_ready',lambda port:calls.append(('window',port)))
+    socket=SimpleNamespace(getsockname=lambda:('127.0.0.1',PORT))
+    monkeypatch.setattr(cli,'_listen',lambda port,exact:calls.append(('listen',port,exact)) or socket)
+    net=SimpleNamespace(web_login=SimpleNamespace(code='test-code'))
+    monkeypatch.setattr(engine,'RomNetwork',lambda *a:net)
+    mcp=SimpleNamespace(streamable_http_app=lambda **kwargs:object())
+    monkeypatch.setattr(server,'build',lambda *a,**kwargs:(calls.append(('build',kwargs)) or (mcp,object(),object(),lambda:calls.append('quit'))))
+    monkeypatch.setattr(uvicorn,'Server',lambda cfg:SimpleNamespace(run=lambda sockets:calls.append(('run',sockets))))
+    assert cli.run(SimpleNamespace(cmd='serve',port=PORT,window=True))==0
+    assert calls==[('listen',PORT,True),('build',{'headless':True}),'tray',('window',PORT),('run',[socket]),'quit']
+    import json
+    state=json.loads((tmp_path/'.decomp/server.json').read_text())
+    assert state['mode']=='desktop'
     assert 'Web sign-in code: test-code' in capsys.readouterr().out

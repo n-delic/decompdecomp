@@ -159,12 +159,17 @@ def run(args) -> int:
     from .server import build
     from .support import file_log
 
-    headless = getattr(args, 'cmd', None) == 'serve' or os.environ.get('DECOMP_SERVE') == '1'
-    if headless:
+    serving = getattr(args, 'cmd', None) == 'serve' or os.environ.get('DECOMP_SERVE') == '1'
+    restarted = _restart_state()
+    with_window = not serving or bool(getattr(args, 'window', False)) or bool(restarted and restarted.get('window'))
+    web_access = serving
+    if serving:
         if not 1 <= args.port <= 65535:
             print('Choose a server port between 1 and 65535.', file=sys.stderr)
             return 2
-        os.environ.update(DECOMP_SERVE='1', DECOMP_WINDOW='0', DECOMP_TRAY='0')
+        os.environ.update(DECOMP_SERVE='1', DECOMP_WINDOW='1' if with_window else '0')
+        if not with_window:
+            os.environ['DECOMP_TRAY'] = '0'
     use_own_wine_prefix()
     home = home_dir()
     internal = home / ".decomp"
@@ -173,8 +178,7 @@ def run(args) -> int:
     from . import build_info
     log.info("%s %s starting (%s)", edition.NAME, build_info.label(), sys.executable)
     state_file = internal / "server.json"
-    restarted = _restart_state()
-    if headless and not restarted and (existing := _state(state_file)):
+    if serving and not restarted and (existing := _state(state_file)):
         print(f"This home already has a running app at http://127.0.0.1:{existing['port']}/. "
               "Stop it with `decomp stop` first, or set DECOMP_HOME to a different folder.", file=sys.stderr)
         return 1
@@ -198,25 +202,27 @@ def run(args) -> int:
         # an update from 1.0.2 landed here: quitting would stop the helpers mid-work; they carry on, and `decomp`
         # opens the window once the packages are in (Window.open looks again)
 
-    sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or headless)
+    sock = _listen(restarted["port"] if restarted else args.port, exact=bool(restarted) or serving)
     port = sock.getsockname()[1]
     secret = restarted["secret"] if restarted else secrets.token_urlsafe(24)
-    state_file.write_text(json.dumps({"port": port, "secret": secret, "pid": os.getpid(), "mode": "serve" if headless else "desktop"}), encoding="utf-8")
+    state_file.write_text(json.dumps({"port": port, "secret": secret, "pid": os.getpid(), "mode": "desktop" if with_window else "serve"}), encoding="utf-8")
     os.chmod(state_file, 0o600)
     cleanup.old_registrations(internal)
     from .. import compiler_processes
     compiler_processes.configure(internal / "compiler-processes")
     net = RomNetwork(internal / "decomp.db", home)
-    mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if headless else {}))
+    mcp, manager, security, quit_app = build(net, internal, port, secret, **({"headless":True} if web_access else {}))
     app = mcp.streamable_http_app(transport_security=security, max_request_body_size=REQUEST_BODY_LIMIT, host="127.0.0.1")
     # with a tray icon, helpers kept working without the window have a way back to it
-    window.IN_TRAY = False if headless else tray.start(window.open_app, quit_app)
+    window.IN_TRAY = tray.start(window.open_app, quit_app) if with_window else False
     print(f"{edition.NAME} {__import__('decompnet').__version__}\nyour projects: {hostenv.shown_path(home)}"
-          + ("\nupdated and restarted" if restarted else "" if headless else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
+          + ("\nupdated and restarted" if restarted else "" if not with_window else "\nstop with Ctrl-C, or quit it in its window"), flush=True)
     # (1.0.2 and older restart into a new version without saying: they had a browser tab, which can't follow)
-    if headless:
-        print(f"Server: http://127.0.0.1:{port}/\nWeb sign-in code: {net.web_login.code}\nStop with Ctrl-C or `decomp stop`.", flush=True)
-    elif not restarted or restarted.get("window", True):
+    if web_access:
+        print(f"Server: http://127.0.0.1:{port}/\nWeb sign-in code: {net.web_login.code}\n"
+              + ("The desktop window is open too. Stop with `decomp stop`." if with_window
+                 else "Stop with Ctrl-C or `decomp stop`."), flush=True)
+    if with_window and (not restarted or restarted.get("window", True)):
         _open_when_ready(port)
     try:
         uvicorn.Server(server_config(app)).run(sockets=[sock])
@@ -338,8 +344,9 @@ def main(argv: list[str] | None = None) -> int:
     # what 1.0.2 and older pass when they restart into an update: refusing it would end the app mid-update
     ap.add_argument("--no-browser", action="store_true", help=argparse.SUPPRESS)
     sub = ap.add_subparsers(dest="cmd")
-    serve = sub.add_parser("serve", help="run a localhost webserver without a window or tray")
+    serve = sub.add_parser("serve", help="run the app in a browser on localhost")
     serve.add_argument("--port", type=int, default=argparse.SUPPRESS, help=f"localhost port (default: {edition.FIRST_PORT})")
+    serve.add_argument("--window", action="store_true", help="also open the desktop window; both share the same app and project state")
     sub.add_parser("setup", help="install the compilers and tools this computer needs")
     sub.add_parser("stop", help="quit the running app (and every helper it started)")
     sub.add_parser("shortcut", help="add decompdecomp to your apps menu")
