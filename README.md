@@ -425,6 +425,17 @@ browser uses a separate HttpOnly session cookie for up to 12 hours; **Sign out**
 not the server or its agents. Restarting the server prints a new code and requires signing in again. Keep the
 terminal code private: it grants full access to this app, unlike project-scoped agent or browser-worker pairing.
 
+To use the browser and native desktop window at the same time, run:
+
+```sh
+decomp serve --window --port 6464
+```
+
+This opens the desktop window and serves the same full interface and project state to a browser at
+`http://127.0.0.1:6464/`. Enter the sign-in code printed in the terminal. Both interfaces share one running app,
+database, and set of agents; closing or signing out of the browser does not close the desktop app. Use
+`decomp stop` to stop both.
+
 `serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
 home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --port 6484`. A checkout can use
