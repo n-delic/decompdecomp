@@ -49,6 +49,11 @@ _CONFIG_LOCK = threading.Lock()
 # Agents may only edit source and header files, never the project's build setup, targets or verification.
 EDITABLE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc|inl)$", re.I)
 FORBIDDEN_PARTS = {".git", STATE, "orig", "build", "asm", "expected", "tools", "config", ".github", "assets", "bin"}
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}  # (EDITABLE's)
+_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+# An edit that more units than this compile is checked with a build of the whole project: about as quick by then,
+# and it checks everything (units_built_from)
+EDIT_UNITS_MAX = 16
 
 
 def _sha1(path: Path) -> str:
@@ -808,9 +813,91 @@ class ForkProject:
         return found
 
     def units_for(self, rel: str) -> list[Unit]:
-        """The units whose source file is `rel` (relative to the project root)."""
+        """The units whose source file is `rel` (relative to the project root), or, in an LTCG project, whose code
+        `rel` holds part of (unit_files)."""
         want = Path(rel).as_posix()
-        return [u for u in self.units() if u.source and Path(u.source).as_posix() == want]
+        found = [u for u in self.units() if u.source and Path(u.source).as_posix() == want]
+        p = Path(want)
+        if found or "." not in p.stem or not (self.manifest or {}).get("ltcg"):
+            return found
+        main = (p.parent / (p.stem.split(".")[0] + p.suffix)).as_posix()
+        return [u for u in self.units() if u.source and Path(u.source).as_posix() == main]
+
+    def units_built_from(self, rel: str) -> list[Unit]:
+        """The units an edit of `rel` can change, when that's known to be a few: what units_for says and, in an LTCG
+        project, the unit a harness file belongs to (harness/<unit>.<name>.cpp, which only that unit's link compiles:
+        tools/ltcg.py) and every unit whose files include `rel`, directly or through another file. Empty when the
+        whole project has to be built to know: a header includes it, or more than EDIT_UNITS_MAX units do.
+
+        Why: on an Xbox game built with LTCG, a harness edit went the way of a header's, two builds of all 1,420
+        units and a measure of the project, every agent's compile waiting meanwhile, 2,137 times in eight days; and
+        a unit's source that 32 other units' drivers include was rebuilt alone, their matches unchecked."""
+        if not (self.manifest or {}).get("ltcg"):
+            return self.units_for(rel)
+        want = Path(rel).as_posix()
+        if Path(want).suffix.lower() not in (".c", ".cc", ".cpp"):
+            return []  # a header: `#include <...>` and forced includes reach it too, so only a whole build knows
+        includers = self._includers(want)
+        if includers is None:
+            return []
+        units: dict[str, Unit] = {}
+        for f in (want, *sorted(includers)):
+            for u in self._unit_of_file(f):
+                units.setdefault(u.name, u)
+        if not units or len(units) > EDIT_UNITS_MAX:
+            return []
+        return list(units.values())
+
+    def _unit_of_file(self, rel: str) -> list[Unit]:
+        """The unit a C or C++ file of an LTCG project belongs to: its source, a part of it, or one of its harness
+        files (harness/<unit>.<name>.cpp)."""
+        found = self.units_for(rel)
+        p = Path(rel)
+        if found or p.parent.as_posix() != "harness" or "." not in p.stem or p.suffix.lower() not in (".c", ".cpp"):
+            return found
+        return [u for u in self.units() if u.name == p.stem.split(".")[0] and u.base is not None]
+
+    def _includers(self, rel: str) -> set[str] | None:
+        """The project's C and C++ files that include `rel`, directly or through others (`#include "..."` resolved
+        as the build's compiler does: beside the file, then include/ and harness/), or None when a header does (a
+        header can be included anywhere: only a whole build knows)."""
+        files: dict[str, str] = {}
+        for top in ("src", "harness", "include"):
+            base = self.root / top
+            if base.is_dir():
+                for f in base.rglob("*"):
+                    if f.suffix.lower() in SOURCE_SUFFIXES and f.is_file():
+                        files[f.relative_to(self.root).as_posix()] = f.read_text(encoding="utf-8", errors="replace")
+        included_by: dict[str, set[str]] = {}
+        for name, text in files.items():
+            for m in _INCLUDE.finditer(text):
+                for where in (Path(name).parent, Path("include"), Path("harness")):
+                    target = os.path.normpath(where / m.group(1)).replace(os.sep, "/")
+                    if target in files:
+                        included_by.setdefault(target, set()).add(name)
+                        break
+        found, todo = set(), [rel]
+        while todo:
+            for f in included_by.get(todo.pop(), ()):
+                if f in found:
+                    continue
+                if Path(f).suffix.lower() not in (".c", ".cc", ".cpp"):
+                    return None
+                found.add(f)
+                todo.append(f)
+        return found
+
+    def unit_files(self, unit: Unit) -> list[str]:
+        """A unit's source files, relative to the root: its source file, then in an LTCG project the files its code is
+        split into, <unit>.<part>.cpp beside it (the template's tools/ltcg.py links them all into the unit's harness:
+        under LTCG which file a function is in changes what its callers compile to)."""
+        if not unit.source:
+            return []
+        src = Path(unit.source)
+        if not (self.manifest or {}).get("ltcg"):
+            return [src.as_posix()]
+        parts = sorted(p for p in (self.root / src.parent).glob(f"{src.stem}.*{src.suffix}") if p.is_file())
+        return [src.as_posix(), *((src.parent / p.name).as_posix() for p in parts)]
 
     def diff_options(self, unit: Unit) -> dict:
         """What every diff of this unit is judged by: the progress report's rules with the project's and unit's options."""
