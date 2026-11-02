@@ -68,7 +68,9 @@ def calls(image,functions,order):
         if fn.get('handwritten'):continue
         regs={};epoch=0;skip_delay=False
         def value(r):return (0,{}) if not r else regs.get(r,(0,{f'{epoch}:{r}':1}))  # noqa: B023 synchronous interpreter state
+        def scalar(a):return (0,{a['scalar']:1}) if isinstance(a,dict) else a
         def plus(a,b,sign=1):
+            a=scalar(a);b=scalar(b)
             if not isinstance(a,tuple) or not isinstance(b,tuple):return None
             coeff=dict(a[1])
             for k,v in b[1].items():coeff[k]=coeff.get(k,0)+sign*v
@@ -97,11 +99,11 @@ def calls(image,functions,order):
                 out=value(rs) if rt==0 else (value(rt) if rs==0 and f==33 else plus(value(rs),value(rt),1 if f==33 else -1))
                 destination=rd
             elif op==0 and f==0:
-                a=value(rt);n=(w>>6)&31
+                a=scalar(value(rt));n=(w>>6)&31
                 if isinstance(a,tuple) and all(abs(v<<n)<=256 for v in a[1].values()):out=((a[0]<<n)&0xffffffff,{k:v<<n for k,v in a[1].items()})
                 destination=rd
             elif op==35:
-                a=plus(value(rs),(signed(w),{}));out={'load':a} if a is not None else None;destination=rt
+                a=plus(value(rs),(signed(w),{}));out={'load':a,'scalar':f'{epoch}:load:{pc}'} if a is not None else None;destination=rt
             else:
                 # No guessed preservation through instructions, branches or calls.
                 regs={};epoch+=1;continue

@@ -114,3 +114,14 @@ def test_one_switch_cannot_enter_another_switch_after_its_guard():
     result=extent(image,0x1000,0x107c,0x80001000,'big',table_ranges=ranges)
     assert not result['flow_closed']
     assert any(t.get('reason')=='a table edge bypasses this guard' for t in result['jump_tables'])
+
+
+def test_loaded_index_can_form_a_record_stride_but_never_proves_reachability():
+    image=bytearray(0x1200)
+    image[0x1000:0x1024]=struct.pack('>9I',0x8c840000,0x000418c0,0x00641823,0x00031880,0x3c028000,0x00431021,0x8c421100,0x0040f809,0)
+    rows=[dict(pointer_references=[dict(rom_offset=0x1138,value=0x80002000)])]
+    consumers(image,[dict(name='f',rom=0x1000,size=36,vram=0x80001000)],rows,'big',
+              [dict(rom_start=0x1138,rom_end=0x113c,vram=0x80001138)],[])
+    found=rows[0]['callback_consumers'][0]
+    assert found['stride']==28 and found['possible_index']==2
+    assert found['mapping_verified'] and found['state']=='consumer_hypothesis'
