@@ -2611,3 +2611,11 @@ ROM names, never a guessed offset delta. Only the chosen freshly linked entry is
 exported through matching-only extraction, so context is not exported or counted
 again. Other architectures without this metadata reader and PROJECT builds keep
 their existing function/build paths.
+
+An additional SDK callback at IDO 5.3 O1 (the same MIPS II flags) was missing
+six internal alignment NOPs in isolation, score 600. Preserving its real 392-byte
+constructor before it produced an exact 460-byte entry; both bodies were freshly
+rejudged. The running app accepted the entry through its existing predecessor
+path, and the complete original-cartridge export passed. The context constructor
+is not a new match. This is a separate live recovery from the staged private-unit
+candidates above.
