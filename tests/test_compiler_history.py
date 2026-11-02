@@ -133,7 +133,7 @@ def test_flags_only_uses_each_functions_current_compiler_and_resumes(comparison,
     net, profiles, _, _ = comparison
     profiles.append(('gcc-2.7.2-kmc', ('-O3',)))
     proj = net.project_row('demo')
-    cfg = net.cfg(proj)
+    cfg = json.loads(proj['config'])
     cfg['compiler_ranges'] = [{'start': 0x80001020, 'end': 0x80001040,
                                'toolchain': 'sn-n64-281', 'flags': ['-O1']}]
     with net.store.tx() as db:
@@ -176,3 +176,70 @@ def test_comparison_queue_counts_exclude_completed_and_respect_run_limit(compari
     second = net.survey_compilers('demo', all_installed=True, untested_only=True, log=Log())
     assert second['total'] == 1 and second['skipped'] == 1 and second['deferred'] == 0
     assert snapshots[0]['total'] == 1
+
+
+def test_auto_apply_uses_best_completed_profile_and_records_outcomes(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    applied=[]
+    def judge(proj, fn, tc, flags, source):
+        return False, SimpleNamespace(percent=90 if tc=='sn-n64-281' else 80,score=40 if tc=='sn-n64-281' else 80), ''
+    monkeypatch.setattr(net,'_judge_with',judge)
+    def apply(slug,function,tc,flags):
+        applied.append((function,tc,flags))
+        if function=='f0':
+            from decompnet.network import NetworkError
+            raise NetworkError('This function is being worked on.')
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_score=40 WHERE name=?',(function,))
+        return {'said':'Applied and rechecked.'}
+    monkeypatch.setattr(net,'apply_function_compiler',apply)
+    result=net.run_compiler_comparison('demo',auto_apply=True)
+    assert applied==[('f0','sn-n64-281',['-O1']),('f1','sn-n64-281',['-O1'])]
+    assert result['auto_apply'] and result['applied_count']==1
+    assert not result['results'][0]['applied'] and 'worked on' in result['results'][0]['apply_error']
+    assert result['results'][1]['applied']
+    for name in ('f0','f1'):
+        saved=net.compiler_test_result(net.project_row('demo'),net._function(name,'demo'))['comparison']
+        assert saved['applied']==(name=='f1')
+    assert net.cfg(net.project_row('demo'))['compiler']=={'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}
+
+
+def test_auto_apply_rejects_changed_input_and_remains_opt_in(comparison, monkeypatch):
+    net,_,_,_=comparison
+    calls=[]
+    monkeypatch.setattr(net,'apply_function_compiler',lambda *args:calls.append(args))
+    net.run_compiler_comparison('demo')
+    assert not calls
+    original=net._judge_with
+    def changed(proj,fn,*args):
+        result=original(proj,fn,*args)
+        if fn['name']=='f0':
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source='int f0(void){return 9;}' WHERE name='f0'")
+        return result
+    monkeypatch.setattr(net,'_judge_with',changed)
+    result=net.run_compiler_comparison('demo',function='f0',auto_apply=True)
+    assert not calls and result['applied_count']==0
+    assert 'changed' in result['results'][0]['apply_error']
+    with pytest.raises(Exception,match='boolean'):net.run_compiler_comparison('demo',auto_apply='false')
+
+
+def test_auto_apply_changes_only_function_ranges_and_rechecks_current_c(comparison, monkeypatch):
+    from decompnet.project import compiler_for
+    net,_,_,_=comparison
+    original=net.cfg(net.project_row('demo'))['compiler'].copy()
+    monkeypatch.setattr(net,'_judge_with',lambda proj,fn,tc,flags,source:
+                        (False,SimpleNamespace(percent=95 if tc=='sn-n64-281' else 50,score=20 if tc=='sn-n64-281' else 200),''))
+    rechecked=[]
+    def recheck(agent,proj,fn,source):
+        assert compiler_for(net.cfg(proj),fn['vram'])=={'toolchain':'sn-n64-281','flags':['-O1']}
+        rechecked.append(fn['name'])
+        with net.store.tx() as db:db.execute('UPDATE functions SET best_score=20 WHERE id=?',(fn['id'],))
+    monkeypatch.setattr(net,'try_quietly',recheck)
+    result=net.run_compiler_comparison('demo',auto_apply=True)
+    assert result['applied_count']==2, result['results']
+    assert rechecked==['f0','f1']
+    cfg=net.cfg(net.project_row('demo'))
+    assert cfg['compiler']==original
+    assert compiler_for(cfg,0x80001040)==original
+    assert net.run_compiler_comparison('demo',auto_apply=True)['tried']==0

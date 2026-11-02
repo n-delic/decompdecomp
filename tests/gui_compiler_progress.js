@@ -147,17 +147,14 @@ async function checkStopButton() {
   };
   let rejectPoll;
   const polling = new Promise((_resolve, reject) => { rejectPoll = reject; });
-  let cancels = 0, finished = 0;
+  let cancels = 0;
   const context = {$: get, S: {slug:'demo'}, renderCompilerProgress() {},
     showJobError(_work, message) { if (message) throw new Error('Intentional stopping is not a failed comparison'); },
-    beginWork(work, label, buttons) {
-      buttons[0].disabled = true;
-      work._workStatus = {dataset:{state:'running'}};
-      return () => { finished++; buttons[0].disabled = false; };
-    },
+    beginWork() { throw new Error("Compiler comparison must not create a workbar"); },
+    updateCompilerTestScope() { get("testInstalledCompilers").textContent = "Find better settings"; },
     followJob: () => polling,
     api: async (url, options) => {
-      if (url === '/api/compilermap') return {job:'only-this-job'};
+      if (url === '/api/compilermap') { assert.equal(options.body.auto_apply, true); return {job:'only-this-job'}; }
       assert.equal(url, '/api/job/cancel'); assert.equal(options.body.id, 'only-this-job');
       if (++cancels === 1) throw new Error('Connection failed');
       return {cancelled:true};
@@ -165,10 +162,12 @@ async function checkStopButton() {
   vm.createContext(context);
   const source = read('steering'), start = source.indexOf('$("testInstalledCompilers").onclick');
   vm.runInContext(source.slice(start, source.indexOf('\nfunction renderCompilerImprovements', start)), context);
+  get('compilerAutoApply').checked = true;
   const running = get('testInstalledCompilers').onclick();
   for (let i = 0; i < 20; i++) await Promise.resolve();
-  const stop = get('stopInstalledCompilers');
-  assert.equal(stop.hidden, false); assert.equal(stop.disabled, false);
+  const stop = get('testInstalledCompilers');
+  assert.equal(stop.textContent, 'Stop comparison'); assert.equal(stop.disabled, false);
+  assert.equal(get('compilerAutoApply').disabled, true);
   await stop.onclick();
   assert.equal(stop.disabled, false); assert.equal(get('compilerStopError').hidden, false);
   await stop.onclick();
@@ -177,9 +176,8 @@ async function checkStopButton() {
   const saved = [{function:'saved'}]; get('compilerProgress')._compilerRows = saved;
   rejectPoll(Object.assign(new Error('Stopped'), {job:{state:'cancelled'}}));
   await running;
-  assert.equal(stop.hidden, true); assert.equal(stop.onclick, null);
-  assert.equal(get('testInstalledCompilers').disabled, false); assert.equal(finished, 1);
-  assert.equal(get('installedCompilerWork')._workStatus.dataset.state, 'stopped');
+  assert.equal(stop.textContent, 'Find better settings'); assert.equal(stop._compilerRun, undefined);
+  assert.equal(stop.disabled, false); assert.equal(get('compilerAutoApply').disabled, false);
   assert.equal(get('compilerProgress')._compilerRows, saved);
   assert.equal(get('compilerProgress[data-current]').textContent, 'Comparison stopped');
 }
@@ -199,3 +197,7 @@ scopeContext.updateCompilerTestScope();
 assert.match(scopeFields.get('compilerTestScope').textContent, /Current compiler only/);
 assert.match(scopeFields.get('compilerTestScope').textContent, /including completed attempts/);
 assert.equal(scopeFields.get('testInstalledCompilers').textContent, 'Retest compiler settings');
+
+ctx.renderCompilerProgress(null, {tried:1, total:1, auto_apply:true, applied_count:1, results:[{function:'applied',applied:true,best:99,improved:true}],improvements:[{}]});
+assert.match(fields.get('[data-profile]').textContent, /1 function profiles applied and rechecked/);
+assert.ok(box._compilerApplied.has('applied'));

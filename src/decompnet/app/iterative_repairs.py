@@ -11,7 +11,15 @@ from pathlib import Path
 
 from ..network import NetworkError
 from ..project import compiler_for
-from . import allocation_evidence, first_difference, region_repairs, repair_selection, search_frontier, workers
+from . import (
+    allocation_evidence,
+    first_difference,
+    region_repairs,
+    repair_effects,
+    repair_selection,
+    search_frontier,
+    workers,
+)
 
 _PHASE_LOCKS_GUARD = threading.Lock()
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
@@ -49,10 +57,6 @@ def allocation_detour(node, report, arch=None):
                 and allocation_evidence.signature(node.get('baseline_rows'),arch)!=allocation_evidence.signature(report.get('rows'),arch))
 
 
-def family_key(node):
-    return hashlib.sha256(repr((node.get('parent_source'),(node.get('path') or [''])[-1])).encode()).hexdigest()
-
-
 def children(state, parent, variants, *, priority=0):
     """Keep the pending wave, but reserve a tiny burst for a structurally promising two-step repair."""
     if parent['depth'] >= DEPTH or parent['source'] in state.setdefault('expanded', []):
@@ -78,6 +82,7 @@ def children(state, parent, variants, *, priority=0):
                         parent_output=output_key(parent['report']),
                         unchanged_steps=parent.get('unchanged_steps', 0)))
     state['pending'] = new[:priority]+state['pending']+new[priority:]
+    repair_effects.rotate(state)
     return len(new)
 
 
@@ -90,19 +95,17 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
     if not state['pending'] and state.get('deferred') and not stopped():
         expand_wave(state, variants, arch)
     while state['pending'] and not stopped():
-        # No outputs are discarded: unproductive siblings move behind fresh families
-        # under this same parent/build-scoped persisted frontier and phase budget.
-        effects=state.get('family_no_effect',{})
-        state['pending'].sort(key=lambda n:effects.get(family_key(n),0)>=2)
         node = state['pending'][0]
         report = evaluate(node['source'])
         if report is None:  # busy work stays retryable
             return False
         state['pending'].pop(0)
-        state['family_no_effect']=effects
+        if isinstance(report.get('score'), (int, float)):
+            repair_effects.observe(state, node, output_key(report))
         counts = state.setdefault('counts', {})
         outcome = 'matched' if report.get('matched') else 'compile_failed' if report.get('score') is None else 'scored'
         counts[outcome] = counts.get(outcome, 0) + 1
+        repair_effects.rotate(state)
         if report.get('matched'):
             state['reason'] = 'matched'
             state['winning_path'] = state.get('winning_path', node.get('path', []))
@@ -124,10 +127,6 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             # Keep two source shapes per identical output at each depth: a later source edit can distinguish them.
             # This only prunes search branches, never supplies a match verdict.
             output = output_key(report)
-            key=family_key(node)
-            if output is not None and node.get('parent_output') is not None:
-                effects[key]=effects.get(key,0)+1 if output==node['parent_output'] else 0
-                while len(effects)>256:del effects[next(iter(effects))]
             outputs = state.setdefault('outputs', {})
             unchanged = node.get('unchanged_steps', 0)+1 if output is not None and output == node.get('parent_output') else 0
             node['unchanged_steps'] = unchanged
@@ -382,6 +381,37 @@ def _run(twins, slug, job):
                 (time.monotonic()-started)*1000, origin='iterative repairs', exact=bool(report.get('matched')))
             if report.get('matched') and state['pending'] and state['pending'][0].get('parent_source'):
                 expression_recipes.learn(net,recipe_profile,state['pending'][0]['parent_source'],source)
+            # At most one pair of optional phase captures per frozen function frontier.
+            # Reserve their worst-case four compiler runs from this same phase budget.
+            if (not state.get('lifetime_diagnostics_attempted') and not report.get('matched')
+                    and isinstance(report.get('score'), (int, float)) and report['score'] > 0
+                    and report['score'] < node.get('ceiling', 0)
+                    and classify(report.get('rows') or []) == 'register'
+                    and node.get('parent_source') and tries[0]+4 <= PER_FUNCTION
+                    and time.monotonic()+80 < deadline):
+                with guard:
+                    reserved = job.reuse_attempts+4 <= limit
+                    if reserved:
+                        job.reuse_attempts += 4
+                if reserved:
+                    from . import lifetime_diagnostics
+                    spent = [0]
+                    def diagnostic_compile():
+                        spent[0] += 1
+                    state['lifetime_diagnostics_attempted'] = True
+                    try:
+                        state['lifetime_diagnostics'] = lifetime_diagnostics.investigate(
+                            settings, header, node['parent_source'], source, fn['name'],
+                            on_compile=diagnostic_compile)
+                    finally:
+                        tries[0] += spent[0]
+                        with guard:
+                            job.reuse_attempts -= 4-spent[0]
+                    state.setdefault('counts', {})['diagnostic_compiles'] = spent[0]
+                    evidence = state['lifetime_diagnostics']
+                    note = evidence.get('comparison', {}).get('lead') or evidence.get('skipped') or 'No comparable allocation evidence.'
+                    net.add_note(agent, slug, 'Optional compiler lifetime diagnostics: '+note,
+                                 fn['name'])
             outcome = 'match' if report.get('matched') else 'miss'
             path = state['pending'][0].get('path', []) if state['pending'] else []
             reason = 'iterative local repair; ' + ('byte match' if outcome == 'match' else f"score {report.get('score')}") + '; path: ' + ' → '.join(path)

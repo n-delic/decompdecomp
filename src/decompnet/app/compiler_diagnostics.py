@@ -69,7 +69,7 @@ def phase_summary(work):
     return {'phases':result,'removed_between_flow_and_combine':retired[:24]}
 
 
-def diagnose(profile, header, source, name, *, root='.', baseline_obj=None):
+def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None):
     tid = profile.get('toolchain','')
     if not tid or 'cmd' in profile or not toolchains.installed(tid):
         return {'skipped':'Diagnostics require an already installed pinned compiler; nothing is downloaded.'}
@@ -80,6 +80,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None):
     if cfg.wsl or cfg.linux_vm or 'gcc' not in Path(cfg.cmd[0]).name.lower():
         return {'skipped':'This compiler adapter/runtime does not expose native GCC dump files.'}
     if baseline_obj is None:
+        on_compile()
         baseline = compile_source(cfg,header,source)
         if not baseline.ok:
             return {'skipped':'Normal diagnostic baseline did not compile.','error':baseline.log[:500]}
@@ -88,6 +89,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None):
     def collect(work):
         captured.update(phase_summary(work))
     with capture_artifacts(collect):
+        on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)
     if not diagnostic.ok:
         return {'skipped':'This GCC build did not accept phase capture.','error':diagnostic.log[:500]}

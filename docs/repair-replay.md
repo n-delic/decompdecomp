@@ -223,6 +223,23 @@ generator remains supported. Compare reports using `repair_benchmark.compare(bef
 - A recovered historical checkpoint is rediscovery; an unresolved live function improved on a private copy
   is not adopted into the user's project by benchmarking. Keep private source, ROMs and reports outside git.
 
+### Parent-specific unchanged output
+
+Iterative search now records unchanged code/relocation fingerprints for each exact parent source
+and repair family. After two unchanged outputs it defers that family's queued siblings. It keeps
+all candidates and reserves one in three scheduling slots for deferred exploration when both queues
+have work. A different parent gets fresh evidence; changed output resets the consecutive count.
+Displayed scores/rows, failed compiles and missing fingerprints do not establish unchanged output.
+The frontier's complete build scope and repair implementation hashes invalidate stale evidence.
+
+An improved, still register-only near miss can also earn one installed-GCC phase comparison per
+frontier. This needs four available compiler slots and an 80-second deadline margin. Only actual
+compiles spend those reserved slots; unsupported adapters release the unused reservation. The dumps
+and comparison remain advisory, stored on the frontier with a short activity note. No diagnostics
+run for exact matches. Diagnostic builds never adopt code, accept a match or change settings, and
+phase comparisons require `-da` to preserve each normal object's allocated code, data and relocations.
+
+
 Combination replay uses the same paged, mismatch-guided candidate selector as iterative
 search, including scope/value complements and bounded allocation detours. Reports include
 candidate compiles, first exact trial, winning family path, elapsed time,

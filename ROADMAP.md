@@ -1726,3 +1726,10 @@ other ROM architectures need the same file-context/linked-feedback adapter as it
 search; their per-function local repairs remain available. Shared candidate ranking is
 architecture-independent; current-exact-caller prototype reuse requires current recorded
 ROM verification and does not infer imported-build verification.
+
+Installed-compiler comparison has an explicit per-run auto-apply option. Each completed function's
+best profile is revalidated through the normal function-only apply path; changed inputs and busy
+functions retain reviewable skip reasons, and applied outcomes are saved with comparison history.
+The comparison action toggles to Stop while running. Its two determinate progress bars replace the
+redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
+object-project compiler comparisons remain limited by their build-owned per-file adapters.

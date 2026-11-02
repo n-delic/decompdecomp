@@ -1987,3 +1987,55 @@ Relevant donor evidence/header changes invalidate exhausted recipient frontiers.
 unrelated to the referenced callees do not reset those searches. The first-difference
 suite in docs/repair-replay.md found no additional recovery in its six-case snapshot;
 no compiler-specific success is claimed from that benchmark.
+
+### 2 November: parent-specific ineffective families and small lifetime probes
+
+Compiler: installed pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+Three frozen unresolved private gameplay routines had register-only differences: a pointer versus
+shifted index, a pointer versus store constant, and a shifted value shared by a branch/call.
+The previous 96-trial-per-input replay spent 189/288 trials on unchanged code/relocation output.
+That is measured waste in this corpus, not a claim that source shape never matters on a plateau.
+
+Iterative search now reacts after two consecutive unchanged outputs from one family on one exact
+parent source. It softly defers queued siblings and retains a deferred exploration slot in three;
+no candidate is deleted, and another parent starts fresh. Missing/unscored output is not evidence.
+The complete frontier build scope and repair-rule hashes isolate this history from other targets,
+headers, settings and rule versions. Two source shapes per identical output/depth remain available.
+
+New bounded source hypotheses stage a positive representable store constant in an ordinary block
+local, split identical-type local assignment chains around a simple shifted expression, or commute
+pure member/index addition without capturing a larger expression. They are shared draft/agent/local
+experiment families; only the existing destination judge can accept them. They do not invent a
+C-name-to-machine-register map or force physical registers.
+
+Direct frozen probes were **not successes**: pointer/index order stayed at score 10, two constant
+staging variants stayed at 15, and the chain split worsened 15 to 455 (lower is better). Record these
+to avoid treating plausible lifetime edits as established compiler rules. Three installed-GCC phase
+comparisons preserved each normal object's allocated output with `-da`: pointer/index showed no
+comparable phase changes; both constant probes reported scheduling changes. Dump changes can follow
+pseudo renumbering and are advisory, not proof of an allocation cause.
+
+An improved, non-exact register-only iterative candidate can earn one phase comparison per frozen
+frontier, only with four compiler slots and an 80-second deadline margin available. Reserve that
+worst case, charge actual compiles and release unused slots. Unsupported adapters download nothing.
+Capture stays separate from the ordinary judge; output-changing diagnostic flags cannot establish
+comparable phase evidence or progress. Frontier evidence and a short activity note preserve the lead
+without adding full dumps to every agent response.
+
+Controlled comparison against main `944d1d4`: five frozen inputs (four unique routines), same
+source/header/target/settings scopes, 96 candidate trials and 120 seconds per input. Both versions
+recovered the two historical inputs at trials 35 and 1. The other three stayed at scores 10, 15, 15.
+Both spent 324 candidate compiles (329 including baselines); unchanged-output trials across the three
+unresolved inputs totaled 193 in each version (81/71/41 on main, 84/67/42 here). No lost recovery,
+score regression, new coverage or measured compile-count saving. The earlier 189 figure used an older
+main revision. These equal-budget replays exercise repair selection without adopting code; diagnostic
+capture was tested separately on copied inputs and with budget/adoption integration tests. Do not
+claim that phase capture or these new source families have solved the remaining allocator mismatches.
+
+After integrating main `b3f8aff` (equal-value tracking/allocation follow-ups), the same five-input
+comparison again recovered the historical inputs at trials 35 and 1, with unresolved best scores
+10/15/15 and 329 compiler invocations on each side. Main recorded 179 unchanged-output trials on
+the three unresolved inputs; the fair-exploration/lifetime version recorded 192. Reserving exploration
+can spend more trials on source shapes with identical immediate output; this corpus demonstrates no
+match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
+equal-value priorities fixed two integration test failures without dropping either family group.
