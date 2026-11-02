@@ -158,6 +158,8 @@ def register(app: App) -> None:
         return {"ok": True}
 
     def p_open(slug, request, data):
+        if app.web_login:
+            return {'ok':False, 'message':'Project folder on the server: '+str(net.project_row(slug)['root'])}
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
         return {"ok": why is None, "message": why}
 

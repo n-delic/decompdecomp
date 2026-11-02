@@ -209,6 +209,8 @@ def register(app: App) -> None:
         """A folder or file the user picks in the system's own chooser (picker.py): "" if they cancelled."""
         if (bad := guard(request, write=True)):
             return bad
+        if app.web_login:
+            return fail(ValueError('Enter the file or folder path on the server computer; desktop pickers are disabled in server mode.'))
         data = await body(request)
         try:
             return JSONResponse({"path": await call(picker.choose, str(data.get("kind") or ""), str(data.get("title") or ""))})
