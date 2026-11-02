@@ -502,3 +502,11 @@ def test_unchanged_family_moves_behind_fresh_work_without_losing_siblings():
         return [('flat',s) for s in ('a','b','c')]+[('fresh','other')] if source=='seed' else []
     search.advance(state,judge,variants,lambda:len(calls)>=5)
     assert calls==['seed','a','b','other','c']
+
+
+def test_unscored_output_does_not_poison_family_effect_history():
+    state=seed()
+    def judge(source):
+        return dict(score=20 if source=='seed' else None,matched=False,candidate_target='00')
+    search.advance(state,judge,lambda s,r: [('flat','bad')] if s=='seed' else [],lambda:False)
+    assert not state.get('family_no_effect')

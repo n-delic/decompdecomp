@@ -91,7 +91,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         if report is None:  # busy work stays retryable
             return False
         state['pending'].pop(0)
-        repair_effects.observe(state, node, output_key(report))
+        if isinstance(report.get('score'), (int, float)):
+            repair_effects.observe(state, node, output_key(report))
         counts = state.setdefault('counts', {})
         outcome = 'matched' if report.get('matched') else 'compile_failed' if report.get('score') is None else 'scored'
         counts[outcome] = counts.get(outcome, 0) + 1
