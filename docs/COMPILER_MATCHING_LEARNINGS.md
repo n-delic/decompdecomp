@@ -2529,3 +2529,28 @@ Observed replay times (46.5s control, 41.8s experimental) are not a speedup clai
 No additional frontier rule was promoted. The next evidence needed is an actual
 candidate that recovers a target mismatch but is rejected before a proven complementary
 edit, rather than increasing frontier width or retaining arbitrary worse candidates.
+
+### MIPS III runtime routines can be ordinary C at low optimization
+
+A source-assisted N64 investigation reconsidered nine complete runtime entries
+previously set aside as assembly. Ordinary ROM-derived C operations (signed and
+unsigned 64-bit division, right shift, integer/floating conversions, and quotient
+plus remainder) passed the live app's byte/data judge with pinned IDO 5.3:
+`-O1 -mips3 -32 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`.
+The nine entries total 576 bytes. These are new recoveries, not historical replay;
+the profile establishes working code generation, not original compiler provenance.
+
+The quotient/remainder entry is a specific legacy declaration case. An ANSI
+small-divisor definition left score 270. A K&R definition declaring that parameter
+`unsigned short` reproduced the target's argument promotion/conversion sequence
+and reached zero. Do not rewrite such a declaration into a modern prototype for
+style alone, or treat it as a portable interchangeable API: rejudge with the actual
+compiler. The other eight recovered from direct C expressions without invented
+register bindings, assembly, or target-byte substitutions.
+
+Inspect instructions and complete boundaries before reconsidering an assembly
+verdict. MIPS III arithmetic is not by itself proof of hand-written code; hardware
+cache/control-register routines and incomplete prologue fragments remain separate.
+Apply the verified profile per function through normal judging; do not change an
+entire game's compiler to recover a runtime island. Standalone O32 object tagging
+and the final original-cartridge comparison remain required export gates.

@@ -183,3 +183,12 @@ contiguous, already-matched predecessors at their original relative positions;
 it rejudges every body and exports only the selected compiler entry. Preserve
 source line breaks too. Never invent dummy functions, padding or assembly to
 simulate placement. A full original-image rebuild remains necessary.
+
+For complete runtime functions containing 64-bit arithmetic/conversion instructions,
+try the pinned IDO 5.3 `-O1 -mips3 -32` profile with the normal O32 flags and judge.
+Nine retail runtime entries (576 bytes) recovered this way; MIPS III instructions
+alone do not establish handwritten assembly. One quotient/remainder helper also
+required its legacy K&R unsigned-short parameter declaration: modernizing it changed
+argument conversion instructions. Keep hardware control/cache instructions and
+incomplete function fragments separate. Record function-specific evidence and
+retain the normal standalone ABI and original-image validation gates.
