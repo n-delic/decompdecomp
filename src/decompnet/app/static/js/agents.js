@@ -658,7 +658,8 @@ function eventHtml(ev) {
     case "context": return `${who} updated ${ev.agent ? "shared code" : "context"}: ${esc(d)}`;
     case "source": return `${who} updated ${esc(d)}`;
     case "rename": return `${who} renamed ${esc(d)}`;
-    case "split": return `${who} split ${esc(d)}`;
+    // "<prev> / <new_name>" — both functions exist after the split; link each so the log is clickable.
+    case "split": { const [a, b] = d.split(" / "); return `${who} split ${fnLink((a || "").trim())}${b ? " / " + fnLink(b.trim()) : ""}`; }
     // "<head> + <tail(s)>: joined|<reason>" — the head is the surviving function; link it so the log is clickable.
     case "merge": { const head = d.split(" + ")[0].trim(); return `<span class="ok">⊕</span> ${who}: ${fnLink(head)}${esc(d.slice(head.length))}`; }
     case "files": return `${who ? who + " " : ""}gave code without a source file one: ${esc(d)}`;
