@@ -228,7 +228,35 @@ async function togglePrio(name, on) {
 
 /* Autopilot: free matches before any agent spends a token: identical code (twins) of what's matched, then every
    function's machine draft through the judge; the permuter works on near misses meanwhile. */
+function renderFinishNear(ov) {
+  const button = $("finishNearStart"), stop = $("finishNearStop"), log = $("finishNearLog");
+  $("finishNearPanel").hidden = ov.kind === "fork";
+  button.onclick = async () => {
+    const slug = S.slug;
+    const finish = beginWork(log, "Finishing near matches", [button], "Near-match pass finished");
+    log.hidden = false;
+    $("finishNearSummary").textContent = "Preparing near-match queue…";
+    stop.hidden = false; stop.disabled = true;
+    try {
+      const result = await api("/api/finish-near", {method: "POST", body: {slug,
+        seconds: Number($("finishNearSeconds").value), attempts: Number($("finishNearAttempts").value)}});
+      stop.disabled = false;
+      stop.onclick = async () => {
+        try { await api("/api/job/cancel", {method: "POST", body: {id: result.job}}); }
+        catch (e) { showJobError(log, e.message); }
+      };
+      await followJob(result.job, log, (lines, job) => {
+        if (S.slug !== slug) return;
+        const p = job.progress || job.result;
+        if (p) $("finishNearSummary").textContent = `${p.matched || 0} matched · ${p.attempts || 0} compiles · ${(p.matches_per_minute || 0).toFixed(2)} matches/min`;
+      });
+    } catch (e) { showJobError(log, e.message); }
+    finally { finish(); stop.hidden = true; }
+  };
+}
+
 function renderAutopilot(ov) {
+  renderFinishNear(ov);
   const collapsed = renderAutopilot.collapsed ||= new Set();
   const toggle = $("crossGameToggle"), body = $("crossGameBody");
   body.hidden = collapsed.has(ov.slug);

@@ -1716,6 +1716,17 @@ adapter; these source families do not change that limitation or any match verdic
   units with private entry/clobber conventions remain planned. Imported builds retain header ownership;
   their whole-unit integration must preserve their build's judge rather than the ROM single-entry path.
 
+### Finish near matches
+
+An explicit cancellable pass reuses iterative repair frontiers with a separate user
+compile/time allowance, oldest-visit fairness, closeness ordering for fresh inputs and
+matches-per-minute reporting. It skips claimed functions and resumes pending paths on
+later runs. Current adapter: MIPS ROM projects. Planned: imported objdiff projects and
+other ROM architectures need the same file-context/linked-feedback adapter as iterative
+search; their per-function local repairs remain available. Shared candidate ranking is
+architecture-independent; current-exact-caller prototype reuse requires current recorded
+ROM verification and does not infer imported-build verification.
+
 Installed-compiler comparison has an explicit per-run auto-apply option. Each completed function's
 best profile is revalidated through the normal function-only apply path; changed inputs and busy
 functions retain reviewable skip reasons, and applied outcomes are saved with comparison history.

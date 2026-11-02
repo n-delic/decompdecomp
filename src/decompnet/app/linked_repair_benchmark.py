@@ -107,6 +107,32 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
             'compiler_invocations':len(cache),'verdict':'Normal linked-byte and ROM-data judge; read-only, no adoption.'}
 
 
+def suite(root, cases, *, trials=16, seconds=30, focused=True):
+    """Equal budgets for a frozen list of saved sources; never write or adopt a candidate."""
+    from . import iterative_repairs
+    if isinstance(trials,bool) or not isinstance(trials,int) or not 1<=trials<=4096:
+        raise ValueError('Use 1–4096 trials per function.')
+    if isinstance(seconds,bool) or not isinstance(seconds,int) or not 1<=seconds<=1800:
+        raise ValueError('Use 1–1800 seconds per function.')
+    prepared=[]
+    for item in cases:
+        evaluate,scope,arch,asm,_=evaluator(root,item['name'],item['header'])
+        baseline=evaluate(item['source'])
+        if baseline.get('score') is None or baseline.get('matched'):
+            raise ValueError('Every frozen case must compile and be unresolved under the copied judge.')
+        prepared.append(dict(source=item['source'],baseline_score=baseline['score'],arch=arch,
+            scope=hashlib.sha256(repr(scope).encode()).hexdigest(),
+            name=item['name'],header=item['header'],asm=asm,flags=scope['compiler'].get('flags',[]),
+            evaluate=evaluate,selection={},pool_cache={}))
+    def generate(case,source,report):
+        return iterative_repairs.targeted_variants(source,report,{'name':case['name'],'asm':case['asm']},
+            case['arch'],case['flags'],case['header'],tagged=True,selection=case['selection'],
+            pool_cache=case['pool_cache'],focused=focused)
+    result=repair_benchmark.batch(prepared,lambda c,s:c['evaluate'](s),generate,
+        trials=trials,seconds=seconds,generate_report=True)
+    return result | {'focused':focused,'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project',type=Path,required=True)
