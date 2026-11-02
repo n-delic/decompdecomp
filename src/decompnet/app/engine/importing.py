@@ -319,7 +319,7 @@ class ImportMixin:
                             # current version of that private unit.
                             ctx=db.execute('SELECT c.unit,c.header FROM attempts a JOIN context_versions c '
                                            'ON c.project_id=? AND c.version=a.context_version '
-                                           'WHERE a.function_id=? AND a.score=0 AND a.source=? ORDER BY a.id DESC LIMIT 1',
+                                           'WHERE a.function_id=? AND a.score=0 AND a.compiled=1 AND a.source=? ORDER BY a.id DESC LIMIT 1',
                                            (pid,old['id'],old['matched_source'])).fetchone()
                             if ctx and ctx['unit']:
                                 latest=db.execute('SELECT header FROM context_versions WHERE project_id=? AND unit=? ORDER BY version DESC LIMIT 1',

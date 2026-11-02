@@ -18,7 +18,7 @@ def contexts(net, proj, row):
     yield current
     prior=net.store.one('SELECT c.header FROM attempts a JOIN context_versions c '
                         'ON c.project_id=? AND c.version=a.context_version '
-                        'WHERE a.function_id=? AND a.score=0 AND a.source=? ORDER BY a.id DESC LIMIT 1',
+                        'WHERE a.function_id=? AND a.score=0 AND a.compiled=1 AND a.source=? ORDER BY a.id DESC LIMIT 1',
                         proj['id'],row['id'],row['matched_source'])
     if prior and prior['header']!=current:yield prior['header']
 
