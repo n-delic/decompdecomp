@@ -30,14 +30,15 @@ def run(net, proj, names, st, log, budget=4, deadline=None):
                            'big' if proj['big_endian'] else 'little')
             for _,body,private in pairs:
                 if st.stop.is_set() or time.monotonic()>=deadline or report['tested']>=budget:break
-                key=trial_key(expected,body,private,{'export-recovery':1})
+                key=trial_key(expected,body,private,{'export-recovery':2})
                 if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
                 report['tested']+=1;st.add(variants=1)
                 result=net._compile(proj,private,body,fn)
                 exact=False
                 if result.ok and _single_definition(result.obj,name):
                     candidate,verdict,_=net._evaluate(fn,proj,result.obj)
-                    exact=candidate is not None and verdict is True and net._candidate_checks(fn,proj,result.obj).get('export',{}).get('ready') is True
+                    layout=net._candidate_checks(fn,proj,result.obj).get('export',{})
+                    exact=candidate is not None and verdict is True and (layout.get('ready') is True or layout.get('state')=='requires_normalization')
                 if exact:
                     def guard(name=name,proj=proj,fn=fn,source=source,expected=expected):
                         current=net._function(name,proj['slug'])
