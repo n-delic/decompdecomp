@@ -49,3 +49,17 @@ def listing(net, slug, function):
     ranked = similarity.rank(target, ops, top=12, floor=.6)
     return {'exact': False, 'rows': [row(by_id[k], score, False) for k, score in ranked],
             'total': len(ranked)}
+
+
+def name_hints(net, slug, function):
+    """Keep SDK provenance and normalized-code leads alongside raw-byte peers."""
+    out = []
+    for hint in net.twins.suggestions(slug, function, limit=100):
+        hint = dict(hint)
+        if hint.get('function_id'):
+            row = net.store.one('SELECT p.slug,f.name FROM functions f JOIN projects p ON p.id=f.project_id '
+                                f'WHERE f.id=? AND f.{IN_BUILD}', hint['function_id'])
+            if row:
+                hint.update(source_slug=row['slug'], source_function=row['name'])
+        out.append(hint)
+    return out

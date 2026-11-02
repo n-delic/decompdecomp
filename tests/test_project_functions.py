@@ -123,3 +123,23 @@ def test_similar_readers_across_processors(net,arch,endian,one,two):
     other=add(net,2,'named',bytes.fromhex(two)*5)
     result=listing(net,'1','local')
     assert not result['exact'] and result['rows'][0]['id']==other
+
+
+def test_sdk_provenance_and_reference_links_are_retained(net,monkeypatch):
+    from decompnet.app.project_functions import name_hints
+
+    add(net,1,'local',b'bytes')
+    peer=add(net,2,'namedFunction',b'bytes')
+    original=[{'name':'namedFunction','game':'Other game','kind':'shared target code; unverified C',
+               'score':1.,'function_id':peer,'reference_context':'int namedFunction(void);'},
+              {'name':'sdkName','game':'SDK archive','kind':'SDK object signature; name only','score':1.}]
+    requested=[]
+    def hints(slug,function,limit=5):
+        requested.append(limit)
+        return original
+    monkeypatch.setattr(net.twins,'suggestions',hints)
+    result=name_hints(net,'1','local')
+    assert requested==[100]
+    assert result[0]['source_slug']=='2' and result[0]['source_function']=='namedFunction'
+    assert result[0]['reference_context']==original[0]['reference_context']
+    assert result[1]==original[1] and 'source_slug' not in original[0]
