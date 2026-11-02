@@ -2215,6 +2215,40 @@ both sides. No recovery was lost and no additional match or compile saving was d
 combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
 unapproved rather than treating the homemade context success as held-out game evidence.
 
+
+### Historical reconciliation and conservative cross-build evidence
+
+A stale open score of zero is not an exact verdict. Historical source may still be useful after
+renaming or moving a unit, but recompile it with current/recorded headers and require the normal
+linked code/data judge before restoring it. Atomically check the held claim and full frozen inputs;
+never let a recovery overwrite a concurrent edit or publish after cancellation.
+
+Private KMC GCC 2.7.2 frozen investigation: a failed score-60 checkpoint versus its recorded exact
+control had five token-edit groups. Bounded ablation reverted one group while retaining exactness
+(14 compiler/judge calls including controls and final reverification; compile failures included).
+The remaining four-group change did not fit the narrow expression-template grammar: no recipe was
+learned and no independent-target transfer was established. Do not equate smaller with globally minimal.
+
+Both failed/successful `-da` diagnostic builds preserved their ordinary allocated output. Unique
+unchanged C-line anchors exposed two use-count changes, while 67 ambiguous joins were omitted.
+This is evidence for investigation, not proof of a causal register-allocation fix. Source edits can
+renumber pseudos, so joining their numeric IDs across builds would invent correspondences.
+
+Target control-flow blocks and explicit register def/use edges provide more meaningful regional
+search hints than arbitrary 16-instruction slices. Delay slots and candidate insertions require
+canonical target alignment; unsupported flow must fall back conservatively. No new exact verdict
+can come from regional scores, inferred names or diagnostic dumps.
+
+
+Equal-budget control-flow replay against main `a1cc2f0`: five frozen checkpoints, 96 candidate
+compiles and 120 search seconds each, same copied ROM/database, pinned profile and target groups,
+with architecture passed to both runners. Both versions recovered the two historical controls at
+candidate 56 and 1. The other three stayed at 10/15/15. Each side used 345 candidate compiles plus
+five baseline compiles (350 total). Thus the new region hints lost no recovery but demonstrated
+neither another retail match nor a compile saving on this cohort. The first two checkpoints share
+one target and must not be counted as independent held-out transfers. No game source/data or private
+reports are committed; the synthetic tests cover supported CFG/dependency and recovery safety paths.
+
 ### 2 November: indirect dispatch is not a failed compiler match
 
 A private unresolved MIPS gap contained a `jr` through a computed register after a

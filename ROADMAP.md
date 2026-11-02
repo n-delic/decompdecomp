@@ -1798,6 +1798,19 @@ Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine
 
 Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
 
+
+### Historical recovery and conservative repair learning
+
+- Done: explicit cancellable local-ROM saved-match reconciliation across names/units, freshly judged
+  under current or recorded headers, scoped miss caching and fair candidate rotation.
+- Done: minimized replay expression candidates and reviewed profile-scoped held-out validation helpers;
+  ambiguous/complex changes remain investigation evidence instead of enabling a rule.
+- Done: GCC failed/successful value comparison via unique unchanged source anchors, omitting ambiguous joins.
+- Done: MIPS control-flow/delay-slot and explicit register-dependency region hints in iterative/frontier search.
+  Existing fixed regions remain the fallback for other architectures and unsupported transfers.
+- Planned: archived build-context reconciliation for imported projects; additional architecture region readers;
+  demonstrate held-out retail exact-throughput gains before promoting experimental recipes.
+
 ### Saved code audit review
 
 Done for supported ROM audit adapters: local per-project review states and evidence,

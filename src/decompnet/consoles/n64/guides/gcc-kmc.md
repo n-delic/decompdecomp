@@ -316,6 +316,13 @@ The target must support the repeated address pairs, and the normal linked judge 
 settles the result. A frozen case improved from 155 to 25; its remaining register miss
 was not solved by the tested local variants or scheduler toggles.
 
+
+When comparing failed/successful GCC dumps, never join pseudo numbers across builds. Use unique
+unchanged C statement anchors under the same header/profile and omit multi-value ambiguities.
+A bounded minimized repair is only sufficient under its frozen control; require disjoint-target
+exact validation before importing an expression recipe. If an old exact source survives a rename,
+use Recover saved matches to rejudge it with recorded/current headers instead of trusting its old score.
+
 For a register-only table-index store, try `pointer_index_scope` when the source already
 has a block-local slot pointer. Splitting its pointer and index into typed locals inside
 a one-shot scope recovered one 52-instruction KMC `-O2 -g3` case exactly. The split alone

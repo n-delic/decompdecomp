@@ -109,6 +109,8 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
     if 'value_trace' in captured:
         captured['value_trace']['source_sha256']=hashlib.sha256(source.encode()).hexdigest()
         captured['value_trace']['header_sha256']=hashlib.sha256(header.encode()).hexdigest()
+        from .rtl_value_trace import anchors
+        anchors(captured['value_trace'],source)
         captured['value_trace']['profile_sha256']=hashlib.sha256(json.dumps(profile,sort_keys=True,default=str).encode()).hexdigest()
     return {'toolchain':tid,'original_flags':profile.get('flags',[]),'diagnostic_flags':['-da'],
             'output_unchanged':equal,**captured,
@@ -119,6 +121,10 @@ def compare(before,after):
     """Compare frozen GCC phases only when diagnostic flags preserved both normal outputs."""
     if not before.get('output_unchanged') or not after.get('output_unchanged'):
         return {'comparable':False,'note':'Diagnostic output changed or is unavailable; do not attribute a cause.'}
+    if before.get('toolchain')!=after.get('toolchain') or before.get('original_flags')!=after.get('original_flags'):
+        return {'comparable':False,'note':'Different compiler profiles cannot establish a source-only comparison.'}
+    from .rtl_value_trace import compare as compare_values
+    values=compare_values(before.get('value_trace'),after.get('value_trace'))
     phases = []
     for phase in ('rtl','jump','cse','loop','flow','combine','sched','lreg','greg','sched2','jump2','dbr'):
         a,b = before.get('phases',{}).get(phase),after.get('phases',{}).get(phase)
@@ -137,5 +143,5 @@ def compare(before,after):
     scheduling=bool(changed & {'sched','sched2','dbr'})
     lead = ('allocation/lifetime' if allocation else 'lifetime and scheduling' if lifetime and scheduling
             else 'lifetime' if lifetime else 'scheduling' if scheduling else 'earlier optimization' if changed else 'no comparable phase changes')
-    return {'comparable':True,'changed':phases,'lead':lead,
+    return {'comparable':True,'changed':phases,'lead':lead,'value_changes':values,
             'note':'Different input source can renumber pseudos and dumps. Phase changes are investigation leads, not causal proof. allocation_priority uses the legacy GCC floor(log2(references))*references/live_insns heuristic; it is advisory, not a claim about every compiler build.'}
