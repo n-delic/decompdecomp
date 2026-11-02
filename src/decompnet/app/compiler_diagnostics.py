@@ -54,7 +54,12 @@ def phase_summary(work):
             lifetimes.append({'register':int(match[1]),'references':int(match[2]),'live_insns':int(match[3]),
                               'calls_crossed':int(crossed[1]) if crossed else 0,'pointer':'pointer' in match[4]})
         lifetimes.sort(key=lambda row:(-row['calls_crossed'],-row['references']))
-        result[phase] = {'lifetimes':lifetimes[:32],'file':path.name,'bytes':path.stat().st_size,'truncated':path.stat().st_size>len(raw),
+        priority = sorted((dict(row, legacy_weight=(row['references'].bit_length()-1)*row['references']/row['live_insns'])
+                           for row in lifetimes if row['references']>0 and row['live_insns']>0),
+                          key=lambda row:-row['legacy_weight'])[:16]
+        result[phase] = {'allocation_priority':priority,
+                         'loop_begin_notes':len(re.findall(r'NOTE_INSN_LOOP_BEG',text)),
+                         'lifetimes':lifetimes[:32],'file':path.name,'bytes':path.stat().st_size,'truncated':path.stat().st_size>len(raw),
                          'captured_sha256':hashlib.sha256(raw).hexdigest(),'registers':registers,
                          'empty_conflicts':list(map(int,re.findall(r'^;; (\d+) conflicts:\s*$',text,re.M)))[:16],
                          'assignments':re.findall(r'^;; Register \d+ in \d+\.',text,re.M)[:24]}
@@ -113,6 +118,7 @@ def compare(before,after):
                        'register_count_after':b.get('register_count'),
                        'assignments_changed':a.get('assignments')!=b.get('assignments'),
                        'lifetimes_changed':a.get('lifetimes')!=b.get('lifetimes'),
+                       'loop_weights_changed':a.get('loop_begin_notes')!=b.get('loop_begin_notes'),
                        'empty_conflicts_changed':a.get('empty_conflicts')!=b.get('empty_conflicts')})
     changed = {p['phase'] for p in phases}
     allocation=any(p['phase'] in {'lreg','greg'} and (p['assignments_changed'] or p['empty_conflicts_changed']) for p in phases)
@@ -121,4 +127,4 @@ def compare(before,after):
     lead = ('allocation/lifetime' if allocation else 'lifetime and scheduling' if lifetime and scheduling
             else 'lifetime' if lifetime else 'scheduling' if scheduling else 'earlier optimization' if changed else 'no comparable phase changes')
     return {'comparable':True,'changed':phases,'lead':lead,
-            'note':'Different input source can renumber pseudos and dumps. Phase changes are investigation leads, not causal proof.'}
+            'note':'Different input source can renumber pseudos and dumps. Phase changes are investigation leads, not causal proof. allocation_priority uses the legacy GCC floor(log2(references))*references/live_insns heuristic; it is advisory, not a claim about every compiler build.'}
