@@ -618,7 +618,13 @@ class Permuter:
         from . import permuter_inputs, permuter_local, source_preparation
         state = (st.started_at, proj['config'], self.net.forks.permuter_header(fork, fn['name']),
                  permuter_inputs.build_state(proj)) if fork else source_preparation.inputs(self.net, proj, fn)
-        for family, candidate in permuter_local.variants(fn['best_source'], fn['name']):
+        from . import independent_address_repairs, repair_ranking
+        rows=repair_ranking.evidence(self.net,fn['id'],agent.id)
+        header=(self.net._context(proj['id'],fn['unit']) or {'header':''})['header'] if not fork else ''
+        independent=independent_address_repairs.variants(best_src,fn['name'],proj['arch'],rows,header) if not fork else []
+        # Both pools share the existing eight-compile allowance, deadline and exact judge.
+        proposals=(independent+permuter_local.variants(fn['best_source'],fn['name']))[:8]
+        for family, candidate in proposals:
             if st.stop.is_set() or time.monotonic() >= deadline:
                 break
             key = 'local-order-v1:' + hashlib.sha256(repr((state, candidate)).encode()).hexdigest()

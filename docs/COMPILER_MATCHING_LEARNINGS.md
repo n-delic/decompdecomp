@@ -2039,3 +2039,42 @@ the three unresolved inputs; the fair-exploration/lifetime version recorded 192.
 can spend more trials on source shapes with identical immediate output; this corpus demonstrates no
 match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
 equal-value priorities fixed two integration test failures without dropping either family group.
+
+### Independent address materialization after near-miss triage
+
+A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
+changed instruction rows) and one mixed address/register miss. The pinned compiler was
+`gcc-2.7.2-kmc`, with each copied export's recorded flags and exact captured unit header.
+In the mixed case, deriving an address from another pointer let GCC replace a second
+LUI/ADDIU materialization with an ADDIU from the existing base. Replacing the arithmetic
+with the already-used canonical symbol changed allocation elsewhere and worsened the
+score to 895. A fresh automatic alias resolving to that same target address retained
+independent compiler expressions and reduced the linked judge's score from 155 to 25.
+Only three register-difference rows remained; it was not an exact match.
+
+`independent_address_materialization` now proposes this bounded hypothesis when the
+original has repeated adjacent full-address pairs and the candidate has fewer. A single
+unescaped byte pointer must have one literal-address definition and a straight-line
+literal offset use. Unknown writes, control flow, macros and other architectures are
+excluded. The existing ROM linker resolves the fresh automatic alias; no symbol table,
+shared header, object bytes or judge rules are changed. It reaches iterative repairs,
+agent local families and the existing eight-candidate pre-permuter allowance. Imported
+builds need their own owned symbol/link adapter before automatic aliases can be used.
+
+Controlled copied-ROM replay used identical six sources/headers/targets and 16 candidates,
+30 seconds per function. With only this family disabled: 96 candidates, zero improvements,
+zero exact matches, 44.1 seconds. Enabled: 96 candidates, one improvement (155 to 25),
+zero exact matches, 43.7 seconds. The timing difference is noise. The improvement appeared
+on candidate 2 through an existing neutral shape plus the new family; the standalone
+new family also improved the original source. Five cases did not improve; no live work
+was changed and no fresh full-ROM match is claimed.
+
+Failed probes worth avoiding: plain pointer/index commutation, fresh block pointer locals,
+constant-store staging, simple assignment-chain reversal, signedness changes, one-shot
+scopes around the local stores, volatile-load qualifications and record/integer pointer
+views did not improve the register-only cases. A 52-instruction case exhausted 129 existing
+bounded candidates and 251 traced random candidates without improving score 10. A
+124-instruction case exhausted 215 existing candidates and 254 traced random candidates
+without improving score 15. Disabling either scheduler worsened the three tested cases;
+several other GCC optimization toggles left them unchanged. These are negative results
+for frozen inputs, not claims that all possible C shapes have been exhausted.
