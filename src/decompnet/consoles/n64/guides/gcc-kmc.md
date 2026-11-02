@@ -279,3 +279,12 @@ In a five-checkpoint private comparison against main `f399309`, score 160 recove
 (~33 s), while main remained at 100 after 96 trials; three fresh near misses were unchanged. This is
 historical rediscovery, not new game coverage. See the matching learnings and repair-replay docs for
 bounds, cache scope, unsuccessful cases and the unchanged exact-code/data requirement.
+
+For tiny register-only misses, try a small lifetime/evaluation change before another whole-function
+shuffle: stage a positive store constant in a local, separate same-type local assignment chains,
+or reverse a pure pointer/index addition. These are hypotheses, not known fixes: three frozen misses
+remained unresolved, and one chain split made allocation much worse. Keep the ordinary linked-byte
+judge. After two unchanged code/relocation outputs, iterative search now defers that family's siblings
+on the same parent while retaining exploration; changed output or a different parent gets fresh evidence.
+A promising improved candidate may receive one budgeted installed-GCC phase comparison. Phase dumps
+must preserve normal allocated output with `-da`; scheduling/lifetime leads do not prove register identity.

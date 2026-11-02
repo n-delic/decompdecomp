@@ -440,3 +440,39 @@ def test_frontier_prioritizes_novel_output_before_equal_score_plateau():
     state = dict(next=nodes, pending=[], seen=['plateau','novel'])
     search.expand_wave(state, lambda source, report: expanded.append(source) or [], None)
     assert expanded == ['novel', 'plateau']
+
+
+def test_unchanged_family_rotates_before_spending_the_whole_parent_page():
+    state, calls = seed(), []
+    def judge(source):
+        calls.append(source)
+        return dict(score=20, matched=False, candidate_target='00', candidate_relocs='[]')
+    def variants(source, report):
+        return [('flat', 'a'), ('flat', 'b'), ('flat', 'c'), ('other', 'd')] if source=='seed' else []
+    search.advance(state,judge,variants,lambda: len(calls)>=5)
+    assert calls[:3] == ['seed','a','b']
+    assert calls.index('d') < calls.index('c')
+    assert len(calls)==len(set(calls))
+
+
+def test_promising_diagnostics_charge_actual_compiles_once_without_adopting(pair, monkeypatch):
+    from decompnet.app import address_repairs, free_candidates, lifetime_diagnostics, similar_matches
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='seed',best_score=20,n_insns=8 WHERE id=2")
+    monkeypatch.setattr(address_repairs,'variants',lambda s,*a: ['step'] if s=='seed' else [])
+    monkeypatch.setattr(similar_matches,'repair_variants',lambda *a: [])
+    monkeypatch.setattr(pair,'try_quietly',lambda a,p,f,s: dict(matched=False,score=20 if s=='seed' else 10,
+                       rows=[('r','lw $v0, 0($a0)','lw $v1, 0($a0)')]))
+    captures=[]
+    def diagnose(*args, on_compile):
+        captures.append(args)
+        for _ in range(3):on_compile()
+        return {'comparison':{'comparable':True,'lead':'lifetime'}}
+    monkeypatch.setattr(lifetime_diagnostics,'investigate',diagnose)
+    job=Job();free_candidates.budget(job,seconds=180)
+    assert search.run(pair.twins,'destination',job)==0
+    assert len(captures)==1 and job.reuse_attempts==5
+    saved=json.loads(pair.store.one('SELECT state FROM repair_frontiers WHERE function_id=2')['state'])
+    assert saved['counts']['diagnostic_compiles']==3
+    assert saved['lifetime_diagnostics_attempted']
+    assert pair._function('new','destination')['status']=='open'
