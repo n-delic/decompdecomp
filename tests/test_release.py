@@ -262,14 +262,17 @@ def test_a_note_newer_than_the_best_or_better_than_it_isnt_superseded():
     assert out[2] == "- (c) (superseded: best is now 90.0%) stuck around 80% (score 2000)"
 
 
-def test_the_prompts_count_only_claims_that_were_compiled():
+def test_prompts_bound_compiled_claims_and_allow_context_limited_sessions():
     from decompnet.app import tools
 
     for prompt in (tools.WORK_PROMPT, tools.FORK_PROMPT):
         text = " ".join(prompt.format(title="t", count=2, compiler_guide="g", platform="p", guides="g",
                                       budget="b", what="w").split())
-        assert "Do 2 claims you compiled (a batch is one; one you released without compiling it doesn't count)" in text
-        assert "Don't stop early" in text and "on request" in text  # agents stopped at 2-3 of 4, or offered more
+        assert "Work on up to 2 compiled claims (a batch is one)" in text
+        assert "The claim count is a maximum, not a quota" in text
+        assert "Continue with the next eligible function while session capacity remains" in text
+        assert "Stop earlier when the session turn/context allowance is nearly used" in text
+        assert "on request" in text
         assert "needs=" in text
 
 
