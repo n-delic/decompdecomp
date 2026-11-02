@@ -373,12 +373,16 @@ or repair-rule changes reopen it, and explicit selection remains available. Impo
 source, include headers and common build configuration files; custom generated dependencies outside those
 paths still need richer per-file dependency records.
 
-Saved near misses now have a persistent three-round, width-three repair search, disabled by default with a separate
+Saved near misses now have a persistent bounded, width-three repair search, disabled by default with a separate
 configurable budget after normal autopilot, a persistent round-robin cursor, and cached failed compilations.
 It retains improving/equal-score candidates and chains address, literal and targeted local repair families,
 ranked by remaining mismatches. Identical compiler outputs retain at most two source shapes for expansion;
 frontiers and output counts survive runs, and changed repair implementations invalidate the frontier. This uses
 the same MIPS ROM feedback; object-mode and other-processor support await the context/readers described below.
+Generated targeted proposals now have persistent parent/pool cursors beyond the old shortlist. Numeric
+improvements earn bounded complementary follow-ups, explicit offset evidence prioritizes operand sites, and
+a small input-keyed proposal cache avoids repeated generation within a visit. Frozen equal-budget suites
+report successes, failures and regressions. The existing object-mode/other-processor orchestration gap remains.
 
 
 Saved repair candidates retain donor provenance, including conservative exact-reconstruction recovery for

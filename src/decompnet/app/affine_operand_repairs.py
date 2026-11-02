@@ -6,6 +6,7 @@ control flow produce no candidate. These rules never prescribe registers or chan
 import itertools
 import re
 
+from . import operand_focus
 from .integer_repair_support import IDENT, edit, refs, split_args
 from .local_flow import analyze
 from .pattern_repairs import close
@@ -51,7 +52,7 @@ def narrow_load(text, clean):
     return len(declarations) == 1 and not re.match(r'unsigned\b|u16\b', declarations[0]['type'])
 
 
-def operand_variants(source, name):
+def operand_variants(source, name, rows=()):
     flow = analyze(source, name)
     if not flow:
         return []
@@ -74,6 +75,8 @@ def operand_variants(source, name):
         sites.append((node, store[1], operands, halfword))
     if len(sites) < 2:
         return []
+    evidence = operand_focus.offsets(rows)
+    sites.sort(key=lambda s: -operand_focus.weight(s[1]+' '.join(s[2]), evidence))
     locals_ = [d for d in flow.locals if d['type'] in WORD
                and part.clean[part.opening+1:d.start()].count('{') == part.clean[part.opening+1:d.start()].count('}')]
     result = []
@@ -81,7 +84,16 @@ def operand_variants(source, name):
     locals_ = locals_[:MAX_SCRATCH]
     used = {d['name']: bool(refs(part, d)) for d in locals_}
     pairs = list(itertools.permutations(locals_, 2))
-    pairs.sort(key=lambda pair: (used[pair[0]['name']], pair[0].start(), pair[1].start()))
+    focused_positions = {node.start for node, dest, operands, _ in sites
+                         if operand_focus.weight(dest+' '.join(operands), evidence)}
+    available = {d['name']: {node.start for node, dest, operands, _ in sites
+                 if d.end() < node.start and flow.dead(d['name'], node.start)
+                 and not re.search(r'\b'+d['name']+r'\b', dest+' '.join(operands))} for d in locals_}
+    def priority(pair):
+        overlap = available[pair[0]['name']] & available[pair[1]['name']]
+        coverage = (-len(overlap & focused_positions), -len(overlap)) if evidence else ()
+        return (*coverage, used[pair[0]['name']], pair[0].start(), pair[1].start())
+    pairs.sort(key=priority)
     for left, right in pairs:
         selected = [(node, dest, operands, halfword) for node, dest, operands, halfword in sites
                     if left.end() < node.start and right.end() < node.start
@@ -90,7 +102,9 @@ def operand_variants(source, name):
         if len(selected) < 2:
             continue
         # Compare the narrow-store cluster, full-width cluster and their bounded combination.
-        for group in (selected, [s for s in selected if s[3]], [s for s in selected if not s[3]]):
+        focused = [s for s in selected if operand_focus.weight(s[1]+' '.join(s[2]), evidence)]
+        groups = ([focused] if len(focused) >= 2 else []) + [selected, [s for s in selected if s[3]], [s for s in selected if not s[3]]]
+        for group in groups:
             if len(group) < 2:
                 continue
             edits = []
