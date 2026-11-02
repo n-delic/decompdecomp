@@ -302,6 +302,7 @@ class Permuter:
             ranked = repair_ranking.order(dict.fromkeys(labels.get(text, 'draft_repair') for text in candidates),repair_ranking.evidence(self.net,fn['id'],agent.id))
             effect_scope=repair_ranking.effect_scope(self.net,fn,fn['best_source']) if hasattr(self.net,'_context') else None
             ranked=repair_ranking.demote(self.net,effect_scope,ranked)
+            ranked=repair_ranking.private_abi_order(ranked,proj['arch'],fn['asm'] or '',repair_ranking.evidence(self.net,fn['id'],agent.id))
             if not self._hold(agent, fn, count_turn=False):
                 continue
             st.holding(fn['name'], True)
@@ -329,6 +330,7 @@ class Permuter:
                 from . import adaptive_repairs, permuter_focus
                 policy_rows = repair_ranking.evidence(self.net, fn['id'], agent.id)
                 ranked = adaptive_repairs.order(self.net, proj, fn, policy_rows, ranked)
+                ranked = repair_ranking.private_abi_order(ranked,proj['arch'],fn['asm'] or '',policy_rows)
                 policy_key = adaptive_repairs.profile(self.net, proj, fn)
                 candidates.sort(key=lambda text: ranked.index(labels.get(text, 'draft_repair')) if labels.get(text, 'draft_repair') in ranked else len(ranked))
                 for candidate in candidates:

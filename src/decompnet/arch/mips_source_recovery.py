@@ -109,3 +109,41 @@ def tail_branch(asm):
         return {'condition_arg':p,'object_arg':q,'test':values[0],'clear':values[1],'flags':values[2],'mask':values[3],
                 'instructions':lines[i:i+7]}
     return None
+
+
+def extra_narrowing(rows):
+    """Candidate-only integer normalization; not a claim about the variable's intended type."""
+    result=[];extra=[(i,own) for i,(mark,target,own) in enumerate(rows) if mark=='>' and own]
+    for i,own in extra:
+        m=re.fullmatch(r'andi\s+\$\w+,\s*\$\w+,\s*('+NUMBER+r')',own)
+        if m and int(m[1],0) in (255,65535):result.append({'row':i,'width':8 if int(m[1],0)==255 else 16,'unsigned':True})
+    for (i,a),(j,b) in zip(extra,extra[1:]):
+        left=re.fullmatch(r'sll\s+(\$\w+),\s*\$\w+,\s*('+NUMBER+r')',a)
+        right=re.fullmatch(r'(sra|srl)\s+\$\w+,\s*(\$\w+),\s*('+NUMBER+r')',b)
+        if left and right and j==i+1 and left[1]==right[2] and left[2]==right[3] and int(left[2],0) in (16,24):
+            result.append({'row':i,'width':32-int(left[2],0),'unsigned':right[1]=='srl'})
+    return result[:4]
+
+
+def private_abi(asm, rows):
+    """A measured extra transfer plus target incoming pointer/float use warrants context-first search."""
+    text='\n'.join(line.split('*/',1)[-1].strip() for line in asm.splitlines())
+    # This narrow leaf pattern cannot be repaired by permuting ordinary O32 argument widths.
+    transfer=any(mark=='>' and re.fullmatch(r'mtc1\s+\$a[0-3],\s*\$(?:f12|fa0)',own) for mark,_,own in rows)
+    from .mips_runtime import incoming_arguments
+    incoming=incoming_arguments(asm)
+    return_float=re.search(r'\bjr\s+\$ra\n\s*mov\.s\s+\$\w+,\s*\$(?:f12|fa0)\b',text)
+    mixed=incoming['mixed'] or ('$a0' in incoming['integer'] and bool(return_float))
+    displaced=any(mark!=' ' and '$a0' in target and '$a1' in own and re.match(r'(?:sra|andi|addiu)\s+',target)
+                  and target.split()[0]==own.split()[0] for mark,target,own in rows if own and target)
+    if (transfer or displaced) and mixed and not re.search(r'\b(?:mtc1|jal|jalr)\b',text):
+        return {'kind':'mixed-pointer-float-entry','message':'Measured mixed integer/float entry: prioritize original inline/translation-unit context. Ordinary signature-width/storage trials are deferred; no register binding was invented.'}
+    # The target explicitly retains the incoming object in a caller-saved register across
+    # multiple calls; a measured mismatch makes this a context lead, not a new ABI definition.
+    captured=re.search(r'\bor\s+\$a3,\s*\$a0,\s*\$zero',text)
+    if captured and rows:
+        tail=text[captured.end():]
+        if (len(re.findall(r'\bjal\b',tail))>=2 and re.search(r'\([^)]*\$a3\)',tail)
+                and not re.search(r'\b(?:lw|ld|or|move|addiu|addu)\s+\$a3\b',tail)):
+            return {'kind':'retained-caller-saved-argument','message':'Target retains an argument in $a3 across multiple calls. Prioritize actual callee definitions and translation-unit clobber context before ordinary signature changes.'}
+    return None

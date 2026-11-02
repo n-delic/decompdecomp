@@ -1663,3 +1663,29 @@ arbitrary increments with an earlier value.
   repeat them blindly on the same inputs.
 - Diagnostic `-da` builds informed the investigation. Acceptance used the ordinary
   profile without `-da`; symbolic relocation annotations did not override exact linked bytes.
+## Measured layout, narrowing and declaration recovery
+
+For provisional IDO 5.3 with `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`,
+controlled private replays recover two historical original-source matches without model calls:
+
+- The saved inline constructor scored 20. A bounded join of adjacent assignment lines in its called private
+  helper recovers exact linked bytes/data. Other joins miss; this is a compiler scheduling hypothesis,
+  not a claim that reflowing arbitrary source is helpful. Only small instruction-multiset-preserving
+  differences trigger the layout family; comments, directives and explicit line macros are retained.
+- A large gameplay routine with an extra unsigned-halfword normalization scored 1200 after actual verified
+  call/declaration context was supplied. Removing the corresponding explicit narrowing cast recovers exact
+  linked bytes/data. Candidate-only masks/shift pairs gate width-specific trials; types are not inferred
+  from a score. A bundled alternative covers two relevant casts, still through the ordinary judge.
+
+Private context recovery can replace tentative objects with compatible actual `extern` declarations from
+reached authorized reference includes, and add missing callee aliases only with independent exact-context
+agreement plus target-symbol evidence. Aliases precede real prototypes to retain float/aggregate ABI.
+Existing private inline bodies may recover original line numbers from token-identical non-static source
+without importing a new global definition. No shared header is edited by these hypotheses.
+
+Measured mixed integer/float entry and retained caller-saved argument patterns are recorded separately.
+Ordinary signature families are deferred behind context/body trials; no register binding, boundary or ABI
+adapter is synthesized. Full translation-unit/clobber adapters remain planned. Generic layout/extern logic
+reaches applicable source preparation; private header publication remains ROM-only. Extra-normalization and
+private-entry readers currently cover MIPS; other processor readers are planned. Controlled replays are not
+new coverage and do not guarantee that every archived source difference is automatically recoverable.

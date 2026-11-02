@@ -121,7 +121,7 @@ class Bridge:
         proj = self.project(session['slug'])
         rows = self.net.store.all("SELECT id,name,size,best_score,n_insns FROM functions WHERE project_id=? "
                                   "AND status='open' AND size BETWEEN 4 AND 16384 AND name LIKE ? "
-                                  "AND id NOT IN (SELECT function_id FROM claims) ORDER BY size,id LIMIT 100",
+                                  "ORDER BY size,id LIMIT 100",
                                   proj['id'], '%'+str(search)[:80]+'%')
         return {'project': session['slug'], 'functions': [dict(r) for r in rows]}
 
@@ -144,8 +144,8 @@ class Bridge:
         fn = self.net.store.one("SELECT * FROM functions WHERE id=? AND project_id=? AND status='open'", fid, proj['id'])
         if not fn or not re.fullmatch(r'[A-Za-z_]\w*', fn['name']) or not 0 < len(fn['target'] or b'') <= 16384:
             raise ValueError('Choose an open function in this project with a valid C name and at most 16 KiB of code.')
-        if self.net.store.one('SELECT 1 FROM claims WHERE function_id=?', fn['id']):
-            raise ValueError('An agent currently holds this function. Choose another function.')
+        # Reading a saved candidate does not acquire, release or replace an agent's claim.
+        # Submission still uses the ordinary claim and freshness gates.
         cfg = self.net.cfg(proj)
         compiler = compiler_for(cfg, fn['vram'])
         flags = compiler.get('flags', [])

@@ -191,3 +191,27 @@ def test_revoked_variant_cannot_publish_profile_or_match(pair, monkeypatch):
     assert pair.project_row('destination')['config']==original
     assert not pair.store.one('SELECT 1 FROM attempts')
     assert not pair.store.one('SELECT 1 FROM claims')
+
+
+def test_claimed_function_can_be_listed_and_fetched_without_disturbing_agent(pair):
+    from decompnet.network import NetworkError
+    fid=prepared(pair)
+    worker,_=pair.local_agent('active-worker')
+    fn=pair.store.one('SELECT * FROM functions WHERE id=?',fid)
+    assert pair.permuter._hold(worker,fn,count_turn=False)
+    source='int new(void) { return 7; }'
+    with pair.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=20 WHERE id=?',(source,fid))
+    original=dict(pair.store.one('SELECT * FROM claims WHERE function_id=?',fid))
+    bridge,key,session,_=paired(pair)
+    listed=bridge.listing(session,'')
+    assert any(row['id']==fid for row in listed['functions'])
+    packet=bridge.task(key,session,fid)
+    assert packet['source']==source
+    assert dict(pair.store.one('SELECT * FROM claims WHERE function_id=?',fid))==original
+    task=bridge.consume(key,session,packet['id'])
+    with pytest.raises(NetworkError,match='claimed'):
+        bridge.submit(key,session,task,source)
+    assert dict(pair.store.one('SELECT * FROM claims WHERE function_id=?',fid))==original
+    assert not pair.store.one('SELECT 1 FROM attempts')
+    assert not session['busy']
