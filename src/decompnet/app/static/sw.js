@@ -73,9 +73,15 @@ self.addEventListener('message', event => {
 });
 async function readNetwork(request) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 4000);
+  // Large project reads can take tens of seconds while agents are compiling.
+  // A short fallback deadline must never turn a healthy, uncached read into an offline error.
+  const budget = new URL(request.url).pathname.startsWith('/api/') ? 120000 : 15000;
+  const cancel = () => controller.abort();
+  request.signal?.addEventListener('abort', cancel, {once:true});
+  if (request.signal?.aborted) controller.abort();
+  const timer = setTimeout(cancel, budget);
   try { return await fetch(request, {signal:controller.signal}); }
-  finally { clearTimeout(timer); }
+  finally { clearTimeout(timer); request.signal?.removeEventListener('abort', cancel); }
 }
 async function handle(request) {
   const epoch = generation;
@@ -106,7 +112,7 @@ async function handle(request) {
       }
     }
     if (navigation) return new Response('<!doctype html><meta name="viewport" content="width=device-width"><title>decompdecomp offline</title><h1>Connect to your Mac</h1><p>Open and sign in to the app once while connected to save an offline view.</p>', {status:503,headers:{'Content-Type':'text/html'}});
-    return Response.json({error:'This view is not saved offline yet. Connect to your Mac and open it first.'}, {status:503});
+    return Response.json({error:'Could not reach your Mac, and this view has no saved offline copy. Reconnecting automatically…'}, {status:503,headers:{'X-Decomp-Offline':'1'}});
   }
 }
 self.addEventListener('fetch', event => {

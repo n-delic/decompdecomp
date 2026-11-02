@@ -1157,3 +1157,11 @@ function renderLocalProjects(box, scan) {
     finally { finish(); update(); }
   };
 }
+
+// A failed initial load has no polling timer yet. Resume it when the host returns,
+// while leaving any open editor and its unsent changes alone after a successful load.
+window.addEventListener('decomp-reconnected', () => {
+  if (!S.slug || $("project").hidden) return;
+  if (!$("projectRetry").hidden) openProject(S.slug, S.tab);
+  else if (S.ov) poll();
+});

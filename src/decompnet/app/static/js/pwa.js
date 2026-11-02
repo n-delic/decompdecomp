@@ -13,7 +13,10 @@
     const clear = document.createElement('button');
     clear.type = 'button'; clear.className = 'ghost small-btn'; clear.textContent = 'Clear saved data';
     clear.onclick = async () => { await window.clearDecompOffline(); location.reload(); };
-    banner.replaceChildren(message, clear);
+    const retry = document.createElement('button');
+    retry.type = 'button'; retry.className = 'ghost small-btn'; retry.textContent = 'Reconnect';
+    retry.onclick = () => probe();
+    banner.replaceChildren(message, retry, clear);
   };
   window.decompConnection = (response) => {
     if (response.headers.get('X-Decomp-Offline')) show(response.headers.get('X-Decomp-Saved-At'));
@@ -21,7 +24,26 @@
   };
   window.decompIsOffline = () => offline;
   window.addEventListener('offline', () => show());
-  window.addEventListener('online', () => { banner.textContent = 'Reconnecting to your Mac…'; });
+  let probing = false;
+  const probe = async () => {
+    if (probing) return;
+    probing = true;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const response = await fetch('/health', {cache:'no-store',signal:controller.signal});
+      const data = await response.json();
+      if (response.ok && data.ok && !response.headers.get('X-Decomp-Offline')) {
+        const wasOffline = offline;
+        offline = false; banner.hidden = true;
+        if (wasOffline) window.dispatchEvent(new Event('decomp-reconnected'));
+      }
+    } catch { /* Keep the saved view; the next probe tries again. */ }
+    finally { clearTimeout(timer); probing = false; }
+  };
+  window.addEventListener('online', probe);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && offline) probe(); });
+  setInterval(() => { if (offline && !document.hidden) probe(); }, 10000);
   if (offline) show();
   const warm = () => navigator.serviceWorker.controller?.postMessage({type:'WARM_OFFLINE',slug:location.hash.match(/^#\/p\/([\w-]+)/)?.[1]});
   navigator.serviceWorker.addEventListener('controllerchange', warm);

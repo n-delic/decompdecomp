@@ -232,4 +232,5 @@ def test_installable_web_assets_and_offline_worker(web):
     assert login.code not in worker.text and login.code not in json.dumps(manifest)
     node=shutil.which('node')
     if node:
-        subprocess.run([node,str(Path(__file__).with_name('gui_pwa.js'))],check=True,capture_output=True,text=True,timeout=30)
+        for script in ['gui_pwa.js','gui_pwa_reconnect.js']:
+            subprocess.run([node,str(Path(__file__).with_name(script))],check=True,capture_output=True,text=True,timeout=30)

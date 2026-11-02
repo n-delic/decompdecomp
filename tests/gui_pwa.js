@@ -74,5 +74,16 @@ const request = path => new Request(origin+path);
   await inFlight;
   context.fetch=async()=>{throw new Error('offline');};
   assert.equal((await context.handle(request('/api/function?slug=game&name=late'))).status,503);
+  // A healthy but slow first map must survive the old four-second cutoff.
+  const timers=[];
+  context.setTimeout=(fn,ms)=>{timers.push({fn,ms});return timers.length;};
+  context.clearTimeout=()=>{};
+  let finish, signal;
+  context.fetch=(request,options)=>{signal=options.signal;return new Promise(done=>{finish=done;});};
+  const slow=context.handle(request('/api/map?slug=slow'));
+  assert.equal(timers.at(-1).ms,120000);
+  for(const timer of timers.filter(timer=>timer.ms<=4000)) timer.fn();
+  assert.equal(signal.aborted,false);
+  finish(Response.json({rows:[],keys:[]}));assert.equal((await slow).status,200);
   console.log('Offline snapshots, secret exclusion, rejected writes, expiry, sign-out and offline launch passed.');
 })().catch(error=>{ console.error(error);process.exitCode=1; });
