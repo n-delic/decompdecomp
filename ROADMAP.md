@@ -1696,6 +1696,14 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
 
 - Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.
 
+Recent repair-example automation: shared source generators now offer sibling-local scope merging,
+CFG-checked narrow loop-exit value reuse, typed float argument staging before integer casts,
+word-sized multi-use scalar-chain inlining, and unescaped pointer updates after error returns.
+Both ROM and object-project source consumers use the shared draft/local-search registry and existing
+trial budgets. ROM donor reuse reserves a slot for agreeing paired HI/LO global mappings before
+raw-address guesses. Object-project donor remapping still needs its existing relocation/file-context
+adapter; these source families do not change that limitation or any match verdict.
+
 - Done: N64 late-code detection completes a frame prologue accidentally included in
   alignment after the last detected return. Recovery is bounded to valid instructions,
   a matching stack-pop return and the next known ROM/RAM segment; reimport preserves
