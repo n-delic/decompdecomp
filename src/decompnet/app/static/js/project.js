@@ -141,7 +141,7 @@ async function refreshMap(force = true, prefetched = null) {
    matches on the map. */
 let pollingGen = -1;
 async function poll() {
-  if (pollingGen === S.gen || !S.slug || (document.hidden && S.primed)) return;  // (minimised: nobody sees it)
+  if (pollingGen === S.gen || !S.slug || ((document.hidden || window.decompIsOffline?.()) && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
     const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);

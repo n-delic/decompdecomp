@@ -25,6 +25,8 @@ async function remember(key, response, epoch = generation) {
   if (bytes.byteLength > MAX_BYTES) return;
   const headers = new Headers(response.headers);
   headers.set('X-Decomp-Saved-At', new Date().toISOString());
+  headers.delete('Content-Length');
+  headers.delete('Content-Encoding');
   if (new URL(key).pathname === '/api/state') {
     const state = JSON.parse(new TextDecoder().decode(bytes));
     // Credentials and connection configuration never belong in offline storage.
