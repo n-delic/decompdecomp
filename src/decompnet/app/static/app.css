@@ -1023,7 +1023,18 @@ details.more[open] > summary::before { content: "− "; }
 #installedCompilerLog { min-width: 0; max-width: 100%; max-height: 280px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 #compilerPanel .workbar { min-width: 0; max-width: 100%; }
 
-#fnCompilerTest { padding: 16px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); display: grid; gap: 10px; min-width: 0; }
+/* Shared disclosure component: native details supplies keyboard and expanded-state semantics. */
+.collapsible-box { margin-bottom: 18px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); min-width: 0; }
+.collapsible-box > summary { cursor: pointer; padding: 16px; font-weight: 650; }
+.collapsible-box > summary:focus-visible { outline: 2px solid var(--hl); outline-offset: -3px; }
+.collapsible-box[open] > summary { border-bottom: 1px solid var(--line); }
+.collapsible-box-body { padding: 16px; display: grid; gap: 10px; min-width: 0; }
+.collapsible-box-body > .small { max-width: 78ch; line-height: 1.55; }
+.project-peer-table { overflow-x: auto; }
+.project-peer-table table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.project-peer-table th, .project-peer-table td { padding: 10px; text-align: left; border-bottom: 1px solid var(--line); }
+.project-peer-table th { color: var(--muted); font-family: var(--mono); font-size: 11px; text-transform: uppercase; }
+.project-peer-table .mono { overflow-wrap: anywhere; }
 #fnTestCompilers { justify-self: start; }
 #fnCompilerTest > .small { max-width: 78ch; line-height: 1.55; }
 #fnCompilerLog { max-height: 240px; overflow-wrap: anywhere; }

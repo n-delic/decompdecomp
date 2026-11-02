@@ -48,15 +48,15 @@ function nameHintsHTML(hints, current) {
   }).join("");
 }
 let nameChangeBusy = false;
-async function useSuggestedName(button, detail) {
+async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "fnCrossHints") {
   const slug = S.slug, old = detail.name, name = button.dataset.name;
-  const log = $("fnNameLog");
+  const log = $(logId);
   nameChangeBusy = true;
   log.hidden = false;
   showJobError(log, "");
-  const done = beginWork(log, "Applying name and checking existing matches", [...$("fnCrossHints").querySelectorAll("[data-name]")]);
+  const done = beginWork(log, "Applying name and checking existing matches", [...$(rootId).querySelectorAll("[data-name]")]);
   try {
-    const result = await api("/api/cross-game/name", { method: "POST", body: { slug, function: old, name } });
+    const result = await api("/api/cross-game/name", { method: "POST", body: { slug, function: old, name, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
     log.textContent = result.message;
     if (S.slug === slug && S.fn === old) {
       S.fn = name;
@@ -68,6 +68,46 @@ async function useSuggestedName(button, detail) {
     }
   } catch (e) { showJobError(log, e.message); }
   finally { nameChangeBusy = false; done(); }
+}
+
+function projectPeersHTML(data, current) {
+  const rows = data.rows || [];
+  const note = data.unavailable ? esc(data.unavailable) : data.exact ? 'Identical target bytes in other open projects. C does not need to be matched.'
+    : 'No identical target bytes found. These are instruction-pattern similarities, ignoring operands; names are suggestions, not proof of identity or matching C. At most 400 similarly sized functions are compared.';
+  return `<p class="small muted">${note}</p>${rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Project</th><th>Function</th><th>Similarity</th><th>C status</th><th>Action</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.project)}</td><td class="mono">${esc(r.name)}</td><td>${r.identical ? 'Identical bytes' : (r.score * 100).toFixed(1) + '% instruction pattern'}</td><td>${r.status === 'matched' ? 'Matched' : 'Not matched'}</td><td>${r.name === current ? 'Same name' : `<button type="button" class="ghost small-btn" data-name="${esc(r.name)}" data-peer-id="${r.id}">Use name</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No similar functions found in other open projects.</p>'}${data.total > rows.length ? `<p class="small muted">Showing ${rows.length} of ${data.total} identical functions.</p>` : ''}`;
+}
+let projectPeersRequest = 0;
+function prepareProjectPeers(detail) {
+  const panel = $('fnProjectPeers'), content = $('fnProjectPeersContent');
+  const key = S.slug + '/' + detail.name;
+  if (panel.dataset.target !== key) {
+    panel.dataset.target = key;
+    panel.dataset.loaded = '';
+    content.textContent = '';
+    projectPeersRequest++;
+  }
+  const load = async (force = false) => {
+    if (!force && panel.dataset.loaded === key) return;
+    panel.dataset.loaded = key;
+    const request = ++projectPeersRequest, slug = S.slug;
+    content.innerHTML = '<p class="small muted" role="status">Looking for functions in other projects…</p>';
+    const progress = document.createElement('div'); content.append(progress);
+    const done = beginWork(progress, 'Comparing functions in other projects');
+    try {
+      const data = await api('/api/cross-game/functions?slug=' + encodeURIComponent(slug) + '&function=' + encodeURIComponent(detail.name));
+      if (request !== projectPeersRequest || S.slug !== slug || S.fn !== detail.name) return;
+      content.innerHTML = projectPeersHTML(data, detail.name) + '<button type="button" class="ghost small-btn" data-refresh-peers>Refresh</button><pre id="fnPeerNameLog" class="log" hidden></pre>';
+      content.querySelectorAll('[data-name]').forEach(b => { b.onclick = () => useSuggestedName(b, detail, 'fnPeerNameLog', 'fnProjectPeersContent'); });
+      content.querySelector('[data-refresh-peers]').onclick = () => load(true);
+    } catch (e) {
+      if (request !== projectPeersRequest) return;
+      panel.dataset.loaded = '';
+      content.textContent = 'Could not compare functions: ' + e.message;
+      const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry'; retry.className = 'ghost small-btn'; retry.onclick = () => load(true); content.append(retry);
+    } finally { done(); }
+  };
+  panel.ontoggle = () => { if (panel.open) load(); };
+  if (panel.open) load();
 }
 
 async function openFn(name) {
@@ -271,6 +311,7 @@ async function refreshFn(first) {
     if (d.calls.length) xr.push(`<div><b>calls</b>${d.calls.map(fnLink).join("")}</div>`);
     if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
     $("fnXref").innerHTML = xr.join("");
+    prepareProjectPeers(d);
     $("fnCrossHints").innerHTML = d.cross_game_hints?.length
       ? `<p class="col-title">Other games and local SDKs</p><p class="muted small">Sources suggesting the same name are grouped together. Agreement is a naming lead; only a compiled byte match verifies C for this game.</p>${nameHintsHTML(d.cross_game_hints, d.name)}<pre id="fnNameLog" class="log" hidden></pre>` : "";
     $("fnCrossHints").querySelectorAll("[data-name]").forEach((b) => { b.onclick = () => useSuggestedName(b, d); });
