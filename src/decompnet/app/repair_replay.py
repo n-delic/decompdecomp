@@ -122,8 +122,9 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
         report['minimization'] = ablate(before['source'],after['source'],preserves,
                                        trials=trials if ablation_only else max(1,trials//2),stopped=lambda:time.monotonic()>=deadline)
         for row in report['minimization']['trials']:
-            outcome = 'edit_reverted' if row['preserves_output'] else 'edit_retained'
-            report['trials'].append({'family':'revert_captured_edit','outcome':outcome,**row})
+            forward = row.get('direction')=='forward'
+            outcome = ('subset_preserved' if row['preserves_output'] else 'subset_failed') if forward else ('edit_reverted' if row['preserves_output'] else 'edit_retained')
+            report['trials'].append({'family':'captured_edit_subset' if forward else 'revert_captured_edit','outcome':outcome,**row})
             counts[outcome] += 1
     if ablation_only:
         return report | {'summary':dict(counts),'remaining':0}

@@ -52,7 +52,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'candidate_compiles': len(results),
             'first_exact_trial': next((i+1 for i, r in enumerate(results) if r['exact']), None),
             'exact_alternatives': len(state.get('exact', [])), 'winning_path': state.get('winning_path'),
-            'search_counts': state.get('counts', {})}
+            'search_counts': state.get('counts', {}), 'regional_combination_bursts':state.get('regional_bursts',0)}
 
 
 def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lambda: None):

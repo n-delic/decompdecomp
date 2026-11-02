@@ -240,3 +240,10 @@ compiles; a preceding pointer shape needed 108 compiles and three families. The 
 checkpoint was not automatically recovered in the measured budget. Regional frontiers can retain
 useful intermediate shapes with a temporarily worse total score; the ordinary exact judge still
 decides acceptance. Use the read-only linked-ROM benchmark to measure a private checkpoint.
+
+For mixed allocator/scheduling misses, inspect the compact first-differing-block
+report before requesting another full diff. Local search now interleaves block and
+whole-function repair priorities and bounds combinations of regional improvements.
+This does not prove a lifetime conflict: the frozen score-520 regression remained
+unresolved after 128 candidate compiles. Captured single/pair edit subsets can help
+separate sufficient changes from accumulated experiments under the same compiler.
