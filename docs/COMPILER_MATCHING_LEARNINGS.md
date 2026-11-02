@@ -1733,6 +1733,30 @@ MIPS pointer-lifetime candidates require an entry field load saved to the stack,
 
 A third controlled replay starts with the historical draw candidate at score 4,069. Generated saved-pointer lifetime C reaches 40; generated neighboring-float-element correction then links exactly. The lifetime reader selects the second call occurrence, not the earlier same-callee call. Restricting candidate cleared fields to the straight-line entry region avoids confusing later cleanup clears with the saved pointer. This is another historical replay, not new coverage.
 
+### Bounded follow-up automation
+
+The shared repair pipeline now exposes `loop_weight_scope` and `equal_value_increment`.
+The former wraps up to three eligible scalar updates (and adjacent pairs) in one or
+three one-shot scopes. The latter preserves an earlier equal local through an adjacent
+increment. It requires identical declared integer types and no intervening statement;
+this deliberately does not infer equality across a call or branch. Qualified, escaped,
+macro-backed and assembly cases are excluded. At most twelve proposals are generated.
+Register-only evidence prioritizes these families; all adoption uses the normal judge.
+These are shared source hypotheses, available to ROM and imported-project candidates,
+with legacy GCC as the motivating compiler, not a guarantee of benefit on other compilers.
+
+The existing six-source frontier already retains distinct allocation alternatives even
+when their numeric score exceeds the saved best by 25%; a regression covers 275 versus
+390. Existing durable local-trial scopes include build identity and candidate hashes;
+new family IDs participate in the same cache, budget and fairness rules. No new automatic
+diagnostic compilations or higher default budgets are introduced.
+
+Optional GCC dump summaries now report loop-begin notes and the legacy allocation-weight
+heuristic alongside raw reference/lifetime counts. Pseudo numbers are not stable source
+identifiers. These are advisory comparisons, only valid when diagnostic output is unchanged.
+Synthetic host-compiler execution tests verify the narrow transformations; they do not
+establish a fresh retail match or prove the full original cross-branch repair is automated.
+
 ### Target-block search is guidance, not a compiler diagnosis
 
 A linked MIPS reconstruction using KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
