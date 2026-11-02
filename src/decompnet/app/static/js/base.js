@@ -65,6 +65,10 @@ function bytes(n) { return n >= MIB ? `${(n / MIB).toFixed(1)} MB` : n >= KIB ? 
 function money(usd) { return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`; }
 
 async function api(path, { method = "GET", body, raw, signal } = {}) {
+  const serverMode = typeof document !== "undefined" && document.body?.dataset?.serverMode;
+  if (serverMode && path === "/api/pick" && method === "POST") {
+    return {path: window.prompt(`${body?.title || "Choose a path"}\nEnter the ${body?.kind === "folder" ? "folder" : "file"} path on the server computer:`, "")?.trim() || ""};
+  }
   const opts = { method, headers: {} };
   if (signal) opts.signal = signal;
   if (method !== "GET") opts.headers["X-Decomp"] = "1";
@@ -73,6 +77,7 @@ async function api(path, { method = "GET", body, raw, signal } = {}) {
   const res = await fetch(path, opts);
   let data = null;
   try { data = await res.json(); } catch { /* not json */ }
+  if (res.status === 401 && serverMode) location.assign("/login");
   if (!res.ok) throw new Error((data && data.error) || `request failed (${res.status})`);
   return data;
 }
