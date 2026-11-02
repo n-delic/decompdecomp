@@ -55,7 +55,25 @@ def statement_lines(source, name, header, rows):
                 if re.search(r'\b(?:if|for|while|return|case|goto|else)\b|:',previous+following):continue
                 changed=text[:start]+'\n'+text[end:]
                 splits.append(('cpu-statement-lines',source,changed) if is_header else ('cpu-statement-lines',changed,header))
-    return list(dict.fromkeys(result+splits))[:4]
+    # IDO can schedule control-flow statements differently when several share a
+    # source line. Include one token-preserving whole-body split, not just pairs
+    # of assignments. Parenthesized for clauses and directives stay untouched.
+    span=find(source,name)
+    if span and '__LINE__' not in _blank(source+'\n'+header):
+        clean=_blank(source);a,b=span;depth=0;edits=[]
+        for at in range(a,b):
+            char=clean[at]
+            if char=='(':depth+=1
+            elif char==')':depth-=1
+            if char!=';' or depth or '#' in clean[clean.rfind('\n',0,at)+1:at]:continue
+            end=at+1
+            while end<b and source[end] in ' \t':end+=1
+            if end<b and source[end]!='\n' and not source.startswith(('//','/*'),end) and source[at+1:end].strip()=='':edits.append(end)
+        if edits:
+            changed=source
+            for at in reversed(edits):changed=changed[:at]+'\n'+changed[at:]
+            splits.insert(0,('cpu-statement-lines-body',changed,header))
+    return list(dict.fromkeys(splits+result))[:5]
 
 
 def narrowing_casts(source, header, evidence):

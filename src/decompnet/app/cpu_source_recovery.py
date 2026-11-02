@@ -9,6 +9,11 @@ def proposals(net, proj, fn, source, header, measurement):
     from .measured_source_repairs import narrowing_casts, statement_lines
     arch=arches.get(proj['arch'])
     rows=measurement.get('rows',[])
+    from .source_context_diagnostics import identity
+    from .source_lead_analysis import compare
+    # Spend broad permutation work on better-supported leads first. A mismatch is
+    # not a rejected mapping; changed context or a new mapping remains retryable.
+    if identity(compare(rows,proj['arch'])):return []
     from .retail_context_repairs import commented_conditions, draft_prefix, pointer_lifetimes
     proof=arch.source_pointer_lifetime(fn['asm'] or '') if arch.source_pointer_lifetime else []
     result=draft_prefix(source,fn['name'],header,dict(fn).get('best_source'),rows,proj['arch'])
@@ -67,7 +72,7 @@ def extend(net, proj, fn, variants, origins, source, header, measurement, lead):
 
 def trial_key(state, source, header, cfg):
     import hashlib
-    return 'local-source-v11:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
+    return 'local-source-v12:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
 
 
 def pending(net, fn, state, cfg, variants, origins, exclude):

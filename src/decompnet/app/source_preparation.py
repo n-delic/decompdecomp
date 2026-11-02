@@ -580,6 +580,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                                (json.dumps(trial_feedback(fresh,fn,source,header,error=str(exc))),fn['id'],cache_key))
                             continue
                     if not fork and measurement:
+                        st.source_measurement={'pair':(source,header),**measurement}
                         from .cpu_source_recovery import extend
                         extend(net,fresh,fn,variants,reader.origins,source,header,measurement,lead)
                     if score is not None and (fn['best_score'] is None or score < fn['best_score']):
@@ -589,7 +590,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                         if score == 0:
                             report['matched'] += 1
                             st.add(matched=1)
-                    if (not fork and score is not None and fn['best_score'] is not None and score >= fn['best_score']
+                    if (not fork and score is not None and score != 0
                             and not pending(net,fn,state,cfg,variants,reader.origins,(source,header))):
                         private_profiles(net, fresh, fn, source, header, st, report, log_line, budget, deadline, lead)
                     with net.store.tx() as db:
@@ -650,6 +651,12 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     from ..rom.export import _single_definition
     from .profile_hypotheses import neighbours, prioritized
     if not hasattr(net, 'is_rom') or not net.is_rom(proj):return
+    # An unsupported identity should be remapped before broad profile search. This
+    # uses compiled evidence cached for this exact pair, never a source-name guess.
+    from .source_context_diagnostics import identity
+    from .source_lead_analysis import compare
+    current_measurement=getattr(st,'source_measurement',{})
+    if current_measurement.get('pair')==(source,header) and identity(compare(current_measurement.get('rows',[]),proj['arch'])):return
     cfg=json.loads(proj['config'])
     own=compiler_for(cfg,fn['vram'])
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:return
