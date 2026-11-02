@@ -178,7 +178,8 @@ next symbol)? join_functions(it, the other part, why), so it becomes one whole f
 # What a ROM helper whose engine can join functions is told (the base prompt names no tool its engine lacks)
 ROM_JOIN = """\
 Part of another function the analysis cut (no prologue, registers the code before set, a switch's cases in the
-next symbol)? join_functions(it, the other part, why), so it becomes one whole function."""
+next symbol)? join_functions(it, the other part, why), so it becomes one whole function — even across overlays
+when the two are ROM-adjacent and their names differ; a note alone won't rejoin them."""
 
 
 def _console_guides() -> dict:
@@ -777,9 +778,13 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]])
     @mcp.tool(meta=ALWAYS_LOAD)
     async def join_functions(ctx: Context, function: str, with_function: str, reason: str) -> str:
         """`function` and `with_function` are one function the analysis cut in two (or more: the symbols between
-        them too): a piece with no prologue that uses registers the code before it set, an epilogue alone, a switch
-        whose cases are in the next symbol. Say what in the code shows it. Once agents of two models say so of the
-        same pair, they're joined into one; never a matched function. Undo a wrong join by splitting it again."""
+        them too): a piece with no prologue that uses registers the code before it set, an epilogue alone, a tail
+        that never returns and runs straight into the next symbol, a switch whose cases are in the next symbol.
+        Such a piece cannot match on its own, so don't body it, stub it or compile it alone, and don't just say so
+        in a note — call this. Works across overlays too: if the two are adjacent in the ROM they join even when
+        their names or units differ. Say what in the code shows they are one. It takes effect once agents of two
+        models say so of the same pair (never a matched function), so if a note already calls a function a piece of
+        the one before it, add your vote here rather than re-noting it. Undo a wrong join by splitting it again."""
         return await run(ctx, "join_functions", function=function, with_function=with_function, reason=reason)
 
     @mcp.prompt(title="Decompile", description="Work loop: claim functions and match them byte for byte.")
