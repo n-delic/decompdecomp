@@ -96,3 +96,16 @@ def test_raw_numeric_address_feedback_does_not_change_the_verdict(monkeypatch):
     net._evaluate(fn,proj,b'unresolved')
     assert not net._candidate_addresses(fn,b'unresolved')
     assert 'address_mismatches' not in net._candidate_checks(fn,proj,b'unresolved')
+
+
+def test_missing_extended_symbol_table_blocks_export_without_changing_exact_verdict():
+    obj=bytearray(object_file());elf=ELFFile(BytesIO(obj));symbols=elf.get_section_by_name('.symtab')
+    # A homemade unused object symbol with SHN_XINDEX, no SHT_SYMTAB_SHNDX table.
+    payload=symbols.data()+struct.pack('>IIIBBH',0,4,4,0x11,0,0xffff)
+    offset=len(obj);obj+=payload
+    for i,section in enumerate(elf.iter_sections()):
+        if section['sh_type']=='SHT_SYMTAB':
+            struct.pack_into('>II',obj,elf['e_shoff']+i*elf['e_shentsize']+16,offset,len(payload))
+    result=diagnostics.export_layout(bytes(obj),'f',True,{})
+    assert result['state']=='blocked' and result['ready'] is False
+    assert 'tentative definitions' in result['message']

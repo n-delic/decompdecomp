@@ -1588,3 +1588,10 @@ and an already-present static helper's original line. Entry line alone retained 
 identical helper's line recovered exact linked code/data at `-O3`. Preparation now also generates that private
 line-only variant when the existing and reference helper definitions are token-identical. A controlled replay
 reproduces this result. Differing helper bodies are not replaced by this rule.
+
+A full original-image build then caught an unused tentative object in a flattened private header:
+IDO emitted raw `SHN_XINDEX` without an `SHT_SYMTAB_SHNDX` table. Isolated function bytes/data still matched,
+but GNU ld rejected the malformed symbol table. Restoring the actual include header's `extern` declaration
+preserves the function bytes without inventing storage or changing ELF indices. Export diagnostics now block
+this malformed case before advertising layout readiness; a homemade ELF regression retains the exact-function
+verdict separately. A complete repository build remains necessary.

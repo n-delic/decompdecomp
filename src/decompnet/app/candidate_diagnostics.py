@@ -28,6 +28,16 @@ def export_layout(obj, name, exact, placements):
         if elf['e_machine'] != 'EM_MIPS' or elf['e_type'] != 'ET_REL':
             return {'state': 'unsupported', 'ready': None,
                     'message': 'Standalone layout checks are not available for this object format yet.'}
+        # Old assemblers can emit a tentative object with raw SHN_XINDEX but no index
+        # table. The function judge need not read that unused symbol; GNU ld rejects it.
+        for index,section in enumerate(elf.iter_sections()):
+            if section['sh_type'] not in ('SHT_SYMTAB','SHT_DYNSYM'):continue
+            extended=any(s['sh_type']=='SHT_SYMTAB_SHNDX' and s['sh_link']==index for s in elf.iter_sections())
+            if not extended and any(s['st_shndx'] in (0xffff,'SHN_XINDEX') for s in section.iter_symbols()):
+                return {'state':'blocked','ready':False,
+                        'message':'The object has an extended symbol index without its required index table. '
+                                  'Check unintended tentative definitions in the private header against actual extern declarations; '
+                                  'do not change the target or patch symbol indices to force linking.'}
         if not _single_definition(obj, name):
             problem = 'The candidate emits extra function bodies; export needs one function per object.'
         else:
