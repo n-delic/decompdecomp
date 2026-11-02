@@ -1827,3 +1827,14 @@ The existing full-input failed-trial cache avoids repeating already judged sourc
 No first compile can be skipped based on source appearance, displayed rows are not an exact
 verdict, and output-neutral chains are not unconditionally discarded. Targeted search reserves
 four of its twenty proposal slots for smaller applicable families when one family is large.
+
+### A no-return fragment can be an import-boundary error
+
+A private N64 ROM audit found five compiled-function prologues imported as 4–12 byte
+assembly targets. The code scanner aligned the last visible return into the following
+prologue, but missed a distant return after a long body with no new frame. The complete
+functions were 3,472, 3,996, 4,092, 3,836 and 9,024 bytes. Matching frame pops and returns
+exist in the original image; 24,376 bytes had been classified as binary data. A fresh
+split preserves every existing matched target. These are recovered matching targets,
+not new C matches or evidence that any compiler flag changed. Check surrounding original
+bytes before declaring a fall-through fragment handwritten assembly.
