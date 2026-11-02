@@ -238,12 +238,19 @@ async function showSettingsPage() {
   $("setComputer").innerHTML = `
     <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
     <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>
-    <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser on this computer while the desktop window stays open.</span></label>
+    <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser while the desktop window stays open.</span></label>
     <div id="webInterfaceDetails" hidden></div>`;
   const renderWebInterface = info => {
     $("webInterfaceEnabled").checked = info.enabled;
     $("webInterfaceDetails").hidden = !info.enabled;
     $("webInterfaceDetails").innerHTML = info.enabled ? `<p class="small"><a class="link" href="${esc(info.url)}" target="_blank" rel="noopener">Open web interface</a></p>${info.code ? `<div class="field"><span>Web sign-in code</span>${cmdBox(info.code)}</div>` : '<p class="small muted">The sign-in code is shown in the desktop app’s Settings.</p>'}<p class="small muted">The browser shares this app’s projects and agents. Disabling access signs out all browsers. Keep the sign-in code private: it grants full access.</p>` : "";
+    if (info.enabled) {
+      $("webInterfaceDetails").insertAdjacentHTML('beforeend', `<label class="field"><span>Private remote address (Tailscale HTTPS)</span><input id="webRemoteUrl" type="url" placeholder="https://my-computer.my-tailnet.ts.net" value="${esc(info.remote_url || '')}"></label><button type="button" class="ghost small-btn" id="webRemoteSave">Save remote address</button>${info.remote_url ? `<p class="small"><a class="link" href="${esc(info.remote_url)}" target="_blank" rel="noopener">Open remote web interface</a></p>` : ''}<p class="small muted">Connect both devices to Tailscale. On this computer, run <code>tailscale serve --bg http://127.0.0.1:${new URL(info.url).port}</code> to route the private HTTPS address to this app. Saving a new address signs out existing browser sessions. Set this address from the desktop app.</p>`);
+      $("webRemoteSave").onclick = async () => {
+        try { renderWebInterface(await api('/api/web-interface', {method:'POST', body:{enabled:true,remote_url:$("webRemoteUrl").value}})); toast('Remote address saved.'); }
+        catch(error) { toast(esc(error.message), 'err'); }
+      };
+    }
     wireCopies($("webInterfaceDetails"));
   };
   renderWebInterface(await api('/api/web-interface'));

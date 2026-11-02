@@ -182,3 +182,30 @@ def test_desktop_toggle_enables_revokes_and_persists_browser_access(tmp_path):
         assert json.loads((internal/'settings.json').read_text())['web_interface_enabled'] is True
     finally:
         manager.shutdown();net.deep_sweeps.shutdown()
+
+
+def test_private_remote_origin_login_and_revocation(web):
+    client,net,login=web
+    native={'User-Agent':window.TOKEN_AGENT+'native-secret','X-Decomp':'1'}
+    remote='https://computer.example.ts.net'
+    answer=client.post('/api/web-interface',json={'enabled':True,'remote_url':remote},headers=native)
+    assert answer.status_code==200 and answer.json()['remote_url']==remote
+    headers={'Host':'computer.example.ts.net','Origin':remote}
+    assert client.get('/login',headers={'Host':'evil.example'}).status_code==403
+    response=client.post('/login',data={'code':net.web_login.code},headers=headers,follow_redirects=False)
+    assert response.status_code==303 and 'Secure' in response.headers['set-cookie']
+    token=response.cookies.get(net.web_login.cookie)
+    remote_headers={**headers,'Cookie':f'{net.web_login.cookie}={token}'}
+    assert client.get('/api/state',headers=remote_headers).status_code==200
+    assert client.get('/api/web-interface',headers=remote_headers).json()['code'] is None
+    assert client.post('/api/settings',json={},headers={**remote_headers,'X-Decomp':'1','Origin':ORIGIN}).status_code==403
+    assert client.post('/api/web-interface',json={'enabled':True,'remote_url':remote},headers={**remote_headers,'X-Decomp':'1'}).status_code==403
+    client.post('/api/web-interface',json={'enabled':False},headers=native)
+    assert client.get('/api/state',headers=remote_headers).status_code==401
+
+
+@pytest.mark.parametrize('url',['http://computer.example.ts.net','https://evil.example','https://computer.example.ts.net/path','https://user@computer.example.ts.net','https://computer.example.ts.net?code=x'])
+def test_remote_origin_rejects_unsafe_addresses(url):
+    from decompnet.app.web_login import remote_origin
+    with pytest.raises(ValueError):
+        remote_origin(url)
