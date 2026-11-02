@@ -1972,3 +1972,12 @@ Measured private temporary-register entry and retained-register ABI cases route 
 context, and suppress only generic declaration/stack-shape follow-ups, retaining targeted repairs.
 An extra restore/return epilogue receives a separate route; target extents and byte judgment are unchanged.
 Cache version 11 includes the same complete candidate, header, settings and destination inputs.
+
+
+### Boundary evidence precedes allocator evidence
+
+After the five truncated-target repairs, a frozen N64 export audit found four further
+raw-gap leads: two direct-call/closed-flow candidates, one unreferenced closed frame
+pattern and one unresolved frame pattern. None was adopted automatically. A fall-through
+extent now prompts boundary review; it is not an assembly classification, a compiler
+mismatch or proof that a different flag is needed. Existing exact acceptance is unchanged.

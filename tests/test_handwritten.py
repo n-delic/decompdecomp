@@ -83,7 +83,7 @@ def test_mips_code_no_compiler_makes():
     def mips_reason(code, big_endian, console):
         return ps2(code) if console == "ps2" else asm_reason(code, big_endian)
 
-    assert mips_reason(le(0x8D110024), False, "ps2").startswith("ends without a return")  # lw s1, 0x24(t0)
+    assert mips_reason(le(0x8D110024), False, "ps2") is None  # lw s1, 0x24(t0)
     assert "VU0" in mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "ps2")  # ctc2 a0, $26; jr ra; nop
     assert mips_reason(le(0x48C4D000, 0x03E00008, 0), False, "n64") is None  # no VU0 there
     assert "coprocessor 0" in mips_reason(le(0x40026000, 0x03E00008, 0), False, "n64")  # mfc0 v0, Status

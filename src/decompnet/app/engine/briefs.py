@@ -241,14 +241,16 @@ class BriefMixin:
     def _brief(self, fn, agent, header):
         from ..search_evidence import brief as search_brief
         proj = self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+        warning=self.console(proj).boundary_reason(fn['target'] or b'') if fn['status']!='matched' else None
+        review='\n\nBoundary review before tuning:\n'+warning if warning else ''
         if self.cfg(proj).get('kind') == 'fork':
-            return self.forks.brief(fn, agent, header) + self._lifetime_hints(fn) + search_brief(self,proj,fn)
+            return self.forks.brief(fn, agent, header) + review + self._lifetime_hints(fn) + search_brief(self,proj,fn)
         if self.is_rom(proj) and fn["status"] == "open" and not fn["best_source"]:
             self._seed_for(fn, proj)  # made again first when what it's made from changed
             fn = self._function(fn["name"], proj["slug"])
             if fn["seed"]:
                 fn = dict(fn) | {"seed": self._draft_shown(fn, proj)}
-        text = super()._brief(fn, agent, header)
+        text = review + super()._brief(fn, agent, header)
         if fn['status'] == 'open' and fn['best_source']:
             from .. import compiler_preflight, repair_ranking, source_diagnostics
             suggestions = source_diagnostics.hints(fn['best_source'], fn['name'], fn['asm'], proj['arch'],

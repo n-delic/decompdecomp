@@ -36,6 +36,13 @@ history, distinguish linking blockers from instruction differences, and synchron
 Compiler preflight checks precede long ROM searches; typed SDK and structure-return hypotheses share the ordinary
 repair pipeline. A function match now carries a separate MIPS export-layout check, with a full rebuild still required.
 
+## Review incomplete targets before tuning
+
+MIPS ROM projects can audit unanalysed binary gaps from Settings without agents or
+compilers. Incomplete target extents receive a visible boundary-review warning instead
+of an automatic assembly verdict. See [ROM code audits](docs/ROM_CODE_AUDIT.md) for
+limits and the read-only command-line audit.
+
 ## Automatic repairs before paid agents
 
 Iterative repairs now interleave first-block and whole-function priorities, reserve bounded

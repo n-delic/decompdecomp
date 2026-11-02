@@ -142,7 +142,7 @@ class Core(Network):
         # what the console's work did, it said in the feed ("8 pieces of functions ... joined"): in the answer too
         done = [r["detail"] for r in self.store.all("SELECT detail FROM events WHERE project_id=? AND id>? AND "
                                                      "kind='analysis' ORDER BY id", row["id"], last)]
-        n = self.not_c_from_notes(slug) + self.twins.set_aside_asm(self.project_row(slug))
+        n = self.twins.set_aside_asm(self.project_row(slug)) + self.not_c_from_notes(slug)
         self._update_cfg(slug, lambda cfg: cfg.update(checked=__version__))
         if n:
             done.append(f"{n} more function{'' if n == 1 else 's'} set aside, as no C makes them")

@@ -471,6 +471,7 @@ function projectCompilerFacts(ov) {
 }
 
 async function renderProjectSettings() {
+  $("codeAuditPanel").hidden = !S.ov?.code_audit;
   const settingsGen = S.gen, settingsSlug = S.slug;
   renderDeepSweep();
   if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
@@ -1245,4 +1246,18 @@ $("sourcePairTry").onclick = async () => {
     log.textContent += `\n${result.matched ? "Exact bundle saved." : `Score ${result.score}; working candidate unchanged.`}`;
     if (S.slug === slug) refreshMap();
   } catch (error) { showJobError(log, error.message); } finally { finish(); }
+};
+
+
+$("codeAuditBtn").onclick = async () => {
+  const button=$("codeAuditBtn"), log=$("codeAuditLog"), slug=S.slug;
+  const finish=beginWork(log,"Auditing unanalysed code",[button]);
+  try {
+    const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
+    const result=await followJob(job,log);
+    if (S.slug!==slug) return;
+    $("codeAuditResult").innerHTML=`<p><b>${result.candidates.length} candidates</b> across ${result.gaps} gaps. ${esc(result.note)}</p>`+
+      result.candidates.map(r=>`<p><code>${hex8(r.vram)}</code> · ${esc(r.evidence)} · ${r.decoded_instructions} decoded instructions · ${r.direct_flow_closed ? "direct flow closes" : "flow unresolved"}${r.incoming.length ? " · from "+r.incoming.map(i=>`<button class="link-btn" data-audit-source="${esc(i.function)}">${esc(i.function)}</button>`).join(", ") : ""}</p>`).join("");
+    $("codeAuditResult").querySelectorAll("[data-audit-source]").forEach(b=>b.onclick=()=>openFn(b.dataset.auditSource));
+  } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
 };
