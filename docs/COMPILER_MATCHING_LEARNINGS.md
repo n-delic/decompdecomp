@@ -1828,6 +1828,49 @@ No first compile can be skipped based on source appearance, displayed rows are n
 verdict, and output-neutral chains are not unconditionally discarded. Targeted search reserves
 four of its twenty proposal slots for smaller applicable families when one family is large.
 
+## Targeted proposal pages and complementary follow-ups
+
+The historical 619-instruction halfword/counter example also exposed a search-selection problem:
+fair one-per-family interleaving can still hide a useful later member of one family. On current
+main `f399309`, a frozen score-160 checkpoint improved to 100 but exhausted its selected branches
+without recovering exact within 96 trials. This differs from the older main used in the preceding
+43-trial comparison; historical numbers are not interchangeable baselines.
+
+The shared selector now retains evidence-ranked order even when a candidate already exists in the
+ordinary pool. After a measured improvement, paired-operand and affine-counter families can receive
+an earlier bounded window; only two follow-ups jump ahead of queued ordinary work. A proposal page
+reserves two positions for other available families, and untouched generated proposals retain a
+parent/pool cursor. Resuming a build-scoped frontier can therefore reach beyond the old shortlist.
+A two-parent generation cache is separate from compiler-verdict caching and includes all generation
+inputs. Unknown source/assembly correspondence remains ordinary-order advice, not an inferred map.
+
+The replay adapter must preserve an already ordered `Page`. Interleaving it again erases the very
+family weighting being measured. Regression tests cover this, candidate-order retention, reaching
+candidate 25 after a restart, cache invalidation, and budget/input checks on comparisons.
+
+Verification uses unchanged KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, copied database/ROM
+inputs and ordinary linked-code/data verdicts. The comparison includes five starting checkpoints
+across four functions: two historical checkpoints of the same routine, plus three currently unresolved
+52-, 124- and 295-instruction routines. All cases receive a maximum of 96 candidate trials and 120 seconds;
+the baseline compile is additional and the current compile/generation may finish after the soft deadline.
+These are target-specific CPU replays with no model calls or live adoption, not evidence of a measured
+reduction in agent tokens or new game coverage. Reports retain unsuccessful cases as well as recoveries.
+
+| Frozen starting checkpoint | Main `f399309` | New selector |
+| --- | --- | --- |
+| Historical score 160 | Best 100; 96 trials, 60.5 s | Exact; trial 35, 33.0 s |
+| Historical score 60 | Exact; trial 1, 4.7 s | Exact; trial 1, 4.4 s |
+| Unresolved 52-instruction routine, score 10 | Best 10; 96 trials | Best 10; 96 trials |
+| Unresolved 124-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
+| Unresolved 295-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
+
+These measurements were made on feature commit `7337280`, before incorporating the subsequently
+merged main changes. Across these five inputs, compiler invocations including baselines fell from 390 to 329 (61 fewer),
+with one additional historical recovery and no lost recoveries or best-score regressions. The three
+fresh near misses did not improve. Wall time is observational, with other processes possible; the
+compile counts and ordinary exact verdicts are the stronger evidence. The recovered example used
+existing structural follow-up triggering plus the new complementary ordering/focus; the new numeric-only
+burst path is covered by synthetic tests, not credited with this recovery without an ablation.
 ### A no-return fragment can be an import-boundary error
 
 A private N64 ROM audit found five compiled-function prologues imported as 4–12 byte

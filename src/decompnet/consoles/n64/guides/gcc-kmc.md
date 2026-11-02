@@ -270,3 +270,12 @@ A private 48-trial replay recovered the historical exact result from score 160 i
 and from score 60 in one trial (~3.2 s), while main recovered neither. These are rediscoveries;
 ordinary linked-byte/data verification is still required. See the 2 November paired-operand case
 in `docs/COMPILER_MATCHING_LEARNINGS.md` for the compiler profile, failed alternatives and limits.
+
+When a paired-operand or affine-counter edit helps, iterative search now gives its complementary
+family a bounded early window while keeping other families and ordinary queued work. Explicit changed
+memory offsets can rank operand sites; C names do not establish register identities. Parent/pool cursors
+retain generated candidates beyond the old shortlist across runs, under the existing separate budget.
+In a five-checkpoint private comparison against main `f399309`, score 160 recovered exact on trial 35
+(~33 s), while main remained at 100 after 96 trials; three fresh near misses were unchanged. This is
+historical rediscovery, not new game coverage. See the matching learnings and repair-replay docs for
+bounds, cache scope, unsuccessful cases and the unchanged exact-code/data requirement.
