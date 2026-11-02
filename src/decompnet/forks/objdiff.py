@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,6 +30,8 @@ REPORT_OPTIONS = {"functionRelocDiffs": "none", "combineDataSections": True, "co
 # the code still links, with its own handler. A jump table's labels too: Visual C++ 2017's $LN4, and $L0040101B, the
 # label a PC project's delinked function names a place in itself by (tools/delink.py): local to the function.
 _GENERATED = re.compile(r"^(@\d+|\$LC\d+|\$[LT]\d+|\$LN\d+|\$L[0-9A-F]{8,16}|_\$E\d+|\.\.\..*|@stringBase\d*|\.L.*)$")
+# An LTCG unit's checks file that can't be read (being rewritten as the unit builds): tries and the wait between
+SIDECAR_TRIES, SIDECAR_WAIT = 5, 0.2
 
 
 class ObjdiffError(NetworkError):
@@ -202,11 +205,21 @@ class DataConflict(MappingConflict):
     check): two globals used once each and swapped keep the mapping one to one, and only this sees them."""
 
 
-def _sidecar(base: Path) -> dict:
-    try:
-        return json.loads(base.with_suffix(".ltcg.json").read_text(encoding="utf-8")).get("functions", {}) or {}
-    except (OSError, ValueError):
-        return {}
+def _sidecar(base: Path) -> dict | None:
+    """The address mapping and data checks of an LTCG unit's functions (<object>.ltcg.json): {} for a unit with none,
+    None for one whose file can't be read. dll2coff rewrites it each time the unit builds, an agent's compile or the
+    permuter's; read then, it once looked like "no conflicts" and the progress report matched a 100% function with
+    two swapped globals, twice. A read that fails is tried again (the rewrite takes milliseconds); after that the
+    unit's checks are unknown, and callers count its functions as not confirmed."""
+    path = base.with_suffix(".ltcg.json")
+    for _ in range(SIDECAR_TRIES):
+        if not path.is_file():
+            return {}
+        try:
+            return json.loads(path.read_text(encoding="utf-8")).get("functions", {}) or {}
+        except (OSError, ValueError):
+            time.sleep(SIDECAR_WAIT)
+    return None
 
 
 def ltcg_problems(base: Path | None) -> list[str]:
@@ -226,7 +239,11 @@ def mapping_conflicts(base: Path | None, symbol: str | None) -> list[MappingConf
     a function."""
     if base is None or symbol is None:
         return []
-    found = _sidecar(base).get(symbol) or {}
+    side = _sidecar(base)
+    if side is None:
+        return [MappingConflict(f"the unit's address checks ({base.with_suffix('.ltcg.json').name}) couldn't be "
+                                "read, so this 100% isn't confirmed; it's being rebuilt: compile again")]
+    found = side.get(symbol) or {}
     return [MappingConflict(c) for c in found.get("conflicts", [])] + [DataConflict(c) for c in found.get("data", [])]
 
 
@@ -247,7 +264,10 @@ def subtract_conflicts(project: Path, rep: dict) -> dict:
         side = _sidecar(base)
         u_fns, u_code = 0, 0
         for f in unit.get("functions", []):
-            bad = side.get(f.get("name")) or {}
+            if side is None:  # its checks couldn't be read: no 100% of the unit is confirmed
+                bad = {"conflicts": ["unread"]}
+            else:
+                bad = side.get(f.get("name")) or {}
             if (bad.get("conflicts") or bad.get("data")) and float(f.get("fuzzy_match_percent") or 0) >= 100.0:
                 f["fuzzy_match_percent"] = 99.99
                 u_fns, u_code = u_fns + 1, u_code + int(f.get("size") or 0)
@@ -294,6 +314,20 @@ def _sym(obj: dict | None, name: str | None) -> dict | None:
 # shows it, "bl func_0203aca8-0x8", and on a DS game a model spent a minute working out it was no offset at all
 PC_BIAS = {"R_ARM_PC24": -8, "R_ARM_CALL": -8, "R_ARM_JUMP24": -8, "R_ARM_THM_CALL": -4, "R_ARM_THM_PC22": -4,
            "R_ARM_THM_JUMP24": -4}
+
+
+def _defined_functions(side: dict | None) -> list[dict]:
+    """The functions an object defines, once each. objdiff lists an object's undefined symbols too, with the same
+    kind and no size or code: a COFF object can carry a function both ways (the PC template's delink.py gave every
+    call inside a unit an undefined copy of the callee's name), and the undefined copy, scored None, came after the
+    defined one and hid its score from the unit-wide report (free functions that matched went back to open after
+    the next attempt in their unit; methods, called through vtables, kept theirs). Undefined callees from other
+    units, scored None too, kept a finished file from ever counting as done."""
+    out: dict[str, dict] = {}
+    for s in (side or {}).get("symbols", []):
+        if s.get("kind") == "SYMBOL_FUNCTION" and (int(s.get("size") or 0) > 0 or s.get("instructions")):
+            out.setdefault(s["name"], s)
+    return list(out.values())
 
 
 def _fmt(row: dict) -> str:
@@ -373,8 +407,7 @@ def diff(target: Path | None, base: Path | None, symbol: str | None, cwd: Path, 
              if s.get("kind") == "SYMBOL_FUNCTION" and s.get("instructions")}
     # (not an extern reference: a PC game's delinked object names a function it calls again, as an extern, beside
     # its definition, and that later entry scored a matched function "not in your build", which reopened it)
-    funcs = [s for s in (data.get("left") or {}).get("symbols", [])
-             if s.get("kind") == "SYMBOL_FUNCTION" and s.get("instructions")]
+    funcs = _defined_functions(data.get("left"))
     scores = {s["name"]: (float(s["match_percent"]) if s.get("match_percent") is not None and s["name"] in built else None)
               for s in funcs}
     order = [s["name"] for s in sorted(funcs, key=lambda s: int(s.get("address") or 0))]

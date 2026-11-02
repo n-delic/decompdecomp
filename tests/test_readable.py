@@ -121,6 +121,57 @@ def test_project_mode_games_are_polished_too_through_their_own_files(tmp_path, m
     assert "edit_file" in tools.READABLE_PROMPT.format(title="T", count=1, names=tools.READABLE_FORK)
 
 
+def test_a_header_inline_is_polished_in_its_header(tmp_path, monkeypatch):
+    """An LTCG project keeps the out-of-line copy of a header inline as a marker under the function's annotation in
+    its unit's file (`HEADER_INLINE(...)`, expanding to nothing); the body is in the header. Polishing showed no C and
+    wrote each rewrite into the unit's file, where it defined the function twice: 174 rewrites on an Xbox game failed
+    to compile. The brief shows the header's definition, and make_readable rewrites it there through edit_file."""
+    import json
+
+    from decompnet.app.forkengine import ForkEngine
+    from decompnet.forks.project import ForkProject
+
+    net = RomNetwork(tmp_path / "app.db", tmp_path / "ws")
+    root = tmp_path / "ws" / "p"
+    (root / "src").mkdir(parents=True)
+    (root / "include" / "game").mkdir(parents=True)
+    (root / "objdiff.json").write_text(json.dumps({"units": [{"name": "combo",
+                                                              "metadata": {"source_path": "src/combo.cpp"}}]}))
+    header = ("struct CCombo {\n    int m_best;\n    inline bool Post(int id);\n};\n\n"
+              "inline bool CCombo::Post(int id)\n{\n    if (id < m_best)\n        return false;\n    m_best = id;\n"
+              "    return true;\n}\n")
+    (root / "include" / "game" / "combo.h").write_text(header)
+    (root / "src" / "combo.cpp").write_text(
+        '#include "game/combo.h"\n\n// FUNCTION: 0x00011000\nvoid Other() {}\n\n'
+        "// FUNCTION: 0x00011540 ?Post@CCombo@@\nHEADER_INLINE(bool CCombo::Post(int id))\n")
+    net.forks._register("p", "P", "fork", root, {"kind": "fork", "platform": "xbox", "ready": True}, "x")
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,vram,meta) VALUES(1,'?Post@CCombo@@"
+                   "QAE_NH@Z',32,12,'matched','combo',?,?)", (0x11540, json.dumps(
+                       {"symbol": "?Post@CCombo@@QAE_NH@Z", "demangled": "public: bool __thiscall CCombo::Post(int)"})))
+    fn = net._function("?Post@CCombo@@QAE_NH@Z", "p")
+    fp = ForkProject(root)
+    assert net.forks._current_source(fp, fn) is None  # the marker isn't a definition
+    assert net.forks.inline_definition(fp, fn) == ("include/game/combo.h", header[header.index("inline bool CCombo::"):])
+    # found by its name too, where the project doesn't know its address
+    assert net.forks.inline_definition(fp, dict(fn) | {"vram": None}) == net.forks.inline_definition(fp, fn)
+    agent, _ = net.local_agent("claude-sonnet-5-5-1")
+    brief = net.readability.claim(agent, "p")
+    assert "inline bool CCombo::Post(int id)\n{" in brief and "inline in include/game/combo.h" in brief
+    edits = []
+
+    def edit_file(self, agent, slug, path, old, new, message=""):
+        edits.append((path, old, new))
+        return "✅ include/game/combo.h updated; every matched function still matches."
+    monkeypatch.setattr(ForkEngine, "edit_file", edit_file)
+    polished = "// Posts award `awardId` when it beats the best so far.\n" + \
+        header[header.index("inline bool CCombo::"):].replace("id", "awardId")
+    assert "readable now" in net.readability.submit(agent, "p", fn["name"], polished)
+    assert edits == [("include/game/combo.h", header[header.index("inline bool CCombo::"):].strip("\n"),
+                      polished.strip("\n"))]
+    assert net._function(fn["name"], "p")["readable"] == 1
+
+
 def test_the_function_list_tells_polished_functions_and_helpers_say_they_polish(tmp_path):
     """Polished functions are matched ones made readable: the Functions tab shows them apart (a Polished filter and
     status), and a polishing helper's card says what it does, so decompiling and polishing helpers read apart."""

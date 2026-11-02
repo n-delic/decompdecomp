@@ -44,6 +44,11 @@ compiles can't match those functions: note "LTCG register convention" and releas
     A line `// HARNESS-LINK: <flags>` in any of them adds linker flags (`d3d8ltcg.lib`).
   - Functions are found in the link by func_<address> in their names, or by `// FUNCTION: 0x<address> [map symbol]`
     right above the definition (needed for constructors, destructors and operators; no helper between the two).
+  - A function's file changes its callers' code: when callees match but a caller's call order doesn't, split the
+    unit into `src/auto/<unit>.<part>.cpp` files, linked in a `// LINK-ORDER: <files>` line's order.
+- Each compile_and_diff checks your link's conventions (the function's and its callees') against the original's.
+  "Conventions in your link that differ" names the driver call or stand-in to fix first; "takes its
+  arguments as the original does" means what's left is the code or its data: keep working on it.
 - Adding a helper function or a call site changes conventions under LTCG. The linker specialises a callee with a
   single call site (arguments left where that caller has them, saves dropped); a second caller (a helper, a
   driver call, a stand-in) can make it standard again, or the reverse. After adding one, check the convention
@@ -57,9 +62,9 @@ compiles can't match those functions: note "LTCG register convention" and releas
   objects (the brief's "Two objects alike"): neither is `this`.
 - Unresolved names: the harness link goes on without them (`/FORCE:UNRESOLVED`) and the judge writes the
   original's reference in their place. The brief and compile_and_diff list them by kind:
-  - data (a global, a D_<address>, a pool constant): not always harmless. Under LTCG the compiler sees a global's
-    definition, type and constness, and an unresolved one can change scheduling around its loads. Define it, with
-    its real type, in the unit or a harness file; don't release or wait for it;
+  - data (a global, a D_<address>; not a pool float, below): not always harmless. Under LTCG the compiler sees a
+    global's definition, type and constness, and an unresolved one can change scheduling and code around its
+    loads. Define it, with its real type, in the unit or a harness file; don't release or wait for it;
   - a callee called with a standard convention (__cdecl, __stdcall, __thiscall): harmless;
   - a callee passed arguments in other registers: the call differs until a definition is in the link. Write a
     stand-in shaped like the original's yourself, in the same claim;
@@ -68,9 +73,14 @@ compiles can't match those functions: note "LTCG register convention" and releas
     calls to it. If one is needed, `<name>.nogl.cpp`.
 - Float constants the target loads by address (the diff shows their values): try both the literal (`0.5f`) and an
   `extern const float D_<address>`, and keep the better score; the loads schedule differently and either can win.
-  On equal scores prefer the literal. Sometimes the matching form is a folded expression (`1.0f - 1.3f`).
+  On equal scores prefer the literal. Never define a pool constant in harness/ (it folds). The matching form can be
+  a folded expression (`1.0f - 1.3f`), or two forms the compiler doesn't see as equal (`t / 60.0f`,
+  `t * (1.0f / 60.0f)`).
 - 100% isn't a match until the references map one to one onto the original's: a name that says an address
   (`D_<address>`, `func_<address>`, a global with `// GLOBAL: 0x<address>` before it) means the original's, and
   floats and strings have its values. The judge says so when they don't.
 - `volatile` in a driver or stand-in, to steer the compiler, is forbidden: the harness must reproduce the
-  original's call sites and callees faithfully, or its matches are false ones the final link loses.
+  original's call sites and callees faithfully, or its matches are false ones the final link loses. An address
+  escape (`void *volatile esc[] = { &g_x };`) for a global the game writes or takes the address of elsewhere is
+  faithful, not steering. In the game's own source, `volatile` is allowed only as a documented exception (a
+  comment saying why) when it's the only form that matches.

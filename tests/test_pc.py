@@ -583,6 +583,29 @@ def test_only_32_bit_x86_programs():
     assert not scratch_pe.is_pe(bytes(head))
 
 
+def test_the_unit_wide_scores_count_each_defined_function_once(monkeypatch):
+    from decompnet.forks import objdiff
+
+    # what objdiff says about a delinked unit whose first function another one calls: the callee is listed again,
+    # undefined (no size, no score), after its definition; methods called through a vtable aren't
+    ins = [{"instruction": {"formatted": "ret", "size": 1}}]
+    left = {"symbols": [
+        {"name": "_func_00401000", "kind": "SYMBOL_FUNCTION", "size": "1", "match_percent": 100.0, "instructions": ins},
+        {"name": "_func_00401010", "kind": "SYMBOL_FUNCTION", "address": "16", "size": "11", "match_percent": 100.0,
+         "instructions": ins},
+        {"name": "_func_00401000", "kind": "SYMBOL_FUNCTION", "flags": {"global": True}},
+        {"name": "_func_00402000", "kind": "SYMBOL_FUNCTION", "flags": {"global": True}}]}
+    # (built: with code, as objdiff lists a function the object defines)
+    right = {"symbols": [{"name": "_func_00401010", "kind": "SYMBOL_FUNCTION", "size": "11", "match_percent": 100.0,
+                          "instructions": ins},
+                         {"name": "_func_00401000", "kind": "SYMBOL_FUNCTION", "size": "1", "match_percent": 100.0,
+                          "instructions": ins}]}
+    monkeypatch.setattr(objdiff, "_run", lambda *a, **k: json.dumps({"left": left, "right": right}))
+    d = objdiff.diff(None, None, None, cwd=Path("."))
+    assert d.unit_scores == {"_func_00401000": 100.0, "_func_00401010": 100.0}
+    assert d.order == ["_func_00401000", "_func_00401010"]
+
+
 def test_a_function_your_object_only_calls_is_not_in_your_build_not_a_match(monkeypatch):
     import json
 
@@ -668,9 +691,11 @@ def test_agents_match_functions(pc):
     header += "extern s32 g_settings[6];\n"
     assert net.forks.edit_file(agent, slug, "include/common.h", "", sub(header), "the game's types").startswith("✅")
     source = GAME.read_text() + (DEMO / "pcmain.c").read_text()
+    matched = []
     for name in ("clamp_s32", "player_take_damage", "entity_default_hp", "settings_get", "mix_score"):
         decorated = next(s for s in syms if re.sub(r"^[_@]|@\d+$", "", s) == name)
-        res = net.attempt(agent, decorated.replace(name, rename[name]), sub(csource.get(source, name)), slug)
+        matched.append(decorated.replace(name, rename[name]))
+        res = net.attempt(agent, matched[-1], sub(csource.get(source, name)), slug)
         assert res["matched"], res["text"]
     # C++: a class's method, whatever MSVC mangles its name to, pairs with the original's function
     abs_name = rename["abs_s32"]
@@ -723,6 +748,10 @@ def test_agents_match_functions(pc):
                         slug)
     assert not wrong["matched"]
     net.release(agent, other, "", slug)
+    # later attempts rescore their file: what matched stays matched (a called free function did go back to open)
+    status = {r["name"]: r["status"] for r in net.store.all("SELECT name, status FROM functions WHERE project_id=?",
+                                                             net.project_row(slug)["id"])}
+    assert {n: status[n] for n in matched} == {n: "matched" for n in matched}
     root = Path(net.project_row(slug)["root"])
     assert "Match " in subprocess.run(["git", "log", "--oneline"], cwd=root, capture_output=True, text=True).stdout
 

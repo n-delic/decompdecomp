@@ -32,9 +32,11 @@ from __future__ import annotations
 import bisect
 import hashlib
 import json
+import os
 import re
 import struct
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -177,6 +179,24 @@ class Program:
         return None
 
 
+REPLACE_TRIES, REPLACE_WAIT = 50, 0.1  # Windows refuses to replace a file another process has open
+
+
+def write_whole(path: Path, data: bytes) -> None:
+    """Write a file in one step: the app reads the object and its checks while units build, and a half-written
+    checks file once read as "no conflicts", which matched a function with two swapped globals."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    for attempt in range(REPLACE_TRIES):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_TRIES - 1:
+                raise
+            time.sleep(REPLACE_WAIT)
+
+
 def unresolved_by_function(link_said: str) -> dict[str, list[str]]:
     """What the harness link said, as each function of ours (its decorated name) -> the names it left unresolved
     that the function uses."""
@@ -220,12 +240,18 @@ def map_objects(path: Path) -> dict[str, str]:
     return out
 
 
-def own_symbol(syms: dict[str, int], objects: dict[str, str], name: str, source: Path) -> str | None:
-    """`name` (a unit function's original, decorated name) when the map has it from the unit's own source's object
-    (ltcg.py's 00_<source>.obj), not from a stand-in: the function an annotation means when the definition right
-    after the annotation is something else, such as an inline helper written between the two."""
-    own = f"00_{source.stem.replace('.', '_')}.obj"
-    return name if name in syms and objects.get(name, "").endswith(own) else None
+def own_objects(sources: list[Path]) -> set[str]:
+    """The objects of the unit's own code in its harness link: ltcg.py's <NN>_<file>.obj of every source that isn't in
+    harness/ (the unit's source and the files its code is split into), numbered in link order as ltcg.py numbers them."""
+    return {f"{i:02d}_{p.stem.replace('.', '_')}.obj" for i, p in enumerate(sources)
+            if not p.parts or p.parts[0] != "harness"}
+
+
+def own_symbol(syms: dict[str, int], objects: dict[str, str], name: str, own: set[str]) -> str | None:
+    """`name` (a unit function's original, decorated name) when the map has it from one of the unit's own objects
+    (own_objects), not from a stand-in: the function an annotation means when the definition right after the
+    annotation is something else, such as an inline helper written between the two."""
+    return name if name in syms and any(objects.get(name, "").endswith(o) for o in own) else None
 
 
 def symbol_hint(decl: str) -> str | None:
@@ -253,7 +279,9 @@ def annotations(paths: list[Path]) -> tuple[dict[int, str], list[str]]:
         found = list(FUNCTION.finditer(text))
         for n, m in enumerate(found):
             va, sym = m.group(1), m.group(2)
-            bound = found[n + 1].start() if n + 1 < len(found) else len(text)
+            if sym and "::" in sym:  # `// FUNCTION: 0x29080 Mode::Tick (NONMATCHING ...)`: the source's name, which
+                sym = symbol_hint(sym + "(")  # no decorated map symbol contains; looked for as "Mode::Tick" it never
+            bound = found[n + 1].start() if n + 1 < len(found) else len(text)  # was found, and never compiled in
             decl = None if sym else definition(text, clean, m.end(), bound)
             if not sym and decl is None:
                 problems.append(f"{p}: FUNCTION {va}: no function definition follows it")
@@ -594,7 +622,13 @@ def main() -> None:
     syms = map_symbols(Path(mapf))
     objects = map_objects(Path(mapf))
     wanted = names.wanted(info)
-    starts = sorted({a for a in syms.values() if img.section(a) is not None})
+    real = names.real_names(info)  # functions.json's "names": a real name stands for its address, as in names.py
+
+    def key_of(s: str) -> bytes | None:
+        """func_XXXXXXXX / D_XXXXXXXX a map symbol stands for, by the address in its name or its real name."""
+        return names.address_of(s.encode(), real)
+
+    starts =sorted({a for a in syms.values() if img.section(a) is not None})
     by_addr = sorted((a, s) for s, a in syms.items())
     addrs = [a for a, _ in by_addr]
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
@@ -609,13 +643,16 @@ def main() -> None:
     for addr, fn in functions.items():
         want = hints.get(addr)
         if want is None:
-            m = [s for s in syms if re.search(f"func_{addr:08X}(?![0-9A-Fa-f])", s, re.I)]
+            m = [s for s in syms if key_of(s) == f"func_{addr:08X}".encode()]
+            if len(m) > 1:  # a real name library code has too (an XDK class's Add): the unit's own object's
+                own = own_objects(sources)
+                m = [s for s in m if any(objects.get(s, "").endswith(o) for o in own)]
             if len(m) == 1:
                 found[addr] = (m[0], syms[m[0]])
             continue
         sym, why = find_symbol(syms, want)
         if sym is None:  # `// FUNCTION:`, then a helper inlined into the function, then the function itself
-            sym = own_symbol(syms, objects, fn["name"], sources[0]) if sources else None
+            sym = own_symbol(syms, objects, fn["name"], own_objects(sources))
         if sym is None:
             problems.append(f"0x{addr:08X} {want} {why}")
         else:
@@ -636,9 +673,10 @@ def main() -> None:
         if i < 0:
             return f"$A{va:08X}", 0
         a, s = by_addr[i]
-        m = names.REF.search(s.encode())
-        if m:
-            s = wanted.get(m.group(1) + b"_" + m.group(2).upper(), s.encode()).decode()
+        if names.REF.search(s.encode()):
+            s = wanted.get(key_of(s), s.encode()).decode()
+        elif (key := key_of(s)) is not None:  # a real name: as names.py names it, the original's or _D_<address>
+            s = wanted.get(key, b"_" + key).decode()
         return s, va - a
 
     program = Program(exe)
@@ -658,8 +696,8 @@ def main() -> None:
         shown = s if not delta else f"{s}+0x{delta:X}"
         if s in annotated:
             return shown, annotated[s] + delta
-        m = names.REF.search(s.encode())
-        return (shown, int(m.group(2), 16) + delta) if m else None
+        key = key_of(s)  # (a real name too: a renamed global is checked as its address was)
+        return (shown, int(key.split(b"_", 1)[1], 16) + delta) if key else None
 
     def claim(va: int) -> tuple[list[tuple[str, int]], bool]:
         if va in orig_of:
@@ -728,8 +766,8 @@ def main() -> None:
     data = delink.coff(cuts, img.data)
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-    path.with_suffix(".ltcg.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    write_whole(path, data)
+    write_whole(path.with_suffix(".ltcg.json"), json.dumps(report, indent=1).encode("utf-8"))
     bad = {n: f["conflicts"] for n, f in report["functions"].items() if f["conflicts"]}
     for p in problems:
         print(f"{unit}: {p}")
