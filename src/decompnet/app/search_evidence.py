@@ -1,7 +1,7 @@
 """Bounded build-scoped search notes for agents: useful differences without full assembly replay."""
 import hashlib
 
-from . import agent_tokens, allocation_evidence, experiment_evidence, permuter_focus, repair_ranking
+from . import agent_tokens, allocation_evidence, experiment_evidence, permuter_focus, region_repairs, repair_ranking
 
 LIMIT = 64
 
@@ -34,6 +34,7 @@ def brief(net, proj, fn):
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
+        if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
         lines.append(f"Remaining mismatch: {current['kind'] or 'mixed'}; {len(rows)} displayed differences (advisory).")
         lines.extend(f"  {r[0]} {str(r[1])[:80]} => {str(r[2])[:80]}" for r in rows[:4])
         from .repair_sequences import starting

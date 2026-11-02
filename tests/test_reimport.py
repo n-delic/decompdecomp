@@ -52,6 +52,10 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
         db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) "
                    "VALUES(?,?,?,?,?,?)", (pid, 1, "user header", "custom", 1, ""))
 
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET meta=? WHERE id=?',
+                   (json.dumps({'naming':{'method':'operator'},'reopened':True}),unchanged_id))
+
     game = tmp_path / "selected.z64"
     game.write_bytes(b"new rom")
 
@@ -109,6 +113,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert (root / "new.yaml").read_text(encoding="utf-8") == "new split"
     assert not (root / "old.yaml").exists()
     unchanged = net.store.one("SELECT status, matched_source FROM functions WHERE id=?", unchanged_id)
+    assert json.loads(net.store.one("SELECT meta FROM functions WHERE id=?",unchanged_id)["meta"])["naming"]=={"method":"operator"}
     assert unchanged["status"] == "matched"
     assert unchanged["matched_source"] == "void clamp_s32(void) {}"
     assert net.store.one("SELECT name FROM functions WHERE id=?", unchanged_id)["name"] == "clamp_s32"

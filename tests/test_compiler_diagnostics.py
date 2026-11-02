@@ -37,3 +37,11 @@ def test_capture_callback_is_local_and_flags_are_not_mutated(monkeypatch,tmp_pat
         assert compile_source(cfg,'','int f(void){return 1;}').ok
     assert compile_source(cfg,'','int f(void){return 2;}').ok
     assert seen==[True] and cfg.cmd==original
+
+
+def test_legacy_weight_summary_exposes_reference_priority_and_loop_notes(tmp_path):
+    (tmp_path/'func.c.flow').write_text('Register 201 used 22 times across 74 insns\nRegister 202 used 14 times across 38 insns\nNOTE_INSN_LOOP_BEG\n')
+    phase=diagnostics.phase_summary(tmp_path)['phases']['flow']
+    assert phase['loop_begin_notes']==1
+    assert [r['register'] for r in phase['allocation_priority']]==[201,202]
+    assert phase['allocation_priority'][0]['legacy_weight']==88/74

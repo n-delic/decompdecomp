@@ -119,7 +119,9 @@ def find_segments(rom: bytes, taken: list[tuple[int, int, int]], ends: tuple[int
         start = code_before(rom, lo + frames[0], floor)
         end = min((lo + returns[-1] + 8 + 0xF) & ~0xF, len(rom))
         accept(start, end, start + mapping)
-    return sorted(found)
+    from .code_tails import complete
+
+    return complete(rom,sorted(found),taken)
 
 
 # ---------------------------------------------------------------------------------------------- compressed code
@@ -288,7 +290,7 @@ def add_segments(config: Path, workdir: Path, image: str, log=print) -> str:
     for st, en, vram in found:
         name = f"code_{vram:08X}"
         segs.append({"name": name, "type": "code", "start": st, "vram": vram, "subsegments": [[st, "c", name]]})
-        if en < len(rom) and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
+        if en < len(rom) and en not in starts and not any(start_of(s) == en for s in segs if not isinstance(s, list)):
             segs.append({"type": "bin", "start": en})
     segs.sort(key=lambda s: start_of(s) if start_of(s) is not None else -1)
     segs.append([len(rom)])

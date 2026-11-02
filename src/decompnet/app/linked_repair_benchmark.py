@@ -17,7 +17,7 @@ from ..match_bundle import compiler_identity
 from ..project import compiler_config, compiler_for
 from ..rom import match, split
 from ..rom.symbols import Symbol, SymbolTable
-from . import draft_repairs, repair_benchmark, repair_ranking
+from . import draft_repairs, region_repairs, repair_benchmark
 
 
 def evaluator(root, name, header):
@@ -98,7 +98,7 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
         labels = {}
         candidates = draft_repairs.variants(parent,name,arch,asm,scope['compiler'].get('flags',[]),labels,
                                             limit=None,header=header)
-        order = repair_ranking.order(list(dict.fromkeys(labels[c] for c in candidates)),cache[parent].get('rows') or [])
+        order = region_repairs.order(list(dict.fromkeys(labels[c] for c in candidates)),cache[parent].get('rows') or [])
         return sorted([(labels[c],c) for c in candidates if not families or labels[c] in families],
                       key=lambda item:order.index(item[0]))
     result = repair_benchmark.run(source,baseline['score'],evaluate,generate,trials=trials,

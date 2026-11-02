@@ -165,3 +165,60 @@ the baseline is measured once and reported separately in `compiler_invocations`.
 The shared C families also reach supported imported projects. This read-only exported-ROM
 adapter currently needs MIPS targets; other processors and imported builds can use the existing
 copied-evaluator replay interface. This limitation does not disable their ordinary local repairs.
+
+### Target-block composition and captured subsets
+
+Iterative search interleaves family rankings from the first differing 16-instruction
+target block (with adjacent context) and the whole function. This ranks hypotheses;
+it does not map C lines to assembly or prove that an edit preserves a correct block.
+The frontier prefers less damage to previously correct blocks, then regional recovery.
+Up to three regional follow-up bursts move two child probes forward within the same
+compile/time allowance, width and four-stage depth. A worse scalar score remains
+eligible only under the existing eight-times ceiling, equal instruction count and
+measured regional recovery. Pending candidates remain resumable. Ordinary judges
+alone accept matches; displayed rows never do.
+
+Captured-output minimisation spends at most half its trial budget testing interleaved
+single-edit and pair subsets from the failed source. A successful subset becomes the
+starting set for greedy deletion. `sufficient_recipes` records edit indices that
+reproduced the frozen successful output, not semantic necessity or an automatically
+enabled repair rule. The total compiler budget is unchanged; short budgets cannot
+exhaust every pair. Agents also receive the first differing target block and compact
+register/scheduling/stack clues. These are advisory, not proven lifetime conflicts.
+
+## Proposal pages and productive follow-ups
+
+Iterative repair stores a cursor for each exact parent source and ordered generated proposal pool
+inside its existing build-scoped frontier. Autopilot takes eight targeted candidates per page,
+then interleaves the other candidate sources as before. Omitted generated candidates remain deferred;
+a later wave/run can reach them. Restarting restores the pending work and cursor together. Changed
+source, proposal ordering/pool, compiler, header, symbols or rules cannot reuse an unrelated cursor.
+This covers generated candidates, not every possible C program or candidates excluded by a generator's
+own safety limits. An empty page containing already visited candidates remains resumable. A two-parent, input-keyed
+in-memory proposal cache avoids regenerating the same pool within a visit; it never caches a verdict.
+
+A strict numeric improvement with usable diff feedback can earn two immediate follow-up slots,
+up to three bursts per function's saved search, within the existing phase budget/depth limits.
+Existing structural-gain bursts remain separate; the numeric rule does not duplicate those bursts.
+Known paired-operand/affine-counter combinations receive up to sixteen early positions, reserving
+at least two page positions for other available families (six preferred positions on an eight-item page). Only two children move ahead
+of the ordinary queue, and all compiles still spend the same phase budget.
+Ordinary queued work is preserved, and exact adoption still comes only from the normal judge.
+
+For operand staging, changed memory displacements can prioritize explicit pointer-offset sites and
+scratch pairs that can safely cover those sites. This is an advisory overlap, not a source-line or
+register-variable map. Unknown array stack locations keep ordinary ordering. CFG liveness and the
+existing side-effect/type checks still gate candidates; whole-function alternatives remain available.
+
+For multiple frozen cases, `repair_benchmark.batch(..., generate_report=True)` can pass the measured
+parent report to a generator taking `(case, source, report)`. Return a `repair_selection.Page` to
+preserve pagination; store its cursor dictionary with your private replay state. The default two-argument
+generator remains supported. Compare reports using `repair_benchmark.compare(before, after)`:
+
+- Record the same per-case scope (target, compiler, header, symbols and ROM/build input identity), starting
+  source and equal trial/time limits. The comparator rejects different scopes, duplicates, source hashes,
+  baselines or budgets rather than reporting a misleading speedup.
+- Results include new/lost recoveries, score improvements/regressions, unscored cases, candidate compiles,
+  first exact trial and observed elapsed time. Failed cases must remain in the comparison.
+- A recovered historical checkpoint is rediscovery; an unresolved live function improved on a private copy
+  is not adopted into the user's project by benchmarking. Keep private source, ROMs and reports outside git.

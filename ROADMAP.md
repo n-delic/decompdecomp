@@ -373,12 +373,16 @@ or repair-rule changes reopen it, and explicit selection remains available. Impo
 source, include headers and common build configuration files; custom generated dependencies outside those
 paths still need richer per-file dependency records.
 
-Saved near misses now have a persistent three-round, width-three repair search, disabled by default with a separate
+Saved near misses now have a persistent bounded, width-three repair search, disabled by default with a separate
 configurable budget after normal autopilot, a persistent round-robin cursor, and cached failed compilations.
 It retains improving/equal-score candidates and chains address, literal and targeted local repair families,
 ranked by remaining mismatches. Identical compiler outputs retain at most two source shapes for expansion;
 frontiers and output counts survive runs, and changed repair implementations invalidate the frontier. This uses
 the same MIPS ROM feedback; object-mode and other-processor support await the context/readers described below.
+Generated targeted proposals now have persistent parent/pool cursors beyond the old shortlist. Numeric
+improvements earn bounded complementary follow-ups, explicit offset evidence prioritizes operand sites, and
+a small input-keyed proposal cache avoids repeated generation within a visit. Frozen equal-budget suites
+report successes, failures and regressions. The existing object-mode/other-processor orchestration gap remains.
 
 
 Saved repair candidates retain donor provenance, including conservative exact-reconstruction recovery for
@@ -1683,6 +1687,13 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
 - Done: newly matched source-preparation/deep-search functions can spend their remaining bounded budget on export repair. ROM-verified strings combine with macro arithmetic/scalar references, retaining scheduling-sensitive pools; prefix normalization still needs the standalone rebuild.
 - Planned: non-MIPS saved-pointer readers and constant-operand syntax; imported-build private-header publication and object-layout/export adapters. The MIPS-specific readers cover N64/PS1/PS2 ROM work; absent readers produce no candidate rather than guessed register/layout facts.
 - Planned: reconstruct entirely absent retail cases and enum revisions from CFG/data evidence. Current CPU retail-branch recovery restores only explicit supplied commented conditions with available declarations; arbitrary missing control flow stays outside automatic adoption.
+
+- Done: shared target-block/whole-function repair ranking, bounded regional follow-up
+  combinations, captured single/pair output ablation, and compact agent block reports.
+  Generic search and replay are shared across processors and modes; automatic iterative
+  autopilot retains its existing linked-MIPS-only scope. Other modes require a copied
+  evaluator for composition replay; there is no inferred C-to-instruction source map.
+
 - Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.
 
 Recent repair-example automation: shared source generators now offer sibling-local scope merging,
@@ -1692,3 +1703,8 @@ Both ROM and object-project source consumers use the shared draft/local-search r
 trial budgets. ROM donor reuse reserves a slot for agreeing paired HI/LO global mappings before
 raw-address guesses. Object-project donor remapping still needs its existing relocation/file-context
 adapter; these source families do not change that limitation or any match verdict.
+
+- Done: N64 late-code detection completes a frame prologue accidentally included in
+  alignment after the last detected return. Recovery is bounded to valid instructions,
+  a matching stack-pop return and the next known ROM/RAM segment; reimport preserves
+  unchanged target metadata and progress. It is not arbitrary binary-gap code discovery.

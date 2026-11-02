@@ -61,3 +61,13 @@ def test_numeric_improvements_still_enter_the_frontier():
     frontier = search_frontier.Frontier()
     frontier.offer('improved',9,larger,arch='mips',baseline=baseline,baseline_score=10)
     assert frontier.nodes[0]['source'] == 'improved'
+
+
+def test_register_alternative_beyond_numeric_cutoff_remains_explorable():
+    frontier=search_frontier.Frontier()
+    rows=[('r','move $s1, $a0','move $s2, $a0')]
+    frontier.offer('saved',275,rows)
+    alternate=[('r','move $s1, $a0','move $s3, $a0')]
+    frontier.offer('lifetime-step',390,alternate,baseline=rows,baseline_score=275)
+    assert {'saved','lifetime-step'} <= {n['source'] for n in frontier.nodes}
+    assert any(frontier.choose(i,'saved')=='lifetime-step' for i in range(search_frontier.WIDTH))

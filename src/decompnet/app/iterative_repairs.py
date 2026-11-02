@@ -11,11 +11,12 @@ from pathlib import Path
 
 from ..network import NetworkError
 from ..project import compiler_for
-from . import allocation_evidence, region_repairs, search_frontier, workers
+from . import allocation_evidence, region_repairs, repair_selection, search_frontier, workers
 
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
 DETOUR_RATIO = 1.25
 REGION_DETOUR_RATIO = 8
+REGION_COMBINATIONS = 3  # children share the ordinary compile/time budget
 
 
 def regional_detour(node, report):
@@ -38,9 +39,16 @@ def children(state, parent, variants, *, priority=0):
     """Keep the pending wave, but reserve a tiny burst for a structurally promising two-step repair."""
     if parent['depth'] >= DEPTH or parent['source'] in state.setdefault('expanded', []):
         return 0
-    state['expanded'].append(parent['source'])
+    report = {**parent['report'], 'repair_path': parent.get('path', [])}
+    proposals = variants(parent['source'], report)
+    deferred = state.setdefault('deferred', [])
+    if getattr(proposals, 'more', False):
+        if not any(p['source'] == parent['source'] for p in deferred):
+            deferred.append(parent)
+    else:
+        state['expanded'].append(parent['source'])
     new = []
-    for proposal in variants(parent['source'], parent['report']):
+    for proposal in proposals:
         family, source = proposal if isinstance(proposal, tuple) else ('local_repair', proposal)
         if source in state['seen']:
             continue
@@ -61,6 +69,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
     Detours spend the same phase budget and never replace saved best C. A later repair may need
     an address or scope shape that initially makes register allocation worse.
     """
+    if not state['pending'] and state.get('deferred') and not stopped():
+        expand_wave(state, variants, arch)
     while state['pending'] and not stopped():
         node = state['pending'][0]
         report = evaluate(node['source'])
@@ -100,6 +110,13 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
                                       'region_gain': region_repairs.gain(node.get('region_baseline'), regions)})
                 state['next'][-1]['region_damage'] = region_repairs.damage(node.get('region_baseline'), regions)
+                if (score < node['ceiling'] and node.get('path') and node.get('baseline_rows')
+                        and report.get('rows') and node['depth'] < DEPTH
+                        and search_frontier.structure(report['rows']) >= search_frontier.structure(node['baseline_rows'])
+                        and not state['next'][-1]['region_damage']
+                        and state.get('productive_bursts', 0) < 3):
+                    if children(state, state['next'][-1], variants, priority=2):
+                        state['productive_bursts'] = state.get('productive_bursts', 0)+1
                 # A measured structure improvement earns two immediate combination probes, not
                 # an unbounded recursive search. The original wave remains queued and resumable.
                 if (node.get('baseline_rows') and report.get('rows') and node['depth'] < DEPTH
@@ -123,14 +140,17 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 counts['equivalent_output'] = counts.get('equivalent_output', 0) + 1
         if not state['pending']:
             expand_wave(state, variants, arch)
-    state['reason'] = ('budget_or_stop' if state['pending'] else 'depth_limit' if state.get('counts', {}).get('depth_limit')
+    state['reason'] = ('budget_or_stop' if state['pending'] else 'pending_proposal_pages' if state.get('deferred') else 'depth_limit' if state.get('counts', {}).get('depth_limit')
                        else 'supported_variants_exhausted')
     return bool(state.get('exact'))
 
 
 def expand_wave(state, variants, arch):
     """Retain numeric and structural alternatives between bounded search waves."""
-    ranked = sorted(state['next'], key=lambda n: (n.get('region_damage', 0), n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
+    deferred = state.pop('deferred', [])
+    for parent in deferred:
+        children(state, parent, variants)
+    ranked = sorted(state['next'], key=lambda n: (*region_repairs.priority(n)[:2], n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
                                                     stack_distance(n['report'].get('rows') or []), n['score']))
     ordinary = [n for n in ranked if n['score'] <= n['ceiling']]
     detours = sorted((n for n in ranked if n['score'] > n['ceiling']),
@@ -150,11 +170,17 @@ def expand_wave(state, variants, arch):
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
+    recovered = [n for n in best if n.get('region_gain',0)>0]
+    burst_parent = min(recovered,key=region_repairs.priority) if recovered else None
     for parent in best:
         if parent['depth'] >= DEPTH:
             state.setdefault('counts', {})['depth_limit'] = state.get('counts', {}).get('depth_limit', 0) + 1
             continue
-        children(state, parent, variants)
+        # Probe the best recovered region first, after comparing the entire wave.
+        burst = (parent is burst_parent and
+                 state.get('regional_bursts', 0)<REGION_COMBINATIONS)
+        if children(state, parent, variants, priority=2 if burst else 0) and burst:
+            state['regional_bursts'] = state.get('regional_bursts', 0)+1
 
 
 def stack_distance(rows):
@@ -176,10 +202,13 @@ def output_key(report):
     return hashlib.sha256(repr((report['candidate_target'], report.get('candidate_relocs'))).encode()).hexdigest()
 
 
-def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False):
-    from . import draft_repairs, normalization_repairs, repair_ranking, stack_padding_repairs
+def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees=''):
+    from . import draft_repairs, normalization_repairs, stack_padding_repairs
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
+    focused = draft_repairs.affine_operand_repairs.operand_variants(source, fn['name'], report.get('rows') or [])
+    proposals = list(dict.fromkeys([text for _, text in focused]+proposals))
+    labels.update({text: family for family, text in focused})
     for text in stack_padding_repairs.grow(source, fn['name'], arch, report.get('rows') or []):
         proposals.append(text)
         labels[text] = 'stack_padding'
@@ -187,17 +216,33 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
         for text in normalization_repairs.frame_variants(source, fn['name'], report.get('rows') or []):
             proposals.append(text)
             labels[text] = 'spill_normalization'
-    families = repair_ranking.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
-    ranked = sorted(proposals, key=lambda p: families.index(labels[p]))
-    result, counts = [], Counter()
-    for proposal in ranked:
-        family = labels[proposal]
-        if counts[family] < 16 and len(result) < 20:
-            result.append(proposal)
-            counts[family] += 1
-    # Reserve room for smaller families without wasting budget when only one is applicable.
-    result += [p for p in ranked if p not in result][:20-len(result)]
-    return [(labels[p], p) for p in result] if tagged else result
+    families = region_repairs.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
+    families = repair_selection.order(families, report.get('repair_path', []))
+    pools = [[p for p in proposals if labels[p]==family] for family in families]
+    result = list(dict.fromkeys(p for row in zip_longest(*pools) for p in row if p is not None))
+    return [(labels[p], p) for p in result]
+
+
+def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
+                      selection=None, limit=20, pool_cache=None):
+    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), fn['name'], fn['asm'],
+                              arch, flags, header, tables, callees)).encode()).hexdigest()
+    result = pool_cache.get(key) if pool_cache is not None else None
+    if result is None:
+        result = targeted_pool(source, report, fn, arch, flags, header, tables, callees)
+        if pool_cache is not None:
+            pool_cache[key] = result
+            while len(pool_cache) > 2:
+                del pool_cache[next(iter(pool_cache))]
+    preferred = repair_selection.COMPLEMENTS.get((report.get('repair_path') or [''])[-1], ())
+    quota = min(repair_selection.FOLLOWUP_WINDOW, max(0, limit-2))
+    prefix = [item for item in result if item[0] in preferred[:1]][:quota]
+    reserved = [item for item in result if preferred and item[0] not in preferred][:min(2, limit)]
+    result = list(dict.fromkeys(prefix+reserved+result))
+    if selection is not None:
+        selected = repair_selection.page(result, source, selection, limit)
+        return selected if tagged else repair_selection.Page([p for _, p in selected], more=selected.more)
+    return result[:limit] if tagged else [p for _, p in result[:limit]]
 
 
 def run(twins, slug, job):
@@ -246,7 +291,7 @@ def run(twins, slug, job):
         header = net._context(proj['id'], fn['unit'])['header']
         settings = compiler_for(cfg, fn['vram'])
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v8', candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:
@@ -297,23 +342,25 @@ def run(twins, slug, job):
                            (proj['id'], fn['id'], 'iterative-repair', outcome, reason, time.time()))
             return report
 
+        pool_cache = {}  # Ephemeral, bounded proposal reuse; compiler verdict caches remain separate.
         def variants(source, report):
             guided = address_repairs.variants(source, report, fn, bool(proj['big_endian']), known)
             if report.get('candidate_target'):
                 compiled = dict(target=bytes.fromhex(report['candidate_target']), relocs=report.get('candidate_relocs', '[]'))
                 guided += similar_matches.literal_variants(source, compiled, fn, bool(proj['big_endian']))
             from . import draft_repairs, switch_tables
-            targeted = targeted_variants(source, report, fn, proj['arch'], settings.get('flags', []), header, switch_tables.read(net,proj,fn), draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source), tagged=True)
+            targeted = targeted_variants(source, report, fn, proj['arch'], settings.get('flags', []), header, switch_tables.read(net,proj,fn), draft_repairs.capture_followup_repairs.callee_evidence(net,proj,fn,source), tagged=True, selection=state.setdefault('proposal_cursors', {}), limit=8, pool_cache=pool_cache)
             families = list(dict.fromkeys(family for family, _ in targeted))
-            ordered = adaptive_repairs.order(net, proj, fn, report.get('rows') or [], families)
+            ordered = repair_selection.order(adaptive_repairs.order(net, proj, fn, report.get('rows') or [], families),
+                                             report.get('repair_path', []))
             targeted.sort(key=lambda item: ordered.index(item[0]))
             # Interleave pools so address proposals cannot starve targeted families (or vice versa).
             learned = expression_recipes.variants(net, recipe_profile, source)
-            pools = [[('address_or_literal', s) for s in guided[:4]], targeted[:8],
+            pools = [[('address_or_literal', s) for s in guided[:4]], targeted,
                      [('similar_repair', s) for s in similar_matches.repair_variants(source, report)[:4]],
                      [('learned_expression', s) for s in learned[:2]]]
-            return list(dict.fromkeys(item for group in zip_longest(*pools)
-                                      for item in group if item is not None))
+            return repair_selection.Page(dict.fromkeys(item for group in zip_longest(*pools)
+                                      for item in group if item is not None), more=getattr(targeted, 'more', False))
 
         before_counts = Counter(state.get('counts', {}))
         if advance(state, evaluate, variants, stopped, arch=proj['arch']):

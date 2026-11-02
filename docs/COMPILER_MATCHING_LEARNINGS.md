@@ -1733,6 +1733,47 @@ MIPS pointer-lifetime candidates require an entry field load saved to the stack,
 
 A third controlled replay starts with the historical draw candidate at score 4,069. Generated saved-pointer lifetime C reaches 40; generated neighboring-float-element correction then links exactly. The lifetime reader selects the second call occurrence, not the earlier same-callee call. Restricting candidate cleared fields to the straight-line entry region avoids confusing later cleanup clears with the saved pointer. This is another historical replay, not new coverage.
 
+### Bounded follow-up automation
+
+The shared repair pipeline now exposes `loop_weight_scope` and `equal_value_increment`.
+The former wraps up to three eligible scalar updates (and adjacent pairs) in one or
+three one-shot scopes. The latter preserves an earlier equal local through an adjacent
+increment. It requires identical declared integer types and no intervening statement;
+this deliberately does not infer equality across a call or branch. Qualified, escaped,
+macro-backed and assembly cases are excluded. At most twelve proposals are generated.
+Register-only evidence prioritizes these families; all adoption uses the normal judge.
+These are shared source hypotheses, available to ROM and imported-project candidates,
+with legacy GCC as the motivating compiler, not a guarantee of benefit on other compilers.
+
+The existing six-source frontier already retains distinct allocation alternatives even
+when their numeric score exceeds the saved best by 25%; a regression covers 275 versus
+390. Existing durable local-trial scopes include build identity and candidate hashes;
+new family IDs participate in the same cache, budget and fairness rules. No new automatic
+diagnostic compilations or higher default budgets are introduced.
+
+Optional GCC dump summaries now report loop-begin notes and the legacy allocation-weight
+heuristic alongside raw reference/lifetime counts. Pseudo numbers are not stable source
+identifiers. These are advisory comparisons, only valid when diagnostic output is unchanged.
+Synthetic host-compiler execution tests verify the narrow transformations; they do not
+establish a fresh retail match or prove the full original cross-branch repair is automated.
+
+### Target-block search is guidance, not a compiler diagnosis
+
+A linked MIPS reconstruction using KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+was replayed read-only from the same unresolved score-520 source and frozen header.
+Interleaved first-block/whole-function rankings and bounded regional combinations
+still returned score 520 after 128 candidate compiles (about 71 seconds). This is
+negative evidence: ranking existing repairs did not recover the original match.
+Do not repeat it as a demonstrated end-to-end speedup. Single/pair captured-edit
+subsets are controlled output experiments, not proof that the original compiler used
+that source shape. No game source or binary is included in the regression tests.
+
+The later allocator checkpoint still recovered the normal linked/data exact result
+through initializer extraction, balanced pointer calls and initializer ordering:
+110 candidate compiles, about 100 seconds (previous implementation: 108 compiles,
+about 101 seconds). These are recovery regressions for an already known match,
+not new game progress; wall-time variation is not evidence of lower search cost.
+
 A subsequent source-assisted map routine required a retail cinema guard absent from the reference. Reusing a supplied draft's complete leading guard under a measured missing-call constraint reduced a controlled prepared candidate from 5,065 to 1,478; raw draft memory macros still differed from the exact typed reconstruction. This CPU rule is an improvement lead, not an automatic exact-match claim. Same-unit object-definition evidence separately recovered a boss initializer: supplying the actual object definition instead of an extern removed redundant address-high loads. Do not turn unrelated externs into definitions without actual source evidence.
 ## 2 November: paired operands and a derived loop counter (KMC GCC 2.7.2)
 
@@ -1821,3 +1862,57 @@ standalone linked-byte/objdiff verdicts. Other generated alternatives can be neu
 ordinary judge may accept them during actual searches; no global header, flags, ROM bytes or judge
 thresholds are changed. Synthetic host-C checks compare integer/pointer observations and bounded float
 inputs at ordinary optimization levels; they are not a proof for arbitrary C, FP environments or inputs.
+
+## Targeted proposal pages and complementary follow-ups
+
+The historical 619-instruction halfword/counter example also exposed a search-selection problem:
+fair one-per-family interleaving can still hide a useful later member of one family. On current
+main `f399309`, a frozen score-160 checkpoint improved to 100 but exhausted its selected branches
+without recovering exact within 96 trials. This differs from the older main used in the preceding
+43-trial comparison; historical numbers are not interchangeable baselines.
+
+The shared selector now retains evidence-ranked order even when a candidate already exists in the
+ordinary pool. After a measured improvement, paired-operand and affine-counter families can receive
+an earlier bounded window; only two follow-ups jump ahead of queued ordinary work. A proposal page
+reserves two positions for other available families, and untouched generated proposals retain a
+parent/pool cursor. Resuming a build-scoped frontier can therefore reach beyond the old shortlist.
+A two-parent generation cache is separate from compiler-verdict caching and includes all generation
+inputs. Unknown source/assembly correspondence remains ordinary-order advice, not an inferred map.
+
+The replay adapter must preserve an already ordered `Page`. Interleaving it again erases the very
+family weighting being measured. Regression tests cover this, candidate-order retention, reaching
+candidate 25 after a restart, cache invalidation, and budget/input checks on comparisons.
+
+Verification uses unchanged KMC GCC 2.7.2 `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, copied database/ROM
+inputs and ordinary linked-code/data verdicts. The comparison includes five starting checkpoints
+across four functions: two historical checkpoints of the same routine, plus three currently unresolved
+52-, 124- and 295-instruction routines. All cases receive a maximum of 96 candidate trials and 120 seconds;
+the baseline compile is additional and the current compile/generation may finish after the soft deadline.
+These are target-specific CPU replays with no model calls or live adoption, not evidence of a measured
+reduction in agent tokens or new game coverage. Reports retain unsuccessful cases as well as recoveries.
+
+| Frozen starting checkpoint | Main `f399309` | New selector |
+| --- | --- | --- |
+| Historical score 160 | Best 100; 96 trials, 60.5 s | Exact; trial 35, 33.0 s |
+| Historical score 60 | Exact; trial 1, 4.7 s | Exact; trial 1, 4.4 s |
+| Unresolved 52-instruction routine, score 10 | Best 10; 96 trials | Best 10; 96 trials |
+| Unresolved 124-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
+| Unresolved 295-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
+
+These measurements were made on feature commit `7337280`, before incorporating the subsequently
+merged main changes. Across these five inputs, compiler invocations including baselines fell from 390 to 329 (61 fewer),
+with one additional historical recovery and no lost recoveries or best-score regressions. The three
+fresh near misses did not improve. Wall time is observational, with other processes possible; the
+compile counts and ordinary exact verdicts are the stronger evidence. The recovered example used
+existing structural follow-up triggering plus the new complementary ordering/focus; the new numeric-only
+burst path is covered by synthetic tests, not credited with this recovery without an ablation.
+### A no-return fragment can be an import-boundary error
+
+A private N64 ROM audit found five compiled-function prologues imported as 4–12 byte
+assembly targets. The code scanner aligned the last visible return into the following
+prologue, but missed a distant return after a long body with no new frame. The complete
+functions were 3,472, 3,996, 4,092, 3,836 and 9,024 bytes. Matching frame pops and returns
+exist in the original image; 24,376 bytes had been classified as binary data. A fresh
+split preserves every existing matched target. These are recovered matching targets,
+not new C matches or evidence that any compiler flag changed. Check surrounding original
+bytes before declaring a fall-through fragment handwritten assembly.

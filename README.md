@@ -38,6 +38,11 @@ repair pipeline. A function match now carries a separate MIPS export-layout chec
 
 ## Automatic repairs before paid agents
 
+Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
+regional combination probes, and show compact mismatch clues to agents. Captured fixes
+can test single-edit and pair subsets without model calls. These are search heuristics,
+not a demonstrated speedup for every checkpoint.
+
 Local allocation search now includes initialized pointer guards around identical call branches,
 CFG-proven value-phase splits paired with disjoint lifetime reuse, and groups of up to four
 independent pointer/scalar initializers. A small regional frontier can retain a temporarily worse
@@ -1154,3 +1159,8 @@ families. A candidate-only restore/return epilogue triggers a boundary warning: 
 original padding entry before spending more model tokens. Nothing trims candidate bytes or changes a
 boundary automatically. Prepared-source evidence now highlights differing comparisons and compiled
 immediates, and briefs summarize unsuccessful probes for the current saved source/build scope.
+
+N64 reimport can recover large functions whose first instructions were caught at a
+scanner boundary while the remaining body was left as binary data. Recovery is bounded
+and inferred; the normal linked-byte judge still decides matches. Existing matches and
+naming provenance survive when their complete targets are unchanged.

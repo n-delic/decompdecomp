@@ -241,6 +241,21 @@ checkpoint was not automatically recovered in the measured budget. Regional fron
 useful intermediate shapes with a temporarily worse total score; the ordinary exact judge still
 decides acceptance. Use the read-only linked-ROM benchmark to measure a private checkpoint.
 
+For register-only near misses, request `equal_value_increment` and `loop_weight_scope`
+through local repairs before broad random trials. Both use the existing budget and judge.
+Scope proposals change only plain scalar updates; equal-value proposals currently require
+an adjacent copy and increment of identically typed locals. Cross-branch lifetime changes
+still need investigation. Preserve a distinct allocation candidate even if its numeric
+score is worse. Optional GCC diagnostics expose loop notes and legacy reference weights;
+use them as leads only when diagnostic flags leave output unchanged.
+
+For mixed allocator/scheduling misses, inspect the compact first-differing-block
+report before requesting another full diff. Local search now interleaves block and
+whole-function repair priorities and bounds combinations of regional improvements.
+This does not prove a lifetime conflict: the frozen score-520 regression remained
+unresolved after 128 candidate compiles. Captured single/pair edit subsets can help
+separate sufficient changes from accumulated experiments under the same compiler.
+
 For repeated halfword subtractions with correct instruction structure but swapped operand registers,
 try `paired_operand_reuse`: stage both operands through the same pair of existing dead word locals.
 Use CFG liveness across branches/backedges, not textual last-use guesses. Unsigned halfword staging
@@ -255,3 +270,12 @@ A private 48-trial replay recovered the historical exact result from score 160 i
 and from score 60 in one trial (~3.2 s), while main recovered neither. These are rediscoveries;
 ordinary linked-byte/data verification is still required. See the 2 November paired-operand case
 in `docs/COMPILER_MATCHING_LEARNINGS.md` for the compiler profile, failed alternatives and limits.
+
+When a paired-operand or affine-counter edit helps, iterative search now gives its complementary
+family a bounded early window while keeping other families and ordinary queued work. Explicit changed
+memory offsets can rank operand sites; C names do not establish register identities. Parent/pool cursors
+retain generated candidates beyond the old shortlist across runs, under the existing separate budget.
+In a five-checkpoint private comparison against main `f399309`, score 160 recovered exact on trial 35
+(~33 s), while main remained at 100 after 96 trials; three fresh near misses were unchanged. This is
+historical rediscovery, not new game coverage. See the matching learnings and repair-replay docs for
+bounds, cache scope, unsuccessful cases and the unchanged exact-code/data requirement.
