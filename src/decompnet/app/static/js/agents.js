@@ -659,6 +659,8 @@ function eventHtml(ev) {
     case "source": return `${who} updated ${esc(d)}`;
     case "rename": return `${who} renamed ${esc(d)}`;
     case "split": return `${who} split ${esc(d)}`;
+    // "<head> + <tail(s)>: joined|<reason>" — the head is the surviving function; link it so the log is clickable.
+    case "merge": { const head = d.split(" + ")[0].trim(); return `<span class="ok">⊕</span> ${who}: ${fnLink(head)}${esc(d.slice(head.length))}`; }
     case "files": return `${who ? who + " " : ""}gave code without a source file one: ${esc(d)}`;
     case "import": return `ROM analysed: ${esc(d)}`;
     case "compiler": return `compiler set to ${esc(d)}`;
