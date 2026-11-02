@@ -1684,3 +1684,11 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
 - Planned: non-MIPS saved-pointer readers and constant-operand syntax; imported-build private-header publication and object-layout/export adapters. The MIPS-specific readers cover N64/PS1/PS2 ROM work; absent readers produce no candidate rather than guessed register/layout facts.
 - Planned: reconstruct entirely absent retail cases and enum revisions from CFG/data evidence. Current CPU retail-branch recovery restores only explicit supplied commented conditions with available declarations; arbitrary missing control flow stays outside automatic adoption.
 - Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.
+
+Recent repair-example automation: shared source generators now offer sibling-local scope merging,
+CFG-checked narrow loop-exit value reuse, typed float argument staging before integer casts,
+word-sized multi-use scalar-chain inlining, and unescaped pointer updates after error returns.
+Both ROM and object-project source consumers use the shared draft/local-search registry and existing
+trial budgets. ROM donor reuse reserves a slot for agreeing paired HI/LO global mappings before
+raw-address guesses. Object-project donor remapping still needs its existing relocation/file-context
+adapter; these source families do not change that limitation or any match verdict.

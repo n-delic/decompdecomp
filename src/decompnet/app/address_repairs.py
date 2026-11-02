@@ -82,4 +82,7 @@ def variants(source, report, target, big, known_symbols):
     steps = step_variants(source, report, target, big)
     for variant in list(result):
         steps.extend(step_variants(variant, report, target, big))
-    return list(dict.fromkeys(raw + result + steps + layouts))[:8]
+    # A complete, agreeing HI/LO mapping repairs donor globals as one bundle.
+    # Reserve its slot before raw-address guesses consume the bounded allowance.
+    mapped = [renamed] if renamed != source else []
+    return list(dict.fromkeys(mapped + raw + result + steps + layouts))[:8]

@@ -1786,3 +1786,38 @@ The existing full-input failed-trial cache avoids repeating already judged sourc
 No first compile can be skipped based on source appearance, displayed rows are not an exact
 verdict, and output-neutral chains are not unconditionally discarded. Targeted search reserves
 four of its twenty proposal slots for smaller applicable families when one family is large.
+
+## Recent repair-example lifetime hypotheses — 2 November 2026
+
+Six private captured cases were replayed with their frozen successful compiler/header settings and
+installed compiler, without editing live projects or adopting C. Five new shared source families cover:
+
+- Merging matching leading sibling-arm locals while keeping initializer execution in each arm. Both
+  isolated wrapper scopes and declaration-only parent scopes are offered; sibling declaration order
+  and grouped declarations are bounded alternatives only for independent initializer expressions.
+- Retaining a narrow index in a word local at exit-relevant loop tests and using it in the common tail.
+  CFG traversal must prove a selected test follows every last index write on every tail-use path.
+  Intermediate loops overwritten before the tail are excluded. An optional switch-tail goto cleanup
+  requires a sole jump to the label immediately following its enclosing switch.
+- Staging known float arithmetic in typed locals before the call's integer casts. Only pure float-local
+  expressions and float literals qualify. Immediately preceding dead, unescaped float copies can be
+  folded into the staged expression; arithmetic order and parentheses are retained.
+- Inlining a private word temporary's load-plus-sum chain into two uses in one pure RHS. Explicit
+  word conversions preserve temporary-width boundaries; calls, volatility, escaped storage, mutation
+  and later temporary uses reject the hypothesis.
+- Moving an unescaped local pointer assignment past a plain error return, including a small grouped
+  version for repeated occurrences. The replacement source is a scoped local pointer or array; globals,
+  unknown storage, braced/compound return guards and escaping pointer storage are excluded.
+
+The existing ROM donor-address proposer already requires aligned agreeing HI/LO pairs. Complete
+candidate-local mappings now retain a slot ahead of raw-address guesses in its bounded proposal list;
+comments, strings and unrelated identifier tokens remain untouched.
+
+Frozen compiler-output regression scores against each successful control were 15→0 (sibling locals),
+355→0 (loop exits), 60→0 (float staging), 5→0 (scalar chain), 185→0 (pointer update), and 40→0 (donor globals).
+A winning generated output reproduced the control's normalized instruction/relocation fingerprint and
+allocated constant data in each case. These are historical rediscoveries, not new game coverage and not
+standalone linked-byte/objdiff verdicts. Other generated alternatives can be neutral or worse. Only the
+ordinary judge may accept them during actual searches; no global header, flags, ROM bytes or judge
+thresholds are changed. Synthetic host-C checks compare integer/pointer observations and bounded float
+inputs at ordinary optimization levels; they are not a proof for arbitrary C, FP environments or inputs.

@@ -29,6 +29,7 @@ from . import (
     decision_address_repairs,
     entry_point_repairs,
     evidence_repairs,
+    example_lifetime_repairs,
     expression_repairs,
     field_order_repairs,
     float_intermediate_repairs,
@@ -76,7 +77,7 @@ from . import (
     zero_test_repairs,
 )
 
-AGENT_FAMILIES = affine_operand_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
+AGENT_FAMILIES = example_lifetime_repairs.FAMILIES + affine_operand_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
                   'pointer_block_scope', 'array_address_share', 'combined_integer_lifetimes', 'inferred_record_layout',
                   'float_product_intermediate','pointer_chase_reuse','independent_assignment_order',
                   'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
@@ -145,7 +146,7 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     for family, text in pointer_pair_repairs.variants(source, name, header) + field_order_repairs.variants(source, name, header) + zero_test_repairs.variants(source, name, arch, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in call_lifetime_repairs.variants(source, name, header):
+    for family, text in example_lifetime_repairs.variants(source, name, header) + call_lifetime_repairs.variants(source, name, header):
         proposals.append(text)
         labels[text] = family
     for family, text in match_shape_repairs.variants(source, name, header) + match_followup_repairs.variants(source, name, header):
