@@ -340,8 +340,7 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6 and then archived it. Thank you,
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals
-compilers. The [guide](docs/GUIDE.md#built-on) lists them.
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals compilers. The [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License
 
