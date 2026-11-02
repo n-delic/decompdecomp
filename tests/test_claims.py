@@ -312,6 +312,29 @@ def test_a_function_agents_of_two_models_agree_no_c_makes_is_set_aside(tmp_path)
         assert "why" in str(e)
 
 
+def test_an_agent_isnt_handed_back_what_it_said_no_c_makes_and_the_user_hears_when_only_that_is_left(tmp_path):
+    """Two agents of one model claimed an x86 demo's last function, a hand-written float-to-int helper, a dozen times
+    between them, each time writing that no C makes it: one model never reaches NOT_C_MODELS, and once an agent's
+    run started again its own release no longer kept it off. Its verdict does now; when every open function is
+    waiting on such a verdict, the agent is told to stop and the user is told (once) to set it aside."""
+    net = _one_function_game(tmp_path)
+    first, _ = net.local_agent("claude-opus-5-5-1")
+    second, _ = net.local_agent("claude-opus-5-5-2")
+    for agent in (first, second):
+        net.claim_row(agent, "game", "piece")
+        net.release(agent, "piece", "fistp on an st(0) it never loads: hand-written", "game", not_c=True)
+        with net.store.tx() as db:  # (its run starts again: its own recent releases no longer keep it off)
+            net._event(db, 1, agent.id, "freed", "")
+    assert net.claim_row(first, "game", None, "easiest") is None
+    said = net.nothing_to_claim(first, net.project_row("game"))
+    assert "1 you said no C makes: piece" in said and "Stop working on this project" in said
+    net.nothing_to_claim(second, net.project_row("game"))  # (asked again: told once)
+    told = net.store.all("SELECT detail FROM events WHERE kind='not_c'")
+    assert len(told) == 1 and told[0]["detail"].startswith("piece: waiting for you. 2 agents (claude-opus-5-5)")
+    other, _ = net.local_agent("claude-sonnet-5-5-1")  # another model can still look
+    assert net.claim_row(other, "game", None, "easiest")["name"] == "piece"
+
+
 def test_a_set_aside_function_the_user_gives_back_stays_open(tmp_path, monkeypatch):
     """Reopen: the agents' verdicts are forgotten, and no later check sets it aside again."""
     from decompnet.app import twins
