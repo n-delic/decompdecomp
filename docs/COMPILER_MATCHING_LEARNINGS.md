@@ -1595,3 +1595,71 @@ but GNU ld rejected the malformed symbol table. Restoring the actual include hea
 preserves the function bytes without inventing storage or changing ELF indices. Export diagnostics now block
 this malformed case before advertising layout readiness; a homemade ELF regression retains the exact-function
 verdict separately. A complete repository build remains necessary.
+
+## KMC GCC 2.7.2: one-shot scopes and equivalent Y lifetimes (2 November 2026)
+
+**Verified case:** a 727-instruction / 2,908-byte rendering function, `func_80073B64`.
+Profile remained `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, big-endian
+32-bit MIPS. The normal running-app judge accepted score **0** and exact linked bytes;
+its saved source SHA-256 is `04513bf5a694f8ce363a557c3e75008171b456f6694368a30517175bf9734a1e`.
+The standalone function check independently accepted the same source and isolated header.
+The complete 12,582,912-byte cartridge also rebuilt identically, SHA1
+`da3f262dfb86cff1376c9a1aa081212e5a7aad64`, with all earlier selected C retained.
+[Reconstructed source](https://github.com/RetroReversing/v-rally-decomp/blob/26fd785dad539c058cb1a93a05f4f0b0161d0b8b/src/code_8004BEB4/func_80073B64.c)
+and [portable verification evidence](https://github.com/RetroReversing/v-rally-decomp/tree/26fd785dad539c058cb1a93a05f4f0b0161d0b8b/progress)
+are retained together. These are reconstruction choices, not proof of the original source spelling.
+
+### Instruction identity can conceal a register-priority problem
+
+At score 275, all 727 ordered instruction mnemonics agreed, but 23 displayed positions
+had register differences. The compiler's actual `lreg`/`greg` dumps showed a projected
+32-bit index being allocated before X. A source variable's 16-bit and 32-bit views did
+not necessarily share a pseudo register. Widening the whole variable or separating its
+earlier half-width phase changed already-correct code and did not solve the miss.
+
+Three nested, **single-execution** `do { ... } while (0)` scopes around the existing
+Y restore and X advance changed allocation priority. No new calls or iterations were
+introduced. In the pinned compiler's dumps, X's weighted reference count changed from
+16 over 73 live instructions to 22 over 74, while the projected index remained 14 over
+38. X was then allocated before the index, recovering the required register choices.
+
+The public [GCC 2.7.2.3 reference source](https://ftp.gnu.org/gnu/gcc/gcc-2.7.2.3.tar.gz)
+explains a mechanism: `flow.c` weights references by recorded loop depth, and
+`global.c` orders allocation using reference count, its integer logarithm, and live
+length. The actual pinned KMC dumps retained loop notes for these one-shot scopes.
+The reference archive is supporting context, not a claim that the modified KMC binary
+is identical to that later GCC release. No reference compiler was built or used to judge C.
+
+| Frozen-profile experiment | Normal judge result | Interpretation |
+| --- | --- | --- |
+| One-shot scopes around only the X advance, depths 1/2 | 740 | Worse; scope placement matters. |
+| Same location, depths 3/4/5 | 505 | Register choices largely recovered, but scheduling and an extra argument copy remained. |
+| Include the adjacent Y restore in the scope, depths 3/4 | 390 | Restored instruction order; one redundant copy remained before a conditional call. |
+| Same scoped source; restore Y after the second call from the existing saved Y plus one instead of incrementing the current Y | **0, linked exact** | Preserved the older equal-value temporary long enough to avoid the copy. |
+
+The useful score-390 alternate was more than 25% worse than the saved score of 275.
+A scalar-score frontier alone could discard it. Keep such evidence in a separately bounded
+experiment; do not silently replace the saved best or raise every search budget.
+
+The last change is safe in this case because the saved value is the same pre-decremented
+coordinate, both restoration expressions produce the same 16-bit value on every path,
+and the local coordinate's address never escapes. The intermediate dump placed a copy
+before a bounds branch and its consuming shift inside the branch. GCC's CSE reference
+implementation prefers a longer-lived equal-value pseudo; extending the existing value's
+use after the call recovered the direct shift operand. This does not justify replacing
+arbitrary increments with an earlier value.
+
+### Bounds for future automation
+
+- Treat one-shot scope placement/depth as a bounded, compiler-specific hypothesis. A
+  lower instruction similarity score remains the saved best until a normal exact verdict.
+- Reject regions with `break`, `continue`, labels or incoming jumps whose binding or
+  reachability would change. Preserve declaration and object lifetimes, volatile accesses,
+  evaluation count and call order. Nested wrappers must still execute the body once.
+- Compare output and intermediate phases, not pseudo numbers alone. A successful
+  allocation change can introduce an extra copy or change delay-slot scheduling.
+- Global coordinate widening, union views, removing the second decrement/restore pair,
+  simple mask removal and explicit copy/cast variants all regressed this case. Do not
+  repeat them blindly on the same inputs.
+- Diagnostic `-da` builds informed the investigation. Acceptance used the ordinary
+  profile without `-da`; symbolic relocation annotations did not override exact linked bytes.
