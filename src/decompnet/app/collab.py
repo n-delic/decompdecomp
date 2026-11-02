@@ -1,6 +1,6 @@
 """Private rooms: friends who each own the same game decompile it together.
 
-The host's decompdecomp is the hub. It serves a small, separate HTTP app (only /collab routes; never the GUI or the
+The host's decompdecomp is the hub. It serves a small, separate HTTP app (the member workspace and /collab routes; never the private GUI or the
 agents' MCP endpoint) that a quick tunnel makes reachable. A friend joins with the invite link *and their own copy of
 the game*: the ROM's SHA-1 must equal the host's, checked on both sides. No ROM bytes or assembly ever cross the
 wire. Each side reads the code from its own copy; what travels is the work: claims (so nobody does the same function
@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from decompnet.hostenv import NO_WINDOW
@@ -252,7 +252,9 @@ class Room:
         """The host-side identity of one of a member's agents, e.g. alex.claude-1."""
         label = re.sub(r"[^A-Za-z0-9_-]", "", str(label or "agent"))[:24] or "agent"
         name = f"{member.name}.{label}"
-        row = self.net.store.one("SELECT id FROM agents WHERE name=?", name)
+        row = self.net.store.one("SELECT id, owner, origin FROM agents WHERE name=?", name)
+        if row is not None and (row["owner"] != member.name or row["origin"] != self.origin):
+            raise NetworkError("That worker name belongs to another connection. Join with a different member name.")
         if row is None:
             with self.net.store.tx() as db:
                 aid = db.execute("INSERT INTO agents(name,owner,token_hash,created_at,trusted,origin) VALUES(?,?,?,?,1,?)",
@@ -365,11 +367,14 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         return room
 
     async def body(request: Request) -> dict:
-        if int(request.headers.get("content-length") or 0) > MAX_BODY:
-            raise NetworkError("request too large")
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > MAX_BODY:
+                raise NetworkError("request too large")
         try:
-            data = await request.json()
-        except ValueError:
+            data = json.loads(raw)
+        except (ValueError, UnicodeError):
             raise NetworkError("invalid request") from None
         if not isinstance(data, dict):
             raise NetworkError("invalid request")
@@ -384,7 +389,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                 data = await body(request) if request.method == "POST" else dict(request.query_params)
                 member = await anyio.to_thread.run_sync(room.member, request) if auth else None
                 result = await anyio.to_thread.run_sync(lambda: fn(room, member, data))
-                return JSONResponse(result)
+                return JSONResponse(result, headers={"Cache-Control": "no-store"})
             except NetworkError as e:
                 return JSONResponse({"error": str(e)}, status_code=400)
         return handler
@@ -500,16 +505,7 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
                        (member.name, room.origin))
         return {"ok": True}
 
-    async def landing(request: Request):
-        return HTMLResponse("<!doctype html><meta charset=utf-8><title>decompdecomp room</title>"
-                            "<body style='font:16px system-ui;max-width:36em;margin:4rem auto;padding:0 1rem'>"
-                            "<h1>decompdecomp room</h1><p>This is an invite to decompile a game together. Open "
-                            "<b>decompdecomp</b>, choose <b>Join a friend</b>, and paste this page's address. "
-                            "You'll need your own copy of the game.</p><p>Don't have the app? "
-                            "<a href='https://github.com/n-delic/decompdecomp'>decompdecomp</a></p>")
-
     routes = [
-        Route("/", landing), Route("/join/{code}", landing),
         Route("/collab/hello", endpoint(hello, auth=False)),
         Route("/collab/join", endpoint(join, auth=False), methods=["POST"]),
         Route("/collab/state", endpoint(state)),
@@ -527,6 +523,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         Route("/collab/split_file", endpoint(split_file), methods=["POST"]),
         Route("/collab/bundle", get_bundle),
     ]
+    from . import room_browser
+    routes.extend(room_browser.routes(net, endpoint))
     return Starlette(routes=routes)
 
 
