@@ -234,3 +234,110 @@ def test_installable_web_assets_and_offline_worker(web):
     if node:
         for script in ['gui_pwa.js','gui_pwa_reconnect.js']:
             subprocess.run([node,str(Path(__file__).with_name(script))],check=True,capture_output=True,text=True,timeout=30)
+
+
+@pytest.fixture
+def github(web,monkeypatch):
+    from decompnet.app import web_github
+    client,net,_=web
+    native={'User-Agent':window.TOKEN_AGENT+'native-secret','X-Decomp':'1'}
+    remote='https://computer.example.ts.net'
+    async def owner(login):
+        return {'id':40120498,'login':'RetroGameDeveloper','type':'User'}
+    monkeypatch.setattr(web_github,'github_user',owner)
+    assert client.post('/api/web-interface',json={'enabled':True,'remote_url':remote},headers=native).status_code==200
+    answer=client.post('/api/web-github',json={'enabled':True,'client_id':'example-client','client_secret':'private-oauth-secret','login':'RetroGameDeveloper'},headers=native)
+    assert answer.status_code==200
+    return client,net,native,remote
+
+
+def start_github(client,remote):
+    from urllib.parse import parse_qs, urlsplit
+    response=client.get(remote+'/login/github',follow_redirects=False)
+    assert response.status_code==303
+    return response,parse_qs(urlsplit(response.headers['location']).query)
+
+
+def test_github_identity_pkce_secure_cookie_and_secret_redaction(github,monkeypatch):
+    import base64
+    import hashlib
+
+    from decompnet.app import web_github
+    client,net,native,remote=github
+    page=client.get(remote+'/login').text
+    assert 'Sign in with GitHub' in page and "name='code'" not in page
+    assert client.post(remote+'/login',data={'code':net.web_login.code},headers={'Origin':remote}).status_code==403
+    info=client.get('/api/web-github',headers=native).json()
+    assert info['user_id']==40120498 and info['secret_set']
+    assert 'private-oauth-secret' not in str(info)
+    assert 'private-oauth-secret' not in client.get('/api/state',headers=native).text
+    response,query=start_github(client,remote)
+    assert 'Secure' in response.headers['set-cookie'] and 'SameSite=lax' in response.headers['set-cookie']
+    assert query['code_challenge_method']==['S256'] and not query.get('scope')
+    assert query['redirect_uri']==[remote+'/login/github/callback']
+    state=query['state'][0]
+    pending=net.web_login.oauth_states[state]
+    challenge=base64.urlsafe_b64encode(hashlib.sha256(pending['verifier'].encode()).digest()).decode().rstrip('=')
+    assert challenge==query['code_challenge'][0]
+    seen=[]
+    async def identity(config,code,verifier,callback):
+        seen.append((code,verifier,callback))
+        return {'id':40120498,'login':'renamed-owner'}
+    monkeypatch.setattr(web_github,'identity',identity)
+    response=client.get(remote+'/login/github/callback',params={'code':'authorization-code','state':state},follow_redirects=False)
+    assert response.status_code==303 and response.headers['location']=='/'
+    assert seen==[('authorization-code',pending['verifier'],remote+'/login/github/callback')]
+    assert 'HttpOnly' in response.headers['set-cookie'] and 'Secure' in response.headers['set-cookie']
+    assert client.get(remote+'/api/state').status_code==200
+    assert client.get(remote+'/api/web-interface').json()['code'] is None
+    assert client.post(remote+'/api/web-github',json={'enabled':False},headers={'Origin':remote,'X-Decomp':'1'}).status_code==403
+    assert client.get(remote+'/login/github/callback',params={'code':'authorization-code','state':state}).status_code==403
+    assert client.post('/api/web-github',json={'enabled':False},headers=native).status_code==200
+    assert client.get(remote+'/api/state').status_code==401
+    assert 'Sign-in code' in client.get(remote+'/login').text
+
+
+@pytest.mark.parametrize('case',['wrong-state','missing-cookie','expired','wrong-account','settings-changed','denied'])
+def test_github_rejects_invalid_authorizations(github,monkeypatch,case):
+    from decompnet.app import web_github
+    client,net,native,remote=github
+    _,query=start_github(client,remote)
+    state=query['state'][0]
+    calls=[]
+    async def identity(*args):
+        calls.append(True)
+        return {'id':7}
+    monkeypatch.setattr(web_github,'identity',identity)
+    if case=='wrong-state':state='wrong'
+    if case=='missing-cookie':client.cookies.clear()
+    if case=='expired':net.web_login.oauth_states[state]['expires']=0
+    if case=='settings-changed':client.post('/api/web-github',json={'enabled':False},headers=native)
+    params={'state':state,'code':'provider-code'}
+    if case=='denied':params['error']='access_denied'
+    response=client.get(remote+'/login/github/callback',params=params,follow_redirects=False)
+    assert response.status_code in (400,403)
+    assert client.get(remote+'/api/state').status_code==401
+    assert calls==([True] if case=='wrong-account' else [])
+
+
+def test_github_exchange_contacts_only_github_and_keeps_credentials_server_side(monkeypatch):
+    import anyio
+    import httpx
+
+    from decompnet.app import web_github
+    seen=[]
+    def handler(request):
+        seen.append(request)
+        if request.url.host=='github.com':
+            assert request.url.path=='/login/oauth/access_token'
+            return httpx.Response(200,json={'access_token':'temporary-token'})
+        assert request.url.host=='api.github.com' and request.url.path=='/user'
+        assert request.headers['Authorization']=='Bearer temporary-token'
+        return httpx.Response(200,json={'id':40120498})
+    original=httpx.AsyncClient
+    monkeypatch.setattr(httpx,'AsyncClient',lambda **kwargs:original(transport=httpx.MockTransport(handler),**kwargs))
+    result=anyio.run(web_github.identity,{'client_id':'app','client_secret':'server-secret'},'code','pkce-verifier','https://host.tail.ts.net/login/github/callback')
+    assert result=={'id':40120498} and len(seen)==2
+    body=seen[0].content.decode()
+    assert 'client_secret=server-secret' in body and 'code_verifier=pkce-verifier' in body
+    assert b'server-secret' not in seen[1].content
