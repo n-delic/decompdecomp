@@ -63,7 +63,8 @@ def variants(source, header, reference, target_calls=()):
         h = callbase.replace(text, '\n'*text.count('\n'), 1)
         if name not in declarations(h, {name}):h += '\n'+available[name]+'\n'
         changes.append(('cpu-preserve-target-call', source, h))
-    return changes[:3]
+    from .measured_source_repairs import externs
+    return [*externs(source,header,reference),*changes][:4]
 
 
 def reachable_types(source, header):

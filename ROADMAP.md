@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: measured statement-line layout and candidate-only narrowing-cast hypotheses, compatible actual
+extern recovery, consensus missing-callee aliases, and original lines for existing inline helper bodies.
+Private mixed-entry/callee-clobber evidence is recorded and defers ordinary signature searches. Private
+translation-unit ABI adapters, non-MIPS normalization readers and imported private-header adapters remain planned.
+
 Implemented: ROM room match submissions retain source, successful compiler/ordered flags and private
 header evidence. Hosts rejudge exact linked bytes before atomically accepting function-only settings,
 and sync compiler ranges/private contexts to clients. Pending submissions show reasons and support

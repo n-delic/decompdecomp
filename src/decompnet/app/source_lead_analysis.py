@@ -112,6 +112,12 @@ def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, 
     from .. import arch as arches
     reader=arches.get(proj['arch']).source_recovery_hints
     if reader:comparison['next_steps']+=reader(fn['asm'] or '',rows or [])
+    private=arches.get(proj['arch']).source_private_abi
+    if private:
+        classification=private(fn['asm'] or '',rows or [])
+        if classification:
+            comparison['private_abi']=classification
+            comparison['next_steps'].append(classification['message'])
     baseline=fn['best_score'];improved=score is not None and (baseline is None or score<baseline)
     item={'scope':scope,'family':family,'profile':settings,'lead':lead,'score':score,'baseline':baseline,
           'exact':score==0,'improved':improved,'error':error[:2000], 'elapsed_ms':max(0,int(elapsed_ms)),
