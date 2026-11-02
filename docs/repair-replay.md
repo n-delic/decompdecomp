@@ -222,3 +222,11 @@ generator remains supported. Compare reports using `repair_benchmark.compare(bef
   first exact trial and observed elapsed time. Failed cases must remain in the comparison.
 - A recovered historical checkpoint is rediscovery; an unresolved live function improved on a private copy
   is not adopted into the user's project by benchmarking. Keep private source, ROMs and reports outside git.
+
+Combination replay uses the same paged, mismatch-guided candidate selector as iterative
+search, including scope/value complements and bounded allocation detours. Reports include
+candidate compiles, first exact trial, winning family path, elapsed time,
+`allocation_followups` and `no_effect_families`. The latter counts parent/family groups
+with two identical measured outputs, which move behind fresh families without being
+removed. Replays compare against the frozen successful compiler output; they do not
+adopt C or establish a new linked-byte game match.

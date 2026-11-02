@@ -279,3 +279,11 @@ In a five-checkpoint private comparison against main `f399309`, score 160 recove
 (~33 s), while main remained at 100 after 96 trials; three fresh near misses were unchanged. This is
 historical rediscovery, not new game coverage. See the matching learnings and repair-replay docs for
 bounds, cache scope, unsuccessful cases and the unchanged exact-code/data requirement.
+
+`cfg_equal_value_increment` now tries earlier equal locals across proven CFG joins and
+calls when neither address escapes. It handles modular unsigned increment/decrement
+restoration and literal-zero do latches. Unknown writes and uncertain paths discard
+facts. Try it with `loop_weight_scope`: the bounded iterative search reserves complementary
+follow-ups without increasing the phase budget. Saved-case output replays recovered a
+previous long-running near miss in 17 or 29 candidate compiles; this is regression
+evidence, not a guarantee for other functions.
