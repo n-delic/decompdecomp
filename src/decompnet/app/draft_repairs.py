@@ -80,6 +80,7 @@ from . import (
     value_range_repairs,
     zero_test_repairs,
 )
+from .repair_generation import call as _generated
 
 AGENT_FAMILIES = copy_shape_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + equal_value_flow.FAMILIES + example_lifetime_repairs.FAMILIES + affine_operand_repairs.FAMILIES + loop_weight_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
                   'pointer_block_scope', 'array_address_share', 'combined_integer_lifetimes', 'inferred_record_layout',
@@ -102,14 +103,14 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     if opening < 0:
         return []
     # The dedicated path preserves directives and never rewrites their bodies.
-    early=decision_address_repairs.variants(source,name,arch,header)
+    early=_generated(decision_address_repairs.variants, source,name,arch,header)
     if '#' in clean[opening:end]:
         def generate(masked):
             inner_labels = {}
             safe_header = macro_repairs.prepare(header)[0] or ''
             choices = variants(masked,name,arch,asm,flags,inner_labels,limit=None,header=safe_header,tables=tables,callees=callees)
             return [(inner_labels[text],text) for text in choices]
-        choices = early + macro_repairs.variants(source,name,generate,header)
+        choices = early + _generated(macro_repairs.variants, source,name,generate,header)
         if labels is not None:labels.update({text:family for family,text in choices})
         return [text for _,text in choices][:limit] if limit is not None else [text for _,text in choices]
     body = clean[opening + 1:end].rstrip()
@@ -121,161 +122,174 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     labels = labels if labels is not None else {}
     for family,text in early:
         proposals.append(text);labels[text]=family
-    for family,text in copy_shape_repairs.variants(source,name,header) + capture_followup_repairs.variants(source,name,header,callees):
+    for family,text in _generated(copy_shape_repairs.variants, source,name,header) + _generated(capture_followup_repairs.variants, source,name,header,callees):
         proposals.append(text)
         labels[text] = family
-    for family, text in helper_expansion.variants(source, name, header) + raw_address_repairs.variants(source, name, arch, asm, header) + buffer_address_repairs.variants(source, name, arch, asm, header) + sdk_io_repairs.variants(source, name, arch, asm, header) + target_local_repairs.variants(source, name, arch, asm, header) + formatter_repairs.variants(source, name) + switch_tables.variants(source, name, tables):
+    for family, text in _generated(helper_expansion.variants, source, name, header) + _generated(raw_address_repairs.variants, source, name, arch, asm, header) + _generated(buffer_address_repairs.variants, source, name, arch, asm, header) + _generated(sdk_io_repairs.variants, source, name, arch, asm, header) + _generated(target_local_repairs.variants, source, name, arch, asm, header) + _generated(formatter_repairs.variants, source, name) + _generated(switch_tables.variants, source, name, tables):
         proposals.append(text)
         labels[text] = family
     if arch == 'mips':
-        for text in entry_point_repairs.variants(source, name, asm):
+        for text in _generated(entry_point_repairs.variants, source, name, asm):
             proposals.append(text)
             labels[text] = 'interior_entry_symbol'
-    for family, text in count_lifetime_repairs.variants(source, name, arch, header) + value_range_repairs.variants(source, name, header):
+    for family, text in _generated(count_lifetime_repairs.variants, source, name, arch, header) + _generated(value_range_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in record_lifetime_repairs.variants(source,name,header):
+    for family, text in _generated(record_lifetime_repairs.variants, source,name,header):
         proposals.append(text)
         labels[text] = family
-    for family, text in operand_order_repairs.variants(source, name, header):
+    for family, text in _generated(operand_order_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family,text in global_store_repairs.variants(source,name,header):
+    for family,text in _generated(global_store_repairs.variants, source,name,header):
         proposals.append(text)
         labels[text]=family
-    allocation_candidates = branch_pointer_repairs.variants(source,name,header) + allocation_repairs.variants(source, name, header)
+    allocation_candidates = _generated(branch_pointer_repairs.variants, source,name,header) + _generated(allocation_repairs.variants, source, name, header)
     for family, text in allocation_candidates:
         proposals.append(text)
         labels[text] = family
-    for family, text in pointer_pair_repairs.variants(source, name, header) + field_order_repairs.variants(source, name, header) + zero_test_repairs.variants(source, name, arch, header):
+    for family, text in _generated(pointer_pair_repairs.variants, source, name, header) + _generated(field_order_repairs.variants, source, name, header) + _generated(zero_test_repairs.variants, source, name, arch, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in example_lifetime_repairs.variants(source, name, header) + call_lifetime_repairs.variants(source, name, header):
+    for family, text in _generated(example_lifetime_repairs.variants, source, name, header) + _generated(call_lifetime_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in match_shape_repairs.variants(source, name, header) + match_followup_repairs.variants(source, name, header):
+    for family, text in _generated(match_shape_repairs.variants, source, name, header) + _generated(match_followup_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in captured_lifetimes.variants(source, name):
+    for family, text in _generated(captured_lifetimes.variants, source, name):
         proposals.append(text)
         labels[text] = family
-    for family, text in increment_expression_repairs.variants(source, name) + loop_weight_repairs.variants(source, name, header) + equal_value_flow.variants(source, name, header):
+    for family, text in _generated(increment_expression_repairs.variants, source, name) + _generated(loop_weight_repairs.variants, source, name, header) + _generated(equal_value_flow.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in captured_control_repairs.variants(source,name):
+    for family, text in _generated(captured_control_repairs.variants, source,name):
         proposals.append(text)
         labels[text] = family
-    for family, text in float_intermediate_repairs.variants(source, name):
+    for family, text in _generated(float_intermediate_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
-    for family, text in structure_return_repairs.variants(source, name, header) + sdk_shape_repairs.variants(source, name, header):
+    for family, text in _generated(structure_return_repairs.variants, source, name, header) + _generated(sdk_shape_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in (stack_repairs.variants(source, name) if arch in {"mips", "ppc", "x86", "arm", "thumb"} else []):
+    for family, text in (_generated(stack_repairs.variants, source, name) if arch in {"mips", "ppc", "x86", "arm", "thumb"} else []):
         proposals.append(text)
         labels[text] = family
-    for family, text in register_repairs.variants(source, name, arch):
+    for family, text in _generated(register_repairs.variants, source, name, arch):
         proposals.append(text)
         labels[text] = family
-    for family, text in inferred_layout_repairs.variants(source, name, arch):
+    for family, text in _generated(inferred_layout_repairs.variants, source, name, arch):
         proposals.append(text)
         labels[text] = family
-    for family, text in compiler_shape_repairs.variants(source, name, arch, flags, header):
+    for family, text in _generated(compiler_shape_repairs.variants, source, name, arch, flags, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in evidence_repairs.variants(source, name, header):
+    for family, text in _generated(evidence_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in (address_association_repairs.variants(source, name) + call_initialization_repairs.variants(source, name)
-                         + masked_reuse_repairs.variants(source, name) + focused_lifetime_repairs.variants(source, name) + register_reuse_repairs.variants(source, name) + affine_operand_repairs.variants(source, name)):
+    for family, text in (_generated(address_association_repairs.variants, source, name) + _generated(call_initialization_repairs.variants, source, name)
+                         + _generated(masked_reuse_repairs.variants, source, name) + _generated(focused_lifetime_repairs.variants, source, name) + _generated(register_reuse_repairs.variants, source, name) + _generated(affine_operand_repairs.variants, source, name)):
         proposals.append(text)
         labels[text] = family
-    for text in mmio_repairs.variants(source, name, arch):
+    for text in _generated(mmio_repairs.variants, source, name, arch):
         proposals.append(text)
         labels[text] = 'mmio_address'
-    for family, text in observed_repairs.variants(source, name):
+    for family, text in _generated(observed_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
-    for family, text in near_match_repairs.variants(source, name, asm):
+    for family, text in _generated(near_match_repairs.variants, source, name, asm):
         proposals.append(text)
         labels[text] = family
-    for family, text in captured_repairs.variants(source, name):
+    for family, text in _generated(captured_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
-    for text in load_pair_repairs.variants(source,name):
+    for text in _generated(load_pair_repairs.variants, source,name):
         proposals.append(text)
         labels[text]='paired_load_order'
-    for family,text in lifetime_repairs.variants(source,name):
+    for family,text in _generated(lifetime_repairs.variants, source,name):
         proposals.append(text)
         labels[text]=family
-    for text in store_address_repairs.variants(source, name, arch):
+    for text in _generated(store_address_repairs.variants, source, name, arch):
         proposals.append(text)
         labels[text] = 'store_address_lifetime'
-    for text in stack_padding_repairs.variants(source, name):
+    for text in _generated(stack_padding_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = 'stack_padding'
-    for text in local_width_repairs.variants(source, name):
+    for text in _generated(local_width_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = 'local_width'
-    for text in local_widening_repairs.variants(source, name):
+    for text in _generated(local_widening_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = 'local_widening'
-    for family,text in phase_lifetime_repairs.variants(source,name,header):
+    for family,text in _generated(phase_lifetime_repairs.variants, source,name,header):
         proposals.append(text)
         labels[text] = family
-    for family,text in initializer_clusters.variants(source,name,header):
+    for family,text in _generated(initializer_clusters.variants, source,name,header):
         proposals.append(text)
         labels[text] = family
     for module in (callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs):
-        for family, text in module.variants(source, name):
+        for family, text in _generated(module.variants, source, name):
             proposals.append(text)
             labels[text] = family
+    from .repair_generation import exhausted
+    if exhausted():
+        return _finish(source,name,proposals,labels,allocation_candidates,limit)
     # Two disjoint lifetime merges can be useful together even when either allocation is worse.
     # Keep the bundle tiny; each merge retains the existing conservative liveness boundaries.
-    merges = [text for family, text in integer_lifetime_repairs.variants(source, name)
+    merges = [text for family, text in _generated(integer_lifetime_repairs.variants, source, name)
               if family == 'merge_integer_lifetimes']
     for first in merges[:2]:
-        second = next((text for family, text in integer_lifetime_repairs.variants(first, name)
+        second = next((text for family, text in _generated(integer_lifetime_repairs.variants, first, name)
                        if family == 'merge_integer_lifetimes' and text != source), None)
         if second:
             proposals.append(second)
             labels[second] = 'combined_integer_lifetimes'
-    for text in pointer_cast_repairs.variants(source, name, arch):
+    for text in _generated(pointer_cast_repairs.variants, source, name, arch):
         proposals.append(text)
         labels[text] = 'pointer_cast_inline'
+    from .repair_generation import exhausted
+    if exhausted():
+        return _finish(source,name,proposals,labels,allocation_candidates,limit)
     # Fresh m2c drafts already get this alternative in autopilot. Saved/transferred drafts need the
     # same chance, with their macro typedef block kept out of the refinement's type substitutions.
-    if arch == 'mips' and ('M2C_FIELD(' in source or 'M2C_UNK' in source or re.search(r'\barg[0-3]\b',source)):
+    from .repair_generation import wanted
+    if wanted('m2c_refinement') and arch == 'mips' and ('M2C_FIELD(' in source or 'M2C_UNK' in source or re.search(r'\barg[0-3]\b',source)):
         plain = re.sub(r'#ifndef M2C_DEFINES.*?#endif\n?', '', source, flags=re.S)
         refined = m2cfix.refine_draft(plain, name, asm)
         if refined and refined != plain:
             proposals.append(seeds.M2C_MACROS + refined)
             labels[proposals[-1]] = 'm2c_refinement'
     if arch == "mips":
-        for family, text in inline_scheduling_repairs.variants(source, name):
+        for family, text in _generated(inline_scheduling_repairs.variants, source, name):
             proposals.append(text)
             labels[text] = family
-    for family, text in allocator_shape_repairs.variants(source, name, header):
+    for family, text in _generated(allocator_shape_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in normalization_repairs.variants(source, name, header):
+    for family, text in _generated(normalization_repairs.variants, source, name, header):
         proposals.append(text)
         labels[text] = family
-    for family, text in scheduling_repairs.variants(source, name):
+    for family, text in _generated(scheduling_repairs.variants, source, name):
         proposals.append(text)
         labels[text] = family
     if local := branch_locals.variant(source, name):
         proposals.insert(0, local)
         labels[local] = 'branch_locals'
-    for text in storage_scope_repairs.variants(source, name, arch, flags):
+    for text in _generated(storage_scope_repairs.variants, source, name, arch, flags):
         proposals.append(text)
         labels[text] = 'pointer_storage_scope'
-    for family,text in pattern_repairs.variants(source,name,any(re.fullmatch(r'-g[1-3]?',f) for f in flags)):
+    for family,text in _generated(pattern_repairs.variants, source,name,any(re.fullmatch(r'-g[1-3]?',f) for f in flags)):
         proposals.append(text)
         labels[text] = family
-    proposals += expression_repairs.variants(source, name, arch)
-    proposals += near_repairs.variants(source, name, arch, asm)
+    if wanted('expression_or_near_repair'):
+        proposals += _generated(expression_repairs.variants, source, name, arch)
+        proposals += _generated(near_repairs.variants, source, name, arch, asm)
 
+    from .repair_generation import exhausted
+    if exhausted():
+        return _finish(source,name,proposals,labels,allocation_candidates,limit)
+    if not wanted('expression_or_near_repair'):
+        return _finish(source,name,proposals,labels,allocation_candidates,limit)
     def add(a, b, text):
         candidate = source[:a] + text + source[b:]
         if candidate != source and candidate not in proposals:
@@ -323,6 +337,10 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
             add(offset + commas[-1], offset + close, '')
         if len(proposals) >= LIMIT:
             break
+    return _finish(source,name,proposals,labels,allocation_candidates,limit)
+
+
+def _finish(source,name,proposals,labels,allocation_candidates,limit):
     # Preserve the targeted attribution when an older generic family emits the same C.
     for family, text in allocation_candidates:
         labels[text] = family
@@ -330,11 +348,12 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
         labels.setdefault(text,'expression_or_near_repair')
     # Round-robin families so a new family cannot crowd existing repairs out of a short pass.
     groups = {}
+    from .repair_generation import ACTIVE
     from .repair_preflight import invalid_call
     for text in dict.fromkeys(proposals):
         if text == source:
             continue
-        if invalid_call(text, name):
+        if ACTIVE.get() is None and invalid_call(text, name):
             continue
         groups.setdefault(labels[text],[]).append(text)
     ordered = []

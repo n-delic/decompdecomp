@@ -1791,3 +1791,13 @@ exact original physical helper-line provenance. These gaps do not permit guessed
 Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.
 
 Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
+
+## Durable diagnostic evidence
+
+Implemented: new compiler-trial records survive restart and can be read by other agents in the same
+local project, with historical source/profile and optional shared-header evidence. Repair discovery
+resumes cached pure stages under a cooperative budget; mutable project donors are read afresh.
+
+Planned: transfer diagnostic trial evidence between separate room participant databases, with explicit
+provenance and bounded source/header payloads. A local trial reference alone cannot retrieve remote
+records or reconstruct missing imported translation-unit inputs.

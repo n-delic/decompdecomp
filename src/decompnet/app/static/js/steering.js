@@ -182,13 +182,14 @@ async function renderKnowledge(force = false) {
   let k;
   try { k = await api(`/api/knowledge?slug=${encodeURIComponent(S.slug)}`); } catch { return; }
   $("knowAuto").checked = k.auto;
+  const evidence = (it) => it.evidence?.length ? `<details><summary>Supporting examples · ${it.evidence.length}</summary>${it.evidence.map(e => `<p class="small muted">${esc(e.agent || 'Agent')}: ${esc(e.text)}</p>`).join('')}</details>` : '';
   const row = (it) => {
-    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}
+    if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
       <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
-    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}
+    if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
+    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
   };
   const waiting = k.items.filter((it) => it.status === "agreed").length;
   $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
