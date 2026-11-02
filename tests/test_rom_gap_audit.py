@@ -31,7 +31,9 @@ def test_incoming_call_evidence_is_closed_but_never_an_automatic_import():
 
 def test_unresolved_indirect_branch_and_data_like_frames_are_not_proofs():
     image,segments,functions=fixture();b=bytearray(image);b[0x1020:0x1028]=words(0x00400008,0)
-    assert not audit(bytes(b),segments,functions)['candidates'][0]['direct_flow_closed']
+    candidate=audit(bytes(b),segments,functions)['candidates'][0]
+    assert not candidate['direct_flow_closed']
+    assert candidate['unresolved_transfers']==[{'address':0x80001020,'register':2}]
     b[0x1040:0x1050]=words(0x27bdffe8,0,0x03e00008,0x27bd0018)
     hints=[r for r in audit(bytes(b),segments,functions)['candidates'] if not r['incoming']]
     assert hints and all(r['review_only'] for r in hints)
@@ -83,7 +85,9 @@ def test_audit_ui_has_shared_progress_and_safe_source_links():
     script=(root/'js/steering.js').read_text()
     assert 'beginWork(log,"Auditing unanalysed code",[button])' in script
     assert 'await followJob(job,log)' in script and 'finally {finish();' in script
-    assert 'data-audit-source' in script and 'esc(i.function)' in script
+    review=(root/'js/code-audit.js').read_text()
+    assert 'data-audit-source' in review and 'esc(i.function)' in review
+    assert 'data-review-save' in review and 'esc(r.review?.notes' in review
     assert 'fnBoundaryReview' in (root/'js/function.js').read_text()
 
 

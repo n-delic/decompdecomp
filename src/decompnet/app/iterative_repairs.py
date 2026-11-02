@@ -14,6 +14,7 @@ from ..project import compiler_for
 from . import (
     allocation_evidence,
     first_difference,
+    paired_local_repairs,
     region_repairs,
     repair_effects,
     repair_selection,
@@ -103,6 +104,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         if isinstance(report.get('score'), (int, float)):
             repair_effects.observe(state, node, output_key(report))
         counts = state.setdefault('counts', {})
+        if (node.get('path') or [''])[-1]=='paired_local':
+            counts['paired_evaluations']=counts.get('paired_evaluations',0)+1
         outcome = 'matched' if report.get('matched') else 'compile_failed' if report.get('score') is None else 'scored'
         counts[outcome] = counts.get(outcome, 0) + 1
         repair_effects.rotate(state)
@@ -119,6 +122,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             if not state['pending']:
                 expand_wave(state, variants, arch)
             continue
+        paired_local_repairs.offer(state,node,report,arch)
         score = report.get('score')
         regional = regional_detour(node,report,arch)
         allocation = allocation_detour(node,report,arch)
@@ -196,7 +200,14 @@ def expand_wave(state, variants, arch):
     regional = search_frontier.regional_choices(state['next'])[:1]
     # Keep the numeric winner, a regionally recovered detour and one distinct sibling.
     fallback = retained[:WIDTH-1]+detours[:1] if detours else retained[:WIDTH]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+regional+fallback))[:WIDTH]
+    # Reserve a slot for a different measured output at equal score, even when the
+    # coarse allocation signature is identical. Keep two source shapes per output above.
+    diverse=[]
+    if numeric and state.get('output_diversity',True):
+        output=output_key(numeric['report'])
+        diverse=[n for n in ordinary if n['score']==numeric['score'] and output is not None
+                 and output_key(n['report']) is not None and output_key(n['report'])!=output][:1]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -356,7 +367,7 @@ def _run(twins, slug, job):
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v10', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

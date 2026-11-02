@@ -354,3 +354,18 @@ within-block register chains when supported, keeping delay slots with branches. 
 transfers, out-of-range destinations and incoming delay-slot edges. Other architectures and unsupported
 MIPS streams retain the fixed 16-instruction fallback. Calls/unknown operations clear dependency state;
 there is no memory-alias or cross-block value proof. These hints affect bounded search retention only.
+
+## Isolate local-pair and output-diversity search
+
+`repair_benchmark.run(..., paired_search=False, output_diversity=False)` supplies explicit developer
+ablation switches. Defaults enable the bounded paths used by iterative autopilot. Keep source,
+compiler/profile, headers, target groups, per-case trial and time budgets identical when comparing
+main, pairs-only, diversity-only and the combined treatment. Pairs are composed from freshly scored
+non-improving siblings, spend ordinary candidate slots and never accept a score-only result.
+
+Reports now include `residual_diagnosis`, `search_policy`, `paired_proposals` and `paired_evaluations`.
+Queued proposals are not claimed as evaluations. Evaluations can use an input-scoped cached verdict; they are not automatically fresh compiler invocations. The comparison records recovered **cases**, total
+candidate compiles and first-exact compile savings for shared recoveries. Several checkpoints of
+one function still count as one target for the separate held-out promotion gate. Timing alone is
+not a win. The existing reviewed promotion workflow remains the gate for learned priority boosts;
+adding bounded hypotheses does not approve a learned boost or weaken later destination judging.

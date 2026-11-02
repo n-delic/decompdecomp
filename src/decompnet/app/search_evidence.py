@@ -35,7 +35,9 @@ def brief(net, proj, fn):
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
         if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
-        lines.append(f"Remaining mismatch: {current['kind'] or 'mixed'}; {len(rows)} displayed differences (advisory).")
+        plan=allocation_evidence.plan(current['rows'],proj['arch'])
+        next_family=(' Try '+plan['families'][0]+'.') if plan['families'] else ''
+        lines.append(f"Remaining mismatch: {plan['category'] or 'mixed'}; {len(rows)} displayed differences.{next_family}")
         lines.extend(f"  {r[0]} {str(r[1])[:80]} => {str(r[2])[:80]}" for r in rows[:4])
         from .repair_sequences import starting
         learned = starting(net,proj,fn,current['rows'])

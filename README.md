@@ -45,6 +45,12 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Source preparation retries bounded compiler profiles after recovering a better
+source context, restores actual small getters as well as call wrappers, and ranks
+compiled source-identity evidence before broad mutation. Scalar-pool repairs can
+try per-use precision and signed constant bindings; near scheduling differences
+also get token-preserving statement line variants. All still require exact judging.
+
 Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
 regional combination probes, and show compact mismatch clues to agents. Captured fixes
 can test single-edit and pair subsets without model calls. These are search heuristics,
@@ -418,6 +424,17 @@ same project database, agents, compiler/judge and project/ROM workflows without 
 browser uses a separate HttpOnly session cookie for up to 12 hours; **Sign out** ends only that browser session,
 not the server or its agents. Restarting the server prints a new code and requires signing in again. Keep the
 terminal code private: it grants full access to this app, unlike project-scoped agent or browser-worker pairing.
+
+To use the browser and native desktop window at the same time, run:
+
+```sh
+decomp serve --window --port 6464
+```
+
+This opens the desktop window and serves the same full interface and project state to a browser at
+`http://127.0.0.1:6464/`. Enter the sign-in code printed in the terminal. Both interfaces share one running app,
+database, and set of agents; closing or signing out of the browser does not close the desktop app. Use
+`decomp stop` to stop both.
 
 `serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
@@ -1233,3 +1250,13 @@ whole gaps without losing verified sources or their private headers. Repository 
 can recheck historical exact headers and isolate plain helper definitions; new matching
 exports include a build-time verified-entry helper for scattered constant pools.
 See [the audit guide](docs/ROM_CODE_AUDIT.md).
+
+Code audit results and evidence can be reviewed in Settings, with saved confirmation,
+dismissal and investigation states. Reviews never adopt code or pause functions;
+changed ROM/layout results require a fresh audit. Export mapping errors identify the
+missing constant ranges and sizes. See [the audit guide](docs/ROM_CODE_AUDIT.md).
+
+MIPS code audits recognize a bounded guarded jump-table pattern and trace local
+pointer loads into indirect calls. Reviewed table mappings allow every case path to
+be checked; raw mapping and indexed-callback hypotheses remain labelled for review.
+These findings never adopt code or change match status.

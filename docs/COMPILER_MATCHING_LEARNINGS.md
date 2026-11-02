@@ -2248,3 +2248,200 @@ five baseline compiles (350 total). Thus the new region hints lost no recovery b
 neither another retail match nor a compile saving on this cohort. The first two checkpoints share
 one target and must not be counted as independent held-out transfers. No game source/data or private
 reports are committed; the synthetic tests cover supported CFG/dependency and recovery safety paths.
+
+### 2 November: indirect dispatch is not a failed compiler match
+
+A private unresolved MIPS gap contained a `jr` through a computed register after a
+24-entry unsigned bound check and scaled table load. All 24 table values pointed
+inside the measured function extent. A direct-only CFG audit correctly left it open;
+there was no evidence here for changing compiler flags or permuting C. A second large
+lead had a balanced frame and appeared among repeated callback-like records, but its
+table consumer/runtime mapping remained unproven. Save that distinction in review
+notes; a human "confirmed" review is not an import action or a byte-identical match.
+No source match or additional recovered-code bytes are claimed from these investigations.
+
+## Complete typed context before repeated profile search (2 November 2026)
+
+A source-assisted N64 checkpoint recovered ten functions (15,600 bytes). Four
+used IDO 5.3 `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`
+on restored typed source; flag trials on earlier incomplete drafts had missed them.
+This is measured matching evidence, not identification of the historical compiler.
+Private source/header/profile caches must distinguish the complete input pair, and
+an improving context still deserves bounded profile trials. Unsupported source
+identity evidence (disjoint compiled calls and fields) defers broad mutation and
+ranks alternative mapped contexts first; it does not declare a mapping false.
+
+An actual small regeneration getter compiled exactly at O3 where a function-like
+macro of the same expression retained register differences (score 35). Actual
+single-line getter macros can now be replaced privately by the supplied function
+body; emitted extra bodies still fail the ordinary gate. Two scene flag wrappers
+likewise needed coherent actual helpers and correct pointer-return prototypes.
+
+One health function needed separate ROM float and double bindings for numeric
+0.4, and a sight function needed positive and negative angle pools bound at their
+actual uses. Numeric equality alone cannot select one pool for every occurrence.
+CPU repairs now offer bounded per-use precision/duplicate-pool alternatives and
+consume unary signs before substituting ROM-proven constants. Failed sign
+substitution had produced a positive constant where a negative one was required.
+
+A collision function at the same O2 profile went from score 120 to exact after
+splitting statements across lines. Bounded whole-body semicolon line splits now
+complement assignment-pair variants when measured instruction multisets differ
+only in ordering. Tokens, directives and parenthesized for clauses are preserved;
+line-sensitive macros disable this repair. These are candidate generators, not
+permission to skip byte/data checks. A local replay recovered the prior health
+constant binding with one emitted function and the ordinary linked data judge;
+synthetic tests cover precision, sign, getter eligibility, cache/profile progression
+and token-preserving line splitting. These replays are not additional new matches.
+## Typed pointer/index split plus one-shot scope (November 2026)
+
+**Measured:** pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A frozen 52-instruction candidate differed only in the registers holding a table-pointer
+load and an index shift. RTL identified separate pseudos for these values; the scheduler
+moved the load before the shift, and local allocation assigned the opposite registers
+from the target. Normal and `-da` diagnostic objects had identical allocated output.
+
+Separating the pointer and index into typed locals **inside a `do { ... } while (0)`**
+changed this case from linked score 10 to exact (52 instructions / 208 bytes). Both
+base-first and index-first declarations matched. The split without the one-shot scope
+worsened the score to 20. Integer-address casts and several other staging forms did not
+solve it. This is evidence for a coupled source-shape hypothesis, not proof that a
+particular RTL phase alone caused the result; both input RTL and subsequent allocation
+changed. Ordinary pointer operand commutation alone remained at score 10.
+
+`pointer_index_scope` emits at most two candidates for complete blocks containing a
+plain typed slot declaration followed by its only store. It retains the exact local
+integer and pointer types, reads operands once, and introduces no forced registers or
+machine-code edits. Calls, updates, labels, escaping slots, uncertain index declarations,
+relevant macros and volatile/asm functions are excluded. Header declarations unrelated
+to the expression do not prevent trials. Fresh names avoid source/header collisions.
+
+The family is shared by ROM/imported source search, agent local experiments and the
+permuter's existing eight-candidate pre-pass. No additional budget or judge exception
+is introduced. The controlled game replay is MIPS/KMC evidence; other processors receive
+source candidates but have no demonstrated new match from this rule yet. On the other
+four frozen register-only cases the narrow pattern did not apply, so their scores
+remained 15/15/35/20. Diagnostics preserved allocated output on all five. The exact
+candidate remains in the private benchmark; no live project or database was changed.
+
+Equal-budget replay against current main, with only this family disabled/enabled:
+16 candidates and 30 seconds per function, five frozen inputs. The control recovered
+0/5 and the enabled search recovered 1/5, reaching exact on candidate 4. Both suites
+used 80 candidate evaluations; no best-score regression occurred. Local suite times
+were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
+same-case regression evidence, not disjoint-target validation of a broad ranking boost.
+
+### 2 November: validate switch edges before compiler tuning
+
+The read-only MIPS audit now recognized the previously inspected 24-entry guarded
+switch in a copied project. A controlled reviewed data mapping allowed traversal of
+all cases and closed bounded flow; omitting that mapping kept the report unresolved.
+The supported callback tracer found no verified consumer for the separate large
+pointer lead. These are analysis results with all original targets/statuses/source
+retained; they are not new matches or newly adopted code. Absolute-table hypotheses,
+unknown caller aliases and unproven indexed reachability are not compiler evidence.
+
+### Measured paired edits and equal-score output diversity
+
+Always replay against current main before attributing a recovery to a new family. Main `76fc422`
+already recovers the historical 52-instruction score-10 checkpoint in four candidate trials using
+`allocation_schedule_bridge` followed by `pointer_index_scope`. Its two differences were scratch
+register choices, with identical ordered instruction forms and a 40-byte frame. The useful change
+was a coupled lifetime/scope shape, not literal correction or prescribed physical registers.
+The generic regression checks that these shared families still compose; no game code is included.
+
+A separate bounded local-pair path combines small, disjoint edits from two measured non-improving
+siblings of the same root. It only applies to supported MIPS register/scheduling near misses with
+unchanged instruction count/frame and score at most twice the parent. Up to three token hunks per
+edit, 24 tokens per hunk, an overall 96-token window, six recorded siblings per parent, two pairs per
+parent and four queued pairs per persisted frontier bound the search. Literals, preprocessor sources,
+volatile/asm sources, overlaps and large edits decline pairing. These are candidate-generation limits,
+not a semantic proof. An ordinary compiler and linked code/data judge must still accept the result.
+Pair work shares existing phase/time/compile limits and survives JSON frontier resume/cancellation.
+
+The equal-score beam now reserves one slot for a different measured function output even when its
+coarse allocation signature is identical. Existing two-source-per-output caps remain: assembly-equal
+sources can lead to different later edits, so do not discard every equivalent source. No displayed
+row or output hash supplies a match verdict. Regional choices and the numeric winner remain bounded
+by the existing beam width.
+
+Negative investigation results: 42 type/loop/store probes and 86 slot-lifetime/initialization probes
+on the old score-10 input did not beat 10. On the remaining two score-15 inputs, 19 pointer/constant/scope
+probes and 14 shifted-value lifetime probes did not improve them. One has three register-only rows
+around a pointer load and constant store (124 instructions, 32-byte frame). The other has three rows
+around a shifted result, branch and forwarded argument (295 instructions, 136-byte frame). A global
+register-substitution map is inconsistent for the latter: a machine register is reused for different
+values, so blindly renaming registers or joining pseudo IDs would be unsound. Assembly alone does not
+establish header/prototype correctness. Source/data and private reports remain outside the repository.
+
+
+Equal-budget main/control, pairs-only, diversity-only and combined replays used five frozen
+checkpoints (four target groups), 96 candidate slots and 120 seconds per checkpoint, on copied
+ROM/database inputs with the same pinned compiler settings. All recovered the same three historical
+checkpoints at candidate 56, 1 and 4; the first two share a target. Both remaining scores stayed 15.
+Each run spent 253 candidate compiles plus five baselines (258 compiler invocations). Pairs-only and
+the combined path each evaluated two new pairs on the 124-instruction input; neither improved it.
+No pair applied to the macro-heavy 295-instruction input under the deliberately narrow grammar.
+The numeric/equal-output change passed its synthetic retention regression but showed no new retail
+match or compile saving in this cohort. Independent training/held-out target-group gates rejected
+promotion for each isolated feature and their bundle: no learned priority boost was installed.
+A separate homemade C test uses the installed pinned compiler and ordinary ROM linker to establish
+that two independent single edits miss while their composed candidate matches its generated control;
+this demonstrates the composition/judge path, not held-out game performance or semantic equivalence.
+## Follow-up: four unchanged register-only cases (November 2026)
+
+The next copied-checkpoint investigation used the same pinned KMC GCC 2.7.2 profile
+(`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) and ordinary linked-byte/data evaluator. Existing
+`-da` diagnostics preserved normal allocated output for every case. Register names
+alone did not identify unique source values: several unrelated pseudos reused `v0`.
+Use instruction IDs and source notes as well as the explicit dispositions.
+
+| Case size | Starting / best linked score | Generated alternatives | Findings |
+| --- | --- | --- | --- |
+| 124 instructions | 15 / 15 | 142 | Typed pointer/value temporaries, either initialization order, field-address staging, reuse of dead scalar locals, branch scopes, and alternative single-execution loops did not fix the pointer-reload/constant-store register swap. |
+| 295 instructions | 15 / 15 | 40 | Chained shift assignments split/reversed inside one-shot scopes, direct tests, removal of unused declarations and explicit reuse of the shifted value in the later store did not help. |
+| 195 instructions | 35 / 35 | 38 | Fresh terminal command pointers, parameter reuse after its final original use, saved OR inputs and staged accumulators were ineffective, including paired tail/accumulator edits and one-shot scopes. |
+| 91 instructions | 20 / 20 | 18 | Global-table load scopes and alternative equal-pointer alias chains did not improve the linked score. The existing volatile frame object remains a reason not to generalize ordinary scope rewrites to this function. |
+
+These are **238 generated alternatives**, including cached duplicates and compiler-rejected
+forms, not a claim of 238 distinct compiler executions. Their best scores were unchanged;
+no additional exact match was found and no new repair family was promoted. The successful
+52-instruction pointer/index repair above is a different case and must not be counted again.
+No flags, target bytes, judge rules or shared headers were changed by these experiments.
+
+**Practical guidance:** test coupled edits on a copy, but stop enumerating the same scopes
+once source/build-scoped results are exhausted. A register-only percentage is not evidence
+that a generic scope or operand swap will solve the case. Next investigations need a more
+specific allocation hypothesis or independently supported original source shape; retain
+negative results rather than spending agent tokens rediscovering them.
+
+### Related-function context follow-up
+
+A further bounded investigation of the 124-instruction case tested actual related
+function declarations and definition visibility instead of more body permutations.
+Three callee definitions were freshly verified at score zero using the same installed
+KMC profile. Their actual signatures supplied candidate-local prototypes. An unmatched
+fourth callee had no verified declaration consensus, so neither its body nor an invented
+prototype was used. One existing exact caller declared a pointer-taking function with
+an integer parameter: exact binary output does not establish a globally trustworthy C
+prototype. The verified definition was the declaration evidence for this experiment.
+
+The recipient was tested with individual/combined prototype updates and with all seven
+subsets of the three real external definitions, before and after the recipient. Its
+original debug line numbers were restored. No `static`, `inline`, register binding or
+private calling convention was invented. A broad splat unit is not proof of an original
+translation-unit boundary. A conflicting representation of one absolute global was
+normalized to the recipient's existing declaration; its address remained unchanged.
+
+Of **21 recipient source variants**, **17 compiled successfully**, all at the original
+linked score **15**. Four initial before-body forms lacked that recipient global's
+forward declaration; corrected versions are included in those totals. The three
+callee entries also remained exact when independently judged from the combined object
+and recipient context. The compiling original variants produced the unchanged recipient
+code hash. No match, source adoption or context-search speedup was demonstrated.
+
+The experiment stayed below its 32-variant / 120-second recipient cap. Inputs, raw
+contexts and reports remain private; no live project, flags, shared declarations or
+judge rules changed. Existing verified-prototype/private-helper support remains in
+place. These results do not justify automatically assembling arbitrary external bodies
+or enabling static/inline transformations on the strength of a shared analysis-unit name.
