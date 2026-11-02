@@ -2225,3 +2225,74 @@ lead had a balanced frame and appeared among repeated callback-like records, but
 table consumer/runtime mapping remained unproven. Save that distinction in review
 notes; a human "confirmed" review is not an import action or a byte-identical match.
 No source match or additional recovered-code bytes are claimed from these investigations.
+
+## Complete typed context before repeated profile search (2 November 2026)
+
+A source-assisted N64 checkpoint recovered ten functions (15,600 bytes). Four
+used IDO 5.3 `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`
+on restored typed source; flag trials on earlier incomplete drafts had missed them.
+This is measured matching evidence, not identification of the historical compiler.
+Private source/header/profile caches must distinguish the complete input pair, and
+an improving context still deserves bounded profile trials. Unsupported source
+identity evidence (disjoint compiled calls and fields) defers broad mutation and
+ranks alternative mapped contexts first; it does not declare a mapping false.
+
+An actual small regeneration getter compiled exactly at O3 where a function-like
+macro of the same expression retained register differences (score 35). Actual
+single-line getter macros can now be replaced privately by the supplied function
+body; emitted extra bodies still fail the ordinary gate. Two scene flag wrappers
+likewise needed coherent actual helpers and correct pointer-return prototypes.
+
+One health function needed separate ROM float and double bindings for numeric
+0.4, and a sight function needed positive and negative angle pools bound at their
+actual uses. Numeric equality alone cannot select one pool for every occurrence.
+CPU repairs now offer bounded per-use precision/duplicate-pool alternatives and
+consume unary signs before substituting ROM-proven constants. Failed sign
+substitution had produced a positive constant where a negative one was required.
+
+A collision function at the same O2 profile went from score 120 to exact after
+splitting statements across lines. Bounded whole-body semicolon line splits now
+complement assignment-pair variants when measured instruction multisets differ
+only in ordering. Tokens, directives and parenthesized for clauses are preserved;
+line-sensitive macros disable this repair. These are candidate generators, not
+permission to skip byte/data checks. A local replay recovered the prior health
+constant binding with one emitted function and the ordinary linked data judge;
+synthetic tests cover precision, sign, getter eligibility, cache/profile progression
+and token-preserving line splitting. These replays are not additional new matches.
+## Typed pointer/index split plus one-shot scope (November 2026)
+
+**Measured:** pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A frozen 52-instruction candidate differed only in the registers holding a table-pointer
+load and an index shift. RTL identified separate pseudos for these values; the scheduler
+moved the load before the shift, and local allocation assigned the opposite registers
+from the target. Normal and `-da` diagnostic objects had identical allocated output.
+
+Separating the pointer and index into typed locals **inside a `do { ... } while (0)`**
+changed this case from linked score 10 to exact (52 instructions / 208 bytes). Both
+base-first and index-first declarations matched. The split without the one-shot scope
+worsened the score to 20. Integer-address casts and several other staging forms did not
+solve it. This is evidence for a coupled source-shape hypothesis, not proof that a
+particular RTL phase alone caused the result; both input RTL and subsequent allocation
+changed. Ordinary pointer operand commutation alone remained at score 10.
+
+`pointer_index_scope` emits at most two candidates for complete blocks containing a
+plain typed slot declaration followed by its only store. It retains the exact local
+integer and pointer types, reads operands once, and introduces no forced registers or
+machine-code edits. Calls, updates, labels, escaping slots, uncertain index declarations,
+relevant macros and volatile/asm functions are excluded. Header declarations unrelated
+to the expression do not prevent trials. Fresh names avoid source/header collisions.
+
+The family is shared by ROM/imported source search, agent local experiments and the
+permuter's existing eight-candidate pre-pass. No additional budget or judge exception
+is introduced. The controlled game replay is MIPS/KMC evidence; other processors receive
+source candidates but have no demonstrated new match from this rule yet. On the other
+four frozen register-only cases the narrow pattern did not apply, so their scores
+remained 15/15/35/20. Diagnostics preserved allocated output on all five. The exact
+candidate remains in the private benchmark; no live project or database was changed.
+
+Equal-budget replay against current main, with only this family disabled/enabled:
+16 candidates and 30 seconds per function, five frozen inputs. The control recovered
+0/5 and the enabled search recovered 1/5, reaching exact on candidate 4. Both suites
+used 80 candidate evaluations; no best-score regression occurred. Local suite times
+were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
+same-case regression evidence, not disjoint-target validation of a broad ranking boost.
