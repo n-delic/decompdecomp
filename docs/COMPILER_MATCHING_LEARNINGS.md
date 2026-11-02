@@ -1733,6 +1733,7 @@ MIPS pointer-lifetime candidates require an entry field load saved to the stack,
 
 A third controlled replay starts with the historical draw candidate at score 4,069. Generated saved-pointer lifetime C reaches 40; generated neighboring-float-element correction then links exactly. The lifetime reader selects the second call occurrence, not the earlier same-callee call. Restricting candidate cleared fields to the straight-line entry region avoids confusing later cleanup clears with the saved pointer. This is another historical replay, not new coverage.
 
+A subsequent source-assisted map routine required a retail cinema guard absent from the reference. Reusing a supplied draft's complete leading guard under a measured missing-call constraint reduced a controlled prepared candidate from 5,065 to 1,478; raw draft memory macros still differed from the exact typed reconstruction. This CPU rule is an improvement lead, not an automatic exact-match claim. Same-unit object-definition evidence separately recovered a boss initializer: supplying the actual object definition instead of an extern removed redundant address-high loads. Do not turn unrelated externs into definitions without actual source evidence.
 ## 2 November: paired operands and a derived loop counter (KMC GCC 2.7.2)
 
 A controlled private replay of a 619-instruction gameplay routine used unchanged KMC GCC 2.7.2
