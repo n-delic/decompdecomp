@@ -90,9 +90,14 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
-                                      console.function_asm(head), fn["id"]))
+            # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
+            # the score). A head trimmed down to pure 0x00 padding (all nops) is not a function to match — mark it
+            # done ('asm') so it leaves the open pool instead of lingering as an open sliver.
+            head_padding = bool(head.size) and not any(th.code)
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "best_source=NULL, status=? WHERE id=?",
+                       (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                        console.function_asm(head), "asm" if head_padding else fn["status"], fn["id"]))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
