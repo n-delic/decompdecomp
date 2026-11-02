@@ -1576,3 +1576,9 @@ normal attempt recording with a stale-input guard. It preserves coverage/readabi
 repository rebuild. Unchanged failed trials are cached. Private context and export repair are ROM-only; imported
 builds retain their own headers and need an adapter. Target scalar-load reading currently supports MIPS;
 other processors need a connector reader. No game data belongs in regression fixtures.
+
+A controlled compiler replay also recovered the historical sort function automatically with `-O3`: removing
+its private helper and restoring the original definition through the new generator passes linked-byte/data
+verification. A first replay imported a same-named global helper that was shadowed by a callback parameter;
+that failed. Helper discovery now excludes function-pointer parameters, retains their actual declarators in
+forward declarations, and has a synthetic regression for the shadowing case. This replay adds no coverage.

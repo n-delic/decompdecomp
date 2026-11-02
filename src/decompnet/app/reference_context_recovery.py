@@ -11,9 +11,10 @@ ID=r'[A-Za-z_]\w*'
 
 def static_helpers(source, header, reference):
     """Try actual same-file static definitions with their original physical line numbers."""
-    from .cpu_source_context import declarations
+    from .pattern_repairs import close
     from .source_match_context import macro_context
-    selected=[];used=called(source);seen=set()
+    shadowed=lambda text:set(re.findall(r'\(\s*\*\s*('+ID+r')\s*\)',_blank(text)))
+    selected=[];used=called(source)-shadowed(source);seen=set()
     for _ in range(4):
         pending=sorted(used-seen);seen.update(pending)
         for name in pending:
@@ -24,21 +25,25 @@ def static_helpers(source, header, reference):
             if not re.search(r'\bstatic\b',head) or ';' in head or len(code)>16000:continue
             if len(selected)>=4:return []
             selected.append((name,code,reference[:span[0]].count('\n')+1))
-            used.update(called(code)-{name})
+            used.update(called(code)-{name}-shadowed(code))
     if not selected:return []
     private=header
     for name,_,_ in selected:
         # A stale external prototype conflicts with the real static definition.
-        pattern=r'(?m)^[ \t]*(?:(?:extern|static|inline)\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\([^(){};]*\)\s*;'
-        private=re.sub(pattern,lambda m:'\n'*m[0].count('\n'),private)
+        pattern=r'(?m)^[ \t]*(?:(?:extern|static|inline)\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\('
+        clean=_blank(private);edits=[]
+        for match in re.finditer(pattern,clean):
+            end=close(clean,match.end()-1)
+            tail=re.match(r'\s*;',clean[end:]) if end else None
+            if tail:edits.append((match.start(),end+tail.end()))
+        for a,b in reversed(edits):private=private[:a]+'\n'*private[a:b].count('\n')+private[b:]
     bodies='\n'.join(code for _,code,_ in selected)
     private+=macro_context(reference,bodies,private)
-    for name,code,_ in selected:
-        declaration=declarations(code,{name}).get(name)
-        if not declaration:return []
-        private+='\nstatic '+declaration+'\n'
+    for _,code,_ in selected:
+        # Keep actual callback parameter declarators too; simple signature readers omit these.
+        private+='\n'+code[:_blank(code).index('{')].strip()+';\n'
     for _,code,line in selected:
-        private+=f'\n#line {line} "reference-static.c"\n'+code+'\n'
+        private+=f'\n#line {line} "reference.c"\n'+code+'\n'
     return [('cpu-reference-static-helpers',source,private)]
 
 

@@ -10,7 +10,7 @@ def test_static_helper_keeps_lines_and_replaces_external_prototype():
     result=recovery.static_helpers('void entry(int *x){helper(x);}','extern void helper(int *x);',reference)
     assert len(result)==1
     private=result[0][2]
-    assert '#line 21 "reference-static.c"' in private
+    assert '#line 21 "reference.c"' in private
     assert 'static void helper(int *x){ *x=3; }' in private
     assert 'extern void helper' not in private
     assert not recovery.static_helpers('void entry(void){unknown();}','','void unknown(void){}')
@@ -122,3 +122,10 @@ def test_export_recovery_does_not_publish_a_stale_or_failed_candidate(monkeypatc
     state[0]='stable';net=Net();net._evaluate=lambda *a:(None,False,[])
     assert exports.run(net,proj,['f'],st,lambda s:None)['export_repaired']==0
     assert calls and len(released)==3
+
+
+def test_static_helper_does_not_import_a_shadowed_callback():
+    reference='static void swap(int x){bad();}\nstatic void helper(void (*swap)(int)){swap(1);}\n'
+    result=recovery.static_helpers('void entry(void (*swap)(int)){helper(swap);swap(2);}','',reference)
+    assert len(result)==1 and 'static void helper' in result[0][2]
+    assert 'static void swap' not in result[0][2] and 'bad()' not in result[0][2]
