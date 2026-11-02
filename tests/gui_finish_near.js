@@ -10,7 +10,7 @@ const code = text.slice(text.indexOf("function renderFinishNear("), text.indexOf
   const calls = []; let release;
   const gate = new Promise(resolve => release = resolve);
   const context = { $, S: {slug: "game"},
-    beginWork: (log, title, buttons) => { buttons[0].disabled = true; return () => buttons[0].disabled = false; },
+    beginWork: (log, title, buttons) => { buttons.forEach(b => b.disabled = true); return () => buttons.forEach(b => b.disabled = false); },
     showJobError: (log, message) => log.error = message,
     api: async (url, options) => { calls.push([url, options.body]); return {job: "job1"}; },
     followJob: async (id, log, update) => {update([], {progress: {matched: 2, attempts: 8, matches_per_minute: 4}}); await gate;},
@@ -27,6 +27,9 @@ const code = text.slice(text.indexOf("function renderFinishNear("), text.indexOf
   release(); await running;
   assert.equal($("finishNearStart").disabled, false);
   assert.equal($("finishNearStop").hidden, true);
+  await $("recoverSavedMatches").onclick();
+  assert.equal(calls[2][0], "/api/reconcile-matches");
+  assert.equal($("recoverSavedMatches").disabled, false);
   context.renderFinishNear({kind: "fork"});
   assert.equal($("finishNearPanel").hidden, true);
   console.log("finish near UI passed");

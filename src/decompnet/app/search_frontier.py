@@ -67,10 +67,10 @@ class Frontier:
         summary = summarize(rows)
         node = {'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
                 'frame_distance': permuter_focus.stack_distance(rows),
-                'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows),
+                'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
                 'allocation': allocation_evidence.signature(rows,arch),
-                'region_gain': region_repairs.gain(region_repairs.snapshot(baseline),region_repairs.snapshot(rows)),
-                'damage': region_repairs.damage(region_repairs.snapshot(baseline), region_repairs.snapshot(rows)),
+                'region_gain': region_repairs.gain(region_repairs.snapshot(baseline,arch),region_repairs.snapshot(rows,arch)),
+                'damage': region_repairs.damage(region_repairs.snapshot(baseline,arch), region_repairs.snapshot(rows,arch)),
                 'output': hashlib.sha256(repr(rows or source).encode()).hexdigest()}
         pool = [n for n in self.nodes if n['source'] != source]+[node]
         numeric = sorted(pool, key=lambda n: (n['score'], n['fitness'], n['frame_distance']))

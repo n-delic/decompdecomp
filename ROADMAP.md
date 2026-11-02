@@ -1791,3 +1791,16 @@ exact original physical helper-line provenance. These gaps do not permit guessed
 Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.
 
 Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
+
+
+### Historical recovery and conservative repair learning
+
+- Done: explicit cancellable local-ROM saved-match reconciliation across names/units, freshly judged
+  under current or recorded headers, scoped miss caching and fair candidate rotation.
+- Done: minimized replay expression candidates and reviewed profile-scoped held-out validation helpers;
+  ambiguous/complex changes remain investigation evidence instead of enabling a rule.
+- Done: GCC failed/successful value comparison via unique unchanged source anchors, omitting ambiguous joins.
+- Done: MIPS control-flow/delay-slot and explicit register-dependency region hints in iterative/frontier search.
+  Existing fixed regions remain the fallback for other architectures and unsupported transfers.
+- Planned: archived build-context reconciliation for imported projects; additional architecture region readers;
+  demonstrate held-out retail exact-throughput gains before promoting experimental recipes.

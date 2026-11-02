@@ -28,7 +28,7 @@ REGION_DETOUR_RATIO = 8
 REGION_COMBINATIONS = 3  # children share the ordinary compile/time budget
 
 
-def regional_detour(node, report):
+def regional_detour(node, report, arch=None):
     """Spend one existing frontier slot on a real regional recovery, with no code growth.
 
     Scalar ratios can reject a recovered heading when allocation gets worse elsewhere.
@@ -41,7 +41,7 @@ def regional_detour(node, report):
         return False
     if not rows or sum(bool(r[1]) for r in rows)!=sum(bool(r[2]) for r in rows):
         return False
-    return region_repairs.gain(node.get('region_baseline'),region_repairs.snapshot(rows))>0
+    return region_repairs.gain(node.get('region_baseline'),region_repairs.snapshot(rows,arch))>0
 
 
 def allocation_detour(node, report, arch=None):
@@ -120,7 +120,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 expand_wave(state, variants, arch)
             continue
         score = report.get('score')
-        regional = regional_detour(node,report)
+        regional = regional_detour(node,report,arch)
         allocation = allocation_detour(node,report,arch)
         if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation)
                 and (regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
@@ -133,7 +133,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             if unchanged:
                 counts['unchanged_output'] = counts.get('unchanged_output', 0)+1
             if output is None or outputs.get(str(node['depth'])+':'+output, 0) < 2:
-                regions = region_repairs.snapshot(report.get('rows'))
+                regions = region_repairs.snapshot(report.get('rows'),arch)
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
                                       'region_gain': region_repairs.gain(node.get('region_baseline'), regions)})
                 if allocation and node['depth'] < DEPTH and state.get('allocation_bursts',0)<3:

@@ -59,6 +59,18 @@ def test_saved_trace_rejects_changed_compiler_without_starting_tools(monkeypatch
     net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:False,cfg=lambda p:{},
                         store=SimpleNamespace(one=lambda *a:dict(state=json.dumps(state))))
     monkeypatch.setattr(project,'compiler_for',lambda *a:profile)
-    assert trace.saved(net,dict(slug='p'),dict(id=1,vram=1),source,'')[0]
+    assert trace.saved(net,dict(slug='p',config='{}'),dict(id=1,vram=1),source,'')[0]
     monkeypatch.setattr(project,'compiler_for',lambda *a:{**profile,'flags':['-O1']})
-    assert trace.saved(net,dict(slug='p'),dict(id=1,vram=1),source,'')==({},[])
+    assert trace.saved(net,dict(slug='p',config='{}'),dict(id=1,vram=1),source,'')==({},[])
+
+
+def test_cross_build_trace_uses_unique_source_anchors_not_pseudo_numbers():
+    before=trace.anchors(dict(header_sha256='h',profile_sha256='p',values=[dict(pseudo=70,source_lines=[2],hard_register='v0')]),'int f(){\nreturn a + b;\n}')
+    after=trace.anchors(dict(header_sha256='h',profile_sha256='p',values=[dict(pseudo=99,source_lines=[3],hard_register='v1')]),'int f(){\nint extra;\nreturn a + b;\n}')
+    result=trace.compare(before,after)
+    assert result['comparable'] and result['changes'][0]['register']
+    after['values'].append(dict(pseudo=70,source_lines=[3],hard_register='v0'))
+    result=trace.compare(before,after)
+    assert not result['changes'] and result['ambiguous_anchors']==1
+    assert not trace.compare(before,dict(after,header_sha256='other'))['comparable']
+    assert not trace.compare(before,dict(after,truncated=True))['comparable']

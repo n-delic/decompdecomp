@@ -315,3 +315,10 @@ symbol resolving to the same address to keep the compiler expressions independen
 The target must support the repeated address pairs, and the normal linked judge still
 settles the result. A frozen case improved from 155 to 25; its remaining register miss
 was not solved by the tested local variants or scheduler toggles.
+
+
+When comparing failed/successful GCC dumps, never join pseudo numbers across builds. Use unique
+unchanged C statement anchors under the same header/profile and omit multi-value ambiguities.
+A bounded minimized repair is only sufficient under its frozen control; require disjoint-target
+exact validation before importing an expression recipe. If an old exact source survives a rename,
+use Recover saved matches to rejudge it with recorded/current headers instead of trusting its old score.
