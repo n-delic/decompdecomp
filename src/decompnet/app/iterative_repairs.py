@@ -277,6 +277,18 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
 
 
 def run(twins, slug, job):
+    """One iterative phase per project owns its persisted frontier at a time."""
+    locks=getattr(twins.net,'_iterative_phase_locks',{})
+    twins.net._iterative_phase_locks=locks
+    lock=locks.setdefault(slug,threading.Lock())
+    if not lock.acquire(blocking=False):return 0
+    try:
+        return _run(twins,slug,job)
+    finally:
+        lock.release()
+
+
+def _run(twins, slug, job):
     """Use a separate phase budget and resume after the last visited function."""
     from .. import candidate_scope
     from . import (

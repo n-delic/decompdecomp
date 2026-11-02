@@ -85,3 +85,17 @@ def test_panel_progress_and_stop_handler():
     if not node:pytest.skip('Needs node for the near-match panel')
     root=Path(__file__).parents[1]
     subprocess.run([node,str(root/'tests/gui_finish_near.js')],cwd=root,check=True,capture_output=True,text=True,timeout=30)
+
+
+def test_duplicate_project_phases_do_not_overwrite_frontiers(monkeypatch):
+    from decompnet.app import iterative_repairs
+    twins=SimpleNamespace(net=SimpleNamespace())
+    calls=[]
+    def work(twins,slug,job):
+        calls.append(slug)
+        assert iterative_repairs.run(twins,slug,job)==0
+        return 1
+    monkeypatch.setattr(iterative_repairs,'_run',work)
+    assert iterative_repairs.run(twins,'game',object())==1
+    assert calls==['game']
+    assert not twins.net._iterative_phase_locks['game'].locked()
