@@ -230,6 +230,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Guarded jump-table / local callback-consumer audit (scalar MIPS ROM) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
@@ -1806,3 +1807,20 @@ show their register/address; constant-mapping export errors show missing ranges 
 sizes. Portable audit-review history, reviewed adoption, bounded switch-table closure,
 and proof of callback-table consumers remain planned, alongside the existing non-MIPS
 and object-project audit adapter gaps.
+
+### Bounded indirect-transfer evidence
+
+Done: scalar MIPS ROM audits recognize a guarded absolute word-table pattern, cap
+entries at 256 and tables at eight per candidate, reject guard-bypassing edges,
+require a unique declared mapping before traversing cases and retain unresolved
+paths. Established code mappings can suggest raw-data locations but cannot close
+flow without review. Direct-only closure remains distinct from bounded table closure.
+
+Done: bounded straight-line affine load-to-JALR tracing, with separate direct-cell
+and indexed/mapping hypotheses; unknown instructions and control-transfer delay
+slots break facts. Caps are visible. Reviewed mapping input is accepted through ROM
+config `audit_data_mappings` or exported manifest `data_mappings`.
+
+Planned: PIC/relative and 64-bit tables, other guard idioms, inter-block dominance and
+alias propagation, runtime callback reachability, overlay-bank-aware mapping identity,
+non-MIPS/object audit adapters and explicit reviewed target adoption.

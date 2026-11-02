@@ -2296,3 +2296,13 @@ Equal-budget replay against current main, with only this family disabled/enabled
 used 80 candidate evaluations; no best-score regression occurred. Local suite times
 were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
 same-case regression evidence, not disjoint-target validation of a broad ranking boost.
+
+### 2 November: validate switch edges before compiler tuning
+
+The read-only MIPS audit now recognized the previously inspected 24-entry guarded
+switch in a copied project. A controlled reviewed data mapping allowed traversal of
+all cases and closed bounded flow; omitting that mapping kept the report unresolved.
+The supported callback tracer found no verified consumer for the separate large
+pointer lead. These are analysis results with all original targets/statuses/source
+retained; they are not new matches or newly adopted code. Absolute-table hypotheses,
+unknown caller aliases and unproven indexed reachability are not compiler evidence.

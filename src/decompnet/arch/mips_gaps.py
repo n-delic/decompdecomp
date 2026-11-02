@@ -8,11 +8,13 @@ MAX_STEPS = 4096
 MAX_CANDIDATES = 128
 
 
-def extent(image, start, end, vram, order, cpu=""):
-    """Follow direct control flow inside a gap; indirect branches remain unresolved."""
+def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_choices=()):
+    """Follow direct flow and reviewed bounded table edges; other indirects remain unresolved."""
     import rabbitizer
 
-    pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[]
+    from .mips_indirect import jump_table
+
+    pending=[start];seen=set();returns=0;unknown=False;highest=start;indirect=[];tables=[]
     while pending and len(seen)<MAX_STEPS:
         at=pending.pop()
         if at in seen:continue
@@ -33,6 +35,12 @@ def extent(image, start, end, vram, order, cpu=""):
         if op==3 or (op==0 and w&63==9):  # calls return; the callee is a separate audit seed
             pending.append(at+8);continue
         if op==0:
+            table=jump_table(image,start,end,vram,at,order,table_ranges,mapping_choices) if len(tables)<8 else None
+            if table:
+                tables.append(table)
+                if table['state']=='validated':
+                    pending.extend(start+t-vram for t in table['targets'])
+                    continue
             if len(indirect)<8:indirect.append({'address':vram+at-start,'register':(w>>21)&31})
             unknown=True;continue
         if op==2:
@@ -43,18 +51,24 @@ def extent(image, start, end, vram, order, cpu=""):
             target=at+4+delta*4
             pending.append(at+8)
         pending.append(target)
-    return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending),
+    return {'decoded_instructions':len(seen),'return_sites':returns,'direct_flow_closed':bool(returns and not unknown and not pending and not tables),
+            'flow_closed':bool(returns and not unknown and not pending),'jump_tables':tables,
             'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
 
 
-def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None):
+def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=()):
     """Frozen image + known code ranges. Even closed direct flow remains review-only."""
     order='big' if big_endian else 'little'
     spans=sorted((s['rom_start'],s['rom_end'],s['vram']) for s in segments)
     if any(not 0<=lo<=hi<=len(image) or lo%4 or hi%4 for lo,hi,_ in spans):
         raise ValueError('Code segments must be word-aligned ranges inside the image.')
-    if any(f['rom']<0 or f['rom']%4 or f['size']%4 or f['rom']+f['size']>len(image) for f in functions):
+    if any(f['rom']<0 or f['rom']%4 or f['size']<0 or f['size']%4 or f['rom']+f['size']>len(image) for f in functions):
         raise ValueError('Function ranges must stay inside the image.')
+    if not isinstance(data_mappings,(list,tuple)) or any(not isinstance(s,dict) or not {'rom_start','rom_end','vram'}<=s.keys() or any(type(s[k]) is not int for k in ('rom_start','rom_end','vram')) for s in data_mappings):
+        raise ValueError('Data mappings need integer rom_start, rom_end and vram fields.')
+    table_ranges=[dict(rom_start=a,rom_end=b,vram=v) for a,b,v in spans]+list(data_mappings)
+    if any(not 0<=s['rom_start']<s['rom_end']<=len(image) or s['rom_start']%4 or s['rom_end']%4 for s in table_ranges):
+        raise ValueError('Data mappings must be aligned ranges inside the verified image.')
     mappings=Counter(v-s for s,_,v in spans)
     end=0x1000;gaps=[]
     for lo,hi,_ in spans:
@@ -144,10 +158,12 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                                          region=region_name,evidence='frame/return pattern only',incoming=[],pointer_references=[],**info);hints+=1
     rows=[]
     for row in candidates.values():
-        info=extent(image,row['rom_offset'],min(row['gap_end'],row['rom_offset']+0x10000),row['vram'],order,cpu)
+        info=extent(image,row['rom_offset'],min(row['gap_end'],row['rom_offset']+0x10000),row['vram'],order,cpu,table_ranges=table_ranges,mapping_choices=mapping_choices)
         rows.append({**row,**info,'review_only':True})
+    from .mips_indirect import consumers
+    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices)
     rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],r['rom_offset'],r['vram']))
     return {'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
-            'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
+            'callback_scan_limit':consumer_limit,'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
             'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
             'note':'Review evidence only. Valid instructions, calls and returns can occur in data or microcode. No targets, statuses, source or compiler settings changed.'}

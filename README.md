@@ -1244,3 +1244,8 @@ Code audit results and evidence can be reviewed in Settings, with saved confirma
 dismissal and investigation states. Reviews never adopt code or pause functions;
 changed ROM/layout results require a fresh audit. Export mapping errors identify the
 missing constant ranges and sizes. See [the audit guide](docs/ROM_CODE_AUDIT.md).
+
+MIPS code audits recognize a bounded guarded jump-table pattern and trace local
+pointer loads into indirect calls. Reviewed table mappings allow every case path to
+be checked; raw mapping and indexed-callback hypotheses remain labelled for review.
+These findings never adopt code or change match status.
