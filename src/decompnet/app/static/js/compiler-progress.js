@@ -6,6 +6,7 @@ function renderCompilerProgress(progress, result) {
   if (!progress && !result) { box._compilerRows = []; box._compilerApplied = new Set(); }
   else if (result) box._compilerRows = result.results || result.improvements || [];
   else if (progress.results) box._compilerRows = progress.results;
+  for (const row of box._compilerRows || []) if (row.applied) (box._compilerApplied ||= new Set()).add(row.function);
   wireCompilerResultCounts(box);
   const set = (key, text) => { box.querySelector(`[data-${key}]`).textContent = text; };
   const tally = result || progress;
@@ -18,7 +19,7 @@ function renderCompilerProgress(progress, result) {
     set("current", "Preparing…"); set("tested", "Waiting for the first result");
     set("before", "—"); set("best", "—"); set("completed", "0"); set("improved", "0");
     set("exact", "0");
-    set("profile", "Comparing the saved C. Compiler settings stay unchanged.");
+    set("profile", $("compilerAutoApply").checked ? "Best settings will be rechecked and applied after each function finishes." : "Comparing the saved C. Compiler settings stay unchanged.");
     const bar = box.querySelector("[data-bar]"); bar.max = 1; bar.value = 0;
     return;
   }
@@ -29,7 +30,7 @@ function renderCompilerProgress(progress, result) {
     set("completed", result.tried); set("improved", (result.improvements || []).length);
     set("exact", result.confirmed || 0);
     set("before", "—"); set("best", "—");
-    set("profile", "Review better settings or exact matches below. Apply individually or use Apply all. Nothing has been applied automatically.");
+    set("profile", result.auto_apply ? `${result.applied_count || 0} function profiles applied and rechecked. Any skipped changes remain available for review below.` : "Review better settings or exact matches below. Apply individually or use Apply all. Nothing has been applied automatically.");
     const bar = box.querySelector("[data-bar]"); bar.max = 1; bar.value = 1;
     return;
   }
@@ -40,7 +41,7 @@ function renderCompilerProgress(progress, result) {
   set("completed", progress.completed); set("improved", progress.improved);
   set("exact", progress.exact);
   box.dataset.improved = progress.best != null && (progress.before == null || progress.best > progress.before + .001) ? "true" : "false";
-  set("profile", progress.profile ? `Best settings: ${progress.profile[0]} ${progress.profile[1].join(" ")} · not applied` : "Comparing the saved C. Compiler settings stay unchanged.");
+  set("profile", progress.profile ? `Best settings: ${progress.profile[0]} ${progress.profile[1].join(" ")} · ${progress.applied ? "applied and rechecked" : progress.auto_apply ? "auto-apply after this function finishes" : "not applied"}` : "Comparing the saved C. Compiler settings stay unchanged.");
   const bar = box.querySelector("[data-bar]"); bar.max = progress.combinations || 1; bar.value = progress.tested;
 }
 

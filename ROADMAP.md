@@ -1715,3 +1715,10 @@ adapter; these source families do not change that limitation or any match verdic
   member layout recovery, source candidate ranking by string identity, and compile/extract of whole translation
   units with private entry/clobber conventions remain planned. Imported builds retain header ownership;
   their whole-unit integration must preserve their build's judge rather than the ROM single-entry path.
+
+Installed-compiler comparison has an explicit per-run auto-apply option. Each completed function's
+best profile is revalidated through the normal function-only apply path; changed inputs and busy
+functions retain reviewable skip reasons, and applied outcomes are saved with comparison history.
+The comparison action toggles to Stop while running. Its two determinate progress bars replace the
+redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
+object-project compiler comparisons remain limited by their build-owned per-file adapters.
