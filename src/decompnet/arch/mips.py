@@ -353,8 +353,7 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     while len(body) > 1 and body[-1] == 0:  # alignment padding
         body.pop()
     if not any(_mips_transfer(w) for w in body[-2:]):
-        return ("ends without a return or a jump, so it runs on into the next function: an entry point inside "
-                "hand-written code (compiled functions end with jr ra)")
+        return None  # an incomplete target is not evidence of handwritten assembly
     names = {1: "at", 2: "v0", 3: "v1", 24: "t8", 25: "t9", 26: "k0", 27: "k1"}
     temps = _MIPS_TEMPS - EABI_ARGUMENTS if eabi else _MIPS_TEMPS
     args = "a0-a3 and t0-t3" if eabi else "a0-a3"
@@ -414,3 +413,16 @@ def prepared_call_arguments(assembly: str, callee: str) -> int:
                      re.finditer(r'\b[a-z][a-z0-9.]*\s+\$a([0-3])\s*,', text)]
         return max(registers, default=-1) + 1
     return 0
+
+
+def boundary_reason(code: bytes, big_endian: bool = True, **_facts) -> str | None:
+    """A fall-through extent needs review, not an assembly verdict or an automatic pause."""
+    if not code or len(code)%4:
+        return None
+    words=[int.from_bytes(code[i:i+4],'big' if big_endian else 'little') for i in range(0,len(code),4)]
+    while len(words)>1 and not words[-1]:words.pop()
+    if not any(_mips_transfer(w) for w in words[-2:]):
+        return ('Target ends without a terminal return or jump. It may be truncated or a separate entry into a larger function. '
+                'Inspect adjacent original bytes and segment boundaries before spending candidate compiles; reimport or join proven pieces. '
+                'This is not proof of handwritten assembly. This warning does not pause the function or change its status.')
+    return None

@@ -89,6 +89,7 @@ class GuiMixin:
         console = self.console(proj)
         return {
             "slug": proj["slug"], "title": proj["name"], "description": proj["description"],
+            "code_audit": self.is_rom(proj) and proj["arch"]=="mips",
             **console.project_facts(),
             "compilers": [c.id for c in console.compilers],
             "rom": {k: cfg["rom"].get(k) for k in ("title", "game_code", "region", "size", "sha1", "byte_order", "compiler_guess")},
@@ -185,6 +186,7 @@ class GuiMixin:
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
+                 "boundary_review":json.loads(r["meta"] or "{}").get("boundary_review") if r["status"]!="matched" else None,
                  "not_c": r["status"] == "asm" and '"not_c"' in (r["meta"] or ""),
                  "polished": r["status"] == "matched" and bool(r["readable"])} for r in rows]
 
@@ -311,6 +313,7 @@ class GuiMixin:
         return {
             **name_state(fn), "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
+            "boundary_review": self.console(proj).boundary_reason(fn["target"] or b"") if fn["status"]!="matched" else None,
             "deep_pass": deep_pass, "verification": bundle_status(self,fn), "baseline_status": baseline_status(self,proj,fn),
             "compiler_test": self.compiler_test_result(proj, fn),
             "compiler_profile": compiler_for(self.cfg(proj), fn["vram"]),

@@ -107,6 +107,8 @@ one claim; one function back is normal.)
    that, compile the next step instead of releasing. A direct callee blocks work?
    release_function(needs=that one) allows one pivot per unchanged input, respecting pauses. Sure that
    no C makes its code at all (hand-written assembly): not_c=true, saying why.
+   A boundary-review warning comes first: inspect adjacent bytes and segment limits before candidate tuning.
+   A target ending without a return is not an assembly verdict; report or correct its extent first.
 
 Write plausible original code, pure C (no inline asm). Never fetch or copy code from outside this project
 (another repository, a finished decomp of this game, the internet): a match must come from your own C. Be brief in your messages: work, don't narrate.

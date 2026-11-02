@@ -281,6 +281,8 @@ async function refreshFn(first) {
         await refreshMap(true);
       } catch (e) { toast(esc(e.message), "err"); }
     };
+    $("fnBoundaryReview").hidden = !d.boundary_review;
+    $("fnBoundaryReview").textContent = d.boundary_review ? `Boundary review: ${d.boundary_review}` : "";
     $("fnAside").hidden = !d.set_aside;
     $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
     $("fnReopen").onclick = async () => {
@@ -624,7 +626,7 @@ function renderList() {
     const on = starred(f), open = st !== "matched" && st !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
     return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
-      <td class="mono name">${esc(f.name)}${sdkBadge(f)}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
+      <td class="mono name">${esc(f.name)}${sdkBadge(f)}${f.boundary_review ? `<span class="badge" title="${esc(f.boundary_review)}">boundary review</span>` : ""}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
       <td class="r mono">${f.attempts || `<span class="dim">0</span>`}</td><td>${functionAge(f.last_improved)}</td><td>${functionAge(f.last_checked)}</td><td>${status}</td></tr>`;
   }).join("") || `<tr class="none"><td colspan="9">${L.filter === "first" && !q ? "No function is starred. ☆ one and agents take it before the others." : `No function matches${q ? ` “${esc(L.q)}”` : ""}.`}</td></tr>`;
   $("fnShown").textContent = rows.length > L.limit ? `${L.limit.toLocaleString()} of ${rows.length.toLocaleString()} shown` : plural(rows.length, "function");
