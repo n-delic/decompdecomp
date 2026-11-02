@@ -2469,3 +2469,28 @@ contexts and reports remain private; no live project, flags, shared declarations
 judge rules changed. Existing verified-prototype/private-helper support remains in
 place. These results do not justify automatically assembling arbitrary external bodies
 or enabling static/inline transformations on the strength of a shared analysis-unit name.
+
+### Is the numeric frontier rejecting useful intermediate allocation changes?
+
+A copied replay on main `dd011c9` compared the existing search with a private,
+bounded follow-up hypothesis for the same 124-instruction case. It allowed an
+otherwise worse, same-frame, register-only candidate up to twice its parent's score
+when at least one originally differing target instruction became exact. Target rows
+had to remain aligned; no instruction growth or guessed register renaming qualified.
+Follow-ups shared the existing three allocation bursts, width/depth and compile budget.
+The experiment did not modify the installed app or enable a new default search mode.
+
+Both runs received **128 candidate evaluations / 120 seconds** and ended at score
+**15**, without an exact match. Both visited 40 single edits, 66 two-edit combinations
+and 22 three-edit combinations, in identical source/path order with identical scores.
+No candidate qualified for the additional follow-up rule. The existing search therefore
+already exercised combined edits here; this replay supplies no evidence that this
+particular score cutoff discarded a useful intermediate. It does not rule out other
+source shapes outside the finite proposal pool. Ninety-two evaluated nodes emitted
+their parent's unchanged output, and 88 hit the existing equivalent-output retention
+cap: source-level diversity alone did not establish useful compiler-output diversity.
+Observed replay times (46.5s control, 41.8s experimental) are not a speedup claim.
+
+No additional frontier rule was promoted. The next evidence needed is an actual
+candidate that recovers a target mismatch but is rejected before a proven complementary
+edit, rather than increasing frontier width or retaining arbitrary worse candidates.
