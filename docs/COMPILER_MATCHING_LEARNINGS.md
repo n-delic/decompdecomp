@@ -2355,6 +2355,41 @@ used 80 candidate evaluations; no best-score regression occurred. Local suite ti
 were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
 same-case regression evidence, not disjoint-target validation of a broad ranking boost.
 
+
+### Actual helper definition order can matter
+
+In a further source-assisted N64 recovery, IDO 5.3 O3 at the same flags above
+scored 780 with a provisional size-getter macro. Restoring the actual getter
+improved it to 610. Moving the three supplied private helper definitions after
+the caller, retaining their prototypes before use, produced exact code and data
+(score zero) with one emitted function. The new bounded CPU definition-order
+candidate reproduced that match in a read-only replay; live API promotion then
+accepted the same source/header/profile bundle. No helper body or padding was
+invented. This is a working compilation context, not proof of the historical
+source's definition order. The ordinary extra-body gate remains in force.
+
+### Real predecessor functions can reproduce internal alignment
+
+One source-assisted N64 entry compiled with three extra unreachable NOPs in
+isolation under IDO 5.3 O2 and the flags above. Its compiler assembly contains an
+internal `.align 5`. Compiling the real two immediately preceding functions
+(36 and 40 bytes) before the 816-byte entry reproduced the correct section
+position and all three passed the ordinary linked code/data judge independently.
+No source padding, assembly patch or boundary change was used. A one-line
+spelling of the second predecessor retained an instruction-order difference;
+restoring its original line breaks also made that predecessor exact.
+
+The bounded predecessor-context path accepts at most three contiguous entries
+in identical ROM/object order, with identical extents and already-matched auxiliary
+functions. It freshly rejudges every body and exports only the compiler's linked
+entry using existing matching-only extraction. This does not claim other context
+bodies as newly matched or export them twice. Unknown, open, moved, noncontiguous
+or nonexact auxiliary bodies still fail the extra-body gate. Other architectures
+and PROJECT builds retain their existing behavior.
+
+Large matching-only rebuilds also use the linker's documented `--no-keep-memory`
+option. A silent killed linker now reports its exit code; this resource change
+must still pass the full original-image comparison and changes no placement rules.
 ### 2 November: validate switch edges before compiler tuning
 
 The read-only MIPS audit now recognized the previously inspected 24-entry guarded

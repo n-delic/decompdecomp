@@ -64,7 +64,7 @@ def fail(msg: str) -> None:
 def run(argv: list[str]) -> None:
     res = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if res.returncode != 0:
-        fail(f"{' '.join(argv[:3])} ...\n{(res.stdout + res.stderr)[-3000:]}")
+        fail(f"{' '.join(argv[:3])} ... exited with {res.returncode}\n{(res.stdout + res.stderr)[-3000:]}")
 
 
 def binutils(tool: str) -> str:
@@ -380,7 +380,7 @@ def build() -> bool:
     objs = sorted({obj for _, _, obj in todo} | {obj for _, obj in gaps})
     # the objects in a response file: a PSP game with its modules has 48,000 functions, past the command line's limit
     (ROOT / "build" / "objects.txt").write_text("\n".join(objs) + "\n", encoding="utf-8")
-    run([binutils("ld"), *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
+    run([binutils("ld"), "--no-keep-memory", *B["ld_flags"], "-T", "build/game.ld", "-o", "build/game.elf", "@build/objects.txt"])
     run([binutils("objcopy"), "-O", "binary", "build/game.elf", B["output"]])
     out, base = (ROOT / B["output"]).read_bytes(), (ROOT / B["image"]).read_bytes()
     c_count = sum(1 for fn in B["functions"] if c_source(fn))

@@ -84,4 +84,33 @@ def stages(source, name, header, reference, target_calls):
         result.extend((family+'-declarations',s,h) for family,_,h in helpers)
         result.append(('cpu-reference-declaration-order',s,header))
     result+=inline_helpers(source,header,reference,target_calls,clobbers=True)[:1]
+    for _,s,h in list(helpers[-1:])+[('',source,header)]:
+        result+=definition_order(s,h)
     return result[:6]
+
+
+def definition_order(source, header):
+    """One coherent after-entry layout for actual private helper bodies already supplied.
+
+    IDO's interprocedural choices can differ when a definition precedes the caller.
+    Keep prototypes before use; no helper is synthesized and the normal emitted-body
+    and exact byte/data gates still decide whether the bundle is usable.
+    """
+    from .source_match_context import dependencies
+    used=dependencies(source,header);clean=_blank(header);spans=[]
+    for match in re.finditer(r'\bstatic\s+(?:(?:__inline|inline)\s+)?(?:'+ID+r'[\s*]+)+('+ID+r')\s*\(',clean):
+        if match[1] not in used:continue
+        span=find(header,match[1])
+        if not span or span in spans:continue
+        code=header[span[0]:span[1]]
+        if len(code)>3000 or '#' in _blank(code):continue
+        spans.append(span)
+        if len(spans)>3:return []
+    if not spans:return []
+    private=header;definitions=[]
+    for a,b in sorted(spans):definitions.append(header[a:b])
+    for a,b in sorted(spans,reverse=True):
+        code=header[a:b];opening=_blank(code).find('{')
+        prototype=code[:opening].rstrip()+';'
+        private=private[:a]+prototype+private[b:]
+    return [('cpu-reference-definition-order',source+'\n'+'\n'.join(definitions)+'\n',private)]

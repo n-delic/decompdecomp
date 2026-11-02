@@ -72,7 +72,7 @@ def extend(net, proj, fn, variants, origins, source, header, measurement, lead):
 
 def trial_key(state, source, header, cfg):
     import hashlib
-    return 'local-source-v12:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
+    return 'local-source-v13:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
 
 
 def pending(net, fn, state, cfg, variants, origins, exclude):

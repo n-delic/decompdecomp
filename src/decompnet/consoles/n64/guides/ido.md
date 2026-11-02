@@ -169,3 +169,17 @@ Enable automatic exact-bundle rechecks in Local source preparation to save fresh
 source/header/profile bundles unattended. Normal claim, stale-input, linked-data and export checks
 still apply; approximate scores do not change compiler settings. Existing register/stack/declaration
 families remain useful for near misses that these structural repairs do not solve.
+
+## Preserve real context before changing C
+
+An actual private getter can allocate differently from an equivalent macro.
+Source preparation can try its supplied function body and a bounded layout with
+helper prototypes before the caller and definitions after it. Every result still
+needs the byte/data judge and an exportable entry.
+
+Internal `.align` directives can depend on the entry's position in its original
+translation unit. The verified predecessor-context path accepts at most two real,
+contiguous, already-matched predecessors at their original relative positions;
+it rejudges every body and exports only the selected compiler entry. Preserve
+source line breaks too. Never invent dummy functions, padding or assembly to
+simulate placement. A full original-image rebuild remains necessary.

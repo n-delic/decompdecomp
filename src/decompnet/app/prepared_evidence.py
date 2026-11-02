@@ -56,7 +56,7 @@ def publish_profile(net, db, fn, expected, settings, agent):
 
 
 def apply(net, proj, key, log, refresh=False):
-    from ..rom.export import _single_definition
+    from .predecessor_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Prepared profile bundles are available for local ROM projects; imported builds own their headers and compiler settings.')
     if refresh:
@@ -79,7 +79,7 @@ def apply(net, proj, key, log, refresh=False):
         private={**dict(proj),'config':json.dumps(scoped_config(proj,fn,settings))}
         log('Rechecking prepared source, header, flags and ROM data…')
         result=net._compile(private,item['header'],item['source'],fn)
-        if not result.ok or not _single_definition(result.obj,fn['name']):
+        if not result.ok or not acceptable(net,proj,fn,result.obj):
             raise NetworkError('The prepared bundle no longer compiles as one function. Run preparation again.')
         candidate,verdict,problems=net._evaluate(fn,proj,result.obj)
         if candidate is None or verdict is not True:
@@ -98,7 +98,7 @@ def try_pair(net, proj, function, source, header, log, settings=None):
     """Explicit local API candidate: keep body/header separate and rejudge before atomic promotion."""
     from .. import scoring, toolchains
     from ..project import compiler_for
-    from ..rom.export import _single_definition
+    from .predecessor_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Private source/header pairs require a local ROM project. Imported projects use their build headers.')
     if not source.strip() or max(len(source.encode()),len(header.encode()))>prep.MAX_HEADER:
@@ -124,7 +124,7 @@ def try_pair(net, proj, function, source, header, log, settings=None):
         started=time.monotonic()
         log('Compiling separate source and private header with the selected profile…')
         result=net._compile(private,header,source,fn)
-        if not result.ok or not _single_definition(result.obj,fn['name']):
+        if not result.ok or not acceptable(net,proj,fn,result.obj):
             from .preparation_diagnostics import compile_error
             raise NetworkError('This source/header pair did not compile as one function: '+compile_error(net,fn,result.log))
         candidate,verdict,problems=net._evaluate(fn,proj,result.obj)
@@ -176,7 +176,7 @@ def recheck_exact(net, proj, log, limit=20):
 
 def promote_measured(net, proj, fn, source, header, settings, agent, expected):
     """Caller holds the claim. Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
-    from ..rom.export import _single_definition
+    from .predecessor_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Automatic prepared bundles require a local ROM project.')
     current=net._function(fn['name'],proj['slug']);fresh=net.project_row(proj['slug'])
@@ -184,7 +184,7 @@ def promote_measured(net, proj, fn, source, header, settings, agent, expected):
         raise NetworkError('Prepared inputs changed before automatic recheck. Run preparation again.')
     private={**dict(fresh),'config':json.dumps(scoped_config(fresh,current,settings))}
     result=net._compile(private,header,source,current)
-    if not result.ok or not _single_definition(result.obj,fn['name']):
+    if not result.ok or not acceptable(net,proj,fn,result.obj):
         raise NetworkError('Automatic bundle recheck did not compile as one function. Evidence retained for review.')
     candidate,verdict,_=net._evaluate(current,fresh,result.obj)
     if candidate is None or verdict is not True:
