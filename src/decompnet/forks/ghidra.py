@@ -55,10 +55,12 @@ def _headless() -> Path:
     return base / ("analyzeHeadless.bat" if os.name == "nt" else "analyzeHeadless")
 
 
-def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = True) -> list[dict]:
+def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = True,
+                said: list[str] | None = None) -> list[dict]:
     """Import `binary` into a throwaway Ghidra project, run one of our post-scripts on it and return the JSON objects
     it wrote, one per line ([] when it took longer than `timeout`). A Ghidra that didn't get to run the script says
-    why (ForkError): that was "found no functions" before, which sent the user after packers and DRM."""
+    why (ForkError): that was "found no functions" before, which sent the user after packers and DRM. `said`, when
+    given, gets what Ghidra printed, a line each."""
     with tempfile.TemporaryDirectory(prefix="decompwtf-ghidra-") as tmp:
         scripts = Path(tmp) / "scripts"
         scripts.mkdir()
@@ -77,6 +79,8 @@ def _run_script(binary: Path, script: str, timeout: float, *, analyse: bool = Tr
             return []
         except OSError as e:
             raise ForkError(f"Ghidra couldn't start: {e}") from e
+        if said is not None:
+            said.extend((res.stdout + res.stderr).splitlines())
         if not out.exists():
             said = [ln for ln in (res.stdout + res.stderr).splitlines() if ln.strip()]
             if killed_for_memory(res.returncode) or any("java.lang.OutOfMemoryError" in ln for ln in said):
@@ -124,7 +128,27 @@ def decompile_object(obj: Path, cache_dir: Path, timeout: float = 900) -> dict[s
         return result
 
 
+# What Ghidra prints when its decompiler is missing or won't start (DecompileProcessFactory, DecompileProcess)
+_NO_DECOMPILER = ("decompile does not exist", "decompile.exe does not exist", "Decompiler executable may not be compatible")
+
+
 def functions(program: Path, timeout: float = 3600) -> list[dict]:
     """Every function Ghidra's analysis finds in a whole program (a Windows .exe: Ghidra reads its imports, exports and
-    the C runtime's functions too): {"entry", "end", "name", "source", "purge", "convention", "params", "thunk"}."""
-    return _run_script(program, "DecompWtfFunctions.java", timeout)
+    the C runtime's functions too): {"entry", "end", "name", "source", "purge", "convention", "params", "thunk"}.
+
+    Ghidra tells functions' calling conventions with its decompiler, a native program. Without it the analysis goes
+    on, and every function's convention is "unknown": a Mac's Ghidra had none, and every __fastcall and __thiscall
+    function of its games was imported as __cdecl. A decompiler that is missing or won't start stops the import
+    (ForkError) instead. One that can't be run at all says nothing: no function with a convention says it then."""
+    said: list[str] = []
+    rows = _run_script(program, "DecompWtfFunctions.java", timeout, said=said)
+    why = next((ln.strip() for ln in said if any(s in ln for s in _NO_DECOMPILER)), None)
+    found = [r for r in rows if not r.get("thunk")]
+    if why is None and found and all(r.get("convention") in ("unknown", "null", None) for r in found):
+        why = "no function it found got a calling convention"
+    if why is not None:
+        raise ForkError(f"Ghidra's decompiler didn't run ({why}), and without it Ghidra can't tell the functions' "
+                        "calling conventions: decompdecomp would name them wrong. Delete Ghidra's folder "
+                        f"({toolchains.path('ghidra')}) and import the game again: decompdecomp installs Ghidra again "
+                        "(on a Mac that builds its decompiler, with Xcode Command Line Tools).")
+    return rows
