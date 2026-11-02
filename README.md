@@ -1159,3 +1159,8 @@ families. A candidate-only restore/return epilogue triggers a boundary warning: 
 original padding entry before spending more model tokens. Nothing trims candidate bytes or changes a
 boundary automatically. Prepared-source evidence now highlights differing comparisons and compiled
 immediates, and briefs summarize unsuccessful probes for the current saved source/build scope.
+
+N64 reimport can recover large functions whose first instructions were caught at a
+scanner boundary while the remaining body was left as binary data. Recovery is bounded
+and inferred; the normal linked-byte judge still decides matches. Existing matches and
+naming provenance survive when their complete targets are unchanged.
