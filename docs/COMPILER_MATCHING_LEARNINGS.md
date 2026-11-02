@@ -2323,3 +2323,34 @@ once source/build-scoped results are exhausted. A register-only percentage is no
 that a generic scope or operand swap will solve the case. Next investigations need a more
 specific allocation hypothesis or independently supported original source shape; retain
 negative results rather than spending agent tokens rediscovering them.
+
+### Related-function context follow-up
+
+A further bounded investigation of the 124-instruction case tested actual related
+function declarations and definition visibility instead of more body permutations.
+Three callee definitions were freshly verified at score zero using the same installed
+KMC profile. Their actual signatures supplied candidate-local prototypes. An unmatched
+fourth callee had no verified declaration consensus, so neither its body nor an invented
+prototype was used. One existing exact caller declared a pointer-taking function with
+an integer parameter: exact binary output does not establish a globally trustworthy C
+prototype. The verified definition was the declaration evidence for this experiment.
+
+The recipient was tested with individual/combined prototype updates and with all seven
+subsets of the three real external definitions, before and after the recipient. Its
+original debug line numbers were restored. No `static`, `inline`, register binding or
+private calling convention was invented. A broad splat unit is not proof of an original
+translation-unit boundary. A conflicting representation of one absolute global was
+normalized to the recipient's existing declaration; its address remained unchanged.
+
+Of **21 recipient source variants**, **17 compiled successfully**, all at the original
+linked score **15**. Four initial before-body forms lacked that recipient global's
+forward declaration; corrected versions are included in those totals. The three
+callee entries also remained exact when independently judged from the combined object
+and recipient context. The compiling original variants produced the unchanged recipient
+code hash. No match, source adoption or context-search speedup was demonstrated.
+
+The experiment stayed below its 32-variant / 120-second recipient cap. Inputs, raw
+contexts and reports remain private; no live project, flags, shared declarations or
+judge rules changed. Existing verified-prototype/private-helper support remains in
+place. These results do not justify automatically assembling arbitrary external bodies
+or enabling static/inline transformations on the strength of a shared analysis-unit name.
