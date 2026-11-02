@@ -428,6 +428,12 @@ browser uses a separate HttpOnly session cookie for up to 12 hours; **Sign out**
 not the server or its agents. Restarting the server prints a new code and requires signing in again. Keep the
 terminal code private: it grants full access to this app, unlike project-scoped agent or browser-worker pairing.
 
+To use the browser and desktop window together, open **Settings** in the desktop app and turn on
+**Enable web interface**. Click **Open web interface**, then enter the sign-in code shown there. Both interfaces
+share one running app, project database and set of agents. The setting is remembered across launches; each
+launch creates a fresh sign-in code. Turning the toggle off immediately signs out all browsers while the desktop
+app keeps running. Access is limited to browsers on this computer.
+
 `serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
 home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --port 6484`. A checkout can use
@@ -1247,3 +1253,8 @@ Code audit results and evidence can be reviewed in Settings, with saved confirma
 dismissal and investigation states. Reviews never adopt code or pause functions;
 changed ROM/layout results require a fresh audit. Export mapping errors identify the
 missing constant ranges and sizes. See [the audit guide](docs/ROM_CODE_AUDIT.md).
+
+MIPS code audits recognize a bounded guarded jump-table pattern and trace local
+pointer loads into indirect calls. Reviewed table mappings allow every case path to
+be checked; raw mapping and indexed-callback hypotheses remain labelled for review.
+These findings never adopt code or change match status.

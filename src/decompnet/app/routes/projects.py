@@ -6,6 +6,7 @@ Each is fn(slug, request, data) wrapped by with_project, which checks the reques
 from __future__ import annotations
 
 import json
+import secrets
 import shutil
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
-from .. import compiler_cleanup, saves
+from .. import compiler_cleanup, saves, window
 from ..engine import parse_ranges
 from . import App
 
@@ -166,7 +167,7 @@ def register(app: App) -> None:
         return {"ok": True}
 
     def p_open(slug, request, data):
-        if app.web_login:
+        if app.web_login and not secrets.compare_digest(window.request_token(request), app.secret):
             return {'ok':False, 'message':'Project folder on the server: '+str(net.project_row(slug)['root'])}
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
         return {"ok": why is None, "message": why}
@@ -358,6 +359,18 @@ def register(app: App) -> None:
             cancel_message='Near-match pass stopped. Verified matches and pending search paths are saved.')
         return {'job':active[slug]}
 
+    def p_reconcile_matches(slug, request, data):
+        from .. import match_reconciliation
+        seconds,attempts=data.get('seconds',120),data.get('attempts',128)
+        match_reconciliation.validate(net,slug,seconds,attempts)
+        active=getattr(net,'_finish_near_jobs',{})
+        net._finish_near_jobs=active
+        previous=active.get(slug)
+        if previous and jobs.jobs.get(previous,{}).get('state')=='running':return {'job':previous}
+        active[slug]=jobs.start('reconcile-matches',lambda log:match_reconciliation.run(net,slug,seconds,attempts,log),
+            cancel_message='Saved-match recovery stopped. Freshly verified matches are saved.')
+        return {'job':active[slug]}
+
     def p_permuter(slug, request, data):
         """Run free local permutations without starting a paid helper or the full autopilot."""
         net.project_row(slug)
@@ -485,6 +498,7 @@ def register(app: App) -> None:
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/finish-near": (p_finish_near, ["POST"]),
+        "/api/reconcile-matches": (p_reconcile_matches, ["POST"]),
         "/api/permuter": (p_permuter, ["POST"]),
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),

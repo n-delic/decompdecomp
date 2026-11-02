@@ -9,6 +9,7 @@ def test_compact_search_notes_are_bounded_and_invalidated_by_build_inputs():
     summary=search_evidence.brief(net,proj,fn)
     assert '100 displayed differences' in summary and len(summary)<1000
     assert summary.count('=>')==4
+    assert 'Try allocation_schedule_bridge.' in summary
     net._context=lambda *_:{'header':'changed','version':2}
     assert search_evidence.brief(net,proj,fn)==''
 

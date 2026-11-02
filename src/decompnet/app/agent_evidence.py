@@ -1,6 +1,7 @@
 """Scoped baseline evidence and an independent unchanged-instruction budget; never verdict shortcuts."""
 import hashlib
 import json
+import re
 
 from .. import scoring, toolchains
 from ..forks.project import ForkError
@@ -75,6 +76,8 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         mapped = mismatches(compiled.obj, fn['name'], diff.rows, source,
                             filename='func.cpp' if getattr(compiled,'language','c') == 'c++' else 'func.c')
         measured['line_note'] = render(mapped, source, limit=4)
+        measured['header_sha256']=hashlib.sha256(context['header'].encode()).hexdigest()
+        measured['compiler']=(getattr(compiled,'effective_settings',None) or {}).get('compiler')
 
     # Imported diagnostic restoration can advance the compile generation. Cache against the
     # restored state, so the next read reuses evidence for that state rather than rebuilding.
@@ -140,7 +143,64 @@ def track(net,agent,slug,fn):
     return f'Repeated instruction outputs without novelty: {count}/{limit}.' if limit else None
 
 
+
+def concise_warnings(text):
+    """Remove recognized assembler progress chatter, preserving diagnostics verbatim elsewhere."""
+    lines=[]
+    for line in (text or '').splitlines():
+        if re.search(r'\b(?:warnings?|errors?|fatal|undefined|overflow\w*|truncat\w*|out of range)\b',line,re.I):
+            lines.append(line)
+        elif re.search(r'::\s*(?:Generating relocation|Skipped for this pass)\b',line):
+            continue
+        elif re.fullmatch(r'\s*\.(?:text|data|rodata|bss)::[0-9a-fA-F]+\s+[^\n]*',line):
+            continue
+        else:
+            lines.append(line)
+    lines=[line for line in lines if line.strip() not in {'compiler output:', 'when linking your code:'}]
+    return '\n'.join(lines).strip()
+
+
+def baseline_note(fn, measured, net=None):
+    if not measured or measured.get('score') is None:
+        return ''
+    source=measured.get('source') or ''
+    saved=fn['best_source'] or ''
+    historical=fn['best_score']
+    current=measured['score']
+    identity='same source' if source==saved else 'different source'
+    text=f'Baseline comparison: current rechecked score {current}; saved historical best {historical if historical is not None else "unavailable"} ({identity}).'
+    if net is not None and historical is not None and current!=historical:
+        row=net.store.one('SELECT s.settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
+                          'WHERE a.function_id=? AND a.score=? AND a.source=? ORDER BY a.id DESC LIMIT 1',
+                          fn['id'],historical,saved)
+        old=json.loads(row['settings']) if row else {}
+        if old.get('context_sha256') and measured.get('header_sha256'):
+            text+=' Header '+('matches recorded saved inputs.' if old['context_sha256']==measured['header_sha256'] else 'differs from recorded saved inputs.')
+        else:
+            text+=' Saved/current header comparison unavailable.'
+        if old.get('compiler') and measured.get('compiler'):
+            keys=('toolchain','flags')
+            same=all(old['compiler'].get(k)==measured['compiler'].get(k) for k in keys)
+            text+=' Compiler profile '+('matches recorded saved inputs.' if same else 'differs from recorded saved inputs.')
+        else:
+            text+=' Saved/current compiler comparison unavailable.'
+    if historical is not None and current!=historical:
+        text+=' Historical and current scores are not automatically comparable: source, compiler/header inputs or scoring rules may differ. Current trials use the rechecked baseline; no regression or match is inferred.'
+    return text
+
+
+
+def remember_log(net,agent,fn,text):
+    if text:
+        logs=getattr(net,'_raw_compiler_logs',{})
+        logs[scope(net,agent,fn)+(hashlib.sha256(text.encode()).hexdigest(),)]=text
+        net._raw_compiler_logs=logs
+        while len(logs)>64:del logs[next(iter(logs))]
+
+
 def warning(net,agent,fn,text):
+    remember_log(net,agent,fn,text)
+    text=concise_warnings(text)
     if not text:
         return ''
     key=scope(net,agent,fn)+(hashlib.sha256(text.encode()).hexdigest(),)
@@ -157,4 +217,5 @@ def warning(net,agent,fn,text):
 def warnings(net,agent,fn):
     key=scope(net,agent,fn)
     values=[v for k,v in getattr(net,'_warning_evidence',{}).items() if k[:-1]==key]
-    return '\n\n'.join(values) or 'No compiler warnings retained for this claim.'
+    raw=[v for k,v in getattr(net,'_raw_compiler_logs',{}).items() if k[:-1]==key]
+    return '\n\n'.join(raw or values) or 'No compiler warnings retained for this claim.'

@@ -237,7 +237,22 @@ async function showSettingsPage() {
   const theme = savedTheme();
   $("setComputer").innerHTML = `
     <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
-    <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>`;
+    <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>
+    <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser on this computer while the desktop window stays open.</span></label>
+    <div id="webInterfaceDetails" hidden></div>`;
+  const renderWebInterface = info => {
+    $("webInterfaceEnabled").checked = info.enabled;
+    $("webInterfaceDetails").hidden = !info.enabled;
+    $("webInterfaceDetails").innerHTML = info.enabled ? `<p class="small"><a class="link" href="${esc(info.url)}" target="_blank" rel="noopener">Open web interface</a></p>${info.code ? `<div class="field"><span>Web sign-in code</span>${cmdBox(info.code)}</div>` : '<p class="small muted">The sign-in code is shown in the desktop app’s Settings.</p>'}<p class="small muted">The browser shares this app’s projects and agents. Disabling access signs out all browsers. Keep the sign-in code private: it grants full access.</p>` : "";
+    wireCopies($("webInterfaceDetails"));
+  };
+  renderWebInterface(await api('/api/web-interface'));
+  $("webInterfaceEnabled").onchange = async event => {
+    const control = event.target; control.disabled = true;
+    try { renderWebInterface(await api('/api/web-interface', {method:'POST', body:{enabled:control.checked}})); toast(control.checked ? 'Web interface enabled.' : 'Web interface disabled.'); }
+    catch(error) { control.checked = !control.checked; toast(esc(error.message), 'err'); }
+    finally { control.disabled = false; }
+  };
   const inst = st.install || {};
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
   $("setAbout").innerHTML = `<p class="small">${esc(versionLine(st))} on ${esc(st.platform)}. Free and open source (AGPL-3.0): <a class="link" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">its source</a>. Everything runs on this computer: no account, nothing sent to us.</p>

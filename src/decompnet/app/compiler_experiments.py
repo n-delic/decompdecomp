@@ -10,6 +10,21 @@ from ..project import compiler_for
 from . import agent_targets, agent_tokens
 
 
+def trial_table(net):
+    with net.store.tx() as db:
+        db.execute('CREATE TABLE IF NOT EXISTS compiler_trial_evidence('
+                   'id TEXT PRIMARY KEY,project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,'
+                   'function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,'
+                   'agent_id INTEGER NOT NULL,record TEXT NOT NULL,created_at REAL NOT NULL)')
+
+
+def save_trial(net,fn,key,record):
+    trial_table(net)
+    with net.store.tx() as db:
+        db.execute('INSERT OR IGNORE INTO compiler_trial_evidence VALUES(?,?,?,?,?,?)',
+                   (key,fn['project_id'],fn['id'],record['agent'],json.dumps(record),time.time()))
+
+
 def run(net,agent,slug,function,revision,trials):
     if not isinstance(trials,list) or not 1<=len(trials)<=6:
         raise NetworkError('Send 1–6 source/compiler trials.')
@@ -66,6 +81,10 @@ def run(net,agent,slug,function,revision,trials):
                 diagnostic_completed(net,agent)
                 ledger[key]={'agent':agent.id,'slug':slug,'function':fn['name'],'source':text,'compiler':t['compiler'],
                              'flags':t.get('flags',''),'revision':revision,'scope':scope,'project_config':cfg,'flags_source':'project build owns per-file flags' if fork else 'explicit effective flags','result':result}
+                header = (net._context(fn['project_id'],fn['unit']) or {'header':''})['header']
+                ledger[key].update(header=header,source_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                                   header_sha256=hashlib.sha256(header.encode()).hexdigest())
+                save_trial(net,fn,key,ledger[key])
                 while len(ledger)>64:
                     del ledger[next(iter(ledger))]
                 tag='diagnostic'
@@ -78,13 +97,24 @@ def run(net,agent,slug,function,revision,trials):
         return '\n'.join(out)+f'\nCandidate revision {actual} unchanged. get_compiler_trial retrieves the exact C/profile pair. No match credited or compiler choice applied.'
 
 
-def retrieve(net,agent,slug,function,trial_id):
-    fn=net._function(function,slug);record=getattr(net,'_compiler_trials',{}).get(trial_id)
-    if not record or (record['agent'],record['slug'],record['function'])!=(agent.id,slug,fn['name']):
-        raise NetworkError('Trial is unavailable for this worker/function; rerun the bounded experiment.')
+def retrieve(net,agent,slug,function,trial_id,include_header=False):
+    fn=net._function(function,slug)
+    row = None
+    if hasattr(net,'store') and net.store.one("SELECT 1 FROM sqlite_master WHERE name='compiler_trial_evidence'"):
+        row=net.store.one('SELECT record FROM compiler_trial_evidence WHERE id=? AND project_id=? AND function_id=?',
+                          trial_id,fn['project_id'],fn['id'])
+    record=json.loads(row['record']) if row else getattr(net,'_compiler_trials',{}).get(trial_id)
+    if (not record or (record['slug'],record['function'])!=(slug,fn['name'])
+        or not row and record['agent']!=agent.id):
+        raise NetworkError('No saved trial for this project/function. The reference may predate durable trial storage; rerun a bounded experiment if the source/settings are known.')
     # The complete private configuration remains in the ledger for reproduction.
     # Range checks/surveys are unrelated to this selected C/profile pair.
-    fields = ('function','source','compiler','flags','revision','scope','flags_source','result')
+    fields = ('function','source','compiler','flags','revision','scope','flags_source','result','source_sha256','header_sha256')
     compact = {key: record[key] for key in fields if key in record}
     compact['context_id'] = hashlib.sha256(json.dumps(record.get('project_config',{}),sort_keys=True,default=str).encode()).hexdigest()[:20]
+    if include_header:compact['header']=record.get('header')
+    compact['header_note']='Recorded shared header only; imported project transitive build inputs are owned by the project. Request include_header=true only if needed.'
+    compact['verification'] = 'Historical diagnostic only; not a current match or applied compiler choice. Rejudge on current inputs before relying on the score.'
+    compact['same_current_source'] = (hashlib.sha256(agent_tokens.candidate(net,agent,slug,function)[0].encode()).hexdigest()==hashlib.sha256(record['source'].encode()).hexdigest()) if hasattr(net,'store') else False
+    compact['same_current_scope'] = (record['scope'] == agent_tokens.target_scope(net,fn,agent_tokens.candidate(net,agent,slug,function)[1])) if hasattr(net,'store') else False
     return json.dumps(compact,ensure_ascii=False)

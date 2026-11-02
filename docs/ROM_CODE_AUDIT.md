@@ -105,3 +105,48 @@ Constant-read export errors identify the function and up to 16 distinct missing 
 ranges, with byte sizes and exclusive ends. Conflicting mappings identify the precise
 address too. The build still rejects unverified data; these messages do not propose or
 install an inferred mapping.
+
+## Bounded jump tables and callback consumers
+
+The MIPS audit recognizes a tightly bounded scalar pattern: unsigned index check,
+default branch, shift by two, LUI/base addition, word load and indirect jump with a
+NOP delay slot. It rejects other entries into the guarded dispatch, tables above
+256 entries, ambiguous mappings, unaligned/out-of-candidate targets and unresolved
+case paths. At most eight tables per candidate are examined; the ordinary 4,096-step
+flow budget still applies. Every distinct reachable case is traversed.
+
+A declared code/data mapping is required to follow table edges. An established code
+address delta can identify a possible raw ROM table, but its report says **mapping
+hypothesis** and keeps flow unresolved. Use reviewed `data_mappings` in an exported
+`build.json`, or `audit_data_mappings` in a ROM project's config, with integer
+`rom_start`, `rom_end`, `vram` fields. Mappings are never installed from hypotheses.
+These input changes invalidate the saved audit. `direct_flow_closed` remains distinct
+from `flow_closed` using reviewed indirect edges, so importer rules do not widen.
+
+Callback tracing connects affine address calculations, word loads and
+JALR instructions. A direct cell load/call with declared mapping is stronger evidence.
+Static cell evidence does not prove runtime table contents or execution. An indexed
+cell remains a hypothesis: a possible index/stride does not prove it is
+reachable. Known-code mapping deltas also remain hypotheses for raw data. Unknown
+instructions invalidate register facts. Branches propagate only identical incoming
+facts at joins, including supported delay-slot and branch-likely semantics. Known
+stack spills/restores retain load provenance; unknown stores and calls invalidate
+stack memory. Calls retain only the stack base. Loaded record pointers remain opaque:
+field origins are recorded but their runtime contents are not guessed. Evidence
+chains show loads, register copies, spills/restores and the indirect call. Handwritten sources are excluded. The pass is capped at 500,000 words, 512
+traces and eight consumer links per candidate; incomplete scans are flagged.
+
+A copied private project exposed a 24-entry switch automatically. With a separately
+reviewed table mapping all case paths closed; without it the table stayed a mapping
+hypothesis. The existing callback lead had no supported consumer trace and remained
+unconfirmed. All existing targets, statuses and saved matching source were unchanged.
+Closed bounded flow is analysis evidence, not termination proof, a complete call graph,
+a C match or automatic permission to import a target.
+
+Unlinked load-to-call chains appear separately in a collapsed diagnostic list.
+They identify useful field loads to investigate without attaching a guessed
+runtime pointer to an unrelated candidate. The worklist visits only reachable
+instructions from the declared entry, merges by intersection, and stops at unknown
+indirect jumps. Unsupported instructions deliberately lose facts. This is scalar
+32-bit MIPS evidence shared by the ROM consoles using this audit, not a general
+interprocedural pointer analysis or an object-project audit.

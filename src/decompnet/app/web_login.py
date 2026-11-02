@@ -6,7 +6,7 @@ import secrets
 import threading
 import time
 
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 SESSION_SECONDS = 12 * 60 * 60
 MAX_SESSIONS = 16
@@ -61,19 +61,42 @@ def login_page(error=''):
     return ("<!doctype html><html lang='en'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
             "<title>Sign in · decompdecomp</title><link rel='stylesheet' href='/assets/server.css'>"
             "<body class='web-login-page'><main class='web-login'><h1>decomp<span>decomp</span></h1><h2>Sign in to your server</h2>"
-            "<p>Enter the sign-in code printed in the terminal running <code>decomp serve</code>.</p>"
+            "<p>Enter the sign-in code shown in the desktop app’s Settings, or printed by <code>decomp serve</code>.</p>"
             f"<p role='status'>{error}</p><form action='/login' method='post'>"
             "<label>Sign-in code<input name='code' type='password' autocomplete='off' required maxlength='128' autofocus></label>"
             "<button type='submit'>Sign in</button></form><p>Your session lasts up to 12 hours. Restarting the server requires signing in again.</p></main></body></html>")
 
 
 def register(app):
-    login = app.web_login
-    if login is None:
-        return
+    def details(request):
+        from . import window
+        login = app.web_login
+        native = secrets.compare_digest(window.request_token(request), app.secret)
+        return {'enabled': login is not None, 'url': f'http://127.0.0.1:{app.port}/',
+                'code': login.code if login and native else None}
+
+    @app.mcp.custom_route('/api/web-interface', methods=['GET', 'POST'])
+    async def interface(request):
+        if (bad := app.guard(request, write=request.method == 'POST')):
+            return bad
+        if request.method == 'POST':
+            data = await app.body(request)
+            if type(data.get('enabled')) is not bool:
+                return app.fail(ValueError('Choose whether to enable the web interface.'))
+            enabled = data['enabled']
+            app.settings.data['web_interface_enabled'] = enabled
+            app.settings.save()
+            if enabled and app.web_login is None:
+                app.web_login = app.net.web_login = WebLogin(app.port)
+            elif not enabled:
+                app.web_login = app.net.web_login = None
+        return JSONResponse(details(request), headers={'Cache-Control':'no-store'})
 
     @app.mcp.custom_route('/login', methods=['GET', 'POST'])
     async def sign_in(request):
+        login = app.web_login
+        if login is None:
+            return HTMLResponse('The web interface is disabled. Enable it in the desktop app’s Settings.', status_code=404, headers=LOGIN_HEADERS)
         if request.headers.get('host') not in app.allowed_hosts:
             return HTMLResponse('Bad host', status_code=403, headers=LOGIN_HEADERS)
         if request.method == 'GET':
@@ -100,6 +123,9 @@ def register(app):
 
     @app.mcp.custom_route('/logout', methods=['POST'])
     async def sign_out(request):
+        login = app.web_login
+        if login is None:
+            return RedirectResponse('/login', status_code=303, headers=LOGIN_HEADERS)
         if request.headers.get('host') not in app.allowed_hosts or not login.same_origin(request):
             return HTMLResponse('Sign out from this server’s own page.', status_code=403, headers=LOGIN_HEADERS)
         login.sign_out(request)

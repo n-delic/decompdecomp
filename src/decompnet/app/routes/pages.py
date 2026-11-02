@@ -38,7 +38,7 @@ def register(app: App) -> None:
         if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
         page=static_file("index.html").decode()
-        if app.web_login:
+        if app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             page=page.replace("form-action 'none'", "form-action 'self'").replace('<body>', '<body data-server-mode="1">')
             page=page.replace('</aside>', '<form class="web-session" method="post" action="/logout"><span>Server mode</span><button type="submit">Sign out</button></form></aside>', 1)
             page=page.replace('</head>', '<link rel="stylesheet" href="/assets/server.css"></head>')
@@ -58,4 +58,4 @@ def register(app: App) -> None:
     @mcp.custom_route("/health", methods=["GET"])
     async def health(request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "app": "decomp-wtf", "edition": edition.NAME, "version": __version__,
-                             "build": build_id, "mode":"serve" if app.web_login else "desktop"})
+                             "build": build_id, "mode":"serve" if app.headless else "desktop", "web_interface":app.web_login is not None})

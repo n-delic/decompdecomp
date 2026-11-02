@@ -417,7 +417,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                             repair_automation=st("Potential deterministic repair"), occurrence=it("1-based occurrence; 0 requires unique anchor"))),
         "compiler_experiments": ("Bounded diagnostic source/profile trials on one candidate revision. 1–6 compiler profiles (compiler=current uses this function’s current compiler); optional independent old/new/occurrence patches. No compiler choice applied.",
                                  s(function=st("function",True),revision=st("candidate revision",True),trials={"type":"array","minItems":1,"maxItems":6,"req":True,"items":{"type":"object","additionalProperties":False,"properties":{"compiler":{"type":"string","description":"current or an exact compiler ID; use try_local_repairs for repair families"},"flags":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"},"occurrence":{"type":"integer"}},"required":["compiler"]}})),
-        "get_compiler_trial": ("Retrieve the saved C/compiler/flags diagnostic pair; no compile/application.",s(function=st("function",True),trial_id=st("trial id",True))),
+        "get_compiler_trial": ("Retrieve the saved C/compiler/flags diagnostic pair; no compile/application.",s(function=st("function",True),trial_id=st("trial id",True),include_header=bo("Include historical shared header snapshot; default false to save context"))),
         "try_local_repairs": ("Try applicable local repair families on one snapshot, max six normal compiles/60 seconds. Keeps best continuation; replaces parallel family probes.",
                               s(function=st("function",True),revision=st("candidate revision",True),families={"type":"array","items":{"type":"string"}},max_trials=it("1–6; default 6"))),
         "compile_family": ("Bounded repair family; selector has one mode: next, anchor (old/occurrence), or declaration (declaration). Omit for pattern families.",
@@ -437,7 +437,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            "notes and a draft. count > 1: a batch of small functions to judge together.",
                            s(function=st("optional name or address"), strategy=st("no_compiling_c | finish | easiest | least_tried | oldest_checked | untried | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
-        "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("all | history | candidate | quality | notes | declarations | compiler | layouts"))),
+        "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("summary (default) | brief | all | history | candidate | quality | notes | declarations | compiler | layouts"), start=it("Character offset for supporting sections"), limit=it("Page characters, default 6000, maximum 12000; complete editable C is not truncated"))),
         "compile_and_diff": ("Whole-function rewrite: small edits should use compile_patch. Compile, link and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True),
@@ -502,7 +502,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "share_knowledge": ("Propose evidence-backed reusable discoveries now; do not wait for a second model before proposing. Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "
                             "Back independently verified tips with supports=N. The user can accept one proposal; automatic acceptance needs two models. "
                             "Compiler identity/profile changes use compiler_map, try_compiler/search_flags or suggest.",
-                            s(text=st("reusable matching technique, not a function-specific note"), supports=it("a proposal's number to back"))),
+                            s(evidence=st("Concrete function examples and scores; keep text as the reusable rule. Evidence is not put in every agent prompt."), text=st("reusable matching technique, not a function-specific note"), supports=it("a proposal's number to back"))),
         "suggest": ("Suggest a setup change for the user (another compiler or flags), with evidence.",
                     s(text=st("what and why", True), compiler=st("toolchain id"), flags=st("flags"),
                       function=st("a function whose best attempt should match with it: checked now"),

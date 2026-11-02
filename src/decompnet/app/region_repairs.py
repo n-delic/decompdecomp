@@ -8,8 +8,9 @@ from .permuter_focus import normalized
 REGION_INSNS = 16
 
 
-def snapshot(rows):
+def snapshot(rows, arch=None):
     targets, losses = [], {}
+    positions=[];changed=[]
     for row in normalized(rows):
         if len(row) != 3:
             return None
@@ -19,27 +20,40 @@ def snapshot(rows):
             targets.append(target)
         else:
             index = max(0, index-1)
+        positions.append(index);changed.append(marker!=' ')
         if marker != ' ':
             region = index // REGION_INSNS
             losses[region] = losses.get(region, 0) + 1
-    if len(targets) < REGION_INSNS:
-        return None
-    return {'target': targets, 'losses': {str(k): v for k, v in losses.items()}}
+    if arch:
+        from ..arch import get
+        reader=get(arch).instruction_regions
+        graph=reader(targets) if reader else None
+        if graph and len(targets)>=2:
+            loss={};bad=set()
+            for position,mismatch in zip(positions,changed):
+                if mismatch:
+                    block=str(graph['block_for'][position]);loss[block]=loss.get(block,0)+1;bad.add(position)
+            chains={str((a,b,r)):int(a in bad)+int(b in bad) for a,b,r in graph['dependencies']}
+            return dict(target=targets,losses=loss,scheme='control-flow',chain_losses=chains,successors=graph['successors'])
+    if len(targets) < REGION_INSNS:return None
+    return {'target':targets,'losses':{str(k):v for k,v in losses.items()},'scheme':'fixed'}
 
 
 def gain(before, after):
     """Count recovered mismatches only with the same target stream; total score may still regress."""
-    if not before or not after or before['target'] != after['target']:
+    if not before or not after or before['target'] != after['target'] or before.get('scheme','fixed')!=after.get('scheme','fixed'):
         return 0
-    return sum(old - after['losses'].get(region, 0) for region, old in before['losses'].items()
-               if old > after['losses'].get(region, 0))
+    block=sum(max(0,old-after['losses'].get(region,0)) for region,old in before['losses'].items())
+    chains=sum(max(0,old-after.get('chain_losses',{}).get(edge,old)) for edge,old in before.get('chain_losses',{}).items())
+    return block+chains
 
 
 def damage(before, after):
     """Count new mismatches in previously correct target blocks; advisory, never a veto."""
-    if not before or not after or before['target'] != after['target']:
+    if not before or not after or before['target'] != after['target'] or before.get('scheme','fixed')!=after.get('scheme','fixed'):
         return 0
-    return sum(loss for region, loss in after['losses'].items() if not before['losses'].get(region))
+    return (sum(loss for region,loss in after['losses'].items() if not before['losses'].get(region))
+            +sum(loss for edge,loss in after.get('chain_losses',{}).items() if not before.get('chain_losses',{}).get(edge)))
 
 
 def clean(rows):
@@ -67,7 +81,7 @@ def summary(rows, arch=None):
     if first is None:
         return ''
     d = diagnose(valid, arch)
-    parts = [f'First differing target block: {first//REGION_INSNS+1} (instruction {first+1}; blocks of {REGION_INSNS}).']
+    parts = [f'First differing target display window: {first//REGION_INSNS+1} (instruction {first+1}; windows of {REGION_INSNS}).']
     if d['register_map']:
         parts.append('Register substitutions: '+', '.join(a+'→'+b for a,b in d['register_map'][:4])+'.')
     if d['scheduling']:

@@ -437,9 +437,18 @@ def feedback(net, agent, slug, function, text, previous):
         head+=f'\n{rendering} relocation-rendering differences omitted from advice; score and exact-byte verdict unchanged.\n'
         if not any(r[0]!=' ' for r in diagnostic):
             head+='No instruction differences remain in this normalized listing; rendering equivalence alone does not prove an exact byte match.\n'
+    from .agent_evidence import baseline_note
+    measured_baseline=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
+    note=baseline_note(fn,measured_baseline,net)
+    if note:head+=note+'\n'
     head += mismatch(rows)+'\n'
     positions = [text.index(marker) for marker in ('\ncompiler output:', '\nwhen linking your code') if marker in text]
     warn = text[min(positions):] if positions else ''
+    if warn:
+        from .agent_evidence import concise_warnings, remember_log
+        remember_log(net,agent,fn,warn)
+        warn = concise_warnings(warn)
+        warn = ('\n'+warn) if warn else ''
     if previous == rows:
         key = (agent.id, fn['id'])
         streaks = getattr(net, '_agent_unchanged', None)
@@ -468,7 +477,24 @@ def feedback(net, agent, slug, function, text, previous):
     return head + detail + mapping + warn + '\nFull/paged instructions: last_diff(function, start=0, limit=40).'
 
 
-def function_view(net, agent, slug, function, section='all'):
+
+def function_view(net, agent, slug, function, section='summary', start=0, limit=6000):
+    if section=='summary':
+        fn=net._function(function,slug)
+        return (f"{fn['name']}: {fn['status']}; {fn['n_insns']} instructions; saved historical score {fn['best_score'] if fn['best_score'] is not None else 'unavailable'}.\n"
+                'Use section=brief for a working packet, candidate for complete editable C, history/quality/notes for evidence, or get_assembly for instruction pages. Supporting sections accept character offsets start/limit.')
+    text=_function_view(net,agent,slug,function,section)
+    if section in {'candidate','source','draft','matched','brief'}:
+        return text  # Never silently truncate editable C.
+    start=max(0,int(start));limit=max(200,min(12000,int(limit)))
+    if start==0 and len(text)<=limit:
+        return text
+    end=min(len(text),start+limit)
+    return (f'Reference page {start}:{end} of {len(text)} characters; next start={end if end<len(text) else "end"}. '
+            'This may contain partial code; get_candidate returns complete editable C.\n'+text[start:end])
+
+
+def _function_view(net, agent, slug, function, section='all'):
     """Small supporting reads without replaying the candidate and assembly."""
     if section == 'warnings':
         from . import agent_evidence
@@ -793,7 +819,8 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                     summary += f"; {sum(r[0] != ' ' for r in rows)} displayed mismatch rows vs target"
                 if measured and measured.get('warnings'):
                     from . import agent_evidence
-                    summary += '; diagnostics: '+agent_evidence.warning(net,agent,fn,measured['warnings'])
+                    warning = agent_evidence.warning(net,agent,fn,measured['warnings'])
+                    if warning:summary += '; diagnostics: '+warning
                 if 'MATCH!' in result:
                     summary += '; MATCH! verified by normal judge'
                 if score is None:
@@ -813,6 +840,7 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
         if baseline:
             if baseline.get('verified'):
                 results.append('Baseline: verified instruction evidence (cached within its build/claim scope). Diff grouping is diagnostic only.')
+                results.append(agent_evidence.baseline_note(fn,baseline,net))
             elif baseline.get('rows') is not None:
                 results.append('Baseline: scored instruction evidence available. Diff grouping is diagnostic only.')
             else:

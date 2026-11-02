@@ -230,6 +230,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
+| Guarded jump-table / local callback-consumer audit (scalar MIPS ROM) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Saved code-audit decisions and evidence (local) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
 | Called whole-gap recovery (conservative import rule) | ✓ | — | — | — | — | — | — | — |
 | Matching-only ELF32 entry extraction for scattered pools (ROM export) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |
@@ -1797,13 +1798,36 @@ Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine
 
 Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
 
+## Durable diagnostic evidence
+
+Implemented: new compiler-trial records survive restart and can be read by other agents in the same
+local project, with historical source/profile and optional shared-header evidence. Repair discovery
+resumes cached pure stages under a cooperative budget; mutable project donors are read afresh.
+
+Planned: transfer diagnostic trial evidence between separate room participant databases, with explicit
+provenance and bounded source/header payloads. A local trial reference alone cannot retrieve remote
+records or reconstruct missing imported translation-unit inputs.
+
+
+### Historical recovery and conservative repair learning
+
+- Done: explicit cancellable local-ROM saved-match reconciliation across names/units, freshly judged
+  under current or recorded headers, scoped miss caching and fair candidate rotation.
+- Done: minimized replay expression candidates and reviewed profile-scoped held-out validation helpers;
+  ambiguous/complex changes remain investigation evidence instead of enabling a rule.
+- Done: GCC failed/successful value comparison via unique unchanged source anchors, omitting ambiguous joins.
+- Done: MIPS control-flow/delay-slot and explicit register-dependency region hints in iterative/frontier search.
+  Existing fixed regions remain the fallback for other architectures and unsupported transfers.
+- Planned: archived build-context reconciliation for imported projects; additional architecture region readers;
+  demonstrate held-out retail exact-throughput gains before promoting experimental recipes.
+
 ### Saved code audit review
 
 Done for supported ROM audit adapters: local per-project review states and evidence,
 image/extent-bound identity, stale-layout rejection, and hidden-by-default confirmed /
 dismissed rows. Decisions never pause functions or adopt targets. Indirect transfers
 show their register/address; constant-mapping export errors show missing ranges and
-sizes. Portable audit-review history, reviewed adoption, bounded switch-table closure,
+sizes. Portable audit-review history, reviewed adoption, additional switch-table idioms,
 and proof of callback-table consumers remain planned, alongside the existing non-MIPS
 and object-project audit adapter gaps.
 
@@ -1814,3 +1838,31 @@ rejudging every body. Matching-only entry extraction prevents duplicate exports;
 PROJECT builds continue using their own translation units and build judge. Other
 ROM processors will need an equivalent verified-entry exporter before this path
 can be enabled for them.
+### Bounded indirect-transfer evidence
+
+Done: scalar MIPS ROM audits recognize a guarded absolute word-table pattern, cap
+entries at 256 and tables at eight per candidate, reject guard-bypassing edges,
+require a unique declared mapping before traversing cases and retain unresolved
+paths. Established code mappings can suggest raw-data locations but cannot close
+flow without review. Direct-only closure remains distinct from bounded table closure.
+
+Done: bounded straight-line affine load-to-JALR tracing, with separate direct-cell
+and indexed/mapping hypotheses; unknown instructions and control-transfer delay
+slots break facts. Caps are visible. Reviewed mapping input is accepted through ROM
+config `audit_data_mappings` or exported manifest `data_mappings`.
+
+Planned: PIC/relative and 64-bit tables, other guard idioms, inter-block dominance and
+alias propagation, runtime callback reachability, overlay-bank-aware mapping identity,
+non-MIPS/object audit adapters and explicit reviewed target adoption.
+
+### Evidence-led iterative combinations
+
+- Done: bounded MIPS pairing of measured non-improving local edits, sharing existing iterative phase
+  budgets, persistent candidate state, cancellation and the ordinary match judge.
+- Done: equal-score measured-output reservation within the existing beam and equivalent-output caps.
+- Done: source-free residual diagnosis and explicit pairs/output-diversity ablation switches in frozen
+  replay, plus recovered-case and first-exact compile-cost comparisons.
+- Planned: independent-target evidence of additional retail recoveries before approving learned
+  priority boosts; broader local grammars and other architecture adapters need separate validation.
+
+Callback audit now tracks agreeing scalar MIPS paths, stack spills and field-load evidence. Runtime pointer contents, interprocedural alias analysis and non-MIPS callback dataflow remain planned; no targets are automatically adopted.

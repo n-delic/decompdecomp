@@ -22,7 +22,7 @@ def run(net,slug,log=print):
                     handwritten=bool(console.asm_reason(f['target']))) for f in net.store.all(
                         'SELECT name,rom_offset,vram,size,target FROM functions WHERE project_id=?',proj['id']) if f['rom_offset'] is not None]
     log('Reading frozen ROM bytes and known code segment mappings; no build or compiler is run.')
-    result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,progress=getattr(log,'progress',lambda _:None))
+    result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,progress=getattr(log,'progress',lambda _:None),data_mappings=net.cfg(proj).get('audit_data_mappings',[]))
     log(f"Reviewed {result['gaps']} gaps; {len(result['candidates'])} bounded candidates need human review.")
     from .code_audit_reviews import record
     result['input_revision']=input_revision
@@ -47,7 +47,7 @@ def exported(root):
             functions.append(dict(name=fn['name'],rom=offset,vram=fn['vram'],size=size,
                                   handwritten=bool(console.asm_reason(image[offset:offset+size]))))
     segments=[dict(rom_start=s['start'],rom_end=s['end'],vram=s['vram']) for s in manifest['segments'] if s['kind']=='code']
-    return audit(image,segments,functions,big_endian=console.big_endian,cpu=console.cpu_variant)
+    return audit(image,segments,functions,big_endian=console.big_endian,cpu=console.cpu_variant,data_mappings=manifest.get('data_mappings',[]))
 
 
 def main():

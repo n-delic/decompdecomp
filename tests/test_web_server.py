@@ -151,3 +151,34 @@ def test_serve_startup_never_calls_native_window_or_tray(tmp_path,monkeypatch,ca
     state=json.loads((tmp_path/'.decomp/server.json').read_text())
     assert state['mode']=='serve'
     assert 'Web sign-in code: test-code' in capsys.readouterr().out
+
+
+
+def test_desktop_toggle_enables_revokes_and_persists_browser_access(tmp_path):
+    internal=tmp_path/'.decomp';internal.mkdir()
+    net=RomNetwork(internal/'decomp.db',tmp_path)
+    mcp,manager,security,_=build(net,internal,PORT,'native-secret')
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=ORIGIN)
+    native={'User-Agent':window.TOKEN_AGENT+'native-secret','X-Decomp':'1'}
+    try:
+        assert client.post('/api/web-interface',json={'enabled':True}).status_code==401
+        answer=client.post('/api/web-interface',json={'enabled':True},headers=native)
+        assert answer.status_code==200 and answer.json()['enabled']
+        login=net.web_login
+        assert answer.json()['code']==login.code
+        assert client.get('/',headers=native).status_code==200
+        assert 'data-server-mode' not in client.get('/',headers=native).text
+        assert sign_in(client,login).status_code==303
+        assert client.get('/api/state').status_code==200
+        assert client.get('/api/web-interface').json()['code'] is None
+        assert client.post('/api/web-interface',json={'enabled':False},headers=native).status_code==200
+        assert client.get('/api/state').status_code==401
+        assert client.get('/login').status_code==404
+        assert client.get('/api/state',headers=native).status_code==200
+        client.post('/api/web-interface',json={'enabled':True},headers=native)
+        assert net.web_login is not login
+        assert client.get('/api/state').status_code==401
+        import json
+        assert json.loads((internal/'settings.json').read_text())['web_interface_enabled'] is True
+    finally:
+        manager.shutdown();net.deep_sweeps.shutdown()

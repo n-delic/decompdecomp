@@ -2215,6 +2215,64 @@ both sides. No recovery was lost and no additional match or compile saving was d
 combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
 unapproved rather than treating the homemade context success as held-out game evidence.
 
+## Repair discovery and agent evidence follow-up
+
+A 60-session transcript audit found repeated proposal-generation timeouts, routine linker chatter,
+rejected general tips with example functions, and compiler-trial references unavailable to another
+worker. Repair discovery now caches compressed pure generator stages and resumes under a cooperative
+time budget. Database-dependent donors remain fresh; validity and tried-candidate checks are repeated.
+Unrequested refinement families are skipped. The budget is checked between generators and cannot
+interrupt an individual parser or generator. Incomplete discovery is labelled rather than reported
+as exhaustion. A private generation-only check demonstrated continuation across three bounded calls;
+it did not compile candidates and establishes no additional match or compiler saving.
+
+Reusable knowledge rules can store supporting examples separately without injecting those examples
+into every prompt; function-specific progress remains excluded. New diagnostic compiler trials are
+persisted by project/function and readable by other local workers after restart. Historical shared
+headers are optional evidence, not a complete imported translation-unit archive. Lost pre-migration
+trial records and trials held only on another room participant's machine remain unavailable.
+
+Routine relocation/skip chatter is omitted from concise feedback while full logs and actual errors
+remain available. Default function reads are focused metadata; supporting evidence is paged explicitly,
+while editable candidate C stays complete. Rechecked baseline feedback labels the measured score and
+saved historical best separately, comparing source, recorded header and compiler profile where known.
+No judge, match-verification or consensus thresholds changed. The focused regression gate passed
+330 tests; these are workflow regressions, not evidence of new game matches.
+
+
+### Historical reconciliation and conservative cross-build evidence
+
+A stale open score of zero is not an exact verdict. Historical source may still be useful after
+renaming or moving a unit, but recompile it with current/recorded headers and require the normal
+linked code/data judge before restoring it. Atomically check the held claim and full frozen inputs;
+never let a recovery overwrite a concurrent edit or publish after cancellation.
+
+Private KMC GCC 2.7.2 frozen investigation: a failed score-60 checkpoint versus its recorded exact
+control had five token-edit groups. Bounded ablation reverted one group while retaining exactness
+(14 compiler/judge calls including controls and final reverification; compile failures included).
+The remaining four-group change did not fit the narrow expression-template grammar: no recipe was
+learned and no independent-target transfer was established. Do not equate smaller with globally minimal.
+
+Both failed/successful `-da` diagnostic builds preserved their ordinary allocated output. Unique
+unchanged C-line anchors exposed two use-count changes, while 67 ambiguous joins were omitted.
+This is evidence for investigation, not proof of a causal register-allocation fix. Source edits can
+renumber pseudos, so joining their numeric IDs across builds would invent correspondences.
+
+Target control-flow blocks and explicit register def/use edges provide more meaningful regional
+search hints than arbitrary 16-instruction slices. Delay slots and candidate insertions require
+canonical target alignment; unsupported flow must fall back conservatively. No new exact verdict
+can come from regional scores, inferred names or diagnostic dumps.
+
+
+Equal-budget control-flow replay against main `a1cc2f0`: five frozen checkpoints, 96 candidate
+compiles and 120 search seconds each, same copied ROM/database, pinned profile and target groups,
+with architecture passed to both runners. Both versions recovered the two historical controls at
+candidate 56 and 1. The other three stayed at 10/15/15. Each side used 345 candidate compiles plus
+five baseline compiles (350 total). Thus the new region hints lost no recovery but demonstrated
+neither another retail match nor a compile saving on this cohort. The first two checkpoints share
+one target and must not be counted as independent held-out transfers. No game source/data or private
+reports are committed; the synthetic tests cover supported CFG/dependency and recovery safety paths.
+
 ### 2 November: indirect dispatch is not a failed compiler match
 
 A private unresolved MIPS gap contained a `jr` through a computed register after a
@@ -2332,3 +2390,142 @@ and PROJECT builds retain their existing behavior.
 Large matching-only rebuilds also use the linker's documented `--no-keep-memory`
 option. A silent killed linker now reports its exit code; this resource change
 must still pass the full original-image comparison and changes no placement rules.
+### 2 November: validate switch edges before compiler tuning
+
+The read-only MIPS audit now recognized the previously inspected 24-entry guarded
+switch in a copied project. A controlled reviewed data mapping allowed traversal of
+all cases and closed bounded flow; omitting that mapping kept the report unresolved.
+The supported callback tracer found no verified consumer for the separate large
+pointer lead. These are analysis results with all original targets/statuses/source
+retained; they are not new matches or newly adopted code. Absolute-table hypotheses,
+unknown caller aliases and unproven indexed reachability are not compiler evidence.
+
+### Measured paired edits and equal-score output diversity
+
+Always replay against current main before attributing a recovery to a new family. Main `76fc422`
+already recovers the historical 52-instruction score-10 checkpoint in four candidate trials using
+`allocation_schedule_bridge` followed by `pointer_index_scope`. Its two differences were scratch
+register choices, with identical ordered instruction forms and a 40-byte frame. The useful change
+was a coupled lifetime/scope shape, not literal correction or prescribed physical registers.
+The generic regression checks that these shared families still compose; no game code is included.
+
+A separate bounded local-pair path combines small, disjoint edits from two measured non-improving
+siblings of the same root. It only applies to supported MIPS register/scheduling near misses with
+unchanged instruction count/frame and score at most twice the parent. Up to three token hunks per
+edit, 24 tokens per hunk, an overall 96-token window, six recorded siblings per parent, two pairs per
+parent and four queued pairs per persisted frontier bound the search. Literals, preprocessor sources,
+volatile/asm sources, overlaps and large edits decline pairing. These are candidate-generation limits,
+not a semantic proof. An ordinary compiler and linked code/data judge must still accept the result.
+Pair work shares existing phase/time/compile limits and survives JSON frontier resume/cancellation.
+
+The equal-score beam now reserves one slot for a different measured function output even when its
+coarse allocation signature is identical. Existing two-source-per-output caps remain: assembly-equal
+sources can lead to different later edits, so do not discard every equivalent source. No displayed
+row or output hash supplies a match verdict. Regional choices and the numeric winner remain bounded
+by the existing beam width.
+
+Negative investigation results: 42 type/loop/store probes and 86 slot-lifetime/initialization probes
+on the old score-10 input did not beat 10. On the remaining two score-15 inputs, 19 pointer/constant/scope
+probes and 14 shifted-value lifetime probes did not improve them. One has three register-only rows
+around a pointer load and constant store (124 instructions, 32-byte frame). The other has three rows
+around a shifted result, branch and forwarded argument (295 instructions, 136-byte frame). A global
+register-substitution map is inconsistent for the latter: a machine register is reused for different
+values, so blindly renaming registers or joining pseudo IDs would be unsound. Assembly alone does not
+establish header/prototype correctness. Source/data and private reports remain outside the repository.
+
+
+Equal-budget main/control, pairs-only, diversity-only and combined replays used five frozen
+checkpoints (four target groups), 96 candidate slots and 120 seconds per checkpoint, on copied
+ROM/database inputs with the same pinned compiler settings. All recovered the same three historical
+checkpoints at candidate 56, 1 and 4; the first two share a target. Both remaining scores stayed 15.
+Each run spent 253 candidate compiles plus five baselines (258 compiler invocations). Pairs-only and
+the combined path each evaluated two new pairs on the 124-instruction input; neither improved it.
+No pair applied to the macro-heavy 295-instruction input under the deliberately narrow grammar.
+The numeric/equal-output change passed its synthetic retention regression but showed no new retail
+match or compile saving in this cohort. Independent training/held-out target-group gates rejected
+promotion for each isolated feature and their bundle: no learned priority boost was installed.
+A separate homemade C test uses the installed pinned compiler and ordinary ROM linker to establish
+that two independent single edits miss while their composed candidate matches its generated control;
+this demonstrates the composition/judge path, not held-out game performance or semantic equivalence.
+## Follow-up: four unchanged register-only cases (November 2026)
+
+The next copied-checkpoint investigation used the same pinned KMC GCC 2.7.2 profile
+(`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) and ordinary linked-byte/data evaluator. Existing
+`-da` diagnostics preserved normal allocated output for every case. Register names
+alone did not identify unique source values: several unrelated pseudos reused `v0`.
+Use instruction IDs and source notes as well as the explicit dispositions.
+
+| Case size | Starting / best linked score | Generated alternatives | Findings |
+| --- | --- | --- | --- |
+| 124 instructions | 15 / 15 | 142 | Typed pointer/value temporaries, either initialization order, field-address staging, reuse of dead scalar locals, branch scopes, and alternative single-execution loops did not fix the pointer-reload/constant-store register swap. |
+| 295 instructions | 15 / 15 | 40 | Chained shift assignments split/reversed inside one-shot scopes, direct tests, removal of unused declarations and explicit reuse of the shifted value in the later store did not help. |
+| 195 instructions | 35 / 35 | 38 | Fresh terminal command pointers, parameter reuse after its final original use, saved OR inputs and staged accumulators were ineffective, including paired tail/accumulator edits and one-shot scopes. |
+| 91 instructions | 20 / 20 | 18 | Global-table load scopes and alternative equal-pointer alias chains did not improve the linked score. The existing volatile frame object remains a reason not to generalize ordinary scope rewrites to this function. |
+
+These are **238 generated alternatives**, including cached duplicates and compiler-rejected
+forms, not a claim of 238 distinct compiler executions. Their best scores were unchanged;
+no additional exact match was found and no new repair family was promoted. The successful
+52-instruction pointer/index repair above is a different case and must not be counted again.
+No flags, target bytes, judge rules or shared headers were changed by these experiments.
+
+**Practical guidance:** test coupled edits on a copy, but stop enumerating the same scopes
+once source/build-scoped results are exhausted. A register-only percentage is not evidence
+that a generic scope or operand swap will solve the case. Next investigations need a more
+specific allocation hypothesis or independently supported original source shape; retain
+negative results rather than spending agent tokens rediscovering them.
+
+### Related-function context follow-up
+
+A further bounded investigation of the 124-instruction case tested actual related
+function declarations and definition visibility instead of more body permutations.
+Three callee definitions were freshly verified at score zero using the same installed
+KMC profile. Their actual signatures supplied candidate-local prototypes. An unmatched
+fourth callee had no verified declaration consensus, so neither its body nor an invented
+prototype was used. One existing exact caller declared a pointer-taking function with
+an integer parameter: exact binary output does not establish a globally trustworthy C
+prototype. The verified definition was the declaration evidence for this experiment.
+
+The recipient was tested with individual/combined prototype updates and with all seven
+subsets of the three real external definitions, before and after the recipient. Its
+original debug line numbers were restored. No `static`, `inline`, register binding or
+private calling convention was invented. A broad splat unit is not proof of an original
+translation-unit boundary. A conflicting representation of one absolute global was
+normalized to the recipient's existing declaration; its address remained unchanged.
+
+Of **21 recipient source variants**, **17 compiled successfully**, all at the original
+linked score **15**. Four initial before-body forms lacked that recipient global's
+forward declaration; corrected versions are included in those totals. The three
+callee entries also remained exact when independently judged from the combined object
+and recipient context. The compiling original variants produced the unchanged recipient
+code hash. No match, source adoption or context-search speedup was demonstrated.
+
+The experiment stayed below its 32-variant / 120-second recipient cap. Inputs, raw
+contexts and reports remain private; no live project, flags, shared declarations or
+judge rules changed. Existing verified-prototype/private-helper support remains in
+place. These results do not justify automatically assembling arbitrary external bodies
+or enabling static/inline transformations on the strength of a shared analysis-unit name.
+
+### Is the numeric frontier rejecting useful intermediate allocation changes?
+
+A copied replay on main `dd011c9` compared the existing search with a private,
+bounded follow-up hypothesis for the same 124-instruction case. It allowed an
+otherwise worse, same-frame, register-only candidate up to twice its parent's score
+when at least one originally differing target instruction became exact. Target rows
+had to remain aligned; no instruction growth or guessed register renaming qualified.
+Follow-ups shared the existing three allocation bursts, width/depth and compile budget.
+The experiment did not modify the installed app or enable a new default search mode.
+
+Both runs received **128 candidate evaluations / 120 seconds** and ended at score
+**15**, without an exact match. Both visited 40 single edits, 66 two-edit combinations
+and 22 three-edit combinations, in identical source/path order with identical scores.
+No candidate qualified for the additional follow-up rule. The existing search therefore
+already exercised combined edits here; this replay supplies no evidence that this
+particular score cutoff discarded a useful intermediate. It does not rule out other
+source shapes outside the finite proposal pool. Ninety-two evaluated nodes emitted
+their parent's unchanged output, and 88 hit the existing equivalent-output retention
+cap: source-level diversity alone did not establish useful compiler-output diversity.
+Observed replay times (46.5s control, 41.8s experimental) are not a speedup claim.
+
+No additional frontier rule was promoted. The next evidence needed is an actual
+candidate that recovers a target mismatch but is rejected before a proven complementary
+edit, rather than increasing frontier width or retaining arbitrary worse candidates.

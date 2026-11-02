@@ -464,7 +464,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         net.compiler_map_text(slug, bool(survey), bool(check_ranges)),
     "list_functions": lambda net, agent, slug, status="open", limit=40: net.list_functions(slug, status, limit),
     "add_note": lambda net, agent, slug, text, function="": _add_note(net, agent, slug, text, function),
-    "share_knowledge": lambda net, agent, slug, text="", supports=0: net.knowledge.share(agent, slug, text, supports),
+    "share_knowledge": lambda net, agent, slug, text="", supports=0, evidence="": net.knowledge.share(agent, slug, text, supports, evidence),
     "search_flags": lambda net, agent, slug, function, compiler="", source="":
         net.search_flags(agent, slug, function, compiler, source),
     "claim_readable": lambda net, agent, slug: net.readability.claim(agent, slug),
@@ -656,10 +656,10 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "claim_function", function=function, strategy=strategy, count=count)
 
     @tool
-    async def get_function(ctx: Context, function: str, section: str = 'all') -> str:
+    async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
-        functions to learn how this codebase is written. section: all (default), history, candidate, quality, notes, declarations, compiler, layouts. Prefer the specific section you need."""
-        return await run(ctx, "get_function", function=function, section=section)
+        functions to learn how this codebase is written. section: summary (default), brief, all, history, candidate, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
+        return await run(ctx, "get_function", function=function, section=section, start=start, limit=limit)
 
     @tool
     async def compile_and_diff(ctx: Context, function: str, source: str, repair_note: str = '',
@@ -700,9 +700,9 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx,'compiler_experiments',function=function,revision=revision,trials=[t.model_dump(exclude_none=True) for t in trials])
 
     @tool
-    async def get_compiler_trial(ctx: Context, function: str, trial_id: str) -> str:
+    async def get_compiler_trial(ctx: Context, function: str, trial_id: str, include_header: bool = False) -> str:
         """Retrieve an exact experimental C/compiler/flags pair and its diagnostic result for this worker. In-memory, bounded history; no compile or application."""
-        return await run(ctx,'get_compiler_trial',function=function,trial_id=trial_id)
+        return await run(ctx,'get_compiler_trial',function=function,trial_id=trial_id,include_header=include_header)
 
     @tool
     async def try_local_repairs(ctx: Context, function: str, revision: str, families: list[str] | None = None, max_trials: int = 6) -> str:
@@ -887,14 +887,15 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         return await run(ctx, "tidy_done", unit=unit, summary=summary)
 
     @tool
-    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0) -> str:
-        """Reusable game/compiler matching tips across functions. Not function-specific notes: use
+    async def share_knowledge(ctx: Context, text: str = "", supports: int = 0, evidence: str = "") -> str:
+        """Keep text as the reusable rule without function-specific progress. Put concrete function names, scores and examples in evidence; evidence is retained for review, not included in every agent prompt.
+        Reusable game/compiler matching tips across functions. Not function-specific notes: use
         release_function(notes=...) or add_note(function=...).
         Propose a general technique or back an independently verified proposal with supports=its number.
         Submit your own evidence-backed proposal now; do not wait for a second model before proposing.
         The user may accept one model's proposal; automatic acceptance requires two models.
         Compiler identity/profile changes belong in compiler_map, try_compiler/search_flags or suggest."""
-        return await run(ctx, "share_knowledge", text=text, supports=supports)
+        return await run(ctx, "share_knowledge", text=text, supports=supports, evidence=evidence)
 
     @tool
     async def suggest(ctx: Context, text: str, compiler: str = "", flags: str = "", function: str = "",

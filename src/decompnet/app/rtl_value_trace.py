@@ -91,8 +91,47 @@ def saved(net, proj, fn, source, header):
     try:state=json.loads(row['state'])
     except (ValueError,TypeError):return {},[]
     trace=state.get('value_trace') or {}
-    settings=compiler_for(net.cfg(proj),fn['vram'])
+    settings=compiler_for(json.loads(proj['config']),fn['vram'])
     profile=hashlib.sha256(json.dumps(settings,sort_keys=True,default=str).encode()).hexdigest()
     if trace.get('profile_sha256')!=profile:return {},[]
     rows=state.get('value_trace_rows') or []
     return (trace,rows) if focus(trace,source,rows,header) else ({},[])
+
+
+def anchors(trace, source):
+    """Hash unique unchanged statement lines, not pseudo IDs, for a cross-build comparison."""
+    from .repair_tokens import tokens
+    lines=source.splitlines();by_hash=defaultdict(list)
+    for index,line in enumerate(lines,1):
+        significant=[t for t in tokens(line) if not t.isspace() and not t.startswith(('//','/*'))]
+        if len(significant)>=3:
+            by_hash[hashlib.sha256(repr(significant).encode()).hexdigest()].append(index)
+    trace['line_anchors']={str(indices[0]):key for key,indices in by_hash.items() if len(indices)==1}
+    return trace
+
+
+def compare(before, after):
+    """Align only unambiguous unchanged source anchors; pseudo numbers have compilation-local meaning."""
+    if (not before or not after or before.get('truncated') or after.get('truncated')
+            or before.get('header_sha256')!=after.get('header_sha256')
+            or before.get('profile_sha256')!=after.get('profile_sha256')):
+        return {'comparable':False,'note':'Need complete traces under the same header/profile.'}
+    def indexed(trace):
+        result=defaultdict(list)
+        for item in trace.get('values',[]):
+            for anchor in {trace.get('line_anchors',{}).get(str(line)) for line in item.get('source_lines',[])}-{None}:
+                result[anchor].append(item)
+        return result
+    left,right=indexed(before),indexed(after);changes=[];ambiguous=0
+    for anchor in sorted(left.keys() & right.keys()):
+        a,b=left[anchor],right[anchor]
+        if len(a)!=1 or len(b)!=1:ambiguous+=1;continue
+        a,b=a[0],b[0]
+        fields={'register':a.get('hard_register')!=b.get('hard_register'),
+                'definitions':len(a.get('definitions',[]))!=len(b.get('definitions',[])),
+                'uses':len(a.get('uses',[]))!=len(b.get('uses',[])),
+                'deaths':len(a.get('deaths',[]))!=len(b.get('deaths',[])),
+                'calls_crossed':a.get('calls_crossed')!=b.get('calls_crossed')}
+        if any(fields.values()):changes.append(dict(anchor=anchor,**fields))
+    return dict(comparable=True,changes=changes[:32],ambiguous_anchors=ambiguous,
+                note='Unique unchanged C-line anchors only. A line can contain several values; ambiguous joins are omitted. Counts and register changes are leads, not causal proof.')
