@@ -140,23 +140,32 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
     if check is None:
         return subprocess.run(_wrap(cfg, work, argv), cwd=cwd or work, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout, creationflags=NO_WINDOW)
-    proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
-    started = time.monotonic()
-    try:
-        while True:
-            check()
-            try:
-                stdout, stderr = proc.communicate(timeout=0.1)
-                return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
-            except subprocess.TimeoutExpired:
-                if time.monotonic() - started > timeout:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                    raise subprocess.TimeoutExpired(proc.args, timeout, output=stdout, stderr=stderr)
-    except BaseException:
-        stop_process_tree(proc)
-        raise
+    # Output to files, not pipes: a grandchild that outlives the compiler (a detached wineserver for the MSVC
+    # toolchains) keeps inherited pipe write-ends open, so a post-kill communicate() that drained them blocked
+    # forever -- the compile never returned and its _SLOTS permit leaked, eventually starving every agent's
+    # compile on _SLOTS.acquire. Waiting on the direct child alone (killed on timeout) always returns.
+    out, err = work / ".cc_stdout", work / ".cc_stderr"
+    with open(out, "wb") as outf, open(err, "wb") as errf:
+        proc = subprocess.Popen(_wrap(cfg, work, argv), cwd=cwd or work, stdout=outf, stderr=errf,
+                                creationflags=NO_WINDOW)
+        started = time.monotonic()
+        try:
+            while True:
+                check()
+                try:
+                    proc.wait(timeout=0.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() - started > timeout:
+                        proc.kill()
+                        proc.wait()
+                        raise subprocess.TimeoutExpired(proc.args, timeout)
+        except BaseException:
+            stop_process_tree(proc)
+            raise
+    stdout = out.read_text(encoding="utf-8", errors="replace")
+    stderr = err.read_text(encoding="utf-8", errors="replace")
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def run_in(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float = 300, *,
