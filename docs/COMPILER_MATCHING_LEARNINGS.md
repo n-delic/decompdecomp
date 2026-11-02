@@ -2016,3 +2016,11 @@ score regression, new coverage or measured compile-count saving. The earlier 189
 main revision. These equal-budget replays exercise repair selection without adopting code; diagnostic
 capture was tested separately on copied inputs and with budget/adoption integration tests. Do not
 claim that phase capture or these new source families have solved the remaining allocator mismatches.
+
+After integrating main `b3f8aff` (equal-value tracking/allocation follow-ups), the same five-input
+comparison again recovered the historical inputs at trials 35 and 1, with unresolved best scores
+10/15/15 and 329 compiler invocations on each side. Main recorded 179 unchanged-output trials on
+the three unresolved inputs; the fair-exploration/lifetime version recorded 192. Reserving exploration
+can spend more trials on source shapes with identical immediate output; this corpus demonstrates no
+match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
+equal-value priorities fixed two integration test failures without dropping either family group.
