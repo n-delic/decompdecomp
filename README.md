@@ -38,6 +38,11 @@ repair pipeline. A function match now carries a separate MIPS export-layout chec
 
 ## Automatic repairs before paid agents
 
+Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
+regional combination probes, and show compact mismatch clues to agents. Captured fixes
+can test single-edit and pair subsets without model calls. These are search heuristics,
+not a demonstrated speedup for every checkpoint.
+
 Local allocation search now includes initialized pointer guards around identical call branches,
 CFG-proven value-phase splits paired with disjoint lifetime reuse, and groups of up to four
 independent pointer/scalar initializers. A small regional frontier can retain a temporarily worse

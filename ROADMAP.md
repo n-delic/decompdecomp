@@ -1683,4 +1683,11 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
 - Done: newly matched source-preparation/deep-search functions can spend their remaining bounded budget on export repair. ROM-verified strings combine with macro arithmetic/scalar references, retaining scheduling-sensitive pools; prefix normalization still needs the standalone rebuild.
 - Planned: non-MIPS saved-pointer readers and constant-operand syntax; imported-build private-header publication and object-layout/export adapters. The MIPS-specific readers cover N64/PS1/PS2 ROM work; absent readers produce no candidate rather than guessed register/layout facts.
 - Planned: reconstruct entirely absent retail cases and enum revisions from CFG/data evidence. Current CPU retail-branch recovery restores only explicit supplied commented conditions with available declarations; arbitrary missing control flow stays outside automatic adoption.
+
+- Done: shared target-block/whole-function repair ranking, bounded regional follow-up
+  combinations, captured single/pair output ablation, and compact agent block reports.
+  Generic search and replay are shared across processors and modes; automatic iterative
+  autopilot retains its existing linked-MIPS-only scope. Other modes require a copied
+  evaluator for composition replay; there is no inferred C-to-instruction source map.
+
 - Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.

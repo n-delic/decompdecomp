@@ -16,6 +16,7 @@ from . import allocation_evidence, region_repairs, search_frontier, workers
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
 DETOUR_RATIO = 1.25
 REGION_DETOUR_RATIO = 8
+REGION_COMBINATIONS = 3  # children share the ordinary compile/time budget
 
 
 def regional_detour(node, report):
@@ -130,7 +131,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
 
 def expand_wave(state, variants, arch):
     """Retain numeric and structural alternatives between bounded search waves."""
-    ranked = sorted(state['next'], key=lambda n: (n.get('region_damage', 0), n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
+    ranked = sorted(state['next'], key=lambda n: (*region_repairs.priority(n)[:2], n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
                                                     stack_distance(n['report'].get('rows') or []), n['score']))
     ordinary = [n for n in ranked if n['score'] <= n['ceiling']]
     detours = sorted((n for n in ranked if n['score'] > n['ceiling']),
@@ -150,11 +151,17 @@ def expand_wave(state, variants, arch):
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
+    recovered = [n for n in best if n.get('region_gain',0)>0]
+    burst_parent = min(recovered,key=region_repairs.priority) if recovered else None
     for parent in best:
         if parent['depth'] >= DEPTH:
             state.setdefault('counts', {})['depth_limit'] = state.get('counts', {}).get('depth_limit', 0) + 1
             continue
-        children(state, parent, variants)
+        # Probe the best recovered region first, after comparing the entire wave.
+        burst = (parent is burst_parent and
+                 state.get('regional_bursts', 0)<REGION_COMBINATIONS)
+        if children(state, parent, variants, priority=2 if burst else 0) and burst:
+            state['regional_bursts'] = state.get('regional_bursts', 0)+1
 
 
 def stack_distance(rows):
@@ -177,7 +184,7 @@ def output_key(report):
 
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False):
-    from . import draft_repairs, normalization_repairs, repair_ranking, stack_padding_repairs
+    from . import draft_repairs, normalization_repairs, stack_padding_repairs
     labels = {}
     proposals = draft_repairs.variants(source, fn['name'], arch, fn['asm'] or '', flags, labels, header=header, limit=None, tables=tables,callees=callees)
     for text in stack_padding_repairs.grow(source, fn['name'], arch, report.get('rows') or []):
@@ -187,16 +194,9 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
         for text in normalization_repairs.frame_variants(source, fn['name'], report.get('rows') or []):
             proposals.append(text)
             labels[text] = 'spill_normalization'
-    families = repair_ranking.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
-    ranked = sorted(proposals, key=lambda p: families.index(labels[p]))
-    result, counts = [], Counter()
-    for proposal in ranked:
-        family = labels[proposal]
-        if counts[family] < 16 and len(result) < 20:
-            result.append(proposal)
-            counts[family] += 1
-    # Reserve room for smaller families without wasting budget when only one is applicable.
-    result += [p for p in ranked if p not in result][:20-len(result)]
+    families = region_repairs.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
+    pools = [[p for p in proposals if labels[p]==family] for family in families]
+    result = [p for row in zip_longest(*pools) for p in row if p is not None][:20]
     return [(labels[p], p) for p in result] if tagged else result
 
 
@@ -246,7 +246,7 @@ def run(twins, slug, job):
         header = net._context(proj['id'], fn['unit'])['header']
         settings = compiler_for(cfg, fn['vram'])
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v8', candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v9', candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

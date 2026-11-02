@@ -165,3 +165,23 @@ the baseline is measured once and reported separately in `compiler_invocations`.
 The shared C families also reach supported imported projects. This read-only exported-ROM
 adapter currently needs MIPS targets; other processors and imported builds can use the existing
 copied-evaluator replay interface. This limitation does not disable their ordinary local repairs.
+
+### Target-block composition and captured subsets
+
+Iterative search interleaves family rankings from the first differing 16-instruction
+target block (with adjacent context) and the whole function. This ranks hypotheses;
+it does not map C lines to assembly or prove that an edit preserves a correct block.
+The frontier prefers less damage to previously correct blocks, then regional recovery.
+Up to three regional follow-up bursts move two child probes forward within the same
+compile/time allowance, width and four-stage depth. A worse scalar score remains
+eligible only under the existing eight-times ceiling, equal instruction count and
+measured regional recovery. Pending candidates remain resumable. Ordinary judges
+alone accept matches; displayed rows never do.
+
+Captured-output minimisation spends at most half its trial budget testing interleaved
+single-edit and pair subsets from the failed source. A successful subset becomes the
+starting set for greedy deletion. `sufficient_recipes` records edit indices that
+reproduced the frozen successful output, not semantic necessity or an automatically
+enabled repair rule. The total compiler budget is unchanged; short budgets cannot
+exhaust every pair. Agents also receive the first differing target block and compact
+register/scheduling/stack clues. These are advisory, not proven lifetime conflicts.

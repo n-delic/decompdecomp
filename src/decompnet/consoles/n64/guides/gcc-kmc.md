@@ -241,6 +241,13 @@ checkpoint was not automatically recovered in the measured budget. Regional fron
 useful intermediate shapes with a temporarily worse total score; the ordinary exact judge still
 decides acceptance. Use the read-only linked-ROM benchmark to measure a private checkpoint.
 
+For mixed allocator/scheduling misses, inspect the compact first-differing-block
+report before requesting another full diff. Local search now interleaves block and
+whole-function repair priorities and bounds combinations of regional improvements.
+This does not prove a lifetime conflict: the frozen score-520 regression remained
+unresolved after 128 candidate compiles. Captured single/pair edit subsets can help
+separate sufficient changes from accumulated experiments under the same compiler.
+
 For repeated halfword subtractions with correct instruction structure but swapped operand registers,
 try `paired_operand_reuse`: stage both operands through the same pair of existing dead word locals.
 Use CFG liveness across branches/backedges, not textual last-use guesses. Unsigned halfword staging

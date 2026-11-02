@@ -1733,6 +1733,23 @@ MIPS pointer-lifetime candidates require an entry field load saved to the stack,
 
 A third controlled replay starts with the historical draw candidate at score 4,069. Generated saved-pointer lifetime C reaches 40; generated neighboring-float-element correction then links exactly. The lifetime reader selects the second call occurrence, not the earlier same-callee call. Restricting candidate cleared fields to the straight-line entry region avoids confusing later cleanup clears with the saved pointer. This is another historical replay, not new coverage.
 
+### Target-block search is guidance, not a compiler diagnosis
+
+A linked MIPS reconstruction using KMC GCC 2.7.2 (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`)
+was replayed read-only from the same unresolved score-520 source and frozen header.
+Interleaved first-block/whole-function rankings and bounded regional combinations
+still returned score 520 after 128 candidate compiles (about 71 seconds). This is
+negative evidence: ranking existing repairs did not recover the original match.
+Do not repeat it as a demonstrated end-to-end speedup. Single/pair captured-edit
+subsets are controlled output experiments, not proof that the original compiler used
+that source shape. No game source or binary is included in the regression tests.
+
+The later allocator checkpoint still recovered the normal linked/data exact result
+through initializer extraction, balanced pointer calls and initializer ordering:
+110 candidate compiles, about 100 seconds (previous implementation: 108 compiles,
+about 101 seconds). These are recovery regressions for an already known match,
+not new game progress; wall-time variation is not evidence of lower search cost.
+
 A subsequent source-assisted map routine required a retail cinema guard absent from the reference. Reusing a supplied draft's complete leading guard under a measured missing-call constraint reduced a controlled prepared candidate from 5,065 to 1,478; raw draft memory macros still differed from the exact typed reconstruction. This CPU rule is an improvement lead, not an automatic exact-match claim. Same-unit object-definition evidence separately recovered a boss initializer: supplying the actual object definition instead of an extern removed redundant address-high loads. Do not turn unrelated externs into definitions without actual source evidence.
 ## 2 November: paired operands and a derived loop counter (KMC GCC 2.7.2)
 
