@@ -2297,6 +2297,54 @@ used 80 candidate evaluations; no best-score regression occurred. Local suite ti
 were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
 same-case regression evidence, not disjoint-target validation of a broad ranking boost.
 
+
+### Measured paired edits and equal-score output diversity
+
+Always replay against current main before attributing a recovery to a new family. Main `76fc422`
+already recovers the historical 52-instruction score-10 checkpoint in four candidate trials using
+`allocation_schedule_bridge` followed by `pointer_index_scope`. Its two differences were scratch
+register choices, with identical ordered instruction forms and a 40-byte frame. The useful change
+was a coupled lifetime/scope shape, not literal correction or prescribed physical registers.
+The generic regression checks that these shared families still compose; no game code is included.
+
+A separate bounded local-pair path combines small, disjoint edits from two measured non-improving
+siblings of the same root. It only applies to supported MIPS register/scheduling near misses with
+unchanged instruction count/frame and score at most twice the parent. Up to three token hunks per
+edit, 24 tokens per hunk, an overall 96-token window, six recorded siblings per parent, two pairs per
+parent and four queued pairs per persisted frontier bound the search. Literals, preprocessor sources,
+volatile/asm sources, overlaps and large edits decline pairing. These are candidate-generation limits,
+not a semantic proof. An ordinary compiler and linked code/data judge must still accept the result.
+Pair work shares existing phase/time/compile limits and survives JSON frontier resume/cancellation.
+
+The equal-score beam now reserves one slot for a different measured function output even when its
+coarse allocation signature is identical. Existing two-source-per-output caps remain: assembly-equal
+sources can lead to different later edits, so do not discard every equivalent source. No displayed
+row or output hash supplies a match verdict. Regional choices and the numeric winner remain bounded
+by the existing beam width.
+
+Negative investigation results: 42 type/loop/store probes and 86 slot-lifetime/initialization probes
+on the old score-10 input did not beat 10. On the remaining two score-15 inputs, 19 pointer/constant/scope
+probes and 14 shifted-value lifetime probes did not improve them. One has three register-only rows
+around a pointer load and constant store (124 instructions, 32-byte frame). The other has three rows
+around a shifted result, branch and forwarded argument (295 instructions, 136-byte frame). A global
+register-substitution map is inconsistent for the latter: a machine register is reused for different
+values, so blindly renaming registers or joining pseudo IDs would be unsound. Assembly alone does not
+establish header/prototype correctness. Source/data and private reports remain outside the repository.
+
+
+Equal-budget main/control, pairs-only, diversity-only and combined replays used five frozen
+checkpoints (four target groups), 96 candidate slots and 120 seconds per checkpoint, on copied
+ROM/database inputs with the same pinned compiler settings. All recovered the same three historical
+checkpoints at candidate 56, 1 and 4; the first two share a target. Both remaining scores stayed 15.
+Each run spent 253 candidate compiles plus five baselines (258 compiler invocations). Pairs-only and
+the combined path each evaluated two new pairs on the 124-instruction input; neither improved it.
+No pair applied to the macro-heavy 295-instruction input under the deliberately narrow grammar.
+The numeric/equal-output change passed its synthetic retention regression but showed no new retail
+match or compile saving in this cohort. Independent training/held-out target-group gates rejected
+promotion for each isolated feature and their bundle: no learned priority boost was installed.
+A separate homemade C test uses the installed pinned compiler and ordinary ROM linker to establish
+that two independent single edits miss while their composed candidate matches its generated control;
+this demonstrates the composition/judge path, not held-out game performance or semantic equivalence.
 ## Follow-up: four unchanged register-only cases (November 2026)
 
 The next copied-checkpoint investigation used the same pinned KMC GCC 2.7.2 profile
