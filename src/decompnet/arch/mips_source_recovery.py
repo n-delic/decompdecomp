@@ -147,6 +147,23 @@ def private_abi(asm, rows):
                 and not re.search(r'\b(?:lw|ld|or|move|addiu|addu)\s+\$a3\b',tail)):
             return {'kind':'retained-caller-saved-argument','message':'Target retains an argument in $a3 across multiple calls. Prioritize actual callee definitions and translation-unit clobber context before ordinary signature changes.'}
     if rows:
+        # A load through a temporary before any definition, paired with a measured
+        # ordinary argument load at the same offset, supports private entry context.
+        # Stop at control flow; later paths need a CFG reader, not a lexical guess.
+        defined=set()
+        for line in text.splitlines():
+            if re.match(r'(?:b\w*|j\w*)\s',line):break
+            load=re.fullmatch(r'(l[bhw]u?)\s+\$\w+,\s*('+NUMBER+r')\((\$t[0-9])\)',line)
+            if load and load[3] not in defined:
+                measured=any(mark!=' ' and target.strip()==line and
+                             re.fullmatch(re.escape(load[1])+r'\s+\$\w+,\s*'+re.escape(load[2])+r'\(\$a[0-3]\)',own)
+                             for mark,target,own in rows)
+                if measured:
+                    return {'kind':'temporary-register-entry','message':'Target reads an incoming pointer through an undefined temporary register while the candidate uses an ordinary argument at the same offset. Prioritize original whole-unit call/entry context; do not invent a register binding.'}
+            if not re.match(r'(?:s[bhdw]|swc1|sdc1)\s',line):
+                destination=re.match(r'\w+\s+(\$\w+),',line)
+                if destination:defined.add(destination[1])
+    if rows:
         for capture in re.finditer(r'\b(?:move|or)\s+(\$t[0-9]),\s*\$a[0-3](?:,\s*\$zero)?\n',text):
             register=capture[1];tail=text[capture.end():]
             call=re.search(r'\bjal\s+\w+\n',tail)

@@ -1916,3 +1916,25 @@ exist in the original image; 24,376 bytes had been classified as binary data. A 
 split preserves every existing matched target. These are recovered matching targets,
 not new C matches or evidence that any compiler flag changed. Check surrounding original
 bytes before declaring a fall-through fragment handwritten assembly.
+
+### Context triage before ordinary body permutation
+
+A controlled IDO 5.3 `-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`
+replay showed that an actual same-file object definition removed five redundant address-high
+loads and made an initializer exact. Original definitions are already the first source preparation
+variant; diagnostics now prioritize the largest measured excess. This is not permission to convert
+arbitrary externs to zero definitions.
+
+A supplied retail guard improved a historical source candidate from 5065 to 1478, while its manually
+typed equivalent matched. Raw-field macros can change aliasing and register allocation. CPU follow-up
+now translates exact supported raw macro bodies through unambiguous existing simple scalar record
+layouts before testing the raw guard. It never guesses member names, offsets or new records. Complex
+nested layouts and whole-unit private ABI compilation remain gaps, not solved cases.
+
+Source evidence is also classified before repeating broad body trials: disjoint compiled call sets
+plus largely different field offsets request source-identity review; C89 `register x = ...` shadowing
+an earlier typed local gets an implicit-int warning. Neither warning rejects or edits a candidate.
+Measured private temporary-register entry and retained-register ABI cases route toward translation-unit
+context, and suppress only generic declaration/stack-shape follow-ups, retaining targeted repairs.
+An extra restore/return epilogue receives a separate route; target extents and byte judgment are unchanged.
+Cache version 11 includes the same complete candidate, header, settings and destination inputs.
