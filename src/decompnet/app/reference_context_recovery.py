@@ -26,7 +26,8 @@ def static_helpers(source, header, reference):
             if len(selected)>=4:return []
             selected.append((name,code,reference[:span[0]].count('\n')+1))
             used.update(called(code)-{name}-shadowed(code))
-    if not selected:return []
+    line_variants=helper_lines(source,header,reference)
+    if not selected:return line_variants
     private=header
     for name,_,_ in selected:
         # A stale external prototype conflicts with the real static definition.
@@ -44,7 +45,27 @@ def static_helpers(source, header, reference):
         private+='\n'+code[:_blank(code).index('{')].strip()+';\n'
     for _,code,line in selected:
         private+=f'\n#line {line} "reference.c"\n'+code+'\n'
-    return [('cpu-reference-static-helpers',source,private)]
+    return [('cpu-reference-static-helpers',source,private),*line_variants]
+
+
+def helper_lines(source, header, reference):
+    """Restore physical lines only for identical existing private helper definitions."""
+    private=header;edits=[]
+    normalize=lambda text:re.sub(r'\s+','',_blank(text))
+    for name in sorted(called(source))[:32]:
+        actual=find(reference,name);existing=find(header,name)
+        if not actual or not existing:continue
+        a,b=actual;x,y=existing
+        code=reference[a:b];own=header[x:y]
+        if not re.search(r'\bstatic\b',_blank(code).split('{',1)[0]):continue
+        if normalize(code)!=normalize(own):continue
+        line=reference[:a].count('\n')+1
+        directive=f'#line {line} "reference.c"'
+        if header[:x].rstrip().endswith(directive):continue
+        edits.append((x,'\n'+directive+'\n'))
+        if len(edits)>=4:break
+    for at,text in sorted(edits,reverse=True):private=private[:at]+text+private[at:]
+    return [('cpu-reference-helper-lines',source,private)] if edits else []
 
 
 def configurations(reader, cfg, mapping, aliases, fallback, prepare):

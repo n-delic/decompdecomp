@@ -129,3 +129,12 @@ def test_static_helper_does_not_import_a_shadowed_callback():
     result=recovery.static_helpers('void entry(void (*swap)(int)){helper(swap);swap(2);}','',reference)
     assert len(result)==1 and 'static void helper' in result[0][2]
     assert 'static void swap' not in result[0][2] and 'bad()' not in result[0][2]
+
+
+def test_existing_identical_helper_restores_original_lines_without_body_changes():
+    reference='\n'*16+'static int helper(int n){return n+1;}'
+    header='static int helper(int n){return n+1;}'
+    result=recovery.static_helpers('int entry(void){return helper(1);}',header,reference)
+    assert len(result)==1 and result[0][0]=='cpu-reference-helper-lines'
+    assert result[0][2]=='\n#line 17 "reference.c"\n'+header
+    assert not recovery.static_helpers('int entry(void){return helper(1);}',header,reference.replace('n+1','n+2'))

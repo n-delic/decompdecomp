@@ -1582,3 +1582,9 @@ its private helper and restoring the original definition through the new generat
 verification. A first replay imported a same-named global helper that was shadowed by a callback parameter;
 that failed. Helper discovery now excludes function-pointer parameters, retains their actual declarators in
 forward declarations, and has a synthetic regression for the shadowing case. This replay adds no coverage.
+
+An additional original-source audio-frame function was recovered after restoring the entry's physical line
+and an already-present static helper's original line. Entry line alone retained score 270; restoring the
+identical helper's line recovered exact linked code/data at `-O3`. Preparation now also generates that private
+line-only variant when the existing and reference helper definitions are token-identical. A controlled replay
+reproduces this result. Differing helper bodies are not replaced by this rule.
