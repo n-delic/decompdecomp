@@ -86,7 +86,7 @@
       <h3><span class="pl-name">Nintendo 64</span> <span class="status rec">Recommended</span></h3>
       <ol class="stations">
         <li><small>Your file</small><b>ROM</b><span>.z64, .n64 or .v64</span></li>
-        <li><small>Split by</small><b>splat</b><span>with spimdisasm; finds code loaded later and compressed code, with bounded recovery of truncated function tails</span></li>
+        <li><small>Split by</small><b>splat</b><span>with spimdisasm; finds code loaded later and compressed code, with bounded recovery of truncated function tails and a read-only binary-gap audit</span></li>
         <li><small>Built by</small><b>KMC GCC 2.7.2</b><span>or IDO 5.3 / 7.1, the game's own compiler; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds your ROM again, byte for byte</span></li>
@@ -253,6 +253,7 @@ jr      $ra
     <div class="step">
       <p class="step-n">1 · Install</p>
       <p class="cmd"><code id="cmd-linux">curl -fsSL https://decomp.ndelic.com/install.sh | bash</code><button type="button" class="copy" data-copy-from="cmd-linux">Copy</button></p>
+      <p class="step-note">Without a desktop window: run <code>decomp serve --port 6464</code>, open <code>http://127.0.0.1:6464/</code>, and use the sign-in code printed in the terminal. The same agents and compilers run on that computer; the server binds to localhost only.</p>
       <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">releases page</a>.</p>
       <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>

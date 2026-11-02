@@ -543,6 +543,12 @@
           <div class="pad">
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
+            <div id="codeAuditPanel" hidden>
+              <p class="muted small">Audit binary gaps for incoming transfers and possible code. This reads original bytes without changing targets or using AI. Patterns need review; data and microcode can resemble code.</p>
+              <button class="ghost small-btn" id="codeAuditBtn" type="button">Audit unanalysed code</button>
+              <pre class="joblog" id="codeAuditLog" hidden></pre>
+              <div id="codeAuditResult" aria-live="polite"></div>
+            </div>
             <div id="reimportGame">
               <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
               <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>
@@ -686,6 +692,7 @@
     </header>
     <div id="functionLoading" class="navigation-loading" role="status" hidden><p id="functionLoadingText">Loading function…</p><div class="workbar" role="progressbar" aria-label="Loading function"><i></i></div><button id="functionRetry" class="ghost" type="button" hidden>Retry</button></div>
     <div class="drawer-body">
+      <p class="set-aside" id="fnBoundaryReview" hidden></p>
       <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
       <details id="fnCompilerTest" class="collapsible-box" hidden>
         <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>

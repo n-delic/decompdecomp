@@ -317,3 +317,9 @@ noise cannot promote. The CLI emits a source-free decision and exits nonzero for
 it does not change app policy. `repair_promotion.install(net, training, heldout)` is the explicit
 reviewed developer import. Rejection revokes an earlier approval; compiler/profile or repair-rule
 changes prevent reuse. Candidates remain available for ordinary exploration without a boost.
+
+The residual-cohort investigation added one target-backed independent-address family.
+An equal-budget on/off replay of six frozen cases (96 candidates per run) improved one
+case from linked score 155 to 25, with no score regressions and no new exact matches.
+Five register-only cases remained unchanged. See COMPILER_MATCHING_LEARNINGS.md for the
+controlled settings and failed probes; timing changes were not a demonstrated speedup.

@@ -21,6 +21,7 @@ from . import (
     expression_recipes,
     expression_repairs,
     focused_lifetime_repairs,
+    independent_address_repairs,
     integer_lifetime_repairs,
     lifetime_repairs,
     load_pair_repairs,
@@ -42,7 +43,7 @@ from . import (
 )
 
 EXPERIMENTAL = ('experimental_bitfield_frame',)
-FAMILIES = ('value_trace_bundle','verified_unit_helpers') + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
+FAMILIES = ('value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
             'address_temporary','constant_local','comparison_load','stack_array','loop_induction',
             'parameter_width','value_lifetime','sum_shape','call_result_inline','comparison_reuse','integer_address_order','mmio_address','call_arity','struct_byte_offset','switch_call','paired_load_order','array_index_width','split_scalar_lifetime','pointer_before_store','store_address_lifetime','stack_padding','local_width','pointer_cast_inline',
             'local_widening','callee_parameter_width','callee_return_width','split_integer_lifetime','merge_integer_lifetimes','branch_call','goto_leaf','switch_layout') + draft_repairs.AGENT_FAMILIES
@@ -120,6 +121,10 @@ def available(net, agent, slug, fn, source, revision, requested):
     flags=compiler_for(cfg,fn['vram']).get('flags',[]) if not net.fork_slug(slug) else []
     debug=any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
     pools={family:[] for family in requested}
+    if independent_address_repairs.FAMILIES[0] in pools and net.is_rom(proj):
+        header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
+        for family,candidate in independent_address_repairs.variants(source,fn['name'],proj['arch'],repair_ranking.evidence(net,fn['id'],agent.id),header):
+            pools[family].append(candidate)
     if prototype_reuse.FAMILY in pools:
         pools[prototype_reuse.FAMILY]=[s for _,s in prototype_reuse.variants(net,proj,fn,source)]
     if 'verified_unit_helpers' in pools:

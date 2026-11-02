@@ -106,6 +106,10 @@ def register(app: App) -> None:
             return {k: v for k, v in res.items() if k != "log"} | {"log": res.get("log", "")[-1500:]}
         return {"job": jobs.start("export", work)}
 
+    def p_code_audit(slug, request, data):
+        from .. import rom_gap_audit
+        return {"job": jobs.start("code-audit",lambda log:rom_gap_audit.run(net,slug,log))}
+
     def p_reimport(slug, request, data):
         if not data.get("confirmed"):
             raise ValueError("confirm that this is your own legally obtained copy of the game")
@@ -154,6 +158,8 @@ def register(app: App) -> None:
         return {"ok": True}
 
     def p_open(slug, request, data):
+        if app.web_login:
+            return {'ok':False, 'message':'Project folder on the server: '+str(net.project_row(slug)['root'])}
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
         return {"ok": why is None, "message": why}
 
@@ -465,7 +471,7 @@ def register(app: App) -> None:
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
-        "/api/reimport": (p_reimport, ["POST"]),
+        "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),

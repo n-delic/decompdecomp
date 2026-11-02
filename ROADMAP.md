@@ -225,6 +225,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
+| Read-only binary-gap audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Function-end reports (`report_boundary`) | ✓ | ✓ | ✓ | ✓ | — | ✓ (agents agree, the rebuild checks) | — | — |
 | Compiler ranges and suggestions | ✓ | ✓ | ✓ | ✓ | from scratch: per source file (`try_compiler`, Settings); else the project's build | per source file (`try_compiler`, Settings) | per source file (`try_compiler`, Settings) | the project's build |
 | Verified cleanup of rare compiler profiles | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | ✓ ROM mode | — | — | — | — |
@@ -1716,6 +1717,14 @@ adapter; these source families do not change that limitation or any match verdic
   units with private entry/clobber conventions remain planned. Imported builds retain header ownership;
   their whole-unit integration must preserve their build's judge rather than the ROM single-entry path.
 
+
+- Done: MIPS ROM binary-gap audits with bounded incoming-transfer and frame/return evidence,
+  shared incomplete-target warnings, and a narrow migration for the retired automatic
+  fall-through assembly verdict. Warnings do not pause functions or shrink the denominator.
+- Planned: non-MIPS boundary readers and object-project segment adapters for gap audits;
+  EE-specific instruction decoding, function-pointer-only entry evidence and code/data
+  subsegment audits. Existing MIPS diagnostics remain advisory when a decoder cannot close flow.
+
 ### Finish near matches
 
 An explicit cancellable pass reuses iterative repair frontiers with a separate user
@@ -1740,3 +1749,14 @@ Stored traces also feed local repair batches. Held-out replay approvals gate exp
 boosts and broad focus promotion. Remaining: imported-unit verification/file-context adapters,
 non-native/non-GCC dump readers, full translation-unit/private-clobber context, initialized arrays and
 exact original physical helper-line provenance. These gaps do not permit guessed layouts or ABI types.
+
+- Target-backed independent-address materialization is available to MIPS ROM iterative
+  search, local agent repairs and the bounded pre-permuter pass. Imported project builds
+  need a build-owned alias/link adapter; other architectures need their address-pair
+  reader before this hypothesis can reach them. The first six-case controlled cohort
+  gained one closer draft, with no newly exact function.
+## Headless browser serving
+
+Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.
+
+Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.

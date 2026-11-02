@@ -84,3 +84,11 @@ assignments in a straight-line function. Branches and unknown expressions are sk
 `learned_expression` reuses small templates from exact results under the same compiler
 profile. Local repair batches and deep search spend their normal compile allowance on these
 hypotheses; no model call is needed to generate them. They still require an exact judge.
+
+
+Before tuning a candidate, check any **Boundary review** warning. A target ending in a
+prologue or load sequence can be truncated by a segment boundary; it does not establish
+handwritten assembly. Inspect adjacent original bytes and known mappings, then use a
+copied reimport or proven piece join. Do not spend the candidate budget on an incomplete
+extent or vote it assembly just because no return was imported. Gap audit results are
+review leads, including when direct control flow closes; they never establish a match.

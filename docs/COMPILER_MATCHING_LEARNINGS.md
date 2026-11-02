@@ -1973,6 +1973,15 @@ context, and suppress only generic declaration/stack-shape follow-ups, retaining
 An extra restore/return epilogue receives a separate route; target extents and byte judgment are unchanged.
 Cache version 11 includes the same complete candidate, header, settings and destination inputs.
 
+
+### Boundary evidence precedes allocator evidence
+
+After the five truncated-target repairs, a frozen N64 export audit found four further
+raw-gap leads: two direct-call/closed-flow candidates, one unreferenced closed frame
+pattern and one unresolved frame pattern. None was adopted automatically. A fall-through
+extent now prompts boundary review; it is not an assembly classification, a compiler
+mismatch or proof that a different flag is needed. Existing exact acceptance is unchanged.
+
 ### Current exact callers as prototype hypotheses
 
 A current exact caller's candidate-owned plain scalar prototype can seed another caller
@@ -2079,3 +2088,72 @@ traced bundles ran on the smallest input without improving it. No new recovery, 
 regression or compile-count saving. The held-out promotion gate therefore remains closed. These
 five-input replays do not exercise donor-context transfer; that path has separate stale/conflict
 rejection tests and the pinned-GCC homemade context check above. No live project adoption occurred.
+
+### Independent address materialization after near-miss triage
+
+A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
+changed instruction rows) and one mixed address/register miss. The pinned compiler was
+`gcc-2.7.2-kmc`, with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3` and the exact captured unit header.
+In the mixed case, deriving an address from another pointer let GCC replace a second
+LUI/ADDIU materialization with an ADDIU from the existing base. Replacing the arithmetic
+with the already-used canonical symbol changed allocation elsewhere and worsened the
+score to 895. A fresh automatic alias resolving to that same target address retained
+independent compiler expressions and reduced the linked judge's score from 155 to 25.
+Only three register-difference rows remained; it was not an exact match.
+
+`independent_address_materialization` now proposes this bounded hypothesis when the
+original has repeated adjacent full-address pairs and the candidate has fewer. A single
+unescaped byte pointer must have one literal-address definition and a straight-line
+literal offset use. Unknown writes, control flow, macros and other architectures are
+excluded. The existing ROM linker resolves the fresh automatic alias; no symbol table,
+shared header, object bytes or judge rules are changed. It reaches iterative repairs,
+agent local families and the existing eight-candidate pre-permuter allowance. Imported
+builds need their own owned symbol/link adapter before automatic aliases can be used.
+
+Controlled copied-ROM replay used identical six sources/headers/targets and 16 candidates,
+30 seconds per function. With only this family disabled: 96 candidates, zero improvements,
+zero exact matches, 34.7 seconds. Enabled: 96 candidates, one improvement (155 to 25),
+zero exact matches, 38.8 seconds. These timings do not demonstrate a throughput improvement. The improvement appeared
+on candidate 2 through an existing neutral shape plus the new family; the standalone
+new family also improved the original source. Five cases did not improve; no live work
+was changed and no fresh full-ROM match is claimed.
+
+Failed probes worth avoiding: plain pointer/index commutation, fresh block pointer locals,
+constant-store staging, simple assignment-chain reversal, signedness changes, one-shot
+scopes around the local stores, volatile-load qualifications and record/integer pointer
+views did not improve the register-only cases. A 52-instruction case exhausted 129 existing
+bounded candidates and 251 traced random candidates without improving score 10. A
+124-instruction case exhausted 215 existing candidates and 254 traced random candidates
+without improving score 15. Disabling either scheduler worsened the three tested cases;
+several other GCC optimization toggles left them unchanged. These are negative results
+for frozen inputs, not claims that all possible C shapes have been exhausted.
+
+## Repeated copy helpers and room repair history (November 2026)
+
+Recent examples motivated three bounded shared-pipeline hypotheses:
+
+- `inline_copy_loop`: extract repeated ordinary unsigned-word copy loops. A combined form extracts
+  overlap-tested forward/backward copies only when control-flow liveness proves their unescaped
+  induction locals dead at every exit. The fallback preserves final pointer/counter values explicitly.
+- `typed_command_record`: represent two consecutive ordinary word stores as a candidate-local
+  two-word record, retaining pointer-load, pointer-update and payload-store order. Requires an
+  explicitly declared word-pointer member; does not infer offsets or modify shared layouts.
+- `known_call_excess_arguments`: a matched callee definition establishes arity. Remove only trailing
+  integer literals from a single direct call and correct its candidate-owned prototype. Unknown,
+  indirect, variadic and side-effecting extra arguments are excluded.
+
+Controlled replay of private example #20529 recovered the historical successful compiler output
+from a baseline score of 120. Its extracted function fingerprint and allocated data agree with the
+successful control. This is historical recovery, not a new linked-byte match. Graphics examples
+#20532–20533 also changed build settings: they motivate a conservative shape family, but do not
+establish isolated source-repair success. Generated copy/record shapes also have executable host-C
+checks, including overlapping buffers and observable pointer updates. Every proposal still needs
+normal compilation and the project's ordinary judge before it can become progress.
+
+Room exact-candidate packets optionally include the worker's captured failed baseline, score,
+compiler settings and historical header. After host acceptance, these stay under `worker_baseline`
+in the repair example, with a dedicated worker-before/matched diff in the viewer and full exports.
+They are explicitly worker-reported, not host-rejudged failures, and never become host attempts,
+scores or automatically comparable replay inputs. Host verification of the successful candidate
+is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
+without a failed baseline continue to work.
