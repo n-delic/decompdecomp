@@ -173,13 +173,13 @@ def counter_variants(source, name):
         # Require an ordinary unsigned or signed word index, not a field, narrow value or alias.
         if (not stride or not decl or variable == idx or
                 not re.search(r'\b(?:unsigned(?:\s+int)?|int|u32|s32)\s+'+re.escape(idx)+r'\s*;', part.clean) or
-                re.search(r'&\s*'+re.escape(idx)+r'\b', part.body) or
+                re.search(r'&\s*(?:\(\s*)*'+re.escape(idx)+r'\b', part.body) or
                 int(bound[1])*int(stride[1]) > 2147483647):
             continue
         body_text = part.clean[body+1:stop-1]
         mutation = r'\b(?:'+re.escape(variable)+'|'+re.escape(idx)+r')\s*(?:[+*/%&|^\-]?=|\+\+|--)|(?:\+\+|--)\s*(?:'+re.escape(variable)+'|'+re.escape(idx)+r')\b'
         if (re.search(mutation, body_text) or
-                re.search(r'\b(?:unsigned(?:\s+int)?|int|u32|s32|short|char|long)\s+\**\s*'+re.escape(idx)+r'\b', body_text)):
+                re.search(r'\b'+IDENT+r'\s+\**\s*'+re.escape(idx)+r'\s*(?=[;=,\[])', body_text)):
             continue
         uses = [h for h in refs(part, decl) if body < h.start() < stop]
         if not uses or any(h.start() >= stop for h in refs(part, decl)):

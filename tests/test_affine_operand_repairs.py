@@ -59,6 +59,8 @@ def test_affine_counter_with_internal_goto_and_single_guard_bundles():
 def test_affine_rejects_live_out_mutations_overflow_and_incoming_jump():
     bad = [COUNTER.replace('next: ;', 'next: stride++;'),
            COUNTER.replace('next: ;', 'next: i += 2;'),
+           COUNTER.replace('next: ;', 'next: take(&(i));'),
+           COUNTER.replace('result = stride;', 'Index i; result = stride;'),
            COUNTER.replace('\n}', '\n use(stride);\n}'),
            COUNTER.replace('stride += 5', 'stride += 99999'),
            COUNTER.replace('for (', 'goto next; for ('),
