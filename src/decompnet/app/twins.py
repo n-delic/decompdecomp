@@ -472,6 +472,8 @@ class Twins:
     def _set_aside_rom_asm(self, proj) -> int:
         """ROM projects: the console's asm_reason on each open function's code."""
         console = self.net.console(proj)
+        from .boundary_review import refresh
+        refresh(self.net,proj,console)
         marks = []
         for r in self.net.store.all("SELECT id, target, meta FROM functions WHERE project_id=? AND status='open'", proj["id"]):
             if '"reopened"' not in (r["meta"] or "") and (why := console.asm_reason(r["target"] or b"")):

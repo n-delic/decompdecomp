@@ -318,7 +318,7 @@ def set_aside(fn) -> dict:
     {"set_aside": the reason, "not_c": whether agents agreed no C makes it}, or nothing."""
     meta = json.loads(fn["meta"] or "{}")
     if fn["status"] != "asm" and not meta.get("set_aside"):
-        return {}
+        return {"boundary_review":meta["boundary_review"]} if meta.get("boundary_review") and fn["status"]!="matched" else {}
     why = meta.get("asm_code") or (f"the same code as {meta['asm_twin']}, a matched assembly function"
                                    if meta.get("asm_twin") else "hand-written assembly")
     return {"set_aside": why, "not_c": "not_c" in meta}
@@ -1077,6 +1077,11 @@ class Network:
         """An agent's verdict that no C makes fn's code; with NOT_C_AGENTS agents of NOT_C_MODELS models agreeing, fn
         is set aside (status asm). Returns what to tell the agent."""
         meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fn["id"],)).fetchone()["meta"] or "{}")
+        reader=getattr(self,'console',None)
+        project=db.execute('SELECT * FROM projects WHERE id=?',(fn['project_id'],)).fetchone()
+        boundary=reader(project).boundary_reason(fn['target'] or b'') if reader else None
+        if meta.get('boundary_review') or boundary:
+            return ' No assembly verdict recorded: review the incomplete target boundary first; the function remains available.'
         said = meta.setdefault("not_c", {})
         said[agent.name] = {"model": model_of(agent.name), "why": why[:NOTE_CHARS], "t": time.time()}
         models = sorted({v["model"] for v in said.values()})
@@ -1118,6 +1123,8 @@ class Network:
                 if len(verdicts) < NOT_C_AGENTS or len(models) < NOT_C_MODELS:
                     continue
                 meta = json.loads(db.execute("SELECT meta FROM functions WHERE id=?", (fid,)).fetchone()["meta"] or "{}")
+                if meta.get('boundary_review'):
+                    continue
                 why = max(verdicts.values(), key=lambda v: v["t"])["why"].split("\n")[0][:300]
                 meta["not_c"] = {**meta.get("not_c", {}), **verdicts}
                 meta["asm_code"] = f"{len(verdicts)} agents ({', '.join(models)}) said in their notes that no C makes it: {why}"

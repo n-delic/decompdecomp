@@ -1973,6 +1973,15 @@ context, and suppress only generic declaration/stack-shape follow-ups, retaining
 An extra restore/return epilogue receives a separate route; target extents and byte judgment are unchanged.
 Cache version 11 includes the same complete candidate, header, settings and destination inputs.
 
+
+### Boundary evidence precedes allocator evidence
+
+After the five truncated-target repairs, a frozen N64 export audit found four further
+raw-gap leads: two direct-call/closed-flow candidates, one unreferenced closed frame
+pattern and one unresolved frame pattern. None was adopted automatically. A fall-through
+extent now prompts boundary review; it is not an assembly classification, a compiler
+mismatch or proof that a different flag is needed. Existing exact acceptance is unchanged.
+
 ### Current exact callers as prototype hypotheses
 
 A current exact caller's candidate-owned plain scalar prototype can seed another caller
@@ -2078,3 +2087,33 @@ bounded candidates and 251 traced random candidates without improving score 10. 
 without improving score 15. Disabling either scheduler worsened the three tested cases;
 several other GCC optimization toggles left them unchanged. These are negative results
 for frozen inputs, not claims that all possible C shapes have been exhausted.
+
+## Repeated copy helpers and room repair history (November 2026)
+
+Recent examples motivated three bounded shared-pipeline hypotheses:
+
+- `inline_copy_loop`: extract repeated ordinary unsigned-word copy loops. A combined form extracts
+  overlap-tested forward/backward copies only when control-flow liveness proves their unescaped
+  induction locals dead at every exit. The fallback preserves final pointer/counter values explicitly.
+- `typed_command_record`: represent two consecutive ordinary word stores as a candidate-local
+  two-word record, retaining pointer-load, pointer-update and payload-store order. Requires an
+  explicitly declared word-pointer member; does not infer offsets or modify shared layouts.
+- `known_call_excess_arguments`: a matched callee definition establishes arity. Remove only trailing
+  integer literals from a single direct call and correct its candidate-owned prototype. Unknown,
+  indirect, variadic and side-effecting extra arguments are excluded.
+
+Controlled replay of private example #20529 recovered the historical successful compiler output
+from a baseline score of 120. Its extracted function fingerprint and allocated data agree with the
+successful control. This is historical recovery, not a new linked-byte match. Graphics examples
+#20532–20533 also changed build settings: they motivate a conservative shape family, but do not
+establish isolated source-repair success. Generated copy/record shapes also have executable host-C
+checks, including overlapping buffers and observable pointer updates. Every proposal still needs
+normal compilation and the project's ordinary judge before it can become progress.
+
+Room exact-candidate packets optionally include the worker's captured failed baseline, score,
+compiler settings and historical header. After host acceptance, these stay under `worker_baseline`
+in the repair example, with a dedicated worker-before/matched diff in the viewer and full exports.
+They are explicitly worker-reported, not host-rejudged failures, and never become host attempts,
+scores or automatically comparable replay inputs. Host verification of the successful candidate
+is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
+without a failed baseline continue to work.

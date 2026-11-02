@@ -5,7 +5,7 @@ from ..forks.csource import _blank, find
 from .integer_repair_support import IDENT, INTEGER, edit, locals_for, split_args, view
 from .pattern_repairs import close
 
-FAMILIES = ('typed_clamp_load','typed_pointer_load','loop_update_order','call_postincrement','callee_buffer_extent','known_call_signature')
+FAMILIES = ('typed_clamp_load','typed_pointer_load','loop_update_order','call_postincrement','callee_buffer_extent','known_call_signature','known_call_excess_arguments')
 TYPE = rf'(?:{INTEGER}|void|float|double|f32|f64|{IDENT})(?:\s*\*)*'
 PARAM = re.compile(rf'\s*(?P<type>{TYPE})\s*\b(?P<name>{IDENT})\s*')
 
@@ -176,6 +176,23 @@ def variants(source, name, header='', callees='', _masked=False):
                     amp=part.clean.rfind('&',0,pos);edits.append((amp,base+use.end(),var))
                 else:edits.append((pos,base+use.end(),var+'[0]'))
             add(FAMILIES[4],edits)
+        # A matched callee definition, not a score or guessed prototype, establishes arity.
+        # Only drop literal trailing arguments (no reads/side effects), and update every direct site.
+        prototypes=[p for p in _PROTO.finditer(part.clean[:part.opening]) if p[1]==callee]
+        if (len(prototypes)==1 and len(args)>len(params) and len(params)<=8
+            and not re.search(rf'^\s*#\s*define\s+{callee}\b',header+'\n'+source,re.M)
+            and not re.search(rf'\b{callee}\b(?!\s*\()',part.body)):
+            proto=prototypes[0]
+            normalize=lambda t: re.sub(r'\s+','',t).replace('s32','int').replace('u32','unsignedint')
+            declared=[proto[2][a:b].strip() for a,b in split_args(proto[2])]
+            def type_only(text):
+                named=PARAM.fullmatch(text)
+                return named['type'] if named else text
+            if (len(declared)==len(args) and all((normalize(t)==normalize(p[0]) or normalize(type_only(t))==normalize(p[0])) for t,p in zip(declared,params))
+                and all(re.fullmatch(r'-?(?:0[xX][0-9a-fA-F]+|[0-9]+)[uUlL]*',a) for a in args[len(params):])
+                and not re.search(rf'\b{re.escape(callee)}\b(?!\s*\()',part.clean[proto.end():part.opening])):
+                add(FAMILIES[6],[(opening+1,end-1,', '.join(args[:len(params)])),
+                                  (proto.start(2),proto.end(2),', '.join(t+' '+p for t,p in params))])
         # Canonical named formals provide missing arguments only when the incoming caller parameter has that name/type.
         prototypes=[p for p in _PROTO.finditer(part.clean[:part.opening]) if p[1]==callee]
         if len(prototypes)!=1 or len(args)>=len(params) or len(params)>8 or any(re.search(r'\+\+|--|(?<![=!<>])=(?!=)|\b'+IDENT+r'\s*\(',a) for a in args):
