@@ -1878,3 +1878,11 @@ Callback audit now tracks agreeing scalar MIPS paths, stack spills and field-loa
   held-out other-game subset. No additional retail match or compile saving over main was established.
 - Planned: solve the remaining context-sensitive allocation residuals and validate narrower recipes;
   larger budgets and additional independent games before promoting learned priorities.
+
+### Private compiler-unit verification
+
+Done for MIPS ROM entries with explicit ECOFF procedure metadata: bounded real
+caller/callee units, independently exact code/data for each known body, and
+freshly judged matching-only entry export. Ordinary inline-return placeholders
+retain their prior prefix-normalization behavior. Other processor metadata
+adapters remain planned; PROJECT mode retains its ordinary whole-project judge.

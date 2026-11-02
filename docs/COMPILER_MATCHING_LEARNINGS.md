@@ -2583,3 +2583,31 @@ predecessors. The bounded context path now permits four total entries, still
 requiring the current entry last, exact known extents/order, already-matched
 auxiliary entries, and independent freshly linked byte/data proof for every body.
 Other processors and object-project builds retain their existing paths.
+
+### IDO O3 private calling conventions require actual caller/callee context
+
+Ten previously unmatched N64 SDK/libc entries (6,888 bytes) were independently
+recovered in read-only byte/data replay by compiling small actual caller/callee
+units at IDO 5.3 `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`.
+The cases cover decimal formatting, printf field handling and MIDI sequence readers.
+Compiling helpers globally or alone had changed the private argument registers and
+callee clobber information; large scores were not evidence that their algorithms
+were missing from available source. These are new source-assisted candidates,
+not additional live matches until normal promotion and complete export succeed.
+
+IDO's assembler omits private procedure symbols from `.symtab` while retaining
+explicit starts, sizes and names in ECOFF `.mdebug`. The shared ELF reader now uses
+validated processor metadata, with bounds/endian/overlap checks and agreement with
+ordinary function symbols. Relocations into a same-file private procedure resolve
+through that compiler-recorded name. No target bytes or inferred boundaries supply
+this metadata. Referenced bodies remain bodies; only explicit unused `jr ra; nop`
+inline placeholders may be omitted, preserving existing prefix-normalization cases.
+
+Bounded private compiler units can keep up to four known real entries. Every body
+must independently pass the ordinary linked code/data judge at its existing ROM
+address, with its original size; auxiliary statuses are unchanged. The unit's
+compiler order need not be its retail link order: addresses come only from known
+ROM names, never a guessed offset delta. Only the chosen freshly linked entry is
+exported through matching-only extraction, so context is not exported or counted
+again. Other architectures without this metadata reader and PROJECT builds keep
+their existing function/build paths.
