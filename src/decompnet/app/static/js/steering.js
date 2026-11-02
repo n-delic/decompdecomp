@@ -234,10 +234,13 @@ function renderFinishNear(ov) {
   button.onclick = async () => {
     const slug = S.slug;
     const finish = beginWork(log, "Finishing near matches", [button], "Near-match pass finished");
-    stop.hidden = false;
+    log.hidden = false;
+    $("finishNearSummary").textContent = "Preparing near-match queue…";
+    stop.hidden = false; stop.disabled = true;
     try {
       const result = await api("/api/finish-near", {method: "POST", body: {slug,
         seconds: Number($("finishNearSeconds").value), attempts: Number($("finishNearAttempts").value)}});
+      stop.disabled = false;
       stop.onclick = async () => {
         try { await api("/api/job/cancel", {method: "POST", body: {id: result.job}}); }
         catch (e) { showJobError(log, e.message); }
