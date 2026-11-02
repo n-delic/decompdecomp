@@ -45,3 +45,13 @@ def test_legacy_weight_summary_exposes_reference_priority_and_loop_notes(tmp_pat
     assert phase['loop_begin_notes']==1
     assert [r['register'] for r in phase['allocation_priority']]==[201,202]
     assert phase['allocation_priority'][0]['legacy_weight']==88/74
+
+
+def test_bounded_phase_capture_includes_only_requested_function_trace(tmp_path):
+    from tests.test_rtl_value_trace import GREG, RTL
+    (tmp_path/'func.c.rtl').write_text(RTL)
+    (tmp_path/'func.c.flow').write_text(RTL)
+    (tmp_path/'func.c.greg').write_text(GREG)
+    result=diagnostics.phase_summary(tmp_path,'f')
+    assert result['value_trace']['values'][0]['pseudo']==72
+    assert not diagnostics.phase_summary(tmp_path,'missing')['value_trace']['values']

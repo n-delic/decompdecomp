@@ -510,3 +510,40 @@ def test_unscored_output_does_not_poison_family_effect_history():
         return dict(score=20 if source=='seed' else None,matched=False,candidate_target='00')
     search.advance(state,judge,lambda s,r: [('flat','bad')] if s=='seed' else [],lambda:False)
     assert not state.get('family_no_effect')
+
+
+def test_finish_near_baseline_trace_is_scoped_and_charged_before_repairs(pair,monkeypatch):
+    from decompnet.app import address_repairs, free_candidates, lifetime_diagnostics, similar_matches
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='seed',best_score=20,n_insns=8 WHERE id=2")
+    monkeypatch.setattr(address_repairs,'variants',lambda *a:[])
+    monkeypatch.setattr(similar_matches,'repair_variants',lambda *a:[])
+    monkeypatch.setattr(pair,'try_quietly',lambda *a:dict(matched=False,score=20,rows=[('r','move $v1, $a0','move $v0, $a0')]))
+    calls=[]
+    def trace(*args,on_compile):
+        calls.append(args);on_compile();on_compile()
+        return {'values':[],'source_sha256':'frozen'}
+    monkeypatch.setattr(lifetime_diagnostics,'single',trace)
+    job=Job();job.finish_near=True;free_candidates.budget(job,seconds=180)
+    assert search.run(pair.twins,'destination',job)==0
+    assert job.reuse_attempts==3 and len(calls)==1
+    saved=json.loads(pair.store.one('SELECT state FROM repair_frontiers WHERE function_id=2')['state'])
+    assert saved['initial_trace_attempted'] and saved['counts']['trace_compiles']==2
+
+
+def test_finish_near_can_trace_a_cached_baseline_without_recompiling_it(pair,monkeypatch):
+    from decompnet.app import address_repairs, free_candidates, lifetime_diagnostics, similar_matches
+    with pair.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='seed',best_score=20,n_insns=8 WHERE id=2")
+    monkeypatch.setattr(address_repairs,'variants',lambda *a:[])
+    monkeypatch.setattr(similar_matches,'repair_variants',lambda *a:[])
+    ordinary=[]
+    monkeypatch.setattr(pair,'try_quietly',lambda *a:ordinary.append(a) or dict(matched=False,score=20,rows=[('r','move $v1, $a0','move $v0, $a0')]))
+    search.run(pair.twins,'destination',Job())
+    with pair.store.tx() as db:db.execute('DELETE FROM repair_frontiers')
+    captures=[]
+    def trace(*a,on_compile):captures.append(a);on_compile();on_compile();return {'values':[]}
+    monkeypatch.setattr(lifetime_diagnostics,'single',trace)
+    job=Job();job.finish_near=True;free_candidates.budget(job,seconds=180)
+    search.run(pair.twins,'destination',job)
+    assert len(ordinary)==1 and len(captures)==1 and job.reuse_attempts==2

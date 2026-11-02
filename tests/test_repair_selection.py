@@ -134,7 +134,7 @@ def test_unscored_comparisons_are_reported_without_numeric_claims():
 
 def test_proposal_cache_reuses_generation_but_not_changed_inputs(monkeypatch):
     calls=[]
-    def pool(source,report,fn,arch,flags,header,tables,callees):
+    def pool(source,report,fn,arch,flags,header,tables,callees,*,focused=True):
         calls.append((source,header,flags))
         return [('f',str(i)) for i in range(25)]
     monkeypatch.setattr(search,'targeted_pool',pool)
@@ -160,7 +160,7 @@ def test_benchmark_preserves_live_page_order_instead_of_interleaving_again():
 
 
 def test_live_eight_item_pages_reserve_other_available_families(monkeypatch):
-    monkeypatch.setattr(search,'targeted_pool',lambda *args:[('paired_operand_reuse',str(i)) for i in range(30)]+[('ordinary','a'),('other','b')])
+    monkeypatch.setattr(search,'targeted_pool',lambda *args,**kwargs:[('paired_operand_reuse',str(i)) for i in range(30)]+[('ordinary','a'),('other','b')])
     result=search.targeted_variants('source',{'repair_path':['affine_counter_guard']},dict(name='f',asm=''),
                                     'mips',[],selection={},limit=8,tagged=True)
     assert ('ordinary','a') in result and ('other','b') in result
@@ -172,5 +172,5 @@ def test_evidence_order_is_retained_when_candidates_already_exist(monkeypatch):
         labels.update(a='paired_operand_reuse',b='paired_operand_reuse')
         return ['a','b']
     monkeypatch.setattr(draft_repairs,'variants',generic)
-    monkeypatch.setattr(draft_repairs.affine_operand_repairs,'operand_variants',lambda *args:[('paired_operand_reuse','b'),('paired_operand_reuse','a')])
+    monkeypatch.setattr(draft_repairs.affine_operand_repairs,'operand_variants',lambda *args,**kwargs:[('paired_operand_reuse','b'),('paired_operand_reuse','a')])
     assert search.targeted_variants('void f(void) {}',{'repair_path':['affine_counter_guard']},dict(name='f',asm=''),'mips',[]) == ['b','a']
