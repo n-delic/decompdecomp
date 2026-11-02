@@ -66,6 +66,23 @@ class Fatal(RuntimeError):
     """A helper can't work until the user changes something: it pauses with this, instead of trying again."""
 
 
+class ToolConnectionUnavailable(RuntimeError):
+    """A local connection failure: retry without starting or charging a model session."""
+
+
+def connection_failure(error, token):
+    """Exception groups often hide the transport error; retain bounded, redacted leaf diagnostics."""
+    children = getattr(error, 'exceptions', None)
+    if children:
+        return '; '.join(connection_failure(child, token) for child in children[:4])[:600]
+    return (type(error).__name__+': '+(str(error) or 'no additional message')).replace(token, '[redacted]')[:600]
+
+
+def resumable(s):
+    return (s.state == 'stopped' and s.stopped_by == BY_QUIT or
+            s.state == 'paused' and s.why.startswith("The app's tool connection is unavailable."))
+
+
 # An agent's error that's about signing in or keys: then the pause says how to sign in
 _SIGNIN = re.compile(r"auth|log ?in|sign(ed)? ?in|credential|api.?key|unauthori[sz]ed|\b401\b|\b403\b", re.I)
 
@@ -743,7 +760,7 @@ class Manager:
         """Resume saved helpers without holding the UI's agent-state lock during project synchronization."""
         ids = []
         with self._lock:
-            pending = [s for s in self.sessions.values() if s.state == "stopped" and s.stopped_by == BY_QUIT]
+            pending = [s for s in self.sessions.values() if resumable(s)]
         for s in pending:
             if self._down:
                 break
@@ -755,7 +772,7 @@ class Manager:
             if options is not None:
                 self._prepare(s.slug)
             with self._lock:
-                if self._down or s.state != "stopped" or s.stopped_by != BY_QUIT:
+                if self._down or not resumable(s):
                     continue
                 if options is None:
                     s.stopped_by, s.why = BY_ITSELF, "its API endpoint was removed"
@@ -1119,7 +1136,7 @@ class Manager:
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
-        failures = fast = throttles = limits = auths = 0
+        failures = fast = throttles = limits = auths = connection_failures = 0
         while not s.stop.is_set():
             if self._left(s.slug, task := s.options.get("task") or "") == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
@@ -1155,7 +1172,17 @@ class Manager:
             kind = agents.get(s.kind)
             try:
                 ok = self._run_cli(s, token, workdir) if kind.command else kind.run(self, s, agent)
+            except ToolConnectionUnavailable as error:
+                connection_failures += 1
+                s.error = str(error)
+                s.push('error', s.error)
+                self._session_end(s, row, agent, began, 'connection_retry')
+                delay = min(60, 5 * 2 ** min(connection_failures-1, 4))
+                self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. No model request started.',
+                           time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
+                continue
             except Fatal as e:  # needs the user first: retrying can't help
+                s.push("error", str(e))
                 self._session_end(s, row, agent, began, "paused")
                 s.error = str(e)
                 self._pause(s, str(e))
@@ -1165,6 +1192,7 @@ class Manager:
                 s.error = f"{type(e).__name__}: {e}"
                 s.push("error", s.error)
                 ok = False
+            connection_failures = 0
             if ok and not s.stop.is_set() and not s.rotated and self._progress(agent.id) == before:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
@@ -1204,7 +1232,7 @@ class Manager:
             throttles = 0
             if ok:
                 failures = fast = limits = 0
-                self._set(s, "waiting", "the next session starts in a moment")
+                self._set(s, "waiting", "Session completed; helper is continuing. The next session starts in a moment.")
                 s.stop.wait(SESSION_GAP)
                 continue
             failures += 1
@@ -1314,7 +1342,8 @@ class Manager:
         from .session_efficiency import finish
         finish(self.net,agent,s.slug,row,began)
         spent = f", ${u['usd']:.2f}" if u["usd"] else f", {u['tokens'] // 1000}k tokens" if u["tokens"] else ""
-        s.push("info", f"session {s.runs} done: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
+        ending = 'completed; helper continues' if outcome in ('ok', 'rotated') and not s.stop.is_set() else 'ended ('+outcome+')'
+        s.push("info", f"session {s.runs} {ending}: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
                        f"matched{spent}")
         self._save(s)
         from .. import agent_notes
@@ -1409,30 +1438,47 @@ class Manager:
         return cmd, env, None if prompt_file is not None else k.stdin(prompt)
 
     def _preflight_tools(self, token: str) -> None:
-        """Prove the authenticated MCP exposes the working tools before spending a model turn."""
+        """Check local authenticated wiring, without building project facts or making a model request."""
+        phase = 'local authentication'
+        began = time.monotonic()
         async def check():
+            nonlocal phase
             from mcp import ClientSession
             from mcp.client.streamable_http import streamable_http_client
             from mcp.shared._httpx_utils import create_mcp_http_client
 
+            phase = 'opening MCP transport'
             async with create_mcp_http_client(headers={"Authorization": f"Bearer {token}", "X-Decomp-Connection-Check":"1"}) as http:
                 async with streamable_http_client(self.mcp_url, http_client=http) as streams:
                     async with ClientSession(*streams[:2]) as client:
+                        phase = 'initializing MCP'
                         await client.initialize()
+                        phase = 'listing tools'
                         tools = await client.list_tools()
                         names = {tool.name for tool in tools.tools}
                         if not {"project_info", "claim_function", "compile_and_diff", "release_function"} <= names:
-                            raise ValueError("The decomp MCP server did not expose the required tools.")
-                        # tools/list can succeed even when per-call helper/project authentication fails.
+                            raise Fatal('The decomp MCP server is missing required tools. Review tool settings before restarting this helper.')
+                        phase = 'authenticated project check'
                         result = await client.call_tool('project_info', {'detail': False})
                         if result.is_error:
-                            raise ValueError('The authenticated project_info call failed.')
+                            message = ' '.join(getattr(block, 'text', '') for block in getattr(result, 'content', ()))
+                            raise Fatal('Authenticated tool check rejected: '+(message[:400] or 'project access was denied'))
+                        phase = 'closing MCP transport'
         try:
             self.net.authenticate(token)
+        except NetworkError as error:
+            raise Fatal('Local helper authentication failed: '+connection_failure(error, token)+'. No model request was started.') from error
+        try:
             asyncio.run(asyncio.wait_for(check(), timeout=15))
         except Exception as error:
-            raise Fatal("The app's tool connection is unavailable. Restart the helper after checking the app connection. "
-                        "No model request was started.") from error
+            detail = f'Tool connection check failed during {phase} after {time.monotonic()-began:.1f}s: '+connection_failure(error, token)
+            # Context-manager cleanup can wrap permanent errors inside an exception group.
+            def permanent(exc):
+                return (isinstance(exc, Fatal) or getattr(getattr(exc, 'response', None), 'status_code', None) in (401,403,404)
+                        or any(permanent(child) for child in getattr(exc, 'exceptions', ())))
+            if permanent(error):
+                raise Fatal(detail+'. No model request was started.') from error
+            raise ToolConnectionUnavailable(detail+'. No model request was started; reconnecting automatically.') from error
 
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)

@@ -499,7 +499,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
         "claim_readable": ("Take the next matched function that isn't readable yet.", s()),
         "make_readable": ("A readable rewrite of a matched function (names, types, a comment); kept only if it still "
                           "matches byte for byte.", s(function=st("function", True), source=st("readable C", True))),
-        "share_knowledge": ("Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "
+        "share_knowledge": ("Propose evidence-backed reusable discoveries now; do not wait for a second model before proposing. Reusable matching tips for the game/compiler across functions. NOT function-specific notes: use release_function(notes=...) or add_note(function=...). "
                             "Back independently verified tips with supports=N. The user can accept one proposal; automatic acceptance needs two models. "
                             "Compiler identity/profile changes use compiler_map, try_compiler/search_flags or suggest.",
                             s(text=st("reusable matching technique, not a function-specific note"), supports=it("a proposal's number to back"))),

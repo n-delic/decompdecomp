@@ -263,7 +263,7 @@ function renderSessions(sessions) {
       ${agentEfficiency(s)}
       ${s.metrics_since ? `<span class="small muted">Metrics since reset · ${new Date(s.metrics_since * 1000).toLocaleString()}</span>` : ''}
       <span class="small muted">Work settings · ${s.per_session || 8} functions/session${s.task === "readable" ? "" : ` · ${esc(QUEUE_STRATEGIES.find(([v]) => v === (s.selection?.strategy || ""))?.[1] || "Automatic")}${s.selection?.model_untried ? " · never checked by this model" : ""}${s.selection?.match_below != null ? ` · below ${esc(s.selection.match_below)}%` : ""}${s.selection?.stall_compiles ? ` · move on after ${esc(s.selection.stall_compiles)} without improvement` : ""}${s.selection?.max_tries ? ` · max ${esc(s.selection.max_tries)} tries` : ""}`}</span>
-      ${s.last_message ? `<div class="agent-message"><b class="small">Latest update</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
+      ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
   setHtml(box, html);

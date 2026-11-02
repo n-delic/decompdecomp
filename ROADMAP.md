@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: lightweight authenticated helper connection checks retry temporary transport failures with
+capped backoff before any model call. Configuration/authentication failures retain phase, duration and
+redacted diagnostics; old generic connection pauses recover on restart. Session completion is distinct
+from helper stopping, and reusable knowledge proposals need not wait for consensus.
+
 Implemented: shared native collapsible boxes for function compiler settings and cross-project comparisons.
 Exact target-byte peers include matched and unmatched functions; absent exact peers, bounded
 processor-aware instruction-pattern similarity supplies explicit naming leads. Names use the existing
