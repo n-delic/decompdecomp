@@ -712,8 +712,8 @@ C, then the console's status can say recommended.
   pointer from a member function when LTCG moves both into a register, and it groups a base class's functions, and
   a member object's at +0, with the object they're called on. Names from another build would settle both.
 - **Visual C++ 7.1 on Windows itself**: the msvc pack's 7.1 `cl.exe` doesn't start there (MSVCR71.dll isn't in the
-  pack; wibo has it built in on Linux). An Xbox game builds with your XDK's own copy of the same compiler
-  (`MSVC/xdk-<build>`, set per file or with `try_compiler`), which has the runtime beside it.
+  pack; wibo has it built in on Linux). An Xbox game's import picks your XDK's own copy of the same compiler there
+  (`MSVC/xdk-<build>`), which has the runtime beside it; a PC game of 7.1 has no such copy yet.
 
 ### Game Boy Advance from your own copy
 
