@@ -46,7 +46,8 @@ limits and the read-only command-line audit.
 ## Automatic repairs before paid agents
 
 Source preparation retries bounded compiler profiles after recovering a better
-source context, restores actual small getters as well as call wrappers, and ranks
+source context, restores actual small getters as well as call wrappers, tests a bounded private
+helper definition-order alternative, and ranks
 compiled source-identity evidence before broad mutation. Scalar-pool repairs can
 try per-use precision and signed constant bindings; near scheduling differences
 also get token-preserving statement line variants. All still require exact judging.

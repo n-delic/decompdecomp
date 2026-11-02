@@ -2296,3 +2296,16 @@ Equal-budget replay against current main, with only this family disabled/enabled
 used 80 candidate evaluations; no best-score regression occurred. Local suite times
 were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
 same-case regression evidence, not disjoint-target validation of a broad ranking boost.
+
+
+### Actual helper definition order can matter
+
+In a further source-assisted N64 recovery, IDO 5.3 O3 at the same flags above
+scored 780 with a provisional size-getter macro. Restoring the actual getter
+improved it to 610. Moving the three supplied private helper definitions after
+the caller, retaining their prototypes before use, produced exact code and data
+(score zero) with one emitted function. The new bounded CPU definition-order
+candidate reproduced that match in a read-only replay; live API promotion then
+accepted the same source/header/profile bundle. No helper body or padding was
+invented. This is a working compilation context, not proof of the historical
+source's definition order. The ordinary extra-body gate remains in force.

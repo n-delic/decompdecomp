@@ -188,3 +188,15 @@ def test_scalar_pools_keep_signed_value_and_offer_per_use_precision():
 def test_actual_getter_without_a_provisional_prototype_can_be_supplied():
     result=stages.inline_helpers('int f(int *p){return getter(p);}', '', 'int getter(int *p){return *p;}', [])
     assert len(result)==1 and 'static __inline int getter' in result[0][2]
+
+
+def test_actual_helper_definitions_can_follow_entry_as_one_context():
+    source='int f(int *p){return getter(p)+wrap(p);}'
+    header='static int getter(int *p){return *p;}\nstatic int wrap(int *p){return getter(p);}\nstatic int unrelated(void){return 0;}'
+    result=stages.definition_order(source,header)
+    assert len(result)==1
+    _,s,h=result[0]
+    assert s.index('int f')<s.index('static int getter')<s.index('static int wrap')
+    assert 'static int getter(int *p);' in h and 'static int wrap(int *p);' in h
+    assert 'unrelated' not in s and 'static int unrelated(void){return 0;}' in h
+    assert not stages.definition_order(source,'int getter(int *p);')
