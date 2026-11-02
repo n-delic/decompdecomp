@@ -86,10 +86,10 @@ def _read(elf):
             if name_offset>=string_count:raise ValueError('Invalid ECOFF string offset')
             at=strings_at+string_base+name_offset;end=data.find(b'\0',at,strings_at+string_base+string_count)
             if end<at:raise ValueError('Unterminated ECOFF name')
-            name=data[at:end].decode('utf-8')
             if elf.little_endian:kind,storage,index=bits&63,(bits>>6)&31,bits>>12
             else:kind,storage,index=bits>>26,(bits>>21)&31,bits&0xfffff
-            if storage!=1:continue  # scText; file/block markers are not function evidence
+            if storage!=1 or (kind not in (6,14) and not (kind==8 and index in starts)):continue
+            name=data[at:end].decode('utf-8')
             if kind in (6,14):starts[k]=(name,value)  # stProc/stStaticProc
             elif kind==8 and index in starts:  # stEnd points back to its procedure symbol
                 original,start=starts.pop(index)
