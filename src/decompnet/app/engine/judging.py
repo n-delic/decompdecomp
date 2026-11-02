@@ -203,7 +203,8 @@ class JudgeMixin:
             verdict = link.attempt(agent, name, source)
             if not verdict.get("matched"):
                 res["text"] += ("\n⚠️ The room's host could not confirm this match on their copy (score "
-                                f"{verdict.get('score')}). Check that both of you use the same compiler settings.")
+                                f"{verdict.get('score')}). {verdict.get('reason') or 'Check compiler settings.'} "
+                                "The source and compiler/context evidence are retained for host retry.")
             else:
                 res["text"] += "\nShared with the room: the host confirmed the match."
         elif before is None or res["score"] < before:

@@ -40,7 +40,7 @@ from ..rom.symbols import AUTO_NAME
 from . import forkroom
 
 NAME = re.compile(r"^[A-Za-z0-9_-]{1,24}$")
-MAX_BODY = 256 * 1024
+MAX_BODY = 2 * 1024 * 1024
 TUNNEL_URL = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 # what the host answers someone it hasn't let in; the guest's screen says which (gui.py: the room's state)
 WAITING = "waiting for the host to let you in"
@@ -289,10 +289,17 @@ class Room:
         kinds = {ev["kind"] for ev in events}
         names = {ev["detail"] for ev in events if ev["kind"] in ("match",)}
         first = e == 0
-        if first or names:
+        if first or fresh or names:
             rows = net.store.all("SELECT f.name, f.vram, f.matched_source, a.name AS agent FROM functions f LEFT JOIN agents a "
                                  "ON a.id=f.matched_agent_id WHERE f.project_id=? AND f.status='matched'", pid)
-            out["matched"] = [dict(r) for r in rows if first or r["name"] in names]
+            out["matched"] = [dict(r) for r in rows if first or fresh or r["name"] in names]
+        if first or fresh or names or kinds & {'compiler','context'}:
+            cfg=net.cfg(net.project_row(self.slug))
+            out['compiler_settings']={k:cfg.get(k,[] if k=='compiler_ranges' else {}) for k in ('compiler','compiler_ranges')}
+            units=net._unit_contexts(pid)
+            out['function_contexts']=[{'vram':r['vram'],'header':net._context(pid,r['unit'])['header']}
+                                      for r in net.store.all('SELECT vram,unit FROM functions WHERE project_id=?',pid)
+                                      if r['unit'] and r['unit'] in units]
         best = net.store.all("SELECT f.name, f.vram, f.best_score, f.best_source, MAX(t.id) AS last FROM attempts t "
                              "JOIN functions f ON f.id=t.function_id WHERE f.project_id=? AND t.id>? AND f.status='open' "
                              "AND f.best_source IS NOT NULL GROUP BY f.id", pid, a)
@@ -416,8 +423,11 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
 
     def attempt(room, member, d):
         agent = room.agent_for(member, d.get("agent"))
-        res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
-        return {"score": res["score"], "matched": res["matched"]}
+        if room.fork:
+            res = net.attempt(agent, str(d.get("function", "")), str(d.get("source", "")), room.slug)
+            return {"score": res["score"], "matched": res["matched"]}
+        from .room_matches import verify
+        return verify(net,room.slug,agent,str(d.get('function','')),str(d.get('source','')),d.get('evidence'))
 
     def best(room, member, d):
         """A member's attempt got better: kept as the function's best so far, as reported (no compile here: the host
@@ -717,6 +727,9 @@ class Link:
                                                     "selection": self.net.selection(self.slug, agent.name)})["function"]
 
     def attempt(self, agent: Agent, function: str, source: str) -> dict:
+        if not self.fork:
+            from .room_matches import send
+            return send(self,agent,function,source)
         return self._req("POST", "/collab/attempt", {"agent": agent.name, "function": function, "source": source})
 
     def call(self, route: str, agent: Agent, /, **data) -> str:
@@ -732,6 +745,13 @@ class Link:
                 self.error, self.refused = str(e), True
                 raise
             self.refused = False
+            if not self.fork and not getattr(self,'_recovered_matches',False):
+                from .room_matches import recover_client
+                snapshot=st if not self.cursor['e'] else self._req('GET','/collab/state',self.cursor | {'fresh':1})
+                recover_client(self,snapshot)
+                for field in ('compiler_settings','function_contexts'):
+                    if field in snapshot:st[field]=snapshot[field]
+                self._recovered_matches=True
             self.apply(st)
             self.behind = int(st.get("behind") or 0)
             self.received += len(st.get("events") or []) if self.behind or self.received else 0
@@ -749,6 +769,10 @@ class Link:
                 # every candidate was sent, refused or skipped; a transport failure raised above and kept the rest
                 self.saved_progress = None
                 self._save_saved_progress()
+
+        if not self.fork:
+            from .room_matches import pump
+            pump(self)
 
     def _save_saved_progress(self) -> None:
         """Keep queued work in its own small table, not in projects.config (parsed on every project access): a guest
@@ -810,6 +834,8 @@ class Link:
         mine = f"{self.member}."
         if st.get("symbols") is not None or st.get("functions") is not None:
             net.apply_remote_layout(slug, st.get("functions") or [], st.get("symbols") or [])
+        from .room_matches import sync_inputs
+        sync_inputs(net,slug,st)
         if st.get("context"):
             net.apply_remote_context(slug, st["context"]["header"], st["context"]["version"])
             self.cursor["v"] = st["context"]["version"]
