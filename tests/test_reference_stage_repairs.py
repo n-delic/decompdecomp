@@ -147,3 +147,16 @@ def test_two_actual_wrappers_form_one_coherent_private_context():
     assert len(result)==2
     assert 'static __inline int wrap_a' in result[-1][2]
     assert 'static __inline int wrap_b' in result[-1][2]
+
+
+def test_missing_prefix_reuses_supplied_draft_and_param_bindings_only():
+    source='void f(Obj *p, App *app){int n;\n original(app);}'
+    draft='#define FLAG(p) (*(int*)(p))\nint check(void *p);\nvoid f(void *a, void *b){void *saved; saved=b; if(FLAG(saved)){if(check(saved)) FLAG(saved)=0;} original(b);}'
+    rows=[('<','jal check',''),(' ','jal original','jal original')]
+    result=retail.draft_prefix(source,'f','',draft,rows,'mips')
+    assert len(result)==1
+    assert 'saved=app;' in result[0][1] and '#define FLAG' in result[0][2]
+    assert result[0][1].index('int n;')<result[0][1].index('saved=app;')
+    assert not retail.draft_prefix(source,'f','',draft,[(' ','jal original','jal original')],'mips')
+    assert not retail.draft_prefix(source,'f','',draft.replace('if(check(saved))','if(unknown(saved))'),rows,'mips')
+    assert not retail.draft_prefix(source,'f','',draft.replace('saved=b','saved=side_effect(b)'),rows,'mips')

@@ -9,9 +9,10 @@ def proposals(net, proj, fn, source, header, measurement):
     from .measured_source_repairs import narrowing_casts, statement_lines
     arch=arches.get(proj['arch'])
     rows=measurement.get('rows',[])
-    from .retail_context_repairs import commented_conditions, pointer_lifetimes
+    from .retail_context_repairs import commented_conditions, draft_prefix, pointer_lifetimes
     proof=arch.source_pointer_lifetime(fn['asm'] or '') if arch.source_pointer_lifetime else []
-    result=pointer_lifetimes(source,fn['name'],header,proof,rows)
+    result=draft_prefix(source,fn['name'],header,dict(fn).get('best_source'),rows,proj['arch'])
+    result+=pointer_lifetimes(source,fn['name'],header,proof,rows)
     import re
     result+=commented_conditions(source,header,re.findall(r'\bD_[0-9A-Fa-f]{8}\b',fn['asm'] or ''))
     result+=statement_lines(source,fn['name'],header,rows)
