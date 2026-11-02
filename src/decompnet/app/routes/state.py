@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import platform
+import secrets
 import shutil
 import uuid
 from pathlib import Path
@@ -17,7 +18,7 @@ from ... import __version__, consoles, hostenv, linuxvm, toolchains
 from ...agents.api import API_PRESETS
 from ...forks.project import SCOPES
 from ...network import NetworkError
-from .. import build_info, cleanup, edition, picker, saves, updates
+from .. import build_info, cleanup, edition, picker, saves, updates, window
 from ..engine import COMPILERS, TOOLS
 from ..support import MAX_DISC, job_error, static_file
 from . import App
@@ -209,7 +210,7 @@ def register(app: App) -> None:
         """A folder or file the user picks in the system's own chooser (picker.py): "" if they cancelled."""
         if (bad := guard(request, write=True)):
             return bad
-        if app.web_login:
+        if app.web_login and not secrets.compare_digest(window.request_token(request), app.secret):
             return fail(ValueError('Enter the file or folder path on the server computer; desktop pickers are disabled in server mode.'))
         data = await body(request)
         try:

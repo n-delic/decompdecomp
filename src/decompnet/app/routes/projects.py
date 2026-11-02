@@ -6,6 +6,7 @@ Each is fn(slug, request, data) wrapped by with_project, which checks the reques
 from __future__ import annotations
 
 import json
+import secrets
 import shutil
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from starlette.responses import JSONResponse, Response
 from ... import consoles, hostenv, toolchains
 from ...forks.project import SCOPES
 from ...network import NetworkError
-from .. import compiler_cleanup, saves
+from .. import compiler_cleanup, saves, window
 from ..engine import parse_ranges
 from . import App
 
@@ -166,7 +167,7 @@ def register(app: App) -> None:
         return {"ok": True}
 
     def p_open(slug, request, data):
-        if app.web_login:
+        if app.web_login and not secrets.compare_digest(window.request_token(request), app.secret):
             return {'ok':False, 'message':'Project folder on the server: '+str(net.project_row(slug)['root'])}
         why = hostenv.open_folder(Path(net.project_row(slug)["root"]))
         return {"ok": why is None, "message": why}
