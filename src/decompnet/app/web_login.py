@@ -5,6 +5,7 @@ import hashlib
 import secrets
 import threading
 import time
+from urllib.parse import urlsplit
 
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
@@ -15,17 +16,37 @@ LOGIN_HEADERS = {'Cache-Control':'no-store', 'Referrer-Policy':'same-origin', 'X
                  'Content-Security-Policy':"default-src 'none'; style-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"}
 
 
+def remote_origin(value):
+    """One explicitly trusted HTTPS Tailscale origin, never a path or wildcard."""
+    value = str(value or '').strip()
+    if not value:
+        return ''
+    try:
+        url = urlsplit(value)
+        port = url.port
+        if (url.scheme != 'https' or not url.hostname or not url.hostname.endswith('.ts.net')
+                or url.username or url.password or url.path not in ('', '/') or url.query or url.fragment
+                or port not in (None, 443, 8443, 10000)):
+            raise ValueError
+        return 'https://' + url.netloc.lower()
+    except ValueError:
+        raise ValueError('Enter an HTTPS Tailscale address, such as https://my-computer.my-tailnet.ts.net.') from None
+
+
 class WebLogin:
-    def __init__(self, port):
+    def __init__(self, port, remote_url=''):
         self.code = secrets.token_urlsafe(24)
         self.cookie = f'decomp_web_{port}'
         self.origins = {f'http://127.0.0.1:{port}', f'http://localhost:{port}'}
+        if remote_url:
+            self.origins.add(remote_origin(remote_url))
         self.sessions = {}
         self.failures = []
         self.lock = threading.Lock()
 
     def same_origin(self, request):
-        return request.headers.get('origin') in self.origins
+        origin = request.headers.get('origin')
+        return origin in self.origins and urlsplit(origin).netloc == request.headers.get('host')
 
     def authorized(self, request):
         token = request.cookies.get(self.cookie, '')
@@ -73,7 +94,8 @@ def register(app):
         login = app.web_login
         native = secrets.compare_digest(window.request_token(request), app.secret)
         return {'enabled': login is not None, 'url': f'http://127.0.0.1:{app.port}/',
-                'code': login.code if login and native else None}
+                'code': login.code if login and native else None,
+                'remote_url': app.settings.data.get('web_remote_url', '')}
 
     @app.mcp.custom_route('/api/web-interface', methods=['GET', 'POST'])
     async def interface(request):
@@ -84,10 +106,27 @@ def register(app):
             if type(data.get('enabled')) is not bool:
                 return app.fail(ValueError('Choose whether to enable the web interface.'))
             enabled = data['enabled']
+            if 'remote_url' in data:
+                from . import window
+                if not secrets.compare_digest(window.request_token(request), app.secret):
+                    return app.fail(ValueError('Set the remote address in the desktop app.'), 403)
+                try:
+                    remote = remote_origin(data['remote_url'])
+                except ValueError as error:
+                    return app.fail(error)
+                previous = app.settings.data.get('web_remote_url', '')
+                if previous:
+                    app.allowed_hosts.discard(urlsplit(previous).netloc)
+                if remote:
+                    app.allowed_hosts.add(urlsplit(remote).netloc)
+                app.settings.data['web_remote_url'] = remote
+                # Changing the trusted destination revokes all old browser sessions.
+                if app.web_login:
+                    app.web_login = app.net.web_login = WebLogin(app.port, remote)
             app.settings.data['web_interface_enabled'] = enabled
             app.settings.save()
             if enabled and app.web_login is None:
-                app.web_login = app.net.web_login = WebLogin(app.port)
+                app.web_login = app.net.web_login = WebLogin(app.port, app.settings.data.get('web_remote_url', ''))
             elif not enabled:
                 app.web_login = app.net.web_login = None
         return JSONResponse(details(request), headers={'Cache-Control':'no-store'})
@@ -118,7 +157,7 @@ def register(app):
             message = 'Too many attempts. Wait one minute and try again.' if status == 429 else 'That code was not accepted. Check the terminal and try again.'
             return HTMLResponse(login_page(message), status_code=status, headers=LOGIN_HEADERS)
         response = RedirectResponse('/', status_code=303, headers=LOGIN_HEADERS)
-        response.set_cookie(login.cookie, token, max_age=SESSION_SECONDS, httponly=True, samesite='strict', path='/')
+        response.set_cookie(login.cookie, token, max_age=SESSION_SECONDS, httponly=True, samesite='strict', path='/', secure=request.headers.get('host') not in {f'127.0.0.1:{app.port}', f'localhost:{app.port}'})
         return response
 
     @app.mcp.custom_route('/logout', methods=['POST'])

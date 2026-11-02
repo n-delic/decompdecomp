@@ -432,7 +432,14 @@ To use the browser and desktop window together, open **Settings** in the desktop
 **Enable web interface**. Click **Open web interface**, then enter the sign-in code shown there. Both interfaces
 share one running app, project database and set of agents. The setting is remembered across launches; each
 launch creates a fresh sign-in code. Turning the toggle off immediately signs out all browsers while the desktop
-app keeps running. Access is limited to browsers on this computer.
+app keeps running. For private phone or laptop access, enable **Tailscale Serve** on the host computer, enter its exact HTTPS
+`.ts.net` address under **Settings → This computer → Private remote address**, and save. Run
+`tailscale serve --bg http://127.0.0.1:6464` (use the app’s actual port). Both devices must be connected to the
+same tailnet. Open the remote HTTPS link and enter the code from the desktop app. Tailscale provides the private
+network and TLS; decompdecomp still requires its own sign-in. Public Funnel access is not needed.
+Changing or clearing the trusted remote address revokes browser sessions. Disabling the web interface blocks
+browser access even if the Tailscale proxy remains configured. Use `tailscale serve --https=443 off` to stop that
+proxy. Remote addresses must be set from the native app; remote browsers cannot authorize a new destination.
 
 `serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
@@ -440,8 +447,8 @@ home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --
 `uv run decomp serve --port 6474`. Stop the server with Ctrl-C or `decomp stop` using the same home. Updates preserve
 server mode; they do not open a native window.
 
-It binds **127.0.0.1 only**. LAN binding, reverse-proxy deployment and public HTTPS serving are not enabled by this
-mode. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
+It binds **127.0.0.1 only**. Direct LAN binding and public HTTPS serving are not enabled. Private HTTPS through Tailscale Serve uses
+the explicitly trusted remote address configured in Settings. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
 Browser file uploads still work; folder/file-path chooser buttons ask for a path **on the server computer**.
 Opening its folder in a desktop file manager is unavailable. Compiler and platform runtime requirements remain
 the same; only native-window/tray dependencies are bypassed at runtime.
