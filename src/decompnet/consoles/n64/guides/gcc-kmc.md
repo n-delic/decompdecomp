@@ -24,6 +24,16 @@ Keep the compiler, flags, header and symbol addresses fixed while comparing sour
 5. **Before repeating trials:** check failed history for the current source, header and compiler
    inputs. A changed context needs rejudging; an unchanged failed trial needs a new hypothesis.
 
+For register-only residuals, compare the linked operand differences and inspect the allocator's
+actual pseudo-registers. A source variable and its sign-extension temporary may have different
+lifetimes and priorities. One verified 662-instruction case required preserving a raw coordinate
+past narrowing and changing the relative allocation order of two saved-register lifetimes; pure
+identities disappeared late but affected earlier bookkeeping. This is a case-specific workaround,
+not a default recipe. Broad register qualifiers and retyping did not help; some attempts added an
+eight-byte stack-frame difference. Keep the target and flags fixed, retain failed input keys, and
+require exact linked bytes. Details: `docs/COMPILER_MATCHING_LEARNINGS.md`, “register allocation
+after late cancellation”.
+
 These lifetime/declaration observations come from KMC GCC experiments. They do not establish an
 IDO rule. IDO's separate observed source-layout sensitivity is described in `guide("ido")`.
 Every proposal still needs the normal linked-byte and data checks.

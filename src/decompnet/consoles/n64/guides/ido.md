@@ -183,3 +183,12 @@ contiguous, already-matched predecessors at their original relative positions;
 it rejudges every body and exports only the selected compiler entry. Preserve
 source line breaks too. Never invent dummy functions, padding or assembly to
 simulate placement. A full original-image rebuild remains necessary.
+
+If source is correct but private helper registers differ, preserve the actual
+caller/callee bodies and try O3 before rewriting their algorithms. IDO can assign
+private arguments to registers outside the public ABI and narrow its clobber set.
+The app reads those private procedure names/extents from compiler `.mdebug` metadata.
+A bounded unit is accepted only after every known body independently matches its
+fixed ROM entry. Only the chosen entry is published/exported; auxiliary context
+is not counted as another match. Ordinary isolated helpers are insufficient to
+reproduce these interprocedural choices.

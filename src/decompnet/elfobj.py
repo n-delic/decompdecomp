@@ -163,7 +163,10 @@ def symbol_at(symtab: SymbolTableSection, shndx: int, offset: int) -> tuple[str,
         rank = (lo == offset, kind, s["st_info"]["bind"] == "STB_GLOBAL")
         if best is None or rank > best[0]:
             best = (rank, canonical_symbol(s.name, s["st_info"]["bind"]), offset - lo)
-    return (best[1], best[2]) if best else None
+    if best:return best[1],best[2]
+    hits=[(name,offset-start) for name,(sx,start,size) in metadata_functions(symtab.elffile).items()
+          if sx==shndx and start<=offset<start+size]
+    return hits[0] if len(hits)==1 else None
 
 
 def _encode(arch: str, r: dict, residual: int) -> int:
@@ -181,6 +184,16 @@ def _encode(arch: str, r: dict, residual: int) -> int:
 
 
 _MARKERS = ("gcc2_compiled.", "__gnu_compiled_c", "__gnu_compiled_cplusplus")
+
+
+def metadata_functions(elf):
+    reader=arch.get(MACHINES.get(elf['e_machine'],'')).object_functions
+    return reader(elf) if reader else {}
+
+
+def metadata_placeholders(elf):
+    reader=arch.get(MACHINES.get(elf['e_machine'],'')).object_placeholders
+    return reader(elf) if reader else {}
 
 
 def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
@@ -221,7 +234,7 @@ def _function_symbols(elf) -> dict[str, tuple[int, int, int]]:
                     end += 4
             if end > off:
                 out[name] = (shndx, off, end - off)
-    return out
+    return {**metadata_functions(elf),**out}
 
 
 def list_functions(data: bytes) -> list[str]:

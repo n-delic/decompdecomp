@@ -52,7 +52,11 @@ compiled source-identity evidence before broad mutation. Scalar-pool repairs can
 try per-use precision and signed constant bindings; near scheduling differences
 also get token-preserving statement line variants. All still require exact judging. A small verified predecessor context can reproduce
 internal compiler alignment; each predecessor is rejudged and only the selected
-entry is exported, without adding padding to source.
+entry is exported, without adding padding to source. For IDO private calling
+conventions, the app can also read explicit procedure metadata from `.mdebug` and
+verify a bounded real caller/callee unit. Every body must match its known ROM
+entry; only the selected function is published and exported. Compiler context
+is not counted as additional progress.
 
 Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
 regional combination probes, and show compact mismatch clues to agents. Captured fixes
