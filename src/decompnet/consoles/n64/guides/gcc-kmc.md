@@ -329,3 +329,9 @@ recovers one frozen control in four trials on current main; it is not a universa
 measured equal-score outputs, since different allocation shapes may enable the next repair. Small
 independent lifetime edits can also be paired within the iterative budget; the linked judge remains
 mandatory. If a register is reused across the function, a global rename map cannot identify a C value.
+Do not generalize the successful pointer/index scope to every register-only miss. Four
+other frozen KMC cases stayed unchanged after pointer/constant staging, dead-local reuse,
+shift-chain rewrites, command-accumulator/tail combinations and one-shot scope alternatives.
+Consult the negative-results table in `docs/COMPILER_MATCHING_LEARNINGS.md` before repeating
+these families. Multiple pseudos can share `v0`; use GCC instruction IDs/source notes,
+not a physical register name alone, to select a lifetime hypothesis.
