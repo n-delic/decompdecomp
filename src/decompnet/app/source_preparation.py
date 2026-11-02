@@ -391,8 +391,8 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     for hint in compiler_hints(result.log):
         log.warning('source preparation %s: %s', fn['name'], hint)
         if diagnostic:diagnostic(fn['name'] + ': ' + hint)
-    from ..rom.export import _single_definition
-    if net.is_rom(proj) and not _single_definition(result.obj, fn['name']):
+    from .predecessor_context import acceptable
+    if net.is_rom(proj) and not acceptable(net,proj,fn,result.obj):
         record(net,proj,fn,source,header,None,[],lead,(time.monotonic()-started)*1000,error='Extra emitted function bodies',scope=scope)
         raise NetworkError('Prepared declarations emitted extra function bodies. Supply a declarations-only header.')
     candidate, verdict, problems = net._evaluate(fn, proj, result.obj)
@@ -648,7 +648,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     """Probe unpromoted context too; retain evidence without bypassing profile/context approval gates."""
     from .. import toolchains
     from ..project import compiler_for
-    from ..rom.export import _single_definition
+    from .predecessor_context import acceptable
     from .profile_hypotheses import neighbours, prioritized
     if not hasattr(net, 'is_rom') or not net.is_rom(proj):return
     # An unsupported identity should be remapped before broad profile search. This
@@ -678,7 +678,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         scope=destination(net,proj,fn);started=time.monotonic()
         report['tested']+=1;st.add(variants=1)
         result=net._compile(private,header,source,fn)
-        if not result.ok or not _single_definition(result.obj,fn['name']):
+        if not result.ok or not acceptable(net,private,fn,result.obj):
             record(net,private,fn,source,header,None,[],{**(lead or {}),'family':'compiler-profile'},
                    (time.monotonic()-started)*1000,error=str(result.log),scope=scope)
             feedback={'toolchain':own['toolchain'],'flags':flags,'score':None,'exact':False,

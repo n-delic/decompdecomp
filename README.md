@@ -50,7 +50,9 @@ source context, restores actual small getters as well as call wrappers, tests a 
 helper definition-order alternative, and ranks
 compiled source-identity evidence before broad mutation. Scalar-pool repairs can
 try per-use precision and signed constant bindings; near scheduling differences
-also get token-preserving statement line variants. All still require exact judging.
+also get token-preserving statement line variants. All still require exact judging. A small verified predecessor context can reproduce
+internal compiler alignment; each predecessor is rejudged and only the selected
+entry is exported, without adding padding to source.
 
 Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
 regional combination probes, and show compact mismatch clues to agents. Captured fixes

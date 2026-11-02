@@ -2309,3 +2309,26 @@ candidate reproduced that match in a read-only replay; live API promotion then
 accepted the same source/header/profile bundle. No helper body or padding was
 invented. This is a working compilation context, not proof of the historical
 source's definition order. The ordinary extra-body gate remains in force.
+
+### Real predecessor functions can reproduce internal alignment
+
+One source-assisted N64 entry compiled with three extra unreachable NOPs in
+isolation under IDO 5.3 O2 and the flags above. Its compiler assembly contains an
+internal `.align 5`. Compiling the real two immediately preceding functions
+(36 and 40 bytes) before the 816-byte entry reproduced the correct section
+position and all three passed the ordinary linked code/data judge independently.
+No source padding, assembly patch or boundary change was used. A one-line
+spelling of the second predecessor retained an instruction-order difference;
+restoring its original line breaks also made that predecessor exact.
+
+The bounded predecessor-context path accepts at most three contiguous entries
+in identical ROM/object order, with identical extents and already-matched auxiliary
+functions. It freshly rejudges every body and exports only the compiler's linked
+entry using existing matching-only extraction. This does not claim other context
+bodies as newly matched or export them twice. Unknown, open, moved, noncontiguous
+or nonexact auxiliary bodies still fail the extra-body gate. Other architectures
+and PROJECT builds retain their existing behavior.
+
+Large matching-only rebuilds also use the linker's documented `--no-keep-memory`
+option. A silent killed linker now reports its exit code; this resource change
+must still pass the full original-image comparison and changes no placement rules.

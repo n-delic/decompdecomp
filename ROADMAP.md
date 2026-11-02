@@ -1806,3 +1806,11 @@ show their register/address; constant-mapping export errors show missing ranges 
 sizes. Portable audit-review history, reviewed adoption, bounded switch-table closure,
 and proof of callback-table consumers remain planned, alongside the existing non-MIPS
 and object-project audit adapter gaps.
+
+Source-preparation context recovery now includes actual small getters and bounded
+helper definition order. ROM-mode MIPS entries can retain up to two contiguous,
+already-matched predecessor definitions as compiler context after independently
+rejudging every body. Matching-only entry extraction prevents duplicate exports;
+PROJECT builds continue using their own translation units and build judge. Other
+ROM processors will need an equivalent verified-entry exporter before this path
+can be enabled for them.

@@ -246,7 +246,9 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             as_fallback.append((f["name"], "doesn't compile any more"))
             f["kind"] = "asm"
             continue
-        if not _single_definition(compiled.obj, row["name"]):
+        from ..app.predecessor_context import verified
+        predecessor=None if _single_definition(compiled.obj,row['name']) else verified(net,proj,row,compiled.obj)
+        if not _single_definition(compiled.obj, row["name"]) and not predecessor:
             as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))
             f["kind"] = "asm"
             continue
@@ -256,7 +258,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             f["kind"] = "asm"
             continue
         bases, problem = _section_bases(linked.placements)
-        if problem:
+        if problem or predecessor:
             # Recompile and judge this entry every build; the builder can retain
             # scattered original pools without pretending they share one base.
             from .export_entry import object_for

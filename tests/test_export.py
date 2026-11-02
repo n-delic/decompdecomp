@@ -346,3 +346,20 @@ def test_cpp_overloads_are_not_hidden_by_export_name_mapping():
     section=elf['e_shoff']+2*elf['e_shentsize']  # point symtab at the extended table
     struct.pack_into('>II',obj,section+16,new_offset,len(symbols))
     assert not _single_definition(bytes(obj),'target')
+
+
+def test_exported_build_reports_a_silent_linker_kill():
+    import ast
+    from types import SimpleNamespace
+
+    from decompnet.rom import export
+
+    # Exercise the generated script's real process-reporting functions without
+    # importing its project-specific manifest or requiring a compiler in CI.
+    tree=ast.parse(Path(export.__file__).with_name('export_build.py').read_text())
+    functions=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'run','fail'}]
+    scope={'sys':sys,'subprocess':SimpleNamespace(run=lambda *a,**k:SimpleNamespace(returncode=-9,stdout='',stderr='')),
+           'ROOT':Path('.')}
+    exec(compile(ast.Module(body=functions,type_ignores=[]),'export-build-test','exec'),scope)
+    with pytest.raises(SystemExit,match='exited with -9'):
+        scope['run'](['ld','-EB'])

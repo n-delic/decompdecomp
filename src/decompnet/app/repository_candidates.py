@@ -55,7 +55,9 @@ def select(net, proj, row):
         if not compiled.ok:
             reason='Saved C does not compile with these declarations. Restore its verified private header before export. '+compiled.log[-600:]
             continue
-        if not _single_definition(compiled.obj,row['name']):
+        from .predecessor_context import verified
+        predecessor=None if _single_definition(compiled.obj,row['name']) else verified(net,proj,row,compiled.obj)
+        if not _single_definition(compiled.obj,row['name']) and not predecessor:
             isolated=single_source(source,compiled.obj,row['name'])
             if isolated is None:
                 reason='Extra function bodies could not be isolated safely; preserve assembly and review helper linkage.';continue
@@ -66,6 +68,6 @@ def select(net, proj, row):
         readiness=net._candidate_checks(row,proj,compiled.obj).get('export',{})
         if exact and (readiness.get('ready') is True or readiness.get('state')=='requires_normalization' or
                       'non-contiguous constant pools' in readiness.get('message','')):
-            return (source,header,'non-contiguous constant pools' in readiness.get('message','')),None
+            return (source,header,bool(predecessor) or 'non-contiguous constant pools' in readiness.get('message','')),None
         reason=readiness.get('message') or ('Current source fails the byte judge: '+'; '.join(problems))
     return None,reason
