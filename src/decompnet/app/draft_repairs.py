@@ -37,6 +37,7 @@ from . import (
     helper_expansion,
     increment_expression_repairs,
     inferred_layout_repairs,
+    initializer_clusters,
     inline_scheduling_repairs,
     integer_lifetime_repairs,
     lifetime_repairs,
@@ -54,6 +55,7 @@ from . import (
     observed_repairs,
     operand_order_repairs,
     pattern_repairs,
+    phase_lifetime_repairs,
     pointer_cast_repairs,
     pointer_pair_repairs,
     raw_address_repairs,
@@ -77,7 +79,8 @@ from . import (
 AGENT_FAMILIES = affine_operand_repairs.FAMILIES + branch_pointer_repairs.FAMILIES + capture_followup_repairs.FAMILIES + ('paired_load_order',) + allocation_repairs.FAMILIES + value_range_repairs.FAMILIES + count_lifetime_repairs.FAMILIES + helper_expansion.FAMILIES + record_lifetime_repairs.FAMILIES + raw_address_repairs.FAMILIES + zero_test_repairs.FAMILIES + pointer_pair_repairs.FAMILIES + field_order_repairs.FAMILIES + match_shape_repairs.FAMILIES + increment_expression_repairs.FAMILIES + allocator_shape_repairs.FAMILIES + buffer_address_repairs.FAMILIES + normalization_repairs.FAMILIES + call_lifetime_repairs.FAMILIES + sdk_io_repairs.FAMILIES + target_local_repairs.FAMILIES + formatter_repairs.FAMILIES + ('target_switch_order',) + inline_scheduling_repairs.FAMILIES + ('runtime_scalar_signature', 'shared_return_tail', 'direct_compound_store', 'redundant_loop_guard', 'float_argument_bits', 'arithmetic_operand_order', 'call_forwarded_arguments', 'small_copy', 'typed_record_address', 'one_shot_scope', 'one_shot_unwrap',
                   'pointer_block_scope', 'array_address_share', 'combined_integer_lifetimes', 'inferred_record_layout',
                   'float_product_intermediate','pointer_chase_reuse','independent_assignment_order',
-                  'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores')
+                  'terminal_early_return','member_store_replay','scalar_global_address','split_mask_stores',
+                  'split_integer_phase','paired_integer_lifetimes','initialization_cluster')
 
 LIMIT = 20
 _IDENT = r'[A-Za-z_]\w*'
@@ -212,6 +215,12 @@ def variants(source: str, name: str, arch: str, asm: str = '', flags=(), labels=
     for text in local_widening_repairs.variants(source, name):
         proposals.append(text)
         labels[text] = 'local_widening'
+    for family,text in phase_lifetime_repairs.variants(source,name,header):
+        proposals.append(text)
+        labels[text] = family
+    for family,text in initializer_clusters.variants(source,name,header):
+        proposals.append(text)
+        labels[text] = family
     for module in (callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs):
         for family, text in module.variants(source, name):
             proposals.append(text)

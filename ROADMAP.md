@@ -130,6 +130,14 @@ failed rechecks of locally captured exact source raise deduplicated regression a
 See [learned repair search](docs/learned-repair-search.md). Durable cross-restart alternative
 source frontiers and controlled live agent-token comparisons remain future work.
 
+
+Bounded allocator combinations now include CFG-dominated pointer-call branches, mixed initializer
+clusters and paired value-phase splits/reuse. Search reserves regional recovery slots under the
+existing time/compile caps. A read-only exported-MIPS-ROM benchmark records linked/data-judge
+results and compile/time costs; imported and other-processor adapters remain planned (copied
+measurement callbacks are already supported by repair replay). Controlled replay recovery is
+not new game progress and full recovery from every earlier checkpoint is not demonstrated.
+
 What's planned for decompdecomp, roughly in order, and why. Every item keeps the rule that matters most: a match is
 byte-identical after linking (ROM mode) or objdiff 100% (fork mode). Nothing here accepts code that only does the
 same thing.
@@ -1667,3 +1675,11 @@ another worker's claim; continuation instructions respect claim ownership. Compa
 C-line tables for unchanged instruction diffs and labels proven relocation-rendering pairs separately from
 instruction mismatches. Target assembly pages provide explicit end-exclusive ranges and next-page calls.
 Reference typedef extraction excludes masked preprocessor prefixes to keep supplied declarations intact.
+
+### Source-context CPU stages and export follow-ups
+
+- Done: bounded actual helper-inline and same-unit callee-context trials, original complete local declaration order, and combined helper/order candidates before broader source permutations. Shared C logic reaches configured source preparation on every supported processor; build-owned projects keep only candidates that preserve their owned headers.
+- Done: measured MIPS saved-pointer lifetimes, explicit commented retail if/else stores backed by target symbols, and repeated neighboring-float-element binding repairs. All remain candidate hypotheses under the unchanged judge, not source-identity verdicts.
+- Done: newly matched source-preparation/deep-search functions can spend their remaining bounded budget on export repair. ROM-verified strings combine with macro arithmetic/scalar references, retaining scheduling-sensitive pools; prefix normalization still needs the standalone rebuild.
+- Planned: non-MIPS saved-pointer readers and constant-operand syntax; imported-build private-header publication and object-layout/export adapters. The MIPS-specific readers cover N64/PS1/PS2 ROM work; absent readers produce no candidate rather than guessed register/layout facts.
+- Planned: reconstruct entirely absent retail cases and enum revisions from CFG/data evidence. Current CPU retail-branch recovery restores only explicit supplied commented conditions with available declarations; arbitrary missing control flow stays outside automatic adoption.

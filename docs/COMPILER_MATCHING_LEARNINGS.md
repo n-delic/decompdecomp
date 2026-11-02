@@ -1690,6 +1690,49 @@ reaches applicable source preparation; private header publication remains ROM-on
 private-entry readers currently cover MIPS; other processor readers are planned. Controlled replays are not
 new coverage and do not guarantee that every archived source difference is automatically recoverable.
 
+### Bounded pointer-call and mixed-initializer allocation repairs
+
+A previously verified 739-instruction menu formatter used KMC GCC 2.7.2 with
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Reusing a heading total, separating a later
+integer/address phase, and using equivalent formatter-call branches changed allocation before
+GCC merged the identical branch bodies. The final difference was the order of two independent
+instructions. Ordering four local initializers recovered it. These are reconstruction choices,
+not evidence of the original source spelling. The game match and complete cartridge build were
+verified separately before these app changes.
+
+Shared generators now offer CFG-dominated, single-definition pointer guards, including
+pointer-to-array locals and two-level identical-call branches. They do not read buffer contents.
+The initializer family can extract independent comma resets from a call, group three or four
+mixed pointer/scalar initializers, and delay a private constant address only when the reached call
+dominates all pointer uses. Scope boundaries, pointer-storage escape, hidden macro access,
+unknown control flow and alternative reaching definitions prevent these transformations.
+A paired family combines a proven integer value-phase split with a disjoint-lifetime merge.
+
+Search still uses its existing compile/time allowance. A measured regional recovery with no
+instruction-count growth can occupy one iterative frontier slot even beyond the ordinary 1.25x
+score ceiling, capped at 8x. Numeric and regional alternatives stay separate; no search score
+or displayed-row classification can accept C. ROM linked-byte/data checks and project objdiff
+remain the only match verdicts.
+
+Private controlled replays against the original ROM recovered the final initializer checkpoint
+(score 160) in 17 candidate compiles, about 17 seconds. A preceding pointer-allocation checkpoint
+(score 725) recovered exact output in 108 candidate compiles, about 101 seconds, through
+`initialization_cluster`, `balanced_pointer_calls`, and `allocation_initialization_order`.
+These recover an existing match, not additional game progress. A broader 520 checkpoint did not
+improve in an initial 128-trial run or a targeted 218-trial, four-stage run. Full rediscovery from
+that earlier shape is not demonstrated. Inputs and captured game code remain private.
+## Bounded context stages before source permutation — 2 November 2026
+
+A source-assisted MIPS ROM batch demonstrated three distinct requirements: an actual small animation wrapper compiled inline, an actual range predicate plus the original local declaration order, and exact source whose separated string/scalar pools blocked export. Controlled private IDO 5.3 replays with retained `-O3`/`-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul` profiles reproduce the historical wrapper match and the predicate/order match through generated candidates. Actual verified call aliases are inputs; the pass does not infer an address from a function name. These replays add no coverage.
+
+Declaration recovery requires the complete uninitialized local name/type set to agree; initializers, directives and changed types are not reordered. A wrapper absent from retail's out-of-line calls is copied from the authorized reference, with its physical line, into private context. Ordinary same-unit callee-body context is a separate bounded hypothesis, not an invented calling convention. An early live temporary across a call, without a spill/reload, demotes ordinary ABI guesses.
+
+Export candidates may reference a complete ROM-proven string and floating arithmetic macros while retaining one generated pool. In the private example, retaining the 0.01 literal while referencing the other two doubles and the actual diagnostic string preserves exact code; replacing that scheduling-sensitive literal fails. Publication still requires exact linked bytes/data, fresh source/context/claim guards and the normal standalone rebuild. Prefix normalization is provisional until that build passes.
+
+MIPS pointer-lifetime candidates require an entry field load saved to the stack, restoration around a specific call occurrence and a subsequent field clear, plus the candidate's same-offset clear and unique typed pointer member. Explicit commented condition recovery and repeated neighboring-array-element repair are bounded source hypotheses. Entirely absent case/enum reconstruction remains planned; no generic CFG synthesizer is claimed.
+
+A third controlled replay starts with the historical draw candidate at score 4,069. Generated saved-pointer lifetime C reaches 40; generated neighboring-float-element correction then links exactly. The lifetime reader selects the second call occurrence, not the earlier same-callee call. Restricting candidate cleared fields to the straight-line entry region avoids confusing later cleanup clears with the saved pointer. This is another historical replay, not new coverage.
+
 ## 2 November: paired operands and a derived loop counter (KMC GCC 2.7.2)
 
 A controlled private replay of a 619-instruction gameplay routine used unchanged KMC GCC 2.7.2

@@ -15,6 +15,23 @@ from . import allocation_evidence, region_repairs, search_frontier, workers
 
 WIDTH, DEPTH, PER_FUNCTION = 3, 4, 8
 DETOUR_RATIO = 1.25
+REGION_DETOUR_RATIO = 8
+
+
+def regional_detour(node, report):
+    """Spend one existing frontier slot on a real regional recovery, with no code growth.
+
+    Scalar ratios can reject a recovered heading when allocation gets worse elsewhere.
+    Bound this larger detour separately; neither this nor displayed rows accept a match.
+    """
+    score, rows = report.get('score'), report.get('rows') or []
+    if not isinstance(score,(int,float)) or not 0<score<=node['ceiling']*REGION_DETOUR_RATIO:
+        return False
+    if any(not isinstance(r,(list,tuple)) or len(r)!=3 or not all(isinstance(v,str) for v in r) for r in rows):
+        return False
+    if not rows or sum(bool(r[1]) for r in rows)!=sum(bool(r[2]) for r in rows):
+        return False
+    return region_repairs.gain(node.get('region_baseline'),region_repairs.snapshot(rows))>0
 
 
 def children(state, parent, variants, *, priority=0):
@@ -67,8 +84,9 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 expand_wave(state, variants, arch)
             continue
         score = report.get('score')
-        if (isinstance(score, (int, float)) and 0 < score <= node['ceiling'] * DETOUR_RATIO
-                and (score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
+        regional = regional_detour(node,report)
+        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional)
+                and (regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
             # Keep two source shapes per identical output at each depth: a later source edit can distinguish them.
             # This only prunes search branches, never supplies a match verdict.
             output = output_key(report)
@@ -125,7 +143,12 @@ def expand_wave(state, variants, arch):
         if shape not in shapes:
             retained.append(candidate);shapes.add(shape)
     retained += [n for n in ordinary if n not in retained]
-    best = retained[:WIDTH-1] + detours[:1] if detours else retained[:WIDTH]
+    regional = search_frontier.regional_choices(state['next'])[:1]
+    # Keep the numeric winner, a regionally recovered detour and one distinct sibling.
+    fallback = retained[:WIDTH-1]+detours[:1] if detours else retained[:WIDTH]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+regional+fallback))[:WIDTH]
+    by_source = {n['source']:n for n in ranked}
+    best = [by_source[source] for source in best]
     state['next'] = []
     for parent in best:
         if parent['depth'] >= DEPTH:

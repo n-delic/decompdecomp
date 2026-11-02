@@ -4,7 +4,7 @@ import re
 from .integer_repair_support import IDENT, NUMBER, edit, locals_for, view
 from .pattern_repairs import close
 
-FAMILIES = ('constant_index_temporary', 'balanced_call_references')
+FAMILIES = ('constant_index_temporary', 'balanced_call_references', 'balanced_pointer_calls')
 
 
 def indices(source, name):
@@ -88,5 +88,6 @@ def balanced_calls(source, name, header=''):
 
 
 def variants(source, name, header=''):
+    from .allocator_call_guards import variants as pointer_calls
     return [('constant_index_temporary',s) for s in indices(source,name)]+[
-        ('balanced_call_references',s) for s in balanced_calls(source,name,header)]
+        ('balanced_call_references',s) for s in balanced_calls(source,name,header)]+pointer_calls(source,name,header)

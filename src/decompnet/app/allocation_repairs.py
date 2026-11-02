@@ -4,7 +4,7 @@ No artificial stack fields, tautological guards or prescribed machine registers.
 syntax is left alone. The existing CFG split/reuse families supply phase partition candidates.
 """
 import re
-from itertools import zip_longest
+from itertools import permutations, zip_longest
 
 from . import pointer_pair_repairs
 from .call_lifetime_repairs import block_path
@@ -101,9 +101,12 @@ def initialization_orders(source,name,header=''):
     if not part or re.search(r'\b(?:asm|__asm__)\b',part.clean):return []
     # Volatile accesses elsewhere do not forbid moving two plain local stores. Do not
     # read/move volatile expressions themselves or infer semantics for opaque macros.
-    declared = {d['name']:d for d in pointer_pair_repairs.declarations(part)+locals_for(part)}
+    from .allocator_call_guards import declarations
+    declared = {d['name']:d for d in declarations(part)+locals_for(part)}
     macros = set(re.findall(r'^\s*#\s*define\s+('+IDENT+r')',source+'\n'+header,re.M))
-    atom = rf'(?:{NUMBER}|&\s*{IDENT}(?:\s*\.\s*{IDENT})*)'
+    arrays = set(re.findall(rf'\b(?:char|[su](?:8|16|32)|int)\s+({IDENT})\s*\[\s*{NUMBER}\s*\]',part.body))
+    array_atom = '|'.join(map(re.escape,sorted(arrays))) or r'(?!)'
+    atom = rf'(?:{NUMBER}|&\s*{IDENT}(?:\s*\.\s*{IDENT})*|{array_atom})'
     hits = list(re.finditer(rf'\b({IDENT})\s*=\s*({atom})\s*;',part.body))
     out = []
     for left,right in zip(hits,hits[1:]):
@@ -118,7 +121,41 @@ def initialization_orders(source,name,header=''):
         if set(re.findall(IDENT,left[0]+' '+right[0])) & macros:continue
         left_end = part.opening+1+left.end()
         out.append(edit(source,[(start,left_end,source[mid:end]),(mid,end,source[start:left_end])]))
-    return out[-6:]
+    # Permute a small, contiguous group together: adjacent swaps alone can plateau
+    # when a pointer, loop counter and narrow scalar compete in the scheduler.
+    groups = []
+    for hit in hits:
+        if groups and not part.body[groups[-1][-1].end():hit.start()].strip():
+            groups[-1].append(hit)
+        else:
+            groups.append([hit])
+    clustered = []
+    for group in groups:
+        if len(group)>4:
+            windows = [group[i:i+4] for i in range(len(group)-3)]
+            group = max(windows,key=lambda items:sum(h[2].lstrip().startswith('&') or h[2].strip() in arrays for h in items))
+        if not 3 <= len(group) <= 4:
+            continue
+        start = part.opening+1+group[0].start()
+        names = [hit[1] for hit in group]
+        prefix = part.clean[part.opening+1:start].rstrip()
+        if (prefix and prefix[-1] not in ';{}') or len(set(names)) != len(names):
+            continue
+        if any(v not in declared or declared[v].end()>start for v in names):
+            continue
+        if set(names) & set(re.findall(IDENT, ' '.join(hit[2] for hit in group))):
+            continue
+        if set(re.findall(IDENT, ' '.join(hit[0] for hit in group))) & macros:
+            continue
+        for order in permutations(group):
+            if list(order) == group:
+                continue
+            # Keep comments and line slots in place; do not replace the group's gaps.
+            clustered.append(edit(source,[(part.opening+1+a.start(),part.opening+1+a.end(),
+                                          source[part.opening+1+b.start():part.opening+1+b.end()])
+                                         for a,b in zip(group,order)]))
+        break
+    return list(dict.fromkeys(clustered+out[-6:]))[:24]
 
 
 def variants(source,name,header=''):

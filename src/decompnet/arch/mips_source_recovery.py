@@ -146,4 +146,15 @@ def private_abi(asm, rows):
         if (len(re.findall(r'\bjal\b',tail))>=2 and re.search(r'\([^)]*\$a3\)',tail)
                 and not re.search(r'\b(?:lw|ld|or|move|addiu|addu)\s+\$a3\b',tail)):
             return {'kind':'retained-caller-saved-argument','message':'Target retains an argument in $a3 across multiple calls. Prioritize actual callee definitions and translation-unit clobber context before ordinary signature changes.'}
+    if rows:
+        for capture in re.finditer(r'\b(?:move|or)\s+(\$t[0-9]),\s*\$a[0-3](?:,\s*\$zero)?\n',text):
+            register=capture[1];tail=text[capture.end():]
+            call=re.search(r'\bjal\s+\w+\n',tail)
+            if not call:continue
+            use=re.search(r'\('+re.escape(register)+r'\)',tail[call.end():])
+            if not use:continue
+            live=tail[:call.end()+use.end()]
+            if re.search(r'\b(?:sw|sd)\s+'+re.escape(register)+r',[^\n]*\(\$sp\)',live):continue
+            if re.search(r'\b\w+\s+'+re.escape(register)+r',',live):continue
+            return {'kind':'retained-caller-saved-temporary','message':'Target keeps an incoming pointer in a caller-saved temporary across a call without a spill/reload. Try actual same-unit callee/clobber context; this does not invent a register binding.'}
     return None
