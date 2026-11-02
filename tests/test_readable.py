@@ -137,10 +137,8 @@ def test_the_function_list_tells_polished_functions_and_helpers_say_they_polish(
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit,readable) VALUES(1,?,8,2,'matched','u',?)",
                        (name, readable))
     assert {r["name"]: r["polished"] for r in net.function_map("g")} == {"a": True, "b": False}
-    s = agents.Session.__new__(agents.Session)
-    s.__dict__.update(id="1", kind="api", label="x", slug="g", agent_name="api-m-1", model="m", state="working",
-                      why="", todo="", until=None, stopped_by=None, last_message="", runs=0, restarts=0, error="",
-                      started_at=0, usd=0, tokens=0, feed=[], options={"task": "readable"})
+    s = agents.Session(id="1", kind="api", label="x", slug="g", agent_name="api-m-1",
+                       options={"task": "readable"}, state="working")
     assert s.snapshot()["task"] == "readable"
 
 

@@ -129,6 +129,7 @@ def test_targeted_phase_respects_lease_and_trial_budget(tmp_path,monkeypatch):
 @pytest.mark.parametrize('mode',['rom','fork'])
 def test_agent_release_runs_phase_only_after_accepted_tried_release(tmp_path,monkeypatch,mode):
     net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a')
+    net.claim_row(a,'game','f')  # An accepted release requires the agent's actual lease.
     with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,best_score=10',('void f(){}',))
     net.claim_row(a,'game','f')
     monkeypatch.setattr(net,'claim_progress',lambda *a:{'compiles':1})

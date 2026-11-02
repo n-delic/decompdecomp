@@ -49,7 +49,9 @@ def children(state, parent, variants, *, priority=0):
         new.append(dict(source=source, depth=parent['depth'] + 1,
                         ceiling=min(parent['ceiling'], parent['score']),
                         region_baseline=parent.get('regions'), baseline_rows=parent['report'].get('rows'),
-                        path=parent.get('path', [])+[family], parent_source=parent['source']))
+                        path=parent.get('path', [])+[family], parent_source=parent['source'],
+                        parent_output=output_key(parent['report']),
+                        unchanged_steps=parent.get('unchanged_steps', 0)))
     state['pending'] = new[:priority]+state['pending']+new[priority:]
     return len(new)
 
@@ -90,6 +92,10 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             # This only prunes search branches, never supplies a match verdict.
             output = output_key(report)
             outputs = state.setdefault('outputs', {})
+            unchanged = node.get('unchanged_steps', 0)+1 if output is not None and output == node.get('parent_output') else 0
+            node['unchanged_steps'] = unchanged
+            if unchanged:
+                counts['unchanged_output'] = counts.get('unchanged_output', 0)+1
             if output is None or outputs.get(str(node['depth'])+':'+output, 0) < 2:
                 regions = region_repairs.snapshot(report.get('rows'))
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
@@ -125,7 +131,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
 
 def expand_wave(state, variants, arch):
     """Retain numeric and structural alternatives between bounded search waves."""
-    ranked = sorted(state['next'], key=lambda n: (*region_repairs.priority(n)[:2], search_frontier.structure(n['report'].get('rows') or []),
+    ranked = sorted(state['next'], key=lambda n: (*region_repairs.priority(n)[:2], n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
                                                     stack_distance(n['report'].get('rows') or []), n['score']))
     ordinary = [n for n in ranked if n['score'] <= n['ceiling']]
     detours = sorted((n for n in ranked if n['score'] > n['ceiling']),

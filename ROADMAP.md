@@ -1689,3 +1689,5 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
   Generic search and replay are shared across processors and modes; automatic iterative
   autopilot retains its existing linked-MIPS-only scope. Other modes require a copied
   evaluator for composition replay; there is no inferred C-to-instruction source map.
+
+- Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.
