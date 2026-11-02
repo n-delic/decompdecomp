@@ -37,7 +37,7 @@ def diagnose(rows, arch=None):
     target_count=sum(bool(r[1]) for r in rows);candidate_count=sum(bool(r[2]) for r in rows)
     merging=bool(target_count and .8*target_count<=candidate_count<target_count and
                  any(n>=3 and candidate_calls[c]<n for c,n in target_calls.items()))
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'register_map':swaps, 'scheduling':scheduling,
+    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'register_only': bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'scheduling':scheduling,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -53,6 +53,8 @@ def text(rows, arch=None):
     hints = []
     if d['possible_tail_merging']:
         hints.append(f"{d['candidate_instructions']} candidate / {d['target_instructions']} target instructions with fewer repeated calls; inspect tail merging or missing logic, then try selective branch pointer lifetimes")
+    if d['register_only']:
+        hints.append(f"{d['target_instructions']} ordered instruction forms agree; {d['differences']} register-only rows; prioritize equal-value lifetimes and bounded loop-weight scopes, retaining distinct allocation alternatives")
     if d['register_map']:
         hints.append('consistent register substitution '+', '.join(a+'→'+b for a,b in d['register_map'][:6])+
                      '; try lifetime/split-reuse repairs before broad flag search')

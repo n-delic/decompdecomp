@@ -240,3 +240,11 @@ compiles; a preceding pointer shape needed 108 compiles and three families. The 
 checkpoint was not automatically recovered in the measured budget. Regional frontiers can retain
 useful intermediate shapes with a temporarily worse total score; the ordinary exact judge still
 decides acceptance. Use the read-only linked-ROM benchmark to measure a private checkpoint.
+
+For register-only near misses, request `equal_value_increment` and `loop_weight_scope`
+through local repairs before broad random trials. Both use the existing budget and judge.
+Scope proposals change only plain scalar updates; equal-value proposals currently require
+an adjacent copy and increment of identically typed locals. Cross-branch lifetime changes
+still need investigation. Preserve a distinct allocation candidate even if its numeric
+score is worse. Optional GCC diagnostics expose loop notes and legacy reference weights;
+use them as leads only when diagnostic flags leave output unchanged.
