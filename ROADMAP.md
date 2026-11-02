@@ -1,5 +1,12 @@
 # Roadmap
 
+Implemented: ROM room match submissions retain source, successful compiler/ordered flags and private
+header evidence. Hosts rejudge exact linked bytes before atomically accepting function-only settings,
+and sync compiler ranges/private contexts to clients. Pending submissions show reasons and support
+retry; upgraded clients recover saved local matches, and hosts can recover older source-only submissions
+with bounded installed-profile searches. Imported projects retain their existing build/tree verification;
+portable per-file profile/header adapters remain planned.
+
 Implemented: lightweight authenticated helper connection checks retry temporary transport failures with
 capped backoff before any model call. Configuration/authentication failures retain phase, duration and
 redacted diagnostics; old generic connection pauses recover on restart. Session completion is distinct

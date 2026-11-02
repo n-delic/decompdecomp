@@ -266,7 +266,10 @@ def test_one_refused_saved_candidate_does_not_wedge_the_others(built, tmp_path, 
     assert guest.links[gslug].saved_progress is None
     assert guest.store.all("SELECT name FROM saved_progress WHERE project_id=?",
                            guest.project_row(gslug)["id"]) == []
-    assert any("refused saved progress for func_80000808" in line for line in said), said
+    assert any("wasn't confirmed" in line for line in said), said
+    from decompnet.app.room_matches import pending
+    assert any(r['function']=='func_80000808' for r in pending(host,slug,'host'))
+    assert any(r['function']=='func_80000808' for r in pending(guest,gslug,'client'))
 
 
 def test_a_failure_before_the_join_leaves_no_member_or_project(built, tmp_path, monkeypatch):  # noqa: F811

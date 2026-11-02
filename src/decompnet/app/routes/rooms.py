@@ -117,6 +117,41 @@ def register(app: App) -> None:
                              "addresses": await anyio.to_thread.run_sync(collab.local_addresses),
                              "tunnel_supported": collab.cloudflared_available()})
 
+    @mcp.custom_route('/api/collab/matches', methods=['GET','POST'])
+    async def api_room_matches(request: Request) -> Response:
+        if (bad := guard(request,write=request.method=='POST')):
+            return bad
+        from .. import room_matches
+        data=await body(request) if request.method=='POST' else dict(request.query_params)
+        slug=str(data.get('slug') or '')
+        try:
+            net.project_row(slug)
+            if request.method=='GET':
+                return JSONResponse({'rows':await call(room_matches.public,net,slug),'guest':slug in net.links})
+            if net.fork_slug(slug):
+                raise NetworkError('Imported-project rooms verify their source tree/build settings; portable compiler/header bundles currently support ROM projects.')
+            key=str(data.get('key') or '')
+            if key and not key.startswith(room_matches.PREFIX+str(net.project_row(slug)['id'])+':'):
+                raise NetworkError('Choose a submission in this project.')
+            def work(log):
+                if data.get('recover') and slug not in net.links:
+                    log(f'Recovered {room_matches.recover_legacy(net,slug)} older submissions.')
+                rows=[r for r in room_matches.pending(net,slug) if not key or r['key']==key][:5]
+                matched=0
+                for index,row in enumerate(rows):
+                    if getattr(log,'cancelled',False):break
+                    log(f"Verifying {row['function']} ({index+1}/{len(rows)})")
+                    if row['direction']=='client':
+                        if slug not in net.links:raise NetworkError('Reconnect to this room before resubmitting.')
+                        result=room_matches.resend(net.links[slug],row['key'])
+                    else:result=room_matches.retry(net,slug,row['key'])
+                    matched+=bool(result.get('matched'))
+                    log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
+                    if hasattr(log,'progress'):log.progress({'finished':index+1,'total':len(rows),'phase':'Host verification'})
+                return {'matched':matched}
+            return JSONResponse({'job':jobs.start('room match verification',work)})
+        except (NetworkError,ValueError) as error:return fail(error)
+
     @mcp.custom_route("/api/collab/start", methods=["POST"])
     async def api_collab_start(request: Request) -> Response:
         if (bad := guard(request, write=True)):

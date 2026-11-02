@@ -557,6 +557,31 @@ function renderNext(ov) {
 }
 
 /* ------------------------------------------------------------------ team (rooms), in the header's panel */
+async function openRoomMatchReview() {
+  const slug=S.slug;
+  const box=dialog('Room match verification','<p class="muted">Loading pending submissions…</p>');
+  const load=async () => {
+    const data=await api('/api/collab/matches?slug='+encodeURIComponent(slug));
+    box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
+      ${data.rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Why pending</th><th></th></tr></thead><tbody>${data.rows.map(r=>`<tr><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td>${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
+      <div class="row"><button class="ghost" data-refresh-matches>Refresh</button>${!data.guest ? '<button class="ghost" data-recover-matches>Recover older submissions</button>' : ''}</div><pre class="joblog" id="roomMatchLog" hidden></pre>`;
+    const run=async payload=>{
+      const log=box.querySelector('#roomMatchLog');log.hidden=false;
+      const done=beginWork(log,'Verifying saved room matches',[...box.querySelectorAll('button')]);
+      try { const {job}=await api('/api/collab/matches',{method:'POST',body:{slug,...payload}}); await followJob(job,log);await load(); }
+      catch(error){showJobError(log,error.message);}finally{done();}
+    };
+    box.querySelectorAll('[data-retry-match]').forEach(b=>{b.onclick=()=>run({key:b.dataset.retryMatch});});
+    box.querySelector('[data-refresh-matches]').onclick=()=>load().catch(e=>toast(e.message));
+    if(box.querySelector('[data-recover-matches]'))box.querySelector('[data-recover-matches]').onclick=()=>run({recover:true});
+  };
+  try{await load();}catch(error){box.textContent=error.message;}
+}
+function wireRoomMatchReview(box) {
+  const button=box.querySelector('[data-room-matches]');
+  if(button)button.onclick=openRoomMatchReview;
+}
+
 async function renderTeam(box) {
   clearInterval(teamTimer);
   if (!S.ov) return;
@@ -595,7 +620,8 @@ function renderGuest(box, room) {
       : `${esc(room.error || "Waiting for the host…")} Your agents wait and carry on when it's back.`}</p>
     <dl class="facts"><div><dt>Host</dt><dd>${esc(room.host)}</dd></div><div><dt>Members</dt><dd>${members.length}</dd></div><div><dt>Online</dt><dd>${members.filter((m) => m.online).length}</dd></div></dl>
     ${people ? `<div class="setup-group"><h3>In the room</h3>${people}</div>` : ""}
-    <div class="row"><button class="ghost" id="roomReconnect" type="button">${room.connected ? "The host shared a new link?" : "Reconnect with a new link"}</button><button class="ghost danger" id="roomLeave" type="button">Leave room</button></div>`);
+    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="ghost" id="roomReconnect" type="button">${room.connected ? "The host shared a new link?" : "Reconnect with a new link"}</button><button class="ghost danger" id="roomLeave" type="button">Leave room</button></div>`);
+  wireRoomMatchReview(box);
   $("roomReconnect").onclick = openReconnect;
   $("roomLeave").onclick = async () => {
     if (!confirm("Leave this room? Your local copy of the project stays; it stops syncing.")) return;
@@ -619,7 +645,8 @@ function renderHost(box, info) {
           <label class="field"><span>The address teammates use (the room listens on port <input id="addrPort" class="mono port" type="number" value="${info.port || ROOM_PORT}">)</span><input id="addrIn" class="mono" placeholder="http://192.168.1.20:6481" value="${esc(info.address || "")}"></label>
           <div class="chips">${sugg}</div></div></div>
       ${opts(info)}
-      <div class="row"><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`);
+      <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`);
+    wireRoomMatchReview(box);
     box.querySelectorAll('[name="mode"]').forEach((r) => { r.onchange = () => { box.querySelector("#addrBox").hidden = r.value !== "address" || !r.checked; }; });
     box.querySelectorAll("[data-addr]").forEach((b) => { b.onclick = () => { box.querySelector("#addrIn").value = b.dataset.addr; }; });
     box.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => box.querySelectorAll("[data-vis]").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -655,8 +682,9 @@ function renderHost(box, info) {
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
-    <div class="row"><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
+    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
   wireCopies(box);
+  wireRoomMatchReview(box);
   const manage = async (payload) => {
     try { await api("/api/collab/manage", { method: "POST", body: { slug: S.slug, ...payload } }); renderHost(box, await api(`/api/collab?slug=${S.slug}`)); }
     catch (e) { toast(esc(e.message), "err"); }
