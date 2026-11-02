@@ -16,7 +16,6 @@ from pathlib import Path
 from .. import hostenv, limits, toolchains
 from ..network import NetworkError
 from ..project import compiler_for
-from ..rom.export import _single_definition
 from . import repository_sync_build
 
 STATE = 'decompdecomp-sync.json'
@@ -161,10 +160,32 @@ def integrate(net, proj, root, stage, log):
             owned.pop(relative)
             skipped.append({'function':row['name'],'reason':'Preserved committed manual edits; this file is no longer managed by sync.'})
             continue
+        # Unchanged managed files need no new compiler run. Reuse only a header
+        # actually present in this checkout, compared byte-for-byte with current or
+        # recorded exact-attempt context; transformed candidates are checked below.
+        from .function_names import canonical_source
+        from .repository_candidates import contexts
+        unchanged=False
+        if target.exists():
+            for h in contexts(net,proj,row):
+                ctx=toolchains.get(compiler_for(cfg,row['vram'])['toolchain']).prelude+h
+                hn='decompdecomp_sync_'+hashlib.sha256(ctx.encode()).hexdigest()[:20]+'.h'
+                original=source_text(canonical_source(row,row['matched_source']),row['name'],fn['name'])
+                original=re.sub(r'(?m)^([ \t]*#[ \t]*include[ \t]*)"context\.h"',lambda m,hn=hn:m[1]+'"'+hn+'"',original)
+                if target.read_text(encoding='utf-8')==f'#include "{hn}"\n#line 1 "func.c"\n'+original+'\n':
+                    unchanged=True;break
+        if unchanged:continue
         profile=compiler_for(cfg,row['vram'])
-        context=toolchains.get(profile['toolchain']).prelude+net._context(proj['id'],row['unit'])['header']
+        from .repository_candidates import select
+        prepared,reason=select(net,proj,row)
+        if prepared is None:
+            skipped.append({'function':row['name'],'reason':reason});continue
+        candidate,private_header,entry_only=prepared
+        if entry_only and 'def normalize_entry(' not in (stage/'build.py').read_text(encoding='utf-8'):
+            skipped.append({'function':row['name'],'reason':'This exact candidate needs verified-entry extraction. Update the exported build.py before syncing non-contiguous constant pools.'});continue
+        context=toolchains.get(profile['toolchain']).prelude+private_header
         header='include/decompdecomp_sync_'+hashlib.sha256(context.encode()).hexdigest()[:20]+'.h'
-        source=source_text(row['matched_source'],row['name'],fn['name'])
+        source=source_text(candidate,row['name'],fn['name'])
         source=re.sub(r'(?m)^([ \t]*#[ \t]*include[ \t]*)"context\.h"',lambda m,header=header:m[1]+'"'+Path(header).name+'"',source)
         rendered=f'#include "{Path(header).name}"\n#line 1 "func.c"\n'+source+'\n'
         if target.exists() and target.read_text(encoding='utf-8')==rendered:
@@ -172,19 +193,6 @@ def integrate(net, proj, root, stage, log):
         existing_header=inside(stage,header)
         if existing_header.exists() and existing_header.read_text(encoding='utf-8')!=context:
             skipped.append({'function':row['name'],'reason':'Preserved manual edits to a sync header. Rename the edited header or restore its original contents before updating this source.'})
-            continue
-        compiled=net._compile(proj,net._context(proj['id'],row['unit'])['header'],row['matched_source'],row)
-        if not compiled.ok or not _single_definition(compiled.obj,row['name']):
-            skipped.append({'function':row['name'],'reason':'The current candidate does not compile to one standalone function; keep assembly until its extra bodies or declarations are resolved.'})
-            continue
-        _, exact, problems = net._evaluate(row, proj, compiled.obj)
-        readiness = net._candidate_checks(row, proj, compiled.obj).get('export', {})
-        # A curated checkout may already normalize discarded inline prefixes. Let its own
-        # per-function/full-build gates prove that, rather than treating it as a pool conflict.
-        needs_normalization = readiness.get('state') == 'requires_normalization'
-        if not exact or (readiness.get('ready') is not True and not needs_normalization):
-            skipped.append({'function': row['name'], 'reason': readiness.get('message') or
-                            ('Current function no longer passes the byte judge: '+'; '.join(problems))})
             continue
         before=manifest_path.read_bytes();old_source=target.read_bytes() if target.exists() else None
         inside(stage,header).parent.mkdir(parents=True,exist_ok=True);inside(stage,header).write_text(context,encoding='utf-8')

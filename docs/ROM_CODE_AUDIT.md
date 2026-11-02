@@ -45,3 +45,21 @@ were adopted on this evidence alone. These are leads, not four new matches.
 
 Other processors and imported object projects need an image/segment adapter and boundary
 reader (ROADMAP). They do not receive guessed MIPS diagnoses.
+
+## Pointer and interior evidence
+
+The audit also examines bytes inside mapped code parents that no detected function
+owns. These can be data/rodata children or missed text; an interior hit is not proof
+that the data classification is wrong. Aligned words outside known function bodies
+are checked as possible function pointers into raw gaps or unowned interiors. A new
+pointer destination must start with a frame and have closed direct flow before it
+uses a candidate slot. Up to eight referring ROM offsets are retained per candidate.
+Pointers are still hypotheses: tables, constants and microcode can resemble addresses.
+The audit caps pointer destination probes at 512 and reports exhaustion explicitly.
+
+The N64 importer separately recognizes a narrower recovery: an entire gap between
+accepted code ranges, called directly at its start using a unique established
+mapping, with a single frame, matching restores at all returns and closed bounded
+control flow reaching the gap end. Pointer-only and interior leads are never
+promoted by this rule. Reimport retains matching sources and private header units;
+legacy lost units can be recovered from the unchanged exact attempt's header history.

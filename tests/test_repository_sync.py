@@ -44,16 +44,16 @@ if (r/'fail-full').exists():sys.exit(1)
 (r/'build').mkdir(exist_ok=True);shutil.copyfile(b['image'],b['output'])
 ''')
     commit(root)
-    monkeypatch.setattr(sync,'_single_definition',lambda *args:True)
+    monkeypatch.setattr('decompnet.rom.export._single_definition',lambda *args:True)
     cfg={'rom':{'sha1':manifest['sha1']},'compiler':{'toolchain':'gcc-2.7.2-kmc','flags':['-O2']}}
-    rows=[{'name':'f','vram':4096,'matched_source':'void f(void) {}','unit':''},
-          {'name':'curated','vram':8192,'matched_source':'void curated(void) { changed(); }','unit':''}]
+    rows=[{'id':1,'name':'f','vram':4096,'matched_source':'void f(void) {}','unit':''},
+          {'id':2,'name':'curated','vram':8192,'matched_source':'void curated(void) { changed(); }','unit':''}]
     class Store:
         def all(self,query,*args):
             if "status='matched'" in query:return rows
             if 'FROM symbols' in query:return []
             return [{'name':x['name'],'vram':x['vram']}for x in rows]
-        def one(self,*args):return {'n':len(rows)}
+        def one(self,query,*args):return None if 'FROM attempts' in query else {'n':len(rows)}
     net=SimpleNamespace(project_row=lambda slug:{'id':1,'config':json.dumps(cfg)},cfg=lambda proj:cfg,
                         is_rom=lambda proj:True,store=Store(),_context=lambda *args:{'header':'typedef int s32;\n'},
                         _update_cfg=lambda slug,fn:fn(cfg),_compile=lambda *args:SimpleNamespace(ok=True,obj=b'fake object'),
@@ -207,9 +207,10 @@ def test_success_exit_cannot_bypass_original_image_verification(project):
 
 def test_extra_out_of_line_bodies_remain_out_of_the_build(project,monkeypatch):
     root,net,_=project
-    monkeypatch.setattr(sync,'_single_definition',lambda *args:False)
+    monkeypatch.setattr('decompnet.rom.export._single_definition',lambda *args:False)
+    monkeypatch.setattr('decompnet.app.repository_candidates.single_source',lambda *args:None)
     result=run(project)
-    assert result['accepted']==[] and 'one standalone function' in result['skipped'][0]['reason']
+    assert result['accepted']==[] and 'Extra function bodies' in result['skipped'][0]['reason']
     assert not (root/'src/game/f.c').exists()
 
 

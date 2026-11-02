@@ -53,6 +53,8 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
                    "VALUES(?,?,?,?,?,?)", (pid, 1, "user header", "custom", 1, ""))
 
     with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,header,message,created_at,unit) VALUES(?,2,'private types','source',2,'local_source_test')",(pid,))
+        db.execute("UPDATE functions SET unit='local_source_test' WHERE id=?",(unchanged_id,))
         db.execute('UPDATE functions SET meta=? WHERE id=?',
                    (json.dumps({'naming':{'method':'operator'},'reopened':True}),unchanged_id))
 
@@ -112,6 +114,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert (root / "new.z64").read_bytes() == b"new rom"
     assert (root / "new.yaml").read_text(encoding="utf-8") == "new split"
     assert not (root / "old.yaml").exists()
+    assert net.store.one('SELECT unit FROM functions WHERE id=?',unchanged_id)['unit']=='local_source_test'
     unchanged = net.store.one("SELECT status, matched_source FROM functions WHERE id=?", unchanged_id)
     assert json.loads(net.store.one("SELECT meta FROM functions WHERE id=?",unchanged_id)["meta"])["naming"]=={"method":"operator"}
     assert unchanged["status"] == "matched"
@@ -135,7 +138,7 @@ def test_reimport_replaces_analysis_and_keeps_only_unchanged_matches(tmp_path, m
     assert saved["compiler"] == cfg["compiler"] and saved["auto_compiler"] is True
     assert net.project_row("game")["name"] == "old game"
     assert "export" not in saved and "autopilot" not in saved
-    assert net.store.one("SELECT header FROM context_versions WHERE project_id=? ORDER BY version DESC LIMIT 1",
+    assert net.store.one("SELECT header FROM context_versions WHERE project_id=? AND unit='' ORDER BY version DESC LIMIT 1",
                          pid)["header"] == "user header"
     assert net.store.one("SELECT kind FROM events WHERE project_id=? ORDER BY id DESC LIMIT 1",
                          pid)["kind"] == "reimport"

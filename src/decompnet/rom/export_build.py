@@ -224,8 +224,20 @@ def build_objects(todo: list[tuple[str, str, str]]) -> None:
             if src.endswith(".cpp"):  # C++ names back to the game's, as decompdecomp judged it
                 names = {*B["symbols"], *(f["name"] for f in B["functions"])}
                 target.write_bytes(unmangle(target.read_bytes(), lambda n: n in names or bool(AUTO_NAME.match(n))))  # noqa: B023  called within this pass of the loop
-            trim(target)
-            weaken_data(obj)
+            entry=next((f for f in B['functions'] if c_source(f)==src),None)
+            if entry and entry.get('entry_only'):
+                normalize_entry(entry,target)
+            else:
+                trim(target)
+                weaken_data(obj)
+
+
+def normalize_entry(fn, path):
+    """Matching-only extraction, recompiled and rejudged every build; never copies target instructions."""
+    from export_entry import write
+
+    try:write(ROOT,B,fn,path)
+    except ValueError as error:fail(str(error))
 
 
 def weaken_data(obj: str) -> None:
@@ -444,7 +456,15 @@ def check(name: str) -> bool:
             print(f"  - {p}")
         return False
     fn["c"] = src
-    fn["own"] = {sec: min(a - o for o, a in offs.items()) for sec, offs in linked.placements.items()}
+    from decompnet.rom.export import _section_bases, _single_definition
+    _,problem=_section_bases(linked.placements)
+    if problem or not _single_definition(res.obj,name):
+        # A full-image rebuild still has to pass before this becomes accepted C.
+        fn['entry_only']=True
+        fn['own']={}
+    else:
+        fn.pop('entry_only',None)
+        fn["own"] = {sec: min(a - o for o, a in offs.items()) for sec, offs in linked.placements.items()}
     (ROOT / "build.json").write_text(json.dumps(B, indent=1), encoding="utf-8")
     print(f"{name}: identical to the original; recorded in build.json")
     return True
