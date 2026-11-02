@@ -975,6 +975,17 @@ $("sourcePrepRun").onclick = async () => {
 };
 
 
+$("sourcePrepExportRun").onclick = async () => {
+  const log = $("sourcePrepLog"), button = $("sourcePrepExportRun"), slug = S.slug;
+  const functions = $("sourcePrepExportNames").value.trim().split(/[\s,]+/).filter(Boolean);
+  const finish = beginWork(log, "Repairing exact functions for export", [button], "Export repair finished.");
+  try {
+    const { job } = await api("/api/source-preparation", { method: "POST", body: { slug, action: "repair-export", functions } });
+    await followJob(job, log);
+    if (S.slug === slug) await refreshMap(true);
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
+};
+
 let deepSweepFollowing = null, deepSweepProjectVersion = 0;
 function renderDeepSweepResults(status) {
   const scrollPositions = ["deepSweepRecipes", "deepSweepResults"].map(id =>

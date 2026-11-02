@@ -400,6 +400,8 @@
         <p class="small muted">Only selected objects referenced by the candidate are included. The app tries preserved definitions before the version without them; exact judging and export data checks still apply. Split multiple object declarations into a prepared subset.</p>
         <label>Retail macro values (numeric, one per line)<textarea id="sourcePrepOverrides" rows="2" placeholder="OBJECT_LIMIT=128"></textarea></label>
         <p class="small muted">Reference paths and mappings stay on this machine; accepted C and declarations are included in saved/exported work. Use a declarations header with the retail layouts, not debug settings. Imported projects keep their existing build headers; the reference body must compile against those. Each preparation pass is limited to 8 compiles / 20 seconds; unchanged trials are skipped.</p>
+        <label>Exact functions blocked from export (up to 20 names, separated by spaces)<input id="sourcePrepExportNames" placeholder="func_80001000"></label>
+        <button id="sourcePrepExportRun" class="ghost" type="button">Repair export constant pools</button>
         <div class="row"><button id="sourcePrepSave" class="ghost" type="button">Save source settings</button><button id="sourcePrepRun" class="primary" type="button">Try preparation pass</button></div>
         <details><summary>Try a source body and header directly</summary>
           <p class="small muted">Keep these separate to preserve source line positions. Add a #line directive if needed. A match saves this function’s source, private header and profile together; a miss leaves the working candidate unchanged. Local ROM projects only.</p>
