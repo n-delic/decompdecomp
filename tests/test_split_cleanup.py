@@ -1,0 +1,58 @@
+"""split_function cleanup: when a function is split, the head's extent changes, so its old best attempt no longer
+describes it (reset best_source, not just best_score); and a head trimmed down to pure NOP padding is not a function
+to match, so it is marked done ('asm') rather than left as an open sliver agents keep claiming."""
+
+import shutil
+
+import pytest
+
+from decompnet import toolchains
+from decompnet.app.engine import RomNetwork
+
+from .test_rom import built  # noqa: F401  (fixture that builds the demo ROM)
+
+pytestmark = pytest.mark.skipif(toolchains.installed("gcc-2.7.2-kmc") is None or not shutil.which("ld.lld"),
+                                reason="needs gcc-2.7.2-kmc and ld.lld to build the demo ROM")
+
+SLUG = "demo-quest-64"
+FN = "func_800007C4"
+
+
+@pytest.fixture
+def net(built, tmp_path):  # noqa: F811
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    assert net.import_rom(built, confirmed=True, log=lambda *_: None) == SLUG
+    return net
+
+
+def test_split_resets_the_heads_stale_best(net):
+    agent, _ = net.local_agent("tester")
+    pid = net._function(FN, SLUG)["project_id"]
+    with net.store.tx() as db:  # an earlier agent's best attempt for the whole function
+        db.execute("UPDATE functions SET best_source=?, best_score=? WHERE project_id=? AND name=?",
+                   ("int stale(void){return 0;}", 123, pid, FN))
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    head = net._function(FN, SLUG)
+    assert head["best_source"] is None        # the extent changed -> the old best no longer describes it
+    assert head["best_score"] is None
+
+
+def test_split_marks_a_pure_padding_head_done(net):
+    agent, _ = net.local_agent("tester")
+    pid = net._function(FN, SLUG)["project_id"]
+    unit = net._function(FN, SLUG)["unit"]
+    vram, rom = 0x80010000, 0x10000
+    lines = "".join(f"/* {rom + 4 * i:X} {vram + 4 * i:08X} 00000000 */  nop\n" for i in range(3))
+    asm = f"glabel padfn\n{lines}endlabel padfn\n"
+    with net.store.tx() as db:  # three alignment NOPs, as the analysis sometimes glues ahead of a real function
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                   "status,best_source,best_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, "padfn", 12, 3, b"\x00" * 12, "[]", asm, None, unit, vram, rom, "open",
+                    "int was_here(void){return 1;}", 400))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "padfn", vram, 12, "func"))
+    net._syms.pop(pid, None)  # the symbol cache predates the row we just inserted
+    net.split_function(agent, SLUG, "padfn", f"0x{vram + 8:08X}")   # head = the leading NOPs
+    head = net._function("padfn", SLUG)
+    assert head["status"] == "asm", head["status"]   # pure padding -> marked done, out of the open pool
+    assert head["best_source"] is None               # and its stale best cleared
