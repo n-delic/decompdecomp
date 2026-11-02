@@ -58,63 +58,14 @@ def jump_table(image,start,end,vram,at,order,ranges=(),mappings=()):
 
 
 def calls(image,functions,order):
-    """Track affine addresses through a straight-line block to load -> JALR.
-
-    Unknown operations end a trace. Indexed cells are hypotheses: the index's
-    reachability/range is not inferred from this local expression.
-    """
-    result=[];words=0;limited=False
-    for fn in functions:
-        if fn.get('handwritten'):continue
-        regs={};epoch=0;skip_delay=False
-        def value(r):return (0,{}) if not r else regs.get(r,(0,{f'{epoch}:{r}':1}))  # noqa: B023 synchronous interpreter state
-        def scalar(a):return (0,{a['scalar']:1}) if isinstance(a,dict) else a
-        def plus(a,b,sign=1):
-            a=scalar(a);b=scalar(b)
-            if not isinstance(a,tuple) or not isinstance(b,tuple):return None
-            coeff=dict(a[1])
-            for k,v in b[1].items():coeff[k]=coeff.get(k,0)+sign*v
-            coeff={k:v for k,v in coeff.items() if v}
-            if len(coeff)>2 or any(abs(v)>256 for v in coeff.values()):return None
-            return ((a[0]+sign*b[0])&0xffffffff,coeff)
-        for at in range(fn['rom'],fn['rom']+fn['size']-3,4):
-            words+=1
-            if words>MAX_WORDS or len(result)>=MAX_CALLS:return result,True
-            if skip_delay:
-                skip_delay=False;regs={};epoch+=1;continue
-            w=int.from_bytes(image[at:at+4],order);op=w>>26;rs=(w>>21)&31;rt=(w>>16)&31;rd=(w>>11)&31;f=w&63
-            pc=fn['vram']+at-fn['rom'];out=None;destination=None
-            if op==0 and f==9:
-                address=regs.get(rs)
-                if rd and isinstance(address,dict) and address.get('load') is not None:
-                    result.append({'function':fn['name'],'address':pc,'load_address':address['load']})
-                regs={};epoch+=1;skip_delay=True;continue
-            if op in (1,2,3,4,5,6,7,20,21,22,23) or (op==17 and rs==8) or (op==0 and f==8):
-                regs={};epoch+=1;skip_delay=True;continue
-            if op==15:out=((w&0xffff)<<16,{});destination=rt
-            elif op==9:out=plus(value(rs),(signed(w),{}));destination=rt
-            elif op==13:
-                a=value(rs);out=((a[0]|(w&0xffff)),{}) if isinstance(a,tuple) and not a[1] else None;destination=rt
-            elif op==0 and f in (33,35):
-                out=value(rs) if rt==0 else (value(rt) if rs==0 and f==33 else plus(value(rs),value(rt),1 if f==33 else -1))
-                destination=rd
-            elif op==0 and f==0:
-                a=scalar(value(rt));n=(w>>6)&31
-                if isinstance(a,tuple) and all(abs(v<<n)<=256 for v in a[1].values()):out=((a[0]<<n)&0xffffffff,{k:v<<n for k,v in a[1].items()})
-                destination=rd
-            elif op==35:
-                a=plus(value(rs),(signed(w),{}));out={'load':a,'scalar':f'{epoch}:load:{pc}'} if a is not None else None;destination=rt
-            else:
-                # No guessed preservation through instructions, branches or calls.
-                regs={};epoch+=1;continue
-            if destination:
-                if out is None:regs[destination]=(0,{f'unknown:{pc}:{destination}':1})
-                else:regs[destination]=out
-    return result,limited
+    """Bounded agreeing-path dataflow; no inferred callback reachability."""
+    from .mips_callback_flow import trace
+    return trace(image,functions,order,MAX_WORDS,MAX_CALLS)
 
 
-def consumers(image,functions,rows,order,ranges,mappings):
+def consumers(image,functions,rows,order,ranges,mappings,unresolved=None):
     traced,limited=calls(image,functions,order)
+    linked=set()
     for row in rows:
         found=[]
         for ref in row['pointer_references']:
@@ -129,11 +80,14 @@ def consumers(image,functions,rows,order,ranges,mappings):
                     else:continue
                     mapped,problem=locations(cell,4,image,ranges)
                     mapping_ok=verified and not problem and len(mapped)==1 and mapped[0][0]==ref['rom_offset']
+                    linked.add((call['function'],call['address']))
                     found.append({'function':call['function'],'address':call['address'],'pointer_rom':ref['rom_offset'],
-                                  'mapping_verified':bool(mapping_ok),'indexed':bool(terms),'stride':stride,'possible_index':index,
+                                  'evidence_chain':call.get('evidence_chain',[]),'mapping_verified':bool(mapping_ok),'indexed':bool(terms),'stride':stride,'possible_index':index,
                                   'state':'cell_load_call' if mapping_ok and not terms else 'consumer_hypothesis','reason':problem or ('index reachability is unproven' if terms else ('reviewed cell mapping' if mapping_ok else 'raw-data mapping is unproven'))})
                     if len(found)>=8:break
                 if len(found)>=8:break
             if len(found)>=8:break
         row['callback_consumers']=found
+    if unresolved is not None:
+        unresolved.extend({**c,'reason':'Runtime pointer or cell mapping unresolved; not linked to a candidate'} for c in traced if (c['function'],c['address']) not in linked)
     return limited

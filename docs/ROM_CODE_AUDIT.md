@@ -123,13 +123,17 @@ hypothesis** and keeps flow unresolved. Use reviewed `data_mappings` in an expor
 These input changes invalidate the saved audit. `direct_flow_closed` remains distinct
 from `flow_closed` using reviewed indirect edges, so importer rules do not widen.
 
-Callback tracing connects straight-line affine address calculations, word loads and
+Callback tracing connects affine address calculations, word loads and
 JALR instructions. A direct cell load/call with declared mapping is stronger evidence.
 Static cell evidence does not prove runtime table contents or execution. An indexed
 cell remains a hypothesis: a possible index/stride does not prove it is
 reachable. Known-code mapping deltas also remain hypotheses for raw data. Unknown
-instructions and calls/branches (including their delay slots) invalidate register
-facts. Handwritten sources are excluded. The pass is capped at 500,000 words, 512
+instructions invalidate register facts. Branches propagate only identical incoming
+facts at joins, including supported delay-slot and branch-likely semantics. Known
+stack spills/restores retain load provenance; unknown stores and calls invalidate
+stack memory. Calls retain only the stack base. Loaded record pointers remain opaque:
+field origins are recorded but their runtime contents are not guessed. Evidence
+chains show loads, register copies, spills/restores and the indirect call. Handwritten sources are excluded. The pass is capped at 500,000 words, 512
 traces and eight consumer links per candidate; incomplete scans are flagged.
 
 A copied private project exposed a 24-entry switch automatically. With a separately
@@ -138,3 +142,11 @@ hypothesis. The existing callback lead had no supported consumer trace and remai
 unconfirmed. All existing targets, statuses and saved matching source were unchanged.
 Closed bounded flow is analysis evidence, not termination proof, a complete call graph,
 a C match or automatic permission to import a target.
+
+Unlinked load-to-call chains appear separately in a collapsed diagnostic list.
+They identify useful field loads to investigate without attaching a guessed
+runtime pointer to an unrelated candidate. The worklist visits only reachable
+instructions from the declared entry, merges by intersection, and stops at unknown
+indirect jumps. Unsupported instructions deliberately lose facts. This is scalar
+32-bit MIPS evidence shared by the ROM consoles using this audit, not a general
+interprocedural pointer analysis or an object-project audit.

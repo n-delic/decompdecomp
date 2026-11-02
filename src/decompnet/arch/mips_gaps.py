@@ -169,9 +169,10 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
         info=extent(image,row['rom_offset'],min(row['gap_end'],row['rom_offset']+0x10000),row['vram'],order,cpu,table_ranges=table_ranges,mapping_choices=mapping_choices)
         rows.append({**row,**info,'review_only':True})
     from .mips_indirect import consumers
-    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices)
+    unresolved_callbacks=[]
+    consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks)
     rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],r['rom_offset'],r['vram']))
     return {'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
-            'callback_scan_limit':consumer_limit,'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
+            'unresolved_callbacks':unresolved_callbacks,'callback_scan_limit':consumer_limit,'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
             'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
             'note':'Review evidence only. Valid instructions, calls and returns can occur in data or microcode. No targets, statuses, source or compiler settings changed.'}
