@@ -43,19 +43,29 @@ def inline_helpers(source, header, reference, target_calls, clobbers=False):
     result=[];targets=set(target_calls);combined=header
     for name in sorted(called(source))[:32]:
         span=find(reference,name)
-        if not span or (name not in targets if clobbers else name in targets) or find(source,name) or find(header,name) or name in macros(header):continue
+        if not span or (name not in targets if clobbers else name in targets) or find(source,name) or find(header,name):continue
         code=reference[span[0]:span[1]];plain=_blank(code);opening=plain.find('{')
         if opening<0 or len(code)>(3000 if clobbers else 1800) or len(plain.split(';'))>(32 if clobbers else 9):continue
         if re.search(r'\b(?:static|inline|__inline|volatile|asm|for|while|switch|goto)\b|#',plain):continue
-        children=called(code)-{name}
-        if (not clobbers and (not children or not children<=targets)) or len(re.findall(r'\b'+re.escape(name)+r'\s*\(',plain))!=1:continue
+        children=called(code)-{name}-set(macros(header))
+        if (not clobbers and not children<=targets) or len(re.findall(r'\b'+re.escape(name)+r'\s*\(',plain))!=1:continue
+        # Actual leaf getters matter too: a macro with the same expression can allocate
+        # registers differently. Do not turn arbitrary no-call bodies into helpers.
+        if not clobbers and not children and (len(re.findall(r'\breturn\b',plain))!=1
+                or re.search(r'(?<![=!<>])=(?!=)|\+\+|--',plain[opening+1:])):continue
         private=combined if not clobbers else header
+        # A provisional function-like macro may stand in for the actual getter.
+        # Replace only a single-line macro, never an object alias or continuation.
+        macro=re.search(r'(?m)^[ \t]*#define[ \t]+'+re.escape(name)+r'\([^\n]*$',private)
+        if macro:
+            if clobbers or macro[0].rstrip().endswith('\\'):continue
+            private=private[:macro.start()]+'\n'*macro[0].count('\n')+private[macro.end():]
         pattern=r'(?m)^[ \t]*(?:extern\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\('
         edits=[];clean=_blank(private)
         for match in re.finditer(pattern,clean):
             end=close(clean,match.end()-1);tail=re.match(r'\s*;',clean[end:]) if end else None
             if tail:edits.append((match.start(),end+tail.end()))
-        if not edits:continue
+        if not edits and not macro:continue
         for a,b in reversed(edits):private=private[:a]+'\n'*private[a:b].count('\n')+private[b:]
         private+=macro_context(reference,code,private)+prototypes(reference,code,private,name)
         line=reference[:span[0]].count('\n')+1

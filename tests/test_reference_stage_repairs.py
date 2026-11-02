@@ -160,3 +160,26 @@ def test_missing_prefix_reuses_supplied_draft_and_param_bindings_only():
     assert not retail.draft_prefix(source,'f','',draft,[(' ','jal original','jal original')],'mips')
     assert not retail.draft_prefix(source,'f','',draft.replace('if(check(saved))','if(unknown(saved))'),rows,'mips')
     assert not retail.draft_prefix(source,'f','',draft.replace('saved=b','saved=side_effect(b)'),rows,'mips')
+
+
+def test_actual_getter_replaces_only_a_single_line_function_macro():
+    source='int f(Obj *p){return getter(p);}'
+    header='typedef struct {int flag;} Obj;\n#define ACCESS(p) (p)\n#define getter(p) (ACCESS(p)->flag)\n'
+    reference='int getter(Obj *p){return ACCESS(p)->flag;}'
+    result=stages.inline_helpers(source,header,reference,[])
+    assert len(result)==1
+    assert 'static __inline int getter' in result[0][2]
+    assert '#define getter' not in result[0][2] and '#define ACCESS' in result[0][2]
+    assert not stages.inline_helpers(source,header,reference.replace('return ACCESS(p)->flag;','p->flag=1; return p->flag;'),[])
+    assert not stages.inline_helpers(source,'#define getter actual\n',reference,[])
+
+
+def test_scalar_pools_keep_signed_value_and_offer_per_use_precision():
+    source='void f(void){use(-PI);x=LIMIT; if(x<LIMIT)use(1);}'
+    header='#define PI 3.0\n#define LIMIT 0.4\n'
+    memory={0x80001000:struct.pack('>d',-3.0),0x80001008:struct.pack('>f',0.4),0x80001010:struct.pack('>d',0.4)}
+    asm='ldc1 $f2,%lo(D_80001000)($at)\nlwc1 $f4,%lo(D_80001008)($at)\nldc1 $f6,%lo(D_80001010)($at)'
+    result=pools.variants(source,header,asm,lambda a,n:memory.get(a,b'')[:n],lambda s:int(s[2:],16))
+    assert any('use(D_80001000);x=D_80001008; if(x<D_80001010)' in s for _,s,_ in result)
+    assert all('-D_80001000' not in s for _,s,_ in result)
+    assert len(result)<=8

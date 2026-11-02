@@ -55,7 +55,16 @@ def scalars(source, header, asm, read, resolve, order='big'):
         # Never touch directives, array extents or declaration initializers outside the body.
         line=clean[clean.rfind('\n',0,match.start())+1:match.start()]
         if '#' in line or clean.find('{')<0 or match.start()<clean.find('{'):continue
-        try:number=value(match[0],macros)
+        a,b=match.start(),match.end()
+        expression=match[0]
+        # Include only unary signs. Leaving a unary minus in front of an already
+        # negative pool silently reverses the intended value.
+        prefix=clean[:a].rstrip()
+        if prefix.endswith(('-', '+')):
+            before=prefix[:-1].rstrip()
+            if not before or before[-1] in '(=,:?<>!&|*/{;':
+                a=len(prefix)-1;expression=prefix[-1]+expression
+        try:number=value(expression,macros)
         except (ValueError,SyntaxError,ZeroDivisionError,OverflowError):continue
         matches=[]
         for symbol,types in sorted(symbols.items())[:32]:
@@ -65,27 +74,39 @@ def scalars(source, header, asm, read, resolve, order='big'):
             try:payload=struct.pack(('>' if order=='big' else '<')+('f' if kind=='float' else 'd'),number)
             except (OverflowError,struct.error):continue
             if read(address,len(payload))==payload:matches.append((symbol,kind))
-        if len(matches)==1:
-            a,b=match.start(),match.end()
+        if 1<=len(matches)<=4:
             # Preserve call parentheses; remove only an enclosing arithmetic grouping pair.
             left=clean[:a].rstrip();right=clean[b:].lstrip()
             if left.endswith('(') and right.startswith(')') and not re.search(r'[\w)]\s*\($',left):
                 a=len(left)-1;b=len(clean)-len(right)+1
-            candidates.append((a,b,*matches[0]))
-    groups=sorted({symbol for _,_,symbol,_ in candidates})
-    if not 1<=len(groups)<=8:return []
+            # A float suffix authorizes only float bindings. Otherwise precision and
+            # duplicate pools remain bounded hypotheses, judged per occurrence.
+            if re.search(r'\d[fF]\b',expression):matches=[m for m in matches if m[1]=='float']
+            if matches:candidates.append((a,b,matches))
+    if not candidates or len(candidates)>16:return []
+    from itertools import islice, product
     out=[]
-    # Retaining a generated pool can preserve scheduling and contiguous standalone placement.
-    for keep in [None,*groups[:3]]:
-        edits=[entry for entry in candidates if entry[2]!=keep]
-        if not edits:continue
-        body=source;private=header;declarations=[]
-        for a,b,symbol,kind in reversed(edits):body=body[:a]+symbol+body[b:]
-        for symbol,kind in sorted({(s,k) for _,_,s,k in edits}):
-            if re.search(r'\b'+symbol+r'\b',_blank(private)):
-                if not re.search(r'\bextern\s+const\s+'+kind+r'\s+'+symbol+r'\s*;',_blank(private)):break
-            else:declarations.append('extern const '+kind+' '+symbol+';')
-        else:out.append(('cpu-rom-scalar-pools','\n'.join(declarations)+'\n'+body,private))
+    # Ambiguous float/double values and repeated signed constants need per-use
+    # alternatives, not one numeric-value-to-symbol map. Bound the cross product.
+    for bindings in islice(product(*(c[2] for c in candidates)),8):
+        entries=[(a,b,*binding) for (a,b,_),binding in zip(candidates,bindings)]
+        groups=sorted({symbol for _,_,symbol,_ in entries})
+        if len(groups)>8:continue
+        for keep in [None,*groups[:3]]:
+            edits=[entry for entry in entries if entry[2]!=keep]
+            if not edits:continue
+            body=source;private=header;declarations=[]
+            for a,b,symbol,kind in reversed(edits):body=body[:a]+symbol+body[b:]
+            for symbol,kind in sorted({(s,k) for _,_,s,k in edits}):
+                if re.search(r'\b'+symbol+r'\b',_blank(private)):
+                    if not re.search(r'\bextern\s+const\s+'+kind+r'\s+'+symbol+r'\s*;',_blank(private)):break
+                else:declarations.append('extern const '+kind+' '+symbol+';')
+            else:out.append(('cpu-rom-scalar-pools','\n'.join(declarations)+'\n'+body,private))
+    # Try complete bindings before retaining a generated pool, so a small caller
+    # budget still reaches mixed-precision hypotheses.
+    out=list(dict.fromkeys(out))
+    out.sort(key=lambda p:-sum(p[1].count(symbol) for symbol in symbols))
+
     return out
 
 

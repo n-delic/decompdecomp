@@ -101,3 +101,20 @@ def test_coherent_alternatives_keep_source_identity_and_rename_the_entry(tmp_pat
     assert len(pairs)==2 and 'int f(void){return 2;}' in pairs[1][0]
     assert reader.origins[pairs[1]]['symbol']=='alternate'
     assert reader.origins[pairs[0]]['file']=='one.c'
+
+
+def test_identity_ranking_is_scoped_to_complete_measured_pair(monkeypatch):
+    import hashlib
+    net,proj,fn=prepared_net()
+    pairs=[('wrong','h'),('new','h'),('supported','h')]
+    digest=lambda text:hashlib.sha256(text.encode()).hexdigest()
+    bad={'target':{'calls':['a','b'],'offsets':[4,8]},'candidate':{'calls':['c','d'],'offsets':[12,16]},'support':0}
+    leads=[{'function':fn['name'],'scope':'current','profile':{},'source_sha256':digest('wrong'),
+            'header_sha256':digest('h'),'comparison':bad},
+           {'function':fn['name'],'scope':'current','profile':{},'source_sha256':digest('supported'),
+            'header_sha256':digest('h'),'comparison':{'support':80}}]
+    monkeypatch.setattr(analysis,'listing',lambda *a:{'families':[],'leads':leads})
+    monkeypatch.setattr(analysis,'destination',lambda *a:'current')
+    assert analysis.rank_pairs(net,proj,fn,pairs,{})==[pairs[2],pairs[1],pairs[0]]
+    monkeypatch.setattr(analysis,'destination',lambda *a:'changed')
+    assert analysis.rank_pairs(net,proj,fn,pairs,{})==pairs

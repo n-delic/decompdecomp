@@ -103,3 +103,15 @@ def test_same_line_assignments_can_be_split_without_reordering_tokens():
     source='void f(void){\n a=b; c=d;\n}'
     rows=[('o','lw $t0, 0($a0)',''),('o','','lw $t0, 0($a0)')]
     assert any('a=b;\nc=d;' in s for _,s,_ in repairs.statement_lines(source,'f','',rows))
+
+
+def test_whole_body_line_split_preserves_tokens_and_for_clauses():
+    import re
+    source='void f(void){for(i=0;i<4;i++){if(a)b=c;else b=d; use(b);}}'
+    rows=[('i','move $a0, $v0','beqz $v0, x'),('i','beqz $v0, x','move $a0, $v0')]
+    result=repairs.statement_lines(source,'f','',rows)
+    assert any(f=='cpu-statement-lines-body' for f,_,_ in result)
+    for _,s,_ in result:
+        assert re.sub(r'\s','',s)==re.sub(r'\s','',source)
+        assert 'for(i=0;i<4;i++)' in s
+    assert not repairs.statement_lines(source,'f','#define LINE __LINE__',rows)
