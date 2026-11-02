@@ -1759,6 +1759,12 @@ object-project compiler comparisons remain limited by their build-owned per-file
 - Planned: non-MIPS entry extraction and equivalent conservative import recovery for
   other consoles, richer callback/table provenance, instruction-level data references,
   overlay-bank identity and explicit reviewed adoption of weaker audit candidates.
+Finish near matches now has bounded, output-preserving native-GCC def/use traces and six-candidate
+traced bundles, plus verified same-unit private-helper/static-constant trials in its MIPS ROM adapter.
+Stored traces also feed local repair batches. Held-out replay approvals gate experimental adaptive
+boosts and broad focus promotion. Remaining: imported-unit verification/file-context adapters,
+non-native/non-GCC dump readers, full translation-unit/private-clobber context, initialized arrays and
+exact original physical helper-line provenance. These gaps do not permit guessed layouts or ABI types.
 
 - Target-backed independent-address materialization is available to MIPS ROM iterative
   search, local agent repairs and the bounded pre-permuter pass. Imported project builds

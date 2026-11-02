@@ -2049,6 +2049,46 @@ can spend more trials on source shapes with identical immediate output; this cor
 match or compile-count benefit yet. Restoring the established lifetime-family fallback behind the new
 equal-value priorities fixed two integration test failures without dropping either family group.
 
+### 2 November: GCC def/use tracing, verified unit context and held-out gates
+
+Compiler: pinned native KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+Its real dumps expose stable instruction IDs within one compilation, `func.c` line notes, pseudo
+register definitions/uses, death/equality notes and a global register-dispositions table. These can
+join a value to a candidate physical register and source lines. Several values can reuse that
+register; neither a C name nor a target assembly address is established by that join. Complete dumps
+only, per-function selection and ordinary-output preservation are required. Traces are bounded at
+4 MiB input, 4096 flow instructions and 512 pseudo summaries, with source/header/profile invalidation.
+
+Initial register-only tracing now spends at most two reserved compiler runs in the explicit Finish
+near matches pass, even for a cached baseline. Six bounded combinations join proven existing source
+hypotheses on disjoint lines near trace evidence. They are trials, not semantic/register identity
+proofs; no result is adopted without the unchanged linked-byte/data judge.
+
+A small homemade pinned-GCC check recovered the exact ordinary function-object fingerprint by adding
+an actual same-unit `static inline` helper and initialized static-const scalar. The starting extern
+form differed. The transferred definitions use a private namespace to avoid shared-header/linkage
+collisions. This demonstrates that verified unit context can matter; it is **not a new retail match**
+or evidence for inventing definitions, private types, original helper line numbers or caller clobbers.
+
+Priority changes now require reviewed equal-budget training **and disjoint-target held-out** results:
+exact recovery or cheaper first exact in both splits, no total compile increase, score regression,
+lost recovery or unscored input. Timing differences and score-only gains do not qualify. New families
+remain available without a boost. Approval expires with profile/rules changes and cannot weaken the
+judge. The first broad-focus experiment recovered an older historical input at trial 56, compared
+with trial 35 in an earlier pre-focus revision. The current-main control also needs 56; that slowdown
+must not be attributed to value tracing. Broader ordering therefore remains gated, with established
+operand-supported priority retained and the explicit focus-disable flag honored.
+
+Equal-budget copied-input validation against main `302cb35`: five frozen inputs, 96 compiler slots
+and 120 search seconds per input. Both versions recovered historical cases at trials 56 and 1; three
+fresh unresolved scores stayed 10/15/15. Each used 345 candidate/diagnostic compiler runs (350 with
+normal baselines). Six diagnostic runs were charged inside those allowances, leaving 94 ordinary
+candidate trials for each traced unresolved input. Complete traces captured 21/60/137 values; two
+traced bundles ran on the smallest input without improving it. No new recovery, score improvement,
+regression or compile-count saving. The held-out promotion gate therefore remains closed. These
+five-input replays do not exercise donor-context transfer; that path has separate stale/conflict
+rejection tests and the pinned-GCC homemade context check above. No live project adoption occurred.
+
 ### Independent address materialization after near-miss triage
 
 A six-case frozen MIPS/GCC cohort contained five register-only misses (3, 3, 7, 2 and 4
@@ -2139,3 +2179,38 @@ entry extraction: compile again, run the full code/data relocation judge, emit o
 the compiler's relocated entry, and retain already verified image data. This is not
 a target-byte fallback. Source changes that fail the byte judge stop the build.
 A complete cartridge comparison remains mandatory before accepting repository C.
+## Agent transcript follow-ups (November 2026)
+
+The latest 60-session audit found claim/release-only sessions counted as productive, nine sessions
+hitting the same five-hour allowance, and stale revisions reused after successful edits. The runner
+now distinguishes compilation attempts/completed diagnostic builds from claims, notes and releases.
+A premature finish can receive one explicit continuation prompt while eligible work and context
+capacity remain; provider/context stops, blocked-input reports and polishing are excluded. This is
+bounded guidance, not a compilation quota. Normal failure/backoff handling remains after that nudge.
+Polishing retains its event-based progress check, and finishing the available work is successful.
+
+Provider plan-limit cooldowns are persisted by connector sign-in, or by API endpoint/credential pair,
+without storing credentials in cooldown keys. A sibling helper checks the shared reset before starting
+another provider session. Resume is staggered by helper ID; active provider requests are not killed.
+Transient request throttles remain separate. Diagnostic builds count as runner activity only when a
+new trial actually runs; cached results and ordinary reads do not count as compilation.
+
+Editing-tool replies start with one current continuation state, after automatic local edits have
+finished. Applicable batch patch IDs remain attached only to the current revision. Stale edits still
+fail without compilation. Compile feedback retains scores, changes, warnings, bounded changed rows
+and available C-line associations, while presenting one category/focus/first-difference summary.
+Full diff diagnostics remain available through the paged readers. Candidate-base selection is an
+explicit enum in MCP/API schemas, and API agents can now supply the function to `get_context`.
+An omitted header function is inferred only for exactly one held claim in that project.
+
+Unsupported compiler extensions, tool-rejected asm register forms, return-address builtin limitations
+and unsuitable build flags do not count as no-C votes. They leave review evidence and normal release
+notes; legacy note-based voting applies the same exclusion. Genuine assembly/boundary evidence still
+uses the existing multi-model verdict and normal judge. Existing set-aside functions are not reopened
+silently by this change.
+The same five inputs were replayed again after merging main `ccebd5b` (headless serving, ROM audit,
+independent address materialization and copy-shape repairs retained). Against that latest-main control,
+recoveries remain at 56/1 and unresolved scores at 10/15/15, with 350 total compiler invocations on
+both sides. No recovery was lost and no additional match or compile saving was demonstrated. The
+combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
+unapproved rather than treating the homemade context success as held-out game evidence.

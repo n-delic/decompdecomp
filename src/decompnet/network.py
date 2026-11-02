@@ -98,6 +98,19 @@ NOT_C_NOTE = re.compile(
 FLAG_NOTE = re.compile(r"flag-blocked|\b(compiler|compiler's|project|project's|build|game's|its own|other|different|"
                        r"right|wrong|these|those|default)\s+flags\b|flags?\s+(search|blocked)|-O[0-3s]\b|-framepointer|"
                        r"-mips\d|try_compiler|search_flags|compiler range", re.I)
+
+def assembly_blocker(why):
+    """Tool/compiler limitations do not establish that a target was handwritten assembly."""
+    if FLAG_NOTE.search(why):
+        return 'Compiler/build settings need review; unsuitable flags are not proof that no C exists.'
+    extension = re.search(r'asm|extension|builtin|register|return.address|\$31|\$ra',why,re.I)
+    rejected = re.search(r'unsupported|not supported|reject|forbid|disallow|tool(?:ing)?.{0,30}restrict',why,re.I)
+    return_address = re.search(r'__builtin_return_address|return.address',why,re.I)
+    if extension and (rejected or return_address):
+        return 'Compiler-extension or return-address support needs review; a tooling restriction is not proof of handwritten assembly.'
+    return None
+
+
 # Routing between models (claim_row): on an N64 game free models matched 14-25% of the functions they claimed and
 # spent 17-31 compiles a match, stronger ones 42-77% and 3-6, and every model was handed the functions the others
 # gave up on. A model well behind the strongest one at work leaves functions given up on ESCALATE_AFTER times to it;
@@ -1082,6 +1095,12 @@ class Network:
         boundary=reader(project).boundary_reason(fn['target'] or b'') if reader else None
         if meta.get('boundary_review') or boundary:
             return ' No assembly verdict recorded: review the incomplete target boundary first; the function remains available.'
+        if (blocker := assembly_blocker(why)):
+            meta['not_c'] = {name:vote for name,vote in meta.get('not_c',{}).items() if name != agent.name and not assembly_blocker(vote.get('why',''))}
+            meta['assembly_review'] = {'reason':blocker, 'notes':why[:NOTE_CHARS], 'agent':agent.name, 't':time.time()}
+            db.execute('UPDATE functions SET meta=? WHERE id=?',(json.dumps(meta),fn['id']))
+            return ' No assembly verdict recorded. '+blocker+' The function remains available; findings are saved in notes.'
+        meta['not_c'] = {name:vote for name,vote in meta.get('not_c',{}).items() if not assembly_blocker(vote.get('why',''))}
         said = meta.setdefault("not_c", {})
         said[agent.name] = {"model": model_of(agent.name), "why": why[:NOTE_CHARS], "t": time.time()}
         models = sorted({v["model"] for v in said.values()})
@@ -1112,7 +1131,7 @@ class Network:
                                 "f.status='open' AND (f.meta IS NULL OR f.meta NOT LIKE '%\"reopened\"%') ORDER BY n.id",
                                 pid):
             if r["name"] in ("you", "decompdecomp", *MACHINE_AGENTS) or r["created_at"] <= joined.get(r["function_id"], float("-inf")) \
-                    or not NOT_C_NOTE.search(r["text"]) or FLAG_NOTE.search(r["text"]):
+                    or not NOT_C_NOTE.search(r["text"]) or assembly_blocker(r["text"]):
                 continue
             said[r["function_id"]][r["name"]] = {"model": model_of(r["name"]), "why": r["text"][:NOTE_CHARS],
                                                  "t": r["created_at"], "from": "note"}
@@ -1126,7 +1145,7 @@ class Network:
                 if meta.get('boundary_review'):
                     continue
                 why = max(verdicts.values(), key=lambda v: v["t"])["why"].split("\n")[0][:300]
-                meta["not_c"] = {**meta.get("not_c", {}), **verdicts}
+                meta["not_c"] = {**{name:v for name,v in meta.get("not_c", {}).items() if not assembly_blocker(v.get("why", ""))}, **verdicts}
                 meta["asm_code"] = f"{len(verdicts)} agents ({', '.join(models)}) said in their notes that no C makes it: {why}"
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fid))
                 name = db.execute("SELECT name FROM functions WHERE id=?", (fid,)).fetchone()["name"]

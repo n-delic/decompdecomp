@@ -16,3 +16,14 @@ def investigate(profile, header, before, after, name, *, on_compile=lambda: None
     right = capture(after)
     comparison = compiler_diagnostics.compare(left, right)
     return {'comparison':comparison, 'before':left, 'after':right}
+
+
+def single(profile, header, source, name, *, on_compile=lambda: None):
+    """Initial trace needs two already-budgeted compiler runs, never a match verdict."""
+    try:
+        result=compiler_diagnostics.diagnose(profile,header,source,name,on_compile=on_compile)
+    except (OSError,ValueError,KeyError,RuntimeError) as error:
+        return {'skipped':'Value trace unavailable ('+type(error).__name__+').'}
+    if result.get('output_unchanged') and not result.get('skipped'):
+        return result.get('value_trace',{})
+    return {'skipped':result.get('skipped') or 'Diagnostic flags changed normal allocated output.'}
