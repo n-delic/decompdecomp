@@ -1695,3 +1695,8 @@ Reference typedef extraction excludes masked preprocessor prefixes to keep suppl
   evaluator for composition replay; there is no inferred C-to-instruction source map.
 
 - Done: a measured missing target call can restore one complete leading conditional from an already supplied machine draft into a typed reference candidate. Parameter names, declarations, macros and actual prototypes are copied coherently; unknown calls, side-effecting initializers and unbounded control flow are rejected. This is a candidate under the judge, not arbitrary CFG synthesis.
+
+- Done: N64 late-code detection completes a frame prologue accidentally included in
+  alignment after the last detected return. Recovery is bounded to valid instructions,
+  a matching stack-pop return and the next known ROM/RAM segment; reimport preserves
+  unchanged target metadata and progress. It is not arbitrary binary-gap code discovery.

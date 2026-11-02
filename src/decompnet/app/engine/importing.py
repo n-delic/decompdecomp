@@ -292,7 +292,10 @@ class ImportMixin:
                     same_target = (old is not None and old["target"] == target.code
                                    and json.loads(old["relocs"] or "[]") == target.to_json())
                     asm = console.function_asm(fn)
-                    meta_data = dict(console.function_meta(fn))
+                    # Identical targets keep operator decisions and naming provenance too.
+                    # Re-analysis facts may refresh, but must not erase unrelated saved metadata.
+                    meta_data = json.loads(old['meta'] or '{}') if same_target else {}
+                    meta_data.update(console.function_meta(fn))
                     if known:
                         meta_data["debug"] = known
                     meta = json.dumps(meta_data) if meta_data else None
