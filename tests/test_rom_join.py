@@ -104,3 +104,25 @@ def test_refuses_cross_unit_when_not_rom_contiguous(net):
     ag, _ = net.local_agent("solo-1")
     with pytest.raises(NetworkError):
         net.join_functions(ag, SLUG, FN, TAIL, "aliased, not a continuation")
+
+
+def test_join_selects_by_rom_run_not_the_shared_vram_window(net):
+    # Overlays alias the same vram within one unit (different ROM copies). The merge must pick the pieces by their
+    # ROM run, or it would sweep in an aliased copy sitting at the same address+unit and delete it.
+    agent, _ = net.local_agent("tester")
+    orig = net._function(FN, SLUG)
+    pid = orig["project_id"]
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    head = net._function(FN, SLUG)
+    with net.store.tx() as db:   # a byte-identical alias of the head: same unit+vram, a far-away ROM copy, matched
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                   "status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, "alias_head", head["size"], head["n_insns"], head["target"], head["relocs"], head["asm"],
+                    None, head["unit"], head["vram"], (head["rom_offset"] or 0) + 0x100000, "matched"))
+    net._syms.pop(pid, None)
+    out = _agree(net, FN, TAIL)
+    assert out.startswith("✅"), out
+    assert net._function(FN, SLUG)["size"] == orig["size"]        # head+tail rejoined, nothing else
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, TAIL) is None
+    alias = net.store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, "alias_head")
+    assert alias is not None and alias["status"] == "matched"     # the aliased copy was NOT swept into the merge
