@@ -12,7 +12,7 @@ const ctx = vm.createContext({ S, $: el, esc: (s) => String(s).replaceAll("<", "
   api: () => new Promise((yes, no) => { resolve = fail ? () => no(new Error("Name already taken")) : yes; }),
   refreshMap: async () => {}, refreshFn: async () => {},
 });
-vm.runInContext(source.slice(source.indexOf("function groupNameHints"), source.indexOf("async function openFn")), ctx);
+vm.runInContext(source.slice(source.indexOf("function relatedFunctionLink"), source.indexOf("async function openFn")), ctx);
 (async () => {
   const hints = [
     { name: "sdkName", game: "Game", kind: "verified C in another game", score: 1 },

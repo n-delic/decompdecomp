@@ -394,7 +394,7 @@ def register(app: App) -> None:
             if not any(str(p['id']) == str(data['peer_id']) and p['name'] == new for p in peers):
                 raise ValueError('That project function has changed or is no longer a naming lead. Refresh the table.')
         elif not any(h["name"] == new and h["score"] == 1 and "unverified" not in h["kind"]
-                   for h in net.twins.suggestions(slug, old)):
+                   for h in net.twins.suggestions(slug, old, limit=100)):
             raise ValueError("that exact SDK or cross-game name is no longer suggested for this function")
         agent, _ = net.local_agent("you")
         message = net.rename_symbol(agent, slug, old, new, "name selected from a cross-project naming lead")
@@ -403,8 +403,9 @@ def register(app: App) -> None:
         return {"message": message}
 
     def p_project_functions(slug, request, data):
-        from ..project_functions import listing
-        return listing(net, slug, str(request.query_params.get('function') or ''))
+        from ..project_functions import listing, name_hints
+        function = str(request.query_params.get('function') or '')
+        return {**listing(net, slug, function), 'name_hints': name_hints(net, slug, function)}
 
     def p_save(slug, request, data):
         """Save the project's work as plain files (app/saves.py): to its progress/ folder, or one the user picks."""

@@ -28,6 +28,20 @@ function highlightC(text) {
   }).join("\n");
 }
 
+function relatedFunctionLink(slug, name, label = name) {
+  return slug && name ? `<button type="button" class="link-btn mono" data-related-project="${esc(slug)}" data-related-function="${esc(name)}" title="Open this function in its project">${esc(label)}</button>` : esc(label);
+}
+let relatedFunctionNavigation = 0;
+async function openRelatedFunction(button) {
+  const slug = button.dataset.relatedProject, name = button.dataset.relatedFunction;
+  const navigation = ++relatedFunctionNavigation;
+  try {
+    hideDrawer('drawer');
+    await openProject(slug, 'functions');
+    if (navigation === relatedFunctionNavigation && S.slug === slug && S.ov) await openFn(name);
+  } catch (error) { toast('Could not open related function: ' + error.message); }
+}
+
 function groupNameHints(hints) {
   const groups = new Map();
   for (const hint of hints || []) {
@@ -43,12 +57,12 @@ function groupNameHints(hints) {
 function nameHintsHTML(hints, current) {
   return groupNameHints(hints).map((g) => {
     const sources = g.hints.length;
-    const details = g.hints.map((h) => `<li>${esc(h.game.replace(/\s*\/\s*sha256:.*$/, ""))} · ${esc(h.kind)}${h.score < 1 ? ` · ${Math.round(h.score * 100)}% similar` : ""}</li>`).join("");
+    const details = g.hints.map((h) => `<li>${relatedFunctionLink(h.source_slug, h.source_function, h.game.replace(/\s*\/\s*sha256:.*$/, ""))} · ${esc(h.kind)}${h.score < 1 ? ` · ${Math.round(h.score * 100)}% similar` : ""}</li>`).join("");
     return `<div class="note"><b class="mono">${esc(g.name)}</b> · ${sources} source${sources === 1 ? "" : "s"}${sources > 1 ? " agree" : ""}${g.exact && g.name !== current ? ` <button class="link-btn" type="button" data-name="${esc(g.name)}">Use name</button>` : ""}<details><summary>Supporting sources</summary><ul>${details}</ul></details></div>`;
   }).join("");
 }
 let nameChangeBusy = false;
-async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "fnCrossHints") {
+async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "fnProjectPeersContent") {
   const slug = S.slug, old = detail.name, name = button.dataset.name;
   const log = $(logId);
   nameChangeBusy = true;
@@ -74,7 +88,7 @@ function projectPeersHTML(data, current) {
   const rows = data.rows || [];
   const note = data.unavailable ? esc(data.unavailable) : data.exact ? 'Identical target bytes in other open projects. C does not need to be matched.'
     : 'No identical target bytes found. These are instruction-pattern similarities, ignoring operands; names are suggestions, not proof of identity or matching C. At most 400 similarly sized functions are compared.';
-  return `<p class="small muted">${note}</p>${rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Project</th><th>Function</th><th>Similarity</th><th>C status</th><th>Action</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.project)}</td><td class="mono">${esc(r.name)}</td><td>${r.identical ? 'Identical bytes' : (r.score * 100).toFixed(1) + '% instruction pattern'}</td><td>${r.status === 'matched' ? 'Matched' : 'Not matched'}</td><td>${r.name === current ? 'Same name' : `<button type="button" class="ghost small-btn" data-name="${esc(r.name)}" data-peer-id="${r.id}">Use name</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No similar functions found in other open projects.</p>'}${data.total > rows.length ? `<p class="small muted">Showing ${rows.length} of ${data.total} identical functions.</p>` : ''}`;
+  return `<p class="small muted">${note}</p>${rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Project</th><th>Function</th><th>Similarity</th><th>C status</th><th>Action</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.project)}</td><td class="mono">${relatedFunctionLink(r.slug, r.name)}</td><td>${r.identical ? 'Identical bytes' : (r.score * 100).toFixed(1) + '% instruction pattern'}</td><td>${r.status === 'matched' ? 'Matched' : 'Not matched'}</td><td>${r.name === current ? 'Same name' : `<button type="button" class="ghost small-btn" data-name="${esc(r.name)}" data-peer-id="${r.id}">Use name</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No similar functions found in other open projects.</p>'}${data.total > rows.length ? `<p class="small muted">Showing ${rows.length} of ${data.total} identical functions.</p>` : ''}`;
 }
 let projectPeersRequest = 0;
 function prepareProjectPeers(detail) {
@@ -96,8 +110,10 @@ function prepareProjectPeers(detail) {
     try {
       const data = await api('/api/cross-game/functions?slug=' + encodeURIComponent(slug) + '&function=' + encodeURIComponent(detail.name));
       if (request !== projectPeersRequest || S.slug !== slug || S.fn !== detail.name) return;
-      content.innerHTML = projectPeersHTML(data, detail.name) + '<button type="button" class="ghost small-btn" data-refresh-peers>Refresh</button><pre id="fnPeerNameLog" class="log" hidden></pre>';
-      content.querySelectorAll('[data-name]').forEach(b => { b.onclick = () => useSuggestedName(b, detail, 'fnPeerNameLog', 'fnProjectPeersContent'); });
+      content.innerHTML = projectPeersHTML(data, detail.name) + (data.name_hints?.length ? `<div id="fnCrossHints"><h4>Signature and SDK name suggestions</h4><p class="small muted">Sources suggesting the same name are grouped together. Agreement is a naming lead; only a compiled byte match verifies C for this game.</p>${nameHintsHTML(data.name_hints, detail.name)}<pre id="fnNameLog" class="log" hidden></pre></div>` : '<p class="small muted">No additional SDK or cross-game signature suggestions.</p>') + '<button type="button" class="ghost small-btn" data-refresh-peers>Refresh</button><pre id="fnPeerNameLog" class="log" hidden></pre>';
+      content.querySelectorAll('[data-peer-id]').forEach(b => { b.onclick = () => useSuggestedName(b, detail, 'fnPeerNameLog', 'fnProjectPeersContent'); });
+      content.querySelectorAll('#fnCrossHints [data-name]').forEach(b => { b.onclick = () => useSuggestedName(b, detail); });
+      content.querySelectorAll('[data-related-project]').forEach(b => { b.onclick = () => openRelatedFunction(b); });
       content.querySelector('[data-refresh-peers]').onclick = () => load(true);
     } catch (e) {
       if (request !== projectPeersRequest) return;
@@ -312,9 +328,6 @@ async function refreshFn(first) {
     if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
     $("fnXref").innerHTML = xr.join("");
     prepareProjectPeers(d);
-    $("fnCrossHints").innerHTML = d.cross_game_hints?.length
-      ? `<p class="col-title">Other games and local SDKs</p><p class="muted small">Sources suggesting the same name are grouped together. Agreement is a naming lead; only a compiled byte match verifies C for this game.</p>${nameHintsHTML(d.cross_game_hints, d.name)}<pre id="fnNameLog" class="log" hidden></pre>` : "";
-    $("fnCrossHints").querySelectorAll("[data-name]").forEach((b) => { b.onclick = () => useSuggestedName(b, d); });
     $("fnXref").querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn.split("+")[0]); });
     // your own notes (written here, as "you") apart from the agents': they aren't notes from an agent
     const noteRow = (n) => {
