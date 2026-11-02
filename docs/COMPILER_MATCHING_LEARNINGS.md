@@ -22,6 +22,43 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Verified case: register allocation after late cancellation
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+A 662-instruction menu renderer reached an identical opcode sequence and frame, but seven linked
+instruction words still differed: two saved-register lifetimes were exchanged. The normal live
+judge subsequently accepted all 2,648 linked bytes, with the original target, context and flags.
+Evidence: [published source and complete-cartridge verification](https://github.com/RetroReversing/v-rally-decomp/commit/78f6bd8).
+
+- Reference counts and live ranges mattered after expression simplification. In captured GCC dumps,
+  the final two allocnos moved from the wrong order to the required order. The accepted case had
+  12 references / 62 live instructions for one, versus 8 / 43 for the other. The corresponding
+  public GCC 2.7.2.3 [`allocno_compare`](https://sources.debian.org/src/altgcc/1:2.7.2.3-2/global.c/)
+  orders by `floor_log2(refs) * refs / live_length`, with size and tie-break adjustments. This is
+  supporting compiler evidence; the dump and linked verdict establish the actual KMC result.
+- Pure unsigned/bitwise identities affected early compiler bookkeeping and disappeared from the
+  final code. Moving an exactly-zero expression and its zero product past the final drawing call
+  recovered the allocation. That expression leaves the context argument unchanged for all bit
+  patterns. This is a source-shape workaround, not evidence that the original game used it.
+- Keeping the raw coordinate live beyond its narrowing conversion prevented an unwanted local
+  register coalescing preference. Substituting an equivalent carrier first improved allocation,
+  but left two wrong operands; restoring raw-value uses with the longer lifetime recovered them.
+- The path was staged: weighted scores 365 → 320 → 285 → 275 → an exact linked match. These are
+  sequential improvements, not isolated attribution for every edit. Final acceptance used the
+  normal judge; symbolic relocation display scores alone were not authoritative.
+
+Failed probes included broad `register` qualifiers, unsigned retyping, named sign-extension
+temporaries, prototype widening with explicit casts, and unconstrained reference-count boosts.
+Some algebraic variants retained the instruction count but grew the frame by eight bytes. Compare
+linked words, frame, spills and the value's actual internal pseudo-register before expanding a
+search. A named C temporary can be distinct from the sign-extension pseudo that needs repairing.
+The stopped local permuter pass from score 320 tested 213 candidates with no improvement.
+
+Automation opportunity: expose a small register-cycle diagnosis and bounded lifetime alternatives,
+then check full linked bytes. Do not generate arbitrary padding identities by default: this is one
+verified case, no general repair generator or held-out evaluation, and the compiler's phase order
+must be checked. Preserve input-keyed failures and source/header/profile provenance.
+
 ### Verified case: a large rendering/menu function
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
