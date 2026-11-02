@@ -1772,3 +1772,14 @@ def test_reconcile_matches_starts_a_cancellable_budgeted_job(app,monkeypatch):
         time.sleep(.01)
     assert result['state']=='done' and result['result']['matched']==1
     assert checked==[('near-game',30,12)]
+
+
+def test_generation_metrics_route_is_source_free_and_process_local(app):
+    from decompnet.app import repair_generation
+    client,net,_=app
+    with repair_generation.session(net,'private-scope',None,['one'],accept=lambda *args:True):
+        repair_generation.call(lambda:[('one','private source')])
+    response=client.get('/api/repair-generation-metrics')
+    assert response.status_code==200
+    result=response.json()
+    assert result['retained']>=1 and result['limit']==64 and 'private' not in response.text

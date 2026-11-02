@@ -369,3 +369,20 @@ candidate compiles and first-exact compile savings for shared recoveries. Severa
 one function still count as one target for the separate held-out promotion gate. Timing alone is
 not a win. The existing reviewed promotion workflow remains the gate for learned priority boosts;
 adding bounded hypotheses does not approve a learned boost or weaken later destination judging.
+
+
+## Macro coverage and discovery measurements
+
+Pairing now accepts unchanged simple defines only when all edit hunks and the complete combined
+window avoid the existing protected macro regions. Header dependencies participate too. Replay's
+`pair_coverage` describes supported/opaque coverage without exporting source. Unsupported directives
+remain unsupported; no preprocessor is run and no macro text is rewritten.
+
+`repair_generation.measurements(net)` and authenticated `GET /api/repair-generation-metrics` expose
+the last 64 generation sessions in this process, across projects, with no source, prompts, function
+names or scope IDs. The history resets on restart. Fields distinguish generated wrapped stages,
+cache hits, non-double-counted stage wall time, total session wall time, and first eligible candidate.
+First eligible is a filtered proposal, not a compiled or matched function. `Pools.generation_metrics`
+provides the same completed session data to developer callers. These counters do not cover unwrapped
+work, token consumption or compiler execution time. Cold/warm benchmark timings must account for
+compiler configuration separately when measuring the time to its first compile call.

@@ -2529,3 +2529,43 @@ Observed replay times (46.5s control, 41.8s experimental) are not a speedup clai
 No additional frontier rule was promoted. The next evidence needed is an actual
 candidate that recovers a target mismatch but is rejected before a proven complementary
 edit, rather than increasing frontier width or retaining arbitrary worse candidates.
+
+
+### Macro-safe pairing, generation telemetry and a broader control
+
+The blanket preprocessor rejection in local pairing is now replaced by the existing macro-region
+protection. Simple unchanged defines can coexist with edits in unaffected C windows. Directives,
+macro-dependent statements, hidden header dependencies and the complete span between paired edits
+remain opaque. Conditional/include/multiline/token-pasting directives still decline analysis.
+The unchanged header now follows live iterative search, frozen replay and exported-ROM adapters;
+without it a source-only check could miss a hidden macro dependency. Unsupported macro coverage is
+reported rather than expanded or guessed. The ordinary linked code/data judge remains mandatory.
+
+Private reduction of the 124-instruction score-15 input removed 196 of 1450 non-whitespace characters
+while preserving its bad local register sequence over 20 compiler checks. This is a debugging
+reproducer: deleting control flow does not preserve game semantics and none of that C was adopted.
+The necessary surrounding context remains substantial; it is not an isolated constant-store recipe.
+Another 32 typed-constant/pointer, inline-store and register-hint probes (including C89 declaration
+rejections) produced no exact match. No automated repair or priority boost is inferred from this
+failure. The original residual and the macro-heavy shifted-result residual remain unresolved.
+
+A larger frozen replay compared main `1446d5b` to the treatment: 19 unresolved checkpoints across
+KMC GCC 2.7.2, GCC 2.8.1 PM/SN-as, IDO 5.3, SN N64 2.81 and SN N64 2.72. Each case had 24 candidate
+slots and 45 seconds. Both sides recovered the same two existing controls at trials 4 and 11, using
+269 candidate compiles plus 19 baselines (288 invocations each). No treatment score regression, new
+recovery or first-exact saving was observed. One additional candidate case was excluded because its
+frozen target did not equal the copied ROM bytes. Keep both V-Rally regions in the same development
+cohort: the 11 checkpoints from other games form the held-out subset, not the homologous region.
+That subset used 151 candidate compiles on each side and produced no new recovery. Some fresh
+baseline scores differ from historical saved scores; comparisons use the newly compiled baseline.
+These small budgets across five profiles are coverage, not proof of general compiler equivalence.
+
+Generation-only cold/warm measurements on five copied inputs confirmed the cache already present
+on main: treatment cold discovery took 21–185 ms versus 1.5–4.3 ms warm. Warm calls reused 17–67 raw
+stages and generated no stages on these repeated identical-input sessions. The time until the first
+selected variant's compiler call, including compiler configuration, was about 29–280 ms cold versus
+9–16 ms warm. Main's timings were similar: this patch measures reuse rather than claiming to invent
+that speedup. These are a few local repeats, not live-agent token or dollar measurements. Eligibility
+still runs again; raw-stage reuse never substitutes for a compiler verdict or authorizes retransmission
+of an already tested candidate. Instrumentation distinguishes wrapped-stage generation, cache hits,
+first eligible candidate, and total session wall time, avoiding nested-stage double counting.
