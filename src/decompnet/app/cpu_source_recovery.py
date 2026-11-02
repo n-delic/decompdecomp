@@ -5,7 +5,13 @@ MAX_PAIRS=6
 
 
 def proposals(net, proj, fn, source, header, measurement):
-    result=cpu_source_repairs.variants(source,header,proj['arch'],measurement.get('rows',[]),measurement.get('lines',{}))
+    from .. import arch as arches
+    from .measured_source_repairs import narrowing_casts, statement_lines
+    arch=arches.get(proj['arch'])
+    rows=measurement.get('rows',[])
+    result=statement_lines(source,fn['name'],header,rows)
+    if arch.source_extra_narrowing:result+=narrowing_casts(source,header,arch.source_extra_narrowing(rows))
+    result+=cpu_source_repairs.variants(source,header,proj['arch'],measurement.get('rows',[]),measurement.get('lines',{}))
     from .retail_source_repairs import data_bindings, terminal_branch
     if hasattr(net,"symbols"):
         result += data_bindings(source,header,measurement.get("rows",[]),net.symbols(proj["id"]).resolve)
@@ -47,7 +53,7 @@ def extend(net, proj, fn, variants, origins, source, header, measurement, lead):
 
 def trial_key(state, source, header, cfg):
     import hashlib
-    return 'local-source-v8:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
+    return 'local-source-v9:'+hashlib.sha256(repr((state,source,header,cfg)).encode()).hexdigest()
 
 
 def pending(net, fn, state, cfg, variants, origins, exclude):

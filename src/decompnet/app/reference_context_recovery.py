@@ -57,8 +57,11 @@ def helper_lines(source, header, reference):
         if not actual or not existing:continue
         a,b=actual;x,y=existing
         code=reference[a:b];own=header[x:y]
-        if not re.search(r'\bstatic\b',_blank(code).split('{',1)[0]):continue
-        if normalize(code)!=normalize(own):continue
+        original_head=_blank(code).split('{',1)[0];own_head=_blank(own).split('{',1)[0]
+        if not re.search(r'\bstatic\b',own_head):continue
+        if not re.search(r'\bstatic\b',original_head) and not re.search(r'\b(?:inline|__inline(?:__)?)\b',own_head):continue
+        strip=lambda text:re.sub(r'\b(?:static|inline|__inline(?:__)?)\b','',text)
+        if normalize(strip(code))!=normalize(strip(own)):continue
         line=reference[:a].count('\n')+1
         directive=f'#line {line} "reference.c"'
         if header[:x].rstrip().endswith(directive):continue
@@ -108,9 +111,21 @@ def binding_variants(source, header, asm, references):
         target=next(iter(values[name]))
         if old==target or target not in targets or len(votes[name,target])<2:continue
         edits.append((match.start(2),match.end(2),target))
-    if not 0<len(edits)<=4:return []
+    additions=[]
+    from .cpu_source_context import declarations
+    from .source_match_context import macros
+    declared=declarations(header,called(source))
+    shadowed=set(re.findall(r'\(\s*\*\s*('+ID+r')\s*\)',_blank(source)))
+    for name in sorted(called(source)-shadowed):
+        if name not in declared or name in macros(header) or find(header,name) or len(values[name])!=1:continue
+        target=next(iter(values[name]))
+        if target in targets and len(votes[name,target])>=2:additions.append((name,target))
+        if len(additions)+len(edits)>=4:break
+    if not 0<len(edits)+len(additions)<=4:return []
     private=header
     for a,b,target in reversed(edits):private=private[:a]+target+private[b:]
+    # The alias precedes the actual prototype so float/aggregate ABI types follow the call.
+    private=''.join('#define '+name+' '+target+'\n' for name,target in additions)+private
     return [('cpu-verified-callback-bindings',source,private)]
 
 

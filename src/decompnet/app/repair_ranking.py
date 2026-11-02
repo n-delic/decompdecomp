@@ -81,3 +81,12 @@ def effect_scope(net, fn, source):
 
     from .agent_tokens import target_scope
     return hashlib.sha256((target_scope(net,fn,'')+source).encode()).hexdigest()
+
+
+def private_abi_order(families, arch, asm, rows):
+    """Defer ordinary entry-signature searches when the measured mismatch needs caller context."""
+    from .. import arch as arches
+    reader=arches.get(arch).source_private_abi
+    if not reader or not reader(asm,rows):return list(families)
+    ordinary={'runtime_scalar_signature','parameter_width','parameter_storage','float_argument_bits'}
+    return sorted(families,key=lambda family:family in ordinary)
