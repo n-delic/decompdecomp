@@ -1864,7 +1864,8 @@ reduction in agent tokens or new game coverage. Reports retain unsuccessful case
 | Unresolved 124-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
 | Unresolved 295-instruction routine, score 15 | Best 15; 96 trials | Best 15; 96 trials |
 
-Across these five inputs, compiler invocations including baselines fell from 390 to 329 (61 fewer),
+These measurements were made on feature commit `7337280`, before incorporating the subsequently
+merged main changes. Across these five inputs, compiler invocations including baselines fell from 390 to 329 (61 fewer),
 with one additional historical recovery and no lost recoveries or best-score regressions. The three
 fresh near misses did not improve. Wall time is observational, with other processes possible; the
 compile counts and ordinary exact verdicts are the stronger evidence. The recovered example used
