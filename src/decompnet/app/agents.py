@@ -872,6 +872,16 @@ class Manager:
         row = self.net.store.one("SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND status='open'", proj["id"])
         return row["n"]
 
+    def _ruled_out(self, slug: str, agent_name: str) -> int:
+        """How many functions are open when this helper said of every one that no C makes it (0 otherwise): the claim
+        order never hands them back to it (Network.claim_row), so a session could only find nothing to do. Its
+        sessions failed one after another into a pause (FAST_FAILURES_TO_PAUSE) instead, on a demo whose last open
+        function was a hand-written helper both agents of one model had ruled out."""
+        proj = self.net.project_row(slug)
+        waiting = self.net.awaiting_verdict(proj)
+        n = self._left(slug)
+        return n if n and sum(agent_name in said for said in waiting.values()) == n else 0
+
     def account(self, s: Session, usage: dict) -> None:
         """Add what a session spent to the helper, the session and the project (kept in its config)."""
         usd = float(usage.get("usd") or 0)
@@ -953,6 +963,12 @@ class Manager:
         while not s.stop.is_set():
             if self._left(s.slug, task := s.options.get("task") or "") == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
+                break
+            if task != "readable" and (ruled := self._ruled_out(s.slug, agent.name)):
+                self._finish(s, f"nothing left it can do: the {ruled} open function{'s' * (ruled != 1)} "
+                                f"{'are ones' if ruled != 1 else 'is one'} it found no C makes. Set "
+                                f"{'them' if ruled != 1 else 'it'} aside in {'their' if ruled != 1 else 'its'} panel, "
+                                "or start a helper of another model to look")
                 break
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")
