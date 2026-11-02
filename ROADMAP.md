@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: shared native collapsible boxes for function compiler settings and cross-project comparisons.
+Exact target-byte peers include matched and unmatched functions; absent exact peers, bounded
+processor-aware instruction-pattern similarity supplies explicit naming leads. Names use the existing
+rename checks; similarity never establishes matching C.
+
 Implemented: bounded actual missing prototypes, target-backed commented calls, isolated word-field
 order hypotheses, real data-symbol bindings and a narrow measured MIPS terminal clear/flag branch.
 SDK private-ABI and register/frame-only blockers receive distinct diagnostics. Full translation-unit

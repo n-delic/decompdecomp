@@ -675,8 +675,8 @@
     <div id="functionLoading" class="navigation-loading" role="status" hidden><p id="functionLoadingText">Loading function…</p><div class="workbar" role="progressbar" aria-label="Loading function"><i></i></div><button id="functionRetry" class="ghost" type="button" hidden>Retry</button></div>
     <div class="drawer-body">
       <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
-      <div id="fnCompilerTest" hidden>
-        <h3>Compiler settings</h3><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
+      <details id="fnCompilerTest" class="collapsible-box" hidden>
+        <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
         <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Flag variations only — use this function’s current compiler</span></label>
         <button class="ghost small-btn" id="fnTestCompilers" type="button">Test installed compilers &amp; flags</button>
         <p class="small muted">Tests this function’s saved C attempt locally with every installed compiler and supported flag-search variant. No AI tokens; settings stay unchanged. This is not every possible compiler option.</p>
@@ -684,7 +684,11 @@
         <p class="compiler-result" id="fnCompilerSummary" role="status" hidden></p>
         <button class="primary small-btn" id="fnApplyCompiler" type="button" hidden>Apply these settings to this function</button>
         <details class="more"><summary>Comparison details</summary><pre class="joblog" id="fnCompilerLog" hidden></pre></details>
-      </div>
+      </div></details>
+      <details class="collapsible-box" id="fnProjectPeers">
+        <summary>Other projects with this function</summary>
+        <div class="collapsible-box-body"><div id="fnProjectPeersContent"></div></div>
+      </details>
       <details class="more" id="fnVerification" hidden>
         <summary>Last verified match</summary>
         <p class="small muted" id="fnVerificationStatus"></p>

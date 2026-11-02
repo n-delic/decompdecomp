@@ -388,15 +388,23 @@ def register(app: App) -> None:
 
     def p_cross_name(slug, request, data):
         old, new = str(data.get("function") or ""), str(data.get("name") or "")
-        hints = net.twins.suggestions(slug, old)
-        if not any(h["name"] == new and h["score"] == 1 and "unverified" not in h["kind"]
-                   for h in hints):
+        if data.get('peer_id'):
+            from ..project_functions import listing
+            peers = listing(net, slug, old)['rows']
+            if not any(str(p['id']) == str(data['peer_id']) and p['name'] == new for p in peers):
+                raise ValueError('That project function has changed or is no longer a naming lead. Refresh the table.')
+        elif not any(h["name"] == new and h["score"] == 1 and "unverified" not in h["kind"]
+                   for h in net.twins.suggestions(slug, old)):
             raise ValueError("that exact SDK or cross-game name is no longer suggested for this function")
         agent, _ = net.local_agent("you")
-        message = net.rename_symbol(agent, slug, old, new, "name suggested by local cross-game signature")
+        message = net.rename_symbol(agent, slug, old, new, "name selected from a cross-project naming lead")
         if message.startswith("❌"):
             raise NetworkError(message)
         return {"message": message}
+
+    def p_project_functions(slug, request, data):
+        from ..project_functions import listing
+        return listing(net, slug, str(request.query_params.get('function') or ''))
 
     def p_save(slug, request, data):
         """Save the project's work as plain files (app/saves.py): to its progress/ folder, or one the user picks."""
@@ -451,6 +459,7 @@ def register(app: App) -> None:
         "/api/sdk-signatures": (p_sdk, ["POST"]),
         "/api/cross-game/run": (p_cross_run, ["POST"]),
         "/api/cross-game/name": (p_cross_name, ["POST"]),
+        "/api/cross-game/functions": (p_project_functions, ["GET"]),
         "/api/priority": (p_priority, ["POST"]), "/api/note": (p_note, ["POST"]), "/api/scope": (p_scope, ["POST"]),
         "/api/unanalysed": (p_unanalysed, ["POST"]),
         "/api/suggestion": (p_suggestion, ["POST"]), "/api/boundary": (p_boundary, ["POST"]),
