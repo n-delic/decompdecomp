@@ -3073,3 +3073,54 @@ def test_a_game_without_a_rich_header_names_old_visual_cpp_by_its_linker_and_tak
     path.write_bytes(game)
     why = scratch_pe.game_info(path)["compiler_why"]
     assert "your newest copy of it" in why and "by its linker's version" in why
+
+
+LOW = 0x10000000  # a program's image base for the analysis tests below (an Xbox game's code sits this low too)
+
+
+def _code(code: bytes) -> "scratch_pe.PE":
+    """A program loaded at LOW whose .text (at LOW + 0x1000) is `code`, with the headers analyse reads (describe)."""
+    exe = bytearray(_tiny_exe(code))
+    struct.pack_into("<I", exe, 0x40 + 24 + 28, LOW)  # image base (_tiny_exe's PE header is at 0x40)
+    return scratch_pe.read_pe(bytes(exe))
+
+
+def test_a_cut_tail_call_is_kept_whole_and_a_flag_mask_isnt_taken_for_an_address():
+    # F: `and edx, <an address inside G>` (a flag mask in a program loaded low, as Xbox games are), `push G` (a
+    # callback: a real address), then a tail call into G, whose last byte Ghidra's function body leaves out
+    f = bytes.fromhex("81e2 14100010" "68 10100010" "e9 00000000")
+    g = bytes.fromhex("9090909090909090c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x100F, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1019, "name": "", "source": "DEFAULT"}]
+    fn = scratch_pe.analyse(_code(f + g), rows)[0]
+    assert fn.size == 0x10
+    assert fn.relocs == [(7, scratch_pe.DIR32, "_func_10001010", 0), (12, scratch_pe.REL32, "_func_10001010", 0)]
+
+
+def test_a_function_that_returns_midway_keeps_the_code_after_its_ret_and_one_ending_in_a_call_does_not():
+    # F: `test eax, eax; jz past; ret; past: xor eax, eax; ret`: Ghidra's body ends at the first ret, but a jump
+    # reaches past it. H: Ghidra ends it at a call that doesn't return; what follows isn't H's code
+    f = bytes.fromhex("85c0" "7401" "c3" "33c0" "c3")
+    h = bytes.fromhex("e8 00000000" "33c0" "c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1005, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1015, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + b"\xcc" * (0x10 - len(f)) + h), rows)
+    assert found[0].addr == LOW + 0x1000 and found[0].size >= 8  # the code after the ret is F's
+    assert found[1].addr == LOW + 0x1010 and len(found) == 3  # after H's call: a function of its own (missed)
+
+
+def test_two_jump_tables_and_a_byte_table_relocate_each_entry_once():
+    # jmp [eax*4+T1] (3 cases), movzx eax, byte [ecx+B]; jmp [eax*4+T2] (2 cases): T1's scan runs on into T2,
+    # whose entries are code addresses too; listed twice, objdiff decoded the byte table after them as code
+    code = bytes.fromhex("ff2485 1a100010" "0fb681 2e100010" "ff2485 26100010" "c3c3c3c3c3")
+    t1 = struct.pack("<3I", LOW + 0x1015, LOW + 0x1016, LOW + 0x1017)
+    t2 = struct.pack("<2I", LOW + 0x1018, LOW + 0x1019)
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1032, "name": "", "source": "DEFAULT"}]
+    fn = scratch_pe.analyse(_code(code + t1 + t2 + bytes([0, 1, 1, 0]) + b"\xcc" * 4), rows)[0]
+    assert [o for o, *_ in fn.relocs] == [3, 10, 17, 0x1A, 0x1E, 0x22, 0x26, 0x2A]  # the tables, each entry once
+    assert fn.size == 0x32  # the byte table is the function's, the int3s after it aren't
+
+
+def test_a_purge_ghidra_couldnt_work_out_counts_as_none():
+    assert scratch_pe.decorate("f", "__stdcall", 2147483647, 0) == "_f"
+    assert scratch_pe.decorate("f", "__stdcall", 8, 2) == "_f@8"
