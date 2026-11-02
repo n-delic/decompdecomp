@@ -245,17 +245,18 @@ Please [report problems](https://github.com/n-delic/decompdecomp/issues). The st
 | Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe and the game's own DLLs into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
 **C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
-classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
+classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use
+C. Public decomps use the language of their project.
 
 **Proprietary compilers** (IDO, CodeWarrior, Visual C++) install only after you accept them. Heavy tools operate
 with a memory limit. Visual C++ 2017 needs wine on Linux and macOS (installing it says how to get wine).
 
 ## The export
 
-**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
-and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are not in git.
-The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects. They
-build the game again on each build.
+**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a
+linker script and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are
+not in git. The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template
+projects. They build the game again on each build.
 
 ## Installation details
 
@@ -274,18 +275,17 @@ compilers run through WSL 2; run `wsl --install` in an
 administrator PowerShell, restart if asked, and open Ubuntu once before importing a game that needs one.
 
 **macOS (Intel and Apple Silicon).** Install the current source with
-`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable release is
-tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit window and
-Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
+`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable
+release is tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit
+window and Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
 `softwareupdate --install-rosetta` and accept Apple's license if you agree. PS1/PS2 period compilers are Linux-only,
 and there is no macOS menu bar tray icon yet. Running `decomp` reopens the window while helpers continue.
 
 **Its window and the tray.** decompdecomp opens in a window of its own. Linux uses GTK and WebKitGTK from your
-system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address does
-nothing in a browser. There is only one
-window: `decomp` or the apps menu shows the open one. When you close it while helper agents work, the app asks: stop
-them and quit, or keep them working. They keep working without the window; the tray icon where available (or `decomp`) brings it
-back. **Quit** ends the app and every helper agent it started.
+system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address
+does nothing in a browser. There is only one window: `decomp` or the apps menu shows the open one. When you close it
+while helper agents work, the app asks: stop them and quit, or keep them working. They keep working without the
+window; the tray icon where available (or `decomp`) brings it back. **Quit** ends the app and every helper agent it started.
 
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.

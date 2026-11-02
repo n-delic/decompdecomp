@@ -45,8 +45,8 @@ often hash an extracted file rather than the whole disc; a library of disc image
 
 ## Install
 
-decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets
-the free compilers and keeps decompdecomp up to date:
+decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with
+one command. The installer also gets the free compilers and keeps decompdecomp up to date:
 
 ```
 curl -fsSL https://decomp.ndelic.com/install.sh | bash
@@ -76,8 +76,8 @@ decomp shortcut
 decomp
 ```
 
-The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
+The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp`
+folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and

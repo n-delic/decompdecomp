@@ -127,11 +127,11 @@ Where to start on a gap:
   a compiler they use, a build no pack has (an EE-GCC, a CodeWarrior PS2, an SNC, a PSP GCC, a KMC GCC, an IDO, an
   agbcc): Setup, Compilers & tools, "Your own PS2 compiler" (one per console, in its group), given the folder it's
   in, laid out as the pack's is (`kits/owncompiler.py`). It runs exactly as the pack does (the pack's command, wibo,
-  the PS1's maspsx and assembler) from your folder, which is never copied; its compiler id starts with the pack's, so each console's
-  flags treat it as that compiler. Checked on the N64, PS1, PS2 and GBA demos (a copy of each one's pack imported,
-  matched and refused wrong C) and, per pack, byte for byte against the pack's own object (`tests/test_kits.py`);
-  PSP's packs weren't on the machine it was checked on. GameCube, Wii and DS: see "Your own compiler for
-  GameCube, Wii and DS".
+  the PS1's maspsx and assembler) from your folder, which is never copied; its compiler id starts with the pack's, so
+  each console’s flags treat it as that compiler. Checked on the N64, PS1, PS2 and GBA demos (a copy of each one's
+  pack imported, matched and refused wrong C) and, per pack, byte for byte against the pack's own object
+  (`tests/test_kits.py`); PSP's packs weren't on the machine it was checked on. GameCube, Wii and DS: see "Your
+  own compiler for GameCube, Wii and DS".
 
 - **Visual C++ 2017 for Windows PC, through wine.** The `msvc2015` pack (proprietary, installed after the user
   accepts it, 220 MB): Visual C++ 2017's last toolset (14.16, cl 19.16.27027.1) and the Windows 10 SDK it was used

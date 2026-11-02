@@ -71,7 +71,8 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When you add a feature:
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
+you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
