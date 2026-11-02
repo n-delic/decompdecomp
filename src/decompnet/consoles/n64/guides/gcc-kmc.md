@@ -315,3 +315,9 @@ symbol resolving to the same address to keep the compiler expressions independen
 The target must support the repeated address pairs, and the normal linked judge still
 settles the result. A frozen case improved from 155 to 25; its remaining register miss
 was not solved by the tested local variants or scheduler toggles.
+
+For a register-only table-index store, try `pointer_index_scope` when the source already
+has a block-local slot pointer. Splitting its pointer and index into typed locals inside
+a one-shot scope recovered one 52-instruction KMC `-O2 -g3` case exactly. The split alone
+made that case worse: test the combined shape before discarding this lifetime hypothesis.
+The rule is bounded and retains the normal exact judge; it is not a general register fix.

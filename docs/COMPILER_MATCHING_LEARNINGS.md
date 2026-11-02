@@ -2214,3 +2214,41 @@ recoveries remain at 56/1 and unresolved scores at 10/15/15, with 350 total comp
 both sides. No recovery was lost and no additional match or compile saving was demonstrated. The
 combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
 unapproved rather than treating the homemade context success as held-out game evidence.
+
+## Typed pointer/index split plus one-shot scope (November 2026)
+
+**Measured:** pinned KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A frozen 52-instruction candidate differed only in the registers holding a table-pointer
+load and an index shift. RTL identified separate pseudos for these values; the scheduler
+moved the load before the shift, and local allocation assigned the opposite registers
+from the target. Normal and `-da` diagnostic objects had identical allocated output.
+
+Separating the pointer and index into typed locals **inside a `do { ... } while (0)`**
+changed this case from linked score 10 to exact (52 instructions / 208 bytes). Both
+base-first and index-first declarations matched. The split without the one-shot scope
+worsened the score to 20. Integer-address casts and several other staging forms did not
+solve it. This is evidence for a coupled source-shape hypothesis, not proof that a
+particular RTL phase alone caused the result; both input RTL and subsequent allocation
+changed. Ordinary pointer operand commutation alone remained at score 10.
+
+`pointer_index_scope` emits at most two candidates for complete blocks containing a
+plain typed slot declaration followed by its only store. It retains the exact local
+integer and pointer types, reads operands once, and introduces no forced registers or
+machine-code edits. Calls, updates, labels, escaping slots, uncertain index declarations,
+relevant macros and volatile/asm functions are excluded. Header declarations unrelated
+to the expression do not prevent trials. Fresh names avoid source/header collisions.
+
+The family is shared by ROM/imported source search, agent local experiments and the
+permuter's existing eight-candidate pre-pass. No additional budget or judge exception
+is introduced. The controlled game replay is MIPS/KMC evidence; other processors receive
+source candidates but have no demonstrated new match from this rule yet. On the other
+four frozen register-only cases the narrow pattern did not apply, so their scores
+remained 15/15/35/20. Diagnostics preserved allocated output on all five. The exact
+candidate remains in the private benchmark; no live project or database was changed.
+
+Equal-budget replay against current main, with only this family disabled/enabled:
+16 candidates and 30 seconds per function, five frozen inputs. The control recovered
+0/5 and the enabled search recovered 1/5, reaching exact on candidate 4. Both suites
+used 80 candidate evaluations; no best-score regression occurred. Local suite times
+were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
+same-case regression evidence, not disjoint-target validation of a broad ranking boost.
