@@ -1798,6 +1798,16 @@ Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine
 
 Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
 
+## Durable diagnostic evidence
+
+Implemented: new compiler-trial records survive restart and can be read by other agents in the same
+local project, with historical source/profile and optional shared-header evidence. Repair discovery
+resumes cached pure stages under a cooperative budget; mutable project donors are read afresh.
+
+Planned: transfer diagnostic trial evidence between separate room participant databases, with explicit
+provenance and bounded source/header payloads. A local trial reference alone cannot retrieve remote
+records or reconstruct missing imported translation-unit inputs.
+
 
 ### Historical recovery and conservative repair learning
 

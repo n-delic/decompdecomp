@@ -86,7 +86,7 @@ def test_automatic_pass_excludes_experimental_families_but_explicit_requests_wor
     net.claim_row(a,'game','f');_,revision=agent_tokens.candidate(net,a,'game','f')
     monkeypatch.setattr(local_experiments.agent_evidence,'preflight',lambda *args:None)
     requested=[]
-    def available(*args):
+    def available(*args,**kwargs):
         requested.extend(args[-1]);return {}
     monkeypatch.setattr(local_experiments,'available',available)
     local_experiments.run(net,a,'game','f',revision,['experimental_bitfield_frame'] if explicit else None)

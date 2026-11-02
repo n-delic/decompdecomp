@@ -152,8 +152,8 @@ def test_claim_defers_supporting_sections_but_full_read_keeps_them(tmp_path, mon
     assert 'return 7' in out and 'keep flags' in out and 'get_function' in out
     net._record(net._function('f','game'),a,4,'int f(){return 7;}',1)
     monkeypatch.setattr(net, 'get_function', lambda *args: text)
-    assert 'long previous investigation' in tools.call(net,a,'game','get_function',{'function':'f'})
-    assert 'Recent history' in tools.call(net,a,'game','get_function',{'function':'f'})
+    assert 'long previous investigation' in tools.call(net,a,'game','get_function',{'function':'f','section':'all'})
+    assert 'Recent history' in tools.call(net,a,'game','get_function',{'function':'f','section':'all'})
 
 
 def test_patch_prompt_reuses_revisions_and_prefers_small_edits():

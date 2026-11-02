@@ -38,6 +38,10 @@ SCHEMA = (
     """CREATE TABLE IF NOT EXISTS knowledge_support(
       knowledge_id INTEGER NOT NULL, agent_id INTEGER NOT NULL, model TEXT NOT NULL, created_at REAL NOT NULL,
       UNIQUE(knowledge_id, agent_id))""",
+    """CREATE TABLE IF NOT EXISTS knowledge_evidence(
+      id INTEGER PRIMARY KEY, knowledge_id INTEGER NOT NULL REFERENCES knowledge(id) ON DELETE CASCADE,
+      agent_id INTEGER NOT NULL, text TEXT NOT NULL, created_at REAL NOT NULL,
+      UNIQUE(knowledge_id,agent_id,text))""",
     # a project's accepted knowledge is in its progress folder's manifest (progress.py)
     """CREATE TRIGGER IF NOT EXISTS progress_dirty_knowledge_insert AFTER INSERT ON knowledge
     WHEN EXISTS (SELECT 1 FROM projects WHERE id=NEW.project_id AND CASE WHEN json_valid(config) THEN json_extract(config,'$.kind') END='rom')
@@ -99,19 +103,45 @@ class Knowledge:
                 db.execute("UPDATE knowledge SET status=?, decided_at=? WHERE project_id=? AND status=?",
                            (ACCEPTED, time.time(), proj["id"], AGREED))
 
-    def share(self, agent: Agent, slug: str, text: str = "", supports: int = 0) -> str:
+    def share(self, agent: Agent, slug: str, text: str = "", supports: int = 0, evidence: str = "") -> str:
         """An agent proposes something every agent on this game should know, or backs a proposal (supports=id)."""
         proj = self.net._project(slug)
+        evidence = " ".join(str(evidence).split())[:2000]
         if supports:
-            return self._support(agent, proj, int(supports))
-        text = " ".join(text.split())[:MAX_TEXT]
+            result = self._support(agent, proj, int(supports))
+            self._evidence(int(supports),agent,evidence)
+            return result
+        text = " ".join(text.split())[:4000]
+        original = text
+        # Move clearly labelled concrete examples out of the reusable rule, never silently generalize a claim.
+        examples = []
+        def example(match):
+            fragment = match[0]
+            if self._function_mentions(proj,fragment) and re.search(r'example|matched|improv|score',fragment,re.I):
+                examples.append(fragment)
+                return ''
+            return fragment
+        text = re.sub(r'\([^()]{0,700}\)',example,text)
+        parts = re.split(r'(?<=[.!?])\s+(?=[A-Z])',text)
+        rule = []
+        for part in parts:
+            if (self._function_mentions(proj,part) and re.match(r'(?:For example|Example:|In [A-Za-z_]\w*)\b',part,re.I)
+                and re.search(r'match|improv|score|example',part,re.I)):
+                examples.append(part)
+            else:
+                rule.append(part)
+        text = ' '.join(rule).strip()
+        if examples and (len(text)<40 or not re.search(r'\b(?:if|when|compiler|cast|avoid|prefer|always|never|pattern|technique)\b',text,re.I)):
+            text=original
+        evidence = ' '.join([evidence]+examples).strip()[:2000]
+        text = text[:MAX_TEXT]
         if not text:
             raise NetworkError("say what every agent on this game should know (text), or back a proposal (supports=id)")
         if COMPILER_MENTION.search(text) and COMPILER_SELECTION.search(text):
             raise NetworkError("which compiler built what isn't shared knowledge: the compiler map settles it with "
                                "evidence. Inspect compiler_map(); test a function with try_compiler or search_flags; "
                                "propose a setup change with suggest(text=..., function=...). This was not saved as shared knowledge.")
-        scoped = self._function_mentions(proj, text)
+        scoped = self._rule_mentions(proj, text)
         if scoped:
             raise NetworkError('This describes a specific function ('+', '.join(scoped[:3])+'). '
                                'Use add_note or release_function(notes=...) for function notes, or report_candidate_issue '
@@ -126,8 +156,15 @@ class Knowledge:
             kid = db.execute("INSERT INTO knowledge(project_id, text, status, created_at) VALUES(?,?,?,?)",
                              (proj["id"], text, PROPOSED, time.time())).lastrowid
         self._support(agent, proj, kid)
+        self._evidence(kid,agent,evidence)
         return (f"Proposed as #{kid}. It reaches every agent once a helper running another model backs it "
                 f"(and the user accepts it, unless the project adds agreed knowledge by itself).")
+
+    def _evidence(self, kid, agent, evidence):
+        if evidence:
+            with self.net.store.tx() as db:
+                db.execute('INSERT OR IGNORE INTO knowledge_evidence(knowledge_id,agent_id,text,created_at) VALUES(?,?,?,?)',
+                           (kid,agent.id,evidence,time.time()))
 
     def _support(self, agent: Agent, proj, kid: int) -> str:
         row = self.net.store.one("SELECT * FROM knowledge WHERE id=? AND project_id=?", kid, proj["id"])
@@ -178,7 +215,8 @@ class Knowledge:
             support.setdefault(r["knowledge_id"], set()).add(r["model"])
         return {"auto": self.auto(proj), "models_to_agree": MODELS_TO_AGREE,
                 "items": [{"id": r["id"], "text": r["text"], "status": r["status"], "t": r["created_at"],
-                           "models": sorted(support.get(r["id"], ()))} for r in rows]}
+                           "models": sorted(support.get(r["id"], ())),
+                           "evidence": [dict(e) for e in self.net.store.all('SELECT e.text,a.name AS agent FROM knowledge_evidence e LEFT JOIN agents a ON a.id=e.agent_id WHERE e.knowledge_id=? ORDER BY e.id',r['id'])]} for r in rows]}
 
     def for_prompt(self, slug: str) -> str:
         """What every agent starts with: the accepted knowledge, then the open proposals it can back."""
@@ -186,19 +224,27 @@ class Knowledge:
         out, used = [], 0
         for r in self.net.store.all("SELECT text FROM knowledge WHERE project_id=? AND status=? ORDER BY id DESC",
                                     proj["id"], ACCEPTED):
-            if self._function_mentions(proj, r["text"]):
+            if self._rule_mentions(proj, r["text"]):
                 continue
             if used + len(r["text"]) > SHOWN_IN_PROMPT:
                 break
             out.append(f"- {r['text']}")
             used += len(r["text"])
         text = ("Accepted matching knowledge for this game (user-approved or model consensus):\n" + "\n".join(out)) if out else ""
-        open_ = [r for r in self._open(proj) if not self._function_mentions(proj, r["text"])][:OPEN_SHOWN]
+        open_ = [r for r in self._open(proj) if not self._rule_mentions(proj, r["text"])][:OPEN_SHOWN]
         if open_:
             text += ("\n\nProposals waiting for a second model (back one with share_knowledge(supports=N) only when "
                      "your own work shows it):\n" + "\n".join(f"- #{r['id']}: {r['text']}" for r in open_))
         return text.strip()
 
+
+    def _rule_mentions(self, proj, text):
+        # Generic compiler tips may naturally name calls inside code examples (e.g. sqrtf).
+        # Keep concrete progress claims out even if an agent puts the function name in backticks.
+        if (re.search(r'\b(?:when|if|compiler|cast|avoid|prefer|pattern|technique)\b',text,re.I)
+            and not re.search(r'\b(?:score|improved|remaining|stuck)\b|\b(?:I|we)\s+tried',text,re.I)):
+            text=re.sub(r'`[^`]*`','',text)
+        return self._function_mentions(proj,text)
 
     def _function_mentions(self, proj, text):
         words = set(re.findall(r'[A-Za-z_]\w*', text))

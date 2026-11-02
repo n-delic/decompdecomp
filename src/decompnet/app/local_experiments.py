@@ -42,6 +42,7 @@ from . import (
     store_address_repairs,
     switch_tables,
 )
+from .repair_generation import call as _generated
 
 EXPERIMENTAL = ('experimental_bitfield_frame',)
 FAMILIES = ('value_trace_bundle','verified_unit_helpers') + independent_address_repairs.FAMILIES + focused_lifetime_repairs.FAMILIES + (prototype_reuse.FAMILY, 'learned_expression', 'address_association', 'call_initialization', *EXPERIMENTAL, 'masked_value_reuse', 'cfg_integer_lifetimes', 'table_slot_lifetime', 'unsigned_assignment_reuse', 'guard_forward_jump', 'constant_register_reuse', 'copy_register_reuse', 'last_shift_reuse', 'signedness','declaration_order','typed_temporary','branch_orientation','narrowing','source_lines',
@@ -71,7 +72,7 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
             return _compile(net,agent,slug,function,source)
         if time.monotonic()>=deadline:
             return 'Local repair time budget reached during baseline checking; no variants submitted.'
-        pools = available(net,agent,slug,fn,source,revision,requested)
+        pools = available(net,agent,slug,fn,source,revision,requested,deadline=time.monotonic()+max(0,(deadline-time.monotonic())*0.35),desired=max_trials if families is not None else 0)
         effect_scope=repair_ranking.effect_scope(net,fn,source)
         selected=[];seen=set()
         while len(selected)<max_trials and any(pools.values()):
@@ -80,6 +81,8 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
                     candidate=pool.pop(0)
                     if candidate not in seen:
                         selected.append((family,candidate));seen.add(candidate)
+        if not selected and getattr(pools,'incomplete',False):
+            return 'Repair discovery paused at its generation budget; cached stages are retained for the next pass. No variants submitted; this is not exhaustion.'
         if not selected:
             return f'No untried applicable local repairs. Revision {actual}; no compile run.'
         scope=agent_tokens.target_scope(net,fn,revision)
@@ -117,31 +120,61 @@ def run(net, agent, slug, function, revision, families=None, max_trials=6, *, se
         return 'Local families: '+', '.join(f'{i}: {f}' for i,(f,_) in enumerate(selected,1))+'\n'+result
 
 
-def available(net, agent, slug, fn, source, revision, requested):
+
+def generation_signature(reader, net, proj, *args):
+    try:
+        return reader(net,proj,*args)
+    except (KeyError,NetworkError):
+        # Coordination-only projects can still describe known pools; this is never build evidence.
+        return 'unavailable:'+hashlib.sha256(str(proj['config']).encode()).hexdigest()
+
+
+class Pools(dict):
+    incomplete = False
+
+
+def available(net, agent, slug, fn, source, revision, requested, *, deadline=None, desired=0):
+    from . import repair_generation, rtl_value_trace, verified_unit_context
+    proj = net._project(slug)
+    ctx = net._context(proj['id'],fn['unit'])
+    scope = (fn['id'], revision, agent_tokens.target_scope(net,fn,''),
+             generation_signature(prototype_reuse.signature,net,proj,source), generation_signature(verified_unit_context.signature,net,proj,fn,source),
+             repr(rtl_value_trace.saved(net,proj,fn,source,ctx['header'] if ctx else '')))
+    durable_scope=agent_tokens.target_scope(net,fn,'')
+    from .repair_preflight import invalid_call
+    def eligible(family,candidate):
+        return candidate!=source and not invalid_call(candidate,fn['name']) and not agent_tokens.compiled_before(net,fn,candidate,durable_scope) and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate)
+    with repair_generation.session(net,scope,deadline,requested,accept=eligible,goal=desired) as state:
+        result = Pools(_available(net,agent,slug,fn,source,revision,requested))
+        result.incomplete = state.incomplete
+        return result
+
+
+def _available(net, agent, slug, fn, source, revision, requested):
     proj=net._project(slug);cfg=json.loads(proj['config'])
     flags=compiler_for(cfg,fn['vram']).get('flags',[]) if not net.fork_slug(slug) else []
     debug=any(re.fullmatch(r'-g[1-3]?',flag) for flag in flags)
     pools={family:[] for family in requested}
     if independent_address_repairs.FAMILIES[0] in pools and net.is_rom(proj):
         header=(net._context(proj['id'],fn['unit']) or {'header':''})['header']
-        for family,candidate in independent_address_repairs.variants(source,fn['name'],proj['arch'],repair_ranking.evidence(net,fn['id'],agent.id),header):
+        for family,candidate in _generated(independent_address_repairs.variants, source,fn['name'],proj['arch'],repair_ranking.evidence(net,fn['id'],agent.id),header):
             pools[family].append(candidate)
     if pointer_index_scope.FAMILY in pools:
         ctx=net._context(proj['id'],fn['unit'])
         pools[pointer_index_scope.FAMILY]=[s for _,s in pointer_index_scope.variants(source,fn['name'],ctx['header'] if ctx else '')]
     if prototype_reuse.FAMILY in pools:
-        pools[prototype_reuse.FAMILY]=[s for _,s in prototype_reuse.variants(net,proj,fn,source)]
+        pools[prototype_reuse.FAMILY]=[s for _,s in _generated(prototype_reuse.variants, net,proj,fn,source)]
     if 'verified_unit_helpers' in pools:
         from . import verified_unit_context
-        pools['verified_unit_helpers']=[s for _,s in verified_unit_context.variants(net,proj,fn,source)]
+        pools['verified_unit_helpers']=[s for _,s in _generated(verified_unit_context.variants, net,proj,fn,source)]
     if 'value_trace_bundle' in pools:
         from . import rtl_value_trace, value_trace_repairs
         ctx=net._context(proj['id'],fn['unit'])
         header=ctx['header'] if ctx else ''
         trace,rows=rtl_value_trace.saved(net,proj,fn,source,header)
-        pools['value_trace_bundle']=[s for _,s in value_trace_repairs.variants(source,fn['name'],trace,rows,header)]
+        pools['value_trace_bundle']=[s for _,s in _generated(value_trace_repairs.variants, source,fn['name'],trace,rows,header)]
     if 'learned_expression' in pools:
-        pools['learned_expression']=expression_recipes.variants(net,repair_sequences.profile(net,proj,fn),source)
+        pools['learned_expression']=_generated(expression_recipes.variants, net,repair_sequences.profile(net,proj,fn),source)
     for family in ('signedness','declaration_order'):
         if family not in pools:
             continue
@@ -154,35 +187,35 @@ def available(net, agent, slug, fn, source, revision, requested):
     if any(f in pools for f in ('table_slot_lifetime','unsigned_assignment_reuse','guard_forward_jump')):
         ctx = net._context(proj['id'],fn['unit'])
         header = net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
-        for family,candidate in evidence_repairs.variants(source,fn['name'],header):
+        for family,candidate in _generated(evidence_repairs.variants, source,fn['name'],header):
             if family in pools:
                 pools[family].append(candidate)
-    for family,candidate in pattern_repairs.variants(source,fn['name'],debug):
+    for family,candidate in _generated(pattern_repairs.variants, source,fn['name'],debug):
         if family in pools:
             pools[family].append(candidate)
-    for family,candidate in register_repairs.variants(source,fn['name'],proj['arch']):
+    for family,candidate in _generated(register_repairs.variants, source,fn['name'],proj['arch']):
         if family in pools:
             pools[family].append(candidate)
-    for family,candidate in captured_repairs.variants(source,fn['name']):
+    for family,candidate in _generated(captured_repairs.variants, source,fn['name']):
         if family in pools:
             pools[family].append(candidate)
-    for family,candidate in lifetime_repairs.variants(source,fn['name']):
+    for family,candidate in _generated(lifetime_repairs.variants, source,fn['name']):
         if family in pools:
             pools[family].append(candidate)
     for module in (address_association_repairs, call_initialization_repairs, masked_reuse_repairs, callee_prototype_repairs, integer_lifetime_repairs, branch_layout_repairs, register_reuse_repairs, focused_lifetime_repairs):
-        for family, candidate in module.variants(source, fn['name']):
+        for family, candidate in _generated(module.variants, source, fn['name']):
             if family in pools:
                 pools[family].append(candidate)
     if 'experimental_bitfield_frame' in pools:
         pools['experimental_bitfield_frame'] = [s for _, s in stack_layout.experimental_variants(source,fn['name'])]
     if 'local_widening' in pools:
-        pools['local_widening'] = local_widening_repairs.variants(source, fn['name'])
+        pools['local_widening'] = _generated(local_widening_repairs.variants, source, fn['name'])
     if 'pointer_cast_inline' in pools:
-        pools['pointer_cast_inline'] = pointer_cast_repairs.variants(source,fn['name'],proj['arch'])
+        pools['pointer_cast_inline'] = _generated(pointer_cast_repairs.variants, source,fn['name'],proj['arch'])
     if 'local_width' in pools:
-        pools['local_width'] = local_width_repairs.variants(source,fn['name'])
+        pools['local_width'] = _generated(local_width_repairs.variants, source,fn['name'])
     if 'stack_padding' in pools:
-        pools['stack_padding'] = stack_padding_repairs.variants(source,fn['name'])
+        pools['stack_padding'] = _generated(stack_padding_repairs.variants, source,fn['name'])
         measured = getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
         if measured and measured.get('source') == source:
             pools['stack_padding'] += stack_padding_repairs.grow(source,fn['name'],proj['arch'],measured.get('rows') or [])
@@ -192,14 +225,14 @@ def available(net, agent, slug, fn, source, revision, requested):
         if measured and measured.get('source') == source:
             pools['spill_normalization'] = normalization_repairs.frame_variants(source,fn['name'],measured.get('rows') or [])
     if 'store_address_lifetime' in pools:
-        pools['store_address_lifetime'] = store_address_repairs.variants(source,fn['name'],proj['arch'])
+        pools['store_address_lifetime'] = _generated(store_address_repairs.variants, source,fn['name'],proj['arch'])
     if 'paired_load_order' in pools:
-        pools['paired_load_order']=load_pair_repairs.variants(source,fn['name'])
+        pools['paired_load_order']=_generated(load_pair_repairs.variants, source,fn['name'])
     if 'mmio_address' in pools:
-        pools['mmio_address'] = mmio_repairs.variants(source,fn['name'],proj['arch'])
+        pools['mmio_address'] = _generated(mmio_repairs.variants, source,fn['name'],proj['arch'])
     if 'narrowing' in pools:
         masks=lambda text:len(re.findall(r'&\s*0x(?:[fF]{4}|[fF]{2})\b',text))
-        pools['narrowing'] += [s for s in expression_repairs.variants(source,fn['name'],proj['arch']) if masks(s)<masks(source)]
+        pools['narrowing'] += [s for s in _generated(expression_repairs.variants, source,fn['name'],proj['arch']) if masks(s)<masks(source)]
     if any(family in pools for family in draft_repairs.AGENT_FAMILIES):
         ctx=net._context(proj['id'],fn['unit'])
         header=net.forks.permuter_header(slug,fn['name']) if net.fork_slug(slug) else (ctx['header'] if ctx else '')
@@ -208,10 +241,22 @@ def available(net, agent, slug, fn, source, revision, requested):
             family=labels[candidate]
             if family in pools and family in draft_repairs.AGENT_FAMILIES:
                 pools[family].append(candidate)
+    from .repair_generation import ACTIVE
     from .repair_preflight import invalid_call
-    pools = {f: [s for s in pool if not invalid_call(s, fn['name'])] for f, pool in pools.items()}
     durable_scope=agent_tokens.target_scope(net,fn,'')
-    pools={f:[s for s in dict.fromkeys(pool) if s!=source and not agent_tokens.compiled_before(net,fn,s,durable_scope) and not agent_tokens.target_tried(net,fn,revision,'local:'+f,s)] for f,pool in pools.items()}
+    state=ACTIVE.get()
+    validation_deadline=time.monotonic()+1 if state and state.deadline is not None else None
+    filtered={f:[] for f in pools}
+    for family,pool in pools.items():
+        for candidate in dict.fromkeys(pool):
+            if validation_deadline is not None and time.monotonic() >= validation_deadline:
+                state.incomplete=True
+                break
+            if (candidate!=source and not invalid_call(candidate,fn['name'])
+                and not agent_tokens.compiled_before(net,fn,candidate,durable_scope)
+                and not agent_tokens.target_tried(net,fn,revision,'local:'+family,candidate)):
+                filtered[family].append(candidate)
+    pools=filtered
     ranked = repair_ranking.order(pools,repair_ranking.evidence(net,fn['id'],agent.id))
     effect_scope=repair_ranking.effect_scope(net,fn,source)
     ranked=repair_ranking.demote(net,effect_scope,ranked)
@@ -237,18 +282,21 @@ def summary(net, agent, slug, fn, source, revision):
         from . import rtl_value_trace, verified_unit_context
         proj=net._project(slug);ctx=net._context(proj['id'],fn['unit'])
         trace_scope=hashlib.sha256(repr(rtl_value_trace.saved(net,proj,fn,source,ctx['header'] if ctx else '')).encode()).hexdigest()
-        key = (fn['id'],agent.id,revision,scope,count,evidence,prototype_reuse.signature(net,proj,source),
-               verified_unit_context.signature(net,proj,fn,source),trace_scope)
+        key = (fn['id'],agent.id,revision,scope,count,evidence,generation_signature(prototype_reuse.signature,net,proj,source),
+               generation_signature(verified_unit_context.signature,net,proj,fn,source),trace_scope)
         cache = getattr(net,'_remaining_repairs',{})
         net._remaining_repairs = cache
         if key not in cache:
-            pools = available(net,agent,slug,fn,source,revision,list(FAMILIES))
+            pools = available(net,agent,slug,fn,source,revision,list(FAMILIES),deadline=time.monotonic()+1)
             counts = [(family,len(set(pool))) for family,pool in pools.items() if pool]
             total = len(set(candidate for pool in pools.values() for candidate in pool))
-            cache[key] = (total,counts)
+            cache[key] = (total,counts,getattr(pools,"incomplete",False))
             while len(cache)>32:
                 del cache[next(iter(cache))]
-        total,counts = cache[key]
+        total,counts,incomplete = cache[key]
+        if incomplete:
+            cache.pop(key,None)
+            return f'Remaining local repairs [{revision}]: at least {total} known proposals; discovery paused at its generation budget. Cached stages resume on the next pass; this is not exhaustion.'
         if not total:
             return f'Remaining local repairs [{revision}]: 0. Do not retry unchanged families; inspect the diff or release with notes.'
         families = ', '.join(f'{family}={count}' for family,count in counts[:4])

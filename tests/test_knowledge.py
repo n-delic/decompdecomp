@@ -151,3 +151,27 @@ def test_function_specific_knowledge_is_scoped_without_deleting_history(net):
     with pytest.raises(NetworkError, match='specific function'):
         net.knowledge.share(a,'game','func_example needs a corrected pointer.')
     assert net.store.one('SELECT COUNT(*) AS n FROM knowledge')['n'] == 2
+
+
+def test_reusable_rule_keeps_concrete_examples_out_of_prompts(net):
+    worker=agent(net,'claude-opus-1')
+    pid=net._project('game')['id']
+    with net.store.tx() as db:db.execute("INSERT INTO functions(project_id,name,status) VALUES(?,?,'open')",(pid,'func_example'))
+    rule='When a compiler masks a bitfield condition, cast the field to its unsigned byte type to test the extracted value.'
+    response=net.knowledge.share(worker,'game',rule+' (func_example matched this way.)')
+    kid=int(response.split('#')[1].split('.')[0])
+    item=net.knowledge.listing('game')['items'][0]
+    assert item['text']==rule and 'func_example' in item['evidence'][0]['text']
+    net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game') and 'func_example' not in net.knowledge.for_prompt('game')
+    with pytest.raises(NetworkError):net.knowledge.share(worker,'game','In func_example improved the score from 40 to 0.')
+
+
+def test_generic_rule_can_name_a_library_call_in_code(net):
+    worker=agent(net,'claude-opus-1');pid=net._project('game')['id']
+    with net.store.tx() as db:db.execute("INSERT INTO functions(project_id,name,status) VALUES(?,?,'open')",(pid,'sqrtf'))
+    rule='When the compiler gives a sum its own register, use separate assignments such as `sq=x*x; sq+=y*y; len=sqrtf(sq);` rather than nesting all arithmetic in one expression.'
+    response=net.knowledge.share(worker,'game',rule)
+    kid=int(response.split('#')[1].split('.')[0]);net.knowledge.decide('game',kid,True)
+    assert rule in net.knowledge.for_prompt('game')
+    with pytest.raises(NetworkError):net.knowledge.share(worker,'game','I tried to cast `sqrtf` and improved its score by 10; remaining differences are in the loop.')

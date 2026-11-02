@@ -2215,6 +2215,30 @@ both sides. No recovery was lost and no additional match or compile saving was d
 combined focused suite passes 417 tests, including new-main integrations. Experimental boosts stay
 unapproved rather than treating the homemade context success as held-out game evidence.
 
+## Repair discovery and agent evidence follow-up
+
+A 60-session transcript audit found repeated proposal-generation timeouts, routine linker chatter,
+rejected general tips with example functions, and compiler-trial references unavailable to another
+worker. Repair discovery now caches compressed pure generator stages and resumes under a cooperative
+time budget. Database-dependent donors remain fresh; validity and tried-candidate checks are repeated.
+Unrequested refinement families are skipped. The budget is checked between generators and cannot
+interrupt an individual parser or generator. Incomplete discovery is labelled rather than reported
+as exhaustion. A private generation-only check demonstrated continuation across three bounded calls;
+it did not compile candidates and establishes no additional match or compiler saving.
+
+Reusable knowledge rules can store supporting examples separately without injecting those examples
+into every prompt; function-specific progress remains excluded. New diagnostic compiler trials are
+persisted by project/function and readable by other local workers after restart. Historical shared
+headers are optional evidence, not a complete imported translation-unit archive. Lost pre-migration
+trial records and trials held only on another room participant's machine remain unavailable.
+
+Routine relocation/skip chatter is omitted from concise feedback while full logs and actual errors
+remain available. Default function reads are focused metadata; supporting evidence is paged explicitly,
+while editable candidate C stays complete. Rechecked baseline feedback labels the measured score and
+saved historical best separately, comparing source, recorded header and compiler profile where known.
+No judge, match-verification or consensus thresholds changed. The focused regression gate passed
+330 tests; these are workflow regressions, not evidence of new game matches.
+
 
 ### Historical reconciliation and conservative cross-build evidence
 

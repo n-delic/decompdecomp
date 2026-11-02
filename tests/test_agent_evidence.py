@@ -95,7 +95,7 @@ def test_quality_reports_require_a_claim_and_a_same_function_alternative(tmp_pat
 def test_remaining_counts_use_the_runner_pool_cache_and_compile_history(tmp_path,monkeypatch):
     net,a=dependency_game(tmp_path);fn=net._function('caller','game');source='int caller(){return 1;}'
     seen=[]
-    def pool(*args):
+    def pool(*args,**kwargs):
         seen.append(1);return {'first':['a','b'],'second':['b','c']}
     monkeypatch.setattr(local_experiments,'available',pool)
     text=local_experiments.summary(net,a,'game',fn,source,'revision')
@@ -104,7 +104,7 @@ def test_remaining_counts_use_the_runner_pool_cache_and_compile_history(tmp_path
     with net.store.tx() as db:
         db.execute('INSERT INTO agent_family_targets VALUES(?,?,?,?)',(fn['id'],'scope','compiled-miss','hash'))
     local_experiments.summary(net,a,'game',fn,source,'revision');assert len(seen)==2
-    monkeypatch.setattr(local_experiments,'available',lambda *args:{})
+    monkeypatch.setattr(local_experiments,'available',lambda *args,**kwargs:{})
     assert 'Do not retry' in local_experiments.summary(net,a,'game',fn,source,'changed')
 
 
@@ -150,7 +150,7 @@ def test_resumed_session_includes_remaining_counts_without_resending_c(tmp_path,
     monkeypatch.setattr(net,'overview',lambda slug:{'platform':'','kind':'rom','compiler':{'toolchain':'example'}})
     monkeypatch.setattr(tools,'up_front',lambda *args:'')
     monkeypatch.setattr(net,'instructions',lambda slug:'')
-    monkeypatch.setattr(local_experiments,'available',lambda *args:{'signedness':['new candidate']})
+    monkeypatch.setattr(local_experiments,'available',lambda *args,**kwargs:{'signedness':['new candidate']})
     session=agents.Session('id','api','Worker','game',a.name,{})
     prompt=manager.prompt(session)
     assert 'caller: Remaining local repairs' in prompt and '1 distinct proposals' in prompt

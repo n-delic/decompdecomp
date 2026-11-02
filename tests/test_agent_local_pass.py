@@ -77,7 +77,7 @@ def test_real_compile_submission_can_match_in_the_local_pass(tmp_path,monkeypatc
     monkeypatch.setattr(net.twins,'after_match',lambda *args:None)
     a,_=net.local_agent('solver');name='func_80000808'
     net.claim_row(a,slug,name)
-    monkeypatch.setattr(agent_local_pass.local_experiments,'available',lambda *args:{'literal':[DAMAGE]})
+    monkeypatch.setattr(agent_local_pass.local_experiments,'available',lambda *args,**kwargs:{'literal':[DAMAGE]})
     agent_local_pass.configure(net,{'agent_local_enabled':True,'agent_local_trials':1,'agent_local_seconds':15})
     result=tools.call(net,a,slug,'compile_and_diff',{'function':name,'source':DAMAGE.replace('= 60;','= 61;')})
     assert 'Automatic local pass:' in result and 'MATCH! Saved by the normal judge' in result,result
