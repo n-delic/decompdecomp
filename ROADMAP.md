@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: bounded typed pointer/index plus one-shot-scope repairs in shared source search,
+agent experiments and the existing permuter pre-pass. One copied KMC register-only case
+recovered exactly; broader compiler/processor evidence and additional slot shapes remain planned.
+
 Implemented: measured statement-line layout and candidate-only narrowing-cast hypotheses, compatible actual
 extern recovery, consensus missing-callee aliases, and original lines for existing inline helper bodies.
 Private mixed-entry/callee-clobber evidence is recorded and defers ordinary signature searches. Private
