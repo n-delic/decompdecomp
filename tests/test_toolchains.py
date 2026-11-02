@@ -335,7 +335,8 @@ def test_ghidras_decompiler_is_built_where_its_release_has_none(monkeypatch, tmp
     monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-arm64")
     toolchains._build_ghidra_decompiler(ghidra, lambda _: None)
     built = ghidra / "Ghidra" / "Features" / "Decompiler" / "os" / "mac_arm_64" / "decompile"
-    assert built.read_bytes() == b"native host executable" and built.stat().st_mode & 0o111
+    assert built.read_bytes() == b"native host executable"
+    assert os.name == "nt" or built.stat().st_mode & 0o111  # (Windows has no executable bit: the CI runs this there too)
     assert calls[0][0] == "make" and "ghidra_opt" in calls[0] and "ARCH_TYPE=" in calls[0]
     assert not list((ghidra / "Ghidra" / "Features" / "Decompiler" / "src").rglob("ghidra_opt"))  # built elsewhere
     toolchains._build_ghidra_decompiler(ghidra, lambda _: None)  # one there already (the release's): kept
