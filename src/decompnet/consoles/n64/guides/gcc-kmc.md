@@ -297,3 +297,10 @@ facts. Try it with `loop_weight_scope`: the bounded iterative search reserves co
 follow-ups without increasing the phase budget. Saved-case output replays recovered a
 previous long-running near miss in 17 or 29 candidate compiles; this is regression
 evidence, not a guarantee for other functions.
+
+If the original materializes the same address twice while the candidate derives it from
+a nearby pointer, try `independent_address_materialization`. It uses a fresh automatic
+symbol resolving to the same address to keep the compiler expressions independent.
+The target must support the repeated address pairs, and the normal linked judge still
+settles the result. A frozen case improved from 155 to 25; its remaining register miss
+was not solved by the tested local variants or scheduler toggles.
