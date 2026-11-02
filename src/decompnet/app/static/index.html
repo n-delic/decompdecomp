@@ -475,9 +475,10 @@
             <summary>Find better compiler settings</summary><div class="compiler-test-body">
             <div><p class="small muted">Test saved C locally, then review and apply the results. No AI tokens are used.</p></div>
             <div class="compiler-test-options"><label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
-            <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label></div>
+            <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
+            <label class="check"><input type="checkbox" id="compilerAutoApply"><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label></div>
             <p class="small muted" id="compilerTestScope">All installed compilers and supported flag variations · new or changed attempts only.</p>
-            <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button><button class="ghost" type="button" id="stopInstalledCompilers" hidden>Stop comparison</button></div>
+            <div class="row"><button class="primary" type="button" id="testInstalledCompilers">Find better settings</button></div>
             <p class="small" id="compilerStopError" role="alert" hidden></p>
 
             <div id="installedCompilerWork"></div>

@@ -477,6 +477,7 @@ async function renderProjectSettings() {
   if ($("compilerImprovements").dataset.slug !== S.slug) $("compilerImprovements").replaceChildren();
   if ($("compilerProgress").dataset.slug !== S.slug) {
     $("compilerProgress").hidden = true;
+    $("compilerAutoApply").checked = false;
     $("compilerLogDetails").hidden = true;
   }
   const ov = S.ov;
@@ -828,18 +829,23 @@ $("deleteBtn").onclick = () => {
 function updateCompilerTestScope() {
   const flagsOnly = $("compilerFlagsOnly").checked, retest = $("compilerRetest").checked;
   $("compilerTestScope").textContent = `${flagsOnly ? "Current compiler only, with supported flag variations" : "All installed compilers and supported flag variations"} · ${retest ? "including completed attempts" : "new or changed attempts only"}.`;
+  if ($("testInstalledCompilers")._compilerRun) return;
   $("testInstalledCompilers").textContent = retest ? "Retest compiler settings" : "Find better settings";
 }
 for (const id of ["compilerFlagsOnly", "compilerRetest"]) $(id).onchange = updateCompilerTestScope;
 $("testInstalledCompilers").onclick = async () => {
   const slug = S.slug;
   const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
+  if (button._compilerRun) return button._compilerRun.cancel();
   const work = $("installedCompilerWork");
-  const stop = $("stopInstalledCompilers"), stopError = $("compilerStopError");
+  const stop = button, stopError = $("compilerStopError");
   let jobId = null;
-  stop.hidden = false; stop.disabled = true; stop.textContent = "Stop comparison";
+  const controls = [$("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
+  const disabled = controls.map(control => control.disabled);
+  controls.forEach(control => { control.disabled = true; });
+  button.disabled = true; button.textContent = "Starting…";
   stopError.hidden = true; stopError.textContent = "";
-  stop.onclick = async () => {
+  button._compilerRun = {cancel: async () => {
     if (!jobId) return;
     stop.disabled = true; stop.textContent = "Stopping…";
     stopError.hidden = true; stopError.textContent = "";
@@ -850,8 +856,7 @@ $("testInstalledCompilers").onclick = async () => {
       stop.disabled = false; stop.textContent = "Stop comparison";
       stopError.textContent = `Could not stop: ${e.message}. Try again.`; stopError.hidden = false;
     }
-  };
-  const finish = beginWork(work, "Testing installed compilers", [button, $("compilerFlagsOnly"), $("compilerRetest")], "");
+  }};
   $("compilerLogDetails").hidden = false;
   $("compilerLogDetails").open = false;
   $("compilerFollowLog").checked = false;
@@ -873,24 +878,27 @@ $("testInstalledCompilers").onclick = async () => {
   renderCompilerProgress(null);
   showJobError(work, "");
   try {
-    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, untested_only: !$("compilerRetest").checked } });
-    jobId = job; stop.disabled = false;
+    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
     const result = await followJob(job, log, (_lines, snapshot) => {
       if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);
     });
     if (S.slug !== slug) return;
     renderCompilerProgress(null, result);
-    if (!$("compilerImprovements").dataset.filter) renderCompilerImprovements(slug, result.improvements || []);
+    if (!$("compilerImprovements").dataset.filter) renderCompilerImprovements(slug, compilerResultRows(result.results || result.improvements || [], "improved"));
     log.textContent += `\n${result.tried} functions tested; ${result.skipped || 0} completed comparisons skipped. Results saved.`;
   } catch (e) {
     if (e.job?.state === "cancelled") {
-      if (work._workStatus) { work._workStatus.textContent = "Comparison stopped. Completed results are saved."; work._workStatus.dataset.state = "stopped"; }
       if (S.slug === slug) {
         $("compilerProgress").querySelector("[data-current]").textContent = "Comparison stopped";
-        $("compilerProgress").querySelector("[data-profile]").textContent = "Completed results remain available. Test untested functions resumes with the unfinished work.";
+        $("compilerProgress").querySelector("[data-profile]").textContent = "Completed results remain available. Find better settings resumes with the unfinished work.";
       }
     } else showJobError(work, e.message);
-  } finally { stop.hidden = true; stop.onclick = null; jobId = null; finish(); }
+  } finally {
+    jobId = null; delete button._compilerRun; button.disabled = false;
+    controls.forEach((control, index) => { control.disabled = disabled[index]; });
+    updateCompilerTestScope();
+  }
 };
 
 function renderCompilerImprovements(slug, rows, filter = "improved") {
@@ -899,10 +907,11 @@ function renderCompilerImprovements(slug, rows, filter = "improved") {
   list.dataset.filter = filter;
   for (const button of $("compilerProgress").querySelectorAll("[data-results-filter]")) button.setAttribute("aria-expanded", String(button.dataset.resultsFilter === filter));
   const applied = $("compilerProgress")._compilerApplied ||= new Set();
+  for (const row of rows) if (row.applied) applied.add(row.function);
   const pending = rows.filter(r => !applied.has(r.function) && r.profile && (r.improved !== false || r.exact));
   const title = { completed: "Finished functions", improved: "Better settings", exact: "Exact matches" }[filter];
-  setHtml(list, `<div class="row"><h3>${esc(title)} · ${rows.length}</h3><button type="button" class="ghost small-btn" data-refresh-results>Refresh results</button>${pending.length ? `<button type="button" class="ghost small-btn" data-apply-all>Apply all · ${pending.length}</button>` : ""}</div><div data-apply-all-status role="status"></div><p class="small muted">Completed comparisons from this run, highest percentage first. Apply individually or apply all results in this group; each function is rechecked before any change. Refresh to include newly finished functions.</p>`
-    + (rows.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Before → tested</th><th>Compiler and flags</th><th>Action</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-result-function="${i}">${esc(r.function)}</button></td><td>${r.before == null ? "—" : `${r.before.toFixed(2)}%`} → <b>${r.best == null ? "—" : `${r.best.toFixed(2)}%`}</b></td><td>${r.profile ? `${esc(r.profile[0])}<br><span class="mono">${esc(r.profile[1].join(" "))}</span>` : "No compiled result"}</td><td>${applied.has(r.function) ? '<span class="small">Applied and rechecked</span>' : r.profile && (r.improved !== false || r.exact) ? `<button type="button" class="ghost small-btn" data-apply-improvement="${i}">Apply to function</button><span class="small" role="status"></span>` : '<span class="small muted">No improvement</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<p class="small muted">No completed results in this group yet.</p>'));
+  setHtml(list, `<div class="row"><h3>${esc(title)} · ${rows.length}</h3><button type="button" class="ghost small-btn" data-refresh-results>Refresh results</button>${pending.length ? `<button type="button" class="ghost small-btn" data-apply-all>Apply all · ${pending.length}</button>` : ""}</div><div data-apply-all-status role="status"></div><p class="small muted">Completed comparisons from this run, highest percentage first. Apply individually or apply all results in this group; each function is rechecked before any change. Automatically applied results are marked below. Refresh to include newly finished functions.</p>`
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr><th>Function</th><th>Before → tested</th><th>Compiler and flags</th><th>Action</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-result-function="${i}">${esc(r.function)}</button></td><td>${r.before == null ? "—" : `${r.before.toFixed(2)}%`} → <b>${r.best == null ? "—" : `${r.best.toFixed(2)}%`}</b></td><td>${r.profile ? `${esc(r.profile[0])}<br><span class="mono">${esc(r.profile[1].join(" "))}</span>` : "No compiled result"}</td><td>${applied.has(r.function) ? '<span class="small">Applied and rechecked</span>' : r.profile && (r.improved !== false || r.exact) ? `<button type="button" class="ghost small-btn" data-apply-improvement="${i}">Apply to function</button><span class="small" role="status">${esc(r.apply_error || "")}</span>` : '<span class="small muted">No improvement</span>'}</td></tr>`).join("")}</tbody></table></div>` : '<p class="small muted">No completed results in this group yet.</p>'));
   list.onclick = async (e) => {
     if (S.slug !== slug || list._applying) return;
     const allButton = e.target.closest("[data-apply-all]");

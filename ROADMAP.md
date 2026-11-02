@@ -1724,3 +1724,10 @@ adapter; these source families do not change that limitation or any match verdic
 - Planned: non-MIPS boundary readers and object-project segment adapters for gap audits;
   EE-specific instruction decoding, function-pointer-only entry evidence and code/data
   subsegment audits. Existing MIPS diagnostics remain advisory when a decoder cannot close flow.
+
+Installed-compiler comparison has an explicit per-run auto-apply option. Each completed function's
+best profile is revalidated through the normal function-only apply path; changed inputs and busy
+functions retain reviewable skip reasons, and applied outcomes are saved with comparison history.
+The comparison action toggles to Stop while running. Its two determinate progress bars replace the
+redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
+object-project compiler comparisons remain limited by their build-owned per-file adapters.
