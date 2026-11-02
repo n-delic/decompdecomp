@@ -125,6 +125,7 @@ class Jobs:
 
         log.progress = progress
         log.check_cancel = check_cancel
+        log.cancel_event = cancel
 
         def run():
             try:

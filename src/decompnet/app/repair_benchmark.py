@@ -76,7 +76,7 @@ def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lamb
         result = run(case['source'], case['baseline_score'], lambda s, case=case: evaluate(case, s),
                      lambda s, report=None, case=case: generate(case, s, report) if generate_report else generate(case, s),
                      trials=trials, deadline=started+seconds,
-                     check_cancel=check_cancel, collect_exact=True, generate_report=generate_report)
+                     check_cancel=check_cancel, collect_exact=True, generate_report=generate_report, arch=case.get('arch'))
         reports.append({'case': case['scope'], 'source_sha256': hashlib.sha256(case['source'].encode()).hexdigest(), **result})
     return {'cases': reports, 'trial_budget': trials, 'seconds_budget': seconds, 'functions': len(reports),
             'matched_functions': sum(r['first_exact_trial'] is not None and not r['baseline_exact'] for r in reports),

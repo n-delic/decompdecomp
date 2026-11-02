@@ -1171,3 +1171,8 @@ N64 reimport can recover large functions whose first instructions were caught at
 scanner boundary while the remaining body was left as binary data. Recovery is bounded
 and inferred; the normal linked-byte judge still decides matches. Existing matches and
 naming provenance survive when their complete targets are unchanged.
+
+**Finish near matches:** open the panel below Autopilot to spend a bounded local
+compile/time budget on your closest saved C, without starting AI agents. Stop whenever
+you like; verified matches are kept and pending paths resume on the next run. The panel
+reports matches per minute. The dedicated pass currently supports MIPS ROM projects.

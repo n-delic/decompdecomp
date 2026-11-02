@@ -336,6 +336,18 @@ def register(app: App) -> None:
         return {'job': jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log),
                                   cancel_message='Deep permuter stopped. Verified improvements are saved.')}
 
+    def p_finish_near(slug, request, data):
+        from .. import finish_near
+        seconds,attempts=data.get('seconds',120),data.get('attempts',128)
+        finish_near.validate(net,slug,seconds,attempts)
+        active=getattr(net,'_finish_near_jobs',{})
+        net._finish_near_jobs=active
+        previous=active.get(slug)
+        if previous and jobs.jobs.get(previous,{}).get('state')=='running':return {'job':previous}
+        active[slug]=jobs.start('finish-near',lambda log:finish_near.run(net,slug,seconds,attempts,log),
+            cancel_message='Near-match pass stopped. Verified matches and pending search paths are saved.')
+        return {'job':active[slug]}
+
     def p_permuter(slug, request, data):
         """Run free local permutations without starting a paid helper or the full autopilot."""
         net.project_row(slug)
@@ -461,6 +473,7 @@ def register(app: App) -> None:
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
+        "/api/finish-near": (p_finish_near, ["POST"]),
         "/api/permuter": (p_permuter, ["POST"]),
         "/api/permuter/pass": (p_deep_sweep, ["GET", "POST"]),
         "/api/permuter/function": (p_deep_permuter, ["POST"]),
