@@ -66,6 +66,8 @@ def main() -> int:
     parser.add_argument("--wine", action="store_true")  # through wine: Visual C++ 2015+ (configure.py's WINE_FROM)
     parser.add_argument("--output", required=True)
     parser.add_argument("--source", required=True)
+    # the project headers the compiler reads go into OUTPUT.d, for ninja (tools/cldeps.py; Visual C++ 7.1 and later)
+    parser.add_argument("--deps", action="store_true")
     parser.add_argument("flags", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     flags = args.flags[1:] if args.flags[:1] == ["--"] else args.flags
@@ -77,7 +79,9 @@ def main() -> int:
         path = windows_path
     command = ([wine] if wine else [args.wrapper] if args.wrapper else []) + [
         args.compiler, *flags, f"/I{path('include')}", *(f"/I{path(d)}" for d in args.include),
-        f"/Fo{path(args.output)}", path(args.source)]
+        *(["/showIncludes"] if args.deps else []), f"/Fo{path(args.output)}", path(args.source)]
+    if args.deps:  # (cldeps.py reads the Z: paths wine and wibo show as the project's own)
+        command = [sys.executable, str(Path(__file__).with_name("cldeps.py")), args.output, "--", *command]
     if args.wine:
         # wine's output to a file, then ours: the services the first wine program after a new server starts
         # (services.exe, winedevice.exe, rpcss.exe...) keep what it was given for as long as the server runs, and
