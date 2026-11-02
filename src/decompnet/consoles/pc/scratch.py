@@ -2031,6 +2031,23 @@ def own_symbols(functions: list[Function], taken: set[str]) -> None:
         f.relocs = [(off, kind, renamed.get(name, name), addend) for off, kind, name, addend in f.relocs]
 
 
+def ensure_ghidra(log) -> None:
+    """Ghidra, and a JDK for it when this computer has none, installed where they aren't, for an import and a reimport
+    alike. A Ghidra without its decompiler isn't installed (toolchains._unbuilt): a Mac's from before decompdecomp
+    built the decompiler is installed again here, and a reimport with it would have named every function as Ghidra
+    gave it, every one with no calling convention."""
+    from ...forks import ghidra
+
+    if ghidra.available():
+        return
+    if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
+        log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
+        toolchains.ensure("jdk", log=log)
+    if toolchains.installed("ghidra") is None:
+        log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
+        toolchains.ensure("ghidra", log=log)
+
+
 def module_rows(ghidra, module: Path, moved: int) -> list[dict]:
     """Ghidra's functions of one of the game's DLLs, at the address the project gives it (`moved` from the one its
     header prefers, where Ghidra reads it). Its own names (its exports, its debug information) go to "names"
@@ -2072,13 +2089,7 @@ def create(root: Path, game: Path, *, compiler: str | None = None, log=print, in
     if not own and not (toolchains.path(pack) / compiler).is_dir():
         raise ForkError(f"this game builds with Visual C++ {compiler}, which comes in {toolchains.get(pack).name}: "
                         "install it in Setup (Compilers & tools) if you accept its licence, then try again")
-    if not ghidra.available():
-        if ghidra.java_home() is not None and toolchains.installed("jdk") is None:
-            log("installing a Java development kit for Ghidra (200 MB, once): this computer has none of its own")
-            toolchains.ensure("jdk", log=log)
-        if toolchains.installed("ghidra") is None:
-            log("installing Ghidra (540 MB, once): it finds the functions in PC programs")
-            toolchains.ensure("ghidra", log=log)
+    ensure_ghidra(log)
     pe = read_pe(game.read_bytes())
     modules, left_out = find_modules(game, pe)
     if modules or left_out:

@@ -207,8 +207,9 @@ def _manifest(tid: str, linux: bool | None = None) -> dict | None:
 
 
 # Ghidra's folder of native programs for each computer (ghidra.framework.Platform)
+# (Windows on Arm runs the release's Intel one, emulated: Ghidra's GettingStarted.md)
 GHIDRA_OS = {"linux-x86_64": "linux_x86_64", "linux-aarch64": "linux_arm_64", "macos-x86_64": "mac_x86_64",
-             "macos-arm64": "mac_arm_64", "windows-x86_64": "win_x86_64"}
+             "macos-arm64": "mac_arm_64", "windows-x86_64": "win_x86_64", "windows-aarch64": "win_x86_64"}
 
 
 def ghidra_decompiler(ghidra: Path, plat: str | None = None) -> Path:
@@ -219,16 +220,15 @@ def ghidra_decompiler(ghidra: Path, plat: str | None = None) -> Path:
 
 
 def _unbuilt(tid: str, linux: bool | None) -> bool:
-    """Whether an install lacks a program its parts build after unpacking: a Ghidra installed on a Mac before
-    decompdecomp built its decompiler has none, and is installed again (ensure), not used without it."""
-    tc = registry().get(tid)
-    if tc is None:
+    """Whether an install lacks the native program it can't work without: Ghidra's decompiler, which its release
+    brings for Intel Linux and Windows and its install builds elsewhere (build = "ghidra-decompiler"). Without it
+    Ghidra's analysis gives no function a calling convention. A Ghidra installed on a Mac before decompdecomp built
+    its decompiler has none, and one whose decompiler went missing on any computer neither: either is installed
+    again (ensure), not used without it."""
+    if tid != "ghidra" or tid not in _registry_data():
         return False
-    linux = tc.via_wsl if linux is None else linux
-    parts = tc.linux_parts() if linux else tc.parts_for()
-    return any(p.get("build") == "ghidra-decompiler"
-               and not ghidra_decompiler(path(tid, linux) / p.get("into", ""), LINUX if linux else None).is_file()
-               for p in parts)
+    linux = get(tid).via_wsl if linux is None else linux
+    return not ghidra_decompiler(path(tid, linux), LINUX if linux else None).is_file()
 
 
 def fingerprint(tc: Toolchain, linux: bool = False) -> str:
@@ -642,7 +642,7 @@ def _build_ghidra_decompiler(ghidra: Path, log) -> None:
     target = ghidra_decompiler(ghidra)
     if target.is_file():
         return
-    mac = sys.platform == "darwin"
+    mac = current_platform().startswith("macos")
     tools = ("Ghidra's decompiler is built from its source on this computer, which needs "
              + ("Xcode Command Line Tools: run `xcode-select --install`, then try again." if mac else
                 "a C++ compiler and make (on Debian or Ubuntu: `sudo apt install g++ make`), then try again."))

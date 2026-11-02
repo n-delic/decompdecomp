@@ -140,6 +140,10 @@ def functions(program: Path, timeout: float = 3600) -> list[dict]:
     on, and every function's convention is "unknown": a Mac's Ghidra had none, and every __fastcall and __thiscall
     function of its games was imported as __cdecl. A decompiler that is missing or won't start stops the import
     (ForkError) instead. One that can't be run at all says nothing: no function with a convention says it then."""
+    if not available():  # (an import and a reimport install it first: scratch.ensure_ghidra)
+        raise ForkError("Ghidra isn't installed, or not all of it (its decompiler is missing, or the JDK it needs): "
+                        "import the game again, and decompdecomp installs it (on a Mac that builds its decompiler, "
+                        "with Xcode Command Line Tools)")
     said: list[str] = []
     rows = _run_script(program, "DecompWtfFunctions.java", timeout, said=said)
     why = next((ln.strip() for ln in said if any(s in ln for s in _NO_DECOMPILER)), None)

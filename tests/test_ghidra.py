@@ -70,6 +70,7 @@ def test_a_ghidra_whose_decompiler_didnt_run_stops_the_import(tmp_path, monkeypa
     fake.chmod(0o755)
     monkeypatch.setattr(ghidra, "_headless", lambda: fake)
     monkeypatch.setattr(ghidra, "capped", lambda argv, **_: argv)
+    monkeypatch.setattr(ghidra, "available", lambda: True)  # (installed, as far as decompdecomp can tell)
     program = tmp_path / "game.exe"
     program.write_bytes(b"MZ" + bytes(64))
     with pytest.raises(ForkError, match="Ghidra's decompiler didn't run .* can't tell the functions' calling conventions"):
