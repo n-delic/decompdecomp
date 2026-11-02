@@ -405,3 +405,38 @@ def test_header_and_compiler_inputs_invalidate_scoped_frontier_cache(pair, monke
         db.execute('UPDATE projects SET config=? WHERE id=?', (json.dumps(config),proj['id']))
     search.run(pair.twins, 'destination', Job())
     assert calls == ['seed','seed','seed']
+
+
+def test_repeated_identical_outputs_are_tracked_without_losing_source_bridges():
+    state = seed()
+    calls = []
+    def evaluate(source):
+        calls.append(source)
+        return dict(score=20, matched=False, candidate_target='001122', candidate_relocs=[])
+    def variants(source, report):
+        return [('shape', source+'x')]
+    assert not search.advance(state, evaluate, variants, lambda: False)
+    assert calls == ['seed', 'seedx', 'seedxx', 'seedxxx', 'seedxxxx']
+    assert state['counts']['unchanged_output'] == 4
+
+
+def test_targeted_budget_reserves_slots_for_other_families(monkeypatch):
+    from decompnet.app import draft_repairs
+    def proposals(source,name,arch,asm,flags,labels,**kwargs):
+        labels.update({str(i): 'paired_operand_reuse' for i in range(30)})
+        labels.update({'affine': 'affine_counter', 'guard': 'affine_counter_guard'})
+        return list(labels)
+    monkeypatch.setattr(draft_repairs, 'variants', proposals)
+    result = search.targeted_variants('void f(void) {}', {'rows': []}, {'name':'f','asm':''}, 'mips', [], tagged=True)
+    assert len(result) == 20
+    assert ('affine_counter', 'affine') in result
+    assert ('affine_counter_guard', 'guard') in result
+
+
+def test_frontier_prioritizes_novel_output_before_equal_score_plateau():
+    expanded = []
+    nodes = [dict(source=s, score=20, ceiling=20, depth=1, report={'rows': []},
+                  unchanged_steps=n) for s,n in [('plateau', 2), ('novel', 0)]]
+    state = dict(next=nodes, pending=[], seen=['plateau','novel'])
+    search.expand_wave(state, lambda source, report: expanded.append(source) or [], None)
+    assert expanded == ['novel', 'plateau']

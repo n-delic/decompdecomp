@@ -31,7 +31,9 @@ def children(state, parent, variants, *, priority=0):
         new.append(dict(source=source, depth=parent['depth'] + 1,
                         ceiling=min(parent['ceiling'], parent['score']),
                         region_baseline=parent.get('regions'), baseline_rows=parent['report'].get('rows'),
-                        path=parent.get('path', [])+[family], parent_source=parent['source']))
+                        path=parent.get('path', [])+[family], parent_source=parent['source'],
+                        parent_output=output_key(parent['report']),
+                        unchanged_steps=parent.get('unchanged_steps', 0)))
     state['pending'] = new[:priority]+state['pending']+new[priority:]
     return len(new)
 
@@ -71,6 +73,10 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             # This only prunes search branches, never supplies a match verdict.
             output = output_key(report)
             outputs = state.setdefault('outputs', {})
+            unchanged = node.get('unchanged_steps', 0)+1 if output is not None and output == node.get('parent_output') else 0
+            node['unchanged_steps'] = unchanged
+            if unchanged:
+                counts['unchanged_output'] = counts.get('unchanged_output', 0)+1
             if output is None or outputs.get(str(node['depth'])+':'+output, 0) < 2:
                 regions = region_repairs.snapshot(report.get('rows'))
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
@@ -106,7 +112,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
 
 def expand_wave(state, variants, arch):
     """Retain numeric and structural alternatives between bounded search waves."""
-    ranked = sorted(state['next'], key=lambda n: (n.get('region_damage', 0), search_frontier.structure(n['report'].get('rows') or []),
+    ranked = sorted(state['next'], key=lambda n: (n.get('region_damage', 0), n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
                                                     stack_distance(n['report'].get('rows') or []), n['score']))
     ordinary = [n for n in ranked if n['score'] <= n['ceiling']]
     detours = sorted((n for n in ranked if n['score'] > n['ceiling']),
@@ -159,7 +165,15 @@ def targeted_variants(source, report, fn, arch, flags, header='', tables=(), cal
             proposals.append(text)
             labels[text] = 'spill_normalization'
     families = repair_ranking.order(list(dict.fromkeys(labels[p] for p in proposals)), report.get('rows') or [])
-    result = sorted(proposals, key=lambda p: families.index(labels[p]))[:20]
+    ranked = sorted(proposals, key=lambda p: families.index(labels[p]))
+    result, counts = [], Counter()
+    for proposal in ranked:
+        family = labels[proposal]
+        if counts[family] < 16 and len(result) < 20:
+            result.append(proposal)
+            counts[family] += 1
+    # Reserve room for smaller families without wasting budget when only one is applicable.
+    result += [p for p in ranked if p not in result][:20-len(result)]
     return [(labels[p], p) for p in result] if tagged else result
 
 

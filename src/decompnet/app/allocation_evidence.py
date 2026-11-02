@@ -27,6 +27,8 @@ def diagnose(rows, arch=None):
     left = Counter(r[1] for r in changed if r[1])
     right = Counter(r[2] for r in changed if r[2])
     scheduling = bool(changed) and left == right
+    normalized = lambda side: Counter(REGISTER.sub('$reg', r[side]) for r in changed if r[side])
+    allocation_schedule = any(r[0] == 'o' for r in changed) and not scheduling and normalized(1) == normalized(2)
     frame = None
     if arch == 'mips':
         from .stack_layout import diagnose as stack
@@ -37,7 +39,7 @@ def diagnose(rows, arch=None):
     target_count=sum(bool(r[1]) for r in rows);candidate_count=sum(bool(r[2]) for r in rows)
     merging=bool(target_count and .8*target_count<=candidate_count<target_count and
                  any(n>=3 and candidate_calls[c]<n for c,n in target_calls.items()))
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'register_map':swaps, 'scheduling':scheduling,
+    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'register_map':swaps, 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -61,6 +63,8 @@ def text(rows, arch=None):
                      '; explicit stack fields need not reproduce compiler spills')
     if d['target_frame'] is not None:
         hints.append(f"frame {d['target_frame']} target / {d['candidate_frame']} candidate")
+    if d['allocation_schedule']:
+        hints.append('same displayed operations after register normalization; try paired operand reuse and affine-counter scheduling together')
     if d['scheduling']:
         hints.append('same displayed instruction multiset, different order; try dependency-safe initialization order')
     return 'Allocation clues (advisory): '+'; '.join(hints)+'.' if hints else ''

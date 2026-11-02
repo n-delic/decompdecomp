@@ -1689,3 +1689,56 @@ adapter is synthesized. Full translation-unit/clobber adapters remain planned. G
 reaches applicable source preparation; private header publication remains ROM-only. Extra-normalization and
 private-entry readers currently cover MIPS; other processor readers are planned. Controlled replays are not
 new coverage and do not guarantee that every archived source difference is automatically recoverable.
+
+## 2 November: paired operands and a derived loop counter (KMC GCC 2.7.2)
+
+A controlled private replay of a 619-instruction gameplay routine used unchanged KMC GCC 2.7.2
+flags `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The historical exact source was already verified;
+these measurements are rediscovery, not new game coverage or proof of original source spelling.
+
+- **160 → 60:** stage both signed-halfword subtraction operands through the same existing,
+  dead `int` pair across multiple stores. For halfword destinations, unsigned-halfword loads
+  preserve the low 16 bits; full-width destinations must retain signed loads and their full
+  difference. Fresh temporaries and casts alone did not recover the same allocation.
+- **60 → exact:** remove an independently initialized/incremented loop counter and derive it
+  from the unit-step index (`stride = index * 5`) before its first read. Combine that change
+  with removal of **one** identical-arm scalar guard. Counter reshaping alone scored 135;
+  removing the other guard scored 155. Removing every guard would lose the needed source shape.
+- At score 60, instruction content and registers agreed; one zero-store initialization moved
+  relative to three setup instructions. GCC diagnostic dumps implicated induction creation and
+  scheduling priority. This supports a source-shape hypothesis, not an arbitrary instruction swap.
+
+### Automatic rediscovery and limits
+
+The shared candidate pipeline now offers `paired_operand_reuse`, `affine_counter`, and
+`affine_counter_guard` to applicable ROM and object-project consumers. Scalar reuse uses CFG
+liveness, including backedges and gotos; it rejects escaped/shadowed/live scratch values and
+side-effectful or unsupported operands. The affine rule supports a deliberately narrow form:
+zero-based unit-step index, positive literal bound/stride, an unescaped word counter, no body
+updates to either induction variable, no live-out counter, no incoming jump into the loop,
+and an insertion dominating all counter reads. An internal skip goto is allowed when proved safe.
+One guard is removed per bundled candidate; conditions must be initialized ordinary scalar locals.
+There is no exhaustive C equivalence proof; the ordinary linked-byte/data or objdiff judge remains
+mandatory. No flags, machine registers, source headers or live project files are changed.
+
+A frozen database snapshot, fixed context/target/ROM and installed compiler were used for both
+main (`69f7a77`) and the new code. Equal 48-candidate limits produced:
+
+| Saved checkpoint | Main | New targeted search |
+| --- | --- | --- |
+| Score 160 | Best 160 after 48 trials, 29.6 s | Exact on trial 43, 33.2 s |
+| Score 60 | Best 60 after 48 trials, 29.1 s | Exact on trial 1, 3.2 s |
+
+Times include candidate generation and judging; the baseline compile is additional. A direct
+family-only replay first reached 60 on paired candidate 14 (~5.6 s), and exact on the third
+counter/guard candidate (~1.25 s). Integrated search can reach exact through the edits in the
+opposite order. No model calls or live adoption were used. Timing is local evidence, not a
+cross-machine performance guarantee or an end-to-end comparison with the historical investigation.
+
+Ranking distinguishes pure scheduling from register-normalized operation movement. Identical
+compiled code/relocation chains receive lower frontier priority, while two source alternatives
+per output/depth remain eligible: a later edit can distinguish initially identical outputs.
+The existing full-input failed-trial cache avoids repeating already judged source candidates.
+No first compile can be skipped based on source appearance, displayed rows are not an exact
+verdict, and output-neutral chains are not unconditionally discarded. Targeted search reserves
+four of its twenty proposal slots for smaller applicable families when one family is large.
