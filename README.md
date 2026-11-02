@@ -38,6 +38,14 @@ repair pipeline. A function match now carries a separate MIPS export-layout chec
 
 ## Automatic repairs before paid agents
 
+Local allocation search now includes initialized pointer guards around identical call branches,
+CFG-proven value-phase splits paired with disjoint lifetime reuse, and groups of up to four
+independent pointer/scalar initializers. A small regional frontier can retain a temporarily worse
+score when it repairs a different target block, within the existing budgets. All candidates still
+need the ordinary exact judge. The [read-only linked-ROM benchmark](docs/repair-replay.md#read-only-linked-rom-benchmarks)
+measures these combinations without agent requests or changes to a live project.
+
+
 New captured matches can run bounded local edit minimisation and paired GCC diagnostics in the background.
 Repair examples shows the saved analysis and its on/off control; successful game source stays unchanged.
 Learned sequences use compiler and mismatch-shape evidence, and metrics expose wins per compile and per

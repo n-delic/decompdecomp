@@ -130,6 +130,14 @@ failed rechecks of locally captured exact source raise deduplicated regression a
 See [learned repair search](docs/learned-repair-search.md). Durable cross-restart alternative
 source frontiers and controlled live agent-token comparisons remain future work.
 
+
+Bounded allocator combinations now include CFG-dominated pointer-call branches, mixed initializer
+clusters and paired value-phase splits/reuse. Search reserves regional recovery slots under the
+existing time/compile caps. A read-only exported-MIPS-ROM benchmark records linked/data-judge
+results and compile/time costs; imported and other-processor adapters remain planned (copied
+measurement callbacks are already supported by repair replay). Controlled replay recovery is
+not new game progress and full recovery from every earlier checkpoint is not demonstrated.
+
 What's planned for decompdecomp, roughly in order, and why. Every item keeps the rule that matters most: a match is
 byte-identical after linking (ROM mode) or objdiff 100% (fork mode). Nothing here accepts code that only does the
 same thing.

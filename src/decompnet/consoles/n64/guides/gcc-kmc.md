@@ -230,3 +230,13 @@ on every path; preserve evaluation/call count, wrapping and object lifetimes. Ne
 such scopes around control transfers whose targets would change. This is a bounded
 KMC-specific hypothesis, not evidence that the original game used those wrappers.
 See the 2 November one-shot-scope case in `docs/COMPILER_MATCHING_LEARNINGS.md`.
+
+For allocator-only near misses, `balanced_pointer_calls` tries initialized pointer guards with
+identical call leaves, including bounded nesting. `paired_integer_lifetimes` combines a CFG-proven
+value-phase split with disjoint reuse. `initialization_cluster` groups independent pointer/scalar
+resets and safely extracts comma initializers. Try these local families with the recorded profile
+before spending more model turns. A frozen initializer case recovered exact linked output in 17
+compiles; a preceding pointer shape needed 108 compiles and three families. The broader earlier
+checkpoint was not automatically recovered in the measured budget. Regional frontiers can retain
+useful intermediate shapes with a temporarily worse total score; the ordinary exact judge still
+decides acceptance. Use the read-only linked-ROM benchmark to measure a private checkpoint.

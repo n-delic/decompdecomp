@@ -136,3 +136,32 @@ Autopilot persists pending sources, family paths and visited edges in its existi
 
 Deep activity and autopilot notes distinguish budgets, supported-variant/depth exhaustion,
 failed/unscored trials and pruned alternatives. No bounded search exhausts every possible C program.
+
+## Read-only linked-ROM benchmarks
+
+For an exported MIPS ROM build, a private starting source and its frozen header can be tested
+against the original image rather than a compiled control:
+
+```sh
+uv run python -m decompnet.app.linked_repair_benchmark \
+  --project /private/exported-build --function FUNCTION \
+  --before /private/starting.c --header /private/context.h \
+  --output /private/linked-results.json --trials 128 --seconds 120
+```
+
+The image SHA1 and assembly target bytes must agree. The recorded registry compiler must already
+be installed. Exported custom commands are ignored. The tool never runs the project's build
+scripts, writes its files or database, adopts C, or downloads tools. Reports record input hashes,
+pinned compiler identity, candidate compiles, first exact trial, elapsed time and family path.
+Only the ordinary linked-byte and ROM-data judge supplies an exact result. Physical linked
+instruction rows guide regional search without residual relocation-rendering differences.
+
+Use `--families initialization_cluster,balanced_pointer_calls,allocation_initialization_order`
+to isolate a combination. Limits are 1–4096 candidates and 1–1800 seconds; the current compile
+and candidate generation may finish after the soft deadline. Keep all source/header inputs
+and reports outside the repository. Compiler failures count against the candidate allowance;
+the baseline is measured once and reported separately in `compiler_invocations`.
+
+The shared C families also reach supported imported projects. This read-only exported-ROM
+adapter currently needs MIPS targets; other processors and imported builds can use the existing
+copied-evaluator replay interface. This limitation does not disable their ordinary local repairs.
