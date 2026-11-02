@@ -321,3 +321,10 @@ has a block-local slot pointer. Splitting its pointer and index into typed local
 a one-shot scope recovered one 52-instruction KMC `-O2 -g3` case exactly. The split alone
 made that case worse: test the combined shape before discarding this lifetime hypothesis.
 The rule is bounded and retains the normal exact judge; it is not a general register fix.
+
+Do not generalize the successful pointer/index scope to every register-only miss. Four
+other frozen KMC cases stayed unchanged after pointer/constant staging, dead-local reuse,
+shift-chain rewrites, command-accumulator/tail combinations and one-shot scope alternatives.
+Consult the negative-results table in `docs/COMPILER_MATCHING_LEARNINGS.md` before repeating
+these families. Multiple pseudos can share `v0`; use GCC instruction IDs/source notes,
+not a physical register name alone, to select a lifetime hypothesis.

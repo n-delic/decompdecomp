@@ -2296,3 +2296,30 @@ Equal-budget replay against current main, with only this family disabled/enabled
 used 80 candidate evaluations; no best-score regression occurred. Local suite times
 were 29.7 versus 28.8 seconds, which does not establish a runtime speedup. This is
 same-case regression evidence, not disjoint-target validation of a broad ranking boost.
+
+## Follow-up: four unchanged register-only cases (November 2026)
+
+The next copied-checkpoint investigation used the same pinned KMC GCC 2.7.2 profile
+(`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`) and ordinary linked-byte/data evaluator. Existing
+`-da` diagnostics preserved normal allocated output for every case. Register names
+alone did not identify unique source values: several unrelated pseudos reused `v0`.
+Use instruction IDs and source notes as well as the explicit dispositions.
+
+| Case size | Starting / best linked score | Generated alternatives | Findings |
+| --- | --- | --- | --- |
+| 124 instructions | 15 / 15 | 142 | Typed pointer/value temporaries, either initialization order, field-address staging, reuse of dead scalar locals, branch scopes, and alternative single-execution loops did not fix the pointer-reload/constant-store register swap. |
+| 295 instructions | 15 / 15 | 40 | Chained shift assignments split/reversed inside one-shot scopes, direct tests, removal of unused declarations and explicit reuse of the shifted value in the later store did not help. |
+| 195 instructions | 35 / 35 | 38 | Fresh terminal command pointers, parameter reuse after its final original use, saved OR inputs and staged accumulators were ineffective, including paired tail/accumulator edits and one-shot scopes. |
+| 91 instructions | 20 / 20 | 18 | Global-table load scopes and alternative equal-pointer alias chains did not improve the linked score. The existing volatile frame object remains a reason not to generalize ordinary scope rewrites to this function. |
+
+These are **238 generated alternatives**, including cached duplicates and compiler-rejected
+forms, not a claim of 238 distinct compiler executions. Their best scores were unchanged;
+no additional exact match was found and no new repair family was promoted. The successful
+52-instruction pointer/index repair above is a different case and must not be counted again.
+No flags, target bytes, judge rules or shared headers were changed by these experiments.
+
+**Practical guidance:** test coupled edits on a copy, but stop enumerating the same scopes
+once source/build-scoped results are exhausted. A register-only percentage is not evidence
+that a generic scope or operand swap will solve the case. Next investigations need a more
+specific allocation hypothesis or independently supported original source shape; retain
+negative results rather than spending agent tokens rediscovering them.
