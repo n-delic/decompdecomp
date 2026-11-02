@@ -183,3 +183,8 @@ def test_scalar_pools_keep_signed_value_and_offer_per_use_precision():
     assert any('use(D_80001000);x=D_80001008; if(x<D_80001010)' in s for _,s,_ in result)
     assert all('-D_80001000' not in s for _,s,_ in result)
     assert len(result)<=8
+
+
+def test_actual_getter_without_a_provisional_prototype_can_be_supplied():
+    result=stages.inline_helpers('int f(int *p){return getter(p);}', '', 'int getter(int *p){return *p;}', [])
+    assert len(result)==1 and 'static __inline int getter' in result[0][2]

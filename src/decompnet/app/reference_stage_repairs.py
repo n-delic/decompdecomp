@@ -65,7 +65,7 @@ def inline_helpers(source, header, reference, target_calls, clobbers=False):
         for match in re.finditer(pattern,clean):
             end=close(clean,match.end()-1);tail=re.match(r'\s*;',clean[end:]) if end else None
             if tail:edits.append((match.start(),end+tail.end()))
-        if not edits and not macro:continue
+        if not edits and not macro and re.search(r'\b'+re.escape(name)+r'\b',_blank(private)):continue
         for a,b in reversed(edits):private=private[:a]+'\n'*private[a:b].count('\n')+private[b:]
         private+=macro_context(reference,code,private)+prototypes(reference,code,private,name)
         line=reference[:span[0]].count('\n')+1
