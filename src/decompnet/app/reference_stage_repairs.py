@@ -40,7 +40,7 @@ def inline_helpers(source, header, reference, target_calls, clobbers=False):
     """Actual small non-recursive wrappers absent from retail's out-of-line call set."""
     from .source_context import prototypes
     from .source_match_context import macro_context, macros
-    result=[];targets=set(target_calls)
+    result=[];targets=set(target_calls);combined=header
     for name in sorted(called(source))[:32]:
         span=find(reference,name)
         if not span or (name not in targets if clobbers else name in targets) or find(source,name) or find(header,name) or name in macros(header):continue
@@ -49,7 +49,8 @@ def inline_helpers(source, header, reference, target_calls, clobbers=False):
         if re.search(r'\b(?:static|inline|__inline|volatile|asm|for|while|switch|goto)\b|#',plain):continue
         children=called(code)-{name}
         if (not clobbers and (not children or not children<=targets)) or len(re.findall(r'\b'+re.escape(name)+r'\s*\(',plain))!=1:continue
-        private=header;pattern=r'(?m)^[ \t]*(?:extern\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\('
+        private=combined if not clobbers else header
+        pattern=r'(?m)^[ \t]*(?:extern\s+)?(?:'+ID+r'[ \t*]+)+'+re.escape(name)+r'\s*\('
         edits=[];clean=_blank(private)
         for match in re.finditer(pattern,clean):
             end=close(clean,match.end()-1);tail=re.match(r'\s*;',clean[end:]) if end else None
@@ -59,6 +60,7 @@ def inline_helpers(source, header, reference, target_calls, clobbers=False):
         private+=macro_context(reference,code,private)+prototypes(reference,code,private,name)
         line=reference[:span[0]].count('\n')+1
         private+=f'\n#line {line} "reference.c"\n'+('static ' if clobbers else 'static __inline ')+code+'\n'
+        if not clobbers:combined=private
         result.append(('cpu-reference-callee-context' if clobbers else 'cpu-reference-inline-wrapper',source,private))
         if len(result)>=2:break
     return result

@@ -137,3 +137,13 @@ def test_later_cleanup_clears_do_not_confuse_entry_saved_pointer():
     rows=[(' ','','sw $zero, 0x10($a0)')]
     assert retail.pointer_lifetimes(source,'f',header,lifetimes.read(POINTER_ASM),rows)
     assert not retail.pointer_lifetimes(source.replace('p->matrix=0;','p->matrix=0; p->other=0;'),'f',header,lifetimes.read(POINTER_ASM),rows)
+
+
+def test_two_actual_wrappers_form_one_coherent_private_context():
+    source='int f(int n){return wrap_a(n)+wrap_b(n);}'
+    header='int wrap_a(int n); int wrap_b(int n); int leaf(int n);'
+    reference='int wrap_a(int n){return leaf(n);}\nint wrap_b(int n){return leaf(n+1);}'
+    result=stages.inline_helpers(source,header,reference,['leaf'])
+    assert len(result)==2
+    assert 'static __inline int wrap_a' in result[-1][2]
+    assert 'static __inline int wrap_b' in result[-1][2]
