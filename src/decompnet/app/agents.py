@@ -387,6 +387,9 @@ class Session:
     auth_failed: bool = False  # its sign-in failed (an expired session): tried a few times, then a new sign-in
     throttled: bool = False  # the last run ended on the provider's limit of requests at once: not a failure
     limited: bool = False  # the last run ended on the plan's usage limit: wait for it to reset
+    cooldown_observed: float = 0
+    continuation_attempts: int = 0
+    continuation_note: str = ""
     limit_until: float | None = None  # when the agent said that limit resets
 
     @property
@@ -732,6 +735,8 @@ class Manager:
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
+        s.cooldown_observed = 0
+        s.continuation_attempts, s.continuation_note = 0, ""
         s.started_at = time.time()
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
@@ -1039,11 +1044,10 @@ class Manager:
     # -- the loop
 
     def _progress(self, agent_id: int) -> int:
-        """Compiles + claims + notes by this agent: a session that adds none of these made no progress."""
+        """Recorded attempts plus completed diagnostic builds; administrative events are not compilation."""
         row = self.net.store.one(
-            "SELECT (SELECT COUNT(*) FROM attempts WHERE agent_id=?) + (SELECT COUNT(*) FROM events WHERE agent_id=?) AS n",
-            agent_id, agent_id)
-        return row["n"]
+            "SELECT COUNT(*) AS n FROM attempts WHERE agent_id=?", agent_id)
+        return row["n"] + getattr(self.net, "_session_diagnostic_compiles", {}).get(agent_id, 0)
 
     def _left(self, slug: str, task: str = "") -> int:
         """What the session's task has left in the project: open functions, or for polishing, matched ones it can
@@ -1164,10 +1168,17 @@ class Manager:
                 self._pause(s, f"the project doesn't build on this computer, so no session starts: {broken}",
                             "Fix the project's setup (its page says what's wrong), then press Start again.")
                 break
+            from . import session_followups
+            if (shared_until := session_followups.cooldown(self, s)) is not None:
+                s.cooldown_observed = shared_until
+                self._wait(s, "This provider account's usage limit is reached", shared_until + session_followups.stagger(s),
+                           "Helpers using this account resume automatically after reset.")
+                continue
             s.runs += 1
             self._set(s, "working")
             began = time.time()
             before = self._progress(agent.id)
+            activity_before = self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
             row = self._session_begin(s)
             kind = agents.get(s.kind)
             try:
@@ -1193,11 +1204,21 @@ class Manager:
                 s.push("error", s.error)
                 ok = False
             connection_failures = 0
-            if ok and not s.stop.is_set() and not s.rotated and self._progress(agent.id) == before:
+            compiled = self._progress(agent.id) - before
+            followup = ok and session_followups.premature(self, s, agent, compiled)
+            if compiled >= 2:
+                s.continuation_attempts = 0
+            if followup:
+                s.continuation_attempts += 1
+                s.continuation_note = session_followups.CONTINUATION
+                s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
+            readable_progress = task == 'readable' and self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
+            work_remains = self._left(s.slug,task) > 0
+            if ok and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
-            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "rotated" if s.rotated else "ok" if ok else
+            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "ok" if ok else
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
             if s.stop.is_set():
                 break
@@ -1219,9 +1240,11 @@ class Manager:
             if s.limited:  # the plan's allowance is used up for now: it resets, so wait as long as it takes
                 limits += 1
                 until = s.limit_until or time.time() + min(LIMIT_WAIT_LONGEST, LIMIT_WAIT_FIRST * 2 ** (limits - 1))
+                until = session_followups.remember_limit(self, s, until + LIMIT_RESET_MARGIN)
+                s.cooldown_observed = until
                 s.limited, s.limit_until = False, None
                 s.restarts += 1
-                self._wait(s, f"{kind.name}'s usage limit is reached", until + LIMIT_RESET_MARGIN,
+                self._wait(s, f"{kind.name}'s usage limit is reached", until + session_followups.stagger(s),
                            "it resets by itself; this helper carries on then")
                 continue
             if s.throttled and throttles < THROTTLES_IN_A_ROW:  # the provider's limit, not the agent's failure
@@ -1232,7 +1255,7 @@ class Manager:
             throttles = 0
             if ok:
                 failures = fast = limits = 0
-                self._set(s, "waiting", "Session completed; helper is continuing. The next session starts in a moment.")
+                self._set(s, "waiting", "Session ended early; continuing with compilation guidance." if followup else "Session completed; helper is continuing. The next session starts in a moment.")
                 s.stop.wait(SESSION_GAP)
                 continue
             failures += 1
@@ -1342,7 +1365,7 @@ class Manager:
         from .session_efficiency import finish
         finish(self.net,agent,s.slug,row,began)
         spent = f", ${u['usd']:.2f}" if u["usd"] else f", {u['tokens'] // 1000}k tokens" if u["tokens"] else ""
-        ending = 'completed; helper continues' if outcome in ('ok', 'rotated') and not s.stop.is_set() else 'ended ('+outcome+')'
+        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; helper continues' if outcome in ('ok', 'rotated') and not s.stop.is_set() else 'ended ('+outcome+')'
         s.push("info", f"session {s.runs} {ending}: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
                        f"matched{spent}")
         self._save(s)
@@ -1373,6 +1396,9 @@ class Manager:
     def prompt(self, s: Session) -> str:
         from .session_handoffs import previous
         text = self._prompt(s) + previous(self.net, s.id, s.slug)
+        if s.continuation_note:
+            text += '\n\nSession continuation guidance:\n' + s.continuation_note
+            s.continuation_note = ""
         # Keep detailed guides on demand; the work prompt already teaches the matching loop.
         ov = self.net.overview(s.slug)  # (only its platform's parts: tools.for_platform)
         text += "\nGuides to load when needed:\n\n" + tools.up_front(

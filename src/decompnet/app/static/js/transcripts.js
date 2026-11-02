@@ -229,7 +229,7 @@ $("helperTranscript").onclick = async () => {
       for (const row of result.sessions) {
         if ([...select.options].some((option) => option.value === String(row.id))) continue;
         const option = document.createElement("option"); option.value = row.id;
-        option.textContent = `${new Date(row.started_at * 1000).toLocaleString()} · ${row.model || row.kind} · ${({ok: "session completed", rotated: "context rotation", connection_retry: "connection check failed · automatic retry"})[row.outcome] || row.outcome || "running / interrupted"}`;
+        option.textContent = `${new Date(row.started_at * 1000).toLocaleString()} · ${row.model || row.kind} · ${({ok: "session completed", rotated: "context rotation", early_finish: "ended early · automatic continuation", connection_retry: "connection check failed · automatic retry"})[row.outcome] || row.outcome || "running / interrupted"}`;
         select.append(option);
       }
       if (result.sessions.length && (old || !oldest)) oldest = result.sessions.at(-1).id;

@@ -414,6 +414,15 @@ def _redraft(net, slug, function, context, agent=None):
     return agent_tokens.brief(net,net.redraft(slug,function,context),slug,agent)
 
 
+def _get_context(net, agent, slug, function=""):
+    if not function:
+        held = net.store.all('SELECT f.name FROM functions f JOIN claims c ON c.function_id=f.id '
+                             'JOIN projects p ON p.id=f.project_id WHERE c.agent_id=? AND p.slug=?', agent.id, slug)
+        if len(held) == 1:
+            function = held[0]['name']
+    return net.get_context(slug, function or None)
+
+
 HANDLERS: dict[str, Callable[..., str]] = {
     "project_info": lambda net, agent, slug, detail=False: project_info(net, slug, detail),
     "get_candidate": agent_tokens.get_candidate,
@@ -438,7 +447,7 @@ HANDLERS: dict[str, Callable[..., str]] = {
         candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
     "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False:
         agent_tokens.brief(net,net.release_function(agent, function, notes, slug, needs or "", bool(not_c), bool(move_on)),slug,agent),
-    "get_context": lambda net, agent, slug, function="": net.get_context(slug, function or None),
+    "get_context": _get_context,
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
     "rename_symbol": lambda net, agent, slug, old, new, message="": net.rename_symbol(agent, slug, old, new, message),
@@ -547,14 +556,18 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
             from .repair_first import before_variants
             result=before_variants(net,agent,slug,named)
             if result is not None:
-                return result
+                from .efficiency_feedback import frontload
+                return frontload(net,agent,slug,named.get('function',''),result)
         result=HANDLERS[name](net,agent,slug,**named)
+        if name == 'try_compiler':
+            from .session_followups import diagnostic_completed
+            diagnostic_completed(net,agent)
         result=after_tool(net,agent,slug,name,named,result)
-        if name in {'compile_patch','compile_and_diff','try_local_repairs','compile_family'}:
+        if name in {'compile_patch','compile_and_diff','try_local_repairs','compile_family','compile_variants','compiler_experiments'}:
             function=named.get('function','')
             if function and ',' not in function:
-                from .efficiency_feedback import continuation
-                result+='\n'+continuation(net,agent,slug,function)
+                from .efficiency_feedback import frontload
+                result=frontload(net,agent,slug,function,result)
         return result
     finally:
         if budget:
@@ -662,7 +675,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                          repair_category=repair_category, repair_automation=repair_automation)
 
     @tool
-    async def get_candidate(ctx: Context, function: str, base: str = "current") -> str:
+    async def get_candidate(ctx: Context, function: str, base: Literal["current", "saved_best", "last_compiling", "reported_corrected"] = "current") -> str:
         """Read your current candidate C/revision and bounded advisory C-line mismatch locations, when compiler debug information is available. Use base="saved_best" to explicitly restore saved best C, base="reported_corrected" to select a compiled alternative explicitly linked to a quality report (an agent hypothesis, not verified correctness), or base="last_compiling" to recover your last scored C after compiler errors. Selection changes only your continuation; historical scores require rejudging. No full assembly listing or historical notes."""
         return await run(ctx, 'get_candidate', function=function, base=base)
 
@@ -752,14 +765,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
             needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
                 candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
             move_on: explicitly release now with precise notes explaining why further exploration is unproductive. Skips the one-time release pushback; does not mark a match or no-C verdict.
-            not_c: true when you're sure no C makes its code at all (hand-written assembly), saying why in notes:
+            not_c: true only with evidence no C makes its code at all (hand-written assembly), saying why in notes. Unsupported compiler extensions, asm-register/tool restrictions, return-address builtins or unsuitable build flags are not proof; describe those as blockers and release normally:
                 once agents of two models agree, it's set aside and no one is handed it again.
         """
         return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on)
 
     @tool
     async def get_context(ctx: Context, function: str = "") -> str:
-        """The shared header (types, structs, prototypes) included before every compile."""
+        """The shared header (types, structs, prototypes) used by function. Omit function only when you hold exactly one claim, or the project has a single header. Pass function explicitly for per-file headers or multiple claims."""
         return await run(ctx, "get_context", function=function)
 
     @tool

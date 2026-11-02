@@ -2078,3 +2078,33 @@ They are explicitly worker-reported, not host-rejudged failures, and never becom
 scores or automatically comparable replay inputs. Host verification of the successful candidate
 is unchanged. Source-free exports omit the worker source/header too. Old clients and successes
 without a failed baseline continue to work.
+
+## Agent transcript follow-ups (November 2026)
+
+The latest 60-session audit found claim/release-only sessions counted as productive, nine sessions
+hitting the same five-hour allowance, and stale revisions reused after successful edits. The runner
+now distinguishes compilation attempts/completed diagnostic builds from claims, notes and releases.
+A premature finish can receive one explicit continuation prompt while eligible work and context
+capacity remain; provider/context stops, blocked-input reports and polishing are excluded. This is
+bounded guidance, not a compilation quota. Normal failure/backoff handling remains after that nudge.
+Polishing retains its event-based progress check, and finishing the available work is successful.
+
+Provider plan-limit cooldowns are persisted by connector sign-in, or by API endpoint/credential pair,
+without storing credentials in cooldown keys. A sibling helper checks the shared reset before starting
+another provider session. Resume is staggered by helper ID; active provider requests are not killed.
+Transient request throttles remain separate. Diagnostic builds count as runner activity only when a
+new trial actually runs; cached results and ordinary reads do not count as compilation.
+
+Editing-tool replies start with one current continuation state, after automatic local edits have
+finished. Applicable batch patch IDs remain attached only to the current revision. Stale edits still
+fail without compilation. Compile feedback retains scores, changes, warnings, bounded changed rows
+and available C-line associations, while presenting one category/focus/first-difference summary.
+Full diff diagnostics remain available through the paged readers. Candidate-base selection is an
+explicit enum in MCP/API schemas, and API agents can now supply the function to `get_context`.
+An omitted header function is inferred only for exactly one held claim in that project.
+
+Unsupported compiler extensions, tool-rejected asm register forms, return-address builtin limitations
+and unsuitable build flags do not count as no-C votes. They leave review evidence and normal release
+notes; legacy note-based voting applies the same exclusion. Genuine assembly/boundary evidence still
+uses the existing multi-model verdict and normal judge. Existing set-aside functions are not reopened
+silently by this change.

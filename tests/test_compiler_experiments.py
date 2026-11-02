@@ -30,6 +30,7 @@ def test_revision_profile_pairs_are_diagnostic_cached_and_scoped(tmp_path,monkey
     again=compiler_experiments.run(net,a,'game','f',rev,trials)
     assert ('cached diagnostic' in again) == (mode=='rom')
     assert len(calls)==(2 if mode=='rom' else 4)
+    assert net._session_diagnostic_compiles[a.id]==len(calls)  # Cached results are not new compilation progress.
     with pytest.raises(NetworkError):compiler_experiments.retrieve(net,b,'game','f',trial)
     assert agent_tokens.candidate(net,a,'game','f')[1]==rev
     assert net.store.one('SELECT COUNT(*) AS n FROM attempts')['n']==0
