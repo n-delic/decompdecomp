@@ -374,6 +374,30 @@ If setup fails after accepting your ROM, reopen the project or retry: its verifi
 selection. Clear the folder setting to disable library searches. On POSIX systems, hashes are cached in memory until files change
 or the app restarts. Windows rehashes files because timestamps may not reliably reflect overwrites; original files are never moved by the search.
 
+## Run without a desktop window
+
+```sh
+decomp serve --port 6464
+```
+
+Open `http://127.0.0.1:6464/` in your browser and enter the sign-in code printed in that terminal. This runs the
+same project database, agents, compiler/judge and project/ROM workflows without a native window or tray. The
+browser uses a separate HttpOnly session cookie for up to 12 hours; **Sign out** ends only that browser session,
+not the server or its agents. Restarting the server prints a new code and requires signing in again. Keep the
+terminal code private: it grants full access to this app, unlike project-scoped agent or browser-worker pairing.
+
+`serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
+running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
+home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --port 6484`. A checkout can use
+`uv run decomp serve --port 6474`. Stop the server with Ctrl-C or `decomp stop` using the same home. Updates preserve
+server mode; they do not open a native window.
+
+It binds **127.0.0.1 only**. LAN binding, reverse-proxy deployment and public HTTPS serving are not enabled by this
+mode. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
+Browser file uploads still work; folder/file-path chooser buttons ask for a path **on the server computer**.
+Opening its folder in a desktop file manager is unavailable. Compiler and platform runtime requirements remain
+the same; only native-window/tray dependencies are bypassed at runtime.
+
 ## Install
 
 decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets

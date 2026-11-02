@@ -1733,3 +1733,9 @@ functions retain reviewable skip reasons, and applied outcomes are saved with co
 The comparison action toggles to Stop while running. Its two determinate progress bars replace the
 redundant loading text and animated workbar. This uses the existing ROM/MIPS compiler-map scope;
 object-project compiler comparisons remain limited by their build-owned per-file adapters.
+
+## Headless browser serving
+
+Implemented: `decomp serve --port N` runs the shared ROM/imported-project engine on localhost without a native window or tray. Terminal-issued login codes grant separate, bounded HttpOnly browser sessions; host/origin/write guards and agent/project capability scopes remain in force. Sign-out revokes that session; updates preserve headless mode. Browser uploads work and local picker actions accept server-side paths instead of invoking a desktop chooser.
+
+Planned: explicit LAN/reverse-proxy binding with TLS deployment guidance, configurable multi-user access and browser-based browsing of server directories. Native file-manager/desktop actions have no browser equivalent in this initial mode.
