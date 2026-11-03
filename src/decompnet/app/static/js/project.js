@@ -926,23 +926,38 @@ async function renderForkSetup() {
       <button class="ghost small-btn" id="fsClose" type="button">Close project…</button></div>
     <p class="muted small">Closing removes this unfinished import from the app and keeps its folder on disk.</p>`;
   let findRom = null, usingGame = false;
+  const setImportStatus = (state, detail = "") => {
+    const status = $("fsImportStatus");
+    if (!status || S.slug !== requestedSlug || S.gen !== setupGen) return;
+    status.textContent = `${state}${detail ? " · " + detail : ""}`;
+    status.dataset.state = state === "Import stopped" ? "error" : "running";
+  };
   const run = async (start) => {
+    if (usingGame) return;
     usingGame = true;
+    setImportStatus(n.saved_progress ? "Importing saved progress — please wait" : "Setting up project — please wait",
+      n.saved_progress ? "A temporary game entry may appear in the sidebar. This page will open the finished project automatically." : "This page will open the project when setup finishes.");
     showJobError($("fsLog"), "");
     const work = box.querySelector('[aria-label="Building project"]');
     if (work) work.hidden = false;
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
       const { job } = await start();
-      const result = await followJob(job, $("fsLog"));
+      const result = await followJob(job, $("fsLog"), (lines) => {
+        const latest = lines.filter(line => line.trim()).at(-1);
+        setImportStatus(n.saved_progress ? "Import still running" : "Setup still running", latest || "Preparing project…");
+      });
       loadNav();
       if (S.slug !== requestedSlug || S.gen !== setupGen) return;
       if (work) work.hidden = true;
-      toast("The project is ready for your agents.", "match");
+      setImportStatus("Import complete", "Opening the finished project…");
+      toast("Import complete. The project is ready for your agents.", "match");
       if (result?.slug && result.slug !== requestedSlug) location.hash = `#/p/${result.slug}`;
       else openProject(requestedSlug);
     } catch (e) {
       if (work) work.hidden = true;
+      setImportStatus("Import stopped", "Setup did not finish. See the error below, then retry. Any existing project work is kept.");
+      loadNav();
       showJobError($("fsLog"), e.message);
       box.querySelectorAll("button, input").forEach((b) => { b.disabled = false; });
       if ($("fsOwn")) $("fsGo").disabled = !$("fsOwn").checked;
@@ -952,8 +967,9 @@ async function renderForkSetup() {
   };
   if (n.auto) {
     box.innerHTML = `<div class="fs-main">
-        <p class="eyebrow">Last step</p>
+        <p class="eyebrow">Awaiting your game file</p>
         <h2>Add your copy of the game</h2>
+        <p class="notice" id="fsImportStatus" role="status" aria-live="polite">${n.saved_progress ? "Ready to restore saved progress. Import starts after you choose your game and confirm ownership. A temporary game entry may appear in the sidebar while verification runs; this page opens the finished project automatically." : "Setup has not started. Choose your game file to continue."}</p>
         <p class="muted">${esc(n.what)}. ${esc(n.help || "")}</p>
         <label class="check"><input type="checkbox" id="fsOwn"><span>This is my own copy of this game, obtained legally (for example, dumped from my console). The results stay with me for my own use.</span></label>
         <div class="row"><button class="primary" id="fsGo" type="button" disabled>Choose the game file…</button>
@@ -967,7 +983,7 @@ async function renderForkSetup() {
     const usePath = () => {
       if (!$("fsOwn").checked) return toast("Confirm that this is your own copy of the game first.", "err");
       if (!$("fsPath").value.trim()) return;
-      run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug, path: $("fsPath").value.trim(), confirmed: true } }));
+      return run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug, path: $("fsPath").value.trim(), confirmed: true } }));
     };
     // the system's chooser (app/picker.py) gives the file's path, and the game is read where it is: sent through
     // the page, a GameCube or Wii disc can take the window down
@@ -975,8 +991,8 @@ async function renderForkSetup() {
       $("fsGo").disabled = true;
       try {
         const { path } = await api("/api/pick", { method: "POST", body: { kind: "file", title: "Your copy of the game" } });
-        if (path) { $("fsPath").value = path; usePath(); }
-      } catch (e) { toast(esc(e.message), "err"); } finally { $("fsGo").disabled = !$("fsOwn").checked; }
+        if (path) { $("fsPath").value = path; await usePath(); }
+      } catch (e) { toast(esc(e.message), "err"); } finally { if (S.slug === requestedSlug && S.gen === setupGen && $("fsOwn")) $("fsGo").disabled = usingGame || !$("fsOwn").checked; }
     };
     $("fsPathGo").onclick = usePath;
     $("fsBuild").onclick = () => run(() => api("/api/fork/setup", { method: "POST", body: { slug: S.slug } }));
