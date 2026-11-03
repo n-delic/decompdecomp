@@ -6,7 +6,7 @@ function openFocusedAgent(slug, name) {
     <label class="field" data-focus-endpoint-field hidden>Saved endpoint<select data-focus-endpoint></select></label>
     <label class="field">Model<input data-focus-model list="focus-models" placeholder="Agent default"><datalist id="focus-models"></datalist></label>
     <label class="field">Time limit · minutes<input data-focus-minutes type="number" min="1" max="240" value="30"></label></div>
-    <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>The timer includes provider-limit and claim waits. If another agent holds this function, this agent waits its turn. Saved improvements are kept.</p></div>
+    <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>The timer includes provider-limit and claim waits. If another agent holds this function, this agent waits its turn. Saved improvements are kept. Focused runs keep one long conversation and compress older context when supported by the provider.</p></div>
     <div class="row"><button class="primary" data-focus-start>Start focused agent</button><button class="ghost" data-focus-stop hidden>Stop agent</button></div>
     <div class="focus-result" data-focus-result hidden><strong data-focus-heading>Agent created</strong><p data-focus-status role="status"></p></div>
     <div data-focus-progress></div><details class="focus-log" data-focus-details hidden><summary>Startup details</summary><pre data-focus-work></pre></details>`, 'focused-agent');

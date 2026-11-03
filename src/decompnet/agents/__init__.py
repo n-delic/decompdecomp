@@ -215,6 +215,12 @@ class Agent:
         for the agent's default."""
         raise RuntimeError(f"{self.name} isn't a program the app runs")
 
+    focus_resume = False
+
+    def focused_session_command(self, exe, workdir, mcp_url, token, model, conversation=None):
+        """Providers may resume a specific persisted conversation; never use a global 'last'."""
+        return self.session_command(exe, workdir, mcp_url, token, model)
+
     def launch_command(self, cmd: list[str]) -> list[str]:
         """Optional stdin bridge after resolving the installed CLI's native launcher."""
         return cmd

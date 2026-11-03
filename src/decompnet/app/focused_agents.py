@@ -81,3 +81,15 @@ def ready(manager,s,agent):
         s.stop.wait(1)
         return False
     return True
+
+
+
+def prompt(s):
+    return (f"Work continuously on only {s.options['focus_function']} until the app stops you on a verified match "
+            "or the focused deadline. This is one long conversation, not a one-function batch to finish and exit. "
+            "Keep testing new hypotheses and saving verified improvements. Do not release the function merely "
+            "because a trial failed, a tool-call count was reached, or you have written a status summary. "
+            "Use the provider's automatic context compaction when context fills: retain the current best candidate, "
+            "compiler/flags, scores, failed experiments, and next hypotheses in the compacted context. "
+            "After compaction recover exact C with get_candidate and consult saved experiments instead of guessing. "
+            "Do not claim other functions. Stop if the app ends the run; all normal safety and judge rules apply.")

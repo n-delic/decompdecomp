@@ -39,6 +39,9 @@ def current(net, agent, slug):
 def start(net, agent_id, slug, options):
     if not hasattr(net,'_session_budgets'):
         net._session_budgets={}
+    if options.get('focus_id'):
+        net._session_budgets.pop((agent_id,slug),None)
+        return None  # A focused conversation compacts instead of rotating.
     budget=Budget(options.get('session_tool_limit',TOOL_LIMIT),options.get('session_char_limit',CHAR_LIMIT))
     net._session_budgets[agent_id,slug]=budget
     return budget

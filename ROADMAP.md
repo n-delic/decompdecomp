@@ -2030,5 +2030,18 @@ launcher has its own Stop control. No model is started until the user clicks Sta
 The function drawer groups AI and local search in matching shared collapsible boxes,
 with aligned cost labels and controls in both themes and narrow layouts.
 
+
+## Focused conversation continuity
+
+Focused workers bypass ordinary 80-tool/160,000-character rotation and receive a continuous-work
+prompt until match, user stop or deadline. Codex and Claude persist and resume their exact provider
+conversation between turns (never a global latest session), leaving native compaction enabled.
+The compatible API loop removes its ordinary step/function cap for focused runs and summarizes
+older context in place near its context budget, preserving instructions and the latest complete
+tool exchange; summary requests are accounted and recorded. Failed summary requests fall back
+to existing context fitting. Paid summarization uses the selected endpoint/model.
+Other CLI connectors retain their provider's in-process context management, but exact conversation
+resumption after those programs exit remains planned. API history persistence across app restarts
+and provider failures also remains planned; saved candidates/experiments still survive.
 - Done: project-scoped distinct improved-function totals per room member, alongside matches in the
   host/guest room dialog and room agent cards, including attribution from older attempt histories.

@@ -69,12 +69,22 @@ class ClaudeCode(Agent):
         env = {} if CACHE_TTL_ENV in os.environ else {CACHE_TTL_ENV: CACHE_TTL}
         return cmd + (["--model", model] if model else []) + (["--effort", effort] if effort else []), env
 
+    focus_resume = True
+
+    def focused_session_command(self, exe, workdir, mcp_url, token, model, conversation=None):
+        cmd, env = self.session_command(exe, workdir, mcp_url, token, model)
+        if conversation:
+            cmd += ['--resume', conversation]
+        return cmd, env
+
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
         out: list[tuple[str, str] | None] = []
         from .claude_usage import update
         if usage_event := update(event,state):
             out.append(usage_event)
+        if t == "system" and event.get("subtype") == "init" and event.get("session_id"):
+            out.append(("conversation", str(event["session_id"])))
         if t == "assistant" and isinstance(event.get("message"), dict):
             for c in event["message"].get("content", []):
                 if c.get("type") == "text" and c.get("text", "").strip():

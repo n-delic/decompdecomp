@@ -87,9 +87,20 @@ class Codex(Agent):
         cmd.append("-")  # the prompt comes from stdin
         return cmd, {TOKEN_ENV: token}
 
+    focus_resume = True
+
+    def focused_session_command(self, exe, workdir, mcp_url, token, model, conversation=None):
+        cmd, env = self.session_command(exe, workdir, mcp_url, token, model)
+        cmd.remove('--ephemeral')  # Persist this focused thread so later turns can resume it.
+        if conversation:
+            cmd[-1:] = ['resume', conversation, '-']
+        return cmd, env
+
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
         t = event.get("type")
         out: list[tuple[str, str] | None] = []
+        if t == "thread.started" and event.get("thread_id"):
+            out.append(("conversation", str(event["thread_id"])))
         if t in ("item.started", "item.completed") and isinstance(event.get("item"), dict):
             item = event["item"]
             it = item.get("type") or item.get("item_type")

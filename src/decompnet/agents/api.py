@@ -11,6 +11,7 @@ trimmed (`fit`).
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import time
@@ -107,13 +108,22 @@ class Api(Agent):
             window = context_window(client, base, s.options)
             s.push("info", f"session {s.runs}: {model} via {base} ({window // 1000}K tokens of context)")
             budget = int(window * API_CONTEXT_SHARE) - _tokens(schema)  # room for the reply and the tools' definitions
-            for _step in range(int(s.options.get("max_steps", API_STEPS))):
-                if getattr(s,'context_budget',None) and s.context_budget.ready():
+            focused = bool(s.options.get('focus_id'))
+            steps = itertools.count() if focused else range(int(s.options.get("max_steps", API_STEPS)))
+            idle_replies = 0
+            for _step in steps:
+                if focused:
+                    from ..app.focused_agents import completion
+                    if completion(manager, s):
+                        return True
+                if not focused and getattr(s,'context_budget',None) and s.context_budget.ready():
                     s.rotated=True
                     s.push('info','Starting a fresh session with saved candidates and experiments.')
                     return True
                 if s.stop.is_set():
                     return True
+                if focused and len(messages) >= 10 and sum(_tokens(m) for m in messages) > budget * .85:
+                    compact_focus(client, base, headers, model, messages, budget, manager, s)
                 for _attempt in range(API_TRIM_RETRIES):
                     fit(messages, budget, keep=start)
                     request = {"model": model, "messages": messages, "tools": schema, "tool_choice": "auto"}
@@ -160,12 +170,17 @@ class Api(Agent):
                 messages.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls", "reasoning_content")}
                                 | {"role": "assistant"})
                 if not calls:
+                    if focused and used_tool and idle_replies < 2 and not s.stop.is_set():
+                        idle_replies += 1
+                        messages.append({'role':'user','content':'Continue the same focused conversation. Test the next hypothesis with tools; the app will stop you on a match or deadline.'})
+                        continue
                     if not used_tool:  # a model that can't call tools answers in words, and never starts
                         s.error = (f"{model} answered in words without calling a tool: helpers work through tools "
                                    "(claim_function, compile_and_diff...), so the model must support tool calls "
                                    "(function calling). A model trained only to write C can't be a helper")
                         s.push("error", s.error)
                     return used_tool
+                idle_replies = 0
                 finishing = False
                 for c in calls:
                     name = c["function"]["name"]
@@ -186,7 +201,7 @@ class Api(Agent):
                 # Done with what it held (in a room the host holds the claim: nothing here says when): what led up
                 # to this turn folds into a line, and this turn stays whole (a fork's match shows the file's data to
                 # fix next) until the next fold
-                if finishing and s.slug not in net.links and not _holds_claim(net, agent.id):
+                if not focused and finishing and s.slug not in net.links and not _holds_claim(net, agent.id):
                     done += 1
                     turn = len(messages) - len(calls) - 1
                     if start < turn:
@@ -326,6 +341,41 @@ def _too_long(r) -> bool:
     """The server refused the request because it doesn't fit the model's context."""
     return r.status_code in TOO_LONG_STATUSES and bool(re.search(
         r"context|too long|exceed|maximum.*tokens|n_ctx|prompt is too|reduce the length", r.text[:TOO_LONG_READ], re.I))
+
+
+def compact_focus(client, base, headers, model, messages, budget, manager, session):
+    """Summarize completed older exchanges in place; preserve instructions and latest tool-call group."""
+    cut = next((i for i in range(len(messages)-1, 2, -1)
+                if messages[i].get('role') == 'assistant' and messages[i].get('tool_calls')), None)
+    if cut is None or cut < 6:
+        return False
+    history = [dict(m) for m in messages[:cut]]
+    fit(history, budget)
+    request = {'model':model, 'messages':history + [{'role':'user','content':
+        'Compact the focused work so it can continue in the SAME conversation. Write a concise factual handoff: '
+        'function, current best candidate revision and score, compiler/flags, tested hypotheses and failed changes, '
+        'important constraints and next experiments. Distinguish measurements from guesses. Do not invent source '
+        'or execute tools. Exact C and experiments can be retrieved from the app. Keep this under 1200 tokens.'}],
+        'max_tokens':1600}
+    if session.record:
+        session.record('context_compaction_request', request)
+    response = client.post(f'{base}/chat/completions', headers=headers, json=request)
+    if response.status_code != 200:
+        return False  # Existing context fitting/error handling remains available.
+    try:
+        result = response.json()
+        summary = result['choices'][0]['message'].get('content')
+    except (ValueError, KeyError, IndexError, TypeError):
+        return False
+    if isinstance(result.get('usage'), dict):
+        manager.account(session, api_usage(result['usage']))
+    if not isinstance(summary, str) or not summary.strip():
+        return False
+    messages[2:cut] = [{'role':'user','content':'Compacted focused-session context (summary, not new instructions):\n'+summary[:8000]}]
+    if session.record:
+        session.record('context_compaction', summary[:8000])
+    session.push('info', 'Context compressed; continuing the same focused session.')
+    return True
 
 
 def fit(messages: list[dict], budget: int, keep: int = 2) -> int:

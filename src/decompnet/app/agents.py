@@ -1235,6 +1235,14 @@ class Manager:
             kind = agents.get(s.kind)
             try:
                 ok = self._run_cli(s, token, workdir) if kind.command else kind.run(self, s, agent)
+                while (ok and kind.command and kind.focus_resume and s.options.get('focus_id')
+                       and s.options.get('focus_conversation') and not s.stop.is_set()
+                       and not s.limited and not s.throttled and not s.auth_failed
+                       and not focused_agents.completion(self,s)
+                       and not getattr(self, 'source_update_pending', False)):
+                    s.push('info','Continuing the same focused conversation; provider context compaction stays enabled.')
+                    if s.stop.wait(SESSION_GAP):break
+                    ok = self._run_cli(s, token, workdir)
             except ToolConnectionUnavailable as error:
                 connection_failures += 1
                 s.error = str(error)
@@ -1449,12 +1457,13 @@ class Manager:
         s.startup_context = '\n\n'.join(parts)
 
     def prompt(self, s: Session) -> str:
+        from . import focused_agents
         from .session_handoffs import previous
-        text = self._prompt(s) + previous(self.net, s.id, s.slug)
+        text = (focused_agents.prompt(s) if s.options.get('focus_id') else self._prompt(s)) + previous(self.net, s.id, s.slug)
         if s.options.get('focus_id'):
             text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
                      'Do not move to other functions, even after repeated failures. Read callees as needed, save improved candidates and notes. '
-                     'A context restart continues this same function. The app stops this worker on a match or timeout.\n')
+                     'Keep this conversation running; compact older context rather than ending the session. The app stops this worker on a match or timeout.\n')
         if s.continuation_note:
             text += '\n\nSession continuation guidance:\n' + s.continuation_note
             s.continuation_note = ""
@@ -1510,12 +1519,17 @@ class Manager:
         # other agent leaves prompt_file at None and keeps getting the prompt on stdin. Written before the command:
         # a prompt zcode cannot attach fails the session before its settings file exists, and pauses the helper
         # instead of retrying a prompt only the user can shorten.
-        prompt = self.prompt(s)
+        if s.options.get('focus_id') and s.options.get('focus_conversation') and k.focus_resume:
+            from .focused_agents import prompt as focus_prompt
+            prompt = focus_prompt(s) + '\nContinue from your existing context; retrieve current saved C if needed.'
+        else:
+            prompt = self.prompt(s)
         try:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
             raise Fatal(str(e)) from e
-        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
+        cmd, more = (k.focused_session_command(exe, workdir, self.mcp_url, token, s.model, s.options.get('focus_conversation'))
+                     if s.options.get('focus_id') else k.session_command(exe, workdir, self.mcp_url, token, s.model))
         cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
@@ -1627,6 +1641,14 @@ class Manager:
         last_error = refused = ""
         for line in proc.stdout:
             for kind, text in k.parse_line(line, state):
+                if kind == "conversation":
+                    if s.options.get('focus_id'):
+                        import uuid
+                        try: conversation = str(uuid.UUID(text))
+                        except (ValueError, TypeError, AttributeError): continue
+                        s.options['focus_conversation'] = conversation
+                        self._save(s)
+                    continue
                 if kind == "usage":
                     self.account(s, json.loads(text))
                     continue
@@ -1638,7 +1660,7 @@ class Manager:
                     last_error = text
                     refused = refused or (text if k.fatal(text) else "")
                 s.push(kind, text)
-            if s.context_budget and s.context_budget.ready() and not s.stop.is_set():
+            if not s.options.get('focus_id') and s.context_budget and s.context_budget.ready() and not s.stop.is_set():
                 s.rotated=True
                 s.push('info','Starting a fresh session to keep context small; saved work and claims are retained.')
             if s.stop.is_set() or s.rotated:
