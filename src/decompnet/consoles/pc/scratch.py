@@ -1293,12 +1293,20 @@ def _sweep(md, pe: PE, lo: int, hi: int, ordered: list[int], extents: dict, data
         at = end
 
 
+def _full_reg(md, reg: int) -> str:
+    """A register's 32-bit name: `al` and `ax` are eax, as a byte loaded into one indexes a table by the other."""
+    name = md.reg_name(reg) or ""
+    return {"al": "eax", "ah": "eax", "ax": "eax", "bl": "ebx", "bh": "ebx", "bx": "ebx", "cl": "ecx", "ch": "ecx",
+            "cx": "ecx", "dl": "edx", "dh": "edx", "dx": "edx", "si": "esi", "di": "edi", "bp": "ebp"}.get(name, name)
+
+
 def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int, list[int]]:
     """(where the function's code ends, where its data ends, the jump table entries' offsets): MSVC puts a switch's
     jump table (and its byte index table) right after the function's code (a 64-bit one's: _tables_x64)."""
     if pe.x64:
         return _tables_x64(md, pe, start, code_end, sweep=False)
     tables, bytes_at = [], []
+    index_regs, loaded = set(), {}  # the registers jump tables are indexed by; a byte table's -> the register it loads
     for ins in _disasm(md, pe.read(start, code_end - start), start):
         for op in ins.operands:
             if op.type != x86.X86_OP_MEM or ins.disp_size != 4:
@@ -1308,8 +1316,11 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
                 continue
             if op.mem.scale == 4 and ins.id == x86.X86_INS_JMP:
                 tables.append(disp)
+                index_regs.add(_full_reg(md, op.mem.index))
             elif op.size == 1:
                 bytes_at.append(disp)
+                if ins.operands[0].type == x86.X86_OP_REG:
+                    loaded.setdefault(disp, set()).add(_full_reg(md, ins.operands[0].reg))
     code_end = min([code_end, *tables, *bytes_at])
     data_end, entries = code_end, []
     for t in sorted(set(tables)):
@@ -1324,9 +1335,10 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
         data_end = max(data_end, at)
     for b in sorted(set(bytes_at)):  # a byte table runs to the next function, less its padding
         tail = pe.read(b, limit - b).rstrip(b"\x90\xcc")
-        if entries:
-            # a byte table indexes the jump table, so every byte is below its entry count: the first one that isn't
-            # is past the table (an x86 game: code that only a vtable reaches followed a byte table and was swallowed)
+        if entries and loaded.get(b, set()) & index_regs:
+            # a byte table that indexes the jump table (what it loads is the jump's index) has every byte below its
+            # entry count: the first one that isn't is past the table (an x86 game: code that only a vtable reaches
+            # followed a byte table and was swallowed). Any other byte table (a lookup) keeps its whole run
             n = len(entries)
             tail = tail[:next((k for k, v in enumerate(tail) if v >= n), len(tail))]
         data_end = max(data_end, b + len(tail))
@@ -1399,6 +1411,11 @@ def _code_end(md, pe: PE, start: int, ghidra_end: int, limit: int) -> int:
     end = max(ghidra_end, min(last.address + last.size, limit))
     stops = last.id in (x86.X86_INS_RET, x86.X86_INS_RETF, x86.X86_INS_JMP)
     return max(end, _flow_end(md, pe, start, limit)) if stops and end < limit else end
+
+
+# a bit mask's immediate is a number even when it equals an address, a function's start among them (`and edx,
+# 0x10001010`); a compare or an add can take a real address (a function pointer, a table) and stays
+_MASKS = frozenset({x86.X86_INS_AND, x86.X86_INS_OR, x86.X86_INS_XOR, x86.X86_INS_TEST})
 
 
 def _mid_code(pe: PE, value: int, starts, start: int, end: int) -> bool:
@@ -1516,7 +1533,7 @@ def _relocations(md, pe: PE, start: int, code_end: int, end: int, entries: list[
                 name, addend = symbol(op.mem.disp & 0xFFFFFFFF)
                 relocs.append((at + ins.disp_offset, DIR32, name, addend))
             elif op.type == x86.X86_OP_IMM and ins.imm_size == 4 and pe.contains(op.imm & 0xFFFFFFFF) \
-                    and not _mid_code(pe, op.imm & 0xFFFFFFFF, names, start, end):
+                    and ins.id not in _MASKS and not _mid_code(pe, op.imm & 0xFFFFFFFF, names, start, end):
                 name, addend = symbol(op.imm & 0xFFFFFFFF)
                 relocs.append((at + ins.imm_offset, DIR32, name, addend))
     for off in sorted(set(entries)):  # a table two jumps go through is found twice (an x86 game has such switches)
