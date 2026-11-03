@@ -286,13 +286,13 @@
         <div class="ap-text"><b id="apTitle"></b><span class="muted small" id="apSub"></span><div class="upbar" id="apBar" role="progressbar" aria-label="Automatic matching progress" hidden><i></i></div></div>
         <button class="ghost small-btn" id="apBtn" type="button"></button>
       </div>
-      <details class="panel settings-disclosure" id="finishNearPanel">
-        <summary>Finish near matches <span class="muted small">Free local repairs</span></summary>
+      <details class="panel settings-disclosure" id="savedMatchRecoveryPanel">
+        <summary>Recover saved matches</summary>
         <div class="settings-content">
-        <p class="muted small">Try local repairs on the closest saved C. No AI tokens. Pending searches resume next time; busy functions are skipped. Available for MIPS ROM projects.</p>
-        <div class="row"><label>Seconds<input id="finishNearSeconds" type="number" min="1" max="600" value="120"></label><label>Compile budget<input id="finishNearAttempts" type="number" min="1" max="1024" value="128"></label></div>
-        <div class="row"><button id="finishNearStart" class="primary" type="button">Finish near matches</button><button id="recoverSavedMatches" class="ghost" type="button">Recover saved matches</button><button id="finishNearStop" type="button" hidden>Stop</button><span id="finishNearSummary" role="status"></span></div>
-        <pre id="finishNearLog" class="joblog" hidden></pre>
+        <p class="muted small">Recheck previously successful C and headers against the current project. This can restore matches lost after project changes. No AI tokens; every match is verified again.</p>
+        <div class="row"><label>Seconds<input id="savedMatchSeconds" type="number" min="1" max="600" value="120"></label><label>Compile budget<input id="savedMatchAttempts" type="number" min="1" max="1024" value="128"></label></div>
+        <div class="row"><button id="recoverSavedMatches" class="ghost" type="button">Recover saved matches</button><button id="savedMatchStop" type="button" hidden>Stop</button><span id="savedMatchSummary" role="status"></span></div>
+        <pre id="savedMatchLog" class="joblog" hidden></pre>
         </div>
       </details>
       <section class="panel" id="crossGamePanel" hidden>

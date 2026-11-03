@@ -1328,10 +1328,12 @@ scanner boundary while the remaining body was left as binary data. Recovery is b
 and inferred; the normal linked-byte judge still decides matches. Existing matches and
 naming provenance survive when their complete targets are unchanged.
 
-**Finish near matches:** open the panel below Autopilot to spend a bounded local
-compile/time budget on your closest saved C, without starting AI agents. Stop whenever
-you like; verified matches are kept and pending paths resume on the next run. The panel
-reports matches per minute. The dedicated pass currently supports MIPS ROM projects.
+**Local repairs:** use the Deep permutation pass to try targeted repairs on saved C,
+followed by random rewrites. The separate near-match pass is no longer shown.
+**Recover saved matches**, below Autopilot, rechecks historical successful C/header
+combinations against the current project. Its time and compile limits apply to the
+whole recovery run; every recovered match must pass fresh verification. No AI tokens
+are used.
 
 ROM code audits also show possible function-pointer references and unowned bytes inside
 mapped segments. These are review leads. N64 reimport can recover narrowly proven
