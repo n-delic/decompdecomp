@@ -81,7 +81,7 @@ def test_mcp_records_full_arguments_results_and_errors(setup, monkeypatch):
 
     from decompnet.app import tools
     net, manager, session, row = setup
-    agent = SimpleNamespace(name='helper')
+    agent = SimpleNamespace(id=1, name='helper')
     monkeypatch.setitem(tools.HANDLERS, 'get_function', lambda *a, **kw: 'source ' * 1000)
     monkeypatch.setattr(tools, '_named', lambda *a: a[-1])
     mcp = tools.build_mcp(net, lambda context: (agent, 'demo'), observe=manager.record_agent)
