@@ -388,7 +388,7 @@ function updateSelectionDescription(box) {
   if (select && hint) hint.textContent = QUEUE_STRATEGIES.find(([value]) => value === select.value)?.[2] || '';
 }
 function assemblySetting(policy = {}) {
-  return `<label class="check"><input data-assembly-metadata type="checkbox" ${policy.assembly_metadata !== false ? "checked" : ""}><span>Include byte and address columns in agent assembly</span></label><p class="small muted">Turn off to save tokens in assembly requests and function briefs. Keeps labels, instructions and addresses used by operands. Applies to the next tool response.</p>`;
+  return `<label class="check"><input data-assembly-metadata type="checkbox" ${policy.assembly_metadata === true ? "checked" : ""}><span>Include byte and address columns in agent assembly</span></label><p class="small muted">Turn off to save tokens in assembly requests and function briefs. Keeps labels, instructions and addresses used by operands. Applies to the next tool response.</p>`;
 }
 function selectionFields(policy = {}) {
   return `${assemblySetting(policy)}<label class="field"><span>Next function</span><select data-selection-strategy>${QUEUE_STRATEGIES.map(([v, label, description]) =>

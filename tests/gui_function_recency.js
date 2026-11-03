@@ -21,6 +21,7 @@ assert.equal(policy.strategy,'oldest_checked');assert.equal(policy.model_untried
 
 assert(c.assemblySetting({assembly_metadata:false}).includes('data-assembly-metadata'));
 assert(!c.assemblySetting({assembly_metadata:false}).includes('checked'));
-assert(c.assemblySetting().includes('checked'));
+assert(!c.assemblySetting().includes('checked'));
+assert(c.assemblySetting({assembly_metadata:true}).includes('checked'));
 fields['[data-assembly-metadata]']={checked:false};
 assert.equal(c.readSelection({querySelector:s=>fields[s]}).assembly_metadata,false);

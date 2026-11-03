@@ -581,7 +581,7 @@ def test_assembly_metadata_setting_applies_to_pages_briefs_and_full_reads(tmp_pa
         net.forks._meta = lambda fn: {}
     else:
         monkeypatch.setattr(net, '_asm_text', lambda *args: raw)
-    assert '03E00008' in agent_tokens.assembly(net, 'game', 'f', focus='page', agent=agent)
+    assert '03E00008' not in agent_tokens.assembly(net, 'game', 'f', focus='page', agent=agent)
     net.set_selection('game', agent.name, {'assembly_metadata': False})
     outputs = [agent_tokens.assembly(net, 'game', 'f', focus='page', agent=agent),
                agent_tokens.brief(net, text, 'game', agent),

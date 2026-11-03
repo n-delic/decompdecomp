@@ -186,7 +186,7 @@ def history(net, fn):
 
 def assembly_text(net, slug, agent, text):
     """Remove presentation columns only; operands, labels and other comments are evidence."""
-    if not agent or not slug or net.selection(slug, agent.name).get('assembly_metadata', True):
+    if not agent or not slug or net.selection(slug, agent.name).get('assembly_metadata', False):
         return text
     text = re.sub(r'(?m)^(\s*)/\*\s*[0-9a-fA-F]+\s+[0-9a-fA-F]+\s+[0-9a-fA-F]+\s*\*/[ \t]*', r'\1', text)
     return re.sub(r'(?m)^[ \t]*(?:0x)?[0-9a-fA-F]{8,16}[ \t]+(?=[A-Za-z.])', '    ', text)
