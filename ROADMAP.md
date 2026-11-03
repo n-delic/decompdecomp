@@ -2009,6 +2009,10 @@ These shared fixes cover both project modes; Windows retains its native handle l
 A scratch run of 300 short-lived reader threads under a 256-descriptor limit with GC
 disabled completed without errors. The app does not change machine-wide launch limits.
 
+- Done: captured index/lifetime repair candidates shared by local repairs, agent experiments and
+  deep permutation: dead unsigned scaling, pointer lifetime endings, indexed-store local reuse,
+  constant-trip loops and type-preserving mask staging. Unknown syntax and macro-heavy inputs skip
+  these candidates; every result still passes the ordinary mode's judge.
 ### Timed single-function agents
 
 Done: the function dialog can create one configured CLI/API agent for a named function

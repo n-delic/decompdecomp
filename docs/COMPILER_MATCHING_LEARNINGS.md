@@ -2858,3 +2858,29 @@ pass. Publish only the requested entry through matching-only extraction; do not
 publish the context bodies twice or change their statuses. A zero disassembly
 score alone is insufficient: an initial whole-file probe still had unresolved
 symbols/data despite matching instructions.
+
+## Captured index and lifetime repairs (3 November 2026)
+
+Evidence level: verified capture observations, plus controlled synthetic regressions. The review
+covered 500 recent records; 84 had comparable settings and distinct before/after source. These are
+not five newly measured live matches, and captures with several edits do not isolate causality.
+
+- Capture 21574: KMC GCC 2.7.2, `-O2`, score 20 to exact after in-place index scaling.
+  The existing last-shift family already covers some such expressions. The shared generator now
+  also tries a separate scaling statement, restricted to a dead, unescaped unsigned word local.
+- Capture 21580: KMC GCC 2.7.2, score 180 to exact after clearing a dead pointer local.
+  A separate pointer CFG permits unrelated volatile reads but never rewrites them or their order.
+- Capture 21581: GCC 2.8.1 with SN assembler, `-O2`, score 20 to exact after indexed-store staging
+  and declaration reordering. The new family isolates staging into a dead compatible word local;
+  declaration ordering remains a separate existing search. Neither edit alone is proven sufficient.
+- Capture 21578: KMC GCC 2.7.2, score 60 to exact after changing a constant-count loop to `for`.
+  The generator requires a positive bounded literal, a zero start and a single terminal increment;
+  escaping counters, other updates and control transfers are excluded.
+- Capture 21577: KMC GCC 2.7.2, score 5 to exact after selector staging and mask/suffix changes.
+  Only same-type assignment staging is automated here. No masks or literal suffixes are invented,
+  removed or changed: those additional edits are not established general equivalences.
+
+Synthetic controls use the pinned KMC GCC 2.7.2 compiler with `-O2`, comparing generated function
+bytes with independently written target shapes. They test generation, not ROM-linked acceptance.
+All production candidates still require the ordinary linked-byte or objdiff judge. Macro-heavy
+inputs, unsupported syntax and unsafe lifetimes yield no new candidates.

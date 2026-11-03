@@ -1461,3 +1461,9 @@ sizes; these are not token or billing estimates. Task counts backfill surviving
 session transcripts once, then accumulate new calls (including failed calls).
 Connection probes are excluded. Detailed experiment guidance is available on demand
 with `guide(topic="agent-experiments")`; user prompt overrides are preserved.
+
+Local repairs also try bounded index and lifetime alternatives: in-place or separately staged
+unsigned index scaling, clearing dead pointer locals, reusing compatible dead locals for indexed
+stores, constant-count `for` loops, and splitting mask assignments without changing their types or
+mask values. These candidates are shared with the deep permuter and agent local experiments;
+only the normal compiler and exact-match judge can save a result.
