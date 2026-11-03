@@ -28,7 +28,12 @@ vm.runInContext(fs.readFileSync("src/decompnet/app/static/js/rewrite-performance
 const source = fs.readFileSync("src/decompnet/app/static/js/steering.js", "utf8");
 vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.indexOf('$("deepSweepStart").onclick')), ctx);
 (async()=>{
+  ctx.renderDeepSweepResults({has_activity:false, completed:12, queue_done:12, improvements:[]});
+  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,true);
+  assert.equal(element("deepSweepResults").innerHTML,"");
   await ctx.renderDeepSweep();
+  for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
+
   assert.equal(element("deepSweepStop").hidden, false);
   assert.equal(element("deepSweepStart").hidden, true);
   const oldFollower=follower;

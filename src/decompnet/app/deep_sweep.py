@@ -100,6 +100,9 @@ class Sweeps:
             last = db.execute('SELECT COALESCE(MAX(id),0) FROM deep_permutation_recipe_wins').fetchone()[0]
             db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)',
                        (f'deep-metrics-reset:{project_id}', str(last)))
+        self.save(slug, self.config(slug) | {'metrics_started': False})
+        with self.lock:
+            self.active.pop(slug, None)
         return self.status(slug)
 
     def recipes(self, project_id):
@@ -208,11 +211,15 @@ class Sweeps:
             with self.lock:
                 self.queue_cache[cache_key] = (time.monotonic() + QUEUE_CACHE_SECONDS, done_open, done_matched)
         job = self.jobs.jobs.get(current.get('job'), {})
-        return cfg | {'threads_default': workers.default_workers(),
+        recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
+        reset = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
+        has_activity = bool(job or improvements or recipes or measurements or wins
+                            or cfg.get('metrics_started', bool((completed or errors) and not reset)))
+        return cfg | {'has_activity': has_activity, 'threads_default': workers.default_workers(),
                       'total': counts['total'], 'ready': ready, 'queue_done': done_open + done_matched,
                       'queue_left': max(0, ready - done_open), 'awaiting_source': max(0, counts['total'] - ready),
-                                   'improved': len(improvements), 'improvements': improvements, 'recipes': self.recipes(proj['id']), 'recipe_wins': self.recipe_wins(proj['id']),
-                                   'measurements': self.measurements(proj['id']),
+                                   'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
+                                   'measurements': measurements,
                                    'completed': completed, 'errors': errors, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
@@ -233,7 +240,7 @@ class Sweeps:
                     db.execute("DELETE FROM deep_permutation_passes WHERE function_id IN "
                                "(SELECT id FROM functions WHERE project_id=? AND status='open')",
                                (self.net.project_row(slug)['id'],))
-            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads})
+            self.save(slug, {'enabled': True, 'minutes': minutes, 'max_variants': max_variants, 'threads': threads, 'metrics_started': True})
             job = self.jobs.start('deep-permutation-pass', lambda log: self.run(slug, minutes, max_variants, log, threads),
                                   cancel_message='Deep pass stopped. Verified improvements and completed passes are saved.')
             self.active[slug] = {'job': job}

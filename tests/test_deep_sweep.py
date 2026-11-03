@@ -341,11 +341,13 @@ def test_reset_metrics_preserves_progress_passes_and_evidence(sweep):
     assert result['recipes'] == result['recipe_wins'] == result['improvements'] == result['measurements'] == []
     assert obj.measurements(other)[0]['attempted'] == 1
     assert result['completed'] == 2
+    assert result['has_activity'] is False
     assert dict(net._function('f0', 'game')) == before
     assert obj.recipes(other)[0]['tested'] == 1
     assert net.store.one('SELECT COUNT(*) n FROM deep_permutation_recipe_wins')['n'] == 1
     reopened = Sweeps(net, Jobs())
     assert reopened.recipe_wins(fn['project_id']) == []
+    assert reopened.status('game')['has_activity'] is False
     reopened.record_recipes(fn['id'], {'rewrite': [1, 0, 0, 1, 0, 5]},
                             [('rewrite', 25, 20, '{}', 1235)])
     assert reopened.recipes(fn['project_id'])[0]['tested'] == 1
@@ -474,3 +476,20 @@ def test_start_repeat_clears_only_this_projects_open_passes_and_preserves_improv
     assert started==['deep-permutation-pass'] and result['job']=='repeat-job'
     assert net.store.one('SELECT new_score FROM deep_permutation_improvements WHERE function_id=?',first)['new_score']==25
     assert net._function('f0','game')['best_score']==50
+
+
+def test_activity_visibility_tracks_new_runs_and_discards_reset_job(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    assert obj.status('game')['has_activity'] is False
+    obj.active['game'] = {'job': 'old'}
+    obj.jobs.jobs['old'] = {'state': 'done', 'progress': {'recent_workers': [{'function': 'f0'}]}}
+    assert obj.status('game')['has_activity'] is True
+    status = obj.reset_metrics('game')
+    assert status['has_activity'] is False and status['progress'] == {}
+    assert 'game' not in obj.active
+    reopened = Sweeps(net, Jobs())
+    assert reopened.status('game')['has_activity'] is False
+    monkeypatch.setattr(reopened.jobs, 'start', lambda *args, **kwargs: 'new')
+    reopened.jobs.jobs['new'] = {'state': 'running'}
+    assert reopened.start('game')['has_activity'] is True
+    assert Sweeps(net, Jobs()).status('game')['has_activity'] is True

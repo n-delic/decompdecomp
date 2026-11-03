@@ -453,10 +453,11 @@
           <div><b id="deepSweepLeft">0</b><span>functions left with scored C</span></div>
           <div><b id="deepSweepWaiting">0</b><span>waiting for scored C</span></div>
         </div>
-        <progress class="deep-sweep-bar" id="deepSweepBar" max="1" value="0" aria-label="Deep pass functions completed"></progress>
+        <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Deep pass functions completed"></progress>
         <p class="small" id="deepSweepStatus" role="status"></p>
         <div id="deepSweepRecipes"></div>
         <div id="deepSweepResults" aria-live="polite"></div>
+        <div id="deepActivitySection" hidden>
         <h3>Function activity <span class="muted small" id="deepActivityCount"></span></h3>
         <div class="deep-activity-controls">
           <label><input id="deepActivityOnlyActive" type="checkbox" checked> Active only</label>
@@ -469,7 +470,8 @@
           </select></label>
         </div>
         <div id="deepActivity" class="deep-activity"></div>
-        <details><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
+        </div>
+        <details id="deepSweepLogSection" hidden><summary>Combined technical log</summary><div id="deepSweepLog"></div></details>
       </div>
     </details>
 
