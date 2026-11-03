@@ -935,6 +935,7 @@ async function renderForkSetup() {
   const run = async (start) => {
     if (usingGame) return;
     usingGame = true;
+    for (const id of ["fsVerifyCount", "fsVerifyProgress"]) if ($(id)) $(id).hidden = true;
     setImportStatus(n.saved_progress ? "Importing saved progress — please wait" : "Setting up project — please wait",
       n.saved_progress ? "A temporary game entry may appear in the sidebar. This page will open the finished project automatically." : "This page will open the project when setup finishes.");
     showJobError($("fsLog"), "");
@@ -943,7 +944,20 @@ async function renderForkSetup() {
     box.querySelectorAll("button, input").forEach((b) => { b.disabled = true; });
     try {
       const { job } = await start();
-      const result = await followJob(job, $("fsLog"), (lines) => {
+      const result = await followJob(job, $("fsLog"), (lines, jobState) => {
+        const progress = jobState?.progress;
+        const bar = $("fsVerifyProgress"), count = $("fsVerifyCount");
+        if (bar && count && S.slug === requestedSlug && S.gen === setupGen) {
+          const total = Number(progress?.total), done = Number(progress?.done);
+          const measured = Number.isFinite(total) && total > 0 && Number.isFinite(done);
+          bar.hidden = count.hidden = !measured;
+          if (measured) {
+            const checked = Math.max(0, Math.min(done, total)), percent = 100 * checked / total;
+            bar.max = total; bar.value = checked;
+            count.textContent = `${percent.toFixed(1)}% · ${checked.toLocaleString()} / ${total.toLocaleString()} functions checked`;
+            if (work) work.hidden = true;
+          }
+        }
         const latest = lines.filter(line => line.trim()).at(-1);
         setImportStatus(n.saved_progress ? "Import still running" : "Setup still running", latest || "Preparing project…");
       });
@@ -976,6 +990,8 @@ async function renderForkSetup() {
           <span class="muted small">or</span><input id="fsPath" class="mono grow" placeholder="paste its path on this computer"><button class="ghost" id="fsPathGo" type="button">Use path</button></div>
         <p class="muted small" id="fsFound"></p><pre class="joblog" id="fsFindLog" hidden></pre>
         <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
+        <p class="small" id="fsVerifyCount" role="status" hidden></p>
+        <progress id="fsVerifyProgress" aria-label="Saved functions checked" style="width:100%" hidden></progress>
         <pre class="joblog tall" id="fsLog" hidden></pre>
         <p class="muted small">Then decompdecomp runs the project's setup and build, which can download its tools and take a few minutes. Supported splat projects also get verified reference objects for measuring progress automatically. Put the game in place yourself? <button class="link-btn" id="fsBuild" type="button">Just build</button></p>
       </div><aside class="fs-side">${facts}</aside>`;
@@ -1028,6 +1044,8 @@ async function renderForkSetup() {
         ${n.readme ? `<p class="col-title">From the project's README</p><pre class="readme" id="fsReadme"></pre>` : ""}
         <div class="row"><button class="ghost" id="fsCheck" type="button">Check again</button></div>
         <div class="workbar" role="progressbar" aria-label="Building project" hidden><i></i></div>
+        <p class="small" id="fsVerifyCount" role="status" hidden></p>
+        <progress id="fsVerifyProgress" aria-label="Saved functions checked" style="width:100%" hidden></progress>
         <pre class="joblog tall" id="fsLog" hidden></pre>
       </div><aside class="fs-side">${facts}</aside>`;
     const setupSlug = S.slug;

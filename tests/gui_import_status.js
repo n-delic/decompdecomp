@@ -17,7 +17,11 @@ vm.runInContext(source.slice(source.indexOf('async function renderForkSetup()'),
  const pending=$('fsPathGo').onclick();
  await new Promise(resolve=>setImmediate(resolve));
  assert.match($('fsImportStatus').textContent,/Importing saved progress/);
- updates(['splitting game','Verifying saved functions']);
+ updates(['splitting game','Verifying saved functions'],{progress:{done:25,total:100}});
+ assert.equal($('fsVerifyProgress').value,25);
+ assert.equal($('fsVerifyProgress').max,100);
+ assert.equal($('fsVerifyProgress').hidden,false);
+ assert.match($('fsVerifyCount').textContent,/25.0% · 25 \/ 100 functions checked/);
  assert.match($('fsImportStatus').textContent,/Import still running · Verifying saved functions/);
  finish({slug:'finished-game'});await pending;
  assert.equal(ctx.location.hash,'#/p/finished-game');

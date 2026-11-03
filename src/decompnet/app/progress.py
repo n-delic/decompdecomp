@@ -929,7 +929,13 @@ class Progress:
                 self._check_paused(slug)
                 getattr(destination, "check_cancel", lambda: None)()
             report.check_cancel = check_cancel
-            report.progress = lambda **fields: self._activity(slug, **fields)
+            def progress(**fields):
+                self._activity(slug, **fields)
+                # Import jobs need the same measured counters as the project activity indicator.
+                publish = getattr(destination, "progress", None)
+                if publish is not None:
+                    publish(self.status(slug))
+            report.progress = progress
             getattr(report, "check_cancel", lambda: None)()
             # Captured before any render: the folder's revision is compared with what the database wrote last.
             stored_revision = saves._stored_revision(cfg)
