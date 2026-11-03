@@ -12,6 +12,7 @@ import hashlib
 import json
 import re
 import secrets
+import threading
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -376,6 +377,14 @@ def _ago(ts: float | None) -> str:
     return f"{s}s ago" if s < 120 else f"{s // 60}m ago" if s < 7200 else f"{s // 3600}h ago"
 
 
+# Settings parsed, by their text: GTA San Andreas's are 193 KB, read 4 to 12 times in one request (462 for a range
+# check after a match), and a large PS2 project's are 2 MB, read on every compile and brief. A few versions are kept; each
+# change of a project's settings is a new text, so the cache turns over on its own with nothing to invalidate.
+SETTINGS_KEPT = 8
+_settings: dict[str, dict] = {}
+_settings_lock = threading.Lock()
+
+
 class Network:
     def __init__(self, db_path: str | Path, claim_ttl: int = CLAIM_TTL):
         self.store = Store(db_path)
@@ -385,6 +394,23 @@ class Network:
         self._last_diffs: dict[tuple[int, int], tuple[list, str]] = {}
         self._generation: dict[int, int] = {}  # project id -> changes compiles depend on (bump_generation)
         self._compiled: OrderedDict[str, dict] = OrderedDict()  # compile_key -> result, for repeat_of
+
+    @staticmethod
+    def cfg(proj) -> dict:
+        """A project's settings, parsed once per text and shared by everyone who reads that version: read it, never
+        change it (code that edits settings parses a copy of its own, json.loads(proj["config"])). a large PS2 project's
+        config is 2 MB and read on every compile and brief, so this cache is what keeps those paths off a per-call
+        parse of the whole blob."""
+        text = proj["config"]
+        with _settings_lock:
+            parsed = _settings.get(text)
+        if parsed is None:
+            parsed = json.loads(text)
+            with _settings_lock:
+                if len(_settings) >= SETTINGS_KEPT:
+                    _settings.pop(next(iter(_settings)))  # the oldest version
+                _settings[text] = parsed
+        return parsed
 
     # ------------------------------------------------------------------ agents
 
@@ -544,7 +570,7 @@ class Network:
 
     def _compile(self, proj, header: str, source: str, fn=None):
         """Compiled with the project's compiler, or for `fn` the one its address range is built with."""
-        cfg = json.loads(proj["config"])
+        cfg = self.cfg(proj)
         if fn is not None and cfg.get("compiler_ranges"):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"])}
         return compile_source(compiler_config(Path(proj["root"]), cfg), header, source)
@@ -920,7 +946,7 @@ class Network:
         lines = [f"## {header}: {proj['slug']}/{fn['name']}",
                  f"size {fn['size']} bytes, {fn['n_insns']} instructions, arch {proj['arch']}, "
                  f"context.h v{ctx['version']} ({len(ctx['header'].splitlines())} lines)"]
-        cfg = json.loads(proj["config"])
+        cfg = self.cfg(proj)
         own = compiler_for(cfg, fn["vram"])
         if own is not cfg.get("compiler"):  # a range built by another compiler than the rest of the game
             lines.append(f"compiled with {own['toolchain']} {' '.join(own['flags'])}: this address range's compiler, "
