@@ -58,7 +58,7 @@ def register(app: App) -> None:
     def autopilot(slug: str) -> None:
         """Free matches first, in the background, when the user wants that (the default): a game started from
         scratch, on any platform, as soon as it's ready. A public decomp, or one not set up yet, says no."""
-        if settings.data.get("autopilot", True):
+        if settings.data.get("autopilot", True) and not getattr(app.jobs, "source_update_pending", False):
             try:
                 net.start_autopilot(slug)
             except NetworkError:

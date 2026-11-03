@@ -20,3 +20,11 @@ def test_job_progress_replaces_snapshot_without_mutating_previous_values():
         assert jobs.jobs[jid]['log'] == []
     finally:
         finish.set()
+
+
+def test_source_handoff_blocks_new_jobs_without_starting_them():
+    import pytest
+    jobs=Jobs();jobs.source_update_pending=True
+    with pytest.raises(ValueError,match='source update'):
+        jobs.start('test',lambda log:pytest.fail('should not start'))
+    assert jobs.jobs=={}

@@ -97,15 +97,18 @@ class Jobs:
     def __init__(self, log_path: Path | None = None):
         self.jobs: dict[str, dict] = {}
         self.cancel_events: dict[str, threading.Event] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # Some routes reserve a job under this lock before start().
         self.log_path = log_path
         self.logger = file_log(log_path) if log_path else logging.getLogger("decompdecomp")
 
     def start(self, kind: str, fn, *, cancel_message="Opening the saved project was cancelled.") -> str:
-        jid = uuid.uuid4().hex[:JOB_ID_CHARS]
-        job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
-        cancel = self.cancel_events[jid] = threading.Event()
-        self.jobs[jid] = job
+        with self._lock:
+            if getattr(self, 'source_update_pending', False):
+                raise ValueError('A source update is queued. Wait for restart or cancel it before starting another job.')
+            jid = uuid.uuid4().hex[:JOB_ID_CHARS]
+            job = {"id": jid, "kind": kind, "state": "running", "log": [], "result": None, "error": None, "t": time.time()}
+            cancel = self.cancel_events[jid] = threading.Event()
+            self.jobs[jid] = job
         logger = self.logger
         logger.info("job %s %s started", kind, jid)
 

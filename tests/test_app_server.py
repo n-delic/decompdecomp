@@ -1783,3 +1783,11 @@ def test_generation_metrics_route_is_source_free_and_process_local(app):
     assert response.status_code==200
     result=response.json()
     assert result['retained']>=1 and result['limit']==64 and 'private' not in response.text
+
+
+def test_source_runtime_route_reports_home_and_requires_explicit_data_choice(app):
+    client, _, _ = app
+    status=client.get('/api/update/runtime')
+    assert status.status_code==200 and status.json()['home']
+    rejected=client.post('/api/update/runtime',json={'path':'/not/a/checkout'},headers={'X-Decomp':'1'})
+    assert rejected.status_code==400 and 'Choose current' in rejected.json()['error']

@@ -591,6 +591,21 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.
+
+To avoid rebuilding a packaged app for each code update, open Settings → Run from Git / update when
+idle. Choose a clean `main` checkout from the configured update repository (Git and uv required).
+Choose separate `~/Decomp-dev` data, or explicitly keep this app's current projects/settings. This
+replaces the current process when keeping current data. Separate development data launches another
+app and leaves this one running. Neither copies/migrates data nor alters the installed app bundle.
+New managed agent sessions and jobs are held until existing work finishes. Continuous background
+passes may need to be stopped from their own panels. You can cancel while waiting. Once idle, the
+app fast-forwards main, runs locked dependency sync, checks imports, then restarts with the chosen
+home. Local changes, another branch, a different origin or failed preparation stop the handoff.
+The checkout and selected data remain separate from packaged code: to return to the packaged app,
+quit the source app before opening the installed app using the same data. External AI clients do
+not participate in this managed session drain; finish their work before switching runtimes.
+Backend changes still require this restart; automatic frontend hot reload is not included yet.
+
 On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
 WKWebView against a fresh app, including authentication, external links and close confirmation.
 The homemade N64 demo tests need `brew install llvm lld`, with `$(brew --prefix llvm)/bin` and

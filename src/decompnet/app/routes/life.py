@@ -33,6 +33,8 @@ def register(app: App) -> None:
             return bad
         if request.method == "POST":
             data = await body(request)
+            if runtime.job['state'] in ('waiting','updating','restarting'):
+                return fail(ValueError('Cancel the queued source restart before changing app updates.'))
             if data.get('action') == 'source':
                 try:
                     source = await call(updater.set_source, str(data.get('repo') or ''), str(data.get('branch') or 'main'))
@@ -61,6 +63,23 @@ def register(app: App) -> None:
         except ValueError as e:
             return fail(e)
 
+    from ..source_runtime import Runtime
+    runtime = Runtime(app)
+
+    @mcp.custom_route("/api/update/runtime", methods=["GET", "POST"])
+    async def api_runtime(request: Request) -> Response:
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                if data.get('action') == 'cancel':
+                    return JSONResponse(runtime.stop())
+                return JSONResponse(await call(runtime.start, str(data.get('path') or ''), str(data.get('data_mode') or '')))
+            return JSONResponse(runtime.status())
+        except (ValueError,OSError) as error:
+            return fail(error)
+
     def checking() -> bool:
         return settings.data.get("check_updates", True) is not False and os.environ.get("DECOMP_UPDATES") != "off"
 
@@ -74,7 +93,7 @@ def register(app: App) -> None:
             try:
                 st = updater.status()
                 busy = any(s.state in ("starting", "working") for s in manager.sessions.values())
-                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy:
+                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy and runtime.job["state"] not in ("waiting", "updating", "restarting"):
                     updater.apply()
             except (ValueError, OSError):
                 pass

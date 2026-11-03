@@ -303,7 +303,7 @@ async function showSettingsPage() {
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
   $("setAbout").innerHTML = `<p class="small">${esc(versionLine(st))} on ${esc(st.platform)}. Free and open source (AGPL-3.0): <a class="link" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">its source</a>. Everything runs on this computer: no account, nothing sent to us.</p>
     <p class="small muted">A continuation of <a class="link" href="https://github.com/i12bp8/decomp.wtf" target="_blank" rel="noopener">decomp.wtf</a> by Sam Wolfs, who built it up to 0.10.6. Thank you, Sam.</p>
-    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">A development copy: no updates. Update it with <code>git pull</code>.</p></div>` : `
+    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">Running from a Git checkout. Use the source launcher below to pull main and restart when idle.</p></div>` : `
     <div class="field"><span>Updates come from ${esc(inst.repo || "RetroReversing/decompdecomp")} · ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>
     <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>
@@ -317,6 +317,11 @@ async function showSettingsPage() {
       <button class="ghost small-btn" id="srcBranchGo" type="button">Switch to it</button>${inst.channel === "branch" ? `<button class="ghost small-btn" id="srcRelease" type="button">Back to releases</button>` : ""}</div>
       <p class="muted small">A branch is a change being tested before it's released: it can break. Use one when you're asked to, and say so when you report a problem.</p></div>`}
     <div class="row"><a class="link small" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">Source code</a></div>`;
+  const runtimeButton = document.createElement("button");
+  runtimeButton.type = "button"; runtimeButton.className = "ghost";
+  runtimeButton.textContent = "Run from Git / update when idle…";
+  runtimeButton.onclick = sourceRuntimeDialog;
+  $("setAbout").append(runtimeButton);
   const showUpdate = (u) => {
     if (!$("upText") || !u) return;
     $("upText").textContent = u.error ? u.error : u.available ? `New: ${updateName(u)}` : u.disabled ? "Not looking for updates." : "Up to date.";
@@ -451,7 +456,7 @@ function offerUpdate() {
 }
 async function sourceCheckoutPanel(body) {
   const panel = document.createElement("details");
-  panel.open = !updateInfo.can_apply;
+  panel.open = !updateInfo?.can_apply;
   panel.className = 'update-source';
   panel.innerHTML = `<summary><span>Get the latest Git version</span><span class="chip-s">Source checkout</span></summary><div class="update-source-body">
     <p class="small muted">Download the newest source into its own folder, then run it with uv.</p>
@@ -658,4 +663,51 @@ async function refreshManualMcp() {
     }; });
   } catch(e) { if(read === manualMcpRead) showJobError(log,e.message); }
   finally { finish(); }
+}
+
+
+async function sourceRuntimeDialog() {
+  const body = dialog("Run decompdecomp from Git", `<p>Run directly from a checkout so future updates do not need a rebuilt app.</p>
+    <p class="small muted">Use a clean main checkout from your configured update repository. Git and uv must be installed. Download a new checkout below if needed, then select its folder above.</p>
+    <label class="field"><span>Existing checkout folder</span><div class="row"><input class="mono grow" data-runtime-path><button type="button" class="ghost" data-runtime-browse>Browse…</button></div></label>
+    <label class="field"><span>Projects and settings</span><select data-runtime-data><option value="development">Separate development data (~/Decomp-dev)</option><option value="current">Keep this app’s current projects and settings</option></select></label>
+    <button type="button" class="ghost small-btn" data-runtime-download>Download a new checkout…</button>
+    <p class="small muted" data-runtime-home></p>
+    <p class="small muted">New agent sessions and jobs are held while current work finishes. Keeping current data restarts this process; separate development data opens another app and leaves this one running. Long-running background tasks must finish or be stopped from their panels. The checkout is then pulled with fast-forward only, dependencies are prepared, and the checkout launches. Existing work is not migrated or copied. Close this dialog and return here to check progress.</p>
+    <div class="row"><button class="primary" type="button" data-runtime-go>Pull main & launch when idle</button><button class="ghost" type="button" data-runtime-cancel hidden>Cancel queued restart</button></div>
+    <p role="status" aria-live="polite" data-runtime-status></p><div class="workbar" role="progressbar" aria-label="Preparing source runtime" data-runtime-bar hidden><i></i></div>`);
+  const get = selector => body.querySelector(selector), go=get('[data-runtime-go]'), cancel=get('[data-runtime-cancel]'), path=get('[data-runtime-path]');
+  const render = info => {
+    const job=info.job || {}, busy=['waiting','updating','restarting'].includes(job.state);
+    go.disabled=busy; path.disabled=busy; get('[data-runtime-data]').disabled=busy; get('[data-runtime-browse]').disabled=busy;
+    cancel.hidden=job.state!=='waiting'; get('[data-runtime-bar]').hidden=!busy;
+    get('[data-runtime-status]').textContent=job.message || (info.source_running ? 'Running from source. Pull main here to update without rebuilding the app.' : 'Choose a checkout and which app data to use.');
+    get('[data-runtime-home]').textContent=`Current app data: ${info.home}. Keeping it switches this process to source code; the installed app bundle stays unchanged.`;
+    if (!path.value) path.value=info.path || '';
+  };
+  get('[data-runtime-download]').onclick=()=>{ get('[data-runtime-download]').hidden=true; sourceCheckoutPanel(body); };
+  get('[data-runtime-browse]').onclick=async()=>{
+    try { const selected=await api('/api/pick',{method:'POST',body:{kind:'folder',title:'Choose decompdecomp source checkout'}}); if(selected.path) path.value=selected.path; }
+    catch(error){get('[data-runtime-status]').textContent=error.message;}
+  };
+  go.onclick=async()=>{
+    go.disabled=true;
+    try { render(await api('/api/update/runtime',{method:'POST',body:{path:path.value,data_mode:get('[data-runtime-data]').value}})); }
+    catch(error){get('[data-runtime-status]').textContent=error.message;go.disabled=false;}
+  };
+  cancel.onclick=async()=>{
+    try {render(await api('/api/update/runtime',{method:'POST',body:{action:'cancel'}}));}
+    catch(error){get('[data-runtime-status]').textContent=error.message;}
+  };
+  try {
+    const initial=await api('/api/update/runtime');
+    if(initial.source_running) get('[data-runtime-data]').value='current';
+    render(initial);
+    while(body.isConnected && !$("dialog").hidden){
+      await sleep(1000);
+      if(!body.isConnected || $("dialog").hidden) return;
+      try {render(await api('/api/update/runtime'));}
+      catch(error){get('[data-runtime-status]').textContent='Connection interrupted during restart. Reopen the app if it does not return.';return;}
+    }
+  } catch(error){get('[data-runtime-status]').textContent=error.message;}
 }

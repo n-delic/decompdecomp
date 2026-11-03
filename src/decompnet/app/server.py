@@ -41,7 +41,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     net.deep_sweeps = Sweeps(net, jobs)
 
     def busy() -> bool:
-        return bool(manager.running()) or any(j["state"] == "running" for j in jobs.jobs.values())
+        return bool(getattr(jobs, "source_update_pending", False)) or bool(manager.running()) or any(j["state"] == "running" for j in jobs.jobs.values())
 
     def window_ended():
         """The window ended without the app asking (the page found nothing working, or it crashed): quit, unless
@@ -215,6 +215,9 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
             return JSONResponse({'error':'Use this server’s own browser page.'}, status_code=403)
         if write and request.headers.get("x-decomp") != "1":
             return JSONResponse({"error": "missing header"}, status_code=403)
+        if getattr(jobs, 'source_update_preparing', False) and request.url.path not in (
+                '/api/update/runtime', '/api/close', '/api/log'):
+            return JSONResponse({'error':'Preparing the source runtime. Wait for restart; no new operations can start.'}, status_code=503)
         return None
 
     async def body(request: Request) -> dict:

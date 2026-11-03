@@ -1900,3 +1900,14 @@ setup dialog. Parallel saved verification remains planned: compile immutable inp
 bounded worker pool, then apply normal judge records on the coordinating thread under the existing
 project lock. Calling attempt concurrently inside restore would deadlock on that lock and conflict
 with the single progress-judge agent's claim; do not increase threads around the existing loop.
+
+## Source checkout runtime
+
+Implemented: explicit clean-main Git/uv runtime handoff from Settings. Users choose current data or
+separate development data; new managed agent sessions/jobs are held until known background work
+finishes, then fast-forward/locked sync/import preflight precede a process replacement. Waiting can
+be cancelled. Ordinary development launch remains isolated by default; packaged bundles are untouched.
+
+Planned: automatic frontend file watching/reload preserving the open view, a desktop shortcut that
+remembers a selected source runtime independently of the packaged app, and coordinated idle leases
+for external MCP clients. Current source launches are manual handoffs; backend updates still restart.

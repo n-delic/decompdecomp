@@ -636,6 +636,8 @@ class Manager:
     # -- control
 
     def start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
+        if getattr(self, 'source_update_pending', False):
+            raise ValueError('A source update is queued. Cancel it before adding new agents.')
         options = dict(options or {})
         options["selection"] = self.net.validate_selection(options.get("selection"))
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
@@ -1142,6 +1144,13 @@ class Manager:
             twins.ordered.wait(ORDER_WAIT)
         failures = fast = throttles = limits = auths = connection_failures = 0
         while not s.stop.is_set():
+            if getattr(self, 'source_update_pending', False):
+                why = 'Source update queued: letting existing work finish before restart'
+                if s.why != why:
+                    self._set(s, 'waiting', why, None,
+                              'No new AI session starts until the update finishes or is cancelled.')
+                s.stop.wait(1)
+                continue
             if self._left(s.slug, task := s.options.get("task") or "") == 0:
                 self._finish(s, f"nothing left to {'polish' if task == 'readable' else 'decompile'} here 🎉")
                 break
@@ -1175,7 +1184,10 @@ class Manager:
                            "Helpers using this account resume automatically after reset.")
                 continue
             s.runs += 1
-            self._set(s, "working")
+            with self._lock:
+                if getattr(self, "source_update_pending", False):
+                    continue
+                self._set(s, "working")
             began = time.time()
             before = self._progress(agent.id)
             activity_before = self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] if task == 'readable' else 0
