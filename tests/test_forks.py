@@ -374,6 +374,21 @@ def test_csource_takes_no_macro_written_prototype_for_a_definition():
     assert csource.get(src, "Next").startswith("void Next(void)")
     assert csource.get(src, "CFoo::CFoo").startswith("CFoo::CFoo(int a) : m_a(a)")
     assert csource.get(src, "Get").startswith("int Get() const throw()")
+    # a function returning a pointer to a function closes a parenthesis opened before its name
+    src = "int (*Pick(int a))(int b)\n{\n    return a ? f : g;\n}\n"
+    assert csource.get(src, "Pick") == src
+
+
+def test_an_annotated_function_isnt_the_inline_helper_before_it():
+    """The annotation's definition was the first after it: an inline helper in between was taken for the function,
+    so compiles, polishing and the brief would replace the helper."""
+    src = ("// FUNCTION: 0x00011000\nstatic inline int Clamp(int x)\n{\n    return x < 0 ? 0 : x;\n}\n"
+           "int Score(int x)\n{\n    return Clamp(x) * 2;\n}\n// FUNCTION: 0x00011040\n"
+           "static inline int Only(void)\n{\n    return 1;\n}\n")
+    span = csource.find(src, csource.address_key(0x11000))
+    assert src[span[0]:span[1]].startswith("int Score(int x)")
+    span = csource.find(src, csource.address_key(0x11040))  # an inline function annotated itself is still found
+    assert src[span[0]:span[1]].startswith("static inline int Only(void)")
 
 
 def test_clone_rejects_odd_sources(tmp_path):

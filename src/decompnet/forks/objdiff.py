@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -210,15 +211,21 @@ def _sidecar(base: Path) -> dict | None:
     None for one whose file can't be read. dll2coff rewrites it each time the unit builds, an agent's compile or the
     permuter's; read then, it once looked like "no conflicts" and the progress report matched a 100% function with
     two swapped globals, twice. A read that fails is tried again (the rewrite takes milliseconds); after that the
-    unit's checks are unknown, and callers count its functions as not confirmed."""
+    unit's checks are unknown, and callers count its functions as not confirmed. The checks name the object they're
+    of (`object_sha1`, written before the object): checks of another object (the object's being written, or is
+    another build's) are unknown too."""
     path = base.with_suffix(".ltcg.json")
     for _ in range(SIDECAR_TRIES):
         if not path.is_file():
             return {}
         try:
-            return json.loads(path.read_text(encoding="utf-8")).get("functions", {}) or {}
-        except (OSError, ValueError):
-            time.sleep(SIDECAR_WAIT)
+            found = json.loads(path.read_text(encoding="utf-8"))
+            of = found.get("object_sha1")
+            if of is None or of == hashlib.sha1(base.read_bytes()).hexdigest():
+                return found.get("functions", {}) or {}
+        except (OSError, ValueError, AttributeError):
+            pass
+        time.sleep(SIDECAR_WAIT)
     return None
 
 
@@ -242,7 +249,8 @@ def mapping_conflicts(base: Path | None, symbol: str | None) -> list[MappingConf
     side = _sidecar(base)
     if side is None:
         return [MappingConflict(f"the unit's address checks ({base.with_suffix('.ltcg.json').name}) couldn't be "
-                                "read, so this 100% isn't confirmed; it's being rebuilt: compile again")]
+                                "read, or are of another build of it, so this 100% isn't confirmed; it's being "
+                                "rebuilt: compile again")]
     found = side.get(symbol) or {}
     return [MappingConflict(c) for c in found.get("conflicts", [])] + [DataConflict(c) for c in found.get("data", [])]
 

@@ -338,6 +338,29 @@ def test_a_checks_file_that_cant_be_read_confirms_no_100_percent_of_its_unit(tmp
     assert objdiff.mapping_conflicts(tmp_path / "build" / "v.obj", "_a") == []
 
 
+def test_checks_of_another_object_confirm_nothing_and_a_plain_build_drops_them(tmp_path, monkeypatch):
+    """dll2coff wrote the object, then its checks: a report in between read the new object's 100% by the old
+    checks, and a unit that left harness mode kept its old checks. The checks now name their object and come first,
+    and a plain compile removes them."""
+    import hashlib
+
+    monkeypatch.setattr(objdiff, "SIDECAR_WAIT", 0)
+    obj = tmp_path / "build" / "u.obj"
+    obj.parent.mkdir()
+    obj.write_bytes(b"new object")
+    checks = {"functions": {"_a": {"conflicts": [], "data": []}}}
+    obj.with_suffix(".ltcg.json").write_text(json.dumps({**checks, "object_sha1": hashlib.sha1(b"old").hexdigest()}))
+    assert "another build" in objdiff.mapping_conflicts(obj, "_a")[0].describe()
+    obj.with_suffix(".ltcg.json").write_text(json.dumps({**checks, "object_sha1": hashlib.sha1(b"new object").hexdigest()}))
+    assert objdiff.mapping_conflicts(obj, "_a") == []
+    # a plain compile of the unit (tools/compile.py) removes them before it compiles, whatever the compile does
+    compile_py = Path(dll2coff.__file__).with_name("compile.py")
+    subprocess.run([sys.executable, str(compile_py), "--compiler", str(tmp_path / "no-cl.exe"), "--include", ".",
+                    "--config", "c.json", "--output", str(obj), "--source", "u.cpp"], cwd=tmp_path,
+                   capture_output=True, timeout=60)
+    assert not obj.with_suffix(".ltcg.json").exists()
+
+
 def test_dll2coff_writes_the_object_and_its_checks_whole(tmp_path, monkeypatch):
     """Readers never see a half-written file; Windows refusing the replace while a reader has the file open is
     waited out."""
@@ -550,6 +573,13 @@ def test_an_edit_rebuilds_the_units_that_compile_the_file_and_only_a_header_rebu
     (root / "include" / "state.h").write_text('#include "../harness/u.state.cpp"\n')
     assert built("harness/u.state.cpp") == []  # a header includes it: it could be anywhere
     (root / "include" / "state.h").unlink()
+    # `#include <...>` counts like "...": w's driver including u's source with it builds w too
+    (root / "harness" / "w.drv.cpp").write_text("#include <../src/auto/u.cpp>\nvoid HarnessEntry(void) {}\n")
+    assert built("src/auto/u.cpp") == ["u", "v", "w"]
+    # and a file including what a macro names could include anything: the whole project
+    (root / "harness" / "w.drv.cpp").write_text("#include STATE_FILE\nvoid HarnessEntry(void) {}\n")
+    assert built("src/auto/u.cpp") == []
+    (root / "harness" / "w.drv.cpp").write_text("void HarnessEntry(void) {}\n")
     project.EDIT_UNITS_MAX = 1
     try:
         assert built("src/auto/u.cpp") == []  # too many to be quicker than all of them

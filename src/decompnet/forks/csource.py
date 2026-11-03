@@ -48,8 +48,10 @@ def _block_end(clean: str, brace: int) -> int:
 
 
 def _annotated(text: str, addr: int) -> tuple[int, int] | None:
-    """The first function definition after the annotation, before the next one: types and declarations the code
-    needs may come in between (`struct CRigOwner { ... };`)."""
+    """The function definition after the annotation, before the next one: types and declarations the code needs
+    may come in between (`struct CRigOwner { ... };`), and so may an inline helper (`static inline int Clamp(...)
+    { ... }`), which is never the annotated function when another definition follows: the first that isn't inline,
+    else the first."""
     found = list(_ANNOTATION.finditer(text))
     clean = None
     for n, m in enumerate(found):
@@ -57,29 +59,39 @@ def _annotated(text: str, addr: int) -> tuple[int, int] | None:
             continue
         clean = clean if clean is not None else _blank(text)
         bound = found[n + 1].start() if n + 1 < len(found) else len(text)
-        pos = m.end()
-        while True:
-            brace = clean.find("{", pos, bound)
-            if brace < 0:
-                break  # only declarations up to the next annotation
-            head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
-            head = clean[head_at:brace]
-            if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
-                pos = _block_end(clean, brace)  # a type (or a brace initialiser): past it
-                continue
-            i = head_at
-            while i < brace:  # comments, blank and #pragma lines before the definition's first line
-                end = text.find("\n", i)
-                end = len(text) if end < 0 else end
-                line = text[i:end].strip()
-                if line and not line.startswith(("//", "#")):
-                    break
-                i = end + 1
-            k = _block_end(clean, brace)
-            if k < len(text) and text[k] == "\n":
-                k += 1
-            return min(i, brace), k
+        spans = list(_definitions(text, clean, m.end(), bound))
+        own = [s for s in spans if not _INLINE_HEAD.search(clean[s[0]:s[2]])]
+        if spans:
+            return (own or spans)[0][:2]
     return None
+
+
+_INLINE_HEAD = re.compile(r"\b(?:inline|__inline|__forceinline)\b")
+
+
+def _definitions(text: str, clean: str, pos: int, bound: int):
+    """Each function definition from `pos` to `bound`: (start, end, where its body's `{` is)."""
+    while True:
+        brace = clean.find("{", pos, bound)
+        if brace < 0:
+            return  # only declarations up to the next annotation
+        head_at = max(clean.rfind(";", pos, brace), clean.rfind("}", pos, brace), pos - 1) + 1
+        head = clean[head_at:brace]
+        k = _block_end(clean, brace)
+        pos = k
+        if "(" not in head or re.match(r"\s*(?:typedef\s+)?(?:struct|class|union|enum|namespace)\b", head):
+            continue  # a type (or a brace initialiser): past it
+        i = head_at
+        while i < brace:  # comments, blank and #pragma lines before the definition's first line
+            end = text.find("\n", i)
+            end = len(text) if end < 0 else end
+            line = text[i:end].strip()
+            if line and not line.startswith(("//", "#")):
+                break
+            i = end + 1
+        if k < len(text) and text[k] == "\n":
+            k += 1
+        yield min(i, brace), k, brace
 
 
 def defined_name(text: str, span: tuple[int, int]) -> str | None:
@@ -92,12 +104,16 @@ def defined_name(text: str, span: tuple[int, int]) -> str | None:
 def _unbalanced(between: str) -> bool:
     """True when what lies between a parameter list and the next `{` closes a parenthesis it didn't open: the
     parameter list was inside a macro call (`HEADER_INLINE(int Clamp(int x))`), and the `{` is another function's.
-    Qualifiers, `throw()` and a constructor's initialisers (`: m_a(0)`) open what they close."""
+    Qualifiers, `throw()` and a constructor's initialisers (`: m_a(0)`) open what they close. A `)` followed by a
+    parameter list closes a declarator opened before the name: a function returning a pointer to a function,
+    `int (*f(int a))(int b)`."""
     depth = 0
-    for c in between:
+    for k, c in enumerate(between):
         depth += (c == "(") - (c == ")")
         if depth < 0:
-            return True
+            if not between[k + 1:].lstrip().startswith(("(", "[")):
+                return True
+            depth = 0
     return False
 
 

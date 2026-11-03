@@ -110,6 +110,26 @@ def test_a_units_code_split_over_files_links_in_its_link_order_and_only_there(tm
     assert (root / "build.ninja").read_text() == before
 
 
+def test_export_takes_the_xdk_whose_compiler_is_the_games(tmp_path):
+    """With two XDKs set up, `ninja export` took the first one's linker and imagebld, not the game's XDK's."""
+    root = _project(tmp_path)
+    owns = []
+    for build in ("4627", "5849"):
+        xbox = tmp_path / f"xdk{build}" / "xbox"
+        (xbox / "include").mkdir(parents=True)
+        (xbox / "include" / "xtl.h").write_text("")
+        (xbox / "lib").mkdir()
+        (xbox / "lib" / "xboxkrnl.lib").write_bytes(b"")
+        owns += ["--own", f"MSVC/xdk-{build}=none,{xbox / 'bin' / 'vc71' / 'CL.EXE'},{xbox / 'include'}"]
+    cfg = root / "tools" / "configure.py"
+    cfg.write_text(cfg.read_text().replace('MSVC_VERSION = "7.1"', 'MSVC_VERSION = "MSVC/xdk-5849"'))
+    res = subprocess.run([sys.executable, "tools/configure.py", "v", "--msvc", str(root / "msvc"), *owns], cwd=root,
+                         capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    export = _ninja(root).split("rule export\n", 1)[1].split("\n", 2)[0]
+    assert str(tmp_path / "xdk5849" / "xbox") in export and "xdk4627" not in export
+
+
 def test_objects_depend_on_the_project_files_the_compiler_includes_and_nothing_else(tmp_path):
     root = _project(tmp_path)
     _entry(root)
@@ -129,6 +149,10 @@ def test_objects_depend_on_the_project_files_the_compiler_includes_and_nothing_e
     assert _configure(root).returncode == 0
     old = _ninja(root)
     assert "/showIncludes" not in old.split("rule cl\n", 1)[1].split("\nrule ", 1)[0]
+    # so neither do the harness's objects (an early XDK's Visual C++ 7.0 is the same): every header and harness file
+    drv = old.split("build build/v/ltcg/u/01_u_drv.obj: ", 1)[1].split("\n", 1)[0]
+    assert drv.startswith("ltcg_cc_all ") and "harness/u.drv.cpp" in drv and "cldeps" not in drv
+    assert "/showIncludes" not in old.split("rule ltcg_cc_all\n", 1)[1].split("\nrule ", 1)[0]
     (root / "tools" / "configure.py").write_text(cfg.read_text().replace('"6.0"', '"7.1"'))
     # a stand-in compiler that reports includes as Visual C++ does: inside the project, and an SDK's outside it
     (root / "include" / "core").mkdir()

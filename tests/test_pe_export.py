@@ -114,6 +114,17 @@ def test_a_compiled_function_that_refers_to_the_wrong_data_keeps_the_original(tm
     assert ex.report["compiled"] == [] and ex.report["conflicts"] == []
 
 
+def test_a_game_with_dlls_of_its_own_isnt_said_identical_by_its_program_alone(tmp_path, monkeypatch):
+    """`ninja export` relinks the program only: a game whose DLLs are the project's too (functions.json's modules)
+    would have been "identical" with only its program checked."""
+    config = tmp_path / "functions.json"
+    config.write_text(json.dumps({"exe": "orig/game.exe", "sha1": "0" * 40, "units": {},
+                                  "modules": [{"exe": "orig/engine.dll"}]}))
+    monkeypatch.setattr(sys, "argv", ["export.py", str(config), str(tmp_path / "out"), "--link", "link.exe"])
+    with pytest.raises(SystemExit, match="DLLs of its own"):
+        export.main()
+
+
 def test_kernel_imports_are_named_from_the_import_library():
     def member(name: bytes, body: bytes) -> bytes:
         head = name.ljust(16) + b"0".ljust(12) + b"0".ljust(6) + b"0".ljust(6) + b"644".ljust(8) + \

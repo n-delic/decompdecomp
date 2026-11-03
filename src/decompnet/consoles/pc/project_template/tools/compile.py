@@ -72,6 +72,8 @@ def main() -> int:
     args = parser.parse_args()
     flags = args.flags[1:] if args.flags[:1] == ["--"] else args.flags
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    # a unit built plain has no LTCG checks: one left from its harness builds would be read as this object's
+    Path(args.output).with_suffix(".ltcg.json").unlink(missing_ok=True)
     env, path, wine = None, str, ""
     if args.wine:
         wine, env = wine_setup()

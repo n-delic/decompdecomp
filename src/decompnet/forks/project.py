@@ -50,7 +50,7 @@ _CONFIG_LOCK = threading.Lock()
 EDITABLE = re.compile(r"\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inc|inl)$", re.I)
 FORBIDDEN_PARTS = {".git", STATE, "orig", "build", "asm", "expected", "tools", "config", ".github", "assets", "bin"}
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inc", ".inl"}  # (EDITABLE's)
-_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+)"', re.M)
+_INCLUDE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*(?:"([^"]+)"|<([^>]+)>|([A-Za-z_]))', re.M)  # (3: a macro's)
 # An edit that more units than this compile is checked with a build of the whole project: about as quick by then,
 # and it checks everything (units_built_from)
 EDIT_UNITS_MAX = 16
@@ -858,9 +858,10 @@ class ForkProject:
         return [u for u in self.units() if u.name == p.stem.split(".")[0] and u.base is not None]
 
     def _includers(self, rel: str) -> set[str] | None:
-        """The project's C and C++ files that include `rel`, directly or through others (`#include "..."` resolved
-        as the build's compiler does: beside the file, then include/ and harness/), or None when a header does (a
-        header can be included anywhere: only a whole build knows)."""
+        """The project's C and C++ files that include `rel`, directly or through others (`#include "..."` and
+        `<...>` resolved as the build's compiler does: beside the file, then include/ and harness/), or None when a
+        header does (a header can be included anywhere: only a whole build knows), or when a file includes what a
+        macro names (no reading of the files says what that is)."""
         files: dict[str, str] = {}
         for top in ("src", "harness", "include"):
             base = self.root / top
@@ -871,8 +872,10 @@ class ForkProject:
         included_by: dict[str, set[str]] = {}
         for name, text in files.items():
             for m in _INCLUDE.finditer(text):
+                if m.group(3):
+                    return None
                 for where in (Path(name).parent, Path("include"), Path("harness")):
-                    target = os.path.normpath(where / m.group(1)).replace(os.sep, "/")
+                    target = os.path.normpath(where / (m.group(1) or m.group(2))).replace(os.sep, "/")
                     if target in files:
                         included_by.setdefault(target, set()).add(name)
                         break
