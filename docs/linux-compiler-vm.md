@@ -50,6 +50,15 @@ old snapshots are retained so active jobs cannot lose their compiler.
 
 ## Coverage
 
+PS2 Sony EE-GCC 2.9 (991111), 2.96 and 3.2 use this runner with their original
+32-bit Linux binaries and the pinned i386 runtime. SN Systems EE-GCC 2.95.2 and
+2.95.3 and CodeWarrior PS2 2.3.3/3.0.1 run through the pinned native Mac wibo
+instead and need no VM. CodeWarrior installation requires explicit proprietary
+license acceptance in Setup. Install
+EE-GCC 2.96 and retain that project selection for an existing 2.96 game; changing
+to another compiler version is not needed to resolve the missing-build warning.
+
+
 Original EGCS 1.1.2-4 and GCC 4.4.0 have passed real macOS-to-VM compilation,
 ordinary engine byte-match comparisons, calls/data relocation checks, floating
 point, branches, export-style relative-path builds, timeouts and cancellation
@@ -79,7 +88,29 @@ projects retain their own build scripts; arbitrary imported Make/Ninja builds
 are not automatically moved into the VM. Native rebuilds of the original GNU
 packs and native modern-macOS IRIX emulation remain future options.
 
+PS2 Apple Silicon checks cover all five EE-GCC packs and both CodeWarrior packs: hand-encoded exact/wrong-C
+engine judgments, C++ fallback and nested relative output paths. The EE-GCC 2.96
+demo additionally covers import, 13 game-function matches (calls, data and float
+relocations), machine drafts, C++ methods, and whole-image exports including a
+clean rebuild. A separate engine audit checked claims/briefs, polishing and real
+names, struct hints, redraft, compiler-map access, flag search and explicit compiler comparison, two bounded
+permuter repairs, Check again, progress, and save/restore with fresh judging. The C demo has no vtables or identical twins;
+those queries return their ordinary empty result. Imported Make/Ninja VM builds
+and physical Intel Mac checks remain planned.
+
+Both CodeWarrior versions also build the homemade PS2 demo and match its 13 game
+functions through the engine. Static C++ methods and calls use the normal linked
+judge and whole-image export path. These checks do not identify a retail game's
+compiler; an exact match remains the ordinary judge's decision.
+
 ## Isolated development checks
+
+For the PS2 compiler packs, also set `DECOMP_PS2_MAC_TESTS=1` and run
+`tests/test_ps2_compilers_macos.py tests/test_ps2.py tests/test_consoles.py -k ps2`.
+These cover host routing, exact and wrong C, C++ fallback, and relative-path builds.
+The tests never accept licenses or install packs; install CodeWarrior explicitly
+with license acceptance before enabling its integration cases.
+
 
 Use a scratch toolchain root and a separate VM profile, never the installed app's
 projects or the user's default Colima VM. After installing only the desired packs

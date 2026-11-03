@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet import hostenv, toolchains
+from decompnet import hostenv, linuxvm, toolchains
 from decompnet.app import agents as app_agents
 from decompnet.app import launcher, macwindow, picker, updates, window
 
@@ -63,11 +63,13 @@ def test_mac_finds_detached_helpers_even_with_spaces_in_home(tmp_path):
 
 @pytest.mark.parametrize("cpu", ["x86_64", "arm64"])
 def test_mac_hosts_use_pinned_tools(cpu, monkeypatch):
+    monkeypatch.setattr(linuxvm, "wanted", lambda: True)
     monkeypatch.setattr(toolchains, "current_platform", lambda: "macos-" + cpu)
     monkeypatch.setattr(toolchains.wsl, "wanted", lambda: False)
     assert toolchains.unsupported_cpu() is None
     assert toolchains.get("gcc-2.7.2-kmc").supported
-    assert not toolchains.get("ee-gcc-2.96").supported
+    assert toolchains.get("ee-gcc-2.96").supported
+    assert toolchains.get("ee-gcc-2.96").via_vm
     assert all(p["sha256"] and p.get("rosetta") for p in toolchains.get("gcc-2.7.2-kmc").parts_for())
 
 

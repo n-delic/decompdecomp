@@ -394,3 +394,23 @@ def test_guest_archive_checksum_and_escape_are_rejected(tmp_path):
     part['sha256'] = hashlib.sha256(archive.read_bytes()).hexdigest()
     with pytest.raises(tarfile.FilterError):
         linuxvm_worker.unpack_part(tmp_path, part)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='guest worker uses POSIX subprocess limits')
+def test_guest_compile_creates_export_output_parents(tmp_path, monkeypatch):
+    monkeypatch.setattr(linuxvm_worker, 'child_limits', lambda: None)
+    result = linuxvm_worker.compile_job({
+        'files': {}, 'outputs': ['build/src/unit/probe.o'], 'timeout': 5,
+        'argv': [sys.executable, '-c',
+                 "from pathlib import Path; Path('build/src/unit/probe.o').write_bytes(b'object')"],
+    }, tmp_path)
+    assert result['returncode'] == 0, result['stderr']
+    assert base64.b64decode(result['files']['build/src/unit/probe.o']) == b'object'
+
+
+def test_guest_validates_output_paths_before_starting_compiler(tmp_path, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail('compiler must not start with an escaping output path')
+    monkeypatch.setattr(linuxvm_worker.subprocess, 'Popen', unexpected)
+    with pytest.raises(ValueError, match='escapes'):
+        linuxvm_worker.compile_job({'files': {}, 'outputs': ['../outside/probe.o'], 'argv': [], 'timeout': 5}, tmp_path)

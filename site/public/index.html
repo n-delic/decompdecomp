@@ -71,7 +71,7 @@
     <label><input type="radio" name="platform" value="gc"><span>GameCube</span></label>
     <label><input type="radio" name="platform" value="wii"><span>Wii</span></label>
     <label><input type="radio" name="platform" value="ps1"><span>PlayStation</span></label>
-    <label><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
+    <label title="EE-GCC also runs on macOS: Sony builds through the local Linux runner, SN Systems and CodeWarrior builds through wibo"><input type="radio" name="platform" value="ps2"><span>PlayStation 2</span></label>
     <label><input type="radio" name="platform" value="ps3"><span>PlayStation 3</span></label>
     <label><input type="radio" name="platform" value="psp"><span>PSP</span></label>
     <label><input type="radio" name="platform" value="pc"><span>Windows PC</span></label>
@@ -127,7 +127,7 @@
       <ol class="stations">
         <li><small>Your file</small><b>Disc or ELF</b><span>the game's main program</span></li>
         <li><small>Split by</small><b>splat</b><span>with spimdisasm</span></li>
-        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2, CodeWarrior 2.3.3 / 3.0.1; C and C++; one compiler per address range when a game mixes them; another build from your own copy</span></li>
+        <li><small>Built by</small><b>EE-GCC or CodeWarrior</b><span>EE-GCC 2.9 to 3.2 (Sony builds through the local Linux runner on Mac; SN Systems and CodeWarrior builds through wibo), CodeWarrior 2.3.3 / 3.0.1 (also on Mac through wibo, with license acceptance); C and C++; one compiler per address range when a game mixes them; another build from your own copy</span></li>
         <li><small>Judged by</small><b>Linking</b><span>at the function's real address, compared byte for byte</span></li>
         <li><small>You get</small><b>A rebuildable project</b><span>that builds the program again, byte for byte</span></li>
       </ol>
@@ -257,7 +257,7 @@ jr      $ra
       <p class="step-note">Linux: run it in your terminal. It installs the app and compilers, then opens the app in its own window. There's also a .deb, an .rpm and an AppImage on the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">releases page</a>.</p>
       <p class="step-note">Windows 10 and 11: download and open <code>decompdecomp-&lt;version&gt;-windows-x64-setup.exe</code> from the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">latest release</a>. The app opens in a native Windows window, with desktop and Start shortcuts and a tray icon. PS1, PS2 and most N64 games also need WSL 2 for their period compilers: run <code>wsl --install</code> in an administrator PowerShell, restart if asked, then open Ubuntu once. GameCube, Wii, DS and Windows PC games, and N64 games built with IDO, don't.</p>
       <p class="cmd"><code id="cmd-macos">curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main</code><button type="button" class="copy" data-copy-from="cmd-macos">Copy</button></p>
-      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS1/PS2 period compilers need Linux; macOS has no menu bar tray icon yet.</p>
+      <p class="step-note">macOS 12+ on Intel and Apple Silicon: installs the current source and a Finder app in ~/Applications. Apple Silicon needs Rosetta for the Intel N64 KMC compiler and binutils. PS2 Sony EE-GCC needs the optional local Linux runner: install <code>brew install colima docker</code>, then choose Prepare Linux runner in Compilers &amp; tools. SN Systems EE-GCC 2.95.2/2.95.3 and CodeWarrior PS2 2.3.3/3.0.1 use wibo; CodeWarrior requires license acceptance in Setup. macOS has no menu bar tray icon yet.</p>
       <p class="step-note">There's also a downloadable macOS app on the <a href="https://github.com/RetroReversing/decompdecomp/releases/latest">latest release</a>: download macos_arm64 for Apple Silicon or macos_x86_64 for Intel, unzip it, move decompdecomp.app to Applications, and open it from Finder. It isn't signed, so macOS may ask you to approve its first launch in Privacy &amp; Security.</p>
       <p class="step-note">The update dialog also offers a Git source download into a new folder: use Browse to choose its parent folder, then download. It includes Git/uv setup links and commands to run a separate development copy. It follows your configured update repository and branch.</p>
       <p class="step-note">RetroReversing fork builds show their version and source commit in the app sidebar and startup log. Include both when reporting an issue; clients need a fresh app package to receive new client-side features.</p>
