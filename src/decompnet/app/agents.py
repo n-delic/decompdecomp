@@ -1136,7 +1136,7 @@ class Manager:
         except ValueError as e:
             raise Fatal(str(e)) from e
         cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
-        cmd = agents.cli_argv(cmd)
+        cmd = k.launch_command(agents.cli_argv(cmd))
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
         env = dict(os.environ, PWD=str(workdir), **{HELPER_ENV: str(self.home)}, **more)
