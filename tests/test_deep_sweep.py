@@ -493,3 +493,38 @@ def test_activity_visibility_tracks_new_runs_and_discards_reset_job(sweep, monke
     reopened.jobs.jobs['new'] = {'state': 'running'}
     assert reopened.start('game')['has_activity'] is True
     assert Sweeps(net, Jobs()).status('game')['has_activity'] is True
+
+
+def test_attention_lists_only_current_unresolved_failures(sweep):
+    obj, net, _, _ = sweep
+    cfg = obj.config('game')
+    proj = net.project_row('game')
+    for name in ('f0', 'f1', 'f2', 'f3'):
+        fn = net._function(name, 'game')
+        scope = deep_sweep.signature(net, proj, fn, cfg['minutes'], cfg['max_variants'])
+        obj.record(fn, scope, 'error', cfg['minutes'], cfg['max_variants'], error='invalid API token')
+    status = obj.status('game')
+    assert status['errors'] == 2
+    assert [issue['function'] for issue in status['attention']] == ['f0', 'f1']
+    assert status['attention'][0]['error'] == 'invalid API token'
+    assert 'internal search worker' in status['attention'][0]['action']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
+        db.execute("UPDATE functions SET best_source='int f1(void) {return 4;}' WHERE name='f1'")
+    assert obj.status('game')['attention'] == []
+    assert obj.status('game')['errors'] == 0
+    # Historical error records remain available, but no longer raise a warning.
+    assert net.store.one("SELECT COUNT(*) n FROM deep_permutation_passes WHERE state='error'")['n'] == 4
+
+
+def test_attention_omits_unscored_candidates(sweep):
+    obj, net, _, _ = sweep
+    cfg, proj = obj.config('game'), net.project_row('game')
+    fn = net._function('f0', 'game')
+    scope = deep_sweep.signature(net, proj, fn, cfg['minutes'], cfg['max_variants'])
+    obj.record(fn, scope, 'error', cfg['minutes'], cfg['max_variants'],
+               error='The saved C does not compile in the current context; fix its declarations before deep search.')
+    assert 'compile its saved C' in obj.status('game')['attention'][0]['action']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_score=NULL WHERE name='f0'")
+    assert obj.status('game')['attention'] == []

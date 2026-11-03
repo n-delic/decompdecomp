@@ -3,12 +3,12 @@ const fs = require("fs"), vm = require("vm"), assert = require("assert");
 const elements = new Map();
 function element(id) {
   if (!elements.has(id)) {
-    let html = "", tables = [], sorts = [];
+    let html = "", tables = [], sorts = [], attention = [];
     elements.set(id, {dataset:{}, textContent:"", value:0, hidden:false, disabled:false,
       get innerHTML() { return html; }, set innerHTML(value) {
-        html = value; sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
+        html = value; attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
       },
-      querySelector:()=>null, querySelectorAll(selector) { return selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
+      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
       replaceChildren() { this.innerHTML = ""; this.textContent = ""; },
       append() {},
     });
@@ -16,7 +16,8 @@ function element(id) {
   return elements.get(id);
 }
 let follower, finished = 0;
-const ctx = {renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn(){},
+const opened = [];
+const ctx = {renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String, openFn:name=>opened.push(name),
   document:{createElement:()=>({})},
   beginWork:()=>()=>finished++, showJobError:()=>{},
   followJob:(job, log, callback, active)=>new Promise(resolve=>{follower={job,callback,active,resolve};}),
@@ -31,6 +32,17 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepSweepResults({has_activity:false, completed:12, queue_done:12, improvements:[]});
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,true);
   assert.equal(element("deepSweepResults").innerHTML,"");
+  assert.equal(element("deepSweepAttention").hidden,true);
+  ctx.renderDeepSweepResults({has_activity:true,attention:[{function:"broken",error:"Compile failed",action:"Fix declarations"}]});
+  assert.equal(element("deepSweepAttention").hidden,false);
+  assert.equal(element("deepSweepAttentionTitle").textContent,"1 function could not be searched — view reasons");
+  assert.match(element("deepSweepAttentionList").innerHTML,/Compile failed/);
+  assert.match(element("deepSweepAttentionList").innerHTML,/Fix declarations/);
+  element("deepSweepAttentionList").querySelectorAll("[data-deep-attention]")[0].onclick();
+  assert.deepEqual(opened,["broken"]);
+  ctx.renderDeepSweepResults({has_activity:false,attention:[]});
+  assert.equal(element("deepSweepAttention").hidden,true);
+  assert.equal(element("deepSweepAttentionList").innerHTML,"");
   await ctx.renderDeepSweep();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
 

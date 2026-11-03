@@ -7,7 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .. import candidate_scope, scoring
-from ..network import NetworkError
+from ..network import IN_BUILD, NetworkError
 from . import agent_tokens, deep_permuter, workers
 from .deep_activity import Activity
 
@@ -177,15 +177,46 @@ class Sweeps:
         return [dict(row) | {'starting_percent_text': scoring.percent_text(row['starting_percent']),
                              'new_percent_text': scoring.percent_text(row['new_percent'])} for row in rows]
 
+    def attention(self, proj):
+        """Only failures that still block this build's unchanged, eligible candidates."""
+        rows = self.net.store.all(
+            'SELECT f.*,d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
+            'd.max_variants AS pass_variants FROM functions f '
+            'JOIN deep_permutation_passes d ON d.function_id=f.id '
+            f"WHERE f.project_id=? AND f.status='open' AND f.{IN_BUILD} AND d.state='error'",
+            proj['id'])
+        issues = []
+        for fn in rows:
+            if not fn['best_source'] or fn['best_score'] is None:
+                continue
+            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants']):
+                continue
+            error = fn['pass_error'] or 'The search stopped without recording an error message.'
+            lower = error.lower()
+            if 'quality' in lower:
+                action = 'Review this candidate in Repair examples before searching again.'
+            elif 'does not compile' in lower or 'no longer compile' in lower or 'declarations' in lower:
+                action = 'Open the function and compile its saved C; fix any reported declaration or compiler errors.'
+            elif 'token' in lower:
+                action = 'An internal search worker lost authentication. Retry with the updated app.'
+            elif 'compiler' in lower or 'toolchain' in lower:
+                action = 'Check this function’s compiler settings and test its saved C.'
+            else:
+                action = 'Open the function to inspect its saved C and compiler settings.'
+            issues.append({'function': fn['name'], 'error': error, 'action': action})
+        return sorted(issues, key=lambda issue: issue['function'])
+
     def status(self, slug):
         proj = self.net.project_row(slug)
         counts = self.net.store.one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
                                     "FROM functions WHERE project_id=? AND status='open'", proj['id'])
         completed = self.net.store.one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id "
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
-        errors = self.net.store.one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id WHERE f.project_id=? AND d.state='error'", proj['id'])['n']
+
         improvements = self.improvements(proj['id'])
         cfg = self.config(slug)
+        attention = self.attention(proj)
+        errors = len(attention)
         # Matching the current build can inspect project files. Cache the result briefly so opening
         # details or polling a running pass does not repeatedly hash every completed function.
         ready = counts['ready'] or 0
@@ -220,7 +251,7 @@ class Sweeps:
                       'queue_left': max(0, ready - done_open), 'awaiting_source': max(0, counts['total'] - ready),
                                    'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
                                    'measurements': measurements,
-                                   'completed': completed, 'errors': errors, 'state': job.get('state', 'idle'), **current,
+                                   'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
                                    'progress': job.get('progress', {}), 'error': job.get('error')}
 
     def start(self, slug, minutes=5, max_variants=10000, repeat=False, threads=0):

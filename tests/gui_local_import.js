@@ -11,7 +11,7 @@ const host = { _html: "", set innerHTML(html) {
 elements.set("[data-project-groups]", host);
 const box = { innerHTML: "", querySelector: get, querySelectorAll: () => [] };
 let importedPaths;
-const ctx = { console, Set, Map, Array, Number, String, encodeURIComponent,
+const ctx = { window: {addEventListener() {}}, console, Set, Map, Array, Number, String, encodeURIComponent,
   $: get, esc: value => String(value).replaceAll("<", "&lt;"), plural: (n, word) => `${n} ${word}s`, policyHtml: () => "Rules",
   beginWork: () => () => {}, showJobError: () => {}, loadState: async () => {}, loadNav: () => {},
   api: async (url, data) => { importedPaths = data.body.paths; return { job: "job" }; },

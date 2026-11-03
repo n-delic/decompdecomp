@@ -1034,6 +1034,14 @@ $("sourcePrepExportRun").onclick = async () => {
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0;
 function renderDeepSweepResults(status) {
+  const attention = status.attention || [];
+  $("deepSweepAttention").hidden = !attention.length;
+  $("deepSweepAttentionTitle").textContent = `${attention.length} function${attention.length === 1 ? "" : "s"} could not be searched — view reasons`;
+  $("deepSweepAttentionList").innerHTML = attention.map((issue, index) => `<div class="panel"><button type="button" class="ghost small-btn mono" data-deep-attention="${index}">${esc(issue.function)}</button><p>${esc(issue.error)}</p><p class="small muted">${esc(issue.action)}</p></div>`).join("");
+  $("deepSweepAttentionList").querySelectorAll("[data-deep-attention]").forEach(button => {
+    button.onclick = () => openFn(attention[Number(button.dataset.deepAttention)].function);
+  });
+
   const visible = status.has_activity ?? (status.state === "running" || !!status.completed || !!status.errors
     || !!status.improvements?.length || !!status.recipe_wins?.length || !!status.measurements?.length);
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = !visible;
@@ -1104,6 +1112,8 @@ async function renderDeepSweep() {
     delete panel.dataset.loadedSlug;
     for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = true;
     $("deepActivity").replaceChildren();
+    $("deepSweepAttention").hidden = true;
+    $("deepSweepAttentionList").replaceChildren();
     $("deepSweepLog").replaceChildren();
     $("deepSweepStatus").textContent = "Loading deep pass…";
     $("deepSweepStart").disabled = true;
@@ -1142,7 +1152,7 @@ async function renderDeepSweep() {
     $("deepSweepWaiting").textContent = (status.awaiting_source || 0).toLocaleString();
     $("deepSweepBar").max = Math.max(1, done + left);
     $("deepSweepBar").value = done;
-    $("deepSweepStatus").textContent = status.error || (status.errors ? `${status.errors} functions need attention.` : "");
+    $("deepSweepStatus").textContent = status.error ? `Deep pass stopped: ${status.error}` : "";
     $("deepSweepStatus").hidden = !$("deepSweepStatus").textContent;
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
   } catch (error) { if (S.slug === slug && version === deepSweepProjectVersion) { $("deepSweepLogSection").hidden = false; showJobError($("deepSweepLog"), error.message); } }
