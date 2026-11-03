@@ -1998,3 +1998,13 @@ shared connector/account/model configuration rejection, user claim handover,
 current-versus-historical baseline messages, shorter default experiment guidance,
 and global/per-agent tool presets with task usage and schema character counts.
 Normal claim ownership and byte/objdiff judging remain required across both modes.
+
+### Open-file pressure during long-running work
+
+Done: POSIX app startup raises only its own soft descriptor limit to 8,192 when the
+existing hard limit permits, preserving higher limits and tolerating denied changes.
+Worker SQLite readers close immediately at thread exit instead of waiting for cyclic
+GC; cancelled compiler stdout/stderr pipes close even when exception frames are retained.
+These shared fixes cover both project modes; Windows retains its native handle limits.
+A scratch run of 300 short-lived reader threads under a 256-descriptor limit with GC
+disabled completed without errors. The app does not change machine-wide launch limits.

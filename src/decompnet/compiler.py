@@ -199,6 +199,10 @@ def _exec(cfg: CompilerConfig, work: Path, argv: list[str], timeout: float, cwd:
                 os.killpg(proc.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        # communicate closes these on success, but cancellation can happen first.
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
         compiler_processes.untrack(proc.pid)
 
 

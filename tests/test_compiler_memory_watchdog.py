@@ -98,3 +98,19 @@ def test_silent_imported_build_times_out_while_reading_stdout(tmp_path, monkeypa
     script = 'import subprocess,sys; subprocess.Popen([sys.executable,"-c","import time; time.sleep(60)"])'
     ok, output = ForkProject(tmp_path).run([sys.executable, '-c', script], timeout=.5)
     assert not ok and 'timed out' in output
+
+
+def test_cancelled_compiler_closes_pipes_even_while_exception_is_retained(tmp_path,monkeypatch):
+    from decompnet import compiler
+    popen=subprocess.Popen;processes=[]
+    def start(*args,**kwargs):
+        proc=popen(*args,**kwargs);processes.append(proc);return proc
+    monkeypatch.setattr(compiler.subprocess,'Popen',start)
+    def cancel():raise RuntimeError('cancelled')
+    with compiler.cancellable(cancel), pytest.raises(RuntimeError,match='cancelled'):
+        compiler._exec(compiler.CompilerConfig(cmd=[],sandbox='none'),tmp_path,
+                       [sys.executable,'-c','import time;time.sleep(30)'],10)
+    # Retaining Popen must not retain its stdout/stderr descriptors after cancellation.
+    proc=processes[0]
+    assert proc.poll() is not None
+    assert proc.stdout.closed and proc.stderr.closed

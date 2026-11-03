@@ -67,6 +67,27 @@ def no_core_dumps() -> None:
         pass
 
 
+def raise_open_file_limit(target: int = 8192) -> int | None:
+    """Raise this process's soft limit only; desktop launchers can start macOS at 256.
+
+    Children inherit it. Never lower an existing limit or change the hard limit, and
+    tolerate hosts that do not permit the increase (Windows has no resource module).
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+    try:
+        soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft==resource.RLIM_INFINITY or soft>=target:return soft
+        desired=target if hard==resource.RLIM_INFINITY else min(target,hard)
+        if desired>soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE,(desired,hard))
+        return resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    except (ValueError,OSError):
+        return None
+
+
 def killed_for_memory(returncode: int) -> bool:
     return returncode in (137, -9)
 

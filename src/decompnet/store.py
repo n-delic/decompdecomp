@@ -299,6 +299,28 @@ WAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 IN_MEMORY = ":memory:"  # a database only its own connection sees: reads go through the writer's connection
 
 
+class _ThreadReader:
+    """Close a worker's SQLite reader when thread-local storage is released.
+
+    SQLite connections contain cycles; dropping the last thread-local reference
+    alone can leave their WAL/database descriptors open until cyclic GC runs.
+    """
+    def __init__(self,path):
+        self.conn=sqlite3.connect(path,isolation_level=None,check_same_thread=False)
+        try:
+            self.conn.row_factory=sqlite3.Row
+            self.conn.execute("PRAGMA query_only=1").close()
+        except BaseException:
+            self.conn.close()
+            raise
+
+    def __del__(self):
+        # Only its owning thread reads this connection. Allow finalization from
+        # another thread too, if the Store itself is collected after workers exit.
+        try:self.conn.close()
+        except Exception:pass
+
+
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -398,20 +420,21 @@ class Store:
         wrote) and for an in-memory database, reads go through the writer's connection."""
         if self.path == IN_MEMORY or getattr(self._local, "in_tx", False):
             return None
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self.path, isolation_level=None)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA query_only=1")  # a write here would bypass the writer's lock
-            self._local.conn = conn
-        return conn
+        reader = getattr(self._local, "reader", None)
+        if reader is None:
+            reader = _ThreadReader(self.path)
+            self._local.reader = reader
+        return reader.conn
 
     def _read(self, sql: str, args: tuple, single: bool):
         conn = self._reader()
         if conn is None:
             with self.lock:
                 cur = self.conn.execute(sql, args)
-                return cur.fetchone() if single else cur.fetchall()
+                try:
+                    return cur.fetchone() if single else cur.fetchall()
+                finally:
+                    cur.close()
         cur = conn.execute(sql, args)
         try:
             return cur.fetchone() if single else cur.fetchall()

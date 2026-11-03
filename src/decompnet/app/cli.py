@@ -352,7 +352,9 @@ def main(argv: list[str] | None = None) -> int:
     ii.add_argument("--repo", default="RetroReversing/decompdecomp")
     args = ap.parse_args(argv)
     __import__("decompnet").utf8_output()
-    __import__("decompnet.limits").limits.no_core_dumps()
+    from .. import limits
+    limits.raise_open_file_limit()
+    limits.no_core_dumps()
     return {"setup": setup, "stop": stop, "shortcut": shortcut, "update": update_cmd,
             "install-info": install_info}.get(args.cmd, run)(args)
 
