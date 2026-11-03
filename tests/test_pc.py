@@ -3121,6 +3121,28 @@ def test_two_jump_tables_and_a_byte_table_relocate_each_entry_once():
     assert fn.size == 0x32  # the byte table is the function's, the int3s after it aren't
 
 
+def test_a_jumps_index_table_ends_at_its_first_byte_past_the_cases_and_a_lookup_table_runs_on():
+    # F: movzx eax, byte [ecx+B]; jmp [eax*4+T] (2 cases); ret. B's bytes 0, 1, 0 index T; the code after them (G,
+    # which only a vtable reaches: Ghidra has no row for it) starts with a byte past T's 2 cases
+    f = bytes.fromhex("0fb681 17100010" "ff2485 0f100010" "c3") + struct.pack("<2I", LOW + 0x100E, LOW + 0x100E)
+    g = bytes.fromhex("33c0" "c3")
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x100F, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + bytes([0, 1, 0]) + g + b"\xcc" * 3), rows)
+    assert (found[0].size, found[1].addr) == (0x1A, LOW + 0x101A)  # G is a function of its own, not F's
+    # a byte table F only looks values up in (its load isn't the jump's index) keeps its whole run, as before
+    f = bytes.fromhex("0fb681 1c100010" "ba 01000000" "ff2495 14100010" "c3") + struct.pack("<2I", *[LOW + 0x1013] * 2)
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1014, "name": "", "source": "DEFAULT"}]
+    found = scratch_pe.analyse(_code(f + bytes([5, 6, *range(7, 21)])), rows)
+    assert [(fn.addr, fn.size) for fn in found] == [(LOW + 0x1000, 0x2C)]
+
+
+def test_a_mask_equal_to_a_functions_start_is_a_number():
+    f = bytes.fromhex("81e2 10100010" "c3").ljust(0x10, b"\xcc")  # and edx, <G's start>; ret
+    rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1007, "name": "", "source": "DEFAULT"},
+            {"entry": LOW + 0x1010, "end": LOW + 0x1011, "name": "", "source": "DEFAULT"}]
+    assert scratch_pe.analyse(_code(f + b"\xc3"), rows)[0].relocs == []
+
+
 def test_a_purge_ghidra_couldnt_work_out_counts_as_none():
     assert scratch_pe.decorate("f", "__stdcall", 2147483647, 0) == "_f"
     assert scratch_pe.decorate("f", "__stdcall", 8, 2) == "_f@8"
