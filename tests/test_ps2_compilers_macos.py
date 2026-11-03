@@ -25,7 +25,7 @@ def test_mac_ps2_compilers_select_the_runner_for_their_binary_format(monkeypatch
         tc = toolchains.get(tid)
         assert tc.supported and tc.via_vm and not tc.parts_for()
         assert all(toolchains.get(dep).via_vm for dep in tc.requires)
-    for tid in SN:
+    for tid in SN + MW:
         tc = toolchains.get(tid)
         assert tc.supported and not tc.via_vm and tc.requires == ['wibo']
         assert toolchains.get('wibo').parts_for(host)
@@ -34,14 +34,16 @@ def test_mac_ps2_compilers_select_the_runner_for_their_binary_format(monkeypatch
     assert all(toolchains.get(tid).proprietary for tid in MW)
 
 
-@pytest.mark.parametrize('tid', SONY + SN)
+@pytest.mark.parametrize('tid', SONY + SN + MW)
 def test_real_mac_ps2_engine_and_export_compile(tmp_path, tid):
     """No downloads in tests: opt in after installing packs in a scratch toolchain root/VM."""
     if (os.environ.get('DECOMP_PS2_MAC_TESTS') != '1'
             or not toolchains.current_platform().startswith('macos-') or not toolchains.installed(tid)):
         pytest.skip('needs opt-in and an isolated installed PS2 compiler')
-    # Hand-encoded return a+b: GCC 3.2 also moves the result through a0.
-    code = '212085000800e0032d108000' if tid == 'ee-gcc-3.2' else '0800e00321108500'
+    # Hand-encoded return a+b: GCC 3.2 moves the result through a0; CodeWarrior
+    # adds before returning, leaving a nop in the delay slot.
+    code = ('211085000800e00300000000' if tid in MW else
+            '212085000800e0032d108000' if tid == 'ee-gcc-3.2' else '0800e00321108500')
     target = bytes.fromhex(code)
     (tmp_path / 'homemade.bin').write_bytes(target)
     flags = toolchains.get(tid).flags
@@ -78,3 +80,15 @@ def test_real_mac_ps2_engine_and_export_compile(tmp_path, tid):
     assert cpp.ok and cpp.language == 'c++', cpp.log
     method = extract_function(cpp.obj, 'probe')
     assert method.arch == 'mips' and not method.big_endian and method.code
+
+
+@pytest.mark.parametrize('tid', MW)
+def test_mac_codewarrior_requires_license_acceptance_before_download(tmp_path, monkeypatch, tid):
+    monkeypatch.setenv('DECOMPNET_TOOLCHAINS', str(tmp_path))
+    monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda _: None)
+    def unexpected(*args, **kwargs):
+        pytest.fail('a proprietary pack must not download without acceptance')
+    monkeypatch.setattr(toolchains, '_download', unexpected)
+    with pytest.raises(toolchains.ToolchainError, match='accept-license'):
+        toolchains.install(tid, log=lambda *_: None)

@@ -390,7 +390,7 @@ flags = ["-O2"]
 [["mwcps2-2.3.3".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-2.3.3-000906.tar.gz"
 sha256 = "c2a4e463f8f7b324350d6bfb26d6daed83f4d5cb46df8b20dcfec8617b22ad5d"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 ["mwcps2-3.0.1"]
 cplusplus = true
@@ -406,7 +406,7 @@ flags = ["-O2"]
 [["mwcps2-3.0.1".parts]]
 url = "https://github.com/decompme/compilers/releases/download/compilers/mwcps2-3.0.1b145-050209.tar.gz"
 sha256 = "d021f7d02ab63da770c13dc246637276141321ca08221ee2333a7acadf82482b"
-platforms = ["linux-x86_64"]
+platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
 
 # PlayStation Portable. Every CodeWarrior build below writes the same note into what it compiles ("MW MIPS C Compiler
 # (3.0.0)"): only its code tells them apart. They build at -O3: a PSP game with debug symbols matches there, and -O2

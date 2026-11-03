@@ -324,11 +324,10 @@ def test_a_game_built_with_two_compilers(tmp_path):
     assert row["status"] == "open" and "entity_default_hp" in row["best_source"] and row["best_score"]
 
 
-@pytest.mark.parametrize("toolchain", ["ee-gcc-2.96", "ee-gcc-3.2"])
+@pytest.mark.parametrize("toolchain", ["ee-gcc-2.96", "ee-gcc-3.2", "mwcps2-2.3.3", "mwcps2-3.0.1"])
 def test_a_function_written_as_a_cpp_method_matches(toolchain, tmp_path):
-    """GTA San Andreas is C++ (2,493 of its indirect calls are virtual calls): a function can be written as a class's
-    method. C that compiles stays C; the rest compiles as C++, and GCC's names (2.9x: clamp_s32__4Mathiii, 3.2:
-    _ZN4Math9clamp_s32Eiii) are given back to the game's before it's judged."""
+    """A C++ PS2 game's functions can be written as static class methods. C that compiles stays C; the rest
+    compiles as C++, and each compiler's mangled names are mapped to the game's before linked-byte judging."""
     if toolchains.installed(toolchain) is None:
         pytest.skip(f"needs {toolchain}")
     build = DEMO / "build" if toolchain == "ee-gcc-2.96" else DEMO / "build" / toolchain
