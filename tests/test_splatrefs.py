@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import shlex
 from types import SimpleNamespace
 
 import pytest
@@ -112,6 +113,8 @@ def synthetic_project(root, platform):
     (root / 'baserom.z64').write_bytes(image)
     (root / 'build/program.z64').write_bytes(image)
     (root / 'candidate.s').write_text(source.replace(',7', ',8'))
+    (root / 'Makefile').write_text(
+        f'all:\n\t{shlex.quote(assembler)} {" ".join(console.as_flags)} -o build/src/demo.o candidate.s\n')
     splatrefs.run([assembler, *console.as_flags, '-o', 'build/src/demo.o', 'candidate.s'], root, print)
     (root / 'include').mkdir()
     (root / 'include/macro.inc').write_text('.macro glabel name\n.global \\name\n.type \\name,@function\n\\name:\n.endm\n.macro endlabel name\n.size \\name,.-\\name\n.endm\n.macro nonmatching name,size=1\n.endm\n')
@@ -141,6 +144,10 @@ def test_generated_targets_are_rom_derived_and_failed_generation_is_atomic(tmp_p
     monkeypatch.setattr(splatrefs, 'verify', real_verify)
     assert splatrefs.generate(ForkProject(tmp_path), tmp_path / 'splat.yaml', cfg, consoles.get(platform))
     objdiff = json.loads((tmp_path / 'objdiff.json').read_text())
+    expected_build = ForkProject(tmp_path).setup_commands()[-1]
+    assert [objdiff['custom_make'], *objdiff['custom_args']] == expected_build
+    built, message = ForkProject(tmp_path).run(expected_build, log=lambda *_: None)
+    assert built, message
     target = tmp_path / objdiff['units'][0]['target_path']
     base = tmp_path / objdiff['units'][0]['base_path']
     with target.open('rb') as stream:
@@ -165,3 +172,45 @@ def test_paths_cannot_escape_the_checkout_through_symlinks(tmp_path):
         pytest.skip('host does not allow directory symlinks')
     with pytest.raises(ForkError, match='inside this checkout'):
         splatrefs.inside(root, 'linked/reference.o')
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_versioned_splat_uses_the_selected_yaml_and_make_arguments(tmp_path, monkeypatch, nested):
+    template = ('config/$(VERSION)/$(BASENAME).$(VERSION).yaml' if nested
+                else '$(BASENAME).$(VERSION).yaml')
+    (tmp_path / 'Makefile').write_text('BASENAME := game\nVERSION ?= us\n'
+                                      f'extract:\n\tpython -m splat split {template}\n')
+    for version in ('pal', 'us'):
+        path = (tmp_path / 'config' / version / f'game.{version}.yaml' if nested
+                else tmp_path / f'game.{version}.yaml')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f'options:\n  platform: n64\n  target_path: baserom.{version}.z64\n'
+            'segments:\n  - type: code\n    start: 0\n    vram: 2147484672\n')
+    project = ForkProject(tmp_path)
+    seen = []
+    monkeypatch.setattr(type(consoles.get('n64')), 'generate_objdiff',
+                        lambda self, fp, path, config, **kwargs: seen.append((path.name, kwargs['version'])) or True)
+    assert project.generate_objdiff(version='us', log=lambda *_: None)
+    assert seen == [('game.us.yaml', 'us')]
+    assert project.generate_objdiff(version='pal', log=lambda *_: None)
+    assert seen[-1] == ('game.pal.yaml', 'pal')
+    with pytest.raises(ForkError, match='several Splat configs'):
+        project.generate_objdiff(log=lambda *_: None)
+    with pytest.raises(ForkError, match='Could not identify'):
+        project.generate_objdiff(version='jp', log=lambda *_: None)
+
+
+@pytest.mark.skipif(toolchains.installed('binutils-mips') is None, reason='needs pinned MIPS binutils')
+def test_generated_objdiff_keeps_versioned_project_make_command(tmp_path, monkeypatch):
+    cfg = synthetic_project(tmp_path, 'n64')
+    project = ForkProject(tmp_path)
+    monkeypatch.setattr(project, 'setup_commands',
+                        lambda version=None: [['make', f'VERSION={version}', '-j2']])
+    assert splatrefs.generate(project, tmp_path / 'splat.yaml', cfg, consoles.get('n64'),
+                              version='us', log=lambda *_: None)
+    data = json.loads((tmp_path / 'objdiff.json').read_text())
+    assert data['custom_make'] == 'make'
+    assert data['custom_args'] == ['VERSION=us', '-j2']
+    built, message = project.run([data['custom_make'], *data['custom_args']], log=lambda *_: None)
+    assert built, message

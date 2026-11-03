@@ -122,13 +122,13 @@ class Console:
     def __repr__(self) -> str:
         return f"<console {self.id}>"
 
-    def generate_objdiff(self, project, config_path, config, log=print) -> bool:
+    def generate_objdiff(self, project, config_path, config, version: str | None = None, log=print) -> bool:
         """Generate byte-verified Splat references for consoles with pinned assembler tools."""
         if not self.reference_tools:
             return False
         from ..forks.splatrefs import generate
 
-        return generate(project, config_path, config, self, log=log)
+        return generate(project, config_path, config, self, version=version, log=log)
 
     @property
     def features(self) -> frozenset[str]:

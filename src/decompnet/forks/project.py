@@ -221,6 +221,39 @@ class ForkProject:
                 return p
         return None
 
+    def _splat_yaml_for_version(self, version: str | None) -> Path | None:
+        """Select the Splat config named by Make; never guess from sorted YAML files."""
+        candidates = []
+        for path in sorted(self.root.glob("*.yaml")) + sorted(self.root.glob("config/**/*.yaml")):
+            try:
+                text = path.read_text(errors="replace", encoding="utf-8")
+            except OSError:
+                continue
+            if "segments:" in text and "options:" in text:
+                candidates.append(path)
+        if not version:
+            if len(candidates) > 1:
+                raise ForkError("This project has several Splat configs; select a build version before generating objdiff.")
+            return candidates[0] if candidates else None
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", version):
+            raise ForkError("The selected build version is not a safe Splat version name.")
+        makefile = self.root / "Makefile"
+        if not makefile.is_file():
+            return None
+        make = makefile.read_text(errors="replace", encoding="utf-8")
+        basename = re.search(r"^BASENAME\s*[:?]?=\s*([A-Za-z0-9_-]+)\s*$", make, re.M)
+        paths = []
+        if basename and "config/$(VERSION)/$(BASENAME).$(VERSION).yaml" in make:
+            paths.append(self.root / "config" / version / f"{basename[1]}.{version}.yaml")
+        if basename and "$(BASENAME).$(VERSION).yaml" in make:
+            paths.append(self.root / f"{basename[1]}.{version}.yaml")
+        if "decompressed.$(VERSION).yaml" in make:
+            paths.append(self.root / f"decompressed.{version}.yaml")
+        selected = [p for p in paths if p in candidates]
+        if len(selected) != 1:
+            raise ForkError(f"Could not identify the Splat config Make uses for version {version}.")
+        return selected[0]
+
     def _inside(self, rel: str) -> str | None:
         """`rel` as a clean path inside the project, or None if it points outside or is a template."""
         if not rel or "__" in rel or "$" in rel or "{" in rel:
@@ -461,16 +494,16 @@ class ForkProject:
             log("compiling every source file, so objdiff can measure each one (some work in progress may not compile)")
             self.build_all(log=log)
         if not (self.root / "objdiff.json").exists():
-            self.generate_objdiff(log=log)
+            self.generate_objdiff(version=version, log=log)
         if not (self.root / "objdiff.json").exists():
             raise ForkError("the project built, but has no objdiff.json, so decompdecomp can't measure matches. "
                             "Some projects generate it with an extra step; check the README.")
 
-    def generate_objdiff(self, log=print) -> bool:
+    def generate_objdiff(self, version: str | None = None, log=print) -> bool:
         """Create missing, ROM-verified references for a supported Splat layout."""
         if (self.root / "objdiff.json").exists():
             return False
-        path = self._splat_yaml()
+        path = self._splat_yaml_for_version(version)
         if path is None:
             return False
         import yaml
@@ -482,7 +515,8 @@ class ForkProject:
             config = yaml.safe_load(path.read_text(encoding="utf-8"))
             if not isinstance(config, dict) or not isinstance(config.get("options"), dict):
                 raise ForkError("automatic objdiff setup needs a supported Splat configuration")
-            return consoles.get(config["options"].get("platform")).generate_objdiff(self, path, config, log=log)
+            return consoles.get(config["options"].get("platform")).generate_objdiff(
+                self, path, config, version=version, log=log)
         except (OSError, ValueError, ELFError, yaml.YAMLError, subprocess.TimeoutExpired,
                 toolchains.ToolchainError) as error:
             raise ForkError(f"automatic objdiff setup could not finish: {error}. Check the project's setup manually.") from None

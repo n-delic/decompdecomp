@@ -260,7 +260,7 @@ def reference_symbols(work: Path) -> dict[str, int]:
     return definitions
 
 
-def generate(project, config_path: Path, config: dict, console, log=print) -> bool:
+def generate(project, config_path: Path, config: dict, console, version: str | None = None, log=print) -> bool:
     """Publish references and objdiff.json only after the complete set passes verification."""
     root = project.root.resolve()
     if (root / 'objdiff.json').exists():
@@ -363,8 +363,10 @@ def generate(project, config_path: Path, config: dict, console, log=print) -> bo
                 if mappings:
                     entry['symbol_mappings'] = mappings
             entries.append(entry)
+        build = project.setup_commands(version)[-1]
         pending = work / 'objdiff.json'
-        pending.write_text(json.dumps({'custom_make': 'make', 'build_target': False, 'build_base': True,
+        pending.write_text(json.dumps({'custom_make': build[0], 'custom_args': build[1:],
+                                       'build_target': False, 'build_base': True,
                                        'units': entries,
                                        'coverage_notes': ([] if matching else [
                                            'The source rebuild has not passed the whole-image checksum. Function '
