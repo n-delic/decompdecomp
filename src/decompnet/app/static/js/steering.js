@@ -1125,6 +1125,7 @@ async function renderDeepSweep() {
     $("deepSweepResults").replaceChildren();
     for (const id of ["deepSweepDone", "deepSweepLeft", "deepSweepWaiting"]) $(id).textContent = "0";
     $("deepSweepBar").value = 0;
+    $("deepSweepProgressText").textContent = "";
   }
   const version = deepSweepProjectVersion;
   try {
@@ -1152,6 +1153,7 @@ async function renderDeepSweep() {
     $("deepSweepWaiting").textContent = (status.awaiting_source || 0).toLocaleString();
     $("deepSweepBar").max = Math.max(1, done + left);
     $("deepSweepBar").value = done;
+    $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left).toLocaleString()} functions completed · ${done + left ? Math.floor(100 * done / (done + left)) : 0}%`;
     $("deepSweepStatus").textContent = status.error ? `Deep pass stopped: ${status.error}` : "";
     $("deepSweepStatus").hidden = !$("deepSweepStatus").textContent;
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
@@ -1186,6 +1188,7 @@ async function followDeepSweep(slug, job) {
             $("deepSweepWaiting").textContent = (status.awaiting_source || 0).toLocaleString();
             $("deepSweepBar").max = Math.max(1, done + left);
             $("deepSweepBar").value = done;
+                $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left).toLocaleString()} functions completed · ${done + left ? Math.floor(100 * done / (done + left)) : 0}%`;
           }
         }).catch(() => {}).finally(() => { refreshing = false; });
       }

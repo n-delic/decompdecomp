@@ -440,21 +440,29 @@
     <details class="panel settings-disclosure" id="deepSweepPanel">
       <summary class="panel-head"><h2>Deep permutation pass</h2><span class="muted small">all unmatched functions · no AI tokens</span></summary>
       <div class="pad">
-        <p class="small muted">Give each function a longer turn through local repairs and random permutations. Completed passes are saved. After restarting the app, start the deep pass again to continue. Changed source, headers or compiler inputs make a function eligible again.</p>
-        <div class="row"><label>Maximum minutes per function<input id="deepSweepMinutes" type="number" min="1" max="120" value="5"></label><label>Variants per function<input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"></label><label title="Functions searched at once. Empty: as many as this computer can spare. More threads finish sooner and leave the app slower to respond.">Threads<input id="deepSweepThreads" type="number" min="1" placeholder="auto"></label></div>
-        <label class="check"><input id="deepSweepRepeat" type="checkbox"><span>Repeat previously completed passes</span></label>
-        <div class="row"><button id="deepSweepStart" type="button" class="primary">Deep permute untested functions</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop deep pass</button><button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button></div>
-        <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
+        <p class="deep-sweep-intro">Search saved C with local repairs and random rewrites. Verified improvements are saved as they happen.</p>
+        <div class="deep-sweep-settings">
+          <label class="field"><span>Time limit per function</span><input id="deepSweepMinutes" type="number" min="1" max="120" value="5"><small>Maximum minutes</small></label>
+          <label class="field"><span>Variants per function</span><input id="deepSweepVariants" type="number" min="1" max="1000000" value="10000"><small>Candidate limit for each turn</small></label>
+          <label class="field"><span>Parallel threads</span><input id="deepSweepThreads" type="number" min="1" placeholder="auto"><small>Functions searched at once; blank uses automatic</small></label>
+          <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, continue with untested or changed functions.</small></span></label>
+          <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Deep permute untested functions</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop deep pass</button><button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button></div>
+        </div>
         <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep pass progress">
-          <div><b id="deepSweepMatched">0</b><span>functions matched</span></div>
-          <div><b id="deepSweepImproved">0</b><span>functions improved</span></div>
-          <div><b id="deepSweepActive">0</b><span>working now</span></div>
-          <div><b id="deepSweepDone">0</b><span>functions done</span></div>
-          <div><b id="deepSweepLeft">0</b><span>functions left with scored C</span></div>
-          <div><b id="deepSweepWaiting">0</b><span>waiting for scored C</span></div>
+          <div><b id="deepSweepMatched">0</b><span>Matched</span></div>
+          <div><b id="deepSweepImproved">0</b><span>Improved</span></div>
+          <div><b id="deepSweepActive">0</b><span>Searching now</span></div>
+          <div><b id="deepSweepDone">0</b><span>Passes completed</span></div>
+          <div><b id="deepSweepLeft">0</b><span>Ready to search</span></div>
+          <div><b id="deepSweepWaiting">0</b><span>Waiting for scored C</span></div>
         </div>
         <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Deep pass functions completed"></progress>
+        <p class="deep-sweep-progress-text small muted" id="deepSweepProgressText"></p>
         <p class="small" id="deepSweepStatus" role="status"></p>
+        <details class="deep-sweep-help"><summary>How this search works</summary>
+          <p class="small muted">Completed passes are saved across restarts. Start the pass again after restarting the app to continue. Changes to source, headers or compiler inputs make a function eligible again.</p>
+          <p class="small muted">Each thread picks a different eligible function in random order. Turns start with half the time allowance and extend after improvements, up to your maximum. Repeated identical output can rotate sooner; rotated functions remain eligible next run. Local searches can run alongside agents using saved, scored C; agents keep their claims. Compiler/header changes are deferred while claimed. Room guests still follow the host’s claims. Functions without scored C wait for a draft. Only the ordinary byte judge can save a match. A completed pass means its bounded turn finished, not that every possible rewrite was tried.</p>
+        </details>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="small muted">These searches stopped with an error for the current saved C and settings. Matched and set-aside functions, and errors for changed inputs, are excluded.</p><div id="deepSweepAttentionList"></div><p class="small muted">After fixing an issue, start the deep pass again. To retry unchanged inputs, enable “Repeat previously completed passes” before starting.</p></details>
         <div id="deepSweepRecipes"></div>
         <div id="deepSweepResults" aria-live="polite"></div>
