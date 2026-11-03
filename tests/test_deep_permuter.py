@@ -572,3 +572,46 @@ def test_duplicate_deep_search_is_rejected_before_runner_credentials_rotate(monk
             deep_permuter.run(net, 'game', 'f', 1, 10, Log())
     finally:
         lock.release()
+
+
+def test_local_phase_deadline_yields_without_consuming_global_budget(monkeypatch):
+    net = setup(monkeypatch)
+    search = deep_permuter.Search(net,1,100,Log())
+    monkeypatch.setattr(deep_permuter.time,'monotonic',lambda: 20)
+    calls = []
+    monkeypatch.setattr(Permuter,'_score',lambda *a: calls.append(1) or 40)
+    best,_ = search.local_repairs(AGENT,net.project_row('game'),net.function(),40,None,phase_deadline=19)
+    assert best==40 and calls==[]
+    assert search.local_status['reason']=='phase_budget'
+
+
+@pytest.mark.parametrize('imported',[False,True])
+def test_initial_local_phase_reserves_compile_allowance_for_random(monkeypatch,imported):
+    net = setup(monkeypatch,imported)
+    monkeypatch.setattr(draft_repairs,'variants',lambda *a,**kw: ['local'+str(i) for i in range(50)])
+    seen = []
+    monkeypatch.setattr(Permuter,'_score',lambda self,agent,proj,fn,source,best,fork: seen.append(source) or 40)
+    batches(monkeypatch,['random'])
+    result = deep_permuter.run(net,'game','f',1,10,Log())
+    assert len([s for s in seen if s.startswith('local')])<=5
+    assert 'random' in seen
+    assert result['tested']<=10
+
+
+def test_structurally_distinct_high_score_seed_can_recover_exact_match(monkeypatch):
+    net = setup(monkeypatch)
+    original = net.function()['best_source']
+    monkeypatch.setattr(draft_repairs,'variants',lambda source,*a,**kw: {original:['typed_seed'], 'typed_seed':['exact']}.get(source,[]))
+    monkeypatch.setattr(deep_permuter.stack_padding_repairs,'grow',lambda *a: [])
+    net._last_diffs = {}
+    def judge(self,agent,proj,fn,source,best,fork):
+        net._last_diffs[agent.id,fn['id']] = ([('>','','nop')],None)
+        if source=='exact':
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET best_source='exact',best_score=0,status='matched' WHERE id=?",(fn['id'],))
+            return 0
+        assert net.function()['best_source']==original
+        return 440
+    monkeypatch.setattr(Permuter,'_score',judge)
+    search = deep_permuter.Search(net,1,10,Log())
+    assert search.local_repairs(AGENT,net.project_row('game'),net.function(),80,None)==(0,'exact')

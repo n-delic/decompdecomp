@@ -376,3 +376,19 @@ and consistent typed global access then matched exactly. Moving a colour load
 manually only reached 80; packing rewrites and a ten-minute deep pass did not solve
 it. An inserted NOP had shifted many later branch offsets. Diagnose the first
 actual byte mismatch before interpreting those downstream rows as separate faults.
+
+The `typed_global_identity` local family now proposes this specific case: repeated
+pointer-cell reads through an absolute cast and/or a simple byte-array-offset macro,
+with the cell address corroborated by raw target instructions. It introduces a
+candidate-local typed extern and unifies those reads. Volatile/qualified cells,
+non-byte bases and conflicting declarations are excluded. It does not infer a
+pointer cell from a similar-looking pointee address or change shared headers.
+A private replay generated the known 440-to-0 exact result automatically.
+
+`block_accumulator_lifetime` tries independent integer accumulators in existing
+blocks when the outgoing value is dead. A private replay reproduced 480-to-440;
+it is a bounded hypothesis, not a guarantee that every local should move inward.
+Keep structurally different near misses: the lowest numeric score can be a poor
+starting point for a declaration/context repair. Deep search now reserves half
+its remaining time and compile allowance for random rewriting after the initial
+local phase (one in-flight compile can cross the time boundary).

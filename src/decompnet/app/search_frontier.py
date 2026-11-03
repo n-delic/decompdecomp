@@ -83,6 +83,10 @@ class Frontier:
             candidate = min(positioned, key=lambda n:(n['summary']['position_differences'],n['score']))
             if candidate not in selected:
                 selected.append(candidate)
+        # Reserve distinct failure kinds before filling allocation variants of one kind.
+        for candidate in structural:
+            if not any(n['kind'] == candidate['kind'] for n in selected):
+                selected.append(candidate)
         for candidate in structural:
             if not any(n['allocation'] == candidate['allocation'] for n in selected):
                 selected.append(candidate)

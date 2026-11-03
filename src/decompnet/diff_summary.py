@@ -47,6 +47,15 @@ def text(rows):
 def advice(rows):
     """Suggest a bounded next experiment from rendered evidence, never infer byte equality."""
     report=summarize(rows);counts=report['counts']
+    shifted = [(i,row) for i,row in enumerate(rows or []) if len(row)==3 and row[0] in {'>','<'}]
+    if len(shifted)==1 and (shifted[0][1][1] or shifted[0][1][2]).strip()=='nop' and counts['branch_target']>=2:
+        index,_ = shifted[0]
+        earlier = any(len(row)==3 and row[0]!=' ' for row in rows[:index])
+        return ('One unmatched NOP accompanies multiple branch-target differences. Inspect '+
+                ('the earlier mismatch first' if earlier else 'the NOP scheduling boundary first')+
+                '; downstream branch differences may follow an instruction-position shift. '
+                'Check local lifetimes and consistent typed global access before changing branches. '
+                'This is advisory: linked bytes remain authoritative.')
     if counts['register'] and sum(counts.values())==counts['register']:
         return (f"Only {counts['register']} rendered register differences remain. Try allocation/address staging "
                 "and existing-load qualification with try_local_repairs; compare debug-flag variants through "
