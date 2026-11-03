@@ -1911,3 +1911,8 @@ be cancelled. Ordinary development launch remains isolated by default; packaged 
 Planned: automatic frontend file watching/reload preserving the open view, a desktop shortcut that
 remembers a selected source runtime independently of the packaged app, and coordinated idle leases
 for external MCP clients. Current source launches are manual handoffs; backend updates still restart.
+
+Hosted rooms in both address and quick-tunnel modes now restore automatically with existing invites
+and members, with startup/error feedback. Fixed endpoints preserve client links across restarts;
+account-free quick-tunnel hostnames expire when their process exits. A named-tunnel provisioning UI
+and managed stable relay discovery remain planned; no stable quick-tunnel hostname is promised.

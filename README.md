@@ -1322,3 +1322,17 @@ MIPS code audits recognize a bounded guarded jump-table pattern and trace local
 pointer loads into indirect calls. Reviewed table mappings allow every case path to
 be checked; raw mapping and indexed-callback hypotheses remain labelled for review.
 These findings never adopt code or change match status.
+
+### Keeping a hosted room across app restarts
+
+Rooms left open are reopened automatically when the host starts decompdecomp again. Their invite
+code, approval settings and saved members remain; explicitly stopped rooms stay closed. The room
+dialog shows restoration failures and lets you retry without discarding membership.
+
+Cloudflare's account-free quick tunnel assigns a new hostname when its process starts. The app
+cannot recover that expired hostname: quick-tunnel clients still need the new link. For automatic
+reconnection using the same link, choose **Decompile together → Use stable address…** and supply a
+reachable LAN/Tailscale/server address and its room port. Share that fixed link once. The address
+must remain assigned/reachable and any external proxy/named tunnel must be running. This serves only
+the room API, not the app GUI or agent MCP endpoint. A fixed endpoint does not make an offline host
+available; clients reconnect when the host and endpoint return.

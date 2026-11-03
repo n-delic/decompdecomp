@@ -602,9 +602,10 @@ async function renderTeam(box) {
   renderHost(box, info);
   teamTimer = setInterval(async () => {
     if (!teamOpen()) { clearInterval(teamTimer); return; }
+    if (box._editingAddress) return;
     if (box.contains(document.activeElement) && document.activeElement.matches("input")) return;  // typing
     const inf = await api(`/api/collab?slug=${S.slug}`).catch(() => null);
-    if (inf && inf.sharing && teamOpen()) renderHost(box, inf);
+    if (inf && (inf.sharing || inf.restoring || inf.restore_error || info.restoring) && teamOpen()) renderHost(box, inf);
   }, TEAM_HOST_EVERY_MS);
 }
 
@@ -631,22 +632,30 @@ function renderGuest(box, room) {
 
 function renderHost(box, info) {
   if (box._working) return;
-  const intro = `<p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) using a browser or their own app and agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
+  if (info.restoring && !info.sharing) {
+    setHtml(box, '<p role="status">Reopening your hosted room… Saved members and the invite are being restored.</p><div class="workbar" role="progressbar" aria-label="Reopening room"><i></i></div>');
+    return;
+  }
+  const intro = `${info.sharing ? `<p class="notice">${info.stable_link ? "This room reopens automatically after restart. Clients can reconnect using this same link while the configured address remains reachable." : "This room reopens automatically after restart and remembers members. Quick tunnels get a new address each time; for a permanent reconnect link, use an address you control (LAN, Tailscale or a server)."}</p>` : ""}<p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) using a browser or their own app and agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
   const opts = (inf) => `<div class="setup-group"><h3>Who can join</h3>
       <div class="seg" id="visSeg"><button type="button" data-vis="private" class="${inf.settings.visibility !== "public" ? "on" : ""}">Private: invite link</button><button type="button" data-vis="public" class="${inf.settings.visibility === "public" ? "on" : ""}">Public: anyone with the address</button></div>
       <label class="check"><input type="checkbox" id="apprChk" ${inf.settings.approve ? "checked" : ""}><span>I let each new member in (they wait until you approve)</span></label></div>`;
   if (!info.sharing) {
     const sugg = (info.addresses || []).map((a) => `<button type="button" class="chip" data-addr="${esc(a.address)}">${esc(a.label)}: <span>${esc(a.address)}</span></button>`).join("");
-    setHtml(box, `${intro}${info.was_sharing ? `<div class="notice"><span>This room was shared before the app restarted. Share it again: members keep their place.</span></div>` : ""}
+    setHtml(box, `${intro}${info.was_sharing ? `<div class="notice"><span>${info.changing_address ? "Choose a reachable fixed address. The room stays online while you edit; members and the invite will be kept." : info.restore_error ? `Automatic room restore failed: ${esc(info.restore_error)}. Retry below; members and the invite are kept.` : "This saved room is not online. Reopen it below; members and the invite are kept."}</span></div>` : ""}
       <div class="setup-group"><h3>How teammates reach this computer</h3>
-        <label class="check"><input type="radio" name="mode" value="tunnel" ${info.mode !== "address" ? "checked" : ""} ${info.tunnel_supported ? "" : "disabled"}><span><b>Quick tunnel</b>: works from anywhere, nothing to set up (Cloudflare's free tunnel). The address changes when the app restarts; members then paste the new link.</span></label>
+        <label class="check"><input type="radio" name="mode" value="tunnel" ${info.mode !== "address" ? "checked" : ""} ${info.tunnel_supported ? "" : "disabled"}><span><b>Quick tunnel</b>: works from anywhere, nothing to set up (Cloudflare's free tunnel). Reopens automatically after restart and keeps members and the invite, but Cloudflare assigns a new address; members must paste the new link. Choose an address you control to keep the same link.</span></label>
         <label class="check"><input type="radio" name="mode" value="address" ${info.mode === "address" ? "checked" : ""}><span><b>An address you control</b>: this network, Tailscale, or a server with its own domain. It stays the same, so the room reopens by itself after a restart.</span></label>
         <div id="addrBox" ${info.mode === "address" ? "" : "hidden"}>
           <label class="field"><span>The address teammates use (the room listens on port <input id="addrPort" class="mono port" type="number" value="${info.port || ROOM_PORT}">)</span><input id="addrIn" class="mono" placeholder="http://192.168.1.20:6481" value="${esc(info.address || "")}"></label>
           <div class="chips">${sugg}</div></div></div>
       ${opts(info)}
-      <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="primary" id="startShare" type="button">Start sharing</button></div><pre class="joblog" id="shareLog" hidden></pre>`);
+      <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="primary" id="startShare" type="button">${info.changing_address ? "Use this address" : "Start sharing"}</button>${info.changing_address ? `<button class="ghost" id="cancelAddress" type="button">Keep current link</button>` : ""}</div><pre class="joblog" id="shareLog" hidden></pre>`);
     wireRoomMatchReview(box);
+    if (info.changing_address) box.querySelector('#cancelAddress').onclick = async () => {
+      box._editingAddress = false;
+      renderHost(box, await api(`/api/collab?slug=${S.slug}`));
+    };
     box.querySelectorAll('[name="mode"]').forEach((r) => { r.onchange = () => { box.querySelector("#addrBox").hidden = r.value !== "address" || !r.checked; }; });
     box.querySelectorAll("[data-addr]").forEach((b) => { b.onclick = () => { box.querySelector("#addrIn").value = b.dataset.addr; }; });
     box.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => box.querySelectorAll("[data-vis]").forEach((x) => x.classList.toggle("on", x === b)); });
@@ -663,7 +672,7 @@ function renderHost(box, info) {
           port: Number(box.querySelector("#addrPort")?.value) || ROOM_PORT, keep: info.was_sharing } });
         await followJob(job, log);
         const shared = await api(`/api/collab?slug=${S.slug}`);
-        box._working = false;
+        box._working = false; box._editingAddress = false;
         renderHost(box, shared);
         toast("Room sharing started.", "match");
       } catch (e) { showJobError(log, e.message); } finally { finish(); box._working = false; }
@@ -683,7 +692,7 @@ function renderHost(box, info) {
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
     <div class="setup-group"><h3>In the room · ${members.length} member${members.length === 1 ? "" : "s"}, ${online} online</h3>${people || `<p class="muted small">Nobody yet.</p>`}</div>
     ${opts(info)}
-    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
+    <div class="row"><button class="ghost" data-room-matches>Review pending matches</button>${!info.stable_link ? `<button class="ghost" id="stableAddress" type="button">Use stable address…</button>` : ""}<button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
   wireCopies(box);
   wireRoomMatchReview(box);
   const manage = async (payload) => {
@@ -695,6 +704,10 @@ function renderHost(box, info) {
   box.querySelectorAll("[data-decline]").forEach((b) => { b.onclick = () => manage({ action: "decline", name: b.dataset.decline }); });
   box.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => manage({ action: "settings", visibility: b.dataset.vis }); });
   box.querySelector("#apprChk").onchange = (e) => manage({ action: "settings", approve: e.target.checked });
+  if (box.querySelector('#stableAddress')) box.querySelector('#stableAddress').onclick = () => {
+    box._editingAddress = true;
+    renderHost(box, {...info, sharing:false, was_sharing:true, mode:'address', changing_address:true});
+  };
   box.querySelector("#rotate").onclick = () => { if (confirm("Make a new invite link? The old one stops working for people who haven't joined yet; members stay in.")) manage({ action: "rotate" }); };
   box.querySelector("#stopShare").onclick = async () => {
     await api("/api/collab/stop", { method: "POST", body: { slug: S.slug } });

@@ -30,7 +30,8 @@ def register(app: App) -> None:
 
     # The tunnel only ever reaches this separate little server, never the GUI or the MCP endpoint above.
 
-    share = {"servers": {}, "tunnel": None, "links": {}}
+    share = {"servers": {}, "tunnel": None, "links": {}, "restore_errors": {}, "restore_job": None}
+    room_lock = threading.RLock()
 
     def collab_server(public_port: int | None = None) -> int:
         """The room server: on 127.0.0.1 behind a quick tunnel, or on every network interface at `public_port` for
@@ -66,7 +67,7 @@ def register(app: App) -> None:
         share["servers"][key] = (server, port)
         return port
 
-    def open_room(slug: str, mode: str, address: str = "", port: int = 0, log=print, keep: bool = False) -> str:
+    def _open_room(slug: str, mode: str, address: str = "", port: int = 0, log=print, keep: bool = False) -> str:
         room = net.rooms.get(slug) or collab.Room(net, slug)
         if mode == "address":
             address = address.strip().rstrip("/")
@@ -88,14 +89,21 @@ def register(app: App) -> None:
         share["links"][slug] = link
         return link
 
-    # rooms shared at an address of the host's own come back when the app starts, with the same invite
-    for p in net.store.all("SELECT slug, config FROM projects"):
-        c = json.loads(p["config"]).get("collab") or {}
-        if c.get("open") and c.get("mode") == "address" and c.get("address"):
-            try:
-                open_room(p["slug"], "address", c["address"], int(c.get("port") or 6481), keep=True)
-            except (NetworkError, OSError):
-                pass
+    def open_room(*args, **kwargs):
+        with room_lock:
+            link = _open_room(*args, **kwargs)
+            share['restore_errors'].pop(args[0], None)
+            return link
+
+    if any((json.loads(p['config']).get('collab') or {}).get('open')
+           for p in net.store.all('SELECT config FROM projects')):
+        from ..hosted_rooms import restore
+        def reopen(log):
+            # Serialize startup with explicit stop/rotate so a closed room cannot reopen behind the user.
+            with room_lock:
+                share['restore_errors'] = restore(net, open_room, log)
+            return {'errors':share['restore_errors']}
+        share['restore_job'] = jobs.start('Restore hosted rooms', reopen)
 
     @mcp.custom_route("/api/collab", methods=["GET"])
     async def api_collab(request: Request) -> Response:
@@ -114,6 +122,9 @@ def register(app: App) -> None:
                              "pending": room.pending() if room else [],
                              "mode": cfg.get("mode", "tunnel"), "address": cfg.get("address", ""), "port": cfg.get("port", 6481),
                              "was_sharing": bool(cfg.get("open")) and room is None,
+                             "restoring": bool(share['restore_job'] and jobs.jobs.get(share['restore_job'], {}).get('state') == 'running'),
+                             "restore_error": share['restore_errors'].get(slug),
+                             "stable_link": cfg.get('mode') == 'address',
                              "addresses": await anyio.to_thread.run_sync(collab.local_addresses),
                              "tunnel_supported": collab.cloudflared_available()})
 
@@ -207,13 +218,14 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         slug = str((await body(request)).get("slug", ""))
-        room = net.rooms.pop(slug, None)
-        if room is not None:
-            room.close()
-        share["links"].pop(slug, None)
-        if not net.rooms and share["tunnel"] is not None:
-            share["tunnel"].stop()
-            share["tunnel"] = None
+        with room_lock:
+            room = net.rooms.pop(slug, None) or collab.Room(net, slug)
+            room.close()  # also closes a saved room whose startup restoration failed
+            share['restore_errors'].pop(slug, None)
+            share["links"].pop(slug, None)
+            if not net.rooms and share["tunnel"] is not None:
+                share["tunnel"].stop()
+                share["tunnel"] = None
         return JSONResponse({"ok": True})
 
     @mcp.custom_route("/api/collab/join", methods=["POST"])
