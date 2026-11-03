@@ -1551,9 +1551,7 @@ class Manager:
 
         def feed_prompt():
             try:
-                proc.stdin.write(("\x01" if os.name == "nt" else "") + prompt)
-                if not k.keeps_stdin:
-                    proc.stdin.close()  # end of input: the agent works on this one prompt, then exits
+                _feed_stdin(proc, prompt)
             except OSError:  # it exited before reading (stderr says why)
                 pass
 
@@ -1567,22 +1565,12 @@ class Manager:
         saw_tool = False
         said: collections.deque = collections.deque(maxlen=20)
         state: dict = {}
-        last_error = refused = finished = ""
+        last_error = refused = ""
         for line in proc.stdout:
             for kind, text in k.parse_line(line, state):
                 if kind == "usage":
                     self.account(s, json.loads(text))
                     continue
-                if kind == "stdin":  # the agent answers its protocol's questions back on stdin (agents/zcode.py)
-                    try:
-                        proc.stdin.write(text + "\n")
-                        proc.stdin.flush()
-                    except OSError:  # it went away mid-answer (stderr says why)
-                        pass
-                    continue
-                if kind == "stop":  # the agent said the work is done: its process wouldn't exit on its own
-                    finished = text or "finished"
-                    break
                 if kind == "tool":
                     saw_tool = True
                     s.usage["tool_calls"] += 1
@@ -1594,8 +1582,8 @@ class Manager:
             if s.context_budget and s.context_budget.ready() and not s.stop.is_set():
                 s.rotated=True
                 s.push('info','Starting a fresh session to keep context small; saved work and claims are retained.')
-            if finished or s.stop.is_set() or s.rotated:
-                reason = 'session completion' if finished else 'budget rotation' if s.rotated else 'stop request ('+str(s.stopped_by)+')'
+            if s.stop.is_set() or s.rotated:
+                reason = 'budget rotation' if s.rotated else 'stop request ('+str(s.stopped_by)+')'
                 s.push('termination', 'App requested termination: '+reason)
                 _terminate(proc)
                 break
@@ -1619,13 +1607,6 @@ class Manager:
             raise Fatal("The helper lost access to the app's tools. Restart this helper to reconnect; repeated paid retries are paused.")
         if "Toolchain infrastructure failure" in everything:
             raise Fatal("The compiler/converter setup failed. Fix the toolchain before restarting this helper; repair retries are paused.")
-        if finished:
-            if saw_tool:  # it said its work is done and used the tools: done, whatever the exit code
-                s.error = ""
-                return True
-            s.error = "the agent never used the decomp tools" + (f": {list(errors)[-1]}" if errors else "")
-            s.push("error", s.error)
-            return False
         if code != 0 and THROTTLED.search(everything):
             s.throttled = True
         if code != 0 and _SIGNED_OUT.search(everything):

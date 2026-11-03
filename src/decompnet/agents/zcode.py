@@ -1,271 +1,156 @@
-"""ZCode, Z.AI's agent CLI (the ZCode desktop app bundles it; a `zcode` launcher on PATH is what the app finds).
-Each session runs `zcode app-server`: the ZCode Protocol, one JSON object a line both ways — the one agent here that
-answers back on stdin. decompdecomp speaks it through the feed kinds this module returns and app/agents.py acts on:
+"""ZCode CLI (`zcode`, the npm `zcode-app-cli`), Z.ai's agent CLI. Each session runs `zcode --output-format
+stream-json` in a private folder, with the app's MCP server as its only one and every built-in tool removed.
 
-- `stdin(prompt)` writes the session's opening script: `session/create` (the app's MCP server, session-scoped, with
-  the token in its Authorization header; the model and thought level) with the session id already chosen, then
-  `session/send` with the prompt. stdin stays open: the server asks back.
-- every question the server asks (`session/requestRuntimePreferences`, plugin servers wanting auth) goes back as a
-  (("stdin", line) feed item, and ("stop", line) ends the session once the turn is done.
-- what the model says arrives as `session/event` notifications whose `payload` carries one event: text and thinking
-  stream in `part.delta` pieces gathered per step (like Antigravity's), a tool call is a `part.upserted` whose part
-  is a tool, and `turn.completed` brings what the session spent.
-
-A session runs on the model the launcher picked, as one of zcode's picker ids ("provider/model", what its `/model`
-shows, with an optional "#effort" after it). The launcher's dropdown reads the same built-in provider registry the
-session gets, the way zcode's own standalone login does: the coding-plan providers in it and their models.
+zcode has no stdin prompt (`-p/--prompt` is a text argument), so the prompt goes in a Markdown file the session
+attaches with `--attach`: zcode reads that file into the model's context as text (not a path for a Read tool),
+which keeps the prompt off the command line and out of the OS argument limit. The fixed `-p` sentence is ours, so
+zcode cannot read the prompt as a slash command either. `--disallowed-tools` removes everything but the app's MCP
+tools; the settings file replaces the user's MCP servers and plugins for the session.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import re
-import threading
-import time
-import uuid
 from pathlib import Path
 
-from . import (
-    MODELS_CACHE,
-    MODELS_LISTED,
-    SAID_CHARS,
-    Agent,
-    _node,
-    args_brief,
-    error_text,
-    read_json,
-    tool_name,
-    usage_item,
-)
+from . import SAID_CHARS, Agent, args_brief, error_text, number, tool_name, usage_item
 
-TOOL_ALLOW = "mcp__decomp__*"  # the app's tools and nothing else: no shell, no file edits, no web, no plugin tools
-MCP_TIMEOUT_MS = 180_000  # one tool call may take this long (a fork's build)
-SESSION_ID = "sess-decomp-"  # the one session each run creates, in zcode's own database
-_NO_MODEL = "Select a model before sending a message"
+MCP_SERVER = "decomp"  # the app's MCP server, and the prefix of its tools (mcp__decomp__claim_function)
+PROMPT_FILE = "prompt.md"  # a text-like extension: zcode inlines it instead of handing the model a path to read
+PROMPT_TEXT = "Follow the instructions in the attached file."
+SETTINGS_FILE = "setting.json"
+# zcode's attachment limits (vendor/zcode.cjs: m3 = 256 KiB, CM = 25,000 estimated tokens). Past either,
+# it stops inlining: a path placeholder or a partial view, which our disallowed Read tool cannot recover. Refuse
+# the session up front instead of letting a helper work without its instructions.
+ATTACHMENT_BYTES = 256 * 1024
+ATTACHMENT_TOKENS = 25_000
+TOKEN_CHARS = 3  # zcode's estimate (qf): CJK counts 2, every other character 1, divided by 3, rounded up
+_CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
-class _PerSession(threading.local):
-    """What one session's start needs later in `stdin`, on the same helper thread (`session_command` runs there)."""
-
-    mcp_url = ""
-    token = ""
-    model = ""
-    workdir = ""
+def estimated_tokens(text: str) -> int:
+    """zcode's own estimate (vendor/zcode.cjs, `qf`), in UTF-16 code units as JavaScript counts them."""
+    cjk = len(_CJK.findall(text))
+    units = len(text.encode("utf-16-le")) // 2
+    return (cjk * 2 + (units - cjk) + TOKEN_CHARS - 1) // TOKEN_CHARS
 
 
-_here = _PerSession()
-_models: dict[str, tuple[float, list[dict]]] = {}  # what the registry said, with when it was read: {id: (time, list)}
-
-
-def _provider_config_env() -> dict[str, str]:
-    """The desktop app ships the CLI's built-in provider registry in its versioned runtime folder, not beside the CLI
-    script a `zcode` launcher runs (a helper then starts five times and gives up, saying 无法定位 CLI ZCode Built-in
-    Provider Config). The newest copy is handed to the session, with the user's own personal provider config beside it
-    — the CLI takes the two only together."""
-    builtin = sorted((Path.home() / ".zcode" / "v2" / "runtime" / "provider")
-                     .glob("*/*/endpoint-*/zcode-builtin.json"), key=lambda p: p.stat().st_mtime)
-    personal = Path.home() / ".zcode" / "v2" / "provider_config.json"
-    if not builtin or not personal.is_file():
-        return {}
-    return {"ZCODE_BUILTIN_PROVIDER_CONFIG_FILE": str(builtin[-1]),
-            "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE": str(personal)}
-
-
-def _registry_file() -> Path | None:
-    """The built-in provider registry: the one this session would hand over, the one the environment names, or the
-    newest copy the desktop app downloaded."""
-    if env := _provider_config_env():
-        return Path(env["ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"])
-    if env := os.environ.get("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE", "").strip():
-        return Path(env)
-    newest = sorted((Path.home() / ".zcode" / "v2" / "runtime" / "provider")
-                    .glob("*/*/endpoint-*/zcode-builtin.json"), key=lambda p: p.stat().st_mtime)
-    return newest[-1] if newest else None
-
-
-def catalog() -> list[dict]:
-    """The coding-plan providers the CLI's own sign-in covers, from the registry it reads, as picker ids the launcher
-    offers ("provider/model"). A standalone `zcode login` provisions one provider per service — the individual coding
-    plan — and records it in the shared credentials as "account-provider:<id>:identity"; anything else in the registry
-    (the desktop app's other plan instances) isn't in the CLI's registry, and a session on it dies with 不存在 Model."""
-    registry = read_json(registry) if (registry := _registry_file()) else {}
-    rules = ((registry.get("config") or {}).get("providerConfigRules") or {}).get("providerRules") or []
-    credentials = (Path.home() / ".zcode" / "v2" / "credentials.json")
-    text = credentials.read_text(encoding="utf-8", errors="replace") if credentials.is_file() else ""
-    provisioned = {m.group(1) for m in re.finditer(r'"account-provider:(account:[^"]+):identity"', text)}
-    if not provisioned:
-        return []  # the CLI has no sign-in of its own: no session on any of these would run
-    out = []
-    for rule in rules:
-        config = rule.get("config") or {}
-        access = config.get("access") or {}
-        if access.get("type") != "zhipu-account":
-            continue
-        if provisioned and rule.get("providerId") not in provisioned:
-            continue  # a plan the CLI's sign-in doesn't cover (the desktop app's own instances)
-        for model in config.get("builtinModelIds") or []:
-            if isinstance(model, str) and model.strip():
-                out.append({"id": f"{rule['providerId']}/{model.strip()}", "name": model.strip(),
-                            "note": str(rule["providerId"]).removeprefix("account:")})
-    return out
-
-
-def selection(model: str) -> dict | None:
-    """ZCode's picker id as the session's model selection: "account:zai-start-plan/GLM-5.3-Flash#high" says provider,
-    model and thought level. A bare name stays zcode's own default: only its picker knows the provider."""
-    model, _, effort = model.partition("#")
-    if "/" not in model:
-        return None
-    provider, _, name = model.partition("/")
-    picked: dict = {"providerId": provider, "modelId": name}
-    if effort:
-        picked["options"] = {"reasoningLevel": effort}
-    return picked
+# zcode's own tools are not the app's: a helper works through decompdecomp's MCP tools only. The list is zcode's
+# built-ins (its runtime's ZCODE_KNOWN_TOOL_NAMES) plus the Node REPL tools bundled with it.
+DISALLOWED = " ".join((
+    "Read", "Write", "Edit", "ApplyPatch", "Bash", "Glob", "Grep", "WebFetch", "WebSearch", "web_search",
+    "TodoRead", "TodoWrite", "GoalRead", "ReadSessionContext", "AskUserQuestion", "SendMessage",
+    "RespondToCoordinator", "TaskOutput", "TaskStop", "js", "js_reset", "js_add_node_module_dir",
+    "mcp__node_repl__js", "mcp__node_repl__js_reset", "mcp__node_repl__js_add_node_module_dir",
+    "Agent", "Task", "Skill", "CreateWorkflow", "AmendWorkflow", "FillWorkflowHole", "submit_result",
+))
+# zcode has no `models` command: these are the Z.ai plans' models, as agent-watch lists them. Provider ids are
+# account/plan-specific, so the launcher also takes a typed name.
+ZCODE_MODELS = (("account:zai-start-plan/GLM-5.3", "GLM-5.3", "Start Plan"),
+                ("account:zai-start-plan/GLM-5.3-Flash", "GLM-5.3-Flash", "Start Plan"),
+                ("account:zai-individual-coding-plan/GLM-5.3", "GLM-5.3", "Coding Plan"),
+                ("account:zai-individual-coding-plan/GLM-5.3-Flash", "GLM-5.3-Flash", "Coding Plan"))
+# zcode's permanent model/effort errors: trying again with the same helper can't help.
+FATAL = ("Unsupported reasoning effort", "does not support reasoning effort", "Invalid prompt model selection",
+         "Cannot apply --effort without a current model")
 
 
 class Zcode(Agent):
     id = "zcode"
-    name = "ZCode"
+    aliases = ("zcode-cli",)  # saved helpers from the fork's duplicate CLI entry
+    name = "ZCode CLI"
     command = "zcode"
-    vendor = "Z.AI"
-    install = ("mkdir -p ~/.local/bin && printf '#!/bin/sh\\n"
-               "node_bin=\"${ZCODE_NODE:-}\"\\n"
-               "[ -n \"$node_bin\" ] || node_bin=\"$(command -v node 2>/dev/null)\"\\n"
-               "[ -n \"$node_bin\" ] || for d in \"$HOME\"/.nvm/versions/node/*/bin /opt/homebrew/bin /usr/local/bin; do "
-               "[ -x \"$d/node\" ] && node_bin=\"$d/node\" && break; done\\n"
-               "[ -n \"$ZCODE_BUILTIN_PROVIDER_CONFIG_FILE\" ] || "
-               "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE=$(ls -t \"$HOME\"/.zcode/v2/runtime/provider/*/*/endpoint-*/"
-               "zcode-builtin.json 2>/dev/null | head -1)\\n"
-               "if [ -n \"$ZCODE_BUILTIN_PROVIDER_CONFIG_FILE\" ]; then\\n"
-               "  export ZCODE_BUILTIN_PROVIDER_CONFIG_FILE\\n"
-               "  export ZCODE_PERSONAL_PROVIDER_CONFIG_FILE=\"${ZCODE_PERSONAL_PROVIDER_CONFIG_FILE:-"
-               "$HOME/.zcode/v2/provider_config.json}\"\\n"
-               "fi\\n"
-               "exec \"$node_bin\" \"/Applications/ZCode.app/Contents/Resources/glm/zcode.cjs\" \"$@\"\\n"
-               "' > ~/.local/bin/zcode && chmod +x ~/.local/bin/zcode")
-    windows_install = ("New-Item -ItemType Directory -Force -Path \"$env:USERPROFILE\\.local\\bin\" | Out-Null; "
-                       "Set-Content -Path \"$env:USERPROFILE\\.local\\bin\\zcode.cmd\" -Value "
-                       "'@echo off\\r\\nif defined ZCODE_NODE (set \"NODE_EXE=%ZCODE_NODE%\") else "
-                       "(set \"NODE_EXE=node\")\\r\\n\"%NODE_EXE%\" \"%LOCALAPPDATA%\\Programs\\ZCode\\resources\\glm\\"
-                       "zcode.cjs\" %*'")
-    signin = "Run `zcode login` once in a terminal (the desktop app's own sign-in doesn't carry over)."
-    docs = "https://zcode.z.ai"
-    takes_effort = True  # the thought level, after a "#" in the model's picker id
-    keeps_stdin = True  # it speaks a protocol: the app answers its questions and ends it (("stop", line)) when done
+    vendor = "Z.ai"
+    install = "npm install -g zcode-app-cli"
+    signin = "Run `zcode login` once and sign in through the browser."
+    docs = "https://github.com/kingsword09/zcode-cli"
+    family = "glm"
+    takes_effort = True
+    efforts = ("low", "high", "max")  # Z.ai's GLM models' levels (zcode's --effort also takes auto)
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
-        """The registry's coding-plan models, asked at most every MODELS_CACHE seconds (the base class's caching,
-        without a CLI subcommand: the registry file is what there is to read)."""
-        cached = _models.get(self.id)
-        if cached and (not run or time.time() - cached[0] < MODELS_CACHE):
-            return cached[1]
-        if not run:
-            return []
-        out = catalog()[:MODELS_LISTED]
-        _models[self.id] = (time.time(), out)
-        return out
+        """The Z.ai plans' models; a user on another plan types its provider/model."""
+        return [{"id": i, "name": n, "note": note} for i, n, note in ZCODE_MODELS]
 
-    def validate_model(self, model: str) -> str | None:
-        selected = (model or "").partition("#")[0]
-        if selected and selected not in {row["id"] for row in catalog()}:
-            _models.pop(self.id, None)
-            return "The selected ZCode model is no longer in its provider registry. Refresh the agent list, choose an available model in Work settings, then press Start again."
-        return None
+    def session_command(self, exe: str, workdir: Path, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
+        settings = {
+            "features": {"mcp": True, "subagent": False, "skill": False, "compact": False, "rewind": False},
+            "mcp": {"servers": {MCP_SERVER: {"type": "http", "url": mcp_url,
+                                             "headers": {"Authorization": f"Bearer {token}"}}}},
+            "plugins": {"enabled": False},
+            "skills": {"enabled": False},
+            "hooks": {"enabled": False},
+        }
+        (workdir / SETTINGS_FILE).write_text(json.dumps(settings), encoding="utf-8")
+        model, _, effort = (model or "").partition("#")
+        cmd = [exe, "--output-format", "stream-json", "--mode", "yolo", "--disallowed-tools", DISALLOWED]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
+        cmd += ["--attach", str(workdir / PROMPT_FILE), "-p", PROMPT_TEXT]
+        return cmd, {"ZCODE_CLI_SETTINGS_FILE": str(workdir / SETTINGS_FILE)}
 
-    def session_command(self, exe: str, workdir, mcp_url: str, token: str, model: str) -> tuple[list[str], dict]:
-        """`zcode app-server` speaks the ZCode Protocol on stdio. The app's MCP address, the token and the model reach
-        it through `session/create` in `stdin`'s script, so they ride on the helper thread, never the command line."""
-        _here.mcp_url, _here.token, _here.model = mcp_url, token, model
-        _here.workdir = str(workdir)
-        env = _provider_config_env()
-        if node := _node():  # the helper's environment has no PATH to speak of; the launcher takes it from here
-            env["ZCODE_NODE"] = node
-        return [exe, "app-server"], env
-
-    def stdin(self, prompt: str) -> str:
-        """The opening script: one session, created with only the app's MCP server and tools, then the prompt."""
-        workdir = _here.workdir
-        model, _, effort = _here.model.partition("#")
-        create: dict = {"id": 1, "method": "session/create", "params": {
-            "sessionId": SESSION_ID + uuid.uuid4().hex[:20],
-            "workspace": {"workspacePath": workdir, "workspaceIdentity": "decompdecomp", "workspaceKey": workdir},
-            "mode": "yolo",  # a background helper can't ask; it may use only decompdecomp's tools (TOOL_ALLOW)
-            "mcpServers": [{"name": "decomp", "type": "http", "url": _here.mcp_url,
-                            "headers": [{"name": "Authorization", "value": f"Bearer {_here.token}"}],
-                            "isolation": "session", "alwaysLoad": True, "timeoutMs": MCP_TIMEOUT_MS}],
-            "toolAllowlist": [TOOL_ALLOW],
-            "titleGenerationEnabled": False, "dynamicWorkflowEnabled": False, "offPeakToolEnabled": False}}
-        if picked := selection(_here.model):
-            create["params"]["model"] = picked
-        elif effort:
-            create["params"]["thoughtLevel"] = effort
-        send = {"id": 2, "method": "session/send",
-                "params": {"sessionId": create["params"]["sessionId"], "content": prompt}}
-        return json.dumps(create) + "\n" + json.dumps(send) + "\n"
+    def prompt_file(self, workdir: Path, prompt: str) -> Path | None:
+        """zcode reads the prompt from the file it attaches; `-p` only says to follow it. A prompt past zcode's
+        attachment limits is refused here: past them zcode would replace the content with a path placeholder or a
+        partial view, and with Read disallowed a helper would work without its instructions."""
+        if len(prompt.encode("utf-8")) > ATTACHMENT_BYTES or estimated_tokens(prompt) > ATTACHMENT_TOKENS:
+            raise ValueError("this project's prompt is too long for zcode, which only reads attachments up to "
+                             "about 25,000 tokens (256 KiB): shorten the project's instructions, or use another "
+                             "agent")
+        path = workdir / PROMPT_FILE
+        path.write_bytes(prompt.encode("utf-8"))  # exact bytes: write_text would translate newlines on Windows
+        return path
 
     def parse(self, event: dict, state: dict) -> list[tuple[str, str] | None]:
-        """The feed items in one protocol line. The server's questions go back on stdin (("stdin", line)); a finished
-        turn ends the session (("stop", line)) — the app would otherwise wait for a process that never exits."""
-        method = event.get("method")
-        if method == "session/requestRuntimePreferences":  # keep the session as bare as a helper needs it
-            return [("stdin", json.dumps({"id": event["id"], "result": {
-                "nativeSearchEnhancementsEnabled": False, "toolSearchMode": "off",
-                "memoryEnabled": False, "askUserQuestionAutoResolutionEnabled": False}}))]
-        if method and "id" in event:  # anything else it asks (plugin servers' auth, ...) is refused: no tools but ours
-            return [("stdin", json.dumps({"id": event["id"], "error": {"code": -32601, "message": "unsupported"}}))]
+        """model.streaming (text and reasoning in deltas, then a tool call), tool failures, turn.failed, and the
+        final result, whose usage counts the cached input in inputTokens."""
+        out: list[tuple[str, str] | None] = []
+        if event.get("sessionId"):
+            state["zcode_session"] = event["sessionId"]
+        t = event.get("type")
+        if t == "model.streaming" and isinstance(event.get("payload"), dict):
+            p = event["payload"]
+            kind = p.get("kind")
+            if kind == "reasoning_delta":
+                state["zcode_think"] = state.get("zcode_think", "") + str(p.get("delta") or "")
+            elif kind == "reasoning_end":
+                text = state.pop("zcode_think", "").strip()
+                if text:
+                    out.append(("think", text))
+            elif kind == "text_delta":
+                state["zcode_text"] = state.get("zcode_text", "") + str(p.get("delta") or "")
+            elif kind in ("text_end", "finish"):
+                text = state.pop("zcode_text", "").strip()
+                if text:
+                    out.append(("text", text))
+            elif kind == "tool_call":
+                out.append(("tool", f"{tool_name(p.get('toolName', ''))}({args_brief(p.get('input'))})"))
+        elif t == "tool.updated" and isinstance(event.get("payload"), dict):
+            p = event["payload"]
+            result = p.get("result") if isinstance(p.get("result"), dict) else {}
+            if p.get("kind") == "result" and not result.get("success", True):
+                out.append(("error", str(result.get("error") or result.get("content") or "tool failed")[:SAID_CHARS]))
+        elif t == "turn.failed":
+            p = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            out.append(("error", error_text(p.get("error") or p.get("message") or p)[:SAID_CHARS]))
+        elif t == "result":  # the end of the session; provider input counts the cached tokens in inputTokens
+            usage = event.get("usage") if isinstance(event.get("usage"), dict) else {}
+            cached, written = number(usage, "cacheReadTokens"), number(usage, "cacheWriteTokens")
+            out.append(usage_item(input=max(0, number(usage, "inputTokens") - cached - written),
+                                  output=number(usage, "outputTokens"), cache_read=cached, cache_write=written,
+                                  turns=number(usage, "modelRequestCount")))
+        return out
 
-        if method is None and "error" in event:  # the answer to the opening script
-            return [("error", error_text(event["error"])[:SAID_CHARS]), ("stop", "create failed")]
-
-        body = event.get("payload") if method == "session/event" and isinstance(event.get("payload"), dict) else {}
-        t = body.get("type")
-        said: list[tuple[str, str] | None] = []
-        if t == "part.delta" and body.get("field") in ("text", "reasoning"):
-            field = body["field"]
-            state[field] = state.get(field, "") + str(body.get("delta") or "")
-        elif t == "part.upserted" and isinstance(body.get("part"), dict):
-            part = body["part"]
-            if part.get("type") == "tool" and part.get("callId") not in state.setdefault("tools", set()):
-                state["tools"].add(part["callId"])
-                said.append(("tool", f"{tool_name(str(part.get('tool') or ''))}"
-                                     f"({args_brief((part.get('state') or {}).get('input'))})"))
-            elif part.get("type") == "step-finish":  # the model's step is over: what it said and thought, in one piece
-                said += _flush(state)
-        elif t in ("turn.completed", "turn.failed"):
-            said += _flush(state)
-            if t == "turn.failed":
-                said.append(("error", error_text(body.get("error"))[:SAID_CHARS]))
-            else:
-                if not state.get("text") and str(body.get("response") or "").strip():
-                    said.append(("text", str(body["response"]).strip()))  # a backstop for runs with no step parts
-                usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-                cache = body.get("cacheStats") if isinstance(body.get("cacheStats"), dict) else {}
-                seconds = body.get("duration")
-                said.append(("info", "session finished" + (f" ({seconds:.0f}s)" if isinstance(seconds, (int, float))
-                                                           else "")))
-                said.append(usage_item(input=usage.get("inputTokens"), output=usage.get("outputTokens"),
-                                       cache_read=cache.get("cacheReadTokens"),
-                                       tokens=0 if usage else body.get("tokenCount"), turns=1))
-            said.append(("stop", t))
-        elif t == "session.closed":
-            said.append(("stop", "session closed"))
-        return said
+    def clean_stderr(self, line: str) -> str:
+        """zcode writes `Error: ...` on stderr; keep the message, drop the prefix."""
+        line = line.strip()
+        return line[len("Error: "):] if line.startswith("Error: ") else line
 
     def fatal(self, error: str) -> bool:
-        # A model the registry doesn't know (a mistyped picker id) and a session that has no model to run on would
-        # fail the same way every try.
-        return "不存在 Model" in error or _NO_MODEL in error or "Provider Registry" in error
-
-
-def _flush(state: dict) -> list[tuple[str, str]]:
-    """The pieces gathered per step, as one item each ("think" first: what it thought comes before what it said)."""
-    out = []
-    for kind, key in (("think", "reasoning"), ("text", "text")):
-        piece = str(state.pop(key, "") or "").strip()
-        if piece:
-            out.append((kind, piece))
-    return out
+        return error.startswith(FATAL)
 
 
 ZCODE = Zcode()

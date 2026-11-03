@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet.agents.zcode import ZCODE
 from decompnet.app.agents import Fatal, Manager
 from decompnet.app.engine import RomNetwork
 
@@ -70,13 +69,6 @@ def test_restart_closes_only_unfinished_sessions(tmp_path, monkeypatch):
     rows = net.store.all('SELECT ended_at,outcome FROM helper_sessions ORDER BY id')
     assert rows[0]['ended_at'] and rows[0]['outcome'] == 'interrupted'
     assert rows[1]['ended_at'] == 10 and rows[1]['outcome'] == 'ok'
-
-
-def test_stale_model_selection_is_validated_before_launch(monkeypatch):
-    from decompnet.agents import zcode
-    monkeypatch.setattr(zcode, 'catalog', lambda: [{'id': 'provider/current'}])
-    assert ZCODE.validate_model('provider/current#high') is None
-    assert 'Refresh the agent list' in ZCODE.validate_model('provider/removed')
 
 
 def test_batch_excludes_already_held_and_returned_functions(tmp_path, monkeypatch):

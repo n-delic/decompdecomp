@@ -13,7 +13,7 @@ import pytest
 
 from decompnet import agents as kinds
 from decompnet import network, scoring
-from decompnet.agents import antigravity, opencode, zcode_cli
+from decompnet.agents import antigravity, opencode, zcode
 from decompnet.app import agents
 from decompnet.app.engine import RomNetwork
 
@@ -67,135 +67,14 @@ def test_opencode_errors_say_what_failed():
     assert kinds.get("antigravity").clean_stderr(agy) == "quota exhausted"
 
 
-def test_zcode_stream_json_is_read():
-    """zcode's --output-format stream-json: reasoning and text in deltas, a tool call, a failed tool result,
-    turn.failed, and the final result whose inputTokens include the cached input and cache writes."""
-    state: dict = {}
-    lines = [
-        {"type": "session.created", "sessionId": "sess_1", "payload": {"mode": "yolo"}},
-        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": "The user wants"}},
-        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": " to claim."}},
-        {"type": "model.streaming", "payload": {"kind": "reasoning_end"}},
-        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "Claiming "}},
-        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "the next one."}},
-        {"type": "model.streaming", "payload": {"kind": "text_end"}},
-        {"type": "model.streaming", "payload": {"kind": "tool_call", "toolName": "mcp__decomp__claim_function",
-                                                "input": {"count": 4}}},
-        {"type": "tool.updated", "payload": {"kind": "result", "result": {"success": False,
-                                                                           "error": "tool exploded"}}},
-        {"type": "turn.failed", "payload": {"error": {"message": "usage limit reached"}}},
-        {"type": "result", "sessionId": "sess_1", "usage": {"inputTokens": 100, "outputTokens": 10,
-                                                            "cacheReadTokens": 40, "cacheWriteTokens": 10,
-                                                            "modelRequestCount": 2}},
-    ]
-    out = [item for line in lines for item in kinds.get("zcode-cli").parse_line(json.dumps(line), state)]
-    assert out == [("think", "The user wants to claim."), ("text", "Claiming the next one."),
-                   ("tool", "claim_function(4)"), ("error", "tool exploded"), ("error", "usage limit reached"),
-                   ("usage", json.dumps({"input": 50, "output": 10, "cache_read": 40, "cache_write": 10,
-                                         "turns": 2}))]
-    assert state["zcode_session"] == "sess_1"
-    assert kinds.get("zcode-cli").parse_line(json.dumps({"type": "session.updated", "payload": {}})) == []
-    assert kinds.get("zcode-cli").clean_stderr("Error: Model access is not configured. Run /login.") == \
-        "Model access is not configured. Run /login."
-    assert kinds.get("zcode-cli").fatal("Unsupported reasoning effort: xhigh")
 
 
-def test_zcode_prompt_reaches_it_by_file_never_as_argv(tmp_path, monkeypatch):
-    """zcode has no stdin prompt: its prompt is a Markdown file the session attaches, so the text is never an
-    argument (and zcode cannot parse it as a slash command). Its settings file names only the app's MCP server."""
-    m = _manager(tmp_path, monkeypatch, "zcode-cli")
-    s = agents.Session("zcode-1", "zcode-cli", "z", "demo", "zcode-1",
-                       {"model": "account:zai-start-plan/GLM-5.3#high"})
-    work = tmp_path / "zcode-cli"
-    work.mkdir()
-    cmd, env, stdin = m._command(s, "tok", work)
-    prompt = m.prompt(s)
-    assert stdin is None  # nothing for stdin: the prompt is in the attached file
-    assert (work / zcode_cli.PROMPT_FILE).read_text(encoding="utf-8") == prompt
-    assert not any(prompt in arg or "line one" in arg for arg in cmd)
-    assert cmd[cmd.index("--attach") + 1] == str(work / zcode_cli.PROMPT_FILE)
-    assert cmd[cmd.index("-p") + 1] == zcode_cli.PROMPT_TEXT
-    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
-    assert cmd[cmd.index("--mode") + 1] == "yolo"
-    denied = set(cmd[cmd.index("--disallowed-tools") + 1].split())
-    assert {"Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"} <= denied
-    assert cmd[cmd.index("--model") + 1] == "account:zai-start-plan/GLM-5.3"
-    assert cmd[cmd.index("--effort") + 1] == "high"
-    assert not any("tok" in arg for arg in cmd)
-    settings = json.loads((work / zcode_cli.SETTINGS_FILE).read_text(encoding="utf-8"))
-    assert list(settings["mcp"]["servers"]) == [zcode_cli.MCP_SERVER]
-    assert settings["mcp"]["servers"][zcode_cli.MCP_SERVER] == {
-        "type": "http", "url": "http://127.0.0.1:6464/mcp",
-        "headers": {"Authorization": "Bearer tok"}}
-    assert settings["plugins"]["enabled"] is False and settings["skills"]["enabled"] is False
-    assert env["ZCODE_CLI_SETTINGS_FILE"] == str(work / zcode_cli.SETTINGS_FILE)
 
 
-def test_zcode_refuses_a_prompt_it_cannot_attach(tmp_path, monkeypatch):
-    """Past zcode's 25,000-token / 256 KiB attachment caps it stops inlining the prompt and gives the model a
-    path placeholder or a partial view; Read is disallowed, so the helper would work without its instructions.
-    Just under the cap the prompt is written and attached; over it, the session start fails before writing."""
-    under = "x" * (zcode_cli.ATTACHMENT_TOKENS * zcode_cli.TOKEN_CHARS - zcode_cli.TOKEN_CHARS)
-    over = "x" * (zcode_cli.ATTACHMENT_TOKENS * zcode_cli.TOKEN_CHARS + zcode_cli.TOKEN_CHARS)
-    assert zcode_cli.estimated_tokens(under) == zcode_cli.ATTACHMENT_TOKENS - 1
-    assert zcode_cli.estimated_tokens(over) == zcode_cli.ATTACHMENT_TOKENS + 1
-    under_work = tmp_path / "zcode-under"
-    under_work.mkdir()
-    path = zcode_cli.ZCODE_CLI.prompt_file(under_work, under)
-    assert path == under_work / zcode_cli.PROMPT_FILE and path.read_text(encoding="utf-8") == under
-    cmd, _ = zcode_cli.ZCODE_CLI.session_command("zcode-cli", under_work, "http://127.0.0.1:1/mcp", "tok", "")
-    assert cmd[cmd.index("--attach") + 1] == str(path)
-    over_work = tmp_path / "zcode-over"
-    over_work.mkdir()
-    with pytest.raises(ValueError, match="too long for zcode"):
-        zcode_cli.ZCODE_CLI.prompt_file(over_work, over)
-    assert not (over_work / zcode_cli.PROMPT_FILE).exists()
-    # the session start itself raises Fatal with the same sentence, before a process is launched
-    m = _manager(tmp_path, monkeypatch, "zcode-cli")
-    m.prompt = lambda session: over
-    command_work = tmp_path / "zcode-command"
-    command_work.mkdir()
-    with pytest.raises(agents.Fatal, match="too long for zcode"):
-        m._command(agents.Session("zcode-1", "zcode-cli", "z", "demo", "zcode-1", {}), "tok", command_work)
-    assert not any(command_work.iterdir())  # no prompt, no settings: the session start wrote nothing
 
 
-def test_zcode_refuses_a_prompt_over_its_byte_cap(tmp_path, monkeypatch):
-    """The 256 KiB cap is separate from the token cap: zcode would read only a 2000-line partial view."""
-    monkeypatch.setattr(zcode_cli, "ATTACHMENT_TOKENS", 10**9)  # isolate the byte guard
-    work = tmp_path / "zcode-bytes"
-    work.mkdir()
-    with pytest.raises(ValueError, match="too long for zcode"):
-        zcode_cli.ZCODE_CLI.prompt_file(work, "x" * (zcode_cli.ATTACHMENT_BYTES + 1))
-    assert not (work / zcode_cli.PROMPT_FILE).exists()
 
 
-def test_an_over_long_zcode_prompt_pauses_without_retrying(tmp_path, monkeypatch):
-    """The guard raises Fatal from _command: the runner pauses with the sentence instead of counting fast failures
-    and starting again."""
-    _no_agent_settings(monkeypatch)
-    fake = tmp_path / "bin" / "zcode"
-    fake.parent.mkdir()
-    fake.write_text("#!/bin/sh\n")
-    fake.chmod(0o755)
-    monkeypatch.setattr(agents, "_which", lambda cmd: str(fake))
-    net = _game(tmp_path)
-    m = agents.Manager(net, tmp_path, URL)
-    m._preflight_tools = lambda token: None
-    m.prepare_session = lambda *a, **kw: None
-    over = "x" * (zcode_cli.ATTACHMENT_TOKENS * zcode_cli.TOKEN_CHARS + zcode_cli.TOKEN_CHARS)
-    m.prompt = lambda s: over
-    s = m._record("game", "zcode-cli", "zcode-1", "zcode-1", {})
-    s.stop = Quick()
-    m._run(s)
-    assert s.state == "paused"
-    assert "too long for zcode" in s.why and "shorten" in s.why
-    assert s.runs == 1 and s.restarts == 0
-    assert s.stop.waits == []  # no backoff wait: Fatal broke the loop
-    rows = net.store.all("SELECT outcome FROM helper_sessions WHERE helper_id=?", s.id)
-    assert [r["outcome"] for r in rows] == ["paused"]
-    assert net.store.one("SELECT state FROM helpers WHERE id=?", s.id)["state"] == "paused"
-    assert any("paused:" in f["text"] and "too long for zcode" in f["text"] for f in s.feed)
 
 
 def test_opencode_2_starts_and_its_quota_error_says_so(tmp_path, monkeypatch):
@@ -233,7 +112,7 @@ def test_a_concurrency_limit_is_a_throttle_not_a_plan_limit():
 def _manager(tmp_path, monkeypatch, kind):
     (tmp_path / "bin").mkdir(exist_ok=True)
     exe = tmp_path / "bin" / {"claude": "claude", "codex": "codex", "antigravity": "agy", "opencode": "opencode",
-                              "zcode": "zcode", "zcode-cli": "zcode"}[kind]
+                              "zcode": "zcode"}[kind]
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
@@ -378,188 +257,16 @@ def test_gemini_cli_helpers_carry_on_as_antigravity():
     assert kinds.kind_id("gemini") == "antigravity" and kinds.kind_id("agy") == "antigravity"
 
 
-def test_zcode_creates_one_session_with_only_decomps_tools(tmp_path, monkeypatch):
-    """`zcode app-server` speaks the ZCode Protocol on stdio: the app's MCP server alone, session-scoped, with the
-    token in its Authorization header and only the app's tools allowed — the token never on the command line."""
-    m = _manager(tmp_path, monkeypatch, "zcode")
-    s = agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1",
-                       {"model": "account:zai-start-plan/GLM-5.3-Flash#high"})
-    work = tmp_path / "zcode"
-    work.mkdir()
-    cmd, _, script = m._command(s, "tok", work)
-    assert cmd == [str(tmp_path / "bin" / "zcode"), "app-server"]
-    assert not any("tok" in a or "zai-start-plan" in a for a in cmd)
-    create, send = (json.loads(line) for line in script.splitlines())
-    p = create["params"]
-    assert send["params"]["sessionId"] == p["sessionId"]
-    assert send["params"]["content"].startswith("line one\nline two")
-    assert p["mcpServers"] == [{"name": "decomp", "type": "http", "url": "http://127.0.0.1:6464/mcp",
-                                "headers": [{"name": "Authorization", "value": "Bearer tok"}],
-                                "isolation": "session", "alwaysLoad": True, "timeoutMs": 180_000}]
-    assert p["toolAllowlist"] == ["mcp__decomp__*"] and p["mode"] == "yolo"
-    assert p["model"] == {"providerId": "account:zai-start-plan", "modelId": "GLM-5.3-Flash",
-                          "options": {"reasoningLevel": "high"}}
 
 
-def test_zcode_hands_the_session_the_built_in_provider_registry(tmp_path, monkeypatch):
-    """The desktop app ships the CLI's provider registry in its versioned runtime folder, not beside the CLI script a
-    launcher runs; without it the helper starts five times and gives up. The CLI takes the built-in and personal
-    provider configs together, or looks for them itself."""
-    m = _manager(tmp_path, monkeypatch, "zcode")
-    monkeypatch.setenv("HOME", str(tmp_path))
-    for var in ("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE", "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"):
-        monkeypatch.delenv(var, raising=False)  # the app itself may run inside the ZCode desktop: no borrowed paths
-    (tmp_path / "zcode").mkdir()
-    s = agents.Session("zcode-5", "zcode", "z", "demo", "zcode-5", {})
-    assert "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" not in m._command(s, "tok", tmp_path / "zcode")[1]  # nothing installed yet: the CLI looks for itself
-    runtime = tmp_path / ".zcode" / "v2" / "runtime" / "provider" / "darwin-aarch64" / "3.16.3" / "endpoint-abc"
-    runtime.mkdir(parents=True)
-    (runtime / "zcode-builtin.json").write_text("{}")
-    personal = tmp_path / ".zcode" / "v2" / "provider_config.json"
-    personal.write_text('{"schemaVersion": 1, "config": {}}')
-    env = m._command(s, "tok", tmp_path / "zcode")[1]
-    assert env["ZCODE_BUILTIN_PROVIDER_CONFIG_FILE"] == str(runtime / "zcode-builtin.json")
-    assert env["ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"] == str(personal)
-    personal.unlink()  # without its other half the built-in path isn't given either
-    assert "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE" not in m._command(s, "tok", tmp_path / "zcode")[1]
 
 
-def test_zcode_bare_model_stays_zcodes_own_default(tmp_path, monkeypatch):
-    """A bare model name can't be resolved to a provider from outside: the session runs on zcode's own selection, and
-    a "#effort" still reaches it as the thought level."""
-    m = _manager(tmp_path, monkeypatch, "zcode")
-    s = agents.Session("zcode-2", "zcode", "z", "demo", "zcode-2", {"model": "GLM-5.3-Flash#max"})
-    (tmp_path / "zcode").mkdir()
-    _, _, script = m._command(s, "tok", tmp_path / "zcode")
-    p = json.loads(script.splitlines()[0])["params"]
-    assert "model" not in p and p["thoughtLevel"] == "max"
-    _, _, script = m._command(agents.Session("zcode-3", "zcode", "z", "demo", "zcode-3", {}), "tok", tmp_path / "zcode")
-    p = json.loads(script.splitlines()[0])["params"]
-    assert "model" not in p and "thoughtLevel" not in p
 
 
-def test_zcode_models_come_from_the_provider_registry(tmp_path, monkeypatch):
-    """The dropdown offers the coding-plan providers the CLI's own sign-in covers: `zcode login` records one provider
-    per service in the shared credentials ("account-provider:<id>:identity"), and a session on any other plan in the
-    registry (the desktop app's own instances) dies with 不存在 Model."""
-    from decompnet.agents import zcode as zcode_agent
-
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("ZCODE_BUILTIN_PROVIDER_CONFIG_FILE", raising=False)  # the app may run inside ZCode desktop
-    runtime = tmp_path / ".zcode" / "v2" / "runtime" / "provider" / "darwin-aarch64" / "3.16.3" / "endpoint-abc"
-    runtime.mkdir(parents=True)
-    (runtime / "zcode-builtin.json").write_text(json.dumps({"schemaVersion": 1, "revision": 4, "config": {
-        "providerConfigRules": {"providerRules": [
-            {"providerId": "account:zai-individual-coding-plan", "config": {"access": {"type": "zhipu-account",
-             "accountType": "zai", "mode": "individual-coding-plan"}, "builtinModelIds": ["GLM-5.3", "GLM-5.3-Flash"]}},
-            {"providerId": "account:zai-start-plan", "config": {"access": {"type": "zhipu-account", "accountType":
-             "zai", "mode": "start-plan"}, "builtinModelIds": ["GLM-5.3-Flash"]}},
-            {"providerId": "api-zai", "config": {"access": {"type": "api-key"}, "builtinModelIds": ["GLM-5.3"]}}]}}}))
-    monkeypatch.setattr(zcode_agent, "_models", {})
-    (tmp_path / ".zcode" / "v2").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".zcode" / "v2" / "credentials.json").write_text('{"oauth:zai:access_token": "x"}')
-    assert zcode_agent.ZCODE.models("zcode") == []  # the CLI isn't signed in: nothing it says would work
-    (tmp_path / ".zcode" / "v2" / "credentials.json").write_text(json.dumps({
-        "oauth:zai:access_token": "x",
-        "account-provider:account:zai-individual-coding-plan:identity": "user-1",
-        "account-provider:account:zai-individual-coding-plan:auth-source": "oauth"}))
-    monkeypatch.setattr(zcode_agent, "_models", {})
-    rows = zcode_agent.ZCODE.models("zcode")
-    assert rows == [{"id": "account:zai-individual-coding-plan/GLM-5.3", "name": "GLM-5.3",
-                     "note": "zai-individual-coding-plan"},
-                    {"id": "account:zai-individual-coding-plan/GLM-5.3-Flash", "name": "GLM-5.3-Flash",
-                     "note": "zai-individual-coding-plan"}]
-    (runtime / "zcode-builtin.json").write_text("{}")  # asked again soon, it says what it said before
-    assert zcode_agent.ZCODE.models("zcode") == rows
-    assert zcode_agent.ZCODE.models("zcode", run=False) == rows
-    monkeypatch.setattr(zcode_agent, "_models", {})
-    assert zcode_agent.ZCODE.models("zcode", run=False) == []
 
 
-def test_zcode_feed_reads_the_protocol():
-    """The server's questions answered on stdin, the model's step gathered from its deltas, the turn's usage, and the
-    ("stop", "turn.completed") that ends a process that would otherwise sit there forever."""
-    z, state = kinds.get("zcode"), {}
-
-    def feed(line):
-        return z.parse_line(json.dumps(line), state)
-
-    out = feed({"id": "server-1", "method": "session/requestRuntimePreferences", "params": {"scope": "x"}})
-    assert out[0][0] == "stdin" and json.loads(out[0][1])["result"]["toolSearchMode"] == "off"
-    out = feed({"id": "server-2", "method": "interaction/requestOfficialMcpAuthHeaders", "params": {}})
-    assert out[0][0] == "stdin" and json.loads(out[0][1])["error"]["code"] == -32601
-    assert feed({"id": 1, "result": {"session": {"sessionId": "s"}}}) == []
-    feed({"method": "session/event", "payload": {"type": "part.delta", "field": "reasoning", "delta": "hmm "}})
-    feed({"method": "session/event", "payload": {"type": "part.delta", "field": "text", "delta": "Claiming "}})
-    feed({"method": "session/event", "payload": {"type": "part.delta", "field": "text", "delta": "the next one."}})
-    out = feed({"method": "session/event", "payload": {"type": "part.upserted", "part": {
-        "type": "tool", "callId": "c1", "tool": "mcp__decomp__claim_function",
-        "state": {"input": {"strategy": "easiest"}}}}})
-    assert out == [("tool", "claim_function(easiest)")]
-    assert feed({"method": "session/event", "payload": {"type": "part.upserted", "part": {
-        "type": "tool", "callId": "c1", "tool": "mcp__decomp__claim_function",
-        "state": {"input": {"strategy": "easiest"}}}}}) == []  # the same call isn't a second one
-    out = feed({"method": "session/event", "payload": {"type": "part.upserted",
-                                                       "part": {"type": "step-finish", "reason": "end"}}})
-    assert out == [("think", "hmm"), ("text", "Claiming the next one.")]
-    out = feed({"method": "session/event", "payload": {"type": "turn.completed", "response": "", "tokenCount": 1200,
-                                                       "duration": 12.3, "usage": {}, "cacheStats": {}}})
-    assert out == [("info", "session finished (12s)"), ("usage", json.dumps({"tokens": 1200, "turns": 1})),
-                   ("stop", "turn.completed")]
-    assert feed({"method": "session/event", "payload": {"type": "turn.failed",
-                                                        "error": {"message": "over the limit"}}})[-1] == ("stop", "turn.failed")
 
 
-def test_zcode_session_ends_when_the_turn_is_done(tmp_path, monkeypatch):
-    """The harness keeps stdin open for zcode, answers the server's questions, and ends the process on ("stop", "turn.completed") —
-    a stand-in app-server that would sleep forever after the turn proves all three."""
-    (tmp_path / "bin").mkdir(exist_ok=True)
-    exe = tmp_path / "bin" / "zcode"
-    exe.write_text(
-        "#!/usr/bin/env python3\n"
-        "import json, sys, time\n"
-        "create = json.loads(sys.stdin.readline())\n"
-        "send = json.loads(sys.stdin.readline())\n"
-        "sid = create['params']['sessionId']\n"
-        "assert send['params']['sessionId'] == sid and 'Bearer tok' in json.dumps(create['params']['mcpServers'])\n"
-        "print(json.dumps({'id': 1, 'result': {'session': {'sessionId': sid}}}), flush=True)\n"
-        "print(json.dumps({'id': 'server-1', 'method': 'session/requestRuntimePreferences', 'params': {}}),"
-        " flush=True)\n"
-        "assert json.loads(sys.stdin.readline())['result']['toolSearchMode'] == 'off'\n"
-        "print(json.dumps({'method': 'session/event', 'payload': {'type': 'part.upserted', 'part': {\n"
-        "    'type': 'tool', 'callId': 'c1', 'tool': 'mcp__decomp__claim_function',\n"
-        "    'state': {'input': {}}}}}), flush=True)\n"
-        "print(json.dumps({'method': 'session/event', 'payload': {'type': 'turn.completed', 'response': '',\n"
-        "    'tokenCount': 0, 'toolCallCount': 1, 'duration': 1, 'usage': {}, 'cacheStats': {}}}), flush=True)\n"
-        "time.sleep(60)  # a real app-server wouldn't exit on its own\n")
-    exe.chmod(0o755)
-    monkeypatch.setattr(agents, "_which", lambda cmd: str(exe))
-    m = agents.Manager.__new__(agents.Manager)
-    m.mcp_url, m.home = "http://127.0.0.1:6464/mcp", tmp_path
-    m.prompt = lambda s: "work the function"
-    m.prepare_session = lambda *a, **kw: None  # This test supplies its own prompt/claim script.
-    monkeypatch.setattr(m, "_preflight_tools", lambda token: None)
-    monkeypatch.setattr(m, "prepare_session", lambda *a, **kw: None)
-
-    import contextlib
-
-    class _Net:
-        add_spend = staticmethod(lambda *a: None)
-        store = type("Store", (), {"tx": staticmethod(lambda: contextlib.nullcontext(
-            type("Db", (), {"execute": staticmethod(lambda *a, **k: None)})()))})()
-
-    m.net = _Net()
-    s = agents.Session("zcode-4", "zcode", "z", "demo", "zcode-4", {})
-    work = tmp_path / "zcode"
-    work.mkdir()
-    started = time.monotonic()
-    assert m._run_cli(s, "tok", work) is True
-    assert time.monotonic() - started < 30, "the helper waited out the stand-in's sleep instead of ending it"
-    assert s.usage["tool_calls"] == 1
-    assert any(e['type'] == 'termination' and 'session completion' in e['text'] for e in s.feed)
-
-    assert "gemini" not in {a.id for a in kinds.AGENTS} and kinds.get("antigravity").command == "agy"
-    assert kinds.get("gemini") is kinds.get("antigravity")
 
 
 def test_assembly_for_agents_is_compact():
@@ -608,7 +315,7 @@ def test_every_helper_with_an_effort_offers_the_levels_its_cli_supports(tmp_path
     low/high/max only, so offering xhigh there would make every session fail on an unsupported effort."""
     for kind in kinds.AGENTS:
         if kind.takes_effort:
-            expected = {"low", "high", "max"} if kind.id in ("kimi", "zcode-cli") else {"medium", "high", "xhigh", "max"}
+            expected = {"low", "high", "max"} if kind.id in ("kimi", "zcode") else {"medium", "high", "xhigh", "max"}
             assert expected <= set(kind.describe()["efforts"]), kind.id
     cmd, _ = kinds.get("codex").session_command("codex", tmp_path, URL, "token", "gpt-5.5#max")
     assert 'model_reasoning_effort="max"' in cmd
@@ -1498,3 +1205,109 @@ def test_termination_reason_is_saved_in_transcript():
     s.record = lambda kind,text: recorded.append((kind,text))
     s.push('termination','App requested termination: user stopped this helper')
     assert recorded == [('termination','App requested termination: user stopped this helper')]
+
+
+def test_zcode_stream_json_is_read():
+    """zcode's --output-format stream-json: reasoning and text in deltas, a tool call, a failed tool result,
+    turn.failed, and the final result whose inputTokens include the cached input and cache writes."""
+    state: dict = {}
+    lines = [
+        {"type": "session.created", "sessionId": "sess_1", "payload": {"mode": "yolo"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": "The user wants"}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_delta", "delta": " to claim."}},
+        {"type": "model.streaming", "payload": {"kind": "reasoning_end"}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "Claiming "}},
+        {"type": "model.streaming", "payload": {"kind": "text_delta", "delta": "the next one."}},
+        {"type": "model.streaming", "payload": {"kind": "text_end"}},
+        {"type": "model.streaming", "payload": {"kind": "tool_call", "toolName": "mcp__decomp__claim_function",
+                                                "input": {"count": 4}}},
+        {"type": "tool.updated", "payload": {"kind": "result", "result": {"success": False,
+                                                                           "error": "tool exploded"}}},
+        {"type": "turn.failed", "payload": {"error": {"message": "usage limit reached"}}},
+        {"type": "result", "sessionId": "sess_1", "usage": {"inputTokens": 100, "outputTokens": 10,
+                                                            "cacheReadTokens": 40, "cacheWriteTokens": 10,
+                                                            "modelRequestCount": 2}},
+    ]
+    out = [item for line in lines for item in kinds.get("zcode").parse_line(json.dumps(line), state)]
+    assert out == [("think", "The user wants to claim."), ("text", "Claiming the next one."),
+                   ("tool", "claim_function(4)"), ("error", "tool exploded"), ("error", "usage limit reached"),
+                   ("usage", json.dumps({"input": 50, "output": 10, "cache_read": 40, "cache_write": 10,
+                                         "turns": 2}))]
+    assert state["zcode_session"] == "sess_1"
+    assert kinds.get("zcode").parse_line(json.dumps({"type": "session.updated", "payload": {}})) == []
+    assert kinds.get("zcode").clean_stderr("Error: Model access is not configured. Run /login.") == \
+        "Model access is not configured. Run /login."
+    assert kinds.get("zcode").fatal("Unsupported reasoning effort: xhigh")
+
+
+
+def test_zcode_prompt_reaches_it_by_file_never_as_argv(tmp_path, monkeypatch):
+    """zcode has no stdin prompt: its prompt is a Markdown file the session attaches, so the text is never an
+    argument (and zcode cannot parse it as a slash command). Its settings file names only the app's MCP server."""
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    s = agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1",
+                       {"model": "account:zai-start-plan/GLM-5.3#high"})
+    work = tmp_path / "zcode"
+    work.mkdir()
+    cmd, env, stdin = m._command(s, "tok", work)
+    prompt = m.prompt(s)
+    assert stdin is None  # nothing for stdin: the prompt is in the attached file
+    assert (work / zcode.PROMPT_FILE).read_text(encoding="utf-8") == prompt
+    assert not any(prompt in arg or "line one" in arg for arg in cmd)
+    assert cmd[cmd.index("--attach") + 1] == str(work / zcode.PROMPT_FILE)
+    assert cmd[cmd.index("-p") + 1] == zcode.PROMPT_TEXT
+    assert cmd[cmd.index("--output-format") + 1] == "stream-json"
+    assert cmd[cmd.index("--mode") + 1] == "yolo"
+    denied = set(cmd[cmd.index("--disallowed-tools") + 1].split())
+    assert {"Read", "Write", "Edit", "Bash", "WebFetch", "WebSearch"} <= denied
+    assert cmd[cmd.index("--model") + 1] == "account:zai-start-plan/GLM-5.3"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    assert not any("tok" in arg for arg in cmd)
+    settings = json.loads((work / zcode.SETTINGS_FILE).read_text(encoding="utf-8"))
+    assert list(settings["mcp"]["servers"]) == [zcode.MCP_SERVER]
+    assert settings["mcp"]["servers"][zcode.MCP_SERVER] == {
+        "type": "http", "url": "http://127.0.0.1:6464/mcp",
+        "headers": {"Authorization": "Bearer tok"}}
+    assert settings["plugins"]["enabled"] is False and settings["skills"]["enabled"] is False
+    assert env["ZCODE_CLI_SETTINGS_FILE"] == str(work / zcode.SETTINGS_FILE)
+
+
+
+def test_zcode_refuses_a_prompt_it_cannot_attach(tmp_path, monkeypatch):
+    """Past zcode's 25,000-token / 256 KiB attachment caps it stops inlining the prompt and gives the model a
+    path placeholder or a partial view; Read is disallowed, so the helper would work without its instructions.
+    Just under the cap the prompt is written and attached; over it, the session start fails before writing."""
+    under = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS - zcode.TOKEN_CHARS)
+    over = "x" * (zcode.ATTACHMENT_TOKENS * zcode.TOKEN_CHARS + zcode.TOKEN_CHARS)
+    assert zcode.estimated_tokens(under) == zcode.ATTACHMENT_TOKENS - 1
+    assert zcode.estimated_tokens(over) == zcode.ATTACHMENT_TOKENS + 1
+    under_work = tmp_path / "zcode-under"
+    under_work.mkdir()
+    path = zcode.ZCODE.prompt_file(under_work, under)
+    assert path == under_work / zcode.PROMPT_FILE and path.read_text(encoding="utf-8") == under
+    cmd, _ = zcode.ZCODE.session_command("zcode", under_work, "http://127.0.0.1:1/mcp", "tok", "")
+    assert cmd[cmd.index("--attach") + 1] == str(path)
+    over_work = tmp_path / "zcode-over"
+    over_work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(over_work, over)
+    assert not (over_work / zcode.PROMPT_FILE).exists()
+    # the session start itself raises Fatal with the same sentence, before a process is launched
+    m = _manager(tmp_path, monkeypatch, "zcode")
+    m.prompt = lambda session: over
+    command_work = tmp_path / "zcode-command"
+    command_work.mkdir()
+    with pytest.raises(agents.Fatal, match="too long for zcode"):
+        m._command(agents.Session("zcode-1", "zcode", "z", "demo", "zcode-1", {}), "tok", command_work)
+    assert not any(command_work.iterdir())  # no prompt, no settings: the session start wrote nothing
+
+
+
+def test_zcode_refuses_a_prompt_over_its_byte_cap(tmp_path, monkeypatch):
+    """The 256 KiB cap is separate from the token cap: zcode would read only a 2000-line partial view."""
+    monkeypatch.setattr(zcode, "ATTACHMENT_TOKENS", 10**9)  # isolate the byte guard
+    work = tmp_path / "zcode-bytes"
+    work.mkdir()
+    with pytest.raises(ValueError, match="too long for zcode"):
+        zcode.ZCODE.prompt_file(work, "x" * (zcode.ATTACHMENT_BYTES + 1))
+    assert not (work / zcode.PROMPT_FILE).exists()
