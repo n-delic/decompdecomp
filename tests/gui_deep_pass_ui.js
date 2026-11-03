@@ -40,6 +40,21 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.match(element("deepSweepAttentionList").innerHTML,/Fix declarations/);
   element("deepSweepAttentionList").querySelectorAll("[data-deep-attention]")[0].onclick();
   assert.deepEqual(opened,["broken"]);
+  ctx.renderDeepSweepResults({has_activity:true,attention:[
+    {function:"first",error:"first is already matched",action:"Inspect saved C"},
+    {function:"second",error:"second is already matched",action:"Inspect saved C"},
+    {function:"third",error:"host answered 502",action:"Check connection"}]});
+  const grouped = element("deepSweepAttentionList").innerHTML;
+  assert.equal((grouped.match(/class="deep-issue-group"/g)||[]).length,2);
+  assert.equal((grouped.match(/Inspect saved C/g)||[]).length,1);
+  assert.match(grouped,/2 functions/);
+  assert.match(grouped,/This function is already matched/);
+  element("deepSweepAttentionList").querySelectorAll("[data-deep-attention]")[1].onclick();
+  assert.equal(opened.at(-1),"second");
+  ctx.renderDeepSweepResults({has_activity:true,attention:[{function:"f",error:"Compile failed",action:"Fix declarations"}]});
+  assert.match(element("deepSweepAttentionList").innerHTML,/Compile failed/);
+
+
   ctx.renderDeepSweepResults({has_activity:false,attention:[]});
   assert.equal(element("deepSweepAttention").hidden,true);
   assert.equal(element("deepSweepAttentionList").innerHTML,"");

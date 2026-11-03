@@ -1417,3 +1417,6 @@ native keyboard navigation and use the current light or dark theme.
 The Deep permutation pass groups its limits in a compact form and shows live result
 cards with a completed-function count and percentage. Search behavior and resume
 details are available under **How this search works**.
+
+Deep-pass search errors are grouped by reason and next step, with compact links to
+the affected functions. Large error lists scroll within the panel.

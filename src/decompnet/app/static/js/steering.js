@@ -1037,7 +1037,15 @@ function renderDeepSweepResults(status) {
   const attention = status.attention || [];
   $("deepSweepAttention").hidden = !attention.length;
   $("deepSweepAttentionTitle").textContent = `${attention.length} function${attention.length === 1 ? "" : "s"} could not be searched — view reasons`;
-  $("deepSweepAttentionList").innerHTML = attention.map((issue, index) => `<div class="panel"><button type="button" class="ghost small-btn mono" data-deep-attention="${index}">${esc(issue.function)}</button><p>${esc(issue.error)}</p><p class="small muted">${esc(issue.action)}</p></div>`).join("");
+  const issueGroups = new Map();
+  attention.forEach((issue, index) => {
+    // A function name embedded in an otherwise identical error should not repeat the guidance.
+    const reason = issue.function ? String(issue.error || "Search stopped").replace(/[A-Za-z_$][\w$]*/g, token => token === issue.function ? "This function" : token) : String(issue.error || "Search stopped");
+    const key = JSON.stringify([reason, issue.action || ""]);
+    if (!issueGroups.has(key)) issueGroups.set(key, {reason, action:issue.action, functions:[]});
+    issueGroups.get(key).functions.push({issue,index});
+  });
+  $("deepSweepAttentionList").innerHTML = [...issueGroups.values()].map((group, groupIndex) => `<section class="deep-issue-group" aria-labelledby="deepIssueReason${groupIndex}"><header><h4 id="deepIssueReason${groupIndex}">${esc(group.reason)}</h4><span class="deep-issue-count">${group.functions.length} function${group.functions.length === 1 ? "" : "s"}</span></header>${group.action ? `<p class="deep-issue-action">${esc(group.action)}</p>` : ""}<ul class="deep-issue-functions">${group.functions.map(({issue,index}) => `<li><button type="button" class="deep-issue-link mono" data-deep-attention="${index}" title="${esc(issue.error)}" aria-describedby="deepIssueReason${groupIndex}">${esc(issue.function)}<span aria-hidden="true">↗</span></button></li>`).join("")}</ul></section>`).join("");
   $("deepSweepAttentionList").querySelectorAll("[data-deep-attention]").forEach(button => {
     button.onclick = () => openFn(attention[Number(button.dataset.deepAttention)].function);
   });

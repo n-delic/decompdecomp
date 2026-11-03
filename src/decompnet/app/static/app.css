@@ -1202,7 +1202,21 @@ details.more[open] > summary::before { content: "− "; }
 .deep-sweep-help summary { cursor: pointer; color: var(--muted); }
 .deep-sweep-help p { margin: 10px 0 0; max-width: 100ch; line-height: 1.7; }
 #deepSweepAttention { font-size: 12px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: var(--r); }
-#deepSweepAttention summary { cursor: pointer; }
+#deepSweepAttention > summary { cursor: pointer; font-weight: 600; padding: 3px 0; }
+.deep-issue-intro { margin: 10px 0 14px; color: var(--muted); font-size: 12px; }
+#deepSweepAttentionList { display: grid; gap: 14px; max-height: 520px; overflow: auto; padding: 1px 4px 4px 1px; scrollbar-gutter: stable; }
+.deep-issue-group { padding: 14px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--raise); min-width: 0; }
+.deep-issue-group > header { display: flex; align-items: flex-start; gap: 12px; justify-content: space-between; }
+.deep-issue-group h4 { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.deep-issue-count { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; padding-top: 3px; font-variant-numeric: tabular-nums; }
+.deep-issue-action { margin: 6px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.deep-issue-functions { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 6px; list-style: none; margin: 12px 0 0; padding: 0; }
+.deep-issue-functions li { min-width: 0; }
+.deep-issue-link { display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; font-size: 11px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--panel); }
+.deep-issue-link span { flex: none; color: var(--muted); }
+.deep-issue-link:hover { border-color: var(--muted); background: var(--bg-alt); }
+.deep-issue-footer { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+@media (max-width: 600px) { .deep-issue-group > header { flex-direction: column; gap: 2px; } }
 @media (max-width: 1000px) { .deep-sweep-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 600px) {
   #deepSweepPanel > .pad { padding: 14px; }
