@@ -1210,3 +1210,18 @@ def test_local_assembly_labels_are_not_allowed_as_c_layout_names(project):
     manifest(folder,layout=[{'name':'.L00100380','vram':0x100380,'size':4,'status':'open'}])
     with pytest.raises(NetworkError,match='layout entry'):
         net.progress.sync('game',force=True)
+
+
+def test_verification_counters_reach_import_job_logger(project):
+    net, folder, _ = project
+    (folder / 'src').mkdir()
+    (folder / 'src/f.c').write_text('good', encoding='utf-8')
+    snapshots = []
+    def report(line):
+        pass
+    report.progress = lambda value: snapshots.append(dict(value))
+    net.progress.sync('game', force=True, logger=report)
+    measured = [p for p in snapshots if p.get('total')]
+    assert measured
+    assert measured[0]['done'] == 0
+    assert measured[-1]['done'] == measured[-1]['total'] == 1

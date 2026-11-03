@@ -1886,3 +1886,9 @@ caller/callee units, independently exact code/data for each known body, and
 freshly judged matching-only entry export. Ordinary inline-return placeholders
 retain their prior prefix-normalization behavior. Other processor metadata
 adapters remain planned; PROJECT mode retains its ordinary whole-project judge.
+
+Saved-progress verification now publishes measured checked/total counters to import jobs and the
+setup dialog. Parallel saved verification remains planned: compile immutable input snapshots in a
+bounded worker pool, then apply normal judge records on the coordinating thread under the existing
+project lock. Calling attempt concurrently inside restore would deadlock on that lock and conflict
+with the single progress-judge agent's claim; do not increase threads around the existing loop.
