@@ -210,3 +210,11 @@ entry is published. Preserve actual SDK macros, types, helper bodies and physica
 coherent source/header revisions rather than mixing declarations. Assembly reconsideration is an
 explicit option and publishes only freshly exact C; a miss stays set aside. Queue completion is
 not a cartridge rebuild: repository sync must verify the complete original image.
+
+If an isolated entry still schedules differently, check its original address-taking
+caller as compiler context. IDO 5.3 can produce the exact entry when the real,
+already-matched constructor stores its callback address earlier in the same unit.
+Keep the actual caller body: unused static/inline versions may not have the same
+effect. The app independently rejudges each included body at its known ROM slot
+before allowing matching-only extraction. A zero diff alone does not verify data
+or authorize invented padding or helper bodies.

@@ -2,7 +2,9 @@
 
 Private IDO procedures need the real caller/callee unit to reproduce its register
 convention. Hidden procedures come from explicit compiler debug extents, never
-from target instruction matching or guessed source boundaries.
+from target instruction matching or guessed source boundaries. Public procedures
+can also need an already-matched address-taking caller as compiler context; those
+callers are independently rechecked at their original addresses before extraction.
 """
 from io import BytesIO
 
@@ -29,7 +31,8 @@ def private_unit(net, proj, fn, obj):
     symtab=elf.get_section_by_name('.symtab')
     exported={s.name for s in symtab.iter_symbols() if s['st_info']['bind']=='STB_GLOBAL' and isinstance(s['st_shndx'],int)} if symtab else set()
     hidden=set(metadata_functions(elf))-exported
-    if not hidden:return None  # ordinary unrelated extra global bodies retain the strict predecessor path
+    public=not hidden and len(found)>1 and set(found)<=exported
+    if not hidden and not public:return None
     section,start,size=found[fn['name']]
     if size!=fn['size']:return None
     rows=[];end=0
@@ -43,8 +46,9 @@ def private_unit(net, proj, fn, obj):
         row=fn if name==fn['name'] else net.store.one(
             'SELECT * FROM functions WHERE project_id=? AND name=?',proj['id'],name)
         if row is None or row['size']!=length:return None
+        if public and name!=fn['name'] and row['status']!='matched':return None
         rows.append(row);end=offset+length
-    # A bounded subset can reproduce a private calling convention without the
+    # A bounded subset can reproduce calling or address-taking context without the
     # unrelated functions between its retail slots. Every call is linked through
     # the known ROM names, and every body is independently judged at its own slot;
     # never infer a target address from the compiler's unit-relative offsets.
@@ -54,7 +58,7 @@ def private_unit(net, proj, fn, obj):
         result=match.link(obj,row['name'],net._rom_target(row),net.symbols(proj['id']),net.reader(proj,row))
         if result.exact is not True or result.candidate is None or result.linked_code is None:return None
     return {'ready':False,'state':'requires_normalization','context_functions':[n for n in ordered if n!=fn['name']],
-            'message':'Exact entry and independently verified private compiler unit; matching-only extraction is required. Auxiliary entries are context, not newly published matches.'}
+            'message':'Exact entry and independently verified compiler unit; matching-only extraction is required. Auxiliary entries are context, not newly published matches.'}
 
 
 def acceptable(net, proj, fn, obj):

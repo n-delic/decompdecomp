@@ -2829,3 +2829,30 @@ A single-compile total budget cannot fund both lanes, and an in-flight compile
 may overrun its phase boundary. Baseline/preflight and cancellation remain under
 the global limits. NOP-plus-branch-cascade diagnostics suggest inspecting the
 first scheduling boundary without deleting branch mismatches from the judge.
+
+## IDO 5.3: verified address-taking context can change scheduling
+
+A source-assisted N64 boss update resisted isolated compilation with IDO 5.3,
+`-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`. The original
+condition order scored 1,190; a reordered-condition draft reached 775, but neither
+was exact. Line-break variants, compiler-phase overrides, 1,800 equivalent boolean
+expression variants and explicit caching did not recover the original block.
+
+Compiling the original update together with its already-matched constructor,
+which stores the update function's address, recovered the retail scheduling.
+Both bodies independently linked byte-identically at their existing ROM slots:
+492 bytes for the constructor and 976 bytes for the update, with no code or data
+placement problems. Compiling either an unused static or inline constructor did
+not reproduce the result. The controlled reduction isolated the constructor's
+address-taking statement; it is evidence of compiler-unit dependence, not proof
+of which internal compiler pass causes it. This replay is not yet a live match
+or a full-cartridge verification.
+
+Keep the real verified constructor as context rather than inventing padding,
+helper bodies or target instructions. Bounded public context may occupy separate
+ROM ranges when every auxiliary is already matched and independently rejudged.
+All body identities, extents, non-overlap checks, code bytes and linked data must
+pass. Publish only the requested entry through matching-only extraction; do not
+publish the context bodies twice or change their statuses. A zero disassembly
+score alone is insufficient: an initial whole-file probe still had unresolved
+symbols/data despite matching instructions.

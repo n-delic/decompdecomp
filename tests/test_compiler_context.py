@@ -72,3 +72,38 @@ def test_only_proven_discarded_inline_stubs_can_fill_compiler_context_gaps(monke
     assert context.private_unit(net,p,rows['entry'],b'obj')
     monkeypatch.setattr(context,'metadata_placeholders',lambda e:{'wrong_extent':(4,16,4)})
     assert context.private_unit(net,p,rows['entry'],b'obj') is None
+
+
+def public_setup(monkeypatch):
+    net,p,rows,found,calls=setup(monkeypatch)
+    symbols=[SimpleNamespace(name=name) for name in found]
+    class Sym(dict):
+        def __init__(self,name):
+            super().__init__(st_info={'bind':'STB_GLOBAL'},st_shndx=4);self.name=name
+    elf=context.ELFFile(None)
+    elf.get_section_by_name=lambda n:SimpleNamespace(iter_symbols=lambda:iter([Sym(s.name) for s in symbols]))
+    rows['helper']['status']='matched'
+    rows['helper']['vram']=0x80002000
+    return net,p,rows,found,calls
+
+
+def test_matched_public_context_is_rejudged_at_its_nonadjacent_rom_slot(monkeypatch):
+    net,p,rows,found,calls=public_setup(monkeypatch)
+    proof=context.private_unit(net,p,rows['entry'],b'obj')
+    assert proof['state']=='requires_normalization'
+    assert proof['context_functions']==['helper']
+    assert calls==['helper','entry']
+    assert rows['helper']['status']=='matched' and rows['entry']['status']=='open'
+
+
+@pytest.mark.parametrize('bad',['open','unknown','inexact','overlap','wrong_size','gap','missing_code'])
+def test_public_context_retains_each_identity_and_byte_gate(monkeypatch,bad):
+    net,p,rows,found,calls=public_setup(monkeypatch)
+    if bad=='open':rows['helper']['status']='open'
+    if bad=='unknown':rows.pop('helper')
+    if bad=='inexact':monkeypatch.setattr(context.match,'link',lambda obj,name,*a:LinkResult(object(),name!='helper',[],{},linked_code=b'code'))
+    if bad=='overlap':rows['helper']['vram']=rows['entry']['vram']
+    if bad=='wrong_size':rows['helper']['size']+=4
+    if bad=='gap':found['entry']=(4,20,32)
+    if bad=='missing_code':monkeypatch.setattr(context.match,'link',lambda *a:LinkResult(object(),True,[]))
+    assert context.private_unit(net,p,rows['entry'],b'obj') is None
