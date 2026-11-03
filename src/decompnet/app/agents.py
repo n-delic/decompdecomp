@@ -638,6 +638,8 @@ class Manager:
         ids = []
         with self._lock:
             for s in list(self.sessions.values()):
+                if self._down:
+                    break  # startup resumes in the background; shutdown may have won the race
                 if s.state != "stopped" or s.stopped_by != BY_QUIT:
                     continue
                 try:
@@ -651,6 +653,8 @@ class Manager:
                     continue
                 s.options = options
                 self._prepare(s.slug)
+                if self._down:
+                    break
                 self._launch(s)
                 ids.append(s.id)
         return ids

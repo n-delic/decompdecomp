@@ -84,8 +84,6 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         return agent, slug
 
     threading.Thread(target=collab.local_addresses, daemon=True).start()  # `tailscale status` can take seconds
-    # rooms this computer belongs to reconnect (members keep their place; their agents wait while the host is away)
-    net.restore_links()
 
     def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
         for row in net.store.all("SELECT slug, config FROM projects"):
@@ -95,8 +93,6 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
                 net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
             except Exception:  # never stands between the user and the app
                 jobs.logger.exception("%s's console work at start failed", row["slug"])
-    threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
-    saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
         """A resumed helper's options as they are now: an API helper's endpoint as saved, with its key (None: the
@@ -113,7 +109,6 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
             now["model"] = str(options["picked_model"])
         return now
     manager.options_now = options_now
-    manager.resume()  # helpers that were working when the app last stopped carry on (their records say which)
 
     mcp = tools.build_mcp(net, agent_of)
 
@@ -171,4 +166,21 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     security = TransportSecuritySettings(enable_dns_rebinding_protection=True, allowed_hosts=sorted(allowed_hosts),
                                          allowed_origins=[f"http://{h}" for h in sorted(allowed_hosts)])
+
+    def resume_work() -> None:
+        # A helper's project_row synchronizes its progress folder. On a large legacy save that takes minutes;
+        # doing it before uvicorn starts left the window waiting and repeat launches fighting for the database.
+        # Finish route registration before any background sync can take the store lock, too.
+        try:
+            net.restore_links()
+        except Exception:  # a broken room must not prevent local helpers from resuming
+            jobs.logger.exception("could not reconnect rooms at start")
+        threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
+        saves.Autosave(net).start()
+        try:
+            manager.resume()
+        except Exception:  # the window must remain available to fix a project's blocked progress
+            jobs.logger.exception("could not resume helpers at start")
+
+    threading.Thread(target=resume_work, daemon=True, name="resume-work").start()
     return mcp, manager, security, quit_app

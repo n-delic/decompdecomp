@@ -39,6 +39,46 @@ def app(tmp_path_factory):
 WINDOW = {"User-Agent": f"Mozilla/5.0 AppleWebKit/605.1.15 {window.TOKEN_AGENT}{SECRET}"}
 
 
+def test_the_server_answers_while_saved_helpers_wait_for_project_sync(tmp_path, monkeypatch):
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    caller = threading.current_thread()
+
+    def resume(manager):
+        assert threading.current_thread() is not caller
+        entered.set()
+        try:
+            assert release.wait(10)
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(agents.Manager, "resume", resume)
+    home = tmp_path / ".decomp"
+    home.mkdir()
+    net = RomNetwork(home / "decomp.db", tmp_path)
+    try:
+        mcp, _, security, _ = build(net, home, PORT, SECRET)
+        assert entered.wait(5)
+        client = TestClient(mcp.streamable_http_app(transport_security=security, host="127.0.0.1"),
+                            base_url=f"http://127.0.0.1:{PORT}", headers=WINDOW)
+        assert client.get("/health").status_code == 200
+        assert client.get("/").status_code == 200
+        assert not finished.is_set()
+    finally:
+        release.set()
+        assert finished.wait(5)
+
+
+def test_shutdown_prevents_background_startup_from_launching_helpers(tmp_path, monkeypatch):
+    net = RomNetwork(tmp_path / "decomp.db", tmp_path)
+    manager = agents.Manager(net, tmp_path, "http://127.0.0.1:6499/mcp")
+    manager.sessions["1"] = agents.Session("1", "api", "helper", "game", "helper", {},
+                                          state="stopped", stopped_by=agents.BY_QUIT)
+    monkeypatch.setattr(net, "project_row", lambda slug: None)
+    monkeypatch.setattr(manager, "_prepare", lambda slug: setattr(manager, "_down", True))
+    monkeypatch.setattr(manager, "_launch", lambda session: pytest.fail("shutdown helper was launched"))
+    assert manager.resume() == []
+
+
 def test_on_windows_it_stops_updating_and_shows_the_way_back_to_1_0_2(tmp_path, monkeypatch):
     """1.0.2 on Windows (in WSL) can install this version by itself, and it doesn't run there. Going back to 1.0.2
     must stick: 1.0.2 reads the same settings, so its update checks are switched off, and its old tab says how."""
