@@ -133,7 +133,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     try:
         manifest = json.loads(disk[saves.MANIFEST])
         headers = dict(manifest.get("headers") or {})
-        layout = {entry["name"] for entry in manifest.get("layout") or []}
+        layout = {saves._source_file(entry["name"]) for entry in manifest.get("layout") or []}
     except (ValueError, TypeError, KeyError, AttributeError):
         return disk
     if not layout:
@@ -147,7 +147,7 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
             (folder / "include").mkdir(exist_ok=True)
             (folder / name).write_text(disk[name], encoding="utf-8")
             report(f"{name} was missing: written again from the project")
-    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).stem not in layout)
+    left = sorted(name for name in disk if name.startswith(("src/", "best/")) and Path(name).name not in layout)
     if left:
         known = {row["name"] for row in net.store.all("SELECT name FROM functions WHERE project_id=?", pid)}
         left = [name for name in left if Path(name).stem not in known]
@@ -214,18 +214,19 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                 raise ValueError(f"set_aside entry {item.get('name')!r} is malformed")
         if "" not in (manifest.get("headers") or {}):
             raise ValueError("headers must name the project-wide header (the empty name)")
+        source_files = {saves._source_file(name) for name in layout}
         for name in files:
-            if name.startswith(("src/", "best/")) and Path(name).stem not in layout:
+            if name.startswith(("src/", "best/")) and Path(name).name not in source_files:
                 raise NetworkError(f"Add {Path(name).stem} to the function layout in progress/decompdecomp.json before continuing.")
         functions = {}
         for name, info in layout.items():
             if Path(name).name != name or "\\" in name or "/" in name:
                 raise ValueError(f"layout name {name!r} is not a function name")
             previous = manifest.get("functions", {}).get(name, {})
-            if f"src/{name}.c" in files:
+            if f"src/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "matched_by": previous.get("matched_by", ""),
                                    "readable": previous.get("readable", False)}
-            elif f"best/{name}.c" in files:
+            elif f"best/{saves._source_file(name)}" in files:
                 functions[name] = {"vram": info["vram"], "best_by": previous.get("best_by", "")}
         manifest["functions"] = functions
         return manifest
@@ -794,7 +795,7 @@ class Progress:
         if full:
             removed = {name: None for name in baseline.projected.files if name not in files}
         else:
-            possible = {f"src/{name}.c" for name in names} | {f"best/{name}.c" for name in names}
+            possible = {f"src/{saves._source_file(name)}" for name in names} | {f"best/{saves._source_file(name)}" for name in names}
             if flags.headers:
                 possible |= {name for name in baseline.projected.files if name.startswith("include/")}
             removed = {name: None for name in possible
@@ -888,7 +889,7 @@ class Progress:
                 # A database match newer than the folder's snapshot wins even when the folder has an older file of
                 # the same name; its source is published below and that older file is not judged (#101 review).
                 legacy_newer = _database_newer(net, proj, manifest, stored_revision)
-                changed.difference_update(f"src/{name}.c" for name in legacy_newer)
+                changed.difference_update(f"src/{saves._source_file(name)}" for name in legacy_newer)
             projected = baseline.projected if baseline is not None else _Snapshot.of(comparison)
             # A helper can finish another function just before a pull. Publish that independent work before
             # loading the pull; the contributor wins if both changed the same file.
@@ -908,7 +909,7 @@ class Progress:
                     manifest["revision"] = saves._next_revision(net, proj, folder)
                     pending[saves.MANIFEST] = json.dumps(manifest, indent=1) + "\n"
                 for name in legacy_newer:
-                    source = f"src/{name}.c"
+                    source = f"src/{saves._source_file(name)}"
                     if source in rendered:
                         pending[source] = rendered[source]
                 if (before is not None and saves.MANIFEST in rendered and previous.manifest is not None
@@ -987,8 +988,8 @@ class Progress:
                     rows = db.execute("SELECT id,name,vram,n_insns FROM functions WHERE project_id=?",
                                       (pid,)).fetchall()
                     for row in rows:
-                        changed_source = f"src/{row['name']}.c" in applied_changed
-                        changed_best = f"best/{row['name']}.c" in applied_changed
+                        changed_source = f"src/{saves._source_file(row['name'])}" in applied_changed
+                        changed_best = f"best/{saves._source_file(row['name'])}" in applied_changed
                         keep_backup = False
                         keep_best = False
                         if changed_source or all_code:

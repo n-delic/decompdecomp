@@ -54,6 +54,43 @@ def manifest(folder, **changes):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+def test_long_template_names_survive_saves_edits_and_deletions(project):
+    net, folder, judged = project
+    name = "lower_bound__" + "template_argument_" * 40
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET name=?,best_source='near miss',best_score=10 WHERE name='f'", (name,))
+    net.progress.sync("game", force=True)
+    file = saves._source_file(name)
+    assert len(file.encode()) < 255
+    assert saves._source_file(name + "other") != file
+    assert (folder / "best" / file).read_text() == "near miss\n"
+    assert name == json.loads((folder / saves.MANIFEST).read_text())["layout"][0]["name"]
+
+    # A fresh process must resolve the shortened file through the full names in the layout.
+    net.progress = Progress(net)
+    net.progress.sync("game", force=True)
+    (folder / "best" / file).write_text("good edited", encoding="utf-8")
+    net.progress.sync("game", force=True)
+    assert judged[-1] == (name, "good edited")
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET matched_source='good local',best_source='good local' WHERE name=?", (name,))
+    net.progress.sync("game", force=True)
+    assert (folder / "src" / file).read_text() == "good local\n"
+    export = folder.parent / "export"
+    saves.save(net, "game", export)
+    assert saves._saved_source(export, None, "src/" + file) == "good local\n"
+    assert "src/" + file in saves._read_owned(export)
+    (folder / "src" / file).unlink()
+    (folder / "best" / file).unlink(missing_ok=True)
+    net.progress.sync("game", force=True)
+    assert net._function(name, "game")["matched_source"] is None
+
+
+def test_portable_source_names_preserve_names_that_already_fit():
+    assert saves._source_file("f" * 249) == "f" * 249 + ".c"
+    assert len((saves._source_file("f" * 250) + ".tmp").encode()) <= 255
+
+
 def test_a_new_source_is_discovered_without_editing_the_function_index(project):
     net, folder, judged = project
     (folder / "src").mkdir()
