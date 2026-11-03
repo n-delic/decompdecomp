@@ -126,3 +126,42 @@ def test_join_selects_by_rom_run_not_the_shared_vram_window(net):
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, TAIL) is None
     alias = net.store.one("SELECT status FROM functions WHERE project_id=? AND name=?", pid, "alias_head")
     assert alias is not None and alias["status"] == "matched"     # the aliased copy was NOT swept into the merge
+
+
+def _three_pieces(net, agent):
+    """Cut FN into head | middle | tail and return (middle_name, tail_name). The real shape behind this is a
+    branch whose delay-slot NOP became its own pad symbol, then the tail that runs on -- three adjacent symbols."""
+    net.split_function(agent, SLUG, FN, "0x800007D0")             # head FN | func_800007D0
+    tail = net._function(TAIL, SLUG)
+    assert tail["size"] >= 8, tail["size"]                        # room to cut a middle piece off the tail
+    mid_addr = tail["vram"] + 4                                   # one instruction in
+    net.split_function(agent, SLUG, TAIL, f"0x{mid_addr:08X}")    # middle func_800007D0 | tail func_<mid_addr>
+    return TAIL, f"func_{mid_addr:08X}"
+
+
+def test_two_adjacent_joins_reassemble_a_three_piece_split(net):
+    # A join is to the very next symbol, so a head | middle | tail cut is put back with two joins -- head+middle,
+    # then head+tail. The middle is absorbed and the original bytes and extent come back. This is the workflow a
+    # branch's delay-slot pad plus a trailing tail actually takes.
+    agent, _ = net.local_agent("tester")
+    orig = net._function(FN, SLUG)
+    orig_size, orig_target, pid = orig["size"], orig["target"], orig["project_id"]
+    middle, tail2 = _three_pieces(net, agent)
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, tail2) is not None
+    assert net._function(FN, SLUG)["size"] < orig_size            # head only, after two cuts
+    assert _agree(net, FN, middle).startswith("✅")               # 1st join: head + middle (the pad)
+    assert _agree(net, FN, tail2).startswith("✅")                # 2nd join: head + tail, now adjacent
+    joined = net._function(FN, SLUG)
+    assert joined["size"] == orig_size, (joined["size"], orig_size)
+    assert joined["target"] == orig_target                        # original bytes restored, middle absorbed
+    for gone in (middle, tail2):
+        assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, gone) is None
+
+
+def test_refuses_a_join_that_skips_a_symbol_between(net):
+    # With head | middle | tail, joining the head straight to the tail is refused: a join is to the very next
+    # symbol, so the middle must be joined first. This is why the three-piece case needs two joins, not one.
+    agent, _ = net.local_agent("tester")
+    _, tail2 = _three_pieces(net, agent)
+    with pytest.raises(NetworkError):                             # the middle sits between FN and tail2
+        net.join_functions(agent, SLUG, FN, tail2, "skip the middle piece")
