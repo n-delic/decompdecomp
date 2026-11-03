@@ -2845,8 +2845,10 @@ Both bodies independently linked byte-identically at their existing ROM slots:
 placement problems. Compiling either an unused static or inline constructor did
 not reproduce the result. The controlled reduction isolated the constructor's
 address-taking statement; it is evidence of compiler-unit dependence, not proof
-of which internal compiler pass causes it. This replay is not yet a live match
-or a full-cartridge verification.
+of which internal compiler pass causes it. The pair subsequently passed the normal live prepared-source API and
+repository-sync full-cartridge verification. Keep the callback forward declaration
+in the source unit too: export may rename its definition and earlier address
+reference together while retaining the private header unchanged.
 
 Keep the real verified constructor as context rather than inventing padding,
 helper bodies or target instructions. Bounded public context may occupy separate
