@@ -1394,3 +1394,7 @@ When closing the window with workers active, the confirmation lists their names,
 projects and current states, plus running background tasks. **Stop them and quit**
 is highlighted and focused by default; **Keep them working** leaves the app running
 without its window.
+
+Single-choice dropdowns share the app’s common control styling automatically,
+including function activity sorting and dynamically added settings. They retain
+native keyboard navigation and use the current light or dark theme.

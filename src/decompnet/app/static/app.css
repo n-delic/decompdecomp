@@ -213,7 +213,7 @@ a.ghost, a.primary { text-decoration: none; }
 .check input { margin-top: 3px; accent-color: var(--match); width: 16px; height: 16px; flex: none; }
 .check.inline { padding: 9px 12px; }
 .field { display: grid; gap: 6px; font-size: 12.5px; color: var(--muted); min-width: 0; }
-.field select, .field input, .lz-custom, .field textarea, .pad > textarea {
+.field input, .lz-custom, .field textarea, .pad > textarea {
   height: 36px; width: 100%; border-radius: var(--r); border: 1px solid var(--line); background: var(--raise); padding: 0 10px; font-size: 14px; color: var(--ink);
 }
 .field textarea, .pad > textarea { height: auto; padding: 9px 11px; font: 13px/1.5 var(--sans); resize: vertical; }
@@ -825,11 +825,21 @@ body { font-family: var(--sans); font-size: 15px; }
 .fn-tabs { border-bottom-width: var(--border-width-hairline); }
 
 /* native form controls in the brand: no browser chrome (spinners, OS arrows, OS checkboxes, the file button) */
-select, .field select {
-  appearance: none; -webkit-appearance: none; padding-right: 34px !important; cursor: pointer;
-  background-image: linear-gradient(45deg, transparent 50%, var(--ink) 50%), linear-gradient(135deg, var(--ink) 50%, transparent 50%);
+/* Common dropdown control. Native selects retain keyboard/type-ahead and screen-reader
+   behavior; all single-choice selects, including dynamically rendered ones, share this skin.
+   Context rules below may adjust width/height, but must not replace the skin or arrow. */
+select:not([multiple]):not([size]), select[size="1"] {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  min-width: 0; max-width: 100%; height: 36px; padding: 0 34px 0 10px;
+  border: 1px solid var(--line); border-radius: var(--r-sm);
+  background-color: var(--panel); color: var(--ink); font: 500 13px var(--sans);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
   background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
 }
+.field select { width: 100%; }
+select:not(:disabled):hover { border-color: var(--muted); }
+select:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
+select:disabled { opacity: .55; cursor: default; }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 input[type="checkbox"], input[type="radio"] {
@@ -1118,9 +1128,7 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-stat [data-exact] { color: var(--match); }
 
 .agent-sort-select { position: relative; flex: 1; max-width: 280px; }
-.agent-sort-select select { appearance: none; width: 100%; height: 38px; padding: 0 36px 0 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font: 500 12px var(--sans); cursor: pointer; }
-.agent-sort-select::after { content: ''; position: absolute; right: 14px; top: 14px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); pointer-events: none; }
-.agent-sort-select select:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
+.agent-sort-select select { width: 100%; }
 .agent-toolbar > label { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .agent-metric-link { display: grid; gap: 3px; text-align: left; color: var(--ink); padding: 6px 8px; margin: -6px -8px; border-radius: 5px; }
 .agent-metric-link:not(:disabled):hover { background: var(--bg-alt); }
@@ -1199,14 +1207,13 @@ details.more[open] > summary::before { content: "− "; }
 .agents-panel .agent-toolbar { padding: 0; border: 0; margin-left: auto; gap: 6px; }
 .agents-panel .agent-sort-select { width: 150px; }
 .agents-panel .agent-sort-select select { height: 30px; padding-left: 8px; }
-.agents-panel .agent-sort-select::after { top: 10px; }
 .ptab[data-pane="agents"] .agents-grid { align-items: start; }
 .ptab[data-pane="agents"] .agents-grid > .agents-panel { height: auto; }
 .ptab[data-pane="agents"] .agents-grid .sessions { overflow: visible; flex: none; }
 
 /* Cross-game transfers: a result, its provenance, and one clear score change per row. */
 #crossGamePanel .panel-head { flex-wrap: wrap; gap: 12px; }
-.transfer-filter { max-width: 100%; padding: 7px 32px 7px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--panel); color: var(--ink); font: 12px var(--sans); }
+.transfer-filter { max-width: 100%; }
 .transfer-summary { padding: 16px; border-bottom: 1px solid var(--line); }
 .transfer-totals { display: flex; flex-wrap: wrap; gap: 12px 28px; color: var(--muted); font-size: 12px; }
 .transfer-totals span { display: flex; align-items: baseline; gap: 7px; }
@@ -1236,8 +1243,6 @@ details.more[open] > summary::before { content: "− "; }
 }
 
 .transfer-filter-wrap { position: relative; max-width: 100%; }
-.transfer-filter-wrap::after { content: ''; position: absolute; right: 12px; top: 11px; width: 6px; height: 6px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); pointer-events: none; }
-.transfer-filter:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
 
 .transfer-toggle { display: inline-flex; gap: 10px; align-items: center; text-align: left; font: inherit; color: inherit; }
 .transfer-chevron { width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(45deg); margin: -4px 2px 0; flex-shrink: 0; }
@@ -1260,7 +1265,6 @@ details.more[open] > summary::before { content: "− "; }
 .compiler-range-heading code { overflow-wrap: anywhere; }
 .compiler-range-reason { margin-top: 6px; }
 .compiler-range-reason summary { font-size: 12px; color: var(--muted); cursor: pointer; }
-.compiler-view-controls select { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--ink); font: inherit; }
 #progressSyncBar.determinate i { animation: none; transform: none; transition: width .2s; }
 
 .compiler-function-links { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; max-height: 240px; overflow: auto; }
@@ -1329,7 +1333,7 @@ details.more[open] > summary::before { content: "− "; }
 th[aria-sort="ascending"] .table-sort, th[aria-sort="descending"] .table-sort { color:var(--ink); }
 
 .deep-activity-controls { display:flex; flex-wrap:wrap; align-items:center; gap:20px; margin:12px 0; }
-.deep-activity-controls label { display:flex; align-items:center; gap:8px; }
+.deep-activity-controls label { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
 .deep-worker[hidden] { display:none; }
 .prompt-setting { margin-bottom:20px; }
 .prompt-setting textarea { width:100%; box-sizing:border-box; font:12px/1.6 var(--mono); resize:vertical; }
