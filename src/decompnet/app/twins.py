@@ -481,6 +481,7 @@ class Twins:
         if marks:
             with self.net.store.tx() as db:
                 db.executemany("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", marks)
+                db.executemany("DELETE FROM claims WHERE function_id=?", [(fid,) for _, fid in marks])
         return len(marks)
 
     def _full_running(self, slug: str) -> bool:

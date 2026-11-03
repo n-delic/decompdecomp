@@ -337,6 +337,10 @@ def asm_reason(code: bytes, big_endian: bool, *, eabi: bool = False, cop2: str =
     words = [int.from_bytes(code[at:at + 4], order) for at in range(0, len(code) - 3, 4)]
     if not words:
         return None
+    # splat can name zero-filled regions as functions; padding trimming leaves one NOP behind.
+    # Keep those bytes for rebuilding, but don't ask agents to compile a function with no control flow.
+    if len(code) % 4 == 0 and not any(words):
+        return "contains only NOPs: zero-filled padding or a code fragment, not a complete C function"
     for w in words:
         op = w >> OPCODE_SHIFT
         if op == SPECIAL and w & FUNCT_BITS == SYSCALL:  # not break (0x0D): GCC emits that for its own divide-by-zero checks

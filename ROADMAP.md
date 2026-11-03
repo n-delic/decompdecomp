@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: NOP-only MIPS targets remain rebuildable as set-aside assembly from import and Check again.
+Incomplete nonzero targets still receive advisory boundary review; original bytes, symbols, matches and explicit
+operator overrides are preserved.
+
 Implemented: resumable local-ROM CPU source queues, explicit mapped/prepared assembly reconsideration
 with atomic exact-only publication, dedicated interrupted-claim recovery, bounded real mapped
 caller/callee and predecessor discovery for MIPS compiler-unit judges, and measured coherent SDK-pair

@@ -298,9 +298,13 @@ class ImportMixin:
                     meta_data.update(console.function_meta(fn))
                     if known:
                         meta_data["debug"] = known
+                    status = console.function_status(fn)
+                    if not same_target and (why := console.asm_reason(target.code)):
+                        # Classify before the target reaches the claim queue; keep its bytes and symbols.
+                        meta_data["asm_code"] = why
+                        status = "asm"
                     meta = json.dumps(meta_data) if meta_data else None
                     n_insns = console.function_insns(fn)
-                    status = console.function_status(fn)
                     if old is None:
                         db.execute(
                             "INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,meta,status) "
