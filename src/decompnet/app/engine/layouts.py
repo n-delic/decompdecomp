@@ -105,14 +105,28 @@ class LayoutMixin:
             return None
         x = self.xrefs(proj)
         if "structs" not in x:
-            rows = self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
-                                  proj["id"])
             syms = self.symbols(proj["id"])
             read = functools.partial(arch.get(self.console(proj).arch).field_accesses,
                                      big_endian=bool(self.cfg(proj).get("big_endian", True)))
-            x["structs"] = structs.recover(((r["vram"], r["target"], json.loads(r["relocs"])) for r in rows), read,
-                                           lambda a: a - syms.name_at(a)[1])
+            facts = self._facts(proj["id"], self._corpus(proj["id"]), read, lambda a: a - syms.name_at(a)[1])
+            x["structs"] = structs.recover_from(facts)
         return x["structs"]
+
+    def _facts(self, pid: int, corpus: list, read_facts, datum) -> dict:
+        """Each function's structs.Facts, keyed by vram; cached facts are reused for every function whose content
+        token is unchanged. extract() still sees the whole corpus (data_start needs every function's extent); `only`
+        just limits which functions are re-read. Splits/cuts/merges preserve byte coverage, so an unchanged
+        function's facts stay valid; a function added over bytes that were not code before clears this cache."""
+        cache = self._facts_cache.setdefault(pid, {})
+        changed = {vram for vram, _, _, token in corpus if (cache.get(vram) or (None,))[0] != token}
+        fresh = structs.extract([(v, c, r) for v, c, r, _ in corpus], read_facts, datum, only=changed) if changed else {}
+        out, kept = {}, {}
+        for vram, _code, _relocs, token in corpus:
+            facts = fresh[vram] if vram in fresh else cache[vram][1]
+            out[vram] = facts
+            kept[vram] = (token, facts)
+        self._facts_cache[pid] = kept
+        return out
 
     def _struct_key(self, fn, argument: str, syms) -> tuple[tuple, list[int], str]:
         """(structs key, pointer fields to follow, what to call it) for what an agent asks about: arg0..arg3, return,
