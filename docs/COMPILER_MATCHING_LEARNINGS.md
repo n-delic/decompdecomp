@@ -2682,6 +2682,45 @@ path, and the complete original-cartridge export passed. The context constructor
 is not a new match. This is a separate live recovery from the staged private-unit
 candidates above.
 
+## KMC: consistent global identity can resolve a scheduling near miss (3 November 2026)
+
+**Measured live evidence:** a private 1,023-instruction / 4,092-byte renderer,
+KMC GCC 2.7.2 with bundled GNU as 2.6, unchanged flags
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+
+The initial saved source scored 550. A block-local accumulator in a squared-distance
+calculation reduced it to 480; a separate block-local accumulator in a brightness
+loop reduced it to 440. These scopes changed register allocation without changing
+the calculations. The remaining inserted NOP shifted many later branches, making
+one scheduling problem look like many address/constant mismatches.
+
+One game-state pointer was expressed through a synthetic byte-array base plus an
+offset in most places, and through a bare integer address in another. Replacing
+both representations with the same independently typed external pointer produced
+score **0**, with every linked instruction byte identical. Other nearby globals
+kept their existing representations. The last remaining colour-byte load and
+floating-point constant setup now scheduled in the required order. This was a
+source/context correction, not a flag, assembler, target, boundary or judge change.
+Do not infer the original spelling or a universal scheduling rule from this case.
+
+**Useful negative evidence:** preloading that colour byte before the display-list
+store scored 80, but moved the load too early and was not a match. A ten-minute app
+deep pass tested 202 candidates without improving 80. Further packing, width,
+formatting, helper, register, copy and flag probes did not resolve it; more than
+2,200 focused command-block permutations also failed. A smaller score therefore
+did not identify the best starting source for the final global-context correction.
+
+**Practical order:** inspect the earliest *real* differing bytes and their
+liveness; check that repeated accesses to a proven global cell use a consistent,
+appropriately typed declaration before spending more trials on shifts and masks.
+Keep separate globals distinct, preserve volatility, and do not globally rewrite
+shared headers from an address resemblance alone. Try a candidate-local change
+and require the ordinary compiler/link byte judge. A matching displayed address
+or symbolic label by itself is not proof. Local experiments used the same pinned
+compiler and linker judge; the final source was submitted to the running app,
+which recorded score 0 and exact linked-byte and instruction checks.
+The complete standalone cartridge rebuild subsequently passed byte for byte,
+retaining every earlier selected C function.
 
 ### From manual private-unit recovery to resumable CPU discovery
 

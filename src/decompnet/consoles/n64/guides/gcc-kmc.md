@@ -360,3 +360,19 @@ constant-store residual, a small local expression is not always enough: the rema
 lifetimes can determine allocation. A reduced compiler reproducer is diagnostic evidence, not a
 semantics-preserving game repair. Neither this investigation nor the broader five-profile replay
 established another automatic match, so no new priority recipe was learned.
+
+### Check global identity before chasing the last scheduling NOP
+
+For a near-exact KMC function, inspect whether repeated reads of the same proven
+global cell mix a byte-array-base-plus-offset expression with a bare integer
+pointer. A consistent typed external declaration can change CSE, lifetimes and
+scheduling even when the old expressions resolve to the right address. Keep
+other globals distinct and preserve volatility; verify any candidate-local change
+with the normal byte judge rather than editing shared types on resemblance alone.
+
+In one measured 1,023-instruction renderer at GCC 2.7.2 / GNU as 2.6,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, scoped integer accumulators reduced 550 to 440,
+and consistent typed global access then matched exactly. Moving a colour load
+manually only reached 80; packing rewrites and a ten-minute deep pass did not solve
+it. An inserted NOP had shifted many later branch offsets. Diagnose the first
+actual byte mismatch before interpreting those downstream rows as separate faults.
