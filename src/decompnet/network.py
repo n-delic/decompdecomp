@@ -872,7 +872,12 @@ class Network:
                               fn["id"], agent.id)["n"] if limit is not None else 0
         return limit, used
 
+    def focus_target(self,agent,project,function=None):
+        from .app.focused_agents import target
+        return target(self,agent,project,function)
+
     def ensure_agent_active(self, agent):
+        if agent.id in getattr(self,'_agent_focus',{}):self.focus_target(agent,None)
         if agent.id in getattr(self, '_revoked_manual_agents', ()):
             raise NetworkError('This manual MCP connection was revoked. Create a new connection in the app.')
 
@@ -956,6 +961,8 @@ class Network:
         if strategy not in STRATEGIES:
             raise NetworkError(f"strategy must be one of {', '.join(STRATEGIES)}")
         proj = self._project(project) if (project or function is None) else None
+        function = self.focus_target(agent,project,function)
+        if batch_from is not None and agent.id in getattr(self,'_agent_focus',{}):return None
         sdk = self.sdk_functions(proj) if proj is not None and not function else {}
         from . import claim_stalls
         blocked = claim_stalls.blocked(self,proj) if proj is not None and not function else []

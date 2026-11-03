@@ -103,6 +103,7 @@ class JudgeMixin:
         return _AUTO_TOKEN.sub(lambda m: syms.label(int(m.group(0)[-8:], 16)), text)
 
     def claim(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest") -> str:
+        function = self.focus_target(agent,project,function)
         if (fork := self.fork_slug(project)):
             return self.forks.claim(agent, fork, function, strategy)
         link = self._link(project)
@@ -121,6 +122,7 @@ class JudgeMixin:
         """Several small functions at once (count 2-6): the next one by `strategy` and, when it's small, its
         neighbours in the same file. Most small functions match on the first try, so an agent writes them all and
         judges them in one compile_and_diff: a fraction of the turns. Big functions come alone."""
+        if agent.id in getattr(self,'_agent_focus',{}):return self.claim(agent,project,None,strategy)
         count = max(1, min(int(count or 1), 6))
         if count == 1 or self._link(project) is not None:
             return self.claim(agent, project, None, strategy)
@@ -455,6 +457,7 @@ class JudgeMixin:
         return canonical_source(fn, source) if source else None
 
     def claim_row(self, agent: Agent, project: str | None = None, function: str | None = None, strategy: str = "easiest"):
+        function = self.focus_target(agent,project,function)
         policy = self.selection(project, agent.name) if project else {}
         if function is None and project and not any(v is not None and v != "" for v in policy.values()) and not self.fork_slug(project):
             proj = self._project(project)

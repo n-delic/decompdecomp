@@ -1969,3 +1969,20 @@ def test_global_tool_preset_route_applies_and_validates_atomically(app):
                 db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (tool_policy.KEY, previous['value']))
             else:
                 db.execute('DELETE FROM settings WHERE key=?', (tool_policy.KEY,))
+
+
+def test_focused_agent_start_passes_scope_and_duration_and_rejects_multiple(app,monkeypatch):
+    from .test_loading import tiny_game
+
+    client,net,manager=app
+    tiny_game(net)
+    seen=[]
+    monkeypatch.setattr(manager,'start',lambda kind,slug,count=1,options=None:seen.append(options) or ['focused'])
+    response=client.post('/api/agents/start',headers={'X-Decomp':'1'},json={
+        'kind':'codex','slug':'game','options':{'focus_function':'f0','focus_minutes':15,'model':'test'}})
+    assert response.status_code==200,response.text
+    assert seen[0]['focus_function']=='f0' and seen[0]['focus_minutes']==15
+    response=client.post('/api/agents/start',headers={'X-Decomp':'1'},json={
+        'kind':'codex','slug':'game','count':2,'options':{'focus_function':'f0','focus_minutes':15}})
+    assert response.status_code==400
+    assert len(seen)==1

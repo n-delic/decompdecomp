@@ -2008,3 +2008,14 @@ GC; cancelled compiler stdout/stderr pipes close even when exception frames are 
 These shared fixes cover both project modes; Windows retains its native handle limits.
 A scratch run of 300 short-lived reader threads under a 256-descriptor limit with GC
 disabled completed without errors. The app does not change machine-wide launch limits.
+
+### Timed single-function agents
+
+Done: the function dialog can create one configured CLI/API agent for a named function
+and a 1–240 minute wall-clock allowance. Shared claim enforcement pins the function by
+stable ID (including batch claims, PROJECT mode and room requests), preserving normal
+leases. Busy targets wait before a paid session starts. Context rotations stay on the
+same target; matches/set-aside status or expiry stop the worker through normal process
+termination and claim release. Deadlines persist across app restart; a manual agent
+restart grants a new allowance. The Agents card shows the target and deadline; the
+launcher has its own Stop control. No model is started until the user clicks Start.

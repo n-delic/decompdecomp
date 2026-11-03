@@ -419,6 +419,7 @@ class Session:
     def snapshot(self, since: int = 0) -> dict:
         return {"id": self.id, "kind": self.kind, "kind_name": agents.get(self.kind).name, "can_login": agents.get(self.kind).supports_login, "label": self.label,
                 "selection": self.options.get("selection") or {},
+                "focus_function":self.options.get("focus_function"), "focus_until":self.options.get("focus_until"),
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
@@ -651,6 +652,8 @@ class Manager:
         report_start("Validating worker selection…")
         options = dict(options or {})
         options["selection"] = self.net.validate_selection(options.get("selection"))
+        from . import focused_agents
+        options = focused_agents.configure(self.net,slug,options,count)
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
         if agent.id != kind:
             kind = agent.id
@@ -756,6 +759,10 @@ class Manager:
         s.cooldown_observed = 0
         s.continuation_attempts, s.continuation_note = 0, ""
         s.started_at = time.time()
+        if s.options.get('focus_id'):
+            s.options.setdefault('focus_until',s.started_at+s.options['focus_minutes']*60)
+            with self.net.store.tx() as db:
+                db.execute('UPDATE helpers SET options=? WHERE id=?',(json.dumps({k:v for k,v in s.options.items() if k!='api_key'}),s.id))
         self._save(s)
         s.thread = threading.Thread(target=self._run, args=(s,), daemon=True, name=f"agent-{s.agent_name}")
         s.thread.start()
@@ -775,6 +782,7 @@ class Manager:
             options = self.options_now(s.kind, dict(s.options))
             if options is None:
                 raise ValueError("its API endpoint was removed: start a new helper on another one")
+            options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
             self._prepare(s.slug)
             self._launch(s)
@@ -1146,9 +1154,15 @@ class Manager:
         return True
 
     def _run(self, s: Session) -> None:
+        from .focused_agents import run
+        run(self,s)
+
+    def _run_work(self, s: Session) -> None:
+        from . import focused_agents
         agent, token = self.net.local_agent(s.agent_name)
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
+        focused_agents.bind(self.net,s,agent)
         if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
         self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'matching'
 
@@ -1165,6 +1179,7 @@ class Manager:
             twins.ordered.wait(ORDER_WAIT)
         failures = fast = throttles = limits = auths = connection_failures = 0
         while not s.stop.is_set():
+            if not focused_agents.ready(self,s,agent):continue
             if getattr(self, 'source_update_pending', False):
                 why = 'Source update queued: letting existing work finish before restart'
                 if s.why != why:
@@ -1184,7 +1199,7 @@ class Manager:
                     self._pause(s, why + " for this worker (unscored functions also count)",
                                 "Change Work selection, then press Start again.")
                     break
-            if task != 'readable' and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
+            if not s.options.get('focus_id') and task != 'readable' and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
                 why, todo = self.net.selection_wait_reason(s.slug, agent)
                 self._wait(s, why, time.time()+30, todo)
@@ -1436,6 +1451,10 @@ class Manager:
     def prompt(self, s: Session) -> str:
         from .session_handoffs import previous
         text = self._prompt(s) + previous(self.net, s.id, s.slug)
+        if s.options.get('focus_id'):
+            text += (f"\nUSER FOCUS: Work only on {s.options['focus_function']} until the app's deadline. "
+                     'Do not move to other functions, even after repeated failures. Read callees as needed, save improved candidates and notes. '
+                     'A context restart continues this same function. The app stops this worker on a match or timeout.\n')
         if s.continuation_note:
             text += '\n\nSession continuation guidance:\n' + s.continuation_note
             s.continuation_note = ""

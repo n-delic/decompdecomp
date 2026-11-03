@@ -309,13 +309,17 @@ def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: st
     """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
     instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
     batch of small ones."""
+    focused=agent.id in getattr(net,'_agent_focus',{})
+    if focused:
+        function=net.focus_target(agent,slug,function)
+        count=1
     strategy = strategy or ("finish" if net.fork_slug(slug) else "easiest")
     if not function and int(count or 1) > 1:
         return agent_tokens.claim_packet(net, agent, slug, net.claim_many(agent, slug, int(count), strategy))
     try:
         return agent_tokens.claim_packet(net, agent, slug, net.claim(agent, slug, function or None, strategy))
     except NetworkError as e:
-        if not function or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e)):
+        if focused or not function or not re.search(r"already matched|is set aside|is claimed by|outside this agent|Max tries reached", str(e)):
             raise
         return f"({e}. Here's the next free function instead.)\n\n" + agent_tokens.brief(net, net.claim(agent, slug, None, strategy), slug, agent)
 
