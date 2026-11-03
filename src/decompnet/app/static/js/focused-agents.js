@@ -1,14 +1,15 @@
 /* A focused worker uses the same configured providers and guarded creation job as other agents. */
 function openFocusedAgent(slug, name) {
   if (S.editDirty) return toast('Compile or copy your unsaved C before starting an agent.');
-  const panel = dialog('Focus an agent on this function', `<p>Work only on <b class="mono">${esc(name)}</b>.</p>
-    <div class="repair-form-grid"><label class="field">Agent<select data-focus-kind></select></label>
+  const panel = dialog('Focus an agent on this function', `<div class="focus-target"><span class="eyebrow">ONE FUNCTION</span><strong class="mono">${esc(name)}</strong><span class="small muted">Stops on a verified match or at your time limit.</span></div>
+    <div class="repair-form-grid focus-form"><label class="field">Agent<select data-focus-kind></select></label>
     <label class="field" data-focus-endpoint-field hidden>Saved endpoint<select data-focus-endpoint></select></label>
     <label class="field">Model<input data-focus-model list="focus-models" placeholder="Agent default"><datalist id="focus-models"></datalist></label>
     <label class="field">Time limit · minutes<input data-focus-minutes type="number" min="1" max="240" value="30"></label></div>
-    <p class="small muted">Uses AI tokens. Stops on a verified match or when time runs out. The timer starts when the worker launches, including waits and provider limits. If this function is claimed, it waits without stealing the claim. A fresh conversation continues on the same function.</p>
+    <div class="focus-guidance small"><strong>Uses AI tokens</strong><p>The timer includes provider-limit and claim waits. If another agent holds this function, this agent waits its turn. Saved improvements are kept.</p></div>
     <div class="row"><button class="primary" data-focus-start>Start focused agent</button><button class="ghost" data-focus-stop hidden>Stop agent</button></div>
-    <p data-focus-status role="status"></p><div data-focus-work></div>`, 'focused-agent');
+    <div class="focus-result" data-focus-result hidden><strong data-focus-heading>Agent created</strong><p data-focus-status role="status"></p></div>
+    <div data-focus-progress></div><details class="focus-log" data-focus-details hidden><summary>Startup details</summary><pre data-focus-work></pre></details>`, 'focused-agent');
   const get = selector => panel.querySelector(selector), kind = get('[data-focus-kind]'), endpoint = get('[data-focus-endpoint]'), model = get('[data-focus-model]');
   const available = (S.st.agents || []).filter(a => a.installed || a.uses_endpoints);
   for (const agent of available) { const option = document.createElement('option'); option.value = agent.id; option.textContent = agent.name; kind.append(option); }
@@ -28,7 +29,9 @@ function openFocusedAgent(slug, name) {
     const minutes = Number(get('[data-focus-minutes]').value), agent = available.find(a => a.id === kind.value);
     if (!Number.isInteger(minutes) || minutes < 1 || minutes > 240) return toast('Choose 1–240 whole minutes.', 'err');
     if (agent?.uses_endpoints && !endpoint.value) return toast('Save an API endpoint in Agents & models first.', 'err');
-    const finish = beginWork(get('[data-focus-work]'), 'Creating focused agent', [start,kind,endpoint,model,get('[data-focus-minutes]')]);
+    get('[data-focus-details]').hidden = false;
+    get('[data-focus-result]').hidden = true;
+    const finish = beginWork(get('[data-focus-progress]'), 'Creating focused agent', [start,kind,endpoint,model,get('[data-focus-minutes]')]);
     try {
       const options = {focus_function:name, focus_minutes:minutes};
       if (model.value.trim()) options.model = model.value.trim();
@@ -37,15 +40,18 @@ function openFocusedAgent(slug, name) {
       const result = response.job ? await followJob(response.job,get('[data-focus-work]')) : response;
       const id = result.started?.[0];
       if (!id) throw new Error('No worker was created. Check the Agents list before retrying.');
-      status.textContent = `Focused agent created for ${name}, up to ${minutes} minutes. Its Agents card shows waiting, working and saved improvements.`;
+      get('[data-focus-result]').hidden = false;
+      get('[data-focus-heading]').textContent = 'Agent created';
+      status.textContent = `${minutes}-minute limit · Follow its live status and saved improvements in the Agents tab.`;
+      start.hidden = true;
       stop.hidden = false;
       stop.onclick = async () => {
-        const done = beginWork(get('[data-focus-work]'),'Stopping focused agent',[stop]);
-        try { await api('/api/agents/stop',{method:'POST',body:{id}}); status.textContent='Agent stopped. Saved improvements are retained.'; stop.hidden=true; }
-        catch (error) { showJobError(get('[data-focus-work]'),error.message); }
+        const done = beginWork(get('[data-focus-progress]'),'Stopping focused agent',[stop]);
+        try { await api('/api/agents/stop',{method:'POST',body:{id}}); get('[data-focus-heading]').textContent='Agent stopped'; status.textContent='Saved improvements are retained.'; stop.hidden=true; start.hidden=false; [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled=false; }); }
+        catch (error) { showJobError(get('[data-focus-progress]'),error.message); }
         finally { done(); }
       };
-    } catch (error) { showJobError(get('[data-focus-work]'),error.message); }
-    finally { finish(); }
+    } catch (error) { showJobError(get('[data-focus-progress]'),error.message); }
+    finally { finish(); if (start.hidden) [kind,endpoint,model,get('[data-focus-minutes]')].forEach(control => { control.disabled = true; }); }
   };
 }

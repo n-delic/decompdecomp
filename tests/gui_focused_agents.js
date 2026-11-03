@@ -23,8 +23,15 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static
   assert.equal(body.slug,'project');assert.equal(body.count,1);assert.equal(body.options.model,'test-model');
   assert.equal(body.options.focus_function,'function_name');assert.equal(body.options.focus_minutes,15);
   assert.equal(parts['[data-focus-stop]'].hidden,false);
+  assert.equal(parts['[data-focus-start]'].hidden,true);
+  assert.equal(parts['[data-focus-model]'].disabled,true);
+  assert.equal(parts['[data-focus-result]'].hidden,false);
+  assert.equal(parts['[data-focus-heading]'].textContent,'Agent created');
   await parts['[data-focus-stop]'].onclick();
   assert.equal(requests[1].options.body.id,'worker-1');
+  assert.equal(parts['[data-focus-start]'].hidden,false);
+  assert.equal(parts['[data-focus-model]'].disabled,false);
+  assert.equal(parts['[data-focus-heading]'].textContent,'Agent stopped');
   parts['[data-focus-minutes]'].value='0';
   await parts['[data-focus-start]'].onclick();assert.equal(requests.length,2);assert(errors.at(-1).includes('1–240'));
   context.S.editDirty=true;context.openFocusedAgent('project','function_name');assert(errors.at(-1).includes('unsaved'));
