@@ -16,10 +16,10 @@ GUI_TIMEOUT_SECONDS = 60
 def test_the_game_picker_stays_above_existing_project_cards():
     """Returning users need to see the new game's details without scrolling past their projects."""
     static = Path(__file__).resolve().parent.parent / "src" / "decompnet" / "app" / "static"
-    html = (static / "index.html").read_text()
+    html = (static / "index.html").read_text(encoding="utf-8")
     home = html.split('<main id="home"', 1)[1].split('</main>', 1)[0]
     assert home.index('class="hero"') < home.index('id="recent"')
-    css = (static / "app.css").read_text()
+    css = (static / "app.css").read_text(encoding="utf-8")
     for selector, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
         if "#recent" in selector or ".hero" in selector:
             assert not re.search(r"(?:^|;)\s*order\s*:", declarations), selector
