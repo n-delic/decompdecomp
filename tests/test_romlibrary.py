@@ -58,11 +58,12 @@ def test_setup_accepts_verified_file_already_at_destination(tmp_path):
         fork.place_game(game, game.name)
 
 
-def test_byte_swapped_file_in_project_is_not_offered_for_self_copy(tmp_path):
+def test_byte_swapped_file_in_project_is_offered_for_conversion(tmp_path):
     original = b'\x80\x37\x12\x40' + bytes(range(12))
     swapped = b''.join(original[i:i+2][::-1] for i in range(0, len(original), 2))
     (tmp_path / 'baserom.z64').write_bytes(swapped)
-    assert romlibrary.find(project(tmp_path), needs(original), '')['path'] is None
+    found = romlibrary.find(project(tmp_path), needs(original), '')
+    assert found['path'] == str(tmp_path / 'baserom.z64') and not found['in_project']
 
 
 def test_n64_target_extension_does_not_control_console_identity(tmp_path):

@@ -86,9 +86,10 @@ def find(project, needs: dict, folder: str, log=print) -> dict:
     platform = str(getattr(project, 'platform', '') or '')
     local = project.root / needs['path'] if needs.get('path') else None
     # Retry setup without copying only when the file already has the exact bytes the project expects.
-    if local and (digest := fingerprint(local, 'raw')) in expected:
-        # A different edition at the default destination still needs placement at its own versioned path.
-        return {'path': str(local), 'in_project': digest == default, 'version': expected[digest]}
+    if local and (digest := fingerprint(local, platform)) in expected:
+        # Another edition or byte order still needs placement/conversion before setup.
+        return {'path': str(local), 'in_project': fingerprint(local, 'raw') == default,
+                'version': expected[digest]}
     if not folder:
         return {'path': None, 'reason': 'Set a ROM library folder in Settings to find your game.'}
     root = Path(folder).expanduser()

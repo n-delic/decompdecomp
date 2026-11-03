@@ -703,7 +703,7 @@ class ForkEngine:
     def needs(self, slug: str) -> dict:
         _, fp, cfg = self.get(slug)
         return fp.needs(cfg.get("version")) | {"kind": fp.kind(), "versions": fp.versions(),
-                                                "version": cfg.get("version") or fp.splat_default_version(),
+                                                "version": cfg.get("version") or fp.default_game_version(),
                                                 "readme": fp.readme()}
 
     def setup(self, slug: str, game: bytes | Path | None, filename: str = "", log=print, move: bool = False) -> dict:
@@ -732,24 +732,10 @@ class ForkEngine:
 
     def _match_version(self, proj, fp: ForkProject, cfg: dict, game: Path, log) -> None:
         """Select a public project's supported version from the supplied game."""
-        originals = fp.splat_baseroms() if fp.kind() == "splat" else {}
-        if originals:
-            from ..consoles.n64.rom import z64_file_sha1
-            from ..rom import RomError
+        from .. import consoles
 
-            try:
-                identity = z64_file_sha1(game)
-            except (OSError, RomError) as error:
-                raise NetworkError(f"Could not read that N64 ROM: {error}") from error
-            if identity is None:
-                raise NetworkError("That file is not an N64 cartridge ROM (.z64, .v64 or .n64).")
-            digest, byte_order = identity
-            version = next((v for v, sha1 in originals.items() if sha1 == digest), None)
-            if version is None:
-                raise NetworkError("That ROM does not match any supported original version: "
-                                   + ", ".join(f"{v}: {sha1}" for v, sha1 in originals.items()))
-            if byte_order != "z64":
-                log(f"your {byte_order} ROM matches after conversion to z64 byte order")
+        version = consoles.get(fp.detect_platform()).match_fork_game_version(fp, game, log=log)
+        if version is not None:
             if version != cfg.get("version"):
                 log(f"your ROM matches the project's {version} version")
                 cfg["version"] = version

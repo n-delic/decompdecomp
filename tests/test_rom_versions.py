@@ -23,7 +23,7 @@ def project(root: Path):
     for version, data in games.items():
         (root / f'game.{version}.yaml').write_text(
             f'sha1: {hashlib.sha1(data).hexdigest()}\noptions:\n'
-            f'  base_path: .\n  target_path: baserom.{version}.z64\nsegments: []\n')
+            f'  platform: n64\n  base_path: .\n  target_path: baserom.{version}.z64\nsegments: []\n')
     return ForkProject(root), games
 
 
@@ -59,6 +59,14 @@ def test_library_selects_byte_swapped_version_for_placement_and_build(tmp_path, 
     misplaced = romlibrary.find(SimpleNamespace(root=root, platform='n64'), need, '', log=lambda *_: None)
     assert misplaced['version'] == 'pal' and not misplaced['in_project']
 
+    swapped_at_destination = root / 'baserom.us.z64'
+    swapped_at_destination.write_bytes(
+        b''.join(games['us'][i:i + 2][::-1] for i in range(0, len(games['us']), 2)))
+    found_in_place = romlibrary.find(SimpleNamespace(root=root, platform='n64'), need, '', log=lambda *_: None)
+    assert found_in_place['path'] == str(swapped_at_destination) and not found_in_place['in_project']
+    assert fp.place_game(swapped_at_destination, swapped_at_destination.name, 'us') == swapped_at_destination
+    assert swapped_at_destination.read_bytes() == games['us']
+
     copy.write_bytes(rom(b'X'))
     with pytest.raises(NetworkError, match='does not match any supported original version'):
         engine._match_version(SimpleNamespace(), fp, cfg, copy, log=lambda *_: None)
@@ -72,9 +80,9 @@ def test_generated_splat_image_uses_original_cartridge_hashes(tmp_path):
                                                 for v, digest in originals.items()))
     for v in originals:
         (tmp_path / f'decompressed.{v}.yaml').write_text(
-            f'options:\n  target_path: decompressed.{v}.z64\n  sha1: {"f" * 40}\nsegments: []\n')
+            f'options:\n  platform: n64\n  target_path: decompressed.{v}.z64\n  sha1: {"f" * 40}\nsegments: []\n')
     fp = ForkProject(tmp_path)
-    assert fp.splat_baseroms() == originals
+    assert fp.fork_game_versions() == originals
     assert fp.needs('pal')['sha1'] == originals['pal']
     assert fp.needs('pal')['path'] == 'baserom.pal.z64'
 
@@ -88,11 +96,22 @@ def test_nested_splat_versions_only_accept_configs_used_by_make(tmp_path):
         config = tmp_path / 'config' / version / f'demo.{version}.yaml'
         config.parent.mkdir(parents=True)
         config.write_text(f'sha1: {hashlib.sha1(data).hexdigest()}\noptions:\n'
-                          f'  base_path: ../..\n  target_path: baserom.{version}.z64\nsegments: []\n')
+                          f'  platform: n64\n  base_path: ../..\n  target_path: baserom.{version}.z64\nsegments: []\n')
     fp = ForkProject(tmp_path)
-    assert fp.splat_default_version() == 'us'
+    assert fp.default_game_version() == 'us'
     assert fp.needs('jp')['path'] == 'baserom.jp.z64'
     assert fp.setup_commands('jp')[0] == ['make', 'VERSION=jp', 'extract']
     invalid = tmp_path / 'config' / 'jp' / 'demo.jp.yaml'
     invalid.write_text(invalid.read_text().replace('base_path: ../..', 'base_path: ../../..'))
-    assert 'jp' not in fp.splat_baseroms()
+    assert fp.fork_game_versions() == {}
+
+
+def test_other_console_does_not_infer_n64_versions_from_z64_filename(tmp_path):
+    fp, _ = project(tmp_path)
+    config = tmp_path / 'game.us.yaml'
+    config.write_text(config.read_text().replace('platform: n64', 'platform: ps'))
+    config = tmp_path / 'game.pal.yaml'
+    config.write_text(config.read_text().replace('platform: n64', 'platform: ps'))
+    assert fp.detect_platform() == 'ps'
+    assert [console.id for console in fp._game_consoles()] == ['ps']
+    assert fp.fork_game_versions() == {}
