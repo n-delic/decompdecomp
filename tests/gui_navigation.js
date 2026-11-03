@@ -32,6 +32,7 @@ const flush = async () => {for(let i=0;i<8;i++) await Promise.resolve();};
 const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`source ${name}`,asm:`asm ${name}`,notes:[],scores:[],calls:[],called_by:[]});
 (async () => {
   const f=setup(), source=read('function');
+  vm.runInContext(source.slice(source.indexOf('function functionCallsHTML'), source.indexOf('function relatedFunctionLink')), f.ctx);
   vm.runInContext(source.slice(source.indexOf('async function openFn'),source.indexOf('function fnBadge')),f.ctx);
   vm.runInContext(source.slice(source.indexOf('let fnBusy'),source.indexOf('function setEditor')),f.ctx);
   f.ctx.fnBadge=()=>{};

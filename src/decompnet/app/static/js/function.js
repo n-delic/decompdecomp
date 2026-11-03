@@ -28,6 +28,34 @@ function highlightC(text) {
   }).join("\n");
 }
 
+// Keep large call graphs readable without pushing the notes far down the inspector.
+function functionCallsHTML(detail) {
+  return [
+    ["calls", "Calls", "Functions this function calls", "↗"],
+    ["called_by", "Called by", "Functions that call this function", "↙"],
+  ].map(([key, title, description, arrow]) => {
+    const names = detail[key] || [];
+    if (!names.length) return "";
+    return `<section class="xref-card" aria-labelledby="xref-${key}">
+      <header class="xref-head"><span class="xref-direction" aria-hidden="true">${arrow}</span>
+        <div><h3 id="xref-${key}">${title}<span class="xref-count">${names.length}</span></h3><p>${description}</p></div>
+      </header>
+      <ul class="xref-list" tabindex="0" aria-label="${title}">${names.map(name => `<li>${fnLink(name)}</li>`).join("")}</ul>
+    </section>`;
+  }).join("");
+}
+
+function renderFunctionCalls(detail) {
+  const panel = $("fnXref"), html = functionCallsHTML(detail);
+  // Periodic refreshes must preserve the list's scroll position and keyboard focus.
+  if (panel._callsHTML === html) return;
+  panel.innerHTML = html;
+  panel._callsHTML = html;
+  panel.querySelectorAll(".fn").forEach(button => {
+    button.onclick = () => openFn(button.dataset.fn.split("+")[0]);
+  });
+}
+
 function relatedFunctionLink(slug, name, label = name) {
   return slug && name ? `<button type="button" class="link-btn mono" data-related-project="${esc(slug)}" data-related-function="${esc(name)}" title="Open this function in its project">${esc(label)}</button>` : esc(label);
 }
@@ -335,12 +363,8 @@ async function refreshFn(first) {
     $("copySrc").onclick = () => navigator.clipboard.writeText($("fnEdit").value).then(() => toast("Copied."));
     renderFnChart(d);
     $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
-    const xr = [];
-    if (d.calls.length) xr.push(`<div><b>calls</b>${d.calls.map(fnLink).join("")}</div>`);
-    if (d.called_by.length) xr.push(`<div><b>called by</b>${d.called_by.map(fnLink).join("")}</div>`);
-    $("fnXref").innerHTML = xr.join("");
+    renderFunctionCalls(d);
     prepareProjectPeers(d);
-    $("fnXref").querySelectorAll(".fn").forEach((x) => { x.onclick = () => openFn(x.dataset.fn.split("+")[0]); });
     // your own notes (written here, as "you") apart from the agents': they aren't notes from an agent
     const noteRow = (n) => {
       const gain = n.score_before != null && n.score_after != null ? `Score ${n.score_before} → ${n.score_after} · reduced by ${n.score_before - n.score_after}` : 'Session score difference unavailable';

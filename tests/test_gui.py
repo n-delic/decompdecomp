@@ -472,3 +472,10 @@ def test_manual_mcp_panel_is_a_collapsed_native_disclosure():
     assert 'open' not in panel.split('>', 1)[0]
     assert '<summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP</h2></summary>' in panel
     assert 'id="mcpCreate"' in panel and panel.rstrip().endswith('</details>')
+
+
+def test_function_call_cards_keep_all_links_and_separate_directions():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name("gui_function_calls.js"))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
