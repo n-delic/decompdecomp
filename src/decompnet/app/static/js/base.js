@@ -69,12 +69,14 @@ async function api(path, { method = "GET", body, raw, signal } = {}) {
   if (serverMode && path === "/api/pick" && method === "POST") {
     return {path: window.prompt(`${body?.title || "Choose a path"}\nEnter the ${body?.kind === "folder" ? "folder" : "file"} path on the server computer:`, "")?.trim() || ""};
   }
+  if (method !== "GET" && typeof window !== "undefined" && window.decompIsOffline?.()) throw new Error("Offline: connect to your Mac to make changes. Nothing has been queued.");
   const opts = { method, headers: {} };
   if (signal) opts.signal = signal;
   if (method !== "GET") opts.headers["X-Decomp"] = "1";
   if (raw !== undefined) { opts.body = raw; opts.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
   const res = await fetch(path, opts);
+  if (typeof window !== "undefined") window.decompConnection?.(res);
   let data = null;
   try { data = await res.json(); } catch { /* not json */ }
   if (res.status === 401 && serverMode) location.assign("/login");

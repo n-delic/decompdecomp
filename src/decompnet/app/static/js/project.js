@@ -141,7 +141,7 @@ async function refreshMap(force = true, prefetched = null) {
    matches on the map. */
 let pollingGen = -1;
 async function poll() {
-  if (pollingGen === S.gen || !S.slug || (document.hidden && S.primed)) return;  // (minimised: nobody sees it)
+  if (pollingGen === S.gen || !S.slug || ((document.hidden || window.decompIsOffline?.()) && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
     const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
@@ -1157,3 +1157,11 @@ function renderLocalProjects(box, scan) {
     finally { finish(); update(); }
   };
 }
+
+// A failed initial load has no polling timer yet. Resume it when the host returns,
+// while leaving any open editor and its unsent changes alone after a successful load.
+window.addEventListener('decomp-reconnected', () => {
+  if (!S.slug || $("project").hidden) return;
+  if (!$("projectRetry").hidden) openProject(S.slug, S.tab);
+  else if (S.ov) poll();
+});

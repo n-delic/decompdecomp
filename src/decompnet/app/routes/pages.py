@@ -44,6 +44,13 @@ def register(app: App) -> None:
             page=page.replace('</head>', '<link rel="stylesheet" href="/assets/server.css"></head>')
         return HTMLResponse(page, headers={"Cache-Control": "no-store", 'Referrer-Policy':'same-origin', 'X-Frame-Options':'DENY'})
 
+    @mcp.custom_route("/sw.js", methods=["GET"])
+    async def service_worker(request: Request) -> Response:
+        if request.headers.get('host') not in allowed_hosts:
+            return Response(status_code=403)
+        script = static_file('sw.js').decode().replace('__BUILD__', build_id or __version__)
+        return Response(script, media_type='text/javascript', headers={'Cache-Control':'no-cache', 'Service-Worker-Allowed':'/'})
+
     @mcp.custom_route("/assets/{name:path}", methods=["GET"])
     async def asset(request: Request) -> Response:
         if request.headers.get("host") not in allowed_hosts:

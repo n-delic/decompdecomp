@@ -420,6 +420,43 @@ guest's own game is planned. Disc-project identities can refer to an extracted p
 rather than the disc image: use the exact program the host imported (up to 256 MiB), not
 an RVZ/compressed image. Projects without an identity retain the existing room join rules.
 
+## Sign in with GitHub
+
+In the native app’s **Settings → This computer → Sign in with GitHub**, register a GitHub OAuth App and use the
+**Authorization callback URL** shown there. This is the trusted private remote address followed by
+`/login/github/callback`. Set the OAuth App’s homepage to the same private remote address.
+
+Enter the app’s **Client ID**, **Client secret**, and your allowed **GitHub username**, check **Use GitHub sign-in**,
+and save. The app verifies and pins that account’s permanent numeric ID. The browser login page then offers
+**Sign in with GitHub** instead of the code form. It requests no repository permissions. Keep the OAuth secret
+in the native Settings fields, not in a repository or chat; it is stored only in the host’s private settings file.
+Setup requires a registered OAuth App; decompdecomp does not ship shared OAuth credentials.
+
+Only the pinned account can gain full web access, even if its username later changes. Login uses a browser-bound,
+short-lived, single-use state and PKCE; GitHub tokens are used transiently to verify identity and are not stored,
+cached or sent to the browser. Settings changes revoke browser sessions. The native desktop window remains
+accessible to disable GitHub sign-in or fix its credentials. If the private remote address changes, update the
+OAuth App’s callback URL on GitHub too. GitHub login needs an internet connection; existing offline snapshots
+remain available under the offline-storage rules below. OAuth endpoints bypass the service worker so browser
+redirects and authentication cookies are handled directly by the browser, including on iOS.
+
+## Install on your phone and use saved views offline
+
+Open the private HTTPS web interface in Safari on iPhone, sign in, then choose **Share → Add to Home Screen**.
+On Android, use the browser’s **Install app** or **Add to Home screen** action. The installed app opens in its own
+window with the decompdecomp icon.
+
+After opening the app online, its interface, project list and recently viewed project, agent and function data
+are saved on that device. Offline, you can reopen those saved views; a banner marks them as snapshots rather
+than live progress. New views need to be opened online first. Compiling, agents and project changes require the
+host Mac: offline actions are rejected and never queued or submitted later. Reconnecting resumes live reads.
+
+Sign-out and an online authentication failure clear saved data. **Settings → Clear offline data on this device**
+and the offline banner’s **Clear saved data** button clear it manually. Offline copies remain on the device until
+cleared; disabling access on the host cannot erase a disconnected phone. Sign-in codes, API keys, ROMs and
+uploads are not cached. Browser storage is bounded and may also be cleared by the operating system. A normal
+desktop app window does not register the service worker or store these browser snapshots.
+
 ## Run without a desktop window
 
 ```sh
