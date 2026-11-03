@@ -200,3 +200,19 @@ def test_windows_rehashes_after_same_size_overwrite_with_unchanged_timestamps(tm
     assert romlibrary.fingerprint(file, 'raw') == hashlib.sha1(b'first').hexdigest()
     file.write_bytes(b'other')
     assert romlibrary.fingerprint(file, 'raw') == hashlib.sha1(b'other').hexdigest()
+
+
+@pytest.mark.parametrize('platform', ['xbox', ''])
+def test_files_that_arent_the_projects_game_are_passed_over(tmp_path, platform):
+    """An Xbox project's search (and one with no platform, whose files every console is asked about) goes on past
+    files that aren't Xbox games to the one that matches."""
+    library = tmp_path / 'library'
+    library.mkdir()
+    (library / 'a readme.txt').write_bytes(b'not a game')
+    (library / 'b other.exe').write_bytes(b'MZ' + bytes(0x200))
+    wanted = library / 'c wanted.bin'
+    wanted.write_bytes(b'the bytes the project declares')
+    root = tmp_path / 'project'
+    root.mkdir()
+    found = romlibrary.find(project(root, platform), needs(wanted.read_bytes()), str(library), log=lambda *_: None)
+    assert found['path'] == str(wanted) and found['scanned'] == 3

@@ -94,6 +94,18 @@ def test_a_damaged_xbe_says_which_field(demo):
         xbox.read_xbe(bytes(data))
 
 
+def test_a_damaged_xbe_or_its_disc_has_no_identity(tmp_path):
+    """Without the demo (CI): an XBE whose entry point doesn't decode, and a disc image holding it, are no game
+    rooms can tell (None, as for any file that isn't an Xbox game), not an error."""
+    data = xbox.MAGIC + bytes(xbox.HEAD_BYTES)
+    assert xbox.is_xbe(data[:xbox.HEAD_BYTES])
+    xbe, disc = tmp_path / "default.xbe", tmp_path / "game.iso"
+    xbe.write_bytes(data)
+    disc.write_bytes(_xiso(data))
+    assert consoles.identify(disc) is XBOX
+    assert XBOX.identity(xbe) is None and XBOX.identity(disc) is None
+
+
 def test_the_xdks_library_sections_are_set_aside(demo, tmp_path):
     xbe = xbox.read_xbe(demo[0].read_bytes())
     assert xbox.library_sections(xbe) == set()
