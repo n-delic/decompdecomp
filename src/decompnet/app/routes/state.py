@@ -13,7 +13,7 @@ from pathlib import Path
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import __version__, consoles, hostenv, toolchains
+from ... import __version__, consoles, hostenv, linuxvm, toolchains
 from ...agents.api import API_PRESETS
 from ...forks.project import SCOPES
 from ...network import NetworkError
@@ -47,6 +47,7 @@ def register(app: App) -> None:
         return {"version": __version__, "build": build_id, "install": updates.installed(), "dev": edition.DEV,
                 "platform": toolchains.current_platform(), "system": system_name(), "home": hostenv.shown_path(home.parent),
                 "log_file": hostenv.shown_path(home / "logs" / "decomp.log"),
+                "linux_vm": ({"ready": linuxvm.status()[0], "why": linuxvm.status()[1]} if linuxvm.wanted() else None),
                 "toolchains": tcs, "agents": manager.detected(), "agents_detecting": manager.detecting(),
                 "bridges_removed": [] if settings.data.get("bridges_removed_seen") else cleanup.report(home),
                 "api_presets": API_PRESETS, "settings": settings.public(), "mcp_url": mcp_url,
