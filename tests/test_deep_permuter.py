@@ -101,7 +101,7 @@ def test_invalid_limits_do_not_start_a_search(monkeypatch, minutes, limit):
         deep_permuter.validate(net, 'game', 'f', minutes, limit)
 
 
-def test_busy_matched_and_unscored_functions_are_rejected(monkeypatch):
+def test_local_claims_allow_search_but_matched_and_unscored_functions_are_rejected(monkeypatch):
     net = setup(monkeypatch)
     for values in ["status='matched'", "best_source=NULL", "best_score=NULL"]:
         with net.store.tx() as db: db.execute('UPDATE functions SET '+values)
@@ -109,6 +109,8 @@ def test_busy_matched_and_unscored_functions_are_rejected(monkeypatch):
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='open',best_source='int f(){return 1;}',best_score=1")
         db.execute('INSERT INTO claims VALUES(1,1,0,9999999999)')
+    assert deep_permuter.validate(net, 'game', 'f', 1, 10)[1]['name'] == 'f'
+    net.links = {'game': object()}
     with pytest.raises(NetworkError, match='working'):
         deep_permuter.validate(net, 'game', 'f', 1, 10)
 
@@ -537,3 +539,36 @@ def test_room_search_publishes_one_result_note_not_lease_notes(monkeypatch, note
     assert summaries[0].startswith('Deep permuter: score 40 → 40; 0 improvements; 1 candidates tested;')
     assert 'elapsed' in summaries[0] and 'Variant limit reached' in summaries[0]
     assert all(not d['notes'] for route, d in calls if route == '/collab/release')
+
+
+def test_side_search_keeps_other_agents_lease_and_defers_compiler_changes(monkeypatch):
+    net = setup(monkeypatch)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO agents(id,name,token_hash) VALUES(2,'owner','owner-token')")
+        db.execute('INSERT INTO claims VALUES(1,2,123,9999999999)')
+    before = tuple(net.store.one('SELECT * FROM claims'))
+    search = deep_permuter.Search(net, 1, 10, Log(), net.function())
+    assert search._hold(AGENT, net.function())
+    monkeypatch.setattr('decompnet.app.matching_preflight.run', lambda *args, **kwargs: pytest.fail('claimed settings changed'))
+    assert search._compiler_preflight(net.project_row('game'), net.function(), None, search.deadline) == {'tested': 0}
+    search._let_go(AGENT, net.function())
+    assert tuple(net.store.one('SELECT * FROM claims')) == before
+    monkeypatch.setattr(Permuter, '_score', lambda *args: 30)
+    result = deep_permuter.run(net, 'game', 'f', 1, 1, Log())
+    assert result['tested'] == 1
+    assert tuple(net.store.one('SELECT * FROM claims')) == before
+
+
+def test_duplicate_deep_search_is_rejected_before_runner_credentials_rotate(monkeypatch):
+    import threading
+
+    net = setup(monkeypatch)
+    lock = threading.Lock()
+    lock.acquire()
+    net._deep_run_locks = {1: lock}
+    net.local_agent = lambda *args: pytest.fail('duplicate search rotated credentials')
+    try:
+        with pytest.raises(NetworkError, match='already running'):
+            deep_permuter.run(net, 'game', 'f', 1, 10, Log())
+    finally:
+        lock.release()

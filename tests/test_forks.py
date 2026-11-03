@@ -1098,3 +1098,25 @@ def test_bundled_progress_detection_rejects_invalid_or_linked_manifests(tmp_path
     manifest.symlink_to(outside)
     with pytest.raises(NetworkError, match='symbolic links'):
         ForkProject(tmp_path).needs()
+
+
+@needs_tools
+def test_background_trial_preserves_another_agents_claim_and_unfinished_file(tmp_path_factory):
+    net, slug, owner = fork.__wrapped__(tmp_path_factory)
+    search_agent, _ = net.local_agent('deep-side-search')
+    name = 'checksum_save'
+    net.claim(owner, slug, name)
+    fn = net._function(name, slug)
+    claim = dict(net.store.one('SELECT * FROM claims WHERE function_id=?', fn['id']))
+    _, fp, _ = net.forks.get(slug)
+    path = fp.root / fp.unit(fn['unit']).source
+    before = path.read_bytes()
+    candidate = _ref(name).replace('return', 'return 1 +', 1)
+    with pytest.raises(NetworkError, match='claimed by'):
+        net.forks.attempt(search_agent, slug, name, candidate, keep=False)
+    result = net.forks.attempt(search_agent, slug, name, candidate, keep=False, background=True)
+    assert not result['matched']
+    assert path.read_bytes() == before
+    assert dict(net.store.one('SELECT * FROM claims WHERE function_id=?', fn['id'])) == claim
+    with pytest.raises(NetworkError, match='restore unfinished source'):
+        net.forks.attempt(search_agent, slug, name, candidate, background=True)

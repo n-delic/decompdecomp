@@ -2902,12 +2902,15 @@ class ForkEngine:
         return "\n".join(out) or "none"
 
     def attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                quiet: int | None = None, comment: bool = False) -> dict:
+                quiet: int | None = None, comment: bool = False, *, background: bool = False) -> dict:
+        if background and (keep or slug in self.net.links):
+            raise NetworkError("Concurrent trials must restore unfinished source and run on the host project.")
         with self.net.attempt_turn(agent, self._fn(slug, function)):
-            return self._attempt_and_share(agent, slug, function, source, keep, prelude, quiet, comment)
+            return self._attempt_and_share(agent, slug, function, source, keep, prelude, quiet, comment,
+                                           **({"background": True} if background else {}))
 
     def _attempt_and_share(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                           quiet: int | None = None, comment: bool = False) -> dict:
+                           quiet: int | None = None, comment: bool = False, *, background: bool = False) -> dict:
         """`keep`: whether a version that doesn't match stays in the source file (an agent's work in progress) or
         is undone and kept only as the function's best attempt (autopilot's drafts). `prelude`: (decompdecomp's own
         tries) type definitions the code needs, placed after the file's includes. `quiet`: (the permuter's
@@ -2915,9 +2918,10 @@ class ForkEngine:
         it builds (twins' tries come unclaimed: a 30-minute claim each kept agents off them, then counted as given up).
         `comment`: (polishing) the comment right above the definition goes into the file, in place of the file's."""
         self.net.check_attempt_limit(agent, self._fn(slug, function))
-        held = None if keep else self._hold_for_try(slug, function, agent)
+        held = None if keep or background else self._hold_for_try(slug, function, agent)
         try:
-            res = self._attempt(agent, slug, function, source, keep, prelude, quiet, comment)
+            res = self._attempt(agent, slug, function, source, keep, prelude, quiet, comment,
+                                **({"background": True} if background else {}))
         finally:
             if held is not None:
                 with self.net.store.tx() as db:
@@ -2970,7 +2974,7 @@ class ForkEngine:
             pass
 
     def _attempt(self, agent: Agent, slug: str, function: str, source: str, keep: bool = True, prelude: str = "",
-                 quiet: int | None = None, comment: bool = False, diagnostic: bool = False) -> dict:
+                 quiet: int | None = None, comment: bool = False, diagnostic: bool = False, *, background: bool = False) -> dict:
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, function)
         meta = self._meta(fn)
@@ -3012,13 +3016,14 @@ class ForkEngine:
         with self.net.store.tx() as db:  # claim bookkeeping, as for ROM projects
             self.net._expire_claims(db)
             claim = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
-            if claim is not None and claim["agent_id"] != agent.id:
+            if not background and claim is not None and claim["agent_id"] != agent.id:
                 raise NetworkError(f"{fn['name']} is claimed by {self.net._agent_name(claim['agent_id'])}")
             now = time.time()
-            if claim is None and fn["status"] != "matched":
-                db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.net.claim_ttl))
-            elif claim is not None:
-                db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.net.claim_ttl, fn["id"]))
+            if not background:
+                if claim is None and fn["status"] != "matched":
+                    db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.net.claim_ttl))
+                elif claim is not None:
+                    db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.net.claim_ttl, fn["id"]))
         path = fp.safe_path(unit.source, write=True)
         symbol = meta.get("symbol") or fn["name"]
         linked = fp.source_is_linked(unit)  # the game is built from this file: changes must keep it identical

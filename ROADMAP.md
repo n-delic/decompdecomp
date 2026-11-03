@@ -1935,3 +1935,14 @@ Hosted rooms in both address and quick-tunnel modes now restore automatically wi
 and members, with startup/error feedback. Fixed endpoints preserve client links across restarts;
 account-free quick-tunnel hostnames expire when their process exits. A named-tunnel provisioning UI
 and managed stable relay discovery remain planned; no stable quick-tunnel hostname is promised.
+
+
+### Deep searches alongside agent claims
+
+Local deep searches may test the saved candidate while an agent owns the function. ROM candidates
+use the ordinary byte/data judge and reject changed compile inputs before saving; PROJECT trials
+use the existing tree/unit locks, restore unfinished source and preserve other matched functions.
+Only improvements update the best attempt; claims remain owned by the agent until a verified match.
+Compiler/private-header preparation waits until the claim is free. One deep search per function
+prevents duplicate worker credentials. Room hosts use the local path; room guests still need the
+host lease. Concurrent guest proposals without a lease remain planned protocol work.

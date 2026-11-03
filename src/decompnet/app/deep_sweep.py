@@ -345,7 +345,7 @@ class Sweeps:
                 if previous and previous['scope'] == scope and previous['state'] in ('completed', 'error'):
                     continue
                 pending += 1
-                if self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
+                if slug in self.net.links and self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
                     waiting += 1
                     continue
                 batch.append((fn, scope))
@@ -375,7 +375,9 @@ class Sweeps:
                 if stats['rotated']:
                     log(f"{stats['rotated']} functions rotated early and remain eligible for the next run.")
                 return {'functions_tested': stats['visited'], 'tested': stats['tested'], 'matched': stats['matched'], 'rotated':stats['rotated']}
-            stats['activity'].publish({'phase': 'waiting for unclaimed functions or scored C', 'functions_tested': stats['visited'],
+            if batch:
+                continue  # Refill immediately; only genuinely blocked queues need a timed wait.
+            stats['activity'].publish({'phase': 'waiting for host claims or scored C', 'functions_tested': stats['visited'],
                           'matches': stats['matched'], 'waiting': waiting, 'total_unmatched': len(rows)})
             # Cancellation remains responsive while another worker owns the remaining functions.
             for _ in range(POLL_SECONDS):
@@ -416,8 +418,9 @@ class Sweeps:
             # Claim races are temporary. A bad unchanged candidate stays visible as an error,
             # not completed, and a changed source/header or an explicit repeat retries it.
             busy = self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time())
-            self.record(fn, scope, 'pending' if busy or 'claim' in str(error).lower() or str(error).startswith('This function is working') else 'error', minutes, variants, error=str(error))
-            activity.update(fn['name'], {'phase': 'waiting' if busy else 'error', 'error': str(error)}, line=str(error), finished=True)
+            claim_wait = bool((busy and slug in self.net.links) or 'claim' in str(error).lower() or str(error).startswith('This function is working'))
+            self.record(fn, scope, 'pending' if claim_wait else 'error', minutes, variants, error=str(error))
+            activity.update(fn['name'], {'phase': 'waiting' if claim_wait else 'error', 'error': str(error)}, line=str(error), finished=True)
             log(f'{fn["name"]}: {error}')
         except BaseException:
             activity.update(fn['name'], {'phase': 'interrupted'}, finished=True)

@@ -5,6 +5,7 @@ search space, so time/variant limits and cancellation always remain explicit.
 """
 import hashlib
 import json
+import threading
 import time
 
 from .. import scoring
@@ -43,7 +44,7 @@ def validate(net, slug, name, minutes, max_variants):
     fn = net._function(name, slug)
     if fn['status'] != 'open' or not fn['best_source'] or fn['best_score'] is None:
         raise NetworkError('Choose an unmatched function with saved, scored C first.')
-    if net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
+    if slug in net.links and net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
         raise NetworkError('This function is working; stop its agent or wait for its claim to finish.')
     return proj, fn
 
@@ -52,6 +53,7 @@ class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
         self.room_holds = {}
+        self.parallel_claims = True
         self.started_at = time.monotonic()
         self.deadline = time.monotonic()+minutes*60
         self.seconds = minutes*60
@@ -92,6 +94,15 @@ class Search(Permuter):
                     link.call('/collab/release', agent, function=claimed, notes='Function identity changed; synchronize before retrying.')
                 return False
             self.room_holds[fn['id']] = (link, agent, fn['name'], time.monotonic())
+        if not link:
+            claim = self.net.store.one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
+                                       fn['id'], time.time())
+            if claim and claim['agent_id'] != agent.id:
+                # A side search never takes, renews or releases the other worker's lease.
+                if kwargs.get('count_turn', True):
+                    with self.net.store.tx() as db:
+                        db.execute('UPDATE functions SET permuted=permuted+1 WHERE id=?', (fn['id'],))
+                return True
         try:
             held = super()._hold(agent, fn, **kwargs)
         except BaseException:
@@ -215,6 +226,9 @@ class Search(Permuter):
         self.measurement_counts.clear()
 
     def _compiler_preflight(self, proj, fn, state, deadline):
+        if self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
+            self.log('Searching with the current compiler settings while an agent owns the function; flag changes are deferred.')
+            return {'tested': 0}
         if proj['slug'] in self.net.links:
             self.log('Using the room host compiler settings; compiler changes stay on the host.')
             return {'tested': 0}
@@ -504,6 +518,18 @@ class Search(Permuter):
 
 
 def run(net, slug, name, minutes, max_variants, log):
+    # One explicit deep search per function, including credential issuance. Agents may keep working.
+    fn = net._function(name, slug)
+    lock = net.__dict__.setdefault('_deep_run_locks', {}).setdefault(fn['id'], threading.Lock())
+    if not lock.acquire(blocking=False):
+        raise NetworkError('A deep search is already running for this function.')
+    try:
+        return _run(net, slug, name, minutes, max_variants, log)
+    finally:
+        lock.release()
+
+
+def _run(net, slug, name, minutes, max_variants, log):
     """Visit the supported local repairs, then spend the remaining budget on random permutations."""
     proj, fn = validate(net, slug, name, minutes, max_variants)
     sweeps = getattr(net, 'deep_sweeps', None)
@@ -534,7 +560,8 @@ def run(net, slug, name, minutes, max_variants, log):
     try:
         # Explicitly configured local source carries real records/macros and original line breaks.
         # Try it before mutating an accumulated machine draft; never fetch a reference automatically.
-        if hasattr(net, '_comparison_digest'):
+        if hasattr(net, '_comparison_digest') and not net.store.one(
+                'SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
             search.check()
             from . import source_preparation
             preparation = source_preparation.run(search, proj, state, log, budget=min(1, max_variants),

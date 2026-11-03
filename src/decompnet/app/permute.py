@@ -685,7 +685,8 @@ class Permuter:
     def _score_work(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         self._trial_outcome = 'unscored'
         if fork:
-            res = self.net.forks.attempt(agent, fork, fn["name"], source, keep=False, quiet=best)
+            res = self.net.forks.attempt(agent, fork, fn["name"], source, keep=False, quiet=best,
+                                         **({"background": True} if getattr(self, "parallel_claims", False) else {}))
             if res.get('score') is not None:
                 self._trial_outcome = 'scored'
             return res.get("score")
@@ -693,6 +694,33 @@ class Permuter:
         from .repair_preflight import invalid_call
         if source != fn['best_source'] and invalid_call(source, fn['name'], ctx['header']):
             return None
+        guard = None
+        if getattr(self, "parallel_claims", False):
+            identity = tuple(fn[k] for k in ('name', 'vram', 'size', 'unit', 'target', 'relocs'))
+            naming = json.loads(fn['meta'] or '{}').get('naming')
+            def build_settings(project):
+                cfg = json.loads(project['config'])
+                return (compiler_for(cfg, fn['vram']), project['root'], project['arch'], project['big_endian'],
+                        tuple(cfg.get(k) for k in ('kind', 'platform', 'big_endian', 'gp')))
+            build = build_settings(proj)
+            generation = self.net._generation.get(proj['id'], 0)
+            def guard():
+                current = self.net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
+                project = self.net.store.one('SELECT * FROM projects WHERE id=?', proj['id'])
+                header = self.net._context(proj['id'], current['unit']) if current else None
+                if not current or not project or current['status'] != 'open' or not header:
+                    raise NetworkError('Search inputs changed while compiling; the function is no longer open.')
+                changed = []
+                if tuple(current[k] for k in ('name', 'vram', 'size', 'unit', 'target', 'relocs')) != identity or json.loads(current['meta'] or '{}').get('naming') != naming:
+                    changed.append('function identity')
+                if build_settings(project) != build:
+                    changed.append('project settings')
+                if header['version'] != ctx['version'] or header['header'] != ctx['header']:
+                    changed.append('header')
+                if self.net._generation.get(proj['id'], 0) != generation:
+                    changed.append('symbols or layout')
+                if changed:
+                    raise NetworkError('Search inputs changed while compiling ('+', '.join(changed)+'); the saved result was left untouched. Retry the function.')
         result = self.net._compile(proj, ctx["header"], source, fn)
         if not result.ok:
             self._trial_outcome = 'compile_failed'
@@ -714,5 +742,6 @@ class Permuter:
         self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': d.rows}
         if d.score < best or (d.bytes_match and fn['status'] != 'matched'):
             self._accept_candidate(agent, proj, fn, source, d)
-            self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None))
+            self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None),
+                             **({"before_record": guard} if guard else {}))
         return 0 if d.bytes_match else max(1, d.score)

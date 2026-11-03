@@ -996,6 +996,13 @@ new candidates permanently.
 
 ### Permuter budgets
 
+Local deep searches can work on saved, scored C while an agent owns the function. The agent keeps
+its claim and can continue submitting candidates; only better scores replace the shared best attempt.
+A verified exact match completes the function normally. Imported-project trials serialize through
+the normal build locks and restore unfinished source. Compiler/private-header preparation is deferred
+while another agent holds the function. One deep search per function runs at a time. These rules also
+apply on a room host; room guests retain the host-lease rules below.
+
 Room members can run deep passes too. Each active function gets a host claim that
 is renewed during the search and released when the turn stops. ROM-room clients
 compile candidates locally and share improvements; exact matches must also pass

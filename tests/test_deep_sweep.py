@@ -84,7 +84,7 @@ def test_cancelled_function_is_not_complete_and_can_resume(sweep, monkeypatch):
     assert obj.run('game',1,10,Log())['functions_tested'] == 2
 
 
-def test_busy_and_unusable_candidates_wait_without_completion(sweep, monkeypatch):
+def test_claimed_candidates_are_searched_while_unusable_candidates_wait(sweep, monkeypatch):
     obj, net, calls, _ = sweep
     import time
     with net.store.tx() as db:
@@ -99,9 +99,10 @@ def test_busy_and_unusable_candidates_wait_without_completion(sweep, monkeypatch
     monkeypatch.setattr(deep_sweep, 'time', SimpleNamespace(time=time.time, sleep=pause))
     with pytest.raises(RuntimeError,match='cancelled'):
         obj.run('game',1,10,log)
-    assert calls == []
-    assert net.store.one('SELECT COUNT(*) n FROM deep_permutation_passes')['n'] == 0
-    assert log.updates[-1]['waiting'] == 2
+    assert calls == ['f0']
+    assert net.store.one('SELECT COUNT(*) n FROM deep_permutation_passes')['n'] == 1
+    assert net.store.one('SELECT agent_id FROM claims')['agent_id'] == 1
+    assert log.updates[-1]['waiting'] == 1
 
 
 def test_bad_candidates_are_errors_not_completed_and_changed_inputs_retry(sweep, monkeypatch):
