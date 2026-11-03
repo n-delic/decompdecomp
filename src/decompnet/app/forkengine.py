@@ -2143,6 +2143,7 @@ class ForkEngine:
             meta["asm_code"] = reason
         with self.net.store.tx() as db:
             db.execute("UPDATE functions SET status='asm', meta=? WHERE id=? AND status='open'", (json.dumps(meta), fn["id"]))
+            db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
 
     # ------------------------------------------------------------------ for agents
 

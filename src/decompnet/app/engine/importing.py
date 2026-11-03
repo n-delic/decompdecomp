@@ -298,8 +298,9 @@ class ImportMixin:
                     meta_data.update(console.function_meta(fn))
                     if known:
                         meta_data["debug"] = known
-                    status = console.function_status(fn)
-                    if not same_target and (why := console.asm_reason(target.code)):
+                    status = old["status"] if same_target else console.function_status(fn)
+                    classify = not same_target or (status == "open" and not meta_data.get("reopened"))
+                    if classify and (why := console.asm_reason(target.code)):
                         # Classify before the target reaches the claim queue; keep its bytes and symbols.
                         meta_data["asm_code"] = why
                         status = "asm"
@@ -330,9 +331,11 @@ class ImportMixin:
                                                   (pid,ctx['unit'])).fetchone()
                                 if latest and latest['header']==ctx['header']:unit=ctx['unit']
                         db.execute(
-                            "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=? "
+                            "UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,unit=?,vram=?,rom_offset=?,meta=?,status=? "
                             "WHERE id=?",
-                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, old["id"]))
+                            (fn.size, n_insns, target.code, relocs, asm, unit, fn.vram, fn.rom, meta, status, old["id"]))
+                        if status != old["status"]:
+                            db.execute("DELETE FROM claims WHERE function_id=?", (old["id"],))
                         preserved += old["status"] == "matched" and bool(old["matched_source"])
                     else:
                         for table in ("claims", "attempts", "twin_misses"):

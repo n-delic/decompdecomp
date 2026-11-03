@@ -9,6 +9,18 @@ from decompnet import consoles
 from decompnet.app.engine import RomNetwork
 from decompnet.rom import Picked, split
 
+from .test_ps2_debug import (
+    SHF_ALLOC,
+    SHF_EXECINSTR,
+    SHT_PROGBITS,
+    SHT_STRTAB,
+    SHT_SYMTAB,
+    STB_GLOBAL,
+    STT_FUNC,
+    _elf,
+    _symbols,
+)
+
 
 @pytest.mark.parametrize("platform", ["n64", "psx", "ps2", "psp"])
 def test_only_complete_nop_words_are_set_aside_on_every_mips_console(platform):
@@ -58,6 +70,12 @@ def test_import_keeps_padding_bytes_and_symbols_but_never_queues_them(tmp_path, 
     agent, _ = net.local_agent("demo-agent")
     assert net.claim_row(agent, slug)["name"] == "empty"
 
+    # Identical reimports repair old open artifacts too, without disturbing other claims.
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',meta=NULL WHERE id=?", (padding["id"],))
+    net.import_split(console, picked, reimport_slug=slug, log=lambda _: None)
+    assert net._function("padding", slug)["status"] == "asm"
+
     # Older imports get the same decision through Check again's shared classifier.
     with net.store.tx() as db:
         db.execute("UPDATE functions SET status='open',meta=NULL WHERE id=?", (padding["id"],))
@@ -73,3 +91,28 @@ def test_import_keeps_padding_bytes_and_symbols_but_never_queues_them(tmp_path, 
     net.import_split(console, picked, reimport_slug=slug, log=lambda _: None)
     assert net._function("padding", slug)["status"] == "open"
     assert json.loads(net._function("padding", slug)["meta"])["reopened"]
+
+
+def test_fork_object_padding_is_set_aside_without_guessing_its_console_abi(tmp_path, monkeypatch):
+    from decompnet.app.twins import object_prints
+
+    image = bytes(4) + bytes.fromhex("0800e00300000000")
+    symtab, strtab = _symbols([("padding", 0, 4, STB_GLOBAL, STT_FUNC, 1),
+                               ("empty", 4, 8, STB_GLOBAL, STT_FUNC, 1)])
+    obj = _elf([(".text", SHT_PROGBITS, SHF_ALLOC | SHF_EXECINSTR, 0, image, 0),
+                (".symtab", SHT_SYMTAB, 0, 0, symtab, 3), (".strtab", SHT_STRTAB, 0, 0, strtab, 0)])
+    prints = object_prints(obj)
+    assert "only NOPs" in prints["padding"].asm and prints["empty"].asm == ""
+    net = RomNetwork(tmp_path / "fork.db", tmp_path)
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('demo','demo','mips',?,?)",
+                         (str(tmp_path), json.dumps({"kind": "fork", "platform": "ps2"}))).lastrowid
+        ids = {name: db.execute("INSERT INTO functions(project_id,name,size,n_insns) VALUES(?,?,?,?)",
+                               (pid, name, size, size // 4)).lastrowid for name, size in (("padding", 4), ("empty", 8))}
+    monkeypatch.setattr(net.twins, "prints", lambda _: {ids[name]: p for name, p in prints.items()})
+    agent, _ = net.local_agent("demo-agent")
+    net.claim_row(agent, "demo", "padding")
+    assert net.twins.set_aside_asm(net.project_row("demo")) == 1
+    assert net._function("padding", "demo")["status"] == "asm"
+    assert not net.store.one("SELECT 1 FROM claims WHERE function_id=?", ids["padding"])
+    assert net.claim_row(agent, "demo")["name"] == "empty"

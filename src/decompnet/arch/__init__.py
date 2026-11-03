@@ -46,7 +46,7 @@ class Arch:
     # why a function's code can't come from a compiler, or None: (code, big_endian, **the console's facts)
     asm_reason: Callable[..., str | None] | None = None
     # its asm_reason needs the console's facts (MIPS: which registers carry arguments depends on the console's ABI,
-    # the PS2's EABI passes them in t0-t3 too), so code whose console isn't known (a fork's object) isn't judged
+    # the PS2's EABI passes them in t0-t3 too), so unknown-console objects use only padding_reason
     asm_needs_console: bool = False
     features: frozenset[str] = frozenset()
     # what a function does with pointers, for structs.py: (vram, code, relocs, big_endian=, datum=) -> structs.Facts
@@ -76,11 +76,12 @@ class Arch:
 
     object_functions: Callable[..., dict] | None = None  # explicit private procedure metadata missing from .symtab
     object_placeholders: Callable[..., dict] | None = None  # proven unused inline-return stubs
+    padding_reason: Callable[..., str | None] | None = None  # padding-only targets, without console or ABI facts
 
 
 ARCHES = [
     Arch("mips", "MIPS", mips.CAPSTONE, mips.RELOC_MASKS, mips.asm_reason, True,
-         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts,
+         frozenset({COMPILER_MAP, CLASSES, BOUNDARIES, STRUCTS}), mips_fields.read_facts, padding_reason=mips.padding_reason,
          object_functions=mips_debug.functions, object_placeholders=mips_debug.placeholders, instruction_regions=mips_regions.read, build_tool_paths=mips_tools.build_paths, stack_frame_growth=mips_stack.frame_growth, stack_layout=mips_stack.layout, source_operand_changes=mips_source_recovery.operand_changes, source_extra_narrowing=mips_source_recovery.extra_narrowing, source_private_abi=mips_source_recovery.private_abi, source_pointer_lifetime=mips_pointer_lifetime.read, source_switch_blocks=mips_source_recovery.blocks, source_recovery_hints=mips_source_recovery.recovery_hints, source_tail_branch=mips_source_recovery.tail_branch, boundary_reason=mips.boundary_reason, variants={mips.ALLEGREX: mips.allegrex_lines}),
     Arch("ppc", "PowerPC", ppc.CAPSTONE, ppc.RELOC_MASKS, ppc.asm_reason),
     Arch("ppc64", "PowerPC64", ppc64.CAPSTONE, ppc64.RELOC_MASKS, ppc64.asm_reason, features=frozenset({BOUNDARIES})),

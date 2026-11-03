@@ -1,6 +1,7 @@
 # Roadmap
 
-Implemented: NOP-only MIPS targets remain rebuildable as set-aside assembly from import and Check again.
+Implemented: NOP-only MIPS targets remain rebuildable as set-aside assembly in ROM imports and project objects;
+Check again applies the same classification to existing targets.
 Incomplete nonzero targets still receive advisory boundary review; original bytes, symbols, matches and explicit
 operator overrides are preserved.
 
