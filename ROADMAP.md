@@ -2029,3 +2029,6 @@ restart grants a new allowance. The Agents card shows the target and deadline; t
 launcher has its own Stop control. No model is started until the user clicks Start.
 The function drawer groups AI and local search in matching shared collapsible boxes,
 with aligned cost labels and controls in both themes and narrow layouts.
+
+- Done: project-scoped distinct improved-function totals per room member, alongside matches in the
+  host/guest room dialog and room agent cards, including attribution from older attempt histories.

@@ -896,14 +896,14 @@ function renderRoomAgents() {
   const mine = room && (room.role === "host" ? HOST_COMPUTER : room.member);
   const computers = !room ? [] : [
     ...(room.role === "guest" ? [{ key: HOST_COMPUTER, name: "Host", online: room.connected }] : []),
-    ...(room.members || []).map((m) => ({ key: m.name, name: m.name, online: m.online, matched: m.matched })),
+    ...(room.members || []).map((m) => ({ key: m.name, name: m.name, online: m.online, matched: m.matched, improved: m.improved })),
   ].filter((c) => c.key !== mine);
   $("roomPanel").hidden = !computers.length;
   if (!computers.length) return;
   setHtml(box, computers.map((c) => {
     const jobs = S.claims.filter((j) => computerOf(j.agent) === c.key), col = computerColour(c.key);
     return `<div class="line-item"><span class="swatch${col == null ? "" : ` pc-${col}`}" aria-hidden="true"></span><div class="txt"><b>${esc(c.name)}</b>
-      <span>${c.online ? "online" : "away"}${c.matched ? ` · ${c.matched} matched` : ""}</span>
+      <span>${c.online ? "online" : "away"}${c.matched != null ? ` · ${c.matched} matched · ${c.improved || 0} improved` : ""}</span>
       ${jobs.length ? jobs.map((j) => `<span class="room-job">${whoHtml(j.agent)} on ${fnLink(j.name)}${j.attempts ? ` · ${plural(j.attempts, "compile")}` : ""}</span>`).join("")
         : `<span class="room-job">no agent working right now</span>`}</div></div>`;
   }).join(""));

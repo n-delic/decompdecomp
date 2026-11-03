@@ -1467,3 +1467,7 @@ unsigned index scaling, clearing dead pointer locals, reusing compatible dead lo
 stores, constant-count `for` loops, and splitting mask assignments without changing their types or
 mask values. These candidates are shared with the deep permuter and agent local experiments;
 only the normal compiler and exact-match judge can save a result.
+
+Team-room member cards show both matched and improved function counts. Improvements count distinct
+functions across each person's agents, include matches, and retain credit when another person later
+improves the same function. The host supplies these counts to everyone in the room.

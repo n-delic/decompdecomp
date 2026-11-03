@@ -172,18 +172,33 @@ class Room:
         # in the order they joined: each member's colour on every computer's screen (agents.js: computerColour)
         rows = self.net.store.all("SELECT id, name, created_at, last_seen FROM agents WHERE origin=? AND owner IS NULL "
                                   "ORDER BY created_at, id", self.origin)
+        if not rows:
+            return []
+        # Count distinct functions across a person's agents, not every improving
+        # compile. Keep credit after another contributor improves or matches it.
+        # Older/fork attempts lack the recorded verdict: compare their score with
+        # the preceding project-wide history, never just that member's attempts.
+        improvements = {r['owner']: r['n'] for r in self.net.store.all(
+            "WITH history AS (SELECT t.*, f.n_insns, "
+            "MIN(CASE WHEN t.compiled AND t.score>=0 THEN t.score END) OVER ("
+            "PARTITION BY t.function_id ORDER BY t.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous "
+            "FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) "
+            "SELECT a.owner, COUNT(DISTINCT h.function_id) AS n FROM history h JOIN agents a ON a.id=h.agent_id "
+            "WHERE a.origin=? AND a.owner IS NOT NULL AND h.compiled AND h.score>=0 "
+            "AND COALESCE(h.score_improved, h.score<COALESCE(h.previous,h.n_insns*100))=1 GROUP BY a.owner",
+            self.proj['id'], self.origin)}
         out = []
         for r in rows:
             agents = self.net.store.all("SELECT id, name FROM agents WHERE origin=? AND owner=?", self.origin, r["name"])
             ids = [a["id"] for a in agents] or [-1]
             matched = self.net.store.one(
-                f"SELECT COUNT(*) AS n FROM functions WHERE matched_agent_id IN ({','.join('?' * len(ids))})", *ids)["n"]
+                f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND matched_agent_id IN ({','.join('?' * len(ids))})", self.proj["id"], *ids)["n"]
             working = [c["name"] for c in self.net.store.all(
                 f"SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id IN "
                 f"({','.join('?' * len(ids))})", *ids)]
             out.append({"name": r["name"], "joined": r["created_at"], "last_seen": r["last_seen"],
                         "online": bool(r["last_seen"]) and time.time() - r["last_seen"] < 30,
-                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "working": working})
+                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "improved": improvements.get(r["name"], 0), "working": working})
         return out
 
     def join(self, name: str, sha1: str) -> tuple[str, str]:
