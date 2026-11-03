@@ -21,7 +21,9 @@ import subprocess
 import tempfile
 import threading
 import time
-from contextlib import nullcontext
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, nullcontext
 from pathlib import Path
 
 from .. import compiler, consoles, toolchains
@@ -740,76 +742,135 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
     return by_name, manifest.get("functions") or {}
 
 
+def _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel):
+    """Compile a bounded window ahead; only the caller may judge or change project state."""
+    from . import workers
+
+    pending = deque()
+    entries = iter(saved.items())
+    width = workers.WORKERS if judge_code else 1
+    # Shared background workers can be waiting for this project's lock. Never queue compiles
+    # behind those tasks while holding that lock. Compiler._SLOTS still caps subprocesses globally.
+    pool = ThreadPoolExecutor(width, thread_name_prefix="progress-compile", initializer=workers.lower_priority)
+    stopped = threading.Event()
+
+    def compile_one(proj, header, text, fn):
+        def check():
+            if stopped.is_set():
+                raise NetworkError("Saved-progress compilation stopped.")
+            check_cancel()
+        with compiler.cancellable(check):
+            check()
+            return net._compile(proj, header, text, fn)
+
+    try:
+        while True:
+            while len(pending) < width:
+                check_cancel()
+                entry = next(entries, None)
+                if entry is None:
+                    break
+                old_name, info = entry
+                kind = "src" if "matched_by" in info else "best"
+                text = _saved_source(folder, files, f"{kind}/{old_name}.c")
+                row = by_name.get(old_name)
+                name = old_name if row is not None and row["vram"] == info["vram"] else None
+                if name is None:
+                    candidates = by_vram.get(info["vram"], [])
+                    name = candidates[0] if len(candidates) == 1 else None
+                prepared = None
+                if judge_code and name is not None and text is not None:
+                    fn = dict(net.store.one("SELECT * FROM functions WHERE project_id=? AND name=?", proj["id"], name))
+                    if fn["status"] != "matched" and not (kind == "best" and fn["best_source"] == text):
+                        ctx = net._context(proj["id"], fn["unit"])
+                        if ctx is not None:
+                            snapshot = net._compile_snapshot(proj, fn, ctx["header"], text)
+                            future = pool.submit(compile_one, dict(proj), ctx["header"], text, fn)
+                            prepared = (snapshot, future)
+                pending.append((old_name, info, kind, text, name, prepared))
+            if not pending:
+                return
+            item = pending.popleft()
+            try:
+                yield item
+            finally:
+                if item[-1] is not None:
+                    item[-1][1].cancel()
+    finally:
+        stopped.set()
+        for *_, prepared in pending:
+            if prepared is not None:
+                prepared[1].cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _judge_saved(net, slug: str, folder: Path, manifest: dict, by_name: dict, saved: dict, log,
                  files: dict[str, str] | None = None, judge_code: bool = True) -> dict:
     check_cancel = getattr(log, "check_cancel", lambda: None)
-    pid = net._project(slug)["id"]
+    proj = dict(net._project(slug))
+    pid = proj["id"]
     by_vram: dict[int, list[str]] = {}
     for name, row in by_name.items():
         by_vram.setdefault(row["vram"], []).append(name)
     matched, lost, best = 0, [], 0
     log(f"judging {len(saved)} saved functions again")
     update = getattr(log, "progress", lambda **fields: None)
-    for index, (old_name, info) in enumerate(saved.items()):
-        update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
-               done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
-        check_cancel()
-        log(f"checking {old_name}")
-        kind = "src" if "matched_by" in info else "best"
-        text = _saved_source(folder, files, f"{kind}/{old_name}.c")
-        row = by_name.get(old_name)
-        name = old_name if row is not None and row["vram"] == info["vram"] else None
-        if name is None:
-            candidates = by_vram.get(info["vram"], [])
-            name = candidates[0] if len(candidates) == 1 else None
-        if name is None or text is None:
-            lost.append(old_name) if kind == "src" else None
-            continue
-        from ..match_bundle import restore_evidence
-        restore_evidence(net,pid,name,old_name,manifest)
-        current = net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
-        if current["status"] == "matched":
-            matched += kind == "src"
-            continue
-        if kind == "best" and current["best_source"] == text:
-            best += 1
-            continue
-        if not judge_code:
-            # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
-            # compile every saved attempt again (the folder's C did not change).
+    checks = _saved_checks(net, proj, folder, files, by_name, by_vram, saved, judge_code, check_cancel)
+    with closing(checks):
+        for index, (old_name, info, kind, text, name, prepared) in enumerate(checks):
+            update(phase="Verifying saved functions" if judge_code else "Reading saved function records",
+                   done=index, total=len(saved), function=old_name, matched=matched, best=best, lost=len(lost))
+            check_cancel()
+            log(f"checking {old_name}")
+            if name is None or text is None:
+                lost.append(old_name) if kind == "src" else None
+                continue
+            from ..match_bundle import restore_evidence
+            restore_evidence(net,pid,name,old_name,manifest)
+            current = net.store.one("SELECT status,best_source FROM functions WHERE project_id=? AND name=?", pid, name)
+            if current["status"] == "matched":
+                matched += kind == "src"
+                continue
+            if kind == "best" and current["best_source"] == text:
+                best += 1
+                continue
+            if not judge_code:
+                # A pull that changed only the manifest's metadata applies its settings, notes and layout, but does not
+                # compile every saved attempt again (the folder's C did not change).
+                if kind == "src":
+                    matched += current["status"] == "matched"
+                else:
+                    best += 1
+                continue
+            credit = net.attribution_agent(info.get("matched_by") or info.get("best_by") or "restored")
+            agent, _ = net.local_agent("progress-judge")
+            try:
+                with net.compiled_ahead(prepared):
+                    result = net.attempt(agent, name, text, slug)
+            except (NetworkError, toolchains.ToolchainError) as e:
+                check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
+                # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
+                # from coming back; the function stays open for when the user picks one (#118).
+                log(f"{name}: {e}")
+                result = {"matched": False}
+            finally:
+                with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
+                    db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
+                               "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
+            with net.store.tx() as db:
+                db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
+                           (credit.id, pid, name, agent.id))
+                db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
+                           (credit.id, pid, name, agent.id))
             if kind == "src":
-                matched += current["status"] == "matched"
+                if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
+                    with net.store.tx() as db:
+                        db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
+                matched += bool(result.get("matched"))
+                if not result.get("matched"):
+                    lost.append(name)
             else:
                 best += 1
-            continue
-        credit = net.attribution_agent(info.get("matched_by") or info.get("best_by") or "restored")
-        agent, _ = net.local_agent("progress-judge")
-        try:
-            result = net.attempt(agent, name, text, slug)
-        except (NetworkError, toolchains.ToolchainError) as e:
-            check_cancel()  # A paused/cancelled check is not a failed match; abort and roll back instead.
-            # A compiler that isn't here (an unknown one can never be installed) must not stop the other saved work
-            # from coming back; the function stays open for when the user picks one (#118).
-            log(f"{name}: {e}")
-            result = {"matched": False}
-        finally:
-            with net.store.tx() as db:  # a saved attempt that didn't match leaves no claim behind
-                db.execute("DELETE FROM claims WHERE agent_id=? AND function_id IN "
-                           "(SELECT id FROM functions WHERE project_id=? AND name=?)", (agent.id, pid, name))
-        with net.store.tx() as db:
-            db.execute("UPDATE functions SET matched_agent_id=? WHERE project_id=? AND name=? AND matched_agent_id=?",
-                       (credit.id, pid, name, agent.id))
-            db.execute("UPDATE functions SET best_agent_id=? WHERE project_id=? AND name=? AND best_agent_id=?",
-                       (credit.id, pid, name, agent.id))
-        if kind == "src":
-            if result.get("matched") and info.get("readable"):  # its polished C matched again: it stays polished
-                with net.store.tx() as db:
-                    db.execute("UPDATE functions SET readable=1 WHERE project_id=? AND name=?", (pid, name))
-            matched += bool(result.get("matched"))
-            if not result.get("matched"):
-                lost.append(name)
-        else:
-            best += 1
     update(done=len(saved), total=len(saved), function=None, matched=matched, best=best, lost=len(lost))
     log(f"restored: {matched} matched functions, {best} best attempts" + (f"; {len(lost)} no longer match" if lost else ""))
     return {"matched": matched, "best": best, "lost": lost}

@@ -1904,10 +1904,17 @@ retain their prior prefix-normalization behavior. Other processor metadata
 adapters remain planned; PROJECT mode retains its ordinary whole-project judge.
 
 Saved-progress verification now publishes measured checked/total counters to import jobs and the
-setup dialog. Parallel saved verification remains planned: compile immutable input snapshots in a
-bounded worker pool, then apply normal judge records on the coordinating thread under the existing
-project lock. Calling attempt concurrently inside restore would deadlock on that lock and conflict
-with the single progress-judge agent's claim; do not increase threads around the existing loop.
+setup dialog. Saved ROM progress verification now compiles immutable source/header/compiler snapshots
+in a bounded compilation pool (Settings: Background worker threads), with the global compiler-slot
+limit still enforced. The pool is separate from shared background jobs that may wait for the project
+lock. Normal attempts, byte/data verification, attribution and records remain serial under the existing project lock. Changed
+inputs discard a prepared object and compile again; cancellation discards queued work. Already verified
+matches and unchanged best attempts retain their existing skip rules. This covers every ROM console
+using saved-progress restore/sync; PROJECT mode retains its whole-project build/objdiff judge and does
+not use this per-function compilation pipeline.
+Local N64 demo benchmark: 32 saved best attempts, two runs each, one worker averaged 8.4 s
+and four averaged 2.5 s (automatic repair analysis disabled for measurement). The 32 functions
+had identical statuses, scores and saved sources. Actual game import speed depends on compiler and C size.
 
 ## Source checkout runtime
 
