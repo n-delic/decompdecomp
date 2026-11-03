@@ -133,9 +133,10 @@ def shows_includes(version: str) -> bool:
 
 def xdk_folder() -> Path | None:
     """The user's own XDK (its xbox folder: include/xtl.h, lib/xboxkrnl.lib, bin/imagebld.exe), from the header folders
-    of its compilers (--own): what `ninja export` rebuilds an Xbox game's XBE with."""
-    for own in OWN.values():
-        for d in own[2:]:
+    of its compilers (--own): what `ninja export` rebuilds an Xbox game's XBE with. With several XDKs, the one whose
+    compiler is the game's (MSVC_VERSION) first."""
+    for version in sorted(OWN, key=lambda v: v != MSVC_VERSION):
+        for d in OWN[version][2:]:
             if (Path(d) / "xtl.h").is_file() and (Path(d).parent / "lib" / "xboxkrnl.lib").is_file():
                 return Path(d).parent
     return None
@@ -220,8 +221,9 @@ def main() -> None:
             import ltcg
 
             def compiler_of(source: str):
-                cl, includes = msvc(versions.get(source, MSVC_VERSION))
-                return cl, includes, [*CL_FLAGS, *more.get(source, [])]
+                version = versions.get(source, MSVC_VERSION)
+                cl, includes = msvc(version)
+                return cl, includes, [*CL_FLAGS, *more.get(source, [])], shows_includes(version)
 
             harness_sources, harness_files = ltcg.write_rules(
                 n, units=list(units), source_of=source_of, build=BUILD, config=CONFIG, compiler_of=compiler_of, py=PY,

@@ -766,8 +766,11 @@ def main() -> None:
     data = delink.coff(cuts, img.data)
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_whole(path, data)
+    # the checks first, naming the object they're of (objdiff.py reads them only with that object): a report read
+    # between the object and its checks once counted the new object's 100% by the old checks
+    report["object_sha1"] = hashlib.sha1(data).hexdigest()
     write_whole(path.with_suffix(".ltcg.json"), json.dumps(report, indent=1).encode("utf-8"))
+    write_whole(path, data)
     bad = {n: f["conflicts"] for n, f in report["functions"].items() if f["conflicts"]}
     for p in problems:
         print(f"{unit}: {p}")

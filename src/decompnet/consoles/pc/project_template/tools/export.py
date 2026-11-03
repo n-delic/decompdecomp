@@ -731,6 +731,10 @@ def main() -> None:
     p.add_argument("--delinked", action="store_true", help="rebuild from the original's code only (no src/)")
     a = p.parse_args()
     info = json.loads(a.config.read_text(encoding="utf-8"))
+    if info.get("modules"):  # (their functions are the project's too: checking the program alone isn't the game)
+        sys.exit("ninja export relinks the game's program only, and this game has DLLs of its own (functions.json's "
+                 "modules), whose functions it can't check yet: it can't say the game is identical. `ninja rebuild` "
+                 "rebuilds and checks the program and its DLLs.")
     data = Path(info["exe"]).read_bytes()
     if hashlib.sha1(data).hexdigest() != info["sha1"]:
         sys.exit(f"{info['exe']} isn't the copy this project was made from (its SHA-1 should be {info['sha1']})")

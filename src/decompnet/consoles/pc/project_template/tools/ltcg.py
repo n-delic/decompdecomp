@@ -209,14 +209,16 @@ def lib_paths(includes) -> list[str]:
 def write_rules(n, *, units: list[str], source_of, build: Path, config: Path, compiler_of, py: str, wibo: str,
                 headers: list[str]) -> tuple[set[str], list[str]]:
     """Ninja rules and builds for every unit whose driver defines HarnessEntry. `compiler_of(source)`: the unit's
-    (cl.exe, header folders, flags); its linker is the one beside the compiler. Returns (the source files those
-    units link, their parts too, the harness files configure reads). `headers` aren't dependencies here: each object
-    depends on what its compile read (tools/cldeps.py)."""
+    (cl.exe, header folders, flags, whether it has /showIncludes); its linker is the one beside the compiler. Returns
+    (the source files those units link, their parts too, the harness files configure reads). An object depends on
+    what its compile read (tools/cldeps.py), or, from a compiler without /showIncludes (Visual C++ 7.0, which an
+    early XDK has), on every header and harness file."""
     q = subprocess.list2cmdline
     out = build / "ltcg"
     wrap = f'"{wibo}" ' if wibo and sys.platform != "win32" else ""
     n.rule("ltcg_cc", f'{py} tools/cldeps.py $out -- {wrap}"$cl" $flags /Iinclude /Iharness $includes /showIncludes '
                       "/Fo$out $in", deps="gcc", depfile="$out.d", description="LTCG cc $in")
+    n.rule("ltcg_cc_all", f'{wrap}"$cl" $flags /Iinclude /Iharness $includes /Fo$out $in', description="LTCG cc $in")
     n.rule("ltcg_support", f'{py} tools/ltcg.py support $out --cl "$cl" --lib "$lib"' + (f' --wibo "{wibo}"' if wrap else ""))
     # through `ltcg.py link`, which runs the linker (through wine) and keeps what it said (<map>.link.txt: what's
     # unresolved, for dll2coff)
@@ -239,7 +241,7 @@ def write_rules(n, *, units: list[str], source_of, build: Path, config: Path, co
         if key not in beside:
             beside[key] = by_prefix(*key)
         own = unit_sources(src, beside[key])
-        cl, includes, flags = compiler_of(src.as_posix())
+        cl, includes, flags, deps = compiler_of(src.as_posix())
         there = Path(cl).parent
         link = next((p for p in (there / "link.exe", there / "LINK.EXE", there / "Link.Exe") if p.exists()),
                     there / "link.exe")
@@ -254,7 +256,8 @@ def write_rules(n, *, units: list[str], source_of, build: Path, config: Path, co
         for i, path in enumerate(sources):
             obj = (out / unit / f"{i:02d}_{path.stem.replace('.', '_')}.obj").as_posix()
             plain = [f for f in gl if f.upper() != "/GL"] if ".nogl." in path.name.lower() else gl
-            n.build(obj, "ltcg_cc", path.as_posix(), implicit=["tools/cldeps.py"],
+            n.build(obj, "ltcg_cc" if deps else "ltcg_cc_all", path.as_posix(),
+                    implicit=["tools/cldeps.py"] if deps else [*headers, *harness_paths],
                     variables={"cl": cl, "includes": q([f"/I{d}" for d in includes]), "flags": q(plain)})
             objs.append(obj)
         dll, mapf = (out / unit / f"{unit}.dll").as_posix(), (out / unit / f"{unit}.map").as_posix()

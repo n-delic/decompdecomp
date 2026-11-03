@@ -711,6 +711,9 @@ C, then the console's status can say recommended.
   follows `this` in any register, where PC's reader expects it in ecx): it can't tell a free function taking a
   pointer from a member function when LTCG moves both into a register, and it groups a base class's functions, and
   a member object's at +0, with the object they're called on. Names from another build would settle both.
+- **`ninja export` of a game with DLLs of its own** (PC: functions.json's `modules`): it relinks the program only,
+  so it stops and says so rather than call the game identical; `ninja rebuild` checks them all. Each DLL relinked
+  with its exports and compared with its own SHA-1 is what's missing.
 - **Visual C++ 7.1 on Windows itself**: the msvc pack's 7.1 `cl.exe` doesn't start there (MSVCR71.dll isn't in the
   pack; wibo has it built in on Linux). An Xbox game's import picks your XDK's own copy of the same compiler there
   (`MSVC/xdk-<build>`), which has the runtime beside it; a PC game of 7.1 has no such copy yet.

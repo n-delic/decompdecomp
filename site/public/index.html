@@ -169,8 +169,8 @@
         <li><small>Your file</small><b>Program</b><span>a 32-bit or 64-bit .exe</span></li>
         <li><small>Split by</small><b>Ghidra</b><span>then decompdecomp cuts each function out of the .exe (a 64-bit one's are in its own list, .pdata)</span></li>
         <li><small>Built by</small><b>Visual C++</b><span>6.0 to 2010, or 2017 (through wine on Linux and macOS; a 64-bit game builds with its 64-bit compiler); any other, from your own copy, for 32-bit games; C and C++</span></li>
-        <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
-        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+        <li><small>Judged by</small><b>objdiff</b><span>per function; link-time code generation through a link of the unit, which checks each function's calling convention</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources; <code>ninja export</code> links the program again with the game's own linker and checks it byte for byte</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="xbox" data-file="default.xbe">
@@ -180,7 +180,7 @@
         <li><small>Split by</small><b>Ghidra</b><span>after decompdecomp makes the XBE a Windows program at the same addresses</span></li>
         <li><small>Built by</small><b>Visual C++ 7.0 / 7.1</b><span>the XDK's compilers; your own XDK optional on Linux and macOS, needed on Windows for 7.1 games; C and C++</span></li>
         <li><small>Judged by</small><b>objdiff</b><span>per function</span></li>
-        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources</span></li>
+        <li><small>You get</small><b>A project of your game's functions</b><span>as C and C++ sources (a unit of a game built with link-time code generation may span several files, linked as the game's linker did, which checks each function's calling convention); with your XDK, <code>ninja export</code> makes the XBE again with its linker and imagebld and checks it byte for byte</span></li>
       </ol>
     </article>
     <article class="pipeline" data-platform="nds" data-file="game.nds">

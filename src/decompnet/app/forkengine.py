@@ -987,8 +987,9 @@ class ForkEngine:
 
     def check_rom(self, slug: str, log=print) -> dict:
         """A game started from scratch: rebuild its program and compare it with the user's copy (its console's
-        check_rebuild; PC and Xbox: the project's `ninja export`); what it says is kept in the project's
-        .decomp.wtf.json and shown on the project."""
+        check_rebuild; PC and Xbox: `ninja prepare` and the functions checked against the game's code, as `ninja
+        rebuild` does; `ninja export`, the game's own linker, is the user's to run); what it says is kept in the
+        project's .decomp.wtf.json and shown on the project."""
         proj, fp, cfg = self.get(slug)
         manifest = fp.manifest or {}
         console = consoles.get(manifest.get("platform"))
@@ -2687,8 +2688,6 @@ class ForkEngine:
                       + ", ".join(r["name"] for r in done)]
         if (hint := _naming_hint(meta, fn)):
             lines += ["", hint]
-        if (found := self._unresolved_lines(fp, meta, fn, unit, src_text[span[0]:span[1]] if span else None)):
-            lines += ["", f"### Unresolved in {unit.name}'s harness link (nothing in it defines them yet)", *found]
         why = (cfg.get("link_failed") or {}).get(unit.source or "")
         if why and not unit.complete:
             lines += ["", f"### {unit.source} didn't link yet (file_status shows its data)", why]

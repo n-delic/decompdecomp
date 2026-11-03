@@ -224,6 +224,20 @@ def test_briefs_and_standins_say_which_struct_a_function_belongs_to(tmp_path):
     assert "`virtual void C_vt_003A94FC::Update(CCamOut *, float)`" in brief and "Struct_" not in brief
 
 
+def test_get_class_in_an_ltcg_project_gives_the_structs_its_member_functions_make(tmp_path):
+    """get_class goes to the member functions' structs (forks/methods.py) in an LTCG or Xbox project, where `this`
+    arrives in the register the linker chose: listed, and one by a function of it."""
+    from decompnet.app.forkengine import ForkEngine
+
+    root, manifest = _program(tmp_path, ltcg=True)
+    fp = SimpleNamespace(root=root, manifest=manifest)
+    engine = ForkEngine.__new__(ForkEngine)
+    engine.get = lambda slug: (None, fp, {"platform": manifest["platform"]})
+    name = methods.recover(convention.load(root, manifest), True).of[BASE + 0x1000].name
+    assert "structs and classes, found from functions that use `this`" in engine.get_class("p")
+    assert name in engine.get_class("p") and name in engine.get_class("p", f"{BASE + 0x1000:08X}")
+
+
 def test_a_member_functions_known_signature_is_read_from_its_undecorated_name():
     """An Xbox game: a brief suggested `int Struct_0015F270::?Update(int arg1, int arg2)` for a function whose symbol
     said `public: virtual void __thiscall C_vt_003A94FC::Update(struct CCamOut *, float)`."""
