@@ -4,13 +4,14 @@ stand-in generator do without any compiler; the end-to-end test on the demo ROM 
 
 import json
 import os
+import re
 import sys
 import threading
 import time
 
 import pytest
 
-from decompnet import toolchains
+from decompnet import seeds, toolchains
 from decompnet.app import permute, workers
 from decompnet.app.permute import MAX_TURNS, Permuter, State, weight_family
 from decompnet.network import Agent
@@ -532,6 +533,101 @@ def test_decomp_permuter_reads_a_c_function_among_cxx_headers():
     finally:
         gen.close()
     assert variants and all("int __fastcall Count(Widget *w, Id id)" in v for v in variants)
+
+
+def test_msvcs_words_leave_a_macros_name_its_value_and_strings_alone():
+    """`#define WINAPI __stdcall` lost its name (`#define int f(...)`), `#define STDCALL __stdcall` its value (the
+    variants lost the convention), and the newline after the word went with it, joining the next line on."""
+    from decompnet.permuter_gen import msvc_as_c
+
+    assert msvc_as_c("#define STDCALL __stdcall\nint STDCALL f(int a);") == \
+        "#define STDCALL __stdcall\nint STDCALL f(int a);"
+    assert msvc_as_c("#define WINAPI __stdcall\nint WINAPI f(int a);") == "#define WINAPI __stdcall\nint f(int a);"
+    assert msvc_as_c('#define DLLEXPORT __declspec(dllexport)\nconst char *s = "__stdcall";\n'
+                     "struct __declspec(align(16)) V { float x; };\nint __cdecl\ng(void);") == \
+        ('#define DLLEXPORT __declspec(dllexport)\nconst char *s = "__stdcall";\nstruct V { float x; };\nint \n'
+         "g(void);")
+
+
+def test_a_const_method_keeps_its_const_where_it_was():
+    """`const` went back after the first `(...)` of the name: `operator()(int a) const` became
+    `operator() const(int a)`, and two const overloads gave `const const` on one and none on the other."""
+    from decompnet.permuter_gen import Restorer
+
+    for source in ("int Widget::operator()(int a) const\n{\n    return a;\n}\n",
+                   "int A::f() const\n{\n    return 1;\n}\nint A::f(int a) const\n{\n    return a;\n}\n"):
+        r = Restorer(source, {"Widget", "A"})
+        assert not re.search(r"\bconst\b", r.source) and r.restore(r.source) == source
+
+
+@needs_tool
+@pytest.mark.parametrize("header,head", [("#define STDCALL __stdcall\nint STDCALL f(int a);\n", "int STDCALL f(int a)"),
+                                         ("#define WINAPI __stdcall\nint WINAPI f(int a);\n", "int WINAPI f(int a)"),
+                                         ("#define DLLEXPORT __declspec(dllexport)\nDLLEXPORT int f(int a);\n",
+                                          "DLLEXPORT int f(int a)")])
+def test_decomp_permuter_reads_a_function_among_msvcs_macros(header, head):
+    source = f"{head}\n{{\n    int b = a + 1;\n    return b * 2;\n}}\n"
+    job = {"header": permute.permuter_header(header, source), "source": source, "function": "f", "family": "base",
+           "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    # the macros are put in where the function uses them, and its convention kept (the randomizer may retype what
+    # it returns: `__declspec(dllexport) volatile unsigned int f(int a)`)
+    convention = r"__declspec\(dllexport\) [^;{]*\bf\(int a\)" if "DLLEXPORT" in head else r"\b__stdcall f\(int a\)"
+    assert variants and all(re.search(convention, v) for v in variants)
+
+
+CXX_GUARDED = "#ifdef __cplusplus\n" + CXX_HEADER.split("class Base")[0] + "#endif\n"
+
+
+def test_a_cxx_functions_header_keeps_its_cxx_branch(monkeypatch):
+    """A C++ function's classes in an `#ifdef __cplusplus` block were taken out (seeds.c_only, which drafts need, as
+    they're C), leaving decomp-permuter nothing to read; a C function's header is still C's."""
+    net = FakeNet()
+    net._context = lambda project_id, unit: {"header": HEADER + CXX_GUARDED, "version": 1}
+    fn = {**net.function(), "best_source": "float Vec2::Len()\n{\n    return x + y;\n}\n"}
+    jobs = batches(monkeypatch, [])
+    ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), fn, State())
+    assert "struct Vec2" in jobs[0]["header"]
+    assert permute.is_cxx("int Widget::Count(int k) { return k; }") and not permute.is_cxx(SOURCE)
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_method_whose_class_is_cxx_only():
+    source = "float Vec2::Len()\n{\n    float n = x;\n    return n + y;\n}\n"
+    job = {"header": permute.permuter_header(seeds.c_only(CXX_GUARDED, cxx=permute.is_cxx(source)), source),
+           "source": source, "function": "Vec2::Len", "family": "base", "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        variants = gen.batch(job)
+    finally:
+        gen.close()
+    assert variants and all("float Vec2::Len()" in v for v in variants)
+
+
+@needs_tool
+@pytest.mark.parametrize("source", [
+    "int f(int a)\n{\n    enum class K { A, B };\n    return a + (int) K::B;\n}\n",
+    "int f(int a)\n{\n    std::vector<int> v;\n    v.push_back(a);\n    return v[0];\n}\n",
+    "Vec2 Vec2::operator+(const Vec2 &o) const\n{\n    Vec2 r;\n    r.x = x + o.x;\n    return r;\n}\n",
+    "int f(int a) noexcept\n{\n    return a + 1;\n}\n",
+    "int f(int a) throw()\n{\n    return a + 1;\n}\n",
+    "int *f(int a)\n{\n    int *p = new int(a);\n    return p;\n}\n",
+])
+def test_cxx_decomp_permuter_doesnt_read_yet_falls_back_to_the_simple_rewrites(source):
+    """What permuter_gen's docstring says isn't read yet: the generator answers None, and the turn goes on with
+    the simple rewrites (test_c_decomp_permuter_cant_read_falls_back_to_the_simple_rewrites)."""
+    name = re.search(r"([\w:+]+)\(", source.split("\n")[0]).group(1)
+    job = {"header": permute.permuter_header(seeds.c_only(CXX_HEADER, cxx=True), source), "source": source,
+           "function": name, "family": "base", "seed": 1, "count": 8}
+    gen = permute.Generator()
+    try:
+        assert gen.batch(job) is None
+    finally:
+        gen.close()
 
 
 def test_a_variant_the_project_refuses_is_skipped_and_the_turn_goes_on(monkeypatch):
