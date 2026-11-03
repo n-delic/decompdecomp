@@ -1,8 +1,8 @@
-"""Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC 2.7.2 and IDO 5.3 / 7.1, ROM mode.
+"""Nintendo 64: the VR4300's MIPS (big-endian), KMC GCC, IDO and SN64 GCC, ROM mode.
 
 - rom.py: the ROM file: its byte order (.z64, .v64, .n64), header and a first guess at the compiler.
 - code.py: code splat's own look misses: segments the game loads later, and code kept compressed in the ROM.
-- guides/: what agents read about the N64 (n64.md) and its compilers (gcc-kmc.md, ido.md).
+- guides/: what agents read about the N64 and its compilers (KMC, IDO, SN64 and GCC variants).
 
 Its demo game is projects/demo-rom (the Demo Quest game in projects/demo-n64/original, built with KMC GCC).
 """
@@ -28,6 +28,21 @@ class Nintendo64(Console):
         Compiler("gcc-2.7.2-kmc", "KMC GCC 2.7.2", "many third-party N64 games", guess="KMC"),
         Compiler("ido-7.1", "IDO 7.1", "most later first-party N64 games", guess="IDO"),
         Compiler("ido-5.3", "IDO 5.3", "early N64 games (1996-97)"),
+        Compiler("sn-n64-281", "SN64 GCC 2.8.1", "SN Systems toolchains used by some third-party games"),
+        Compiler("sn-n64-272-0001", "SN64 GCC 2.7.2 (0001)", "earlier SN Systems N64 toolchains"),
+        Compiler("sn-n64-272-0004", "SN64 GCC 2.7.2 (0004)", "preserved SN compiler and assembler build"),
+        Compiler("sn-n64-272-0006", "SN64 GCC 2.7.2 (0006)", "later SN 2.7.2 build used in some boot code"),
+        Compiler("gcc-2.8.1-pm-sn-as", "GCC 2.8.1 + SN ASN64 2.56", "GCC code generation with original SN assembly"),
+        Compiler("gcc-2.8.1-pm", "GCC 2.8.1 (PM matching)", "patched GCC with its paired GNU assembler"),
+        Compiler("gcc-egcs-2.91.66", "EGCS 1.1.2 / GCC 2.91.66", "later iQue rebuild toolchains"),
+        Compiler("sn-n64-272-970404", "Reconstructed SN64 GCC 2.7.2 (970404)", "reconstructed SN codegen with compatibility assembly"),
+        Compiler("ido-5.3-cxx", "IDO 5.3 C++", "separate SGI C++ frontend; Linux x86_64"),
+        Compiler("ido-5.2", "IDO 5.2", "experimental SGI comparison; Linux x86_64"),
+        Compiler("ido-6.0", "IDO 6.0", "experimental SGI comparison; Linux x86_64"),
+        Compiler("ido-4.1", "IDO 4.1", "experimental early SGI comparison; Linux x86_64"),
+        Compiler("mipspro-7.4.4", "MIPSpro 7.4.4", "experimental; retail N64 use unconfirmed; Linux x86_64"),
+        Compiler("gcc-egcs-1.1.2-4", "Original EGCS 1.1.2-4", "original Linux release; iQue toolchain comparison"),
+        Compiler("gcc-4.4.0-n64", "GCC 4.4.0 (MIPS64 ELF)", "experimental modern toolchain; Linux or WSL"),
     )
     kits = ("own-n64",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
     guides = ("mips",)
@@ -136,10 +151,12 @@ class Nintendo64(Console):
 
     def up_front_guide(self, compiler: str) -> str:
         compiler = compiler.lower()  # (a fork of a public decomp: "project", its own build's)
-        return "ido" if "ido" in compiler else "gcc-kmc" if "gcc" in compiler else ""
+        if compiler in ("gcc-2.8.1-pm-sn-as", "gcc-2.8.1-pm", "gcc-egcs-2.91.66", "gcc-egcs-1.1.2-4", "gcc-4.4.0-n64"):
+            return "gcc-variants"
+        return "ido" if "ido" in compiler or "mipspro" in compiler else "sn64" if compiler.startswith("sn-n64") else "gcc-kmc" if "gcc" in compiler else ""
 
     def m2c_target(self, compiler: str = "") -> str:
-        return "mips-ido" if "ido" in compiler.lower() else "mips-gcc"
+        return "mips-ido" if "ido" in compiler.lower() or "mipspro" in compiler.lower() else "mips-gcc"
 
 
 N64 = Nintendo64()
