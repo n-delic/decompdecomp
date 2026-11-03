@@ -40,7 +40,7 @@ def register(app: App) -> None:
                         with net.progress.view():
                             return fn(slug, request, data)
                     result = fn(slug, request, data)
-                    if request.method == "POST" and request.url.path != "/api/verification" and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and request.url.path != "/api/verification" and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 return JSONResponse(await ((app.ui_call or call) if request.method == "GET" else call)(perform))
@@ -277,7 +277,25 @@ def register(app: App) -> None:
             raise ValueError("write the note first")
         return {"message": net.add_note(agent, slug, text[:2000], str(data.get("function", "")) or None)}
 
+    suggestion_jobs = {}
+
     def p_suggestion(slug, request, data):
+        if data.get("background") and data.get("action") == "apply":
+            sid = int(data.get("id", 0))
+            with jobs._lock:
+                previous = suggestion_jobs.get((slug, sid))
+                if previous and jobs.jobs.get(previous, {}).get('state') == 'running':
+                    return {"job": previous}
+                def apply_suggestion(log):
+                    log("Checking the suggested settings. Existing matches must still match byte for byte.")
+                    net.resolve_suggestion(slug, sid, True, log=log)
+                    log("Saving project progress to disk.")
+                    net.progress.sync(slug, force=True, logger=log)
+                    log("Refreshing project results.")
+                    return net.overview(slug)
+                job = jobs.start("Apply compiler suggestion", apply_suggestion)
+                suggestion_jobs[slug, sid] = job
+                return {"job": job}
         net.resolve_suggestion(slug, int(data.get("id", 0)), data.get("action") == "apply")
         return net.overview(slug)
 

@@ -805,17 +805,17 @@ class CompilerMixin:
                    else "Other flags come closer, but none matches: look at the C again first.")
         return head + "\n".join(lines) + "\n" + verdict
 
-    def resolve_suggestion(self, slug: str, sid: int, apply: bool, guard: bool = False) -> None:
+    def resolve_suggestion(self, slug: str, sid: int, apply: bool, guard: bool = False, log=lambda line: None) -> None:
         """The user's answer to a suggestion: apply it (a compiler: the project switches to it) or dismiss it."""
         hit = next((s for s in self.cfg(self._project(slug)).get("suggestions", []) if s["id"] == sid), None)
         if hit is None:
             raise NetworkError(f"no suggestion {sid}")
         if apply and hit["toolchain"] and hit.get("ranges") and self.fork_slug(slug):  # (its files: each if it holds)
-            self.forks.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"])
+            self.forks.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], log=log)
         elif apply and hit["toolchain"] and hit.get("ranges"):
-            self.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], hit["flags"])
+            self.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], hit["flags"], log=log)
         elif apply and hit["toolchain"]:
-            self.set_compiler(slug, hit["toolchain"], hit["flags"], guard=guard)
+            self.set_compiler(slug, hit["toolchain"], hit["flags"], guard=guard, log=log)
         self._update_cfg(slug, lambda cfg: next(s for s in cfg["suggestions"] if s["id"] == sid).__setitem__(
             "status", "applied" if apply else "dismissed"))
 
@@ -864,7 +864,7 @@ class CompilerMixin:
                 "match_cause": "compiler_profile" if matched else None}
 
     def set_compiler_ranges(self, slug: str, ranges: list[list[int]], toolchain: str | None,
-                            flags: list[str] | None = None, reopen: bool = False) -> None:
+                            flags: list[str] | None = None, reopen: bool = False, log=lambda line: None) -> None:
         """Address ranges built by another compiler than the rest of the game (replacing ranges they overlap), or
         with toolchain None: those ranges back to the project's compiler. Matched functions that wouldn't match any
         more stop it, unless `reopen` (removing a range the user judged a quirk: Ridge Racer V's two GCC 2.96 ranges
@@ -891,7 +891,7 @@ class CompilerMixin:
                 keep += [{"start": a, "end": b, "toolchain": toolchain, "flags": flags} for a, b in ranges]
             cfg["compiler_ranges"] = sorted(keep, key=lambda r: r["start"])
         change(cfg)
-        self._apply_compiler_config(proj, cfg, reopen=reopen and not toolchain)
+        self._apply_compiler_config(proj, cfg, reopen=reopen and not toolchain, log=log)
         with self.store.tx() as db:
             where = ", ".join(f"0x{a:X}-0x{b:X}" for a, b in ranges)
             self._event(db, proj["id"], None, "compiler", f"{consoles.compiler_name(toolchain)} {' '.join(flags)} for {where}"
@@ -926,7 +926,8 @@ class CompilerMixin:
         matched = [f for f in affected if f["status"] == "matched"]
         log(f"Checking {len(matched)} matched functions before changing compiler settings.")
         broken = self.regression_test(trial, None, only=matched,
-                                     header_for=lambda f: self._context(proj["id"], f["unit"])["header"]) if matched else []
+                                     header_for=lambda f: self._context(proj["id"], f["unit"])["header"],
+                                     progress=lambda p: log(f"Checked {p['done']} of {p['total']} affected matches.")) if matched else []
         if broken and not reopen:
             raise NetworkError(f"{len(broken)} matched function(s) wouldn't match with it any more "
                                f"({', '.join(n for n, _ in broken[:5])}): narrow the ranges or keep their compiler settings; when removing a range, reopen those functions explicitly")
@@ -934,7 +935,8 @@ class CompilerMixin:
         scores = {}
         rescored = [f for f in affected if f["status"] == "open" or f["name"] in broken_names]
         log(f"Updating saved scores for {len(rescored)} affected attempts.")
-        for fn in rescored:
+        for done, fn in enumerate(rescored, 1):
+            log(f"Updating score {done} of {len(rescored)}: {fn['name']}")
             source = fn["matched_source"] if fn["name"] in broken_names else self._source_of(fn)
             own = compiler_for(cfg, fn["vram"])
             _, diff, _ = self._judge_with(trial, fn, own["toolchain"], list(own["flags"]), source) if source else (False, None, "")

@@ -262,3 +262,18 @@ def test_profile_migration_prefers_default_even_when_default_is_less_common(clea
                                    source_profile={'toolchain': 'ido-5.3', 'flags': ['-O1']})
     assert out['tested'] == 84 and len(out['changed']) == 84
     assert out['profiles_after'] == 1
+
+
+def test_suggestion_range_reports_validation_and_score_stages(net, monkeypatch):
+    net._update_cfg('demo', lambda cfg: cfg.__setitem__('suggestions', [
+        {'id': 1, 'toolchain': 'ido-5.3', 'flags': ['-O1'], 'ranges': [[0x80001000, 0x80001550]], 'status': 'suggested'}]))
+    def regression(proj, header, only, progress, **kwargs):
+        progress({'done': len(only), 'total': len(only)})
+        return []
+    monkeypatch.setattr(net, 'regression_test', regression)
+    lines = []
+    net.resolve_suggestion('demo', 1, True, log=lines.append)
+    assert 'Checking 84 matched functions before changing compiler settings.' in lines
+    assert 'Checked 84 of 84 affected matches.' in lines
+    assert any('Updating score 1 of 1: f84' in line for line in lines)
+    assert net.cfg(net.project_row('demo'))['suggestions'][0]['status'] == 'applied'

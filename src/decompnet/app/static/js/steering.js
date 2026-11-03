@@ -153,11 +153,35 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   const b = e.target.closest("button[data-apply], button[data-dismiss]");
   if (!b) return;
   const apply = b.dataset.apply != null;
+  const slug = S.slug;
+  if (apply) {
+    const body = dialog("Applying compiler suggestion", `<p>Checking affected functions with the suggested compiler and flags. Existing matches must still match byte for byte; saved attempts are rescored before the settings are saved.</p>
+      <p class="muted small">You can close this dialog; the checks will continue in the background.</p>
+      <pre class="log" id="suggestionApplyLog" aria-label="Compiler checks"></pre>
+      <button class="ghost" type="button" data-close>Close</button>`);
+    const log = body.querySelector("#suggestionApplyLog");
+    const finish = beginWork(log, "Checking compiler settings and protecting existing matches", [b], "Compiler settings applied.");
+    try {
+      const { job } = await api("/api/suggestion", { method: "POST", body: { slug, id: Number(b.dataset.apply), action: "apply", background: true } });
+      const overview = await followJob(job, log);
+      if (S.slug === slug) {
+        S.ov = overview;
+        renderStats(S.ov);
+        renderProjectSettings();
+      }
+      toast("Applied. Agents use the new settings from their next attempt.");
+    } catch (err) { showJobError(log, err.message); }
+    finally { finish(); }
+    return;
+  }
   try {
-    S.ov = await api("/api/suggestion", { method: "POST", body: { slug: S.slug, id: Number(b.dataset.apply || b.dataset.dismiss), action: apply ? "apply" : "dismiss" } });
-    renderStats(S.ov);
-    renderProjectSettings();
-    toast(apply ? "Applied. Agents compile with it from their next attempt on." : "Dismissed.");
+    const overview = await api("/api/suggestion", { method: "POST", body: { slug, id: Number(b.dataset.dismiss), action: "dismiss" } });
+    if (S.slug === slug) {
+      S.ov = overview;
+      renderStats(S.ov);
+      renderProjectSettings();
+    }
+    toast("Dismissed.");
   } catch (err) { toast(esc(err.message), "err"); }
 };
 // a disc's title is often only its serial (GTA San Andreas imports as SLES-52541): the user names it

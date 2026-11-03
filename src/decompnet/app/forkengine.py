@@ -4112,7 +4112,7 @@ class ForkEngine:
                            "check": "confirmed", "said": f"{p['file']}: its matched functions match with it"}
                           for p in parts]}
 
-    def set_compiler_ranges(self, slug: str, ranges: list[list[int]], compiler: str | None) -> str:
+    def set_compiler_ranges(self, slug: str, ranges: list[list[int]], compiler: str | None, log=lambda line: None) -> str:
         """The Settings panel's "only for these address ranges", where each source file has a compiler: the files
         whose code is in them get `compiler` (None: the project's own again), each only when its matches hold."""
         _, fp, cfg = self.get(slug)
@@ -4125,7 +4125,8 @@ class ForkEngine:
         if not files:
             raise NetworkError("no source file's code is in those ranges")
         done, stayed = [], []
-        for f in files:
+        for index, f in enumerate(files, 1):
+            log(f"Checking source file {index} of {len(files)}: {f}")
             try:
                 self.set_file_compiler_by_hand(slug, f, compiler or own)
                 done.append(f)

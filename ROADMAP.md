@@ -2045,3 +2045,7 @@ resumption after those programs exit remains planned. API history persistence ac
 and provider failures also remains planned; saved candidates/experiments still survive.
 - Done: project-scoped distinct improved-function totals per room member, alongside matches in the
   host/guest room dialog and room agent cards, including attribution from older attempt histories.
+
+- Done: compiler-suggestion applications run as reusable background jobs with immediate progress,
+  matched-function check counts, score-update stages and persistent errors in the UI; ROM ranges
+  and source-project file ranges retain their existing regression protection.

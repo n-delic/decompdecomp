@@ -1991,3 +1991,56 @@ def test_focused_agent_start_passes_scope_and_duration_and_rejects_multiple(app,
         'kind':'codex','slug':'game','count':2,'options':{'focus_function':'f0','focus_minutes':15}})
     assert response.status_code==400
     assert len(seen)==1
+
+
+def test_compiler_suggestion_background_reports_progress_and_reuses_job(app, monkeypatch):
+    client, net, *_ = app
+    entered, release = threading.Event(), threading.Event()
+    calls, saves = [], []
+    def resolve(slug, sid, apply, log):
+        calls.append((slug, sid, apply))
+        log('Checking 2 matched functions before changing compiler settings.')
+        entered.set()
+        assert release.wait(5)
+        log('Compiler checks passed; settings and scores saved.')
+    monkeypatch.setattr(net, 'resolve_suggestion', resolve)
+    monkeypatch.setattr(net.progress, 'sync', lambda *a, **kw: saves.append(a) if a[0] == 'suggestion-progress' else None)
+    monkeypatch.setattr(net, 'overview', lambda slug: {'slug': slug, 'suggestions': []})
+    payload = {'slug': 'suggestion-progress', 'id': 1, 'action': 'apply', 'background': True}
+    try:
+        first = client.post('/api/suggestion', json=payload, headers={'X-Decomp': '1'})
+        assert first.status_code == 200
+        assert entered.wait(2)
+        job = first.json()['job']
+        assert saves == []  # the initial request must not wait for project-wide disk synchronization
+        second = client.post('/api/suggestion', json=payload, headers={'X-Decomp': '1'})
+        assert second.json()['job'] == job
+        status = client.get('/api/job', params={'id': job}).json()
+        assert status['state'] == 'running'
+        assert any('Checking 2 matched' in line for line in status['log'])
+    finally:
+        release.set()
+    for _ in range(100):
+        status = client.get('/api/job', params={'id': job}).json()
+        if status['state'] != 'running':
+            break
+        time.sleep(.01)
+    assert status['state'] == 'done' and status['result']['slug'] == payload['slug']
+    assert calls == [(payload['slug'], 1, True)] and saves == [(payload['slug'],)]
+
+
+def test_failed_compiler_suggestion_keeps_job_error_visible(app, monkeypatch):
+    from decompnet.network import NetworkError
+    client, net, *_ = app
+    def reject(*args, **kwargs):
+        raise NetworkError('One matched function would no longer match. Narrow the range.')
+    monkeypatch.setattr(net, 'resolve_suggestion', reject)
+    response = client.post('/api/suggestion', json={'slug': 'failed-suggestion', 'id': 2,
+                           'action': 'apply', 'background': True}, headers={'X-Decomp': '1'})
+    assert response.status_code == 200
+    for _ in range(100):
+        status = client.get('/api/job', params={'id': response.json()['job']}).json()
+        if status['state'] != 'running':
+            break
+        time.sleep(.01)
+    assert status['state'] == 'error' and 'Narrow the range' in status['error']
