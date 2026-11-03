@@ -57,6 +57,27 @@ def default_folder(net, slug: str) -> Path:
     return Path(net.cfg(proj).get("progress_folder") or Path(proj["root"]) / SAVE_FOLDER)
 
 
+def save_folder(net, slug: str) -> Path:
+    """The last successful manual save, or the linked progress folder for a project opened from a save.
+
+    This is a local preference, kept out of the shared manifest: another computer has its own paths.
+    Saving a backup elsewhere does not move the authoritative progress folder.
+    """
+    proj = net.store.one("SELECT * FROM projects WHERE slug=?", slug)
+    if proj is None:
+        raise NetworkError(f"no project {slug!r} here: check its name, or whether it was removed")
+    return Path(net.cfg(proj).get("save_folder") or default_folder(net, slug))
+
+
+def _remember_folder(net, project_id: int, folder: Path) -> None:
+    # A rescue save must work even when synchronizing the authoritative folder fails. Only update local config.
+    with net.store.tx() as db:
+        row = db.execute("SELECT config FROM projects WHERE id=?", (project_id,)).fetchone()
+        cfg = json.loads(row["config"])
+        cfg["save_folder"] = str(folder)
+        db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), project_id))
+
+
 def save(net, slug: str, folder: Path | None = None) -> dict:
     """Write the project's work to `folder` (default: progress/ in the project's folder). Returns what was saved.
 
@@ -76,7 +97,9 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
         proj = net._project(slug)
         _check_save_paths(target, chosen=chosen or bool(net.cfg(proj).get("progress_folder")))
         if not net.is_rom(proj):
-            return _save_best(net, proj, target)
+            result = _save_best(net, proj, target)
+            _remember_folder(net, proj["id"], target.resolve())
+            return result
         if chosen:
             files, result = _render(net, slug, target, chosen=True)
             previous = _read_owned(target)
@@ -99,7 +122,8 @@ def save(net, slug: str, folder: Path | None = None) -> dict:
                 _remember_revision(net, slug, json.loads(files[MANIFEST]))
             else:
                 net.progress.sync(slug, force=True)  # a contributor wrote meanwhile: apply it, don't overwrite it
-        return result | {"folder": str(target)}
+        _remember_folder(net, proj["id"], target.resolve())
+        return result | {"folder": str(target.resolve())}
     finally:
         if chosen and progress is not None:
             progress.local.busy = was_busy

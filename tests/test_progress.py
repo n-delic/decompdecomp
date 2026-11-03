@@ -54,6 +54,49 @@ def manifest(folder, **changes):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
+@pytest.mark.parametrize("kind", ["rom", "fork"])
+def test_manual_save_locations_survive_restart_and_belong_to_one_project(project, tmp_path, kind):
+    net, folder, _ = project
+    with net.store.tx() as db:
+        cfg = dict(net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'")), kind=kind)
+        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps(cfg),))
+        db.execute("INSERT INTO projects(slug,name,root,config) VALUES('other','Other',?,?)",
+                   (str(tmp_path / "other"), json.dumps(cfg)))
+    chosen = tmp_path / "saved-game"
+    saves.save(net, "game", chosen)
+    reopened = RomNetwork(tmp_path / "app.db", tmp_path)
+    assert saves.save_folder(reopened, "game") == chosen.resolve()
+    assert saves.save_folder(reopened, "other") == tmp_path / "other" / "progress"
+    assert saves.default_folder(reopened, "game") == folder
+    if kind == "rom":
+        assert "save_folder" not in json.loads((chosen / saves.MANIFEST).read_text())
+    saves.save(net, "game")  # clearing the field restores the project's default
+    assert saves.save_folder(net, "game") == folder.resolve()
+
+
+def test_a_failed_save_keeps_the_last_successful_location(project, tmp_path, monkeypatch):
+    net, _, _ = project
+    chosen = tmp_path / "saved"
+    saves.save(net, "game", chosen)
+
+    def fail(*args, **kwargs):
+        raise NetworkError("The save folder is unavailable.")
+
+    monkeypatch.setattr(saves, "_publish", fail)
+    with pytest.raises(NetworkError, match="unavailable"):
+        saves.save(net, "game", tmp_path / "unavailable")
+    assert saves.save_folder(net, "game") == chosen.resolve()
+
+
+def test_a_project_opened_from_a_save_shows_its_linked_location(project, tmp_path):
+    net, _, _ = project
+    checkout = tmp_path / "checkout"
+    with net.store.tx() as db:
+        cfg = dict(net.cfg(net.store.one("SELECT * FROM projects WHERE slug='game'")), progress_folder=str(checkout))
+        db.execute("UPDATE projects SET config=? WHERE slug='game'", (json.dumps(cfg),))
+    assert saves.save_folder(net, "game") == checkout
+
+
 def test_a_new_source_is_discovered_without_editing_the_function_index(project):
     net, folder, judged = project
     (folder / "src").mkdir()

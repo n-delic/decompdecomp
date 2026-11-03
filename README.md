@@ -213,6 +213,10 @@ so you can keep it in a git repository. You can edit these files or pull another
 `progress/`; decompdecomp reads them on the next project action and checks the saved functions again. GameCube, Wii
 and PC projects and community decomps are git repositories already: push them.
 
+In **Settings**, **Save now** remembers its last successful destination for each project and restores it when
+you open that project again. A project opened from a saved folder starts with that folder selected. Saving a
+backup elsewhere keeps the project's automatic progress folder in place. Clear the field to save there again.
+
 The simplest way is to copy your whole `~/Decomp` folder to the same place on the new computer. Copy the hidden
 `.decomp` folder in it too: it holds the matches of every project. decompdecomp then finds every project. To take a
 single N64, PlayStation or PlayStation 2 project, or to keep it in git:

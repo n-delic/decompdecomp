@@ -14,6 +14,7 @@ from pathlib import Path
 from ... import compilermap, consoles, scoring, toolchains
 from ...network import IN_BUILD, PROGRESS_COLUMNS, set_aside
 from ...project import compiler_for
+from .. import saves
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
 NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "knowledge", "collab", "import", "reimport", "files",
@@ -61,7 +62,7 @@ class GuiMixin:
                        "helper_matches": helpers,
                        "readable": self.readability.counts(proj)["readable"],
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
-                       "priority": cfg.get("priority", []),
+                       "priority": cfg.get("priority", []), "save_folder": str(saves.save_folder(self, slug)),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
                        "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
                                        and not re.search(r"does not match|doesn't compile", s["check"] or "")],

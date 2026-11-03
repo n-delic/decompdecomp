@@ -45,7 +45,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Tidy each source file once it's polished (shared types in one header, names, dead declarations) | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Polish matched code (still matching) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Real names for the game's symbols (`rename_symbol`) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | dtk and ds-decomp projects |
-| Save and restore (`progress/`, Open a saved project) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
+| Save and restore (`progress/`, Open a saved project); remember each project's save destination | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | the project's git; best attempts saved | the project's git; best attempts saved | the project's git; best attempts saved; the PE view made again from your XBE or disc | the project's git; best attempts saved | the project's git; best attempts saved |
 | Saved README preserves notes, with completion bar and function map | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Reimport: a new split, matched work kept (Settings) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ (Ghidra again, the newest rules) | ✓ | — | — |
 | Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
@@ -352,6 +352,9 @@ Where to start on a gap:
   step at a time (the manifest's `analysis`): the repairs, the stubs set aside, then the pieces joined, never a
   stub; each step that changes code is kept only when the code still rebuilds byte for byte (on that game: 23
   tables, 390 functions, 179 pieces). Agents' `join_functions` works on PC too.
+- **Save destinations belong to each project.** Settings restores the project's last successful manual save
+  destination when it opens again, in ROM and project mode. A restored ROM project starts with its linked save
+  folder selected. Paths stay local, failed saves keep the old choice, and a backup does not move autosave.
 - **Saved guides keep your notes.** Saving creates a basic README only when one is missing. Later saves update
   counts and visuals inside hidden comment pairs, preserving the rest of the guide. A local SVG progress card
   shows completion, platform and a function map in ROM and project mode; it contains no game code.
