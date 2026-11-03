@@ -37,7 +37,7 @@ def allocated_output(raw):
     return hashlib.sha256(repr((sections,relocations)).encode()).hexdigest()
 
 
-def phase_summary(work, name=None):
+def phase_summary(work, name=None, arch=None):
     texts = {}
     result = {}; remaining = 4*1024*1024
     for path in sorted(Path(work).glob('func.*')):
@@ -69,9 +69,10 @@ def phase_summary(work, name=None):
     retired = sorted(set(result.get('flow',{}).get('registers',[]))-set(result.get('combine',{}).get('registers',[])))
     for row in result.values():
         row['register_count'] = len(row.pop('registers'))
-    from . import rtl_value_trace
+    from . import gcc_allocation, rtl_value_trace
     return {'phases':result,'removed_between_flow_and_combine':retired[:24],
-            **({'value_trace':rtl_value_trace.summarize(texts,name)} if name else {})}
+            **({'value_trace':rtl_value_trace.summarize(texts,name,arch),
+                'allocation':gcc_allocation.summarize(texts,name,arch)} if name else {})}
 
 
 def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_compile=lambda: None):
@@ -92,7 +93,7 @@ def diagnose(profile, header, source, name, *, root='.', baseline_obj=None, on_c
         baseline_obj = baseline.obj
     captured = {}
     def collect(work):
-        captured.update(phase_summary(work,name))
+        captured.update(phase_summary(work,name,tc.arch))
     with capture_artifacts(collect):
         on_compile()
         diagnostic = compile_source(replace(cfg,cmd=[*cfg.cmd,'-da']),header,source)

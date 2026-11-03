@@ -34,6 +34,8 @@ def brief(net, proj, fn):
         if hint := advice(current['rows']):lines.append(hint)
         clues = allocation_evidence.text(current['rows'],proj['arch'])
         if clues:lines.append(clues)
+        from . import allocation_search
+        if clue := allocation_search.brief(net,proj,fn,source,current['rows']):lines.append(clue)
         if region := region_repairs.summary(current['rows'],proj['arch']):lines.append(region)
         plan=allocation_evidence.plan(current['rows'],proj['arch'])
         next_family=(' Try '+plan['families'][0]+'.') if plan['families'] else ''
@@ -46,6 +48,13 @@ def brief(net, proj, fn):
         alternatives = [v for v in pool.values() if v is not current and v['score']>0 and v['score']<=max(1,current['score'])*1.25]
         if alternatives:
             lines.append('Recent tested alternatives (not adopted): '+', '.join(f"{v['kind'] or 'mixed'} score {v['score']} (frame {v.get('allocation',{}).get('candidate_frame','unknown')})" for v in alternatives[-2:]))
+    if current is None and getattr(net,'is_rom',lambda _:False)(proj) and not net.fork_slug(proj['slug']):
+        from . import allocation_search
+        evidence = allocation_search.saved(net,proj,fn,source) or {}
+        rows = evidence.get('rows',[])
+        if rows and allocation_evidence.diagnose(rows,proj['arch'])['register_cycles']:
+            lines.append(allocation_evidence.text(rows,proj['arch']))
+            if clue := allocation_search.brief(net,proj,fn,source,rows):lines.append(clue)
     experiment_evidence.prepare(net)
     rows = net.store.all('SELECT family,attempted,same_output,no_edit,improved,worse,failed FROM repair_input_effects WHERE function_id=? AND scope=? ORDER BY attempted DESC LIMIT 3',fn['id'],experiment_evidence.scope(net,proj,fn))
     if rows:

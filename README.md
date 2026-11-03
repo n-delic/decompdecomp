@@ -45,6 +45,15 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Register-only MIPS near misses now identify closed register swaps from actual linked bytes,
+including cases obscured by relocation-label rendering. Deep search prioritizes up to 24
+lifetime candidates within its existing budget. Optional installed-GCC captures expose actual
+allocation order and conversion lifetimes; both diagnostic compiles count against that budget,
+and cached evidence is invalidated by changed source/build inputs. Agents can read a compact
+summary without starting tools. A bounded repair can relocate an already-present, proven zero
+identity; it does not invent padding expressions. See [register-cycle replay evidence](docs/repair-replay.md#register-cycle-lifetime-search).
+
+
 Source preparation retries bounded compiler profiles after recovering a better
 source context, restores actual small getters as well as call wrappers, tests a bounded private
 helper definition-order alternative, and ranks

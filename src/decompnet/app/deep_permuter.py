@@ -16,6 +16,8 @@ from ..repair_feedback import trial as repair_trial
 from . import (
     adaptive_repairs,
     agent_tokens,
+    allocation_evidence,
+    allocation_search,
     draft_repairs,
     permuter_focus,
     permuter_local,
@@ -82,6 +84,9 @@ class Search(Permuter):
         self.last_outcome = ''
         self.last_score = None
         self.local_status = {}
+        self.allocation_trials = 0
+        self.allocation_captures = 0
+        self.allocation_diagnostic_compiles = 0
         self.allowance = search_turns.Allowance(minutes*60,time.monotonic()) if getattr(log,"adaptive_budget",False) else None
 
     def _hold(self, agent, fn, **kwargs):
@@ -169,7 +174,9 @@ class Search(Permuter):
             return 100.0 if score == 0 else min(99.9, int(max(0, 100*(1-score/self.max_score))*10)/10)
         return {'starting_score': self.starting_score, 'starting_percent': percent(self.starting_score),
                 'best_score': self.best, 'best_percent': percent(self.best), 'improvements': self.improvements,
-                'local_search': self.local_status}
+                'local_search': self.local_status,
+                'allocation_trials':self.allocation_trials,
+                'allocation_diagnostic_compiles':self.allocation_diagnostic_compiles}
 
     def report(self):
         if self.best is not None and (self.recorded_best is None or self.best < self.recorded_best):
@@ -248,6 +255,10 @@ class Search(Permuter):
         """A new saved source merits new flag probes before more source mutations."""
         if proj['slug'] in self.net.links or fork or not hasattr(self.net, '_comparison_digest'):
             return best
+        if (self.winner_diff and self.winner_source == fn['best_source']
+                and allocation_evidence.diagnose(self.winner_diff[0],proj['arch'])['register_cycles']):
+            self.log('Measured linked register cycle; keeping the current compiler profile during lifetime search.')
+            return best
         previous = self.phase
         self._let_go(agent, fn)  # settings application requires an unclaimed function
         try:
@@ -296,8 +307,40 @@ class Search(Permuter):
         finally:
             self.measuring_baseline = False
 
+    def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
+        """One bounded lane before broad mutation, charged to the same global limit/deadline."""
+        diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
+        if not diagnosis['register_only'] or not diagnosis['register_cycles'] or self.allocation_trials >= allocation_search.LIMIT:
+            return choices,set()
+        self.log(allocation_evidence.text(rows,proj['arch']))
+        evidence = {}
+        if not fork and proj['slug'] not in self.net.links and self.net.is_rom(proj):
+            evidence = allocation_search.saved(self.net,proj,fn,source)
+            if (evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
+                    and time.monotonic()+40 < self.deadline):
+                self.allocation_captures += 1
+                def charged():
+                    self.check()
+                    self.tested += 1
+                    self.allocation_diagnostic_compiles += 1
+                    self.report()
+                try:
+                    evidence = allocation_search.capture(self.net,proj,fn,source,on_compile=charged,rows=rows)
+                except (OSError,ValueError,KeyError,RuntimeError) as error:
+                    self.check()  # cancellation and budget exhaustion must still propagate
+                    if isinstance(error,SearchLimit):raise
+                    evidence = {'skipped':'Optional phase capture unavailable: '+type(error).__name__}
+            evidence = evidence or {}
+            from .gcc_allocation import brief
+            if hint := brief(evidence.get('allocation'),diagnosis['register_cycles']):self.log(hint)
+            if evidence.get('skipped'):self.log(evidence['skipped'])
+        lane = allocation_search.proposals(source,fn['name'],proj['arch'],rows,choices,labels,evidence,header)
+        lane = [c for _,c in lane if c not in self.local_seen][:allocation_search.LIMIT-self.allocation_trials]
+        return lane+[c for c in choices if c not in lane],set(lane)
+
     def local_repairs(self, agent, proj, fn, best, fork, max_trials=None, phase_deadline=None):
         """Regenerate from each saved winner, sharing this search's deadline, cache and allowance."""
+        ordinary_phase = self.phase
         flags = compiler_for(self.net.cfg(proj), fn['vram']).get('flags', []) if not fork else []
         trials = 0
         detours_used = set()
@@ -350,6 +393,8 @@ class Search(Permuter):
                 preferred = lineage.preferred(source)
                 choices.sort(key=lambda c: (labels.get(c,'local_repair') not in preferred, ranked.index(labels.get(c, 'local_repair'))))
 
+            choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
+
             for candidate in dict.fromkeys(choices):
                 if phase_deadline is not None and time.monotonic() >= phase_deadline:
                     self.local_status = {'reason': 'phase_budget', **counters}
@@ -361,6 +406,11 @@ class Search(Permuter):
                     self.local_status = {'reason': 'burst_budget', **counters}
                     self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
                     return best, self.net._function(fn['name'], proj['slug'])['best_source']
+                if candidate in allocation_lane:
+                    self.phase = 'register-cycle lifetimes'
+                    self.allocation_trials += 1
+                else:
+                    self.phase = ordinary_phase
                 self.local_seen.add(candidate)
                 trials += 1
                 self._parent_rows = rows
@@ -494,7 +544,8 @@ class Search(Permuter):
                 # Only a local near-miss needs diff rows to resume its second edge. Random
                 # trials keep their compact score cache; do not grow it by a full diff per compile.
                 feedback = ({'score': score, 'rows': own[0]} if own and provenance.get('kind') == 'deep local repair'
-                            and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus) else score)
+                            and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
+                                 best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
                 with self.net.store.tx() as db:
                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                                (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),

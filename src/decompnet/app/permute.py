@@ -736,10 +736,11 @@ class Permuter:
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)
-        self.net.keep_diff(agent.id, fn['id'], d.rows)
+        rows = self.net._search_rows(fn,proj,result.obj,d.rows) if hasattr(self.net,'_search_rows') else d.rows
+        self.net.keep_diff(agent.id, fn['id'], rows)
         if not hasattr(self.net, '_agent_outcomes'):
             self.net._agent_outcomes = {}
-        self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': d.rows}
+        self.net._agent_outcomes[agent.id, fn['id']] = {'source': source, 'score': d.score, 'rows': rows}
         if d.score < best or (d.bytes_match and fn['status'] != 'matched'):
             self._accept_candidate(agent, proj, fn, source, d)
             self.net._record(fn, agent, d.score, source, ctx["version"], matched=d.bytes_match, via="permuter", effective_settings=getattr(result,"effective_settings",None),

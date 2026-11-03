@@ -2757,6 +2757,23 @@ and failed claims leave assembly classification intact. Full-image verification 
 separate repository-sync gate. Imported builds retain their owned-header path until an adapter
 exists; non-MIPS compiler units still require supported metadata and normalization readers.
 
+### Controlled follow-up: register-cycle diagnosis and existing identity placement
+
+The late-cancellation menu case now has a bounded placement generator and a focused deep-search
+lane. Physical linked operands expose the closed S4/S5 cycle even when synthetic relocation
+labels leave extra symbolic rows. Native GCC capture reads the actual allocation order and
+joins lreg statistics to explicit pseudo/disposition evidence; it does not identify original
+C variables. All diagnostic outputs must equal their ordinary compiler outputs.
+
+Equal-budget private replay against main `792b0a5` recovered the existing near-final match on
+the first candidate, versus none in 16 on main. Four earlier checkpoints and three other
+functions remained unresolved with unchanged best scores. Total compiler invocations were
+136 versus 121 across the eight inputs; a real isolated engine-copy run used four compiles
+including two diagnostics and recorded a normal exact match. Details and limitations are in
+[register-cycle replay](repair-replay.md#register-cycle-lifetime-search). This is a controlled
+regression, not a new function match or a measured reduction in model tokens. No generator
+synthesizes arbitrary zero/padding expressions; this family requires an existing proven block.
+
 ### Captured store constants, nested halfword casts and build context (2026-11-03)
 
 A read-only review of 1,018 recent local captures found 826 without a failed baseline,

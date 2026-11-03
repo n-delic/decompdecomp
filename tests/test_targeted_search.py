@@ -9,7 +9,7 @@ def test_first_block_focus_preserves_target_position_and_ignores_later_noise():
     assert len(focused)==48
     assert sum(r[0]!=' ' for r in focused)==1
     text = region_repairs.summary(report,'mips')
-    assert 'block: 2 (instruction 18' in text
+    assert 'display window: 2 (instruction 18' in text
     assert 'Advisory only' in text
     assert region_repairs.focus([('r',1,'bad')])==[]
     assert region_repairs.summary([None],'mips')==''

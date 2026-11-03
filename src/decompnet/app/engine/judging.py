@@ -60,10 +60,27 @@ class JudgeMixin:
             checks['address_mismatches'] = [row for row in address_rows
                                            if row['target'] is not None and row['candidate'] is not None
                                            and row['target'] != row['candidate']]
+        # Actual linked operands, rather than synthetic relocation-label rendering, must steer
+        # a register-only search. This is advisory and never changes the link verdict or score.
+        allocation_rows = None
+        if res.linked_code is not None and res.candidate is not None and not res.problems:
+            from ...elfobj import FunctionObj
+            from ..allocation_evidence import diagnose
+            from ..allocation_evidence import text as allocation_text
+            target = self._rom_target(fn)
+            cpu = self._target_obj(fn,proj).cpu
+            physical = scoring.diff(FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),target.code,cpu=cpu),
+                                    FunctionObj(fn['name'],proj['arch'],bool(proj['big_endian']),res.linked_code,cpu=cpu)).rows
+            diagnosis = diagnose(physical,proj['arch'])
+            if diagnosis['register_only'] and diagnosis['register_cycles']:
+                allocation_rows = physical
+                checks['allocation'] = diagnosis
+                checks['allocation_summary'] = allocation_text(physical,proj['arch'])
         checks['message'] = text(checks)
+        if allocation_rows:checks['message'] += '\nPhysical linked-byte '+checks['allocation_summary']
         cache = self.__dict__.setdefault('_candidate_diagnostics', {})
         with self.__dict__.setdefault('_candidate_diagnostics_lock', threading.Lock()):
-            cache[fn['id'], hashlib.sha256(obj).hexdigest()] = (checks, address_rows)
+            cache[fn['id'], hashlib.sha256(obj).hexdigest()] = (checks, address_rows, allocation_rows)
             while len(cache) > 256:
                 del cache[next(iter(cache))]
         return res.candidate, res.exact if res.candidate is not None else None, res.problems
@@ -73,6 +90,12 @@ class JudgeMixin:
 
     def _candidate_addresses(self, fn, obj: bytes):
         return self.__dict__.get('_candidate_diagnostics', {}).get((fn['id'], hashlib.sha256(obj).hexdigest()), ({}, []))[1]
+
+    def _search_rows(self, fn, proj, obj, fallback):
+        if not isinstance(obj,(bytes,bytearray,memoryview)):
+            return fallback
+        cached = self.__dict__.get('_candidate_diagnostics', {}).get((fn['id'],hashlib.sha256(obj).hexdigest()))
+        return cached[2] if cached and len(cached)>2 and cached[2] is not None else fallback
 
     def rename_tokens(self, proj, text: str) -> str:
         """Show automatic names under their current names (func_80001234 -> deflate)."""

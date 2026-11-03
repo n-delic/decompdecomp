@@ -205,6 +205,7 @@
     <h2 id="proof-h">The game's compiler is the judge. Not the AI.</h2>
     <p>Each attempt is compiled with the same compiler and flags the game was built with, linked at the function's real address, and compared with your copy. A near miss comes back with an instruction diff. Only <mark>score 0</mark> is a match.</p>
   </div>
+  <p class="fineprint">For MIPS register-only near misses, the deep permuter can identify register swaps and prioritize bounded lifetime repairs. Optional installed-GCC diagnostics explain allocation choices without AI requests. Only the normal exact judge accepts a match.</p>
   <div class="listing">
     <div class="pane">
       <p class="pane-label">From your ROM <span>0x800007D0</span></p>

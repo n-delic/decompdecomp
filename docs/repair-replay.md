@@ -386,3 +386,55 @@ First eligible is a filtered proposal, not a compiled or matched function. `Pool
 provides the same completed session data to developer callers. These counters do not cover unwrapped
 work, token consumption or compiler execution time. Cold/warm benchmark timings must account for
 compiler configuration separately when measuring the time to its first compile call.
+
+## Register-cycle lifetime search
+
+The deep permuter recognizes closed MIPS register cycles (for example S4/S5 exchanged) only
+when ordered physical linked instruction forms agree. Relocation-rendering annotations do not
+hide such a diagnosis. This changes search advice, not the score or linked-byte/data verdict.
+Before broad mutation it prioritizes at most 24 applicable lifetime proposals. These share the
+run's existing deadline and compiler limit. Ordinary local repairs remain available afterwards.
+
+Already installed native GCC drivers can supply actual `greg` allocation order/dispositions
+joined to `lreg` reference counts and live lengths. Diagnostic `-da` output must preserve the
+normal object's allocated sections and relocations. A capture costs two compiler runs; deep
+search attempts at most two captures and reserves a subsequent judge slot. Source, header,
+target, symbols and profile scope invalidate cached evidence. Input changes during capture
+prevent publication. Briefs read cached evidence only; they never launch compiler tools.
+Several pseudos can share a hard register or C line, especially narrowing conversions, so these
+records are candidate-side leads, not original variable identities or an exact rewrite recipe.
+
+The new `existing_identity_lifetime` family relocates only a recognized, already-present block
+that computes unsigned zero and adds its zero product to an unchanged scalar. It checks concrete
+word/halfword typedefs, initialized unescaped scalar reads, scratch use, scope and statement
+boundaries. It does not introduce new cancellation expressions, guessed types or machine
+register bindings. Unknown syntax/widths, volatile aliases, escapes and unbraced insertion
+points are declined. Every proposal still needs the ordinary judge.
+
+### Controlled private replay, 3 November 2026
+
+Eight frozen inputs used the same ROM-backed evaluator, header, target and pinned KMC GCC
+2.7.2 profile (`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`). Both branches had 16 candidate slots and
+30 seconds per input; main was `792b0a5`. Five inputs were successive checkpoints of one menu
+renderer, not independent games; three were other functions from the same game.
+
+| Result | Main | Treatment |
+| --- | ---: | ---: |
+| Existing matches recovered | 0 | 1 |
+| Candidate compiles | 128 | 113 |
+| Compiler invocations, including eight baselines | 136 | 121 |
+| First exact candidate for the near-final identity-placement case | none in 16 | 1 |
+
+The four earlier menu checkpoints and three other functions had unchanged best scores and no
+recovery on either branch. The successful frozen baseline scored 155 under this linked-row
+adapter; historical app scores are not directly compared. No live project was changed, no
+model was run, and this is recovery of an existing match, not additional game progress.
+This small same-game cohort does not establish generalization or model token savings.
+
+A separate isolated single-function app-engine copy exercised the real deep-search path:
+normal baseline score 275, then score 0 and matched status after one repair. Its four compiler
+invocations were one baseline, two unchanged-output diagnostic captures and one repair;
+local elapsed time was about 3.7 seconds. Its compact evidence identified the two competing
+pseudos and retained ambiguity for another value sharing S4. The global compiler profile was
+kept fixed during the measured register-cycle lane. This is a near-final regression, not an
+end-to-end recovery of all preceding source reconstruction work.

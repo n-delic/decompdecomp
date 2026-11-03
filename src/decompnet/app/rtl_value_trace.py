@@ -31,7 +31,7 @@ def instructions(text):
                    call=head[1]=='call_insn')
 
 
-def summarize(phases, name):
+def summarize(phases, name, arch=None):
     """Accept complete bounded dumps only; join instruction IDs within this single compilation."""
     texts = {phase:function(text,name) for phase,text in phases.items()}
     flow = list(instructions(texts.get('flow','')))
@@ -55,10 +55,16 @@ def summarize(phases, name):
                     item['source_lines'].append(origin['line'])
     for match in re.finditer(r'^Register (\d+) used [^\n]*crosses (\d+) calls?',texts.get('flow',''),re.M):
         if int(match[1]) in values:values[int(match[1])]['calls_crossed']=int(match[2])
+    if arch:
+        from ..arch import get
+        reader = get(arch).gcc_register_aliases
+        if reader:
+            for hard in set(dispositions.values()):
+                aliases[hard].update(reader(hard))
     result=[]
     for pseudo,item in sorted(values.items()):
         hard=dispositions[pseudo]
-        result.append(dict(pseudo=pseudo,hard_register=hard,aliases=sorted(aliases[hard]),**item))
+        result.append(dict(pseudo=pseudo,hard_register=hard,aliases=sorted(aliases[hard],key=lambda a:(a.isdigit(),a)),**item))
     return {'values':result[:512], 'truncated':len(flow)>4096 or len(result)>512,
             'note':'Explicit GCC instruction IDs, source notes and dispositions. Register reuse can identify several candidate values; no assembly-address or C-name correspondence is inferred.'}
 

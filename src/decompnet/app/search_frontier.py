@@ -52,6 +52,14 @@ def unhelpful_detour(arch, baseline, rows):
     return after['frame_delta'] < 0 and candidate_count > target_count and structure(rows) >= structure(baseline)
 
 
+def structure_recovery(before, after, arch=None):
+    """An advisory frontier slot for a recovered full sequence/frame, never a saved winner."""
+    a,b = allocation_evidence.diagnose(before,arch),allocation_evidence.diagnose(after,arch)
+    return bool(b['register_only'] and a['target_instructions']==b['target_instructions']==b['candidate_instructions']
+                and b['target_frame'] is not None and a['target_frame']==b['target_frame']==b['candidate_frame']
+                and (not a['register_only'] or a['target_frame']!=a['candidate_frame']))
+
+
 class Frontier:
     def __init__(self):
         self.nodes = []
@@ -65,7 +73,7 @@ class Frontier:
         rows = permuter_focus.normalized(rows)
         from ..diff_summary import summarize
         summary = summarize(rows)
-        node = {'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
+        node = {'rows':rows, 'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
                 'frame_distance': permuter_focus.stack_distance(rows),
                 'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
                 'allocation': allocation_evidence.signature(rows,arch),
@@ -77,6 +85,9 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        recovered = [n for n in structural if baseline_score is not None and n['score']<=baseline_score*2
+                     and structure_recovery(baseline,rows if n is node else n.get('rows',[]),arch)]
+        selected += [n for n in recovered[:1] if n not in selected]
         selected += [n for n in regional_choices(pool) if n not in selected]
         positioned = [n for n in pool if n['summary']['position_differences'] is not None]
         if positioned:

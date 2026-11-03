@@ -1433,7 +1433,7 @@ class Network:
         last = self.store.one("SELECT score FROM attempts WHERE function_id=? AND agent_id=? AND score IS NOT NULL "
                               "ORDER BY id DESC LIMIT 1", fn["id"], agent.id)
         self._record(fn, agent, d.score, source, ctx["version"], matched=matched_now, effective_settings=getattr(result,"effective_settings",None))
-        self.keep_diff(agent.id, fn["id"], d.rows)
+        self.keep_diff(agent.id, fn["id"], self._search_rows(fn, proj, result.obj, d.rows))
 
         if scratch:
             head = f"(scratch — {fn['name']} was already matched) score {d.score}"
@@ -1489,6 +1489,10 @@ class Network:
             said += (f"\nThe first {same} of {total} target instructions match; the first difference "
                      f"({scoring.MARKERS.get(mark, mark)}): target `{target or '-'}`, yours `{yours or '-'}`.")
         return said
+
+    def _search_rows(self, fn, proj, obj, fallback):
+        """Advisory rows; ROM adapters can provide physical linked operands without changing verdicts."""
+        return fallback
 
     def keep_diff(self, agent_id: int, function_id: int, rows: list, legend: str = scoring.LEGEND) -> None:
         """A compile's diff rows, kept for last_diff (memory only: the next compile replaces them)."""

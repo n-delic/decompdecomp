@@ -9,10 +9,11 @@ REGISTER = re.compile(r'\$[A-Za-z0-9]+\b')
 
 def diagnose(rows, arch=None):
     rows = permuter_focus.normalized(rows)
+    valid = all(isinstance(r,(list,tuple)) and len(r)==3 and all(isinstance(c,str) for c in r) for r in rows)
     rows = [r for r in rows if isinstance(r,(list,tuple)) and len(r)==3 and all(isinstance(c,str) for c in r)]
     changed = [r for r in rows if r[0]!=' ']
     mapping, reverse = {}, {}
-    coherent = bool(changed)
+    coherent = bool(changed) and valid
     for marker,left,right in changed:
         a,b = REGISTER.findall(left),REGISTER.findall(right)
         if marker != 'r' or REGISTER.sub('$reg',left) != REGISTER.sub('$reg',right) or not a or len(a)!=len(b):
@@ -42,7 +43,7 @@ def diagnose(rows, arch=None):
     copy_near=bool(changed) and sum(r[0]=='>' for r in changed)==1 and all(
         (m=='r' and REGISTER.sub('$reg',a)==REGISTER.sub('$reg',b)) or
         (m=='>' and not a and re.fullmatch(r'move\s+\$\w+,\s*\$\w+',b)) for m,a,b in changed)
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
+    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -60,6 +61,9 @@ def text(rows, arch=None):
         hints.append(f"{d['candidate_instructions']} candidate / {d['target_instructions']} target instructions with fewer repeated calls; inspect tail merging or missing logic, then try selective branch pointer lifetimes")
     if d['register_only']:
         hints.append(f"{d['target_instructions']} ordered instruction forms agree; {d['differences']} register-only rows; prioritize equal-value lifetimes and bounded loop-weight scopes, retaining distinct allocation alternatives")
+    if d['register_cycles']:
+        hints.append('closed register cycles '+', '.join(' ↔ '.join(c) for c in d['register_cycles'])+
+                     '; keep logic, header, target and compiler profile fixed; inspect narrowing/coalescing and lifetime order, not assembly register renaming')
     if d['register_map']:
         hints.append('consistent register substitution '+', '.join(a+'→'+b for a,b in d['register_map'][:6])+
                      '; try lifetime/split-reuse repairs before broad flag search')
@@ -90,5 +94,23 @@ def plan(rows, arch=None):
     return dict(category=category,first_difference_row=first,changed_rows=d['differences'],
                 target_instructions=d['target_instructions'],candidate_instructions=d['candidate_instructions'],
                 target_frame=d['target_frame'],candidate_frame=d['candidate_frame'],families=families,
+                register_cycles=d['register_cycles'],
                 context='Header/prototype correctness cannot be inferred from assembly rows.',
                 verdict='Advisory; register substitution is not permission to rename assembly registers.')
+
+
+def cycles(mapping):
+    """Only closed, bijective substitutions; partial chains and conflicting evidence give no cycle."""
+    edges = dict(mapping)
+    if len(edges) != len(mapping) or len(set(edges.values())) != len(edges):
+        return []
+    result, visited = [], set()
+    for start in sorted(edges):
+        path, node = [], start
+        while node in edges and node not in visited and node not in path:
+            path.append(node)
+            node = edges[node]
+        visited.update(path)
+        if node == start and len(path) > 1:
+            result.append(path)
+    return result[:8]

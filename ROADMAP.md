@@ -1953,6 +1953,28 @@ Compiler/private-header preparation waits until the claim is free. One deep sear
 prevents duplicate worker credentials. Room hosts use the local path; room guests still need the
 host lease. Concurrent guest proposals without a lease remain planned protocol work.
 
+### Register-cycle lifetime search
+
+- Done: closed MIPS register substitutions are diagnosed from physical linked operands without
+  changing scores, data checks or exact-match verdicts. Deep search and iterative repairs share
+  bounded lifetime candidates; ordinary project adapters retain their existing exact judges.
+- Done: a 24-proposal prioritized deep-search lane, installed native-GCC actual allocation order,
+  lreg reference/live-range evidence and architecture-owned GPR aliases. At most two phase
+  captures per deep run spend up to four existing compiler slots. Full-input scoped cache reuse
+  and compact agent summaries avoid repeated diagnostic builds. Input changes during a capture
+  discard its evidence. Transient compiler failures remain retryable.
+- Done: a recovered ordered instruction sequence and known matching frame can retain one
+  structural alternative within a fixed two-times score ceiling. It never replaces saved C
+  unless the ordinary judge measures an improvement.
+- Done: conservative relocation of an existing unsigned zero-identity block, with exact scalar
+  type checks, definite initialization, unescaped locals, lexical scope and braced-statement
+  guards. No arbitrary padding identity is synthesized. A copied near-final compiler regression
+  was recovered on candidate 1; earlier checkpoints and three other functions did not recover.
+- Planned: register-cycle operand readers beyond the current MIPS notation, non-native/non-GCC
+  allocation readers and imported-build phase-capture adapters; held-out game/model evaluations
+  before claiming a general token or wall-time reduction. Shared ordinary C repair families and
+  the existing imported-project judge remain available without these diagnostic readers.
+
 ### Recent capture automation and remaining evidence adapters
 
 - Done: bounded shared-store constants and initialization placement, nested halfword cast

@@ -436,3 +436,12 @@ def boundary_reason(code: bytes, big_endian: bool = True, **_facts) -> str | Non
                 'Inspect adjacent original bytes and segment boundaries before spending candidate compiles; reimport or join proven pieces. '
                 'This is not proof of handwritten assembly. This warning does not pause the function or change its status.')
     return None
+
+
+def gcc_register_aliases(number):
+    """Legacy GCC GPR numbers, not pseudo-register numbers or another processor's ABI."""
+    names = ('zero at v0 v1 a0 a1 a2 a3 t0 t1 t2 t3 t4 t5 t6 t7 '
+             's0 s1 s2 s3 s4 s5 s6 s7 t8 t9 k0 k1 gp sp fp ra').split()
+    if not 0 <= number < len(names):
+        return ()
+    return (names[number], str(number)) + (('s8',) if number == 30 else ())

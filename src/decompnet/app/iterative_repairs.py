@@ -126,7 +126,9 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         score = report.get('score')
         regional = regional_detour(node,report,arch)
         allocation = allocation_detour(node,report,arch)
-        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation)
+        structural = (isinstance(score,(int,float)) and score<=node['ceiling']*2
+                      and search_frontier.structure_recovery(node.get('baseline_rows'),report.get('rows'),arch))
+        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural)
                 and (regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
             # Keep two source shapes per identical output at each depth: a later source edit can distinguish them.
             # This only prunes search branches, never supplies a match verdict.
@@ -197,6 +199,8 @@ def expand_wave(state, variants, arch):
         if shape not in shapes:
             retained.append(candidate);shapes.add(shape)
     retained += [n for n in ordinary if n not in retained]
+    structural = [n for n in ranked if n['score']<=n['ceiling']*2 and
+                  search_frontier.structure_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
     regional = search_frontier.regional_choices(state['next'])[:1]
     # Keep the numeric winner, a regionally recovered detour and one distinct sibling.
     fallback = retained[:WIDTH-1]+detours[:1] if detours else retained[:WIDTH]
@@ -207,7 +211,7 @@ def expand_wave(state, variants, arch):
         output=output_key(numeric['report'])
         diverse=[n for n in ordinary if n['score']==numeric['score'] and output is not None
                  and output_key(n['report']) is not None and output_key(n['report'])!=output][:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+regional+diverse+fallback))[:WIDTH]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -271,6 +275,10 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     pools = [[p for p in proposals if labels[p]==family] for family in families]
     result = list(dict.fromkeys(p for row in zip_longest(*pools) for p in row if p is not None))
     tagged=[(labels[p],p) for p in result]
+    from . import allocation_search
+    lane = allocation_search.proposals(source,fn['name'],arch,report.get('rows'),result,labels,
+                                       {'value_trace':report.get('value_trace')},header)
+    tagged = list(dict.fromkeys(lane+tagged))
     # Retain established operand-supported focus. Broad reordering needs held-out replay evidence.
     use_focus=focused and bool(operand_focused or report.get('broad_focus_approved'))
     return first_difference.order(source,tagged,report.get('rows')) if use_focus else tagged

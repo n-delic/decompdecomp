@@ -193,7 +193,8 @@ def test_live_metrics_count_only_verified_strict_improvements_and_keep_starting_
     search.measuring_baseline = False
     search._score(AGENT, proj, fn, 'match', 20, None)
     assert search.metrics() == {'starting_score':50,'starting_percent':95.0,'best_score':0,
-                                'best_percent':100.0,'improvements':3,'local_search':{}}
+                                'best_percent':100.0,'improvements':3,'local_search':{},
+                                'allocation_trials':0,'allocation_diagnostic_compiles':0}
     assert search.log.updates[-1]['improvements'] == 3
 
 
