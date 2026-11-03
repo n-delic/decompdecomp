@@ -137,6 +137,7 @@ function suggestionHtml(s) {
   const ok = s.check && s.check.includes("matches the game");
   return `<div class="note">${saidHead(s.agents.length > 1 ? `${s.agents.length} agents agree` : "suggested", s.agents, s.t, true)}${saidText(s.text)}
     ${s.check ? `<p class="said-check${ok ? " ok" : ""}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
+    ${s.toolchain ? `<p class="small muted">${(s.ranges || []).length ? 'Scope: selected address ranges. Only functions whose settings change are checked.' : 'Scope: project default. This can require checking thousands of existing matches; use a range suggestion for a local change.'}</p>` : ''}
     <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
@@ -157,13 +158,26 @@ $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   if (apply) {
     const body = dialog("Applying compiler suggestion", `<p>Checking affected functions with the suggested compiler and flags. Existing matches must still match byte for byte; saved attempts are rescored before the settings are saved.</p>
       <p class="muted small">You can close this dialog; the checks will continue in the background.</p>
+      <p class="small" data-suggestion-progress role="status">Preparing checks…</p>
+      <progress class="deep-sweep-bar" data-suggestion-meter aria-label="Current compiler-check phase" max="100" value="0" hidden></progress>
       <pre class="log" id="suggestionApplyLog" aria-label="Compiler checks"></pre>
       <button class="ghost" type="button" data-close>Close</button>`);
     const log = body.querySelector("#suggestionApplyLog");
     const finish = beginWork(log, "Checking compiler settings and protecting existing matches", [b], "Compiler settings applied.");
     try {
       const { job } = await api("/api/suggestion", { method: "POST", body: { slug, id: Number(b.dataset.apply), action: "apply", background: true } });
-      const overview = await followJob(job, log);
+      const overview = await followJob(job, log, (_lines, snapshot) => {
+        const progress = snapshot.progress;
+        if (!progress?.phase) return;
+        const total = Number(progress.total || 0), done = Number(progress.done || 0);
+        const percent = total ? Math.round(100 * done / total) : 100;
+        body.querySelector('[data-suggestion-progress]').textContent = `${progress.phase} · ${done.toLocaleString()} / ${total.toLocaleString()} · ${percent}%${progress.affected != null ? ` · ${progress.affected.toLocaleString()} affected functions` : ''}`;
+        const meter = body.querySelector('[data-suggestion-meter]'); meter.hidden=false; meter.value=percent;
+        const waitingBar = log.previousElementSibling;
+        if (waitingBar?.classList.contains('workbar')) waitingBar.hidden=true;
+      });
+      body.querySelector('[data-suggestion-progress]').textContent = 'Compiler settings applied; project progress saved.';
+      body.querySelector('[data-suggestion-meter]').value = 100;
       if (S.slug === slug) {
         S.ov = overview;
         renderStats(S.ov);

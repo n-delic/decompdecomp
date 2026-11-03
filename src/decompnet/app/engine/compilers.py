@@ -925,9 +925,15 @@ class CompilerMixin:
         contexts = [tuple(r) for r in self.store.all("SELECT unit,version FROM context_versions WHERE project_id=? ORDER BY version", proj["id"])]
         matched = [f for f in affected if f["status"] == "matched"]
         log(f"Checking {len(matched)} matched functions before changing compiler settings.")
+        report = getattr(log, 'progress', lambda value: None)
+        def matched_progress(value):
+            report({**value, 'phase':'Checking affected matches', 'affected':len(affected)})
+            if value['done'] == value['total'] or value['done'] % 25 == 0:
+                log(f"Checked {value['done']} of {value['total']} affected matches.")
+        matched_progress({'phase':'Checking affected matches', 'done':0, 'total':len(matched)})
         broken = self.regression_test(trial, None, only=matched,
                                      header_for=lambda f: self._context(proj["id"], f["unit"])["header"],
-                                     progress=lambda p: log(f"Checked {p['done']} of {p['total']} affected matches.")) if matched else []
+                                     progress=matched_progress) if matched else []
         if broken and not reopen:
             raise NetworkError(f"{len(broken)} matched function(s) wouldn't match with it any more "
                                f"({', '.join(n for n, _ in broken[:5])}): narrow the ranges or keep their compiler settings; when removing a range, reopen those functions explicitly")
@@ -935,12 +941,19 @@ class CompilerMixin:
         scores = {}
         rescored = [f for f in affected if f["status"] == "open" or f["name"] in broken_names]
         log(f"Updating saved scores for {len(rescored)} affected attempts.")
-        for done, fn in enumerate(rescored, 1):
-            log(f"Updating score {done} of {len(rescored)}: {fn['name']}")
+        def rescore(fn):
             source = fn["matched_source"] if fn["name"] in broken_names else self._source_of(fn)
             own = compiler_for(cfg, fn["vram"])
             _, diff, _ = self._judge_with(trial, fn, own["toolchain"], list(own["flags"]), source) if source else (False, None, "")
-            scores[fn["id"]] = diff.score if diff is not None else None
+            return fn['id'], diff.score if diff is not None else None, fn['name']
+        report({'phase':'Updating saved scores', 'done':0, 'total':len(rescored), 'affected':len(affected)})
+        # Reuse the bounded judge pool; agents keep seeing the old settings until every result is validated.
+        for done, (fid, score, name) in enumerate(self._pool.map(rescore, rescored), 1):
+            scores[fid] = score
+            report({'phase':'Updating saved scores', 'done':done, 'total':len(rescored),
+                    'affected':len(affected), 'function':name})
+            if done == len(rescored) or done % 25 == 0:
+                log(f"Updating score {done} of {len(rescored)}: {name}")
         # An agent can finish while checks run. Never overwrite its work with a verdict from an older snapshot.
         def population(items):
             return [tuple(r[k] for k in ("id", "name", "vram", "unit", "size", "target", "relocs", "meta",
@@ -966,6 +979,7 @@ class CompilerMixin:
                                "best_score=?, matched_source=NULL, matched_agent_id=NULL, matched_at=NULL WHERE id=?",
                                (scores[fn["id"]], fn["id"]))
                     self._event(db, proj["id"], None, "reopen", f"{fn['name']}: open again (its range was removed)")
+        report({'phase':'Compiler settings saved', 'done':1, 'total':1, 'affected':len(affected)})
         log("Compiler checks passed; settings and scores saved.")
 
     def set_compiler(self, slug: str, toolchain: str, flags: list[str] | None = None, guard: bool = True,

@@ -277,3 +277,44 @@ def test_suggestion_range_reports_validation_and_score_stages(net, monkeypatch):
     assert 'Checked 84 of 84 affected matches.' in lines
     assert any('Updating score 1 of 1: f84' in line for line in lines)
     assert net.cfg(net.project_row('demo'))['suggestions'][0]['status'] == 'applied'
+
+
+def test_saved_attempts_rescore_in_parallel_without_publishing_trial_settings(net, monkeypatch):
+    import threading
+    # Other migration fixtures mutate the shared parsed-config cache; isolate this concurrency check.
+    monkeypatch.setattr(net, 'cfg', lambda proj: json.loads(proj['config']))
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='open',matched_source=NULL,best_score=25 WHERE name='f83'")
+    before = net.project_row('demo')['config']
+    barrier = threading.Barrier(2)
+    seen = []
+    def judge(proj, fn, tc, flags, source):
+        assert net.store.one("SELECT config FROM projects WHERE slug='demo'")['config'] == before
+        assert flags == ['-O1']
+        seen.append(fn['name'])
+        barrier.wait(timeout=2)  # A serial rescore cannot reach the second participant.
+        return False, SimpleNamespace(score=123), ''
+    monkeypatch.setattr(net, '_judge_with', judge)
+    monkeypatch.setattr(net, 'regression_test', lambda *a, **kw: [])
+    snapshots = []
+    def log(line):pass
+    log.progress = lambda value:snapshots.append(dict(value))
+    net.set_compiler('demo', 'ido-5.3', ['-O1'], log=log)
+    assert set(seen) == {'f83','f84'}
+    assert net._function('f83','demo')['best_score'] == 123
+    assert net._function('f84','demo')['best_score'] == 123
+    updates = [p for p in snapshots if p['phase'] == 'Updating saved scores']
+    assert [(p['done'],p['total']) for p in updates] == [(0,2),(1,2),(2,2)]
+    assert snapshots[-1]['phase'] == 'Compiler settings saved'
+
+
+def test_parallel_rescore_failure_preserves_settings_and_all_saved_scores(net, monkeypatch):
+    before = net.project_row('demo')['config']
+    monkeypatch.setattr(net, 'regression_test', lambda *a, **kw: [])
+    def judge(*args):raise RuntimeError('test compiler failed')
+    monkeypatch.setattr(net, '_judge_with', judge)
+    with pytest.raises(RuntimeError, match='test compiler failed'):
+        net.set_compiler('demo', 'ido-5.3', ['-O1'])
+    assert net.project_row('demo')['config'] == before
+    assert net._function('f84','demo')['best_score'] == 20
+    assert net._function('f84','demo')['seed'] == 'draft'

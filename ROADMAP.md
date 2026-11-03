@@ -2049,3 +2049,11 @@ and provider failures also remains planned; saved candidates/experiments still s
 - Done: compiler-suggestion applications run as reusable background jobs with immediate progress,
   matched-function check counts, score-update stages and persistent errors in the UI; ROM ranges
   and source-project file ranges retain their existing regression protection.
+
+
+ROM compiler suggestion application now rescores affected saved attempts in the existing bounded
+judge pool, alongside the already parallel matched-function regression checks. Phase progress
+reports checked/total counts and percentages; suggestion cards distinguish default changes
+from local address ranges. All affected byte-match checks and atomic stale-input validation
+remain mandatory. Broad default changes can still be expensive; narrow range suggestions
+avoid rechecking functions whose effective settings do not change.

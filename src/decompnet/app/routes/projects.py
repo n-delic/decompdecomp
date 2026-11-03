@@ -289,8 +289,10 @@ def register(app: App) -> None:
                 def apply_suggestion(log):
                     log("Checking the suggested settings. Existing matches must still match byte for byte.")
                     net.resolve_suggestion(slug, sid, True, log=log)
+                    log.progress({'phase':'Saving project progress', 'done':0, 'total':1})
                     log("Saving project progress to disk.")
                     net.progress.sync(slug, force=True, logger=log)
+                    log.progress({'phase':'Refreshing project results', 'done':0, 'total':1})
                     log("Refreshing project results.")
                     return net.overview(slug)
                 job = jobs.start("Apply compiler suggestion", apply_suggestion)
