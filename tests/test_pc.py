@@ -343,7 +343,8 @@ def test_wine_is_never_run_without_the_apps_prefix(tmp_path):
 
 def test_a_pc_build_configures_again_only_when_its_files_change(tmp_path, monkeypatch):
     """Editing a source compiles it without writing build.ninja again (3 s of every compile on a game of 1,400
-    units, the permuter's variants too); adding one runs configure, and the new file is built."""
+    units, the permuter's variants too); adding one runs configure, and the new file is built, even when nothing
+    else changed; removing one does too (ninja stopped: the file was "needed by configure.facts, missing")."""
     root = tmp_path / "project"
     source, _, compiler_root = _template_project(tmp_path, monkeypatch, root)
     subprocess.run([sys.executable, str(root / "tools/configure.py"), "TEST", "--msvc", str(compiler_root)],
@@ -360,12 +361,17 @@ def test_a_pc_build_configures_again_only_when_its_files_change(tmp_path, monkey
     ok, output = project.run(["ninja", "all_source"], log=lambda _: None, timeout=30)
     assert ok and obj.is_file(), output
     assert manifest.stat().st_mtime_ns == written, output
-    (root / "src/auto/more.cpp").write_text("int more(void) { return 3; }\n")
-    source.write_text("int sample(void) { return 4; }\n")
-    # one compile at a time: the stand-in compiler writes its arguments to one file, and two at once collide there
+    # a built object is built, by ninja's dry run too (a run of builds asks it: ForkProject._no_work)
+    assert project._no_work(["ninja"], ["build/TEST/src/auto/sample.obj"])
+    (root / "src/auto/more.cpp").write_text("int more(void) { return 3; }\n")  # added alone
     ok, output = project.run(["ninja", "-j1", "all_source"], log=lambda _: None, timeout=30)
     assert ok, output
     assert manifest.stat().st_mtime_ns != written and (root / "build/TEST/src/auto/more.obj").is_file(), output
+    written = manifest.stat().st_mtime_ns
+    (root / "src/auto/more.cpp").unlink()  # removed alone
+    ok, output = project.run(["ninja", "-j1", "all_source"], log=lambda _: None, timeout=30)
+    assert ok and "more.obj" not in manifest.read_text(), output
+    assert manifest.stat().st_mtime_ns != written
 
 
 def _template_tool(name: str):

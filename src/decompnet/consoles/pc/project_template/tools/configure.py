@@ -220,7 +220,17 @@ def main() -> None:
         n.build(programs, "rebuild", [*targets, *objs],
                 implicit=[CONFIG.as_posix(), *exes, "tools/rebuild.py", "tools/delink.py"])
         n.build("rebuild", "phony", programs)
-        n.build(FACTS.as_posix(), "facts", [*headers, *sources], implicit=["tools/configure.py"])
+        # The facts look again when a file they list changes, or a folder holding them does (a file added or
+        # removed changes its folder's date: one added on its own was never seen), and change only when what they
+        # say does (restat). Each is also a phony with no inputs, so one that's gone makes the facts out of date
+        # instead of stopping ninja before configure could run ("needed by configure.facts, missing"); a phony,
+        # not "always look", so a dry run (ForkProject._no_work) still says "no work to do" of a built object
+        folders = sorted({p.as_posix() for top in ("src", "include") if Path(top).is_dir()
+                          for p in (Path(top), *Path(top).rglob("*")) if p.is_dir()})
+        looked_at = list(dict.fromkeys([*headers, *sources, *folders]))
+        for p in looked_at:
+            n.build(p, "phony")
+        n.build(FACTS.as_posix(), "facts", looked_at, implicit=["tools/configure.py"])
         # (the harness files stay: configure reads what's in them, a driver's HarnessEntry and HARNESS-LINK lines)
         n.build("build.ninja", "configure", ["tools/configure.py", CONFIG.as_posix(), FACTS.as_posix(),
                                              *[p.as_posix() for p in (FILE_COMPILERS, FILE_FLAGS) if p.exists()],
