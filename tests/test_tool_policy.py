@@ -83,3 +83,29 @@ def test_connection_probe_checks_policy_without_counting_usage_or_session_budget
     tool_policy.set_global(net,'guide',False)
     with pytest.raises(NetworkError,match='disabled'):
         tools._dispatch(net,agent,'game','guide',{},count_usage=False)
+
+
+def test_presets_restrict_optional_tools_keep_core_and_respect_global_policy(tmp_path):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    full = set(tools.project_tools(net, 'game', agent))
+    net.set_selection('game', agent.name, {'disabled_tools':tool_policy.preset_disabled('matching')})
+    matching = set(tools.project_tools(net, 'game', agent))
+    assert tool_policy.REQUIRED <= matching
+    assert {'get_candidate','compile_patch','guide','compile_variants'} <= matching
+    assert len(matching) < len(full) and 'try_compiler' not in matching
+    tool_policy.set_global(net, 'compile_variants', False)
+    net.set_selection('game', agent.name, {'disabled_tools':tool_policy.preset_disabled('full')})
+    assert 'compile_variants' not in tools.project_tools(net, 'game', agent)
+    with pytest.raises(NetworkError): tool_policy.preset_disabled('unknown')
+
+
+def test_task_usage_records_errors_and_ignores_connection_probes(tmp_path):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    net._agent_tool_tasks = {agent.id:'matching'}
+    tool_policy.record(net, agent, 'game', 'guide')
+    tool_policy.record(net, agent, 'game', 'guide', count=False)
+    net._agent_tool_tasks[agent.id] = 'polishing'
+    tool_policy.record(net, agent, 'game', 'guide')
+    assert {r['task']:r['calls'] for r in net.store.all('SELECT * FROM agent_tool_task_usage')} == {'matching':1,'polishing':1}

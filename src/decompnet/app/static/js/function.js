@@ -215,7 +215,7 @@ function fnBadge(d = S.fnDetail) {
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
-  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside") : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
 }
 
 function showFnTab(tab) {
@@ -273,6 +273,20 @@ async function refreshFn(first) {
       ? `Name inferred from ${d.naming.source_project} · exact code match`
       : d.renamed ? `Renamed from ${d.naming.original_name}` : d.named ? "Named function" : "Generated name";
     fnBadge(d);
+    const handover = $('fnClaimHandover');
+    handover.hidden = !d.can_handover;
+    handover.onclick = async () => {
+      if (S.editDirty) { toast('Compile or copy your unsaved C before handing this function to agents.'); return; }
+      handover.disabled = true;
+      try {
+        await api('/api/claim/handover', {method:'POST', body:{slug, name:d.name}});
+        if (S.slug !== slug || S.fn !== d.name) return;
+        S.myClaim = null; await refreshMap(true); await refreshFn(false);
+        toast('Your claim was released. Agents can now work on this function; compiling in the editor will claim it again.');
+      } catch(error) { toast(esc(error.message), 'err'); }
+      finally { handover.disabled = false; }
+    };
+
     const verificationPanel = $("fnVerification");
     if (verificationPanel) {
       const bundle = d.verification;

@@ -80,8 +80,13 @@ def get_candidate(net, agent, slug, function, base='current'):
     source, revision = candidate(net, agent, slug, function)
     from . import local_experiments
     remaining = local_experiments.summary(net,agent,slug,net._function(function,slug),source,revision)
-    mapping = candidate_line_note(net, agent, slug, net._function(function,slug), source) if base == 'current' else '\nC-line mapping will refresh after this candidate is compiled; no historical line locations inferred.'
-    return note + f'Candidate revision {revision}\n```c\n{source}\n```\n{remaining}' + mapping
+    from . import agent_evidence
+    fn = net._function(function, slug)
+    measured = agent_evidence.baseline(net, agent, slug, fn, source) if base == 'current' else None
+    line_note = measured.get('line_note', '') if measured and measured.get('source') == source else ''
+    mapping = (line_note or '\nC-line mapping unavailable for this candidate/build; no line locations inferred.') if base == 'current' else '\nC-line mapping will refresh after this candidate is compiled; no historical line locations inferred.'
+    baseline = agent_evidence.baseline_note(fn, measured, net) or 'Baseline: historical/unverified for these inputs; no current score inferred.'
+    return note + baseline + '\n' + f'Candidate revision {revision}\n```c\n{source}\n```\n{remaining}' + mapping
 
 
 def stale(net, agent, fn, submitted, source, actual, anchor=""):
@@ -276,7 +281,8 @@ def brief(net, text, slug=None, agent=None):
                     if evidence and evidence.get('verified') and evidence.get('source') == source and evidence.get('rows'):
                         focus = scoring.render_rows(evidence['rows'],context=1,max_rows=16,more_hint=False)
                         text = re.sub(r'```asm\n.*?\n```',lambda m, focus=focus:'Focused target/compiled diff (full target: get_assembly):\n'+focus,text,count=1,flags=re.S)
-                    text = f"{fn['name']} · candidate revision {revision}:" + line_note + '\n\n' + text
+                    baseline = agent_evidence.baseline_note(fn, evidence, net) or 'Baseline: historical/unverified for these inputs; no current score inferred.'
+                    text = f"{fn['name']} · candidate revision {revision}:\n" + baseline + line_note + '\n\n' + text
 
                     from . import local_experiments
                     text += local_experiments.summary(net,agent,slug,fn,source,revision)+'\n'
@@ -716,6 +722,7 @@ def local_family(net, agent, slug, function, revision, family, old='', declarati
 
 def variants(net, agent, slug, function, revision, patches, family="explicit patches", *, seconds=60, provenance_kind='agent batch', variant_families=None):
     """Independent alternatives against one snapshot, never a cumulative patch chain."""
+    from . import agent_evidence
     from .tools import _compile
     if not isinstance(patches, list) or not 1 <= len(patches) <= 6:
         raise NetworkError('Send 1 to 6 independent patches with old and new text.')
@@ -726,7 +733,6 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             raise stale(net,agent,fn,revision,source,actual,patches[0].get('old','') if isinstance(patches[0],dict) else '')
         checked = None
         if family != 'explicit patches':
-            from . import agent_evidence
             checked = agent_evidence.preflight(net,agent,slug,fn,source)
             if checked and checked.get('error'):
                 return agent_evidence.blocked_message(checked, actual)
@@ -756,7 +762,6 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
             if prior and prior['score'] is not None:
                 baseline = {'score':prior['score'], 'rows':None}
         if baseline and baseline.get('rows') is None:
-            from . import agent_evidence
             verified=agent_evidence.baseline(net,agent,slug,fn,source)
             if verified:
                 baseline=verified
@@ -818,7 +823,6 @@ def variants(net, agent, slug, function, revision, patches, family="explicit pat
                 if rows is not None:
                     summary += f"; {sum(r[0] != ' ' for r in rows)} displayed mismatch rows vs target"
                 if measured and measured.get('warnings'):
-                    from . import agent_evidence
                     warning = agent_evidence.warning(net,agent,fn,measured['warnings'])
                     if warning:summary += '; diagnostics: '+warning
                 if 'MATCH!' in result:

@@ -142,25 +142,36 @@ def register(app: App) -> None:
             if data.get('helper') and helper is None:
                 raise NetworkError('This agent no longer exists. Refresh the agents list.')
             if request.method == 'POST':
-                name, enabled = data.get('name'), data.get('enabled')
-                tool_policy.validate([name])
-                if type(enabled) is not bool:
-                    raise NetworkError('Tool enabled must be true or false.')
-                if helper:
-                    await call(manager.set_tool, helper.id, name, enabled)
+                if data.get('preset'):
+                    disabled = tool_policy.preset_disabled(data['preset'])
+                    if helper:
+                        await call(manager.set_selection, helper.id, {**(helper.options.get('selection') or {}), 'disabled_tools': disabled})
+                    else:
+                        await call(tool_policy.set_preset, net, data['preset'])
                 else:
-                    await call(tool_policy.set_global, net, name, enabled)
+                    name, enabled = data.get('name'), data.get('enabled')
+                    tool_policy.validate([name])
+                    if type(enabled) is not bool:
+                        raise NetworkError('Tool enabled must be true or false.')
+                    if helper:
+                        await call(manager.set_tool, helper.id, name, enabled)
+                    else:
+                        await call(tool_policy.set_global, net, name, enabled)
             blocked = tool_policy.disabled(net)
             own = set((helper.options.get('selection') or {}).get('disabled_tools', [])) if helper else set()
             usage = {r['name']:dict(r) for r in net.store.all('SELECT * FROM agent_tool_usage')}
+            tasks = {}
+            for row in net.store.all('SELECT * FROM agent_tool_task_usage'):
+                tasks.setdefault(row['name'], {})[row['task']] = row['calls']
             definitions = await mcp.list_tools()
             if helper:
                 names = set(tools.project_tools(net, helper.slug, include_disabled=True))
                 definitions = [t for t in definitions if t.name in names]
             return JSONResponse({'tools':[{**t.model_dump(mode='json', by_alias=True),
-                'calls':usage.get(t.name, {}).get('calls', 0), 'required':t.name in tool_policy.REQUIRED,
+                'calls':usage.get(t.name, {}).get('calls', 0), 'task_calls':tasks.get(t.name, {}), 'schema_chars':len(json.dumps(t.model_dump(mode='json', by_alias=True))), 'required':t.name in tool_policy.REQUIRED,
                 'global_disabled':t.name in blocked, 'enabled':t.name not in blocked | own}
                 for t in definitions], 'helper':helper.id if helper else None,
+                'presets':[{'id':key, 'label':label, 'tools':sum(t.name not in tool_policy.preset_disabled(key) and (not helper or t.name not in blocked) for t in definitions)} for key,(label,_) in tool_policy.PRESETS.items()],
                 'coverage':'Local counts include surviving saved transcript requests plus calls recorded since tool tracking began. Older unrecorded calls cannot be reconstructed. Counts survive app restarts and agent removal.'})
         except (NetworkError, ValueError, KeyError) as error:
             return fail(error)

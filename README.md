@@ -1420,3 +1420,35 @@ details are available under **How this search works**.
 
 Deep-pass search errors are grouped by reason and next step, with compact links to
 the affected functions. Large error lists scroll within the panel.
+
+## Agent efficiency and recovery
+
+Explicit `compile_variants` requests execute the supplied alternatives; automatic
+repairs never replace them. Use `try_local_repairs` explicitly, or enable the
+existing optional after-submission repair setting. Candidate reads and startup
+briefs show a rechecked baseline alongside the historical saved best. Evidence is
+cached for its candidate/build/claim scope; unavailable builds are marked unverified.
+No historical score is promoted to a current verdict.
+
+A model/configuration rejection pauses the worker immediately. Siblings using the
+same connector/account/model reuse that rejection before starting another provider
+session. Already running sessions are not interrupted. **Choose another model**
+opens the agent launcher; a different model is checked independently. After account
+access changes, restart the app to clear the in-memory rejection. Temporary network
+and usage-limit errors keep their existing retry/cooldown behavior.
+
+The function inspector identifies C-editor reservations. **Let agents work on this**
+releases your own saved function claim; it cannot take another worker’s claim.
+Compile or copy unsaved edits first. Compiling from the editor claims the function
+again. Agents encountering a user reservation are told to choose other work.
+
+**Agents & models → Agent tools**, and each agent’s **Tools** menu, offer All tools,
+Matching essentials, Compiler and data investigation, and Polishing and names
+presets. Applying a preset replaces optional tool toggles in that scope; core tools
+stay enabled and global restrictions apply to every agent. Individual toggles remain
+available. Start a new session or reconnect MCP to receive the changed tool list.
+Tool cards report matching/polishing/external call counts and definition character
+sizes; these are not token or billing estimates. Task counts backfill surviving
+session transcripts once, then accumulate new calls (including failed calls).
+Connection probes are excluded. Detailed experiment guidance is available on demand
+with `guide(topic="agent-experiments")`; user prompt overrides are preserved.

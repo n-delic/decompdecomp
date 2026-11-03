@@ -1450,8 +1450,9 @@ recovered a fourth. This is regression evidence, not new progress or measured to
 - Done: multi-function claims hydrate the first function and retain a compact
   queue; queued briefs and full assembly remain explicitly available. Assembly
   defaults to the first mismatch, with a bounded body fallback and explicit paging.
-- Done: app helper sessions run a small repair-first pass once per source/build
-  scope before handwritten batches. Existing failed-trial ledgers remain authoritative.
+- Done: explicit handwritten batches run their requested variants. Automatic local repairs
+  are explicit tools or the optional after-submission setting; they never replace a batch.
+  Existing failed-trial ledgers remain authoritative.
 - Done: CLI and API conversations rotate after 80 tools or 160,000 tool-response
   characters, once active tools finish. Structured handoffs retain candidate
   revisions, remaining experiments, history and notes; claims and source survive.
@@ -1951,3 +1952,11 @@ Only improvements update the best attempt; claims remain owned by the agent unti
 Compiler/private-header preparation waits until the claim is free. One deep search per function
 prevents duplicate worker credentials. Room hosts use the local path; room guests still need the
 host lease. Concurrent guest proposals without a lease remain planned protocol work.
+
+## Transcript-driven agent efficiency
+
+Implemented: cached-baseline batch crash regression, explicit batch execution,
+shared connector/account/model configuration rejection, user claim handover,
+current-versus-historical baseline messages, shorter default experiment guidance,
+and global/per-agent tool presets with task usage and schema character counts.
+Normal claim ownership and byte/objdiff judging remain required across both modes.

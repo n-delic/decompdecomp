@@ -1004,7 +1004,10 @@ class Network:
                     raise NetworkError(f"{fn['name']} already has a recorded compiling C candidate; choose another function")
                 other = db.execute("SELECT agent_id, expires_at FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
                 if other is not None:
-                    raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(other['agent_id'])} "
+                    owner = self._agent_name(other['agent_id'])
+                    if owner == 'you':
+                        raise NetworkError(f"{fn['name']} is claimed by the user in the C editor. The user can select Let agents work on this; choose another eligible function meanwhile")
+                    raise NetworkError(f"{fn['name']} is claimed by {owner} "
                                        f"for another {int(other['expires_at'] - now) // 60} min")
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
@@ -1395,7 +1398,9 @@ class Network:
                     db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                     self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
                 elif claim["agent_id"] != agent.id:
-                    raise NetworkError(f"{fn['name']} is claimed by {self._agent_name(claim['agent_id'])}")
+                    owner = self._agent_name(claim['agent_id'])
+                    hint = ('the user in the C editor. The user can select Let agents work on this to release it; choose another eligible function meanwhile.' if owner == 'you' else owner)
+                    raise NetworkError(f"{fn['name']} is claimed by {hint}")
                 else:
                     db.execute("UPDATE claims SET expires_at=? WHERE function_id=?", (now + self.claim_ttl, fn["id"]))
 

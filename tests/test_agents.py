@@ -1311,3 +1311,27 @@ def test_zcode_refuses_a_prompt_over_its_byte_cap(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="too long for zcode"):
         zcode.ZCODE.prompt_file(work, "x" * (zcode.ATTACHMENT_BYTES + 1))
     assert not (work / zcode.PROMPT_FILE).exists()
+
+
+def test_rejected_codex_model_pauses_siblings_before_a_provider_session(tmp_path, monkeypatch):
+    from decompnet.app import session_followups
+    _no_agent_settings(monkeypatch)
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    first = manager._record('game', 'codex', 'codex-one', 'first', {'model':'unavailable'})
+    second = manager._record('game', 'codex', 'codex-two', 'second', {'model':'unavailable'})
+    reason = 'The unavailable model is not supported when using Codex with a ChatGPT account. model_not_found'
+    assert kinds.get('codex').fatal(reason)
+    assert not kinds.get('codex').fatal('Model metadata not found. Defaulting to fallback metadata.')
+    assert not kinds.get('codex').fatal('connection reset; retry later')
+    def rejected(*args):
+        raise agents.Fatal(reason)
+    monkeypatch.setattr(manager, '_run_cli', rejected)
+    manager._run(first)
+    assert first.state == 'paused' and first.runs == 1 and first.configuration_error
+    monkeypatch.setattr(manager, '_run_cli', lambda *a: pytest.fail('Rejected configuration must not launch'))
+    manager._run(second)
+    assert second.state == 'paused' and second.runs == 0
+    assert second.snapshot()['configuration_error'] and 'Choose another model' in second.todo
+    changed = manager._record('game', 'codex', 'codex-three', 'third', {'model':'different'})
+    assert session_followups.configuration_error(manager, changed) is None

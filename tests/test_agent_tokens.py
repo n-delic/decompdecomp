@@ -628,3 +628,35 @@ def test_compact_compile_feedback_preserves_line_mapping(tmp_path):
         else:
             assert note not in out and 'repeated C-line table omitted' in out
         assert 'a warning' in out
+
+
+def test_explicit_variants_with_verified_cached_baseline_do_not_crash(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    source = 'int f(){return 1;}'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=10', (source,))
+    fn = net.claim_row(agent, 'game', 'f')
+    net._agent_outcomes = {(agent.id, fn['id']): {'source':source,'score':10,'rows':[], 'verified':True}}
+    def compile(agent, name, changed, slug):
+        net._record(fn, agent, 20, changed, 1)
+        return 'score 20'
+    monkeypatch.setattr(net, 'compile_and_diff', compile)
+    _, revision = agent_tokens.candidate(net, agent, 'game', 'f')
+    result = agent_tokens.variants(net, agent, 'game', 'f', revision, [{'old':'return 1','new':'return 2'}])
+    assert 'Baseline comparison: current rechecked score 10' in result
+    assert 'historical best 10' in result
+
+
+def test_candidate_read_frontloads_current_baseline_not_only_historical_score(tmp_path, monkeypatch):
+    from decompnet.app import agent_evidence
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    source = 'int f(){return 1;}'
+    with net.store.tx() as db:
+        db.execute('UPDATE functions SET best_source=?,best_score=55', (source,))
+    net.claim_row(agent, 'game', 'f')
+    monkeypatch.setattr(agent_evidence, 'baseline', lambda *a: {'source':source,'score':75,'verified':True})
+    text = agent_tokens.get_candidate(net, agent, 'game', 'f')
+    assert text.index('current rechecked score 75') < text.index('```c')
+    assert 'saved historical best 55' in text and 'no regression or match is inferred' in text

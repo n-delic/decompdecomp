@@ -244,10 +244,10 @@ function renderSessions(sessions) {
     const facts = [s.task === "readable" ? `<b>polishing</b>` : "", esc(s.kind_name), s.model ? esc(s.model) : "its default model", s.task === "readable" ? helperResults(b, s.task) : "", b ? `${plural(b.compiles, "compile")} submitted by this agent` : "",
       s.usd ? money(s.usd) : "", s.runs ? plural(s.runs, "session") : "",
       s.restarts ? `started again ${plural(s.restarts, "time")}` : "", live && s.started_at ? `since ${hhmm(s.started_at)}` : ""].filter(Boolean);
-    const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" ? " Then press Start again." : ""}` : "";
+    const todo = s.todo ? `${sentence(s.todo.replace(/\.$/, ""))}.${s.state === "paused" && !s.configuration_error ? " Then press Start again." : ""}` : "";
     const rate = agentTokenRate(s, b);
     return `${head}<div class="session${rowTint(s.agent)}" data-state="${esc(s.state)}"><div class="session-top"><span class="dot ${dot}"></span><b title="${esc(s.agent)}">${esc(s.label)}</b>
-        ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>` : `<button class="ghost" data-again="${id}" type="button">Start again</button>`}
+        ${live ? `<button class="ghost" data-stop="${id}" type="button">Stop</button>` : s.configuration_error ? `<button class="ghost" data-change-model="${id}" type="button">Choose another model</button>` : `<button class="ghost" data-again="${id}" type="button">Start again</button>`}
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button><button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
@@ -334,6 +334,12 @@ function renderSessions(sessions) {
         closeDialog(); await poll(false);
       } catch (error) { toast(esc(error.message),'err'); }
     };
+  }; });
+  box.querySelectorAll('[data-change-model]').forEach(button => { button.onclick = () => {
+    const session = sessions.find(s => s.id === button.dataset.changeModel);
+    LZ.kind = session.kind; LZ.model = ''; LZ.customModel = false; LZ.multiple = false; LZ.count = 1;
+    showLaunch();
+    toast('Choose a model available to this account. The paused worker and its history are kept.');
   }; });
   box.querySelectorAll("[data-login]").forEach(button => { button.onclick = async () => {
     button.disabled = true;

@@ -376,6 +376,7 @@ class Session:
     started_at: float = field(default_factory=time.time)
     restarts: int = 0  # started again by itself, after a failure or a usage limit
     runs: int = 0  # sessions
+    configuration_error: bool = False
     error: str = ""  # the last error
     feed: collections.deque = field(default_factory=lambda: collections.deque(maxlen=FEED_LINES))
     seq: int = 0
@@ -421,7 +422,7 @@ class Session:
                 "per_session": self.options.get("per_session", PER_SESSION),
                 "task": self.options.get("task") or "",  # "readable": it polishes matched code
                 "slug": self.slug, "agent": self.agent_name, "model": self.model, "state": self.state, "why": self.why,
-                "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
+                "configuration_error": self.configuration_error, "todo": self.todo, "until": self.until, "stopped_by": self.stopped_by,
                 "last_message": self.last_message, "runs": self.runs, "restarts": self.restarts, "error": self.error,
                 "started_at": self.started_at, "usd": round(self.usd, 4), "tokens": self.tokens,
                 "current_usage_coverage": self.usage.get("coverage", "unknown"),
@@ -751,6 +752,7 @@ class Manager:
         s.stop = threading.Event()
         s.state, s.why, s.todo, s.until, s.stopped_by, s.error = "starting", "", "", None, "", ""
         s.signed_out = s.throttled = s.limited = s.auth_failed = False
+        s.configuration_error = False
         s.cooldown_observed = 0
         s.continuation_attempts, s.continuation_note = 0, ""
         s.started_at = time.time()
@@ -1147,6 +1149,9 @@ class Manager:
         agent, token = self.net.local_agent(s.agent_name)
         self.net.set_selection(s.slug, agent.name, s.options.get("selection"))
         self.assignments[agent.id] = s.slug
+        if not hasattr(self.net, '_agent_tool_tasks'): self.net._agent_tool_tasks = {}
+        self.net._agent_tool_tasks[agent.id] = 'polishing' if s.options.get('task') == 'readable' else 'matching'
+
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
@@ -1194,6 +1199,10 @@ class Manager:
                             "Fix the project's setup (its page says what's wrong), then press Start again.")
                 break
             from . import session_followups
+            if (rejected := session_followups.configuration_error(self, s)):
+                s.configuration_error = True
+                self._pause(s, rejected, 'Choose another model; this configuration was rejected for this account. Restart the app after changing account access.')
+                break
             if (shared_until := session_followups.cooldown(self, s)) is not None:
                 s.cooldown_observed = shared_until
                 self._wait(s, "This provider account's usage limit is reached", shared_until + session_followups.stagger(s),
@@ -1221,10 +1230,13 @@ class Manager:
                            time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
                 continue
             except Fatal as e:  # needs the user first: retrying can't help
+                if agents.get(s.kind).fatal(str(e)):
+                    s.configuration_error = True
+                    session_followups.configuration_error(self, s, str(e))
                 s.push("error", str(e))
                 self._session_end(s, row, agent, began, "paused")
                 s.error = str(e)
-                self._pause(s, str(e))
+                self._pause(s, str(e), 'Choose another model in Add agents; this configuration cannot recover by retrying.' if s.configuration_error else '')
                 break
             except Exception as e:  # keep the runner alive; show what happened
                 log.exception("helper %s failed", s.agent_name)

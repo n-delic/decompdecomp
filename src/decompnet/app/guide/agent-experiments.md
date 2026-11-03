@@ -1,0 +1,24 @@
+# Agent experiments and continuation
+
+
+Prefer compile_patch for small edits instead of resending the complete C. Call get_candidate once if you lack the current source/revision; then keep your edited source and use the revision returned by each compile. Do not fetch get_candidate after a successful patch unless you lost track of the source or a patch is stale. Use compile_and_diff for substantial rewrites.
+
+## Repair families
+
+Use compile_family for bounded casts, signedness, declaration_order, typed_temporary, branch_orientation, narrowing, source_lines, address_temporary, constant_local, comparison_load, stack_array, loop_induction, parameter_width, value_lifetime, sum_shape or call_result_inline experiments without spelling out variants. Pattern families need only function/revision; source_lines requires known debug flags. Releasing a tried function also runs a bounded local repair pass before another agent edits it. family_targets lists current choices; selector mode=next selects an untried target; anchor mode takes old/occurrence and declaration mode takes declaration. Never combine modes.
+
+## Compiler trials
+
+Use compiler_experiments for up to six independent source/profile trials from the current revision instead of resending C to try_compiler. For C89 compilers keep declarations before statements in each block. Use compiler=current to retain the function compiler. Trials are diagnostic; get_compiler_trial returns the selected C/profile and context ID, not the full project configuration.
+
+## Explicit repairs and batches
+
+Use try_local_repairs before guessing families: it discovers applicable repairs or tries a named families list against one snapshot with at most six compiles. Use compile_patch for small local edits; compile_and_diff is for whole-function rewrites. Wait for each same-function edit response before another edit; separate functions can run in parallel. Batches select the best continuation, keeping baseline on ties; apply selected changes in the response. Missing signedness/declaration_order selectors choose the next untried valid target. Use compile_variants for up to six independent small alternatives. Explicit batch requests always run the supplied variants. Automatic repairs are separate: request try_local_repairs when needed; they never replace a submitted batch. Batch claims hydrate only the first function; load queued functions with get_function(section='brief'). Session context budgets start a fresh session with saved work and experiments.
+
+## Recovery and evidence
+
+Candidate-quality warnings are agent reports, not proofs. Read get_function(section=quality) for saved compiled alternatives before redoing a historical correction. Use report_candidate_issue with the affected revision and optional compiled alternative rather than relying on prose detection. needs requires original direct-call evidence, never a workaround for exhausted work. Quality reports do not pause agents or automatic workers. Use their evidence to repair the candidate; do not repeat an unchanged failed experiment. An Already tried or No untried response means stop that experiment until source or build inputs change. Use a different evidence-backed repair or release with precise notes. Supporting history and notes: get_function(section=history or notes).
+
+## Assembly paging
+
+Prefer get_assembly(focus='mismatch:N') for a later differing instruction, focus='body' for a bounded post-entry page, or focus='callee_symbol' before reading full assembly pages. get_assembly and last_diff are paged.

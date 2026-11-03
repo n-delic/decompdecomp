@@ -16,12 +16,20 @@ function toolCatalog(tools, options = {}) {
       toggle.onchange = () => options.onToggle(tool.name, toggle.checked, toggle);
       summary.append(toggle);
     }
+    let usageDetail = null;
     if (item.calls != null) {
       const count = document.createElement('span'); count.className = 'small muted';
       count.textContent = `${item.calls.toLocaleString()} recorded calls${item.required ? ' · required' : options.helper && item.global_disabled ? ' · disabled globally' : ''}`;
       summary.append(count);
+      if (item.task_calls || item.schema_chars != null) {
+        const detail = document.createElement('p'); detail.className = 'small muted';
+        detail.textContent = [...Object.entries(item.task_calls || {}).map(([task,n])=>`${task}: ${n.toLocaleString()} calls`),
+          item.schema_chars == null ? '' : `${item.schema_chars.toLocaleString()} tool-definition characters`].filter(Boolean).join(' · ');
+        usageDetail = detail;
+      }
     }
     card.append(summary, description);
+    if (usageDetail) card.append(usageDetail);
     const properties = schema.properties;
     if (properties && typeof properties === "object" && Object.keys(properties).length) {
       const list = document.createElement("dl"); list.className = "transcript-tool-params";

@@ -13,6 +13,31 @@ async function loadToolSettings(host, log, helper = '') {
       } catch(error) { toggle.checked=!enabled; showJobError(log,error.message); }
       finally { finish(); }
     }}));
+    if (info.presets?.length) {
+      const controls = document.createElement('div'); controls.className = 'row tool-preset-controls';
+      const label = document.createElement('label'); label.className = 'field';
+      const title = document.createElement('span'); title.textContent = 'Tool preset';
+      const select = document.createElement('select');
+      for (const preset of info.presets) {
+        const option = document.createElement('option'); option.value = preset.id;
+        option.textContent = `${preset.label} · ${preset.tools} tools`; select.append(option);
+      }
+      const apply = document.createElement('button'); apply.type = 'button'; apply.className = 'ghost small-btn'; apply.textContent = 'Apply preset';
+      label.append(title, select); controls.append(label, apply);
+      apply.onclick = async () => {
+        const finish = beginWork(log, 'Saving tool preset', [apply, select]);
+        try {
+          await api('/api/agent-tools', {method:'POST', body:{helper, preset:select.value}});
+          await loadToolSettings(host, log, helper);
+          toast('Preset saved. It replaces optional tool toggles for this scope. Refresh at the next session or MCP reconnect.');
+        } catch(error) { showJobError(log, error.message); }
+        finally { finish(); }
+      };
+      const summary = document.createElement('p'); summary.className = 'small muted';
+      const enabled = info.tools.filter(t => t.enabled !== false);
+      summary.textContent = `${enabled.length} enabled tools · ${enabled.reduce((n,t)=>n+(t.schema_chars || 0),0).toLocaleString()} tool-definition characters. Presets replace optional tool toggles; global restrictions still apply.`;
+      host.prepend(controls, summary);
+    }
     if (!helper) $('agentToolCoverage').textContent='Least used first. ' + info.coverage;
   } catch(error) { showJobError(log,error.message); }
   finally { done(); }

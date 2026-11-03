@@ -39,7 +39,9 @@ class Codex(Agent):
 
     def fatal(self, error: str) -> bool:
         # A rejected model/effort setting cannot recover by retrying the same command.
-        return ('unsupported_value' in error and 'reasoning.effort' in error
+        return ('model_not_found' in error.lower()
+                or bool(re.search(r"model.{0,180}(?:not supported|does not exist)", error, re.I))
+                or 'unsupported_value' in error and 'reasoning.effort' in error
                 or bool(re.search(r"(?:unsupported value|not supported).*(?:reasoning|effort)|(?:reasoning|effort).*not supported", error, re.I)))
 
     def estimate_cost(self, model: str, usage: dict) -> float | None:

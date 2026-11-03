@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from decompnet.app import agent_tokens, compiler_experiments, repair_first, session_budget, tools
+from decompnet.app import agent_tokens, compiler_experiments, session_budget, tools
 from decompnet.network import NetworkError
 from tests.test_claims import _game
 
@@ -74,31 +74,6 @@ def test_dispatch_enforces_budget_after_completed_tool(monkeypatch):
     assert budget.calls==1
 
 
-def test_repair_first_pass_is_persistent_and_build_scoped(tmp_path,monkeypatch):
-    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('a')
-    with net.store.tx() as db:db.execute("UPDATE functions SET best_source='int f(){return 1;}'")
-    net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f')
-    args={'function':'f','revision':revision,'patches':[{'old':'return 1','new':'return 2'}]}
-    seen=[]
-    monkeypatch.setattr('decompnet.app.local_experiments.run',lambda *args,**kwargs:seen.append(kwargs) or 'Baseline retained.')
-    result=repair_first.before_variants(net,agent,'game',args)
-    assert 'were not submitted' in result and seen[0]['max_trials']==3
-    assert repair_first.before_variants(net,agent,'game',args) is None and len(seen)==1
-    # The persisted settings entry survives process memory loss; changed build inputs invalidate it.
-    with net.store.tx() as db:
-        db.execute('UPDATE projects SET config=?',(json.dumps({'compiler':{'toolchain':'test','flags':['-O1']}}),))
-    repair_first.before_variants(net,agent,'game',args)
-    assert len(seen)==2
-
-
-def test_bad_or_stale_patches_never_trigger_repair_first(tmp_path,monkeypatch):
-    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('a')
-    net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f')
-    monkeypatch.setattr('decompnet.app.local_experiments.run',lambda *args,**kwargs:pytest.fail('no compile'))
-    for args in ({'function':'f','revision':'stale','patches':[]},{'function':'f','revision':revision,'patches':[]}):
-        with pytest.raises(NetworkError):repair_first.before_variants(net,agent,'game',args)
-
-
 def test_api_rotation_returns_before_another_provider_request(tmp_path,monkeypatch):
     import httpx
 
@@ -128,16 +103,6 @@ def test_api_rotation_returns_before_another_provider_request(tmp_path,monkeypat
     # A new session gets a fresh budget, without deleting saved claims or attempts.
     fresh=session_budget.start(net,agent.id,'game',{})
     assert fresh.calls==0 and not fresh.ready()
-
-
-def test_exhausted_repair_first_pass_proceeds_to_requested_variants(tmp_path,monkeypatch):
-    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('a')
-    with net.store.tx() as db:db.execute("UPDATE functions SET best_source='int f(){return 1;}'")
-    net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f')
-    args={'function':'f','revision':revision,'patches':[{'old':'return 1','new':'return 2'}]}
-    monkeypatch.setattr('decompnet.app.local_experiments.run',lambda *args,**kwargs:'No untried applicable local repairs.')
-    assert repair_first.before_variants(net,agent,'game',args) is None
-    assert net.store.one("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'repair-first:%'")['n']==1
 
 
 @pytest.mark.skipif(sys.platform=='win32',reason='POSIX fake process; shared budget and API tests cover Windows')
@@ -174,3 +139,16 @@ def test_cli_rotation_does_not_stop_active_tools(tmp_path,monkeypatch):
     monkeypatch.setattr(kind,'parse_line',lambda line,state:[('info',line)])
     assert manager._run_cli(session,'fake-token',tmp_path)
     assert session.rotated and ended==[987654] and budget.active==0
+
+
+def test_explicit_batch_is_not_replaced_by_automatic_repairs(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('f', 10, 'open')])
+    agent, _ = net.local_agent('worker')
+    net.claim_row(agent, 'game', 'f')
+    session_budget.start(net, agent.id, 'game', {'session_tool_limit':10})
+    monkeypatch.setattr('decompnet.app.local_experiments.run', lambda *a, **kw: pytest.fail('Must not intercept explicit batch'))
+    seen = []
+    monkeypatch.setitem(tools.HANDLERS, 'compile_variants', lambda *a, **kw: seen.append(kw['patches']) or 'Supplied batch compiled')
+    patches = [{'old':'return 1','new':'return 2'}]
+    text = tools._dispatch(net, agent, 'game', 'compile_variants', {'function':'f','revision':'r','patches':patches})
+    assert seen == [patches] and 'Supplied batch compiled' in text

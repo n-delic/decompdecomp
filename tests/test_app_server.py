@@ -1918,3 +1918,54 @@ def test_checkout_frontend_reload_injection_and_guard(app, monkeypatch):
     assert 'decomp-live-reload' not in client.get('/').text
     assert '/assets/js/live-reload.js' not in client.get('/').text
     assert client.get('/api/frontend-revision').json() == {'enabled': False}
+
+
+def test_claim_handover_is_explicit_and_cannot_release_another_agent(app):
+    # The shared fixture routes use its own network; add a small coordination-only project.
+    client, net, _ = app
+    with net.store.tx() as db:
+        pid = db.execute("INSERT INTO projects(slug,name,description,arch,big_endian,root,config) VALUES('handover','Handover','','mips',0,'','{}')").lastrowid
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,status,unit) VALUES(?, 'handover_f',16,4,'open','')", (pid,))
+    human, _ = net.local_agent('you')
+    net.claim_row(human, 'handover', 'handover_f')
+    response = client.post('/api/claim/handover', json={'slug':'handover','name':'handover_f'}, headers={'X-Decomp':'1'})
+    assert response.status_code == 200
+    assert not net.store.one('SELECT * FROM claims WHERE function_id IN (SELECT id FROM functions WHERE project_id=?)', pid)
+    other, _ = net.local_agent('handover-worker')
+    net.claim_row(other, 'handover', 'handover_f')
+    response = client.post('/api/claim/handover', json={'slug':'handover','name':'handover_f'}, headers={'X-Decomp':'1'})
+    assert response.status_code == 400
+    assert net.store.one('SELECT agent_id FROM claims WHERE function_id IN (SELECT id FROM functions WHERE project_id=?)', pid)['agent_id'] == other.id
+
+
+def test_tool_presets_and_usage_schema_are_available_to_settings(app):
+    client, _, _ = app
+    response = client.get('/api/agent-tools')
+    assert response.status_code == 200
+    data = response.json()
+    assert {'matching','polishing','investigation','full'} == {p['id'] for p in data['presets']}
+    full = next(p for p in data['presets'] if p['id']=='full')
+    matching = next(p for p in data['presets'] if p['id']=='matching')
+    assert matching['tools'] < full['tools']
+    assert all('task_calls' in t and t['schema_chars'] > 0 for t in data['tools'])
+
+
+def test_global_tool_preset_route_applies_and_validates_atomically(app):
+    from decompnet.app import tool_policy
+    client, net, _ = app
+    previous = net.store.one('SELECT value FROM settings WHERE key=?', tool_policy.KEY)
+    try:
+        response = client.post('/api/agent-tools', json={'preset':'matching'}, headers={'X-Decomp':'1'})
+        assert response.status_code == 200
+        tools = {t['name']:t for t in response.json()['tools']}
+        assert tools['compile_and_diff']['enabled'] and tools['compile_patch']['enabled']
+        assert not tools['try_compiler']['enabled']
+        response = client.post('/api/agent-tools', json={'preset':'invalid'}, headers={'X-Decomp':'1'})
+        assert response.status_code == 400
+        assert 'try_compiler' in tool_policy.disabled(net)
+    finally:
+        with net.store.tx() as db:
+            if previous:
+                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (tool_policy.KEY, previous['value']))
+            else:
+                db.execute('DELETE FROM settings WHERE key=?', (tool_policy.KEY,))

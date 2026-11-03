@@ -68,3 +68,18 @@ def diagnostic_completed(net, agent):
     if counts is None:
         counts = net._session_diagnostic_compiles = {}
     counts[agent.id] = counts.get(agent.id, 0) + 1
+
+
+def configuration_key(session):
+    return (account_key(session), session.model)
+
+
+def configuration_error(manager, session, reason=None):
+    """Share explicit connector/model rejections until restart or a different configuration."""
+    with manager._lock:
+        errors = getattr(manager, '_configuration_errors', {})
+        manager._configuration_errors = errors
+        key = configuration_key(session)
+        if reason is not None:
+            errors[key] = reason
+        return errors.get(key)

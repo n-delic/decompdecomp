@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+import time
 from pathlib import Path
 
 from starlette.requests import Request
@@ -201,6 +202,12 @@ def register(app: App) -> None:
             pass  # not yours (any more): nothing to give back
         return {"ok": True}
 
+    def p_claim_handover(slug, request, data):
+        agent, _ = net.local_agent('you')
+        # release checks ownership transactionally: this cannot take another agent's claim.
+        net.release(agent, str(data.get('name') or ''), '', slug)
+        return {'ok': True}
+
     def p_recheck(slug, request, data):
         """Check again: the project looked at with what this version knows (Core.recheck), in the background."""
         return {"job": jobs.start("recheck", lambda log: {
@@ -350,6 +357,10 @@ def register(app: App) -> None:
     def p_function(slug, request, data):
         name = request.query_params.get("name", "")
         detail = net.function_detail(slug, name)
+        claim = net.store.one('SELECT a.name FROM claims c JOIN agents a ON a.id=c.agent_id JOIN functions f ON f.id=c.function_id JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=? AND c.expires_at>?', slug, detail['name'], time.time())
+        detail['claim_owner'] = claim['name'] if claim else None
+        detail['can_handover'] = bool(claim and claim['name'] == 'you')
+
         with jobs._lock:
             job = function_searches.get((slug, name)) or function_searches.get((slug, detail['name']))
             if job in jobs.jobs:
@@ -529,7 +540,7 @@ def register(app: App) -> None:
         "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
-        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
+        "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/claim/handover": (p_claim_handover, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),
         "/api/recheck": (p_recheck, ["POST"]),
         "/api/finish-near": (p_finish_near, ["POST"]),
         "/api/reconcile-matches": (p_reconcile_matches, ["POST"]),
