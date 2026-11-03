@@ -444,10 +444,16 @@ def register(app: App) -> None:
                    for h in net.twins.suggestions(slug, old, limit=100)):
             raise ValueError("that exact SDK or cross-game name is no longer suggested for this function")
         agent, _ = net.local_agent("you")
-        message = net.rename_symbol(agent, slug, old, new, "name selected from a cross-project naming lead")
-        if message.startswith("❌"):
-            raise NetworkError(message)
-        return {"message": message}
+        def rename(log=None):
+            publish = getattr(log, "progress", None)
+            message = net.rename_symbol(agent, slug, old, new, "name selected from a cross-project naming lead",
+                                        **({"progress": publish} if publish else {}))
+            if message.startswith("❌"):
+                raise NetworkError(message)
+            return {"message": message}
+        if data.get("background"):
+            return {"job": jobs.start("Apply suggested name", rename)}
+        return rename()
 
     def p_project_functions(slug, request, data):
         from ..project_functions import listing, name_hints

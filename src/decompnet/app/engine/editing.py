@@ -257,7 +257,7 @@ class EditMixin:
         self._update_cfg(slug, lambda cfg: next(r for r in cfg["boundaries"] if r["id"] == rid).__setitem__(
             "status", "applied" if apply else "dismissed"))
 
-    def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "") -> str:
+    def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "", *, progress=None) -> str:
         if (fork := self.fork_slug(project)):  # the project's own config and files (ForkEngine.rename_symbol)
             return self.forks.rename_symbol(agent, fork, old, new, message)
         proj = self._project(project)
@@ -269,9 +269,9 @@ class EditMixin:
             if text.startswith("✅"):
                 link.sync()
             return text
-        return self.rename_symbols(agent, project, [(old, new)], message)
+        return self.rename_symbols(agent, project, [(old, new)], message, progress=progress)
 
-    def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "") -> str:
+    def rename_symbols(self, agent: Agent, project: str | None, pairs: list[tuple[str, str]], message: str = "", *, progress=None) -> str:
         """Rename several symbols at once (old -> new): the shared headers, matched sources and best attempts
         change together, after one check that every matched function still matches. One rename is the agents'
         rename_symbol; many at once are the PS2 kernel stubs named at import (consoles/ps2/syscalls.py)."""
@@ -308,13 +308,23 @@ class EditMixin:
         current_ctx = {u: self._context(proj["id"], u) for u in ({""} | units)}
         changed = {u: swap(c["header"]) for u, c in current_ctx.items() if word.search(c["header"])}
         matched = self.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched'", proj["id"])
-        rewritten = {r["id"]: swap(r["matched_source"]) for r in matched}
-        renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in matched]
+        rewritten = {r["id"]: swap(r["matched_source"]) for r in matched if word.search(r["matched_source"] or "")}
+        # A header change can affect every body in its effective unit. Also include the
+        # destination identifier: renaming can capture an existing use of the new spelling.
+        affected_word = re.compile(r"\b(?:" + "|".join(re.escape(n) for pair in pairs for n in pair) + r")\b")
+        affected = [r for r in matched if r["vram"] in addresses.values()
+                    or affected_word.search(current_ctx[self._effective_unit(r, units)]["header"])
+                    or affected_word.search(r["matched_source"] or "")]
+        renamed_rows = [dict(r) | {"name": new_of.get(r["name"], r["name"])} for r in affected]
+        if progress:
+            progress({"done": 0, "total": len(affected), "phase": "Checking affected matches",
+                      "message": f"Checking {len(affected)} affected matches; {len(matched)-len(affected)} unchanged matches need no rebuild."})
         header_for = lambda fn: changed.get(self._effective_unit(fn, units),
                                             current_ctx[self._effective_unit(fn, units)]["header"])
         self._sym_override[proj["id"]] = trial
         try:
-            broken = self.regression_test(proj, None, sources=rewritten, only=renamed_rows, header_for=header_for)
+            broken = self.regression_test(proj, None, sources=rewritten, only=renamed_rows, header_for=header_for,
+                                          **({"progress": progress} if progress else {}))
         finally:
             self._sym_override.pop(proj["id"], None)
         if broken:
@@ -342,14 +352,15 @@ class EditMixin:
                 db.execute("UPDATE functions SET matched_source=?, best_source=? WHERE id=?", (src, src, fid))
             for r in db.execute("SELECT id, best_source FROM functions WHERE project_id=? AND status='open' "
                                 "AND best_source IS NOT NULL", (proj["id"],)).fetchall():
-                db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
+                if word.search(r["best_source"]):
+                    db.execute("UPDATE functions SET best_source=? WHERE id=?", (swap(r["best_source"]), r["id"]))
             self._event(db, proj["id"], agent.id, "rename", msg if len(pairs) > 1 else f"{pairs[0][0]} → {pairs[0][1]}")
         self._syms.pop(proj["id"], None)
         if len(pairs) == 1:
             (old, new), = pairs
-            return (f"✅ 0x{addresses[old]:08X} is now `{new}` (was `{old}`); {len(rewritten)} matched sources updated, "
+            return (f"✅ 0x{addresses[old]:08X} is now `{new}` (was `{old}`); {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, "
                     f"all still match.")
-        return f"✅ renamed {len(pairs)} symbols; {len(rewritten)} matched sources updated, all still match."
+        return f"✅ renamed {len(pairs)} symbols; {len(affected)} affected matches checked; {len(rewritten)} matched sources updated, all still match."
 
     def edit_context(self, agent: Agent, project: str | None, old: str, new: str, message: str,
                      function: str | None = None) -> str:

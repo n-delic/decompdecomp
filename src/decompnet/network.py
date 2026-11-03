@@ -1746,7 +1746,7 @@ class Network:
                 if self._effective_unit(f, units) == unit]
 
     def regression_test(self, proj, header: str | None, sources: dict[int, str] | None = None,
-                        only: list | None = None, header_for=None) -> list[tuple[str, str]]:
+                        only: list | None = None, header_for=None, progress=None) -> list[tuple[str, str]]:
         """Every matched function (or `only`) built again with a changed header or sources: (name, why) of each
         that no longer matches, so a header edit that breaks matches is refused."""
         matched = only if only is not None else self.store.all(
@@ -1770,7 +1770,13 @@ class Network:
                 return []
             res = self._compile(proj, header, "")
             return [] if res.ok else [("<header>", res.log.strip()[:300])]
-        return [b for b in self._pool.map(check, matched) if b]
+        broken = []
+        for done, result in enumerate(self._pool.map(check, matched), 1):
+            if result:
+                broken.append(result)
+            if progress:
+                progress({"phase": "Checking affected matches", "done": done, "total": len(matched)})
+        return broken
 
     # ------------------------------------------------------------------ notes
 

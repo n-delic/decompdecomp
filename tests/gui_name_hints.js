@@ -2,14 +2,15 @@
 const assert = require("node:assert/strict"), fs = require("node:fs"), vm = require("node:vm"), path = require("node:path");
 const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/function.js"), "utf8");
 const elements = new Map();
-const el = (id) => { if (!elements.has(id)) elements.set(id, { hidden: true, textContent: "", querySelectorAll: () => [button] }); return elements.get(id); };
+const el = (id) => { if (!elements.has(id)) elements.set(id, { hidden: true, textContent: "", after() {}, querySelectorAll: () => [button] }); return elements.get(id); };
 const button = { dataset: { name: "sdkName" }, disabled: false };
 let resolve, fail = false, busy = 0;
 const S = { slug: "example", fn: "func_80001000", ov: {} };
-const ctx = vm.createContext({ S, $: el, esc: (s) => String(s).replaceAll("<", "&lt;"),
+const ctx = vm.createContext({document:{createElement:()=>({setAttribute(){},style:{},remove(){}})}, S, $: el, esc: (s) => String(s).replaceAll("<", "&lt;"),
   showJobError: (log, msg) => { log.error = msg; },
   beginWork: () => { busy++; button.disabled = true; return () => { busy--; button.disabled = false; }; },
   api: () => new Promise((yes, no) => { resolve = fail ? () => no(new Error("Name already taken")) : yes; }),
+  followJob: async (id, log, update) => { update([], {progress:{done:1,total:2}}); assert.match(log.textContent,/1 \/ 2 \(50%\)/); return {message:"Renamed"}; },
   refreshMap: async () => {}, refreshFn: async () => {},
 });
 vm.runInContext(source.slice(source.indexOf("function relatedFunctionLink"), source.indexOf("async function openFn")), ctx);
@@ -27,7 +28,7 @@ vm.runInContext(source.slice(source.indexOf("function relatedFunctionLink"), sou
   assert.ok(html.indexOf("sdkName") < html.indexOf("otherName"));
   const pending = vm.runInContext('useSuggestedName(button, {name: S.fn})', Object.assign(ctx, { button }));
   assert.equal(button.disabled, true); assert.equal(busy, 1);
-  resolve({ message: "Renamed" }); await pending;
+  resolve({ job: "rename-job" }); await pending;
   assert.equal(S.fn, "sdkName"); assert.equal(el("fnName").textContent, "sdkName");
   assert.equal(button.disabled, false); assert.equal(busy, 0);
   S.fn = "old"; fail = true;

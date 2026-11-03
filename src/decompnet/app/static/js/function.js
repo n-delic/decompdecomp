@@ -68,9 +68,18 @@ async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "f
   nameChangeBusy = true;
   log.hidden = false;
   showJobError(log, "");
-  const done = beginWork(log, "Applying name and checking existing matches", [...$(rootId).querySelectorAll("[data-name]")]);
+  const done = beginWork(log, "Checking functions affected by this name. Shared header changes may require checking more matches", [...$(rootId).querySelectorAll("[data-name]")]);
+  const progressBar = document.createElement("progress");
+  progressBar.setAttribute("aria-label", "Affected matches checked");
+  progressBar.style.width = "100%";
+  log.after(progressBar);
   try {
-    const result = await api("/api/cross-game/name", { method: "POST", body: { slug, function: old, name, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
+    const started = await api("/api/cross-game/name", { method: "POST", body: { slug, function: old, name, background: true, ...(button.dataset.peerId ? {peer_id: button.dataset.peerId} : {}) } });
+    const result = started.job ? await followJob(started.job, log, (_lines, job) => {
+      const p = job.progress;
+      if (p?.total) { progressBar.max = p.total; progressBar.value = p.done; }
+      if (p) log.textContent = p.total ? `Checking affected matches: ${p.done} / ${p.total} (${(100*p.done/p.total).toFixed(0)}%). The name is saved only if they still match.` : (p.message || "Saving name…");
+    }) : started;
     log.textContent = result.message;
     if (S.slug === slug && S.fn === old) {
       S.fn = name;
@@ -81,7 +90,7 @@ async function useSuggestedName(button, detail, logId = "fnNameLog", rootId = "f
       await refreshFn(false);
     }
   } catch (e) { showJobError(log, e.message); }
-  finally { nameChangeBusy = false; done(); }
+  finally { nameChangeBusy = false; progressBar.remove(); done(); }
 }
 
 function projectPeersHTML(data, current) {
