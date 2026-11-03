@@ -261,7 +261,9 @@ def _merge_manifest(old, new, current, key: str = ""):
             if key == "notes" and isinstance(item, dict):
                 return (item.get("function"), item.get("text"), item.get("by", ""))
             if isinstance(item, dict):
-                return item.get("vram") if key == "set_aside" else item.get("name")
+                if key == "set_aside":
+                    return (item.get("name"), item.get("vram"))
+                return item.get("name")
             return None
 
         old_items = {identity(item): item for item in old if identity(item) is not None}
@@ -293,19 +295,29 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
 
     identities = {"layout": lambda item: item.get("name"), "symbols": lambda item: item.get("name"),
                   "notes": lambda item: (item.get("function"), item.get("text"), item.get("by", "")),
-                  "knowledge": lambda item: item, "set_aside": lambda item: item.get("vram")}
-    # A saved function at a database function's address is that function renamed only when the database no longer
-    # has the saved name: overlays load different functions at one address (a PS2 game's ovl_* units).
+                  "knowledge": lambda item: item,
+                  "set_aside": lambda item: (item.get("name"), item.get("vram"))}
+    # A database function at a saved function's address is that saved function renamed only when a saved layout entry
+    # there, of its size or unit, carries a name the database no longer has: then the saved (old) name stays and the
+    # database name isn't added back. Other database functions new at that shared address still join -- overlays load
+    # different functions at one address (a PS2 game's ovl_* units).
     local_names = {item.get("name") for item in local.get("layout") or []}
     for key, identity in identities.items():
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
         for item in local.get(key) or []:
             ident = identity(item)
-            if ident not in known and (key != "layout" or not any(
-                    row.get("vram") == item.get("vram") and row.get("name") not in local_names for row in current)):
-                current.append(item)
-                known.add(ident)
+            if ident in known:
+                continue
+            if key == "layout" and any(
+                    row.get("vram") == item.get("vram")
+                    and ((item.get("size") is not None and row.get("size") == item.get("size"))
+                         or (item.get("unit") is not None and row.get("unit") == item.get("unit")))
+                    and row.get("name") not in local_names
+                    for row in current):
+                continue
+            current.append(item)
+            known.add(ident)
         manifest[key] = current
 
     headers = manifest.get("headers") or {}

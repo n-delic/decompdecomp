@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _initial_merge, _manifest, _read, _repair
+from decompnet.app.progress import Progress, _initial_merge, _manifest, _merge_manifest, _read, _repair
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -1226,3 +1226,44 @@ def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
     disk = files([renamed])
     manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([disp]), disk)
     assert [f["name"] for f in manifest["layout"]] == ["draw_sprite"]
+
+
+def test_a_first_sync_adds_a_new_function_where_another_at_its_address_was_renamed():
+    """Rename and new-function at one address at once: a saved layout entry renamed in the database (same address
+    and size) keeps its saved name, while a different function the database gained at that same address still joins
+    the layout (and its source is published). The rename must not block the genuinely new sibling."""
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "layout": layout, "headers": {"": "common.h"}}
+        return {saves.MANIFEST: json.dumps(manifest)} | {f"src/{name}.c": "int x;" for name in sources}
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36}  # the saved (old) name of disp
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending
+
+
+def test_a_first_sync_keeps_set_aside_functions_sharing_an_address():
+    """set_aside, like the layout, is keyed by name and address, not address alone: a second set-aside function the
+    database gained at an address another already uses is not dropped on a first sync."""
+    def files(set_aside):
+        manifest = {"format": saves.FORMAT, "layout": [], "set_aside": set_aside, "headers": {"": "common.h"}}
+        return {saves.MANIFEST: json.dumps(manifest)}
+
+    a = {"name": "ovl_a_004BF720", "vram": 0x4BF720, "size": 36}
+    b = {"name": "ovl_b_004BF720", "vram": 0x4BF720, "size": 40}
+    disk = files([a])
+    manifest, _ = _initial_merge(json.loads(disk[saves.MANIFEST]), files([a, b]), disk)
+    assert [f["name"] for f in manifest["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
+
+
+def test_a_later_merge_keeps_both_set_aside_functions_at_one_address():
+    """The three-way merge keys set_aside by name and address too: a set-aside function the database gained at an
+    address another already uses survives the merge onto the saved manifest."""
+    a = {"name": "ovl_a_004BF720", "vram": 0x4BF720}
+    b = {"name": "ovl_b_004BF720", "vram": 0x4BF720}
+    merged = _merge_manifest({"set_aside": [a]}, {"set_aside": [a, b]}, {"set_aside": [a]})
+    assert [f["name"] for f in merged["set_aside"]] == ["ovl_a_004BF720", "ovl_b_004BF720"]
