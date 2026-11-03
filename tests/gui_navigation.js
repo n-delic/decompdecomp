@@ -59,10 +59,10 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
 
   // Background jobs keep running but must not paint another function's shared DOM.
   let update, finishJob, finishes=0;
-  f.ctx.beginWork = log => { log._workStatus={dataset:{},remove(){}}; return () => {finishes++;}; };
+  f.ctx.beginWork = (log, label, controls) => { log._workStatus={dataset:{},remove(){}}; controls.forEach(c=>c.disabled=true); return () => {finishes++; controls.forEach(c=>c.disabled=false);}; };
   f.ctx.showJobError = () => {};
   f.ctx.followJob = (job,log,callback) => { assert.equal(log,null); update=callback; return new Promise(resolve => {finishJob=resolve;}); };
-  vm.runInContext(source.slice(source.indexOf('$("fnTestCompilers").onclick'),source.indexOf('$("fnDeepRun").onclick')),f.ctx);
+  vm.runInContext(source.slice(source.indexOf('$("fnTestCompilers").onclick'),source.indexOf('async function followFunctionDeep(')),f.ctx);
   const compiler=f.el('fnTestCompilers').onclick();
   f.calls.at(-1).resolve({job:1}); await flush();
   const other=f.ctx.openFn('other'); f.calls.at(-1).resolve(detail('other')); await other;
@@ -70,12 +70,28 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   assert.equal(f.el('fnCompilerLog').textContent,''); assert.equal(finishes,0);
   let progressPaints=0;
   f.ctx.deepProgressView=()=>()=>{progressPaints++;};
-  vm.runInContext(source.slice(source.indexOf('$("fnDeepRun").onclick'),source.indexOf('$("fnDeepStop").onclick')),f.ctx);
+  vm.runInContext(source.slice(source.indexOf('async function followFunctionDeep('),source.indexOf('$("fnDeepStop").onclick')),f.ctx);
   const deep=f.el('fnDeepRun').onclick(); f.calls.at(-1).resolve({job:2}); await flush();
   const next=f.ctx.openFn('next'); f.calls.at(-1).resolve(detail('next')); await next;
   update(['OLD DEEP LOG'],{progress:{phase:'old'}}); finishJob({reason:'finished',tested:4}); await deep;
   assert.equal(f.el('fnDeepLog').textContent,''); assert.equal(progressPaints,1);
   assert.equal(f.el('fnDeepMinutes').disabled,false);
+  // Reopening follows the server's existing job, without posting another start request.
+  const reopened=f.ctx.openFn('reopen');
+  const request=f.calls.at(-1);
+  request.resolve({...detail('reopen'),deep_job:'existing-job'}); await reopened;
+  assert.equal(f.calls.at(-1),request,'Reattach must not POST another search');
+  assert.equal(f.el('fnDeepRun').disabled,true);
+  assert.equal(f.el('fnDeepMinutes').disabled,true);
+  f.ctx.refreshMap=async()=>{};
+  update(['17 candidates tested'],{progress:{tested:17,phase:'random rewrites'}});
+  assert.equal(f.el('fnDeepLog').textContent,'17 candidates tested');
+  assert.match(f.el('fnDeepStatus').textContent,/random rewrites/);
+  assert.equal(f.el('fnDeepStop').hidden,false);
+  assert.equal(f.el('fnDeepStop').disabled,false);
+  finishJob({reason:'Time limit reached',tested:17}); await flush();
+  assert.match(f.el('fnDeepStatus').textContent,/17 tested/);
+
 
   const p=setup(), project=read('project');
   vm.runInContext(project.slice(project.indexOf('const POLL_MS'),project.indexOf('function stopPolling')),p.ctx);

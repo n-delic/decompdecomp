@@ -1384,3 +1384,8 @@ the synchronization gate. The loading panel reports four actual loading steps (a
 summary, function list, view rendering), elapsed time, and available saved-file verification counts.
 Step completion is not an estimate of time remaining; a large function/attempt history may still
 make the function-list step longer than the others.
+
+A function’s Deep permuter panel reconnects to its background search when reopened,
+including after a page reload. It restores the live scorecard and technical output,
+keeps Run disabled while searching, and lets you stop the existing job. The latest
+job’s results remain viewable until the app restarts or you start another run.

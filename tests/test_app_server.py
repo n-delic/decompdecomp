@@ -1361,6 +1361,41 @@ def test_deep_permuter_route_starts_a_cancellable_job_for_one_function(app, monk
     assert checked == [('selected-game','selected_function',10,99)]
 
 
+def test_function_deep_job_can_be_reattached_and_duplicate_start_is_reused(app, monkeypatch):
+    from decompnet.app import deep_permuter
+    client, net, _ = app
+    release = threading.Event()
+    started = threading.Event()
+    calls = []
+    monkeypatch.setattr(deep_permuter, 'validate', lambda *args: None)
+    monkeypatch.setattr(net, 'function_detail', lambda slug, name: {'name': name})
+
+    def run(net, slug, name, minutes, variants, log):
+        calls.append(name)
+        log('Search still running')
+        log.progress({'tested': 17, 'phase': 'random rewrites', 'best_score': 42})
+        started.set()
+        assert release.wait(10)
+        return {'tested': 17, 'reason': 'Time limit reached'}
+
+    monkeypatch.setattr(deep_permuter, 'run', run)
+    payload = {'slug': 'reconnect-game', 'function': 'f', 'minutes': 1, 'max_variants': 99}
+    try:
+        first = client.post('/api/permuter/function', json=payload, headers={'X-Decomp': '1'}).json()
+        assert started.wait(5)
+        duplicate = client.post('/api/permuter/function', json=payload, headers={'X-Decomp': '1'}).json()
+        assert duplicate == first
+        detail = client.get('/api/function?slug=reconnect-game&name=f').json()
+        assert detail['deep_job'] == first['job']
+        assert 'deep_job' not in client.get('/api/function?slug=other-game&name=f').json()
+        snapshot = client.get('/api/job?id='+detail['deep_job']).json()
+        assert snapshot['progress']['tested'] == 17
+        assert snapshot['log'] == ['Search still running']
+        assert calls == ['f']
+    finally:
+        release.set()
+
+
 def test_deep_sweep_routes_validate_start_stop_and_status(app, monkeypatch):
     client, net, _ = app
     calls = []

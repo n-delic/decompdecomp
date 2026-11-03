@@ -36,7 +36,7 @@ const cases = [
   ["project", '$("localScan").onclick = async () => {', '\n};', "localScanLog", "localScan"],
   ["project", 'go.onclick = async () => {', '\n  };', "localImportLog", "localImport"],
   ["steering", '$("sourcePrepRun").onclick = async () => {', '\n};', "sourcePrepLog", "sourcePrepRun"],
-  ["function", '$("fnDeepRun").onclick = async () => {', '\n};', "fnDeepLog", "fnDeepRun"],
+  ["function", 'async function followFunctionDeep(job = null) {', '\n}\n$("fnDeepRun")', "fnDeepLog", "fnDeepRun"],
 ];
 function setup(file, marker, end, logId, buttonId, ranges = "") {
   const elements = new Map();
@@ -83,7 +83,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   ctx.showJobError = (el, message) => { el.error = message; showError(el, message); };
   const source = read(file), offset = source.indexOf(marker) + marker.length;
   assert.ok(offset >= marker.length, marker);
-  vm.runInContext('async function run() {' + source.slice(offset, source.indexOf(end, offset)) + '\n}', ctx);
+  vm.runInContext('async function run(' + (marker.startsWith('async function followFunctionDeep') ? 'job = null' : '') + ') {' + source.slice(offset, source.indexOf(end, offset)) + '\n}', ctx);
   return { ctx, get, log, button, start, poll, polls: () => polls };
 }
 async function main() {
@@ -317,7 +317,7 @@ main().catch((error) => { console.error(error); process.exitCode = 1; });
 {
   const source = read("steering"), start = source.indexOf("function renderDeepSweepResults(status) {");
   const end = source.indexOf("async function renderDeepSweep()", start);
-  const result = {dataset:{}, innerHTML:"", querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
+  const result = {dataset:{}, innerHTML:"", replaceChildren(){this.innerHTML="";}, querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
   let opened;
   const ctx = {S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
   vm.createContext(ctx); vm.runInContext(read("rewrite-performance"),ctx); vm.runInContext(source.slice(start,end), ctx);

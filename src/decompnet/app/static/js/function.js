@@ -259,9 +259,10 @@ async function refreshFn(first) {
       }
     }
 
+    if (d.deep_job && !deepPermuterTarget) followFunctionDeep(d.deep_job);
     $("fnDeepPanel").hidden = !deepPermuterBusy && (d.status !== "open" || d.best == null);
     const pass = d.deep_pass || {};
-    $("fnDeepHistory").textContent = pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
+    $("fnDeepHistory").textContent = deepPermuterBusy ? "Following this function’s deep search. Improvements save immediately." : pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
     $("fnCompilerTest").hidden = S.ov.kind === "fork" || !S.ov.compilers?.length;
     if (S.ov.kind !== "fork" && !compilerComparisonBusy) renderKnownCompilerProfiles(d);
     $("fnTestCompilers").disabled = !d.source || d.source_kind === "draft";
@@ -764,10 +765,10 @@ $("fnTestCompilers").onclick = async () => {
   finally { if (compilerComparisonTarget === target) { compilerComparisonBusy = false; compilerComparisonTarget = null; } if (active()) { finish(); await refreshFn(false); } }
 };
 
-$("fnDeepRun").onclick = async () => {
+async function followFunctionDeep(job = null) {
   const slug = S.slug, name = S.fn, gen = S.gen, nav = S.fnNav;
-  const active = () => S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
   const target = deepPermuterTarget = {};
+  const active = () => deepPermuterTarget === target && S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
   const log = $("fnDeepLog"), status = $("fnDeepStatus"), stop = $("fnDeepStop");
   const controls = [$("fnDeepRun"), $("fnDeepMinutes"), $("fnDeepVariants")];
   const minutes = Number($("fnDeepMinutes").value), maxVariants = Number($("fnDeepVariants").value);
@@ -777,20 +778,20 @@ $("fnDeepRun").onclick = async () => {
   deepPermuterBusy = true;
   log.hidden = false; stop.hidden = false; stop.disabled = true;
   showJobError(log, "");
-  status.textContent = `Starting deep search for ${name}…`;
+  status.textContent = job ? `Reconnecting to deep search for ${name}…` : `Starting deep search for ${name}…`;
   const done = beginWork(log, "Searching this function locally", controls, "Deep search finished.");
   const bar = log.previousElementSibling;
   $("fnDeepWork").append(log._workStatus);
   $("fnDeepWork").append(bar);
   try {
-    const { job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants } });
+    if (!job) ({ job } = await api("/api/permuter/function", { method: "POST", body: { slug, function: name, minutes, max_variants: maxVariants } }));
     if (active()) { deepPermuterJob = job; stop.disabled = false; }
     const result = await followJob(job, null, (lines, state) => {
       if (!active()) return;
       log.textContent = lines.join("\n");
       const p = state.progress;
       if (p) { renderProgress(p); status.textContent = `${name} · ${p.phase}`; }
-    });
+    }, active);
     if (!active()) return;
     renderProgress(result);
     status.textContent = `${name} · ${result.reason} · ${result.tested.toLocaleString()} tested. Improvements saved.`;
@@ -803,10 +804,12 @@ $("fnDeepRun").onclick = async () => {
     }
     else { status.textContent = error.message; $("fnDeepOutput").open = true; showJobError(log, error.message); }
   } finally {
-    if (deepPermuterTarget === target) { deepPermuterBusy = false; deepPermuterJob = null; deepPermuterTarget = null; }
-    if (active()) { stop.hidden = true; done(); }
+    const visible = active();
+    if (deepPermuterTarget === target) { deepPermuterBusy = false; deepPermuterJob = null; }
+    if (visible) { stop.hidden = true; done(); }
   }
-};
+}
+$("fnDeepRun").onclick = () => followFunctionDeep();
 $("fnDeepStop").onclick = async () => {
   if (!deepPermuterJob) return;
   const button = $("fnDeepStop"); button.disabled = true;

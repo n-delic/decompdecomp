@@ -345,13 +345,30 @@ def register(app: App) -> None:
         return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', 10000), data.get('repeat', False),
                             data.get('threads', 0))
 
+    function_searches = {}
+
+    def p_function(slug, request, data):
+        name = request.query_params.get("name", "")
+        detail = net.function_detail(slug, name)
+        with jobs._lock:
+            job = function_searches.get((slug, name)) or function_searches.get((slug, detail['name']))
+            if job in jobs.jobs:
+                detail['deep_job'] = job
+        return detail
+
     def p_deep_permuter(slug, request, data):
         from .. import deep_permuter
         name = str(data.get('function') or '')
         minutes, variants = data.get('minutes', 30), data.get('max_variants', 100000)
-        deep_permuter.validate(net, slug, name, minutes, variants)
-        return {'job': jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log),
-                                  cancel_message='Deep permuter stopped. Verified improvements are saved.')}
+        with jobs._lock:
+            previous = function_searches.get((slug, name))
+            if previous and jobs.jobs.get(previous, {}).get('state') == 'running':
+                return {'job': previous}
+            deep_permuter.validate(net, slug, name, minutes, variants)
+            job = jobs.start('deep-permuter', lambda log: deep_permuter.run(net, slug, name, minutes, variants, log),
+                             cancel_message='Deep permuter stopped. Verified improvements are saved.')
+            function_searches[slug, name] = job
+            return {'job': job}
 
     def p_finish_near(slug, request, data):
         from .. import finish_near
@@ -504,7 +521,7 @@ def register(app: App) -> None:
         "/api/save": (p_save, ["POST"]),
         "/api/live": (p_live, ["GET"]),
         "/api/transcript": (p_transcript, ["GET", "POST"]),
-        "/api/function": (lambda s, r, d: net.function_detail(s, r.query_params.get("name", "")), ["GET"]),
+        "/api/function": (p_function, ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]),
