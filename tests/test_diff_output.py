@@ -49,6 +49,34 @@ def test_a_diff_says_what_differs_once_registers_and_order_are_set_aside():
     assert scoring.shape("mov ecx, ?g_state@@3UState@@A+0x1946") == scoring.shape("mov edx, _D_0073BACA")
 
 
+@pytest.mark.parametrize("cs_arch,cs_modes,target,yours,same", [
+    # x86: a prefix doesn't hide the opcode after it
+    ("X86", ["32"], "f00108", "f02908", False),  # lock add vs lock sub
+    ("X86", ["32"], "f3a5", "f3a4", False),  # rep movsd vs rep movsb
+    # x86: an index's scale in a stack slot is an element's size, not the frame's layout
+    ("X86", ["32"], "8b448c18", "8b44cc18", False),  # [esp + ecx*4 + 0x18] vs [esp + ecx*8 + 0x18]
+    ("X86", ["32"], "8b448c18", "8b548c1c", True),  # another register and slot: the same
+    # ARM: a shift in a stack slot likewise; another offset is the frame's
+    ("ARM", ["ARM"], "02019de7", "82019de7", False),  # [sp, r2, lsl #2] vs lsl #3
+    ("ARM", ["ARM"], "10009de5", "14109de5", True),  # ldr r0, [sp, #0x10] vs ldr r1, [sp, #0x14]
+    # MIPS and PowerPC: a load of another size differs, another slot doesn't
+    ("MIPS", ["MIPS32", "BIG_ENDIAN"], "8fa20054", "87a20054", False),
+    ("MIPS", ["MIPS32", "BIG_ENDIAN"], "8fa20054", "8fa30058", True),
+    ("PPC", ["32", "BIG_ENDIAN"], "80610010", "a0610010", False),
+    ("PPC", ["32", "BIG_ENDIAN"], "80610010", "80810014", True),
+])
+def test_the_residue_reads_real_instructions_of_each_arch(cs_arch, cs_modes, target, yours, same):
+    """`lock add` vs `lock sub`, and `[esp + ecx*4 + 0x18]` vs `ecx*8`, came out as no difference, so the diff said
+    "your instructions are the target's" over a real one. The rows here are capstone's own text, as the diff's are."""
+    import capstone
+
+    mode = sum(getattr(capstone, f"CS_MODE_{m}") for m in cs_modes)
+    md = capstone.Cs(getattr(capstone, f"CS_ARCH_{cs_arch}"), mode)
+    t, y = (next(md.disasm(bytes.fromhex(code), 0x1000)) for code in (target, yours))
+    rows = [("|", f"{t.mnemonic} {t.op_str}", f"{y.mnemonic} {y.op_str}")]
+    assert (scoring.residue(rows) == ([], [])) == same, (rows, scoring.shape(rows[0][1]), scoring.shape(rows[0][2]))
+
+
 def test_last_diff_gives_every_row_of_the_agents_last_compile_without_compiling(tmp_path):
     net, _ = _game(tmp_path, [("f", 200, "open")])
     a, _ = net.local_agent("a")

@@ -202,6 +202,11 @@ _KEYWORDS = {"ptr", "byte", "word", "dword", "qword", "tbyte", "xmmword", "short
 _PADDING = {"nop", "int3", "lea R, [R]", "lea R, [R+0x0]"}
 # a memory operand through the stack pointer: x86 [esp+0x18], MIPS 0x54($sp), PowerPC 0x10(r1), ARM [sp, #0x10]
 _STACK_SLOT = re.compile(r"\[[^\]]*\b(?:esp|ebp|rsp|rbp|sp)\b[^\]]*\]|-?(?:0x[0-9a-fA-F]+|\d+)\((?:\$sp|\$fp|r1|sp)\)")
+# a number in a stack slot, and what comes before it: an index's scale (`ecx*4`) or shift (ARM's `lsl #2`) is the
+# element's size, not the frame's layout, and stays
+_SLOT_NUMBER = re.compile(r"(\*\s*|\b(?:lsl|lsr|asr|ror)\s+#?)?(?<![\w$@?.])(-?(?:0x[0-9a-fA-F]+|\d+))(?![\w$@?])")
+# x86 prefixes: `lock add` is an add, not a lock of something called add
+_PREFIXES = {"lock", "rep", "repe", "repz", "repne", "repnz", "xacquire", "xrelease", "bnd", "notrack"}
 RESIDUE_SHOWN = 5
 
 
@@ -214,14 +219,20 @@ def shape(text: str) -> str:
         return ""
     mnemonic, _, ops = t.partition(" ")
     mnemonic = mnemonic.lower()
+    while mnemonic in _PREFIXES and ops.strip():
+        word, _, ops = ops.strip().partition(" ")
+        mnemonic = f"{mnemonic} {word.lower()}"
 
     def name(m: re.Match) -> str:
         word = m.group(0)
         if _REG.match(word.lower()):
             return "R"
         return word if word.lower() in _KEYWORDS else "S"
+
+    def slot(m: re.Match) -> str:
+        return _SLOT_NUMBER.sub(lambda n: n.group(0) if n.group(1) else "N", m.group(0))
     # a stack slot's offset follows the frame's layout (the frame's size, `sub esp, 0x10`, stays as it is)
-    ops = _STACK_SLOT.sub(lambda m: _NUMBER.sub("N", m.group(0)), ops.strip())
+    ops = _STACK_SLOT.sub(slot, ops.strip())
     ops = _NAME.sub(name, ops)
     ops = re.sub(r"\bS\s*[-+]\s*(?:0x[0-9a-fA-F]+|\d+)", "S", ops)  # a symbol and an offset: a place, like a symbol
     if mnemonic.startswith(("j", "b", "loop")):
