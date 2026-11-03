@@ -55,7 +55,7 @@ function helperState(s, claim) {
     return `Working on ${fnLink(claim.name)} (${facts.join(" · ")})${claim.attempts ? "" : ` · ${reading(claim)}`}`;
   }
   if (s.state === "starting") return s.why ? `Starting: ${esc(s.why)}` : "Starting…";
-  if (s.state === "waiting") return `Waiting: ${esc(s.why || "a moment")}${s.until ? ` · carries on at ${hhmm(s.until)}` : ""}`;
+  if (s.state === "waiting") return `Waiting: ${esc(s.why || "a moment")}${s.until ? ` · next check at ${hhmm(s.until)}` : ""}`;
   if (s.state === "paused") return `Paused: ${esc(s.why)}`;
   return s.stopped_by === "you" || !s.why ? "Stopped by you" : `Stopped: ${esc(s.why)}`;
 }

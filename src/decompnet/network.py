@@ -888,6 +888,29 @@ class Network:
             project, json.dumps(list(excluded)), policy.get("match_below"), policy.get("match_below"), policy.get("max_tries"), agent.id,
             policy.get("max_tries"))["n"]
 
+    def selection_wait_reason(self, project: str, agent: Agent) -> tuple[str, str]:
+        """Explain the automatic-selection gate without implying its timer resets exhaustion."""
+        total = self.store.one("SELECT COUNT(*) n FROM functions f JOIN projects p ON p.id=f.project_id "
+                               "WHERE p.slug=? AND f.status='open'", project)["n"]
+        selected = self.selection_remaining(project, agent, include_paused=True)
+        eligible = self.selection_remaining(project, agent)
+        paused = max(0, selected - eligible)
+        filtered = max(0, total - selected)
+        facts = [f"{paused} unchanged candidates paused in this worker's selection"] if paused else []
+        if filtered:
+            facts.append(f"{filtered} open functions excluded by this worker's Work selection")
+        if not facts:
+            facts.append(f"{total} open functions; none currently available for automatic selection")
+        held = self.store.one("SELECT COUNT(*) n FROM claims c JOIN functions f ON f.id=c.function_id "
+                              "JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.status='open' "
+                              "AND c.expires_at>?", project, time.time())["n"]
+        why = "; ".join(facts) + f". Project: {total} open functions, {held} currently claimed (counts can overlap)."
+        todo = ("No AI request is running. Checks again every 30 seconds; this does not reset paused candidates. "
+                "Candidate pauses are shared across agents after repeated releases or reported exhaustion. "
+                "Work resumes when source, build context, symbols, project instructions or repair rules change. "
+                "An agent can still claim an individual function explicitly by name. Change Work selection if functions are filtered out.")
+        return why, todo
+
     def sdk_functions(self, proj) -> dict:
         """Recorded SDK identities; identification is separate from a verified C match."""
         out = {}

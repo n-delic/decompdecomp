@@ -1156,8 +1156,8 @@ class Manager:
                     break
             if task != 'readable' and not self.net.selection_remaining(s.slug,agent) and not self.net.store.one(
                     'SELECT 1 FROM claims WHERE agent_id=?',agent.id):
-                self._wait(s,'No eligible functions: unchanged candidates are paused.',time.time()+30,
-                           'Waiting for candidate, build-context or repair changes; no model call is running.')
+                why, todo = self.net.selection_wait_reason(s.slug, agent)
+                self._wait(s, why, time.time()+30, todo)
                 continue
             if (cap := self.over_budget(s.slug)) is not None:
                 self._finish(s, f"the agents on this project have spent the ${cap:.2f} budget (Setup)")

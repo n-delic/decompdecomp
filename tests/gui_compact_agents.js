@@ -42,3 +42,8 @@ vm.runInContext(base.split('\n').filter(line=>line.startsWith('const pctOf =')||
 c.fnLink=name=>name;c.reading=()=> 'Reading';
 vm.runInContext(source.slice(source.indexOf('function helperState('),source.indexOf('/* What each model cost')),c);
 assert.equal(c.helperState({state:'working'},{name:'f',n_insns:85,best_score:85,attempts:40}),'Working on f (99.0% match · 85 instructions)');
+
+// A polling deadline is not a promise that work will become available then.
+c.esc=String; c.hhmm=()=> '12:54';
+assert.match(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/next check at 12:54/);
+assert.doesNotMatch(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/carries on/);
