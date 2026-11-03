@@ -113,7 +113,17 @@ def register(app: App) -> None:
         if (bad := guard(request, write=request.method == "POST")):
             return bad
         if request.method == "GET":
-            return JSONResponse({"helpers": len(manager.running()), "busy": app.busy(), "tray": window.IN_TRAY})
+            running = set(manager.running())
+            projects = {p['slug']: p['name'] for p in app.net.store.all('SELECT slug,name FROM projects')}
+            workers = [{'id': s.id, 'name': s.agent_name or s.label, 'project': projects.get(s.slug, s.slug),
+                        'slug': s.slug, 'state': s.state, 'why': s.why or ''}
+                       for s in list(manager.sessions.values()) if s.id in running]
+            with app.jobs._lock:
+                tasks = [{'name': j['kind'], 'phase': (j.get('progress') or {}).get('phase', ''),
+                          'function': (j.get('progress') or {}).get('function', '')}
+                         for j in app.jobs.jobs.values() if j['state'] == 'running']
+            return JSONResponse({"helpers": len(workers), "workers": workers, "tasks": tasks,
+                                 "busy": app.busy(), "tray": window.IN_TRAY})
         if (await body(request)).get("keep"):
             await call(window.close_app)
             return JSONResponse({"ok": True})

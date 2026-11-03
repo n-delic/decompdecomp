@@ -1880,3 +1880,23 @@ def test_map_reads_do_not_start_saved_progress_verification(tmp_path,monkeypatch
     net.progress._activity('game',phase='Verifying saved functions',done=2,total=4)
     activity=client.get('/api/project-loading?slug=game').json()['verification']
     assert activity['done']==2 and activity['total']==4
+
+
+def test_close_dialog_identifies_active_workers_without_stopping_them(app, monkeypatch):
+    from types import SimpleNamespace
+    client, _, manager = app
+    def worker(sid, name, slug, state, why=''):
+        return SimpleNamespace(id=sid, agent_name=name, label=name, slug=slug, state=state, why=why)
+    sessions = {'one': worker('one', 'claude-1', 'resident-evil', 'working'),
+                'two': worker('two', 'permuter-2', 'v-rally', 'waiting', 'Waiting for eligible functions'),
+                'off': worker('off', 'stopped-3', 'v-rally', 'stopped')}
+    monkeypatch.setattr(manager, 'sessions', sessions)
+    monkeypatch.setattr(manager, 'running', lambda: ['one', 'two'])
+    result = client.get('/api/close').json()
+    assert result['busy'] and result['helpers'] == 2
+    assert [w['name'] for w in result['workers']] == ['claude-1', 'permuter-2']
+    assert result['workers'][0]['project'] == 'resident-evil'
+    assert result['workers'][1]['state'] == 'waiting'
+    assert result['workers'][1]['why'] == 'Waiting for eligible functions'
+    assert isinstance(result['tasks'], list)
+    assert sessions['one'].state == 'working'

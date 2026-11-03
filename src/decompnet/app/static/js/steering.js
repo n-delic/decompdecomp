@@ -77,16 +77,20 @@ $("joinBtn").onclick = openJoin;
 function decompClose() {
   api("/api/close").then((st) => {
     if (!st.busy) return api("/api/close", { method: "POST", body: {} });
-    const what = st.helpers ? `${plural(st.helpers, "helper")} ${st.helpers === 1 ? "is" : "are"} still working on your games.`
-      : "A job is still running.";
+    const what = st.helpers ? `${plural(st.helpers, "worker")} ${st.helpers === 1 ? "is" : "are"} still active on your games.`
+      : "Background work is still running.";
+    const workers = st.workers || [], tasks = st.tasks || [];
+    const context = (workers.length ? `<div class="compiler-table"><table><thead><tr><th>Worker</th><th>Project</th><th>Status</th></tr></thead><tbody>${workers.map(w => `<tr><td class="mono">${esc(w.name)}</td><td>${esc(w.project)}</td><td>${esc(w.state)}${w.why ? `<br><span class="muted small">${esc(w.why)}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>` : "")
+      + (tasks.length ? `<h3>Background tasks</h3><ul>${tasks.map(t => `<li>${esc(t.name)}${t.phase ? ` · ${esc(t.phase)}` : ""}${t.function ? ` · ${esc(t.function)}` : ""}</li>`).join("")}</ul>` : "");
     const back = st.tray ? "The decompdecomp icon in the tray brings the window back." : "Open decompdecomp again to come back to them.";
-    const body = dialog("Close decompdecomp?", `<p>${what}</p>
+    const body = dialog("Close decompdecomp?", `<p>${what}</p>${context}
       <p class="muted small">They can keep working without the window. ${back}</p>
-      <div class="row"><button class="primary" id="closeKeep" type="button">Keep them working</button>
-        <button class="ghost" id="closeQuit" type="button">Stop them and quit</button>
+      <div class="row"><button class="ghost" id="closeKeep" type="button">Keep them working</button>
+        <button class="primary" id="closeQuit" type="button">Stop them and quit</button>
         <button class="ghost" data-close type="button">Cancel</button></div>`);
     body.querySelector("#closeKeep").onclick = () => api("/api/close", { method: "POST", body: { keep: true } }).catch((e) => toast(esc(e.message), "err"));
     body.querySelector("#closeQuit").onclick = () => api("/api/close", { method: "POST", body: {} }).catch((e) => toast(esc(e.message), "err"));
+    body.querySelector("#closeQuit").focus();
   }).catch(() => api("/api/close", { method: "POST", body: {} }));
   return "wait";
 }

@@ -1389,3 +1389,8 @@ A function’s Deep permuter panel reconnects to its background search when reop
 including after a page reload. It restores the live scorecard and technical output,
 keeps Run disabled while searching, and lets you stop the existing job. The latest
 job’s results remain viewable until the app restarts or you start another run.
+
+When closing the window with workers active, the confirmation lists their names,
+projects and current states, plus running background tasks. **Stop them and quit**
+is highlighted and focused by default; **Keep them working** leaves the app running
+without its window.
