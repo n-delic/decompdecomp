@@ -1,9 +1,11 @@
-"""Explicit source-code handoff: drain work before changing files or replacing this process."""
+"""Prepare source updates separately; use bounded checkpoints before replacing this process."""
 import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
+import time
 from pathlib import Path
 
 from ..hostenv import NO_WINDOW, find_uv
@@ -12,7 +14,7 @@ from . import edition, window
 
 def command(argv, cwd):
     env=dict(os.environ,GIT_TERMINAL_PROMPT='0')
-    for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE'):
+    for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE','UV_PROJECT_ENVIRONMENT','UV_PROJECT'):
         env.pop(key,None)
     result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=600,
                             stdin=subprocess.DEVNULL, env=env, creationflags=NO_WINDOW)
@@ -49,13 +51,17 @@ def checkpoint(net, state):
 
 def idle_wait(net, state, seconds):
     """Idle services must notice a queued update without waiting minutes to poll."""
-    import time
     until = time.monotonic() + seconds
     while not state.stop.is_set() and time.monotonic() < until:
         if getattr(net, 'source_update_pending', False):
             checkpoint(net, state)
             return
         state.stop.wait(min(.2, max(0, until - time.monotonic())))
+
+
+ACTIVE = ('preparing', 'waiting', 'deferred', 'updating', 'restarting')
+DRAIN_SECONDS = 15
+RETRY_SECONDS = 60
 
 
 class Runtime:
@@ -69,7 +75,8 @@ class Runtime:
         return {'job':dict(self.job), 'path':self.app.settings.data.get('source_runtime_path') or
                 (str(edition.CHECKOUT_ROOT) if edition.DEV else ''),
                 'home':str(self.app.home.parent), 'source_running':edition.DEV,
-                'uv_available':bool(find_uv())}
+                'uv_available':bool(find_uv()),
+                'automatic':bool(self.app.settings.data.get('source_runtime_auto'))}
 
     def busy(self):
         app=self.app
@@ -85,6 +92,73 @@ class Runtime:
             if any(s.state=='running' for s in owner.jobs.values()):
                 return True
         return any(s.get('state')=='running' for s in net.autopilots.values()) or any(not value.get('paused') for value in list(net.progress.activity.values()))
+
+    def hold(self, value):
+        with self.app.manager._lock, self.app.jobs._lock:
+            self.app.net.source_update_pending = value
+            self.app.manager.source_update_pending = value
+            self.app.jobs.source_update_pending = value
+
+    def configure(self, automatic):
+        if not isinstance(automatic, bool):
+            raise ValueError('Automatic source updates must be true or false.')
+        self.app.settings.data['source_runtime_auto'] = automatic
+        if automatic:
+            self.app.settings.data['check_updates'] = True
+        self.app.settings.save()
+        return self.status()
+
+    def check(self):
+        """The existing update watcher calls this; never install merely by choosing a path."""
+        if not self.app.settings.data.get('source_runtime_auto') or self.job['state'] in ACTIVE:
+            return False
+        if not edition.DEV:
+            return False  # First source launch is always explicit, with its data choice.
+        from .updates import REPO, installed
+        repo = installed().get('repo') or REPO
+        git = shutil.which('git')
+        if not git:
+            return False
+        remote = command([git, 'ls-remote', f'https://github.com/{repo}.git', 'refs/heads/main'], edition.CHECKOUT_ROOT)
+        head = command([git, 'rev-parse', 'HEAD'], edition.CHECKOUT_ROOT)
+        if remote.split() and remote.split()[0] != head:
+            self.start(str(edition.CHECKOUT_ROOT), 'current')
+            return True
+        return False
+
+    def prepare(self, folder, git, uv, repo):
+        # Neither the active checkout nor its environment may change under lazy imports/compiles.
+        root = self.app.home / 'source-runtimes'
+        root.mkdir(parents=True, exist_ok=True)
+        staged = Path(tempfile.mkdtemp(prefix='main-', dir=root))
+        steps = [([git, 'clone', '--depth', '1', '--single-branch', '--branch', 'main', '--',
+                   f'https://github.com/{repo}.git', str(staged)], folder),
+                 ([uv, 'sync', '--locked', '--python', '3.12'], staged),
+                 ([uv, 'run', '--no-sync', 'python', '-c', 'import decompnet.app.cli'], staged)]
+        for argv, cwd in steps:
+            if self.cancel.is_set():
+                break
+            command(argv, cwd)
+        return staged
+
+    def drain(self):
+        """Try a bounded checkpoint; never leave every worker held behind a long-running job."""
+        while not self.cancel.is_set():
+            self.hold(True)
+            self.job.update(state='waiting', message='Update ready. Checking for a safe restart (up to 15 seconds); active work is not interrupted.')
+            until = time.monotonic() + DRAIN_SECONDS
+            while self.busy():
+                if self.cancel.wait(.2):
+                    return False
+                if time.monotonic() >= until:
+                    break
+            else:
+                return True
+            self.hold(False)
+            self.job.update(state='deferred', message='Update ready; active work is continuing. All agent holds released. Another restart check in 60 seconds.')
+            if self.cancel.wait(RETRY_SECONDS):
+                return False
+        return False
 
     def start(self,path,data_mode):
         if data_mode not in ('current','development'):
@@ -107,67 +181,58 @@ class Runtime:
             if _state(target/'.decomp/server.json'):
                 raise ValueError('The development app is already running. Close it before switching this launcher.')
         with self.lock:
-            if self.job['state'] in ('waiting','updating','restarting'):
+            if self.job['state'] in ACTIVE:
                 raise ValueError('A source handoff is already queued.')
             if self.app.updater.job['state'] in ('installing','restarting'):
                 raise ValueError('Wait for the packaged update to finish first.')
             self.cancel.clear()
             self.app.settings.data['source_runtime_path']=str(folder)
             self.app.settings.save()
-            self.job={'state':'waiting','message':'Waiting for active sessions and current background batches to save their work. Usage-limit waits do not block restart; agents resume with their saved limits.', 'path':str(folder)}
-            with self.app.manager._lock, self.app.jobs._lock:
-                self.app.net.source_update_pending=True
-                self.app.manager.source_update_pending=True
-                self.app.jobs.source_update_pending=True
+            self.job={'state':'preparing','message':'Downloading and checking the update in a separate runtime. Agents and background jobs continue working.', 'path':str(folder)}
         threading.Thread(target=self.run,args=(folder,git,uv,target,repo),daemon=True,name='source-runtime').start()
         return self.status()
 
     def stop(self):
-        if self.job['state']=='waiting':
+        if self.job['state'] in ('preparing','waiting','deferred'):
             self.cancel.set()
         else:
-            raise ValueError('Only a waiting handoff can be cancelled. File update or restart has already started.')
+            raise ValueError('The restart has already started. Wait for the app to reconnect.')
         return self.status()
 
     def run(self,folder,git,uv,target,repo):
         try:
-            while self.busy():
-                if self.cancel.wait(1):
-                    self.job.update(state='cancelled',message='Source handoff cancelled. Normal work can start again.')
-                    return
             if self.cancel.is_set():
-                self.job.update(state='cancelled',message='Source handoff cancelled.')
+                self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
                 return
-            self.app.jobs.source_update_preparing=True
-            self.job.update(state='updating',message='Updating clean main checkout and preparing its Python environment…')
-            validate(str(folder),repo)  # edits made while waiting must never be overwritten
-            command([git,'pull','--ff-only','origin','main'],folder)
-            command([uv,'sync','--locked','--python','3.12'],folder)
-            # Verify the replacement interpreter/imports before shutting down the current app.
-            command([uv,'run','--no-sync','python','-c','import decompnet.app.cli'],folder)
+            folder = self.prepare(folder, git, uv, repo)
+            if self.cancel.is_set():
+                self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
+                return
             if target.resolve()!=self.app.home.parent.resolve():
                 from .cli import _state
                 if _state(target/'.decomp/server.json'):
                     raise ValueError('The development app started while this operation was waiting. Close it and retry.')
                 env=dict(os.environ,DECOMP_HOME=str(target))
-                for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE','DECOMP_RESTART','DECOMP_PORT'):
+                for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE','DECOMP_RESTART','DECOMP_PORT','UV_PROJECT_ENVIRONMENT','UV_PROJECT'):
                     env.pop(key,None)
                 subprocess.Popen([uv,'run','--project',str(folder),'--no-sync','python','-m','decompnet.app.cli'],
                                  cwd=folder,env=env,stdin=subprocess.DEVNULL,creationflags=NO_WINDOW)
                 self.job.update(state='done',message=f'Development app launched with separate data at {target}. This app keeps its current data and continues running.')
                 return
+            if not self.drain():
+                self.job.update(state='cancelled',message='Update cancelled. Work continues normally.')
+                return
+            self.app.jobs.source_update_preparing=True
             self.job.update(state='restarting',message='Source ready. Restarting into the checkout; agents resume with the selected app data.')
             self.app.updater.before_restart()
             env=dict(os.environ,DECOMP_HOME=str(target),DECOMP_RESTART=json.dumps(
                 {'port':self.app.port,'secret':self.app.secret,'window':window.is_open()}))
-            for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE'):
+            for key in ('PYTHONHOME','PYTHONPATH','VIRTUAL_ENV','DECOMP_PACKAGE','UV_PROJECT_ENVIRONMENT','UV_PROJECT'):
                 env.pop(key,None)
             os.chdir(folder)
             os.execve(uv,[uv,'run','--project',str(folder),'--no-sync','python','-m','decompnet.app.cli','--port',str(self.app.port)],env)
         except (OSError,ValueError,subprocess.SubprocessError) as error:
             self.job.update(state='error',message=str(error) + (' Restart failed after shutdown; reopen decompdecomp from the checkout.' if self.job['state']=='restarting' else ' Current app has not been restarted.'))
         finally:
-            self.app.net.source_update_pending=False
-            self.app.manager.source_update_pending=False
-            self.app.jobs.source_update_pending=False
+            self.hold(False)
             self.app.jobs.source_update_preparing=False

@@ -1181,10 +1181,10 @@ class Manager:
         while not s.stop.is_set():
             if not focused_agents.ready(self,s,agent):continue
             if getattr(self, 'source_update_pending', False):
-                why = 'Source update queued: letting existing work finish before restart'
+                why = 'Update ready: brief restart check (up to 15 seconds)'
                 if s.why != why:
                     self._set(s, 'waiting', why, None,
-                              'No new AI session starts until the update finishes or is cancelled.')
+                              'Your work is saved. Sessions resume after restart, or within 15 seconds if active work needs longer.')
                 s.stop.wait(1)
                 continue
             if self._left(s.slug, task := s.options.get("task") or "") == 0:

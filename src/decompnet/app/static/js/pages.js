@@ -303,7 +303,7 @@ async function showSettingsPage() {
   const from = inst.channel === "branch" ? `the ${esc(inst.branch)} branch @ <code>${esc((inst.commit || "?").slice(0, 7))}</code>` : "releases on GitHub";
   $("setAbout").innerHTML = `<p class="small">${esc(versionLine(st))} on ${esc(st.platform)}. Free and open source (AGPL-3.0): <a class="link" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">its source</a>. Everything runs on this computer: no account, nothing sent to us.</p>
     <p class="small muted">A continuation of <a class="link" href="https://github.com/i12bp8/decomp.wtf" target="_blank" rel="noopener">decomp.wtf</a> by Sam Wolfs, who built it up to 0.10.6. Thank you, Sam.</p>
-    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">Running from a Git checkout. Use the source launcher below to pull main and restart when idle.</p></div>` : `
+    ${st.dev ? `<div class="field"><span>Updates</span><p class="muted small">Running from a Git checkout. Use the source launcher below to prepare main updates in the background and enable automatic updates.</p></div>` : `
     <div class="field"><span>Updates come from ${esc(inst.repo || "RetroReversing/decompdecomp")} · ${from}</span><div class="row"><span class="muted small grow" id="upText">Checking…</span><button class="ghost small-btn" id="upCheck" type="button">Check now</button></div></div>
     <label class="check"><input type="checkbox" id="checkUpdateSet" ${st.settings.check_updates ? "checked" : ""}><span><b>Look for updates</b> now and then (it only asks ${inst.channel === "branch" ? "GitHub for the branch's newest commit" : "GitHub which version is current"}; nothing about you or your projects is sent).</span></label>
     <label class="check"><input type="checkbox" id="autoUpdateSet" ${st.settings.auto_update ? "checked" : ""}><span><b>Install updates by itself</b> when no helper agent is working (it restarts in a few seconds; agents carry on).</span></label>
@@ -319,7 +319,7 @@ async function showSettingsPage() {
     <div class="row"><a class="link small" href="https://github.com/RetroReversing/decompdecomp" target="_blank" rel="noopener">Source code</a></div>`;
   const runtimeButton = document.createElement("button");
   runtimeButton.type = "button"; runtimeButton.className = "ghost";
-  runtimeButton.textContent = "Run from Git / update when idle…";
+  runtimeButton.textContent = "Run from Git / background updates…";
   runtimeButton.onclick = sourceRuntimeDialog;
   $("setAbout").append(runtimeButton);
   const showUpdate = (u) => {
@@ -673,17 +673,24 @@ async function sourceRuntimeDialog() {
     <label class="field"><span>Projects and settings</span><select data-runtime-data><option value="development">Separate development data (~/Decomp-dev)</option><option value="current">Keep this app’s current projects and settings</option></select></label>
     <button type="button" class="ghost small-btn" data-runtime-download>Download a new checkout…</button>
     <p class="small muted" data-runtime-home></p>
-    <p class="small muted">New agent sessions and jobs are held while current work finishes. Keeping current data restarts this process; separate development data opens another app and leaves this one running. Agents waiting for usage limits do not block the update. Active AI sessions and background batches finish saving first; continuous draft and permutation services pause between batches. After restart, agents resume with their existing usage-limit timers. Finite jobs, including deep passes, finish before restart. The checkout is then pulled with fast-forward only, dependencies are prepared, and the checkout launches. Existing work is not migrated or copied. Close this dialog and return here to check progress.</p>
-    <div class="row"><button class="primary" type="button" data-runtime-go>Update after current work is saved</button><button class="ghost" type="button" data-runtime-cancel hidden>Cancel queued restart</button></div>
+    <label class="check"><input type="checkbox" data-runtime-auto><span><b>Automatically update from main</b><br><span class="small muted">Download and prepare updates while work continues. Try a brief restart checkpoint; if work needs longer, release the hold and retry later. Agents resume with saved usage limits.</span></span></label>
+    <p class="small muted">Updates are prepared in a separate runtime; your checkout and its Python environment stay unchanged. Python changes require a brief restart. Active sessions and finite jobs are allowed to finish; each restart check holds new sessions for at most 15 seconds, then work continues until the next check. Separate development data opens another app without pausing this one.</p>
+    <div class="row"><button class="primary" type="button" data-runtime-go>Prepare update in background</button><button class="ghost" type="button" data-runtime-cancel hidden>Cancel queued restart</button></div>
     <p role="status" aria-live="polite" data-runtime-status></p><div class="workbar" role="progressbar" aria-label="Preparing source runtime" data-runtime-bar hidden><i></i></div>`);
   const get = selector => body.querySelector(selector), go=get('[data-runtime-go]'), cancel=get('[data-runtime-cancel]'), path=get('[data-runtime-path]');
   const render = info => {
-    const job=info.job || {}, busy=['waiting','updating','restarting'].includes(job.state);
+    const job=info.job || {}, busy=['preparing','waiting','deferred','updating','restarting'].includes(job.state);
     go.disabled=busy; path.disabled=busy; get('[data-runtime-data]').disabled=busy; get('[data-runtime-browse]').disabled=busy;
-    cancel.hidden=job.state!=='waiting'; get('[data-runtime-bar]').hidden=!busy;
+    cancel.hidden=!['preparing','waiting','deferred'].includes(job.state); get('[data-runtime-auto]').checked=!!info.automatic; get('[data-runtime-bar]').hidden=!busy;
     get('[data-runtime-status]').textContent=job.message || (info.source_running ? 'Running from source. Pull main here to update without rebuilding the app.' : 'Choose a checkout and which app data to use.');
     get('[data-runtime-home]').textContent=`Current app data: ${info.home}. Keeping it switches this process to source code; the installed app bundle stays unchanged.`;
     if (!path.value) path.value=info.path || '';
+  };
+  get('[data-runtime-auto]').onchange=async()=>{
+    const control=get('[data-runtime-auto]'); control.disabled=true;
+    try {render(await api('/api/update/runtime',{method:'POST',body:{action:'automatic',enabled:control.checked}}));}
+    catch(error){control.checked=!control.checked;get('[data-runtime-status]').textContent=error.message;}
+    finally {control.disabled=false;}
   };
   get('[data-runtime-download]').onclick=()=>{ get('[data-runtime-download]').hidden=true; sourceCheckoutPanel(body); };
   get('[data-runtime-browse]').onclick=async()=>{

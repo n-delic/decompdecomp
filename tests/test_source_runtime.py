@@ -32,7 +32,7 @@ def test_checkout_validation_preserves_local_work(tmp_path):
 
 def make_app(tmp_path):
     return NS(home=tmp_path/'.decomp',port=12345,secret='test',
-              manager=NS(sessions={},source_update_pending=True,_lock=threading.RLock()),jobs=NS(jobs={},source_update_pending=True,_lock=threading.RLock()),
+              manager=NS(sessions={},source_update_pending=False,_lock=threading.RLock()),jobs=NS(jobs={},source_update_pending=False,_lock=threading.RLock()),
               net=NS(drafter=NS(jobs={}),permuter=NS(jobs={}),twins=NS(jobs={}),autopilots={},progress=NS(activity={})),
               updater=NS(before_restart=lambda:None),settings=NS(data={}))
 
@@ -48,7 +48,7 @@ def test_wait_cancellation_never_changes_checkout_or_stops_work(tmp_path,monkeyp
 
 def test_idle_handoff_checks_environment_before_shutdown_and_preserves_home(tmp_path,monkeypatch):
     app=make_app(tmp_path);r=runtime.Runtime(app);calls=[];envs=[]
-    monkeypatch.setattr(runtime,'validate',lambda *args:calls.append('validate'))
+    monkeypatch.setattr(r,'prepare',lambda *args: calls.append('prepared') or tmp_path)
     monkeypatch.setattr(runtime,'command',lambda argv,cwd:calls.append(argv))
     monkeypatch.setattr(runtime.os,'chdir',lambda path:None)
     monkeypatch.setattr(runtime.window,'is_open',lambda:True)
@@ -57,8 +57,7 @@ def test_idle_handoff_checks_environment_before_shutdown_and_preserves_home(tmp_
         envs.append((argv,env));raise OSError('test exec')
     monkeypatch.setattr(runtime.os,'execve',execute)
     r.run(tmp_path,'git','uv',tmp_path,'example/repo')
-    assert calls[1]==['git','pull','--ff-only','origin','main']
-    assert '--locked' in calls[2]
+    assert calls[0]=='prepared'
     assert calls[-1]=='shutdown'
     argv,env=envs[0]
     assert env['DECOMP_HOME']==str(tmp_path) and '--no-sync' in argv
@@ -85,7 +84,7 @@ def test_idle_checks_all_background_work(tmp_path):
     assert r.busy()
 
 
-def test_queue_requires_explicit_data_choice_and_holds_new_work(tmp_path,monkeypatch):
+def test_queue_requires_explicit_data_choice_and_keeps_work_running(tmp_path,monkeypatch):
     app=make_app(tmp_path);app.settings.save=lambda:None;app.updater.job={'state':'idle'}
     r=runtime.Runtime(app)
     monkeypatch.setattr(runtime,'validate',lambda *args:(tmp_path,'git'))
@@ -98,9 +97,9 @@ def test_queue_requires_explicit_data_choice_and_holds_new_work(tmp_path,monkeyp
     with pytest.raises(ValueError,match='Choose current'):
         r.start(str(tmp_path),'')
     result=r.start(str(tmp_path),'current')
-    assert result['job']['state']=='waiting'
+    assert result['job']['state']=='preparing'
     assert started[0]['args'][3]==tmp_path
-    assert app.jobs.source_update_pending and app.manager.source_update_pending
+    assert not app.jobs.source_update_pending and not app.manager.source_update_pending
     with pytest.raises(ValueError,match='already queued'):
         r.start(str(tmp_path),'current')
 
@@ -114,8 +113,7 @@ def test_source_handoff_blocks_new_agents_before_model_detection():
 def test_separate_data_launch_does_not_replace_current_app(tmp_path,monkeypatch):
     from decompnet.app import cli
     app=make_app(tmp_path);r=runtime.Runtime(app);launched=[]
-    monkeypatch.setattr(runtime,'validate',lambda *args:None)
-    monkeypatch.setattr(runtime,'command',lambda *args:None)
+    monkeypatch.setattr(r,'prepare',lambda *args:tmp_path)
     monkeypatch.setattr(cli,'_state',lambda *args:None)
     monkeypatch.setattr(runtime.subprocess,'Popen',lambda *args,**kwargs:launched.append((args,kwargs)))
     app.updater.before_restart=lambda:pytest.fail('separate data must not stop the current app')
@@ -163,6 +161,113 @@ def test_continuous_service_parks_and_resumes_without_stopping(tmp_path):
 def test_failed_update_releases_background_checkpoint(tmp_path, monkeypatch):
     app = make_app(tmp_path)
     app.net.source_update_pending = True
-    monkeypatch.setattr(runtime, 'validate', lambda *args: (_ for _ in ()).throw(ValueError('changed')))
+    monkeypatch.setattr(runtime.Runtime, 'prepare', lambda *args: (_ for _ in ()).throw(ValueError('changed')))
     runtime.Runtime(app).run(tmp_path, 'git', 'uv', tmp_path, 'example/repo')
     assert not app.net.source_update_pending
+
+
+
+def test_prepare_uses_separate_checkout_and_environment_without_holding_workers(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    r = runtime.Runtime(app)
+    calls = []
+    def command(argv, cwd):
+        assert not app.manager.source_update_pending
+        assert not app.jobs.source_update_pending
+        calls.append((argv, cwd))
+    monkeypatch.setattr(runtime, 'command', command)
+    staged = r.prepare(tmp_path, 'git', 'uv', 'example/repo')
+    assert staged != tmp_path and staged.parent == app.home / 'source-runtimes'
+    assert calls[0][0][:2] == ['git', 'clone']
+    assert calls[0][0][-1] == str(staged)
+    assert all(cwd == staged for _, cwd in calls[1:])
+    assert '--locked' in calls[1][0]
+    assert 'import decompnet.app.cli' in calls[2][0]
+
+
+def test_long_running_job_releases_every_hold_and_retries(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    r = runtime.Runtime(app)
+    monkeypatch.setattr(r, 'busy', lambda: True)
+    monkeypatch.setattr(runtime, 'DRAIN_SECONDS', 0)
+    waits = []
+    class Cancel:
+        def is_set(self): return False
+        def wait(self, seconds):
+            waits.append(seconds)
+            if seconds == runtime.RETRY_SECONDS:
+                assert not app.manager.source_update_pending
+                assert not app.jobs.source_update_pending
+                assert not app.net.source_update_pending
+                assert r.job['state'] == 'deferred'
+                return True
+            return False
+    r.cancel = Cancel()
+    assert not r.drain()
+    assert waits == [.2, runtime.RETRY_SECONDS]
+
+
+def test_automatic_source_check_never_holds_work_and_skips_same_commit(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    app.settings.data['source_runtime_auto'] = True
+    r = runtime.Runtime(app)
+    monkeypatch.setattr(runtime.edition, 'DEV', True)
+    monkeypatch.setattr(runtime.edition, 'CHECKOUT_ROOT', tmp_path)
+    monkeypatch.setattr(runtime.shutil, 'which', lambda _: 'git')
+    monkeypatch.setattr(runtime, 'command', lambda argv, cwd: 'abc refs/heads/main' if 'ls-remote' in argv else 'abc')
+    monkeypatch.setattr(r, 'start', lambda *args: pytest.fail('already current'))
+    assert not r.check()
+    monkeypatch.setattr(runtime, 'command', lambda argv, cwd: 'def refs/heads/main' if 'ls-remote' in argv else 'abc')
+    started = []
+    monkeypatch.setattr(r, 'start', lambda *args: started.append(args))
+    assert r.check() and started == [(str(tmp_path), 'current')]
+    assert not app.manager.source_update_pending
+    r.job['state'] = 'preparing'
+    assert not r.check()
+
+
+def test_automatic_preference_is_explicit_and_persisted(tmp_path):
+    app = make_app(tmp_path)
+    saved = []
+    app.settings.save = lambda: saved.append(dict(app.settings.data))
+    r = runtime.Runtime(app)
+    with pytest.raises(ValueError, match='true or false'):
+        r.configure('yes')
+    assert r.configure(True)['automatic']
+    assert saved[-1]['source_runtime_auto'] is True
+    assert saved[-1]['check_updates'] is True
+    assert not r.configure(False)['automatic']
+
+
+
+def test_deferred_update_can_reach_next_checkpoint(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    r = runtime.Runtime(app)
+    monkeypatch.setattr(runtime, 'DRAIN_SECONDS', 0)
+    busy = iter([True, False])
+    monkeypatch.setattr(r, 'busy', lambda: next(busy))
+    class Cancel:
+        def is_set(self): return False
+        def wait(self, seconds):
+            if seconds == runtime.RETRY_SECONDS:
+                assert not app.manager.source_update_pending
+            return False
+    r.cancel = Cancel()
+    assert r.drain()
+    assert app.manager.source_update_pending  # Held only for the imminent restart.
+    r.hold(False)
+
+
+def test_preparation_cancellation_skips_sync_and_launch(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    r = runtime.Runtime(app)
+    commands = []
+    def command(argv, cwd):
+        commands.append(argv)
+        r.cancel.set()
+    monkeypatch.setattr(runtime, 'command', command)
+    app.updater.before_restart = lambda: pytest.fail('cancelled update must not stop work')
+    r.run(tmp_path, 'git', 'uv', tmp_path, 'example/repo')
+    assert len(commands) == 1 and commands[0][1] == 'clone'
+    assert r.job['state'] == 'cancelled'
+    assert not app.manager.source_update_pending

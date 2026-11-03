@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import threading
 import time
 
@@ -33,7 +34,7 @@ def register(app: App) -> None:
             return bad
         if request.method == "POST":
             data = await body(request)
-            if runtime.job['state'] in ('waiting','updating','restarting'):
+            if runtime.job['state'] in ACTIVE:
                 return fail(ValueError('Cancel the queued source restart before changing app updates.'))
             if data.get('action') == 'source':
                 try:
@@ -63,7 +64,7 @@ def register(app: App) -> None:
         except ValueError as e:
             return fail(e)
 
-    from ..source_runtime import Runtime
+    from ..source_runtime import ACTIVE, Runtime
     runtime = Runtime(app)
 
     @mcp.custom_route("/api/update/runtime", methods=["GET", "POST"])
@@ -73,6 +74,8 @@ def register(app: App) -> None:
         try:
             if request.method == "POST":
                 data = await body(request)
+                if data.get('action') == 'automatic':
+                    return JSONResponse(runtime.configure(data.get('enabled')))
                 if data.get('action') == 'cancel':
                     return JSONResponse(runtime.stop())
                 return JSONResponse(await call(runtime.start, str(data.get('path') or ''), str(data.get('data_mode') or '')))
@@ -84,18 +87,19 @@ def register(app: App) -> None:
         return settings.data.get("check_updates", True) is not False and os.environ.get("DECOMP_UPDATES") != "off"
 
     def watch_updates() -> None:
-        """Check now and then; with "install updates automatically" on, install one while no helper is working."""
+        """Check now and then; prepare automatic source updates without holding workers; packaged installs wait for idle."""
         time.sleep(FIRST_CHECK_SECONDS)
         while True:
             if not checking():
                 time.sleep(CHECK_EVERY_SECONDS)
                 continue
             try:
+                runtime.check()
                 st = updater.status()
                 busy = any(s.state in ("starting", "working") for s in manager.sessions.values())
-                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy and runtime.job["state"] not in ("waiting", "updating", "restarting"):
+                if st.get("available") and st.get("can_apply") and settings.data.get("auto_update") and not busy and runtime.job["state"] not in ACTIVE:
                     updater.apply()
-            except (ValueError, OSError):
+            except (ValueError, OSError, subprocess.SubprocessError):
                 pass
             time.sleep(CHECK_EVERY_SECONDS)
 

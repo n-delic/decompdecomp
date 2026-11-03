@@ -1924,13 +1924,14 @@ had identical statuses, scores and saved sources. Actual game import speed depen
 
 ## Source checkout runtime
 
-Implemented: explicit clean-main Git/uv runtime handoff from Settings. Users choose current data or
-separate development data; new managed agent sessions/jobs are held until known background work
-finishes, then fast-forward/locked sync/import preflight precede a process replacement. Waiting can
-be cancelled. Continuous draft/permutation services park between joined batches instead of blocking
-forever while polling; usage-limit waits are idle, and persisted provider cooldowns survive restart.
-Active provider processes and finite jobs still finish before files change. Automatic repair analysis
-stops taking queued captures during handoff. Ordinary development launch remains isolated by default; packaged bundles are untouched.
+Implemented: explicit clean-main Git/uv runtime handoff from Settings, with opt-in automatic main
+updates. Git clones and locked dependency/import preflight run in a separate managed runtime while
+agents and jobs continue. Current checkouts/environments are never pulled or synced in place. A safe
+restart check holds new sessions for at most 15 seconds; if active sessions/finite jobs need longer,
+all holds release and the app retries after 60 seconds. Continuous draft/permutation services park
+between joined batches. Usage-limit waits are idle and provider cooldowns survive restart. Separate
+development data launches without pausing current work. Managed runtime directories are retained
+for recovery; automatic pruning and seamless backend replacement remain planned.
 
 Implemented: checkout-only frontend revision polling, in-place CSS updates and debounced interface
 reload for scripts/markup/assets. Project/tab, open function, disclosure and main scroll state are

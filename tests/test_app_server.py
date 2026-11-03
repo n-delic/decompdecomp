@@ -1826,6 +1826,11 @@ def test_source_runtime_route_reports_home_and_requires_explicit_data_choice(app
     assert status.status_code==200 and status.json()['home']
     rejected=client.post('/api/update/runtime',json={'path':'/not/a/checkout'},headers={'X-Decomp':'1'})
     assert rejected.status_code==400 and 'Choose current' in rejected.json()['error']
+    configured=client.post('/api/update/runtime',json={'action':'automatic','enabled':True},headers={'X-Decomp':'1'})
+    assert configured.status_code==200 and configured.json()['automatic'] is True
+    assert client.get('/api/update/runtime').json()['automatic'] is True
+    invalid=client.post('/api/update/runtime',json={'action':'automatic','enabled':'yes'},headers={'X-Decomp':'1'})
+    assert invalid.status_code==400
 
 
 def test_background_agent_creation_keeps_server_responsive_and_reports_steps(tmp_path,monkeypatch):
