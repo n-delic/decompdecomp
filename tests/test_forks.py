@@ -1080,17 +1080,18 @@ def _steps_project(tmp_path: Path, broken: str = "b"):
 
 def test_units_built_in_one_run_each_hear_only_their_own_failure(tmp_path, monkeypatch):
     """A project's unit builds asked for together go in one run of ninja (half a unit's build is the run's own
-    cost), and each unit gets what building it alone would say: a unit whose step failed sees that failure, never
-    another unit's (it would read as its own), and a unit that built is built."""
+    cost), and each unit gets what building it alone would say: a unit ninja says is built is built, and one that
+    isn't is built alone, so a unit whose step failed sees that failure (and buildhelp's hints), never another
+    unit's."""
     fp = _steps_project(tmp_path, broken="bd")
     runs = []
     execute = fp._execute
     monkeypatch.setattr(fp, "_execute", lambda cmd, *a, **k: runs.append(cmd) or execute(cmd, *a, **k))
     results = fp.build_units([fp.unit(n) for n in "abcd"])
-    builds = [c for c in runs if "-n" not in c]
-    assert len(builds) == 1 and "-k" in builds[0]  # one run, going on past a failure
-    assert len([c for c in runs if "-n" in c]) == 1  # (and ninja asked whether the rest are built)
+    assert len([c for c in runs if "-k" in c]) == 1  # one run, going on past a failure
+    assert len([c for c in runs if "-n" in c]) == 4  # (ninja asked which units are built)
     assert results == [(True, ""), results[1], (True, ""), results[3]] and not results[1][0] and not results[3][0]
+    assert results[1] == fp.build_unit(fp.unit("b")) and results[3] == fp.build_unit(fp.unit("d"))
     assert "src/b.c:1: error: a broken step" in results[1][1] and "d.c" not in results[1][1]
     assert "src/d.c:1: error: a broken step" in results[3][1] and "b.c" not in results[3][1]
     assert results[1][1].count("error: a broken step") == 1
@@ -1120,7 +1121,7 @@ def test_a_unit_without_a_failure_of_its_own_is_built_only_when_ninja_says_so(tm
     results = fp.build_units([fp.unit(n) for n in "abc"])
     assert results[0] == (True, "")  # a is built, ninja says: it isn't built again
     assert not results[1][0] and "src/b.c:1: error: a broken step" in results[1][1]
-    assert not results[2][0] and alone == ["c"]  # c needs b's object: ninja didn't build it, so it isn't built
+    assert not results[2][0] and alone == ["b", "c"]  # c needs b's object: ninja didn't build it, so it isn't built
     # ninja's progress lines as a user set them, or none (a project's --quiet), don't make a unit built
     from decompnet.forks.project import _tool
 
@@ -1132,11 +1133,11 @@ def test_a_unit_without_a_failure_of_its_own_is_built_only_when_ninja_says_so(tm
 
 def test_a_run_ended_by_the_memory_cap_says_nothing_of_its_units(tmp_path, monkeypatch):
     """The memory cap covers the whole run of several units and kills whichever step is biggest: that step's
-    failure isn't its unit's own, so each unit is built alone; and a unit whose own build then raises gets the
-    exception alone."""
+    failure isn't its unit's own. A unit ninja says is built is; the one it killed is built alone (and gets its own
+    verdict there); and a unit whose own build then raises gets the exception alone."""
     from decompnet.forks import project
 
-    fp = _steps_project(tmp_path, broken="b")
+    fp = _steps_project(tmp_path, broken="bc")
     monkeypatch.setattr(project, "killed_for_memory", lambda code: code not in (0, None))
     build_unit = fp.build_unit
 
@@ -1147,12 +1148,26 @@ def test_a_run_ended_by_the_memory_cap_says_nothing_of_its_units(tmp_path, monke
 
     monkeypatch.setattr(fp, "build_unit", alone)
     results = fp.build_units([fp.unit(n) for n in "abc"])
-    assert results[0][0] and not results[1][0] and isinstance(results[2], PermissionError)
+    assert results[0] == (True, "") and not results[1][0] and isinstance(results[2], PermissionError)
+    assert "more memory than decompdecomp allows" in results[1][1]
 
 
-def test_a_unit_build_that_hangs_with_its_output_open_times_out(tmp_path, monkeypatch):
+def _running(pid: int) -> bool:
+    import os
+
+    if os.name == "nt":
+        listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+        return f" {pid} " in listed
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def test_a_unit_build_that_hangs_with_its_output_open_is_stopped_with_its_compiler(tmp_path, monkeypatch):
     """A compiler stuck under wibo kept a unit's build, and the project's build lock, forever: its output was read
-    to the end before the time limit was looked at."""
+    to the end before the time limit was looked at. Stopped, ninja alone went: the compiler it started ran on."""
     import sys
     import time
 
@@ -1160,12 +1175,40 @@ def test_a_unit_build_that_hangs_with_its_output_open_times_out(tmp_path, monkey
 
     fp = _steps_project(tmp_path, broken="")
     py = sys.executable.replace("\\", "/")
-    (tmp_path / "hang.py").write_text("import time\nprint('compiling', flush=True)\ntime.sleep(20)\n")
-    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{py}" hang.py\nbuild build/a.o: hang src/a.c\n')
+    pid_file = tmp_path / "compiler.pid"
+    (tmp_path / "hang.py").write_text(f"import os, time\nopen({str(pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                                      "print('compiling', flush=True)\ntime.sleep(60)\n")
+    (tmp_path / "build.ninja").write_text(f'rule hang\n  command = "{py}" hang.py\nbuild build/a.o: hang src/a.c\n'
+                                          "build build/b.o: hang src/b.c\n")
     monkeypatch.setattr(project, "UNIT_SECONDS", 2)
     started = time.monotonic()
-    assert fp.build_unit(fp.unit("a")) == (False, "timed out")
-    assert time.monotonic() - started < 15
+    ok, said = fp.build_unit(fp.unit("a"))
+    assert not ok and "didn't finish in 2 seconds" in said  # (ninja holds a step's output until it ends)
+    assert time.monotonic() - started < 20
+    assert not _running(int(pid_file.read_text()))
+    # a run of builds out of time: which unit hung isn't known, so each is built alone, with the whole limit
+    alone = []
+    build_unit = fp.build_unit
+    monkeypatch.setattr(fp, "build_unit", lambda u, **k: alone.append(u.name) or build_unit(u, **k))
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert alone == ["a", "b"] and all(not ok and "didn't finish" in said for ok, said in results)
+    assert not _running(int(pid_file.read_text()))
+
+
+def test_a_step_that_prints_another_units_failure_doesnt_fail_that_unit(tmp_path):
+    """Each unit's verdict was read from what the run printed: a step's own output saying `FAILED: build/a.o`
+    failed unit a, which builds alone."""
+    import sys
+
+    fp = _steps_project(tmp_path, broken="b")
+    py = sys.executable.replace("\\", "/")
+    (tmp_path / "liar.py").write_text("import shutil, sys\nif 'BROKEN' in open(sys.argv[1]).read():\n"
+                                      "    print('FAILED: build/a.o')\n    sys.exit(1)\nshutil.copy(sys.argv[1], sys.argv[2])\n")
+    (tmp_path / "build.ninja").write_text(f'rule step\n  command = "{py}" liar.py $in $out\n'
+                                          "build build/a.o: step src/a.c\nbuild build/b.o: step src/b.c\n")
+    assert fp.build_unit(fp.unit("a"))[0]
+    results = fp.build_units([fp.unit("a"), fp.unit("b")])
+    assert results[0] == (True, "") and not results[1][0]
 
 
 def test_a_failed_step_that_makes_two_files_is_one_failure_in_the_log(tmp_path):

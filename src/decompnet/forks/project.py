@@ -21,6 +21,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -28,7 +29,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from decompnet.hostenv import NO_WINDOW, console_python
+from decompnet.hostenv import NO_WINDOW, console_python, stop_process_tree
 
 from ..limits import capped, killed_for_memory
 from ..network import NetworkError
@@ -107,29 +108,27 @@ def _said(out: list[str]) -> str:
     return "\n".join(said[-60:])
 
 
-# a line where ninja's next step starts: its progress line, another failure, its own last word
-_NINJA_STEP = re.compile(r"^(?:\[\d+/\d+\] |FAILED: |ninja: )")
 _NO_WORK = "ninja: no work to do."  # what ninja says when everything asked for is built
 UNIT_SECONDS = 600  # a unit's build, at most (a run of several builds them side by side: the same)
 OUTPUT_SECONDS = 30  # after a step ends, how long its output may go on
 
 
-def _failures(out: list[str]) -> list[tuple[list[str], list[str]]]:
-    """Each failed step in ninja's output: (the targets it makes, its lines: the FAILED: line, the command, what it
-    printed). Once per step: a step making two files is one failure."""
-    found = []
-    i = 0
-    while i < len(out):
-        m = _FAILED.match(out[i])
-        if m is None or m.group(1) is None:
-            i += 1
+def _stop_tree(proc: subprocess.Popen) -> None:
+    """Stop a build step and every process it started: on Windows the tree; elsewhere its process group, asked
+    first (ninja puts each command in a group of its own, and stops them when it's asked to stop), then killed."""
+    if os.name == "nt":
+        stop_process_tree(proc)
+        return
+    for sig, wait in ((signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            proc.wait(timeout=wait)
+            return
+        except subprocess.TimeoutExpired:
             continue
-        j = i + 1
-        while j < len(out) and not _NINJA_STEP.match(out[j]):
-            j += 1
-        found.append(([t for t in m.group(1).split() if not t.startswith("[code=")], out[i:j]))
-        i = j
-    return found
 
 
 def _tool_dirs() -> list[Path]:
@@ -526,20 +525,21 @@ class ForkProject:
         raise ForkError("decompdecomp can't tell how to build this project; follow its README, then refresh")
 
     def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None,
-            platform: str | None = None, hard: bool = False) -> tuple[bool, str]:
+            platform: str | None = None) -> tuple[bool, str]:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
         are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
-        first build: a game built with Visual C++ 2017 then built without wine's settings). `hard`: see _execute."""
-        code, out, hints = self._execute(cmd, log, timeout, failed, platform, hard)
+        first build: a game built with Visual C++ 2017 then built without wine's settings)."""
+        code, out, hints = self._execute(cmd, log, timeout, failed, platform)
         return code == 0, _said(out) + ("\n\n" + hints if hints else "")
 
     def _execute(self, cmd: list[str], log, timeout: float, failed: list[str] | None,
-                 platform: str | None = None, hard: bool = False) -> tuple[int | None, list[str], str]:
+                 platform: str | None = None) -> tuple[int | None, list[str], str]:
         """Run a build step: (its exit code, None when it couldn't start or ran out of time; every line it printed,
-        or why it didn't run; what buildhelp.explain makes of a failure, or ""). `platform`: as in run. `hard`: the
-        time limit holds while the step still prints, or hangs with its output open (a compiler stuck under wibo kept a unit's build, and
-        the project's build lock, forever: its output is read to the end before the limit was looked at). Unit
-        builds have it; a whole build or a setup step that takes long but goes on printing isn't stopped."""
+        or why it didn't run; what buildhelp.explain makes of a failure, or ""). `platform`: as in run. The time
+        limit holds while the step still prints, or hangs with its output open, and stops it with everything it
+        started: its output used to be read to the end before the limit was looked at, so a compiler that never
+        finished on an agent's code (stuck under wibo, or CodeWarrior looping on one #pragma) kept the build, and
+        the project's build lock, for hours (#114, whose fix this is)."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
         # what its console's builds need (Console.build_env)
@@ -554,8 +554,10 @@ class ForkProject:
         cmd = [console_python(executable), *cmd[1:]]  # not pythonw.exe: its tools' compilers would flash consoles
         log("$ " + " ".join(Path(c).name if i == 0 else c for i, c in enumerate(cmd)))
         try:
+            # (in a process group of its own off Windows, so a step stopped at its limit takes its compilers with it)
             proc = subprocess.Popen(capped(cmd), cwd=self.root, env=env, stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8", creationflags=NO_WINDOW)
+                                    stderr=subprocess.STDOUT, text=True, errors="replace", encoding="utf-8",
+                                    creationflags=NO_WINDOW, start_new_session=os.name != "nt")
         except FileNotFoundError:
             return None, [f"{cmd[0]} isn't installed"], ""
         out, seen, quiet = [], collections.Counter(), [0]
@@ -573,22 +575,18 @@ class ForkProject:
                 elif len(out) <= 400 or len(out) % 50 == 0:
                     log(line)
 
-        if hard:
-            reader = threading.Thread(target=read, daemon=True, name="build-output")
-            reader.start()
-            try:
-                code = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()  # (a step it started may keep the output open: what was read is left to the reader)
-                return None, ["timed out"], ""
-            reader.join(OUTPUT_SECONDS)  # (the step is over: its output ends with it, or soon after)
-        else:
-            read()
-            try:
-                code = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                return None, ["timed out"], ""
+        reader = threading.Thread(target=read, daemon=True, name="build-output")
+        reader.start()
+        try:
+            code = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _stop_tree(proc)  # ninja and the compiler it started: killing ninja alone left the compiler running
+            reader.join(OUTPUT_SECONDS)
+            said = [ln for ln in list(out) if not _NOISE.match(ln)][-40:]
+            return None, [*said, f"stopped: the build didn't finish in {timeout:.0f} seconds, so it was stopped with "
+                                 "everything it started. A compiler that never finishes on this code is the usual "
+                                 "cause: change the code that was just added."], ""
+        reader.join(OUTPUT_SECONDS)  # (the step is over: its output ends with it, or soon after)
         lines = list(out)  # (what was read: a reader still going adds to its own list, not this one)
         if quiet[0]:
             log(f"({quiet[0]} repeated lines and linker warnings not shown)")
@@ -790,21 +788,19 @@ class ForkProject:
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
         rel = self._target(unit.base)  # (named from the build's folder: `-C sub` builds final.o for sub/final.o)
-        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=UNIT_SECONDS, hard=True)
+        return self.run([tool, *cfg.get("custom_args", []), rel], log=log, timeout=UNIT_SECONDS)
 
     def build_units(self, units: list[Unit], log=lambda *_: None) -> list[tuple[bool, str]]:
         """Build several units' objects in one run of the build: (built, the log) for each, in the order given.
         Builds take turns (they share ninja's log), and a run's own cost (reading the build file, configure's facts)
         is half a unit's build: 8 units took 5.6 s one by one, 1.3 s in one run (an x86 game's LTCG units). With
         ninja only (`-k 0`: one unit that doesn't build doesn't stop the others); other builds, and one unit, build
-        alone as before. A unit whose step failed gets that step's failure and no other unit's (it would read as its
-        own); a unit that built gets no log (what a run of several printed is theirs together, and no caller reads a
-        build's log when it built). A unit is built only when ninja says so: a run can stop short without a failure
-        of the unit's own (the memory cap ends the whole run, a dependency known only from a depfile), and then the
-        old object would be judged as the new file's. Whatever can't be put down to a unit (ninja stopping before it
-        builds anything: a target it has no rule for, configure failing; a run out of time; a run the memory cap
-        ended, which covers all of it and kills whichever step is biggest) builds each unit alone. A unit whose own
-        build then raises gets the exception in its place in the list, for its caller alone (_UnitBuilds)."""
+        alone as before. Each unit gets the verdict building it alone gives: when the run fails, a unit ninja says is
+        built (a dry run, `-n`) built, and every other is built alone, so its verdict and log are its own build's
+        (with buildhelp's hints). What the run printed isn't read for whose failure it was: a step's own output can
+        say `FAILED: <another unit's object>` and blamed that unit. A unit that built gets no log (no caller reads a
+        build's log when it built). A unit whose own build raises gets the exception in its place in the list, for
+        its caller alone (_UnitBuilds)."""
         cfg = self.objdiff_config()
         make = cfg.get("custom_make") or "make"
         tool = _tool(make) or make
@@ -819,52 +815,24 @@ class ForkProject:
 
         rels = [os.path.normpath(os.path.relpath(u.base, self.root)) for u in units]
         ninja = [tool, *cfg.get("custom_args", [])]
-        code, out, _ = self._execute([*ninja, "-k", "0", *dict.fromkeys(rels)], log, UNIT_SECONDS, None, hard=True)
+        code, _, _ = self._execute([*ninja, "-k", "0", *dict.fromkeys(rels)], log, UNIT_SECONDS, None)
         if code == 0:
             return [(True, "")] * len(units)
-        judged = None if code is None or killed_for_memory(code) else self._judge_batch(units, rels, ninja, out)
-        if judged is None:
+        if code is None:  # out of time: which unit hung isn't known, and each alone has the whole limit
             return [alone(u) for u in units]
-        return [r if r is not None else alone(u) for u, r in zip(units, judged)]
-
-    def _judge_batch(self, units: list[Unit], rels: list[str], ninja: list[str],
-                     out: list[str]) -> list[tuple[bool, str] | None] | None:
-        """For a run of units' builds that failed: each unit's (False, its failures), or (True, "") when ninja says
-        it's built, or None when that isn't certain (it's built alone); or None for the lot when a failure belongs
-        to none of them."""
-        steps = _failures(out)
-        if not steps:
-            return None
-        try:
-            names = {u.name for u in units}
-            unit_of = {os.path.normpath(os.path.relpath(u.base, self.root)): u.name for u in self.units()
-                       if u.base is not None}
-            owners = []  # each failed step's units: its own object, or one made from what it made (a unit in steps)
-            for made, lines in steps:
-                reached = {os.path.normpath(t) for t in [*made, *self._made_from(made)]}
-                who = {unit_of[t] for t in reached if t in unit_of} & names
-                if not who:  # a step none of them is made from (the build file itself)
-                    return None
-                owners.append((who, lines))
-            rest = list(dict.fromkeys(r for u, r in zip(units, rels) if not any(u.name in w for w, _ in owners)))
-            built = set(rest) if rest and self._no_work(ninja, rest) else set()
-            if rest and not built:  # one of them isn't: which (one dry run each, not a build of each again)
-                built = {r for r in rest if self._no_work(ninja, [r])}
-        except (ForkError, OSError, ValueError):
-            return None
-        results: list[tuple[bool, str] | None] = []
-        for u, r in zip(units, rels):
-            mine = [line for who, lines in owners if u.name in who for line in lines]
-            if mine:
-                results.append((False, _said([*mine, "ninja: build stopped: subcommand failed."])))
-            else:
-                results.append((True, "") if r in built else None)
-        return results
+        done: dict[str, bool] = {}
+        for r in rels:
+            if r not in done:
+                try:
+                    done[r] = self._no_work(ninja, [r])
+                except (ForkError, OSError):
+                    done[r] = False
+        return [(True, "") if done[r] else alone(u) for u, r in zip(units, rels)]
 
     def _no_work(self, ninja: list[str], targets: list[str]) -> bool:
         """Whether ninja has nothing left to build for these targets, by its own word (a dry run): a progress line
         that's missing says nothing (a project's --quiet), "no work to do" does."""
-        code, said, _ = self._execute([*ninja, "-n", *targets], lambda *_: None, 120, None, hard=True)
+        code, said, _ = self._execute([*ninja, "-n", *targets], lambda *_: None, 120, None)
         return code == 0 and any(line.strip() == _NO_WORK for line in said)
 
     def failed_units(self, targets: list[str]) -> set[str]:
