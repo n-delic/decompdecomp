@@ -1923,9 +1923,13 @@ separate development data; new managed agent sessions/jobs are held until known 
 finishes, then fast-forward/locked sync/import preflight precede a process replacement. Waiting can
 be cancelled. Ordinary development launch remains isolated by default; packaged bundles are untouched.
 
-Planned: automatic frontend file watching/reload preserving the open view, a desktop shortcut that
-remembers a selected source runtime independently of the packaged app, and coordinated idle leases
-for external MCP clients. Current source launches are manual handoffs; backend updates still restart.
+Implemented: checkout-only frontend revision polling, in-place CSS updates and debounced interface
+reload for scripts/markup/assets. Project/tab, open function, disclosure and main scroll state are
+restored; edited text and open dialogs defer page reload. Packaged builds do not watch files.
+`DECOMP_LIVE_RELOAD=0` disables it. Backend workers/rooms stay alive; Python changes still restart.
+
+Planned: a desktop shortcut that remembers a selected source runtime independently of the packaged
+app, and coordinated idle leases for external MCP clients. Source launches remain manual handoffs.
 
 Hosted rooms in both address and quick-tunnel modes now restore automatically with existing invites
 and members, with startup/error feedback. Fixed endpoints preserve client links across restarts;

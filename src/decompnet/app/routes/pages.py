@@ -11,7 +11,7 @@ from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from ... import __version__, hostenv
-from .. import edition, window
+from .. import edition, frontend_reload, window
 from ..support import static_file
 from . import App
 
@@ -37,12 +37,23 @@ def register(app: App) -> None:
             return RedirectResponse('/login', status_code=303, headers={'Cache-Control':'no-store'})
         if not app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             return HTMLResponse(OLD_PAGE + (OLD_PAGE_WINDOWS if hostenv.in_old_windows_install() else OLD_PAGE_LINUX), status_code=401)
+        revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else None
         page=static_file("index.html").decode()
+        if revisions:
+            page=page.replace('</head>', f'<meta name="decomp-live-reload" data-css="{revisions["css"]}" data-page="{revisions["page"]}"></head>')
+            page=page.replace('</body>', '<script src="/assets/js/live-reload.js"></script></body>')
         if app.web_login and not secrets.compare_digest(window.request_token(request), secret):
             page=page.replace("form-action 'none'", "form-action 'self'").replace('<body>', '<body data-server-mode="1">')
             page=page.replace('</aside>', '<form class="web-session" method="post" action="/logout"><span>Server mode</span><button type="submit">Sign out</button></form></aside>', 1)
             page=page.replace('</head>', '<link rel="stylesheet" href="/assets/server.css"></head>')
         return HTMLResponse(page, headers={"Cache-Control": "no-store", 'Referrer-Policy':'same-origin', 'X-Frame-Options':'DENY'})
+
+    @mcp.custom_route("/api/frontend-revision", methods=["GET"])
+    async def frontend_revision(request: Request) -> Response:
+        if (bad := app.guard(request)):
+            return bad
+        revisions = await app.call(frontend_reload.snapshot) if frontend_reload.enabled() else {}
+        return JSONResponse({'enabled': frontend_reload.enabled(), **revisions}, headers={'Cache-Control': 'no-store'})
 
     @mcp.custom_route("/sw.js", methods=["GET"])
     async def service_worker(request: Request) -> Response:

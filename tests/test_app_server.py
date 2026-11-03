@@ -1900,3 +1900,21 @@ def test_close_dialog_identifies_active_workers_without_stopping_them(app, monke
     assert result['workers'][1]['why'] == 'Waiting for eligible functions'
     assert isinstance(result['tasks'], list)
     assert sessions['one'].state == 'working'
+
+
+def test_checkout_frontend_reload_injection_and_guard(app, monkeypatch):
+    from decompnet.app import frontend_reload
+    client, _, _ = app
+    monkeypatch.setattr(frontend_reload, 'enabled', lambda: True)
+    monkeypatch.setattr(frontend_reload, 'snapshot', lambda: {'css': 'css1', 'page': 'page1'})
+    page = client.get('/').text
+    assert 'name="decomp-live-reload" data-css="css1" data-page="page1"' in page
+    assert '/assets/js/live-reload.js' in page
+    response = client.get('/api/frontend-revision')
+    assert response.json() == {'enabled': True, 'css': 'css1', 'page': 'page1'}
+    assert response.headers['cache-control'] == 'no-store'
+    assert client.get('/api/frontend-revision', headers={'User-Agent': 'unauthorized'}).status_code == 401
+    monkeypatch.setattr(frontend_reload, 'enabled', lambda: False)
+    assert 'decomp-live-reload' not in client.get('/').text
+    assert '/assets/js/live-reload.js' not in client.get('/').text
+    assert client.get('/api/frontend-revision').json() == {'enabled': False}

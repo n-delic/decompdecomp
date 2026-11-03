@@ -631,7 +631,15 @@ home. Local changes, another branch, a different origin or failed preparation st
 The checkout and selected data remain separate from packaged code: to return to the packaged app,
 quit the source app before opening the installed app using the same data. External AI clients do
 not participate in this managed session drain; finish their work before switching runtimes.
-Backend changes still require this restart; automatic frontend hot reload is not included yet.
+When running from a Git checkout, frontend changes are detected automatically (no
+extra command). CSS updates in place; JavaScript, HTML and other frontend assets
+reload the interface after a short settling delay. The current project/tab, open
+function, disclosures and main scroll position are restored. Backend workers and
+rooms continue running. Edited text or an open dialog/agent launcher delays the
+page reload and shows a **Reload interface** button; save or copy edits before
+using it. Set `DECOMP_LIVE_RELOAD=0` before launching to disable this behavior.
+Packaged apps do not watch files. Python backend changes still require a restart.
+Existing running copies need one restart to pick up this file-watching feature.
 
 On a Mac desktop, `DECOMP_TEST_COCOA=1 uv run pytest -q tests/test_macos.py` also exercises a hidden
 WKWebView against a fresh app, including authentication, external links and close confirmation.
