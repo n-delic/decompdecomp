@@ -23,7 +23,10 @@ type (`F(int, 0x20)`), and every object-like one, the header's and the source's 
 (`expand_in_source`), as pycparser can't read those as they are. The header's object-like macros are put in
 where it uses them, MSVC's words are rewritten (`msvc_as_c`; in the source, `Restorer` puts them back in each
 variant), and a header written for C++ is read as the C of its types (`cxx_as_c`, `type_names`). C++ in the
-function itself (a method, a constructor call, a template) still isn't read.
+function itself is read as far as `Restorer` says: methods (const ones too, `operator()` among them), scoped names,
+template arguments, references, constructors and temporaries. What isn't read yet, so such a function gets the
+simple rewrites only (tests/test_permute.py lists them): `enum class`, a `std::` container, an operator other than
+`()` (`operator+`), `noexcept` and `throw()`, `new` and `delete`.
 
 The walk is decomp-permuter's own: a variant is the last one rewritten once more (KEEP of the time) or the source
 rewritten afresh, so variants drift a few rewrites away from the source and come back.
@@ -57,6 +60,7 @@ INT_TYPES = {"8": "char", "16": "short", "32": "int", "64": "long long"}
 # __intN as a stand-in type name: a variant keeps the stand-in, which goes back to MSVC's words (an old MSVC has no
 # `long long`)
 STAND_INS = "".join(f"typedef {t} DD_int{n};\ntypedef unsigned {t} DD_uint{n};\n" for n, t in INT_TYPES.items())
+STAND_INS += "typedef int DDconst;\n"  # (a const method's mark, Restorer)
 _MSVC_INT = re.compile(r"\b(?:(unsigned)\s+|signed\s+)?__int(8|16|32|64)\b")
 _MSVC_SUFFIX = re.compile(r"\b(\d[0-9A-Fa-fxX]*?)(u?)i64\b", re.I)  # 0x...ui64: C's ULL
 _C_SUFFIX = re.compile(r"\b(\d[0-9A-Fa-fxX]*?)(u?)ll\b", re.I)
@@ -68,16 +72,27 @@ _DECLSPEC_AT = re.compile(rf"\b{_DECLSPEC}\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=
 _STARS = r"(?:\*\s*)*"
 _EXTERN_C_AT = re.compile(r"\bextern\s+\"C\"\s*(?=[\w\s*]*?\b([A-Za-z_]\w*)\s*[;(=\[,])")
 _INLINE = re.compile(r"\b__(?:force)?inline\b")
-_NOTHING = re.compile(rf"\b(?:__w64|__unaligned|__ptr32|__ptr64|__restrict|{_DECLSPEC})\s*|\b(?:_{{1,2}}(?:cdecl|stdcall"
-                      r"|fastcall|thiscall|clrcall|vectorcall)|WINAPI|CALLBACK|APIENTRY)\b\s*")
+_NOTHING = re.compile(r"\b(?:__w64|__unaligned|__ptr32|__ptr64|__restrict)[ \t]*|\b(?:_{1,2}(?:cdecl|stdcall"
+                      r"|fastcall|thiscall|clrcall|vectorcall)|WINAPI|CALLBACK|APIENTRY)\b[ \t]*")
+# what msvc_as_c leaves as it is: a preprocessor line (`#define WINAPI __stdcall` names the macro and gives its value,
+# which expand_macros puts in where it's used, later), a string or character; and a __declspec (group 1), which goes,
+# strings in it and all
+_AS_IS = re.compile(rf"(?m)^[ \t]*#(?:\\\n|[^\n])*|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'|({_DECLSPEC})[ \t]*")
 
 
 def msvc_as_c(text: str) -> str:
     """`text` with MSVC's words that pycparser can't read rewritten as C it reads, for good: the header, which the
-    permuter reads but never writes."""
-    text = _MSVC_INT.sub(lambda m: f"DD_{'u' if m.group(1) else ''}int{m.group(2)}", text)
-    text = _MSVC_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).upper()}LL", text)
-    return _NOTHING.sub("", _INLINE.sub("inline", text))
+    permuter reads but never writes. Preprocessor lines and strings stay as they are."""
+    def code(part: str) -> str:
+        part = _MSVC_INT.sub(lambda m: f"DD_{'u' if m.group(1) else ''}int{m.group(2)}", part)
+        part = _MSVC_SUFFIX.sub(lambda m: f"{m.group(1)}{m.group(2).upper()}LL", part)
+        return _NOTHING.sub("", _INLINE.sub("inline", part))
+
+    out, last = [], 0
+    for m in _AS_IS.finditer(text):
+        out += [code(text[last:m.start()]), "" if m.group(1) else m.group(0)]
+        last = m.end()
+    return "".join(out) + code(text[last:])
 
 
 # C++ in a function's own C, each as a name or a call pycparser reads, and back (Restorer): `A::B` and `A::~A`, a
@@ -88,7 +103,7 @@ _QUALIFIED = re.compile(r"(?<![\w:])((?:[A-Za-z_]\w*::)+~?[A-Za-z_]\w*)")
 _TEMPLATE_ARGS = r"(?:[\w\s*&,:]|<[\w\s*&,:]*>)*"
 _TEMPLATE_ID = re.compile(rf"\b([A-Za-z_]\w*)\s*<({_TEMPLATE_ARGS})>(?=\s*[(:])")
 _TEMPLATE_BACK = re.compile(r"\bDDt(\d+)_\w*")
-_CONST_METHOD = re.compile(r"\)\s*const(\s*)(?=\{)")
+_CONST_METHOD = re.compile(r"(?:(\(\s*)|)\)\s*const(\s*)(?=\{)")
 C_TYPE_WORDS = frozenset("void char short int long float double signed unsigned _Bool".split())
 
 
@@ -126,7 +141,6 @@ class Restorer:
         self.inline = found.group(0) if found else None
         self.suffixes = bool(_MSVC_SUFFIX.search(source))
         self.templates: list[str] = []
-        self.const_methods: list[str] = []
         self.source = self._cxx_as_c(_EXTERN_C_AT.sub("", msvc_as_c(source)), set(types) | C_TYPE_WORDS)
 
     def name(self, function: str) -> str:
@@ -139,9 +153,9 @@ class Restorer:
             return f"DDt{len(self.templates) - 1}_{m.group(1)}"
 
         text = _TEMPLATE_ID.sub(template, text)
-        for m in re.finditer(rf"((?:[A-Za-z_]\w*::)*~?[A-Za-z_]\w*)\s*\([^{{;]*?{_CONST_METHOD.pattern}", text):
-            self.const_methods.append(self.name(m.group(1)))
-        text = _CONST_METHOD.sub(r")\1", text)
+        # a const method's `const` as a last parameter of the stand-in type DDconst, on the definition itself: by
+        # name it went back after the first `(...)`, so `operator()(int a) const` became `operator() const(int a)`
+        text = _CONST_METHOD.sub(lambda m: f"{'(' if m.group(1) is not None else ', '}DDconst){m.group(2)}", text)
         text = _QUALIFIED.sub(lambda m: self.name(m.group(1)), text)
         typed = "|".join(sorted(map(re.escape, types), key=len, reverse=True))
         # a reference, where only a declaration can have it: after a type, before the name it declares
@@ -164,15 +178,7 @@ class Restorer:
         variant = re.sub(r"\b([A-Za-z_]\w*)\s*=\s*DDctor\(", r"\1(", variant)
         variant = re.sub(r"\bDDnew_(\w+?)\(", r"\1(", variant)
         variant = re.sub(r"\*\s*DDref_(\w+)", r"&\1", variant)
-        for name in self.const_methods:
-            m = re.search(rf"\b{re.escape(name)}\s*\(", variant)
-            if m:
-                depth, i = 0, m.end() - 1
-                for i in range(m.end() - 1, len(variant)):
-                    depth += {"(": 1, ")": -1}.get(variant[i], 0)
-                    if depth == 0:
-                        break
-                variant = f"{variant[:i + 1]} const{variant[i + 1:]}"
+        variant = re.sub(r"(\(\s*)?,?\s*\bDDconst\s*\)", lambda m: "() const" if m.group(1) else ") const", variant)
         variant = variant.replace(_SCOPE, "::").replace(_DTOR, "~")
         return _TEMPLATE_BACK.sub(lambda m: self.templates[int(m.group(1))], variant)
 
@@ -387,14 +393,15 @@ def _call_args(text: str, at: int) -> tuple[list[str], int] | None:
 
 def expand_in_source(source: str, definitions: str, types: set[str]) -> str:
     """The function's own C with the macros of `definitions` (the header's and the source's own #defines) put in
-    where pycparser can't read them as they are: an object-like one that stands for C's own words or nothing
+    where pycparser can't read them as they are: an object-like one that stands for C's own words, MSVC's or nothing
     (`MATCH_VOLATILE bool found` is no declaration until it's `volatile`), and a function-like one called with a
     type (`F(int, 0x20) = v`, `MP_RAW(bool, 0x62C)`: no call takes a type). Others read as the names they are and
     stay (`#define CPlayerCar CPlayerCarRaceView` put in renamed the function's own class, so it wasn't found). A
     call of values stays a call, for the randomizer to move; the compiler gets the variant's expansion, which is
     what it would have made of the macro."""
+    # (MSVC's words count as C's: `#define STDCALL __stdcall` put in is a convention Restorer keeps)
     objects = {n: v.strip() for n, v in _OBJECT_MACRO.findall(definitions)
-               if all(w in _C_WORDS for w in re.findall(r"\S+", v))}
+               if all(w in _C_WORDS or _STAND_IN.fullmatch(w) for w in re.findall(r"\S+", msvc_as_c(v)))}
     functions = {n: ([p.strip() for p in ps.split(",")], body.strip())
                  for n, ps, body in _FUNCTION_MACRO.findall(definitions) if "#" not in body}
     if not objects and not functions:
