@@ -586,7 +586,8 @@ installed automatically. IDO still needs your explicit license acceptance in Com
 | Native window, file/folder pickers and export downloads | Cocoa and system WKWebView, no GTK or X11 |
 | m2c, decomp-permuter and objdiff | Pinned Mac/Python builds |
 | Other consoles and public decomp projects | Only where their pinned compiler/tool builds support this Mac |
-| Linux-only PS1/PS2 period compilers | Unavailable on macOS; use a supported Linux host |
+| PS2 Sony EE-GCC 2.9, 2.96 and 3.2 | Optional local Linux runner; install Colima/Docker, then Prepare Linux runner in Compilers & tools ([setup](docs/linux-compiler-vm.md)) |
+| PS2 SN Systems EE-GCC 2.95.2 and 2.95.3 | Pinned Windows compilers through wibo on Intel and Apple Silicon |
 | Keeping helpers working after closing the window | Run `decomp` again to reopen; no Mac menu bar tray icon yet |
 
 For development: `uv sync`, `uv run decomp` (separate `~/Decomp-dev` state), and `uv run pytest -q`.

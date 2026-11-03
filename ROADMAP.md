@@ -197,6 +197,13 @@ comparison, per-function settings and export paths. Physical Linux/WSL checks
 remain outstanding. Shared instruction diffs expose encoding-only disagreements
 hidden behind identical disassembly aliases without weakening the byte judge.
 
+PS2 Sony EE-GCC 2.9 (991111), 2.96 and 3.2 now use the same optional macOS
+Linux runner; SN Systems EE-GCC 2.95.2/2.95.3 use native Mac wibo. Original
+compiler binaries and the linked byte judge are retained. Physical Intel Mac
+verification remains planned; Apple Silicon checks use isolated homemade programs.
+CodeWarrior PS2 on macOS remains planned pending license acceptance and real
+compiler checks; its existing Linux/WSL support is unchanged.
+
 ## What works where
 
 Each feature and the platforms it covers today. A — is a gap: pick one up (the notes under the table say where to

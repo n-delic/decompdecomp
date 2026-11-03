@@ -168,6 +168,11 @@ def compile_job(payload: dict, root: Path = Path('/work')) -> dict:
         path = work_path(root, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+    # Export builds create build/src/<unit> on the host; only selected sources cross
+    # into the fresh guest workspace. Recreate output parents before the assembler runs.
+    outputs = payload.get('outputs')
+    for name in outputs or []:
+        work_path(root, name).parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.Popen(payload['argv'], cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, start_new_session=True, preexec_fn=child_limits)
     try:
@@ -176,7 +181,6 @@ def compile_job(payload: dict, root: Path = Path('/work')) -> dict:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()
         return {'timeout': True}
-    outputs = payload.get('outputs')
     paths = list(root.rglob('*')) if outputs is None else [work_path(root, name) for name in outputs]
     files = {}
     total = 0
