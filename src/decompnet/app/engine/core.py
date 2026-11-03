@@ -26,6 +26,8 @@ class Core(Network):
         self._sym_override: dict[int, SymbolTable] = {}
         self._roms: dict[int, tuple[bytes, list[split.Segment]]] = {}
         self._xrefs: dict[int, dict] = {}
+        self._scan_cache: dict[int, dict] = {}  # project id -> {vram: (content token, classes scan)}; survives edits
+        self._facts_cache: dict[int, dict] = {}  # project id -> {vram: (content token, structs Facts)}; survives edits
         self._draft_locks: dict[int, threading.Lock] = {}  # function id -> held while its machine draft is made
         self._headers: dict[tuple, object] = {}  # (project id, header version, for m2c) -> its declarations
         self._asm_names: dict[int, dict] = {}  # project id -> {function id: (size, the names its assembly mentions)}
@@ -59,6 +61,16 @@ class Core(Network):
         self.find_moved_projects()
         from ..progress import Progress
         self.progress = Progress(self)
+
+    def _corpus(self, pid: int) -> list[tuple[int, bytes, list, bytes]]:
+        """(vram, code, relocs, content token) for every function with target bytes. The token is a cheap content
+        hash so classes/structs extraction can be reused for every function whose bytes did not change (the
+        expensive part of recovery; the whole-game rebuild on each layout change was the ceiling under many agents)."""
+        out = []
+        for r in self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL", pid):
+            token = hashlib.blake2b(r["target"] + b"\x1e" + r["relocs"].encode(), digest_size=16).digest()
+            out.append((r["vram"], r["target"], json.loads(r["relocs"]), token))
+        return out
 
     def _project(self, slug: str | None):
         row = super()._project(slug)

@@ -276,11 +276,25 @@ class BriefMixin:
             return None
         x = self.xrefs(proj)
         if "classes" not in x:
-            rows = self.store.all("SELECT vram, target, relocs FROM functions WHERE project_id=? AND target IS NOT NULL",
-                                  proj["id"])
-            x["classes"] = classes.recover(((r["vram"], r["target"], json.loads(r["relocs"])) for r in rows),
-                                           self.reader(proj), bool(self.cfg(proj).get("big_endian", True)))
+            big_endian = bool(self.cfg(proj).get("big_endian", True))
+            scans = self._scans(proj["id"], self._corpus(proj["id"]), big_endian)
+            found = classes.from_scans(scans, self.reader(proj), big_endian)
+            classes.add_fields(found, scans)
+            x["classes"] = found
         return x["classes"]
+
+    def _scans(self, pid: int, corpus: list, big_endian: bool) -> dict:
+        """Each function's classes.scan, keyed by vram; the cached scan is reused for every function whose content
+        token is unchanged (scan reads only its own code and relocations, never other functions)."""
+        cache = self._scan_cache.setdefault(pid, {})
+        out, kept = {}, {}
+        for vram, code, relocs, token in corpus:
+            hit = cache.get(vram)
+            scan = hit[1] if (hit is not None and hit[0] == token) else classes.scan(code, relocs, big_endian)
+            out[vram] = scan
+            kept[vram] = (token, scan)
+        self._scan_cache[pid] = kept
+        return out
 
     def get_class(self, project: str | None, what: str = "") -> str:
         if (fork := self.fork_slug(project)):
