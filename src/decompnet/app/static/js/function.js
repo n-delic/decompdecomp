@@ -530,6 +530,45 @@ function insnHtml(text, other, cls) {
   }
   return `<span class="op">${esc(m[1])}</span>${m[2] ? " " : ""}${ops}`;
 }
+// Repeated missing-symbol messages share guidance, but keep every original message inspectable.
+function diffProblemsHTML(detail) {
+  const cards = [], symbols = new Set(), guidance = new Set(), originals = new Set();
+  const card = (title, message, kind = "issue") => `<li class="diagnostic-card diagnostic-${kind}">
+    <header class="diagnostic-head"><span class="diagnostic-icon" aria-hidden="true">${kind === "issue" ? "!" : "i"}</span><h3>${esc(title)}</h3></header>
+    <p class="diagnostic-message">${esc(message)}</p></li>`;
+  const link = detail.checks?.link;
+  if (link?.kind === "unresolved_symbols" && link.symbols?.length) {
+    link.symbols.forEach(name => symbols.add(name));
+    if (link.message) originals.add(link.message);
+  } else if (link?.message) cards.push(card("Linking check", link.message));
+  for (const problem of new Set(detail.problems || [])) {
+    const unknown = problem.match(/^`([^`]+)` is not a known symbol\.\s*(.*)$/s);
+    if (unknown) {
+      symbols.add(unknown[1]);
+      if (unknown[2]) guidance.add(unknown[2]);
+      originals.add(problem);
+    } else cards.push(card("Comparison issue", problem));
+  }
+  if (symbols.size) {
+    const count = `${symbols.size} ${symbols.size === 1 ? "symbol" : "symbols"}`;
+    cards.unshift(`<li class="diagnostic-card diagnostic-issue">
+      <header class="diagnostic-head"><span class="diagnostic-icon" aria-hidden="true">!</span><h3>Unresolved symbols</h3><span class="diagnostic-count">${count}</span></header>
+      <p class="diagnostic-message">Resolve these addresses before random permutations. Use target relocation evidence; do not guess addresses.</p>
+      <ul class="diagnostic-symbols" tabindex="0" aria-label="Unresolved symbols">${[...symbols].map(name => `<li><code>${esc(name)}</code></li>`).join("")}</ul>
+      ${[...guidance].map(message => `<p class="diagnostic-guidance">${esc(message)}</p>`).join("")}
+      <details class="diagnostic-details"><summary>Original messages</summary><ul tabindex="0" aria-label="Original diagnostic messages">${[...originals].map(message => `<li>${esc(message)}</li>`).join("")}</ul></details>
+    </li>`);
+  }
+  const layout = detail.checks?.export;
+  if (layout?.message && layout.state !== "unmatched") {
+    cards.push(card("Export layout", layout.message, layout.ready === false ? "issue" : "note"));
+  }
+  for (const message of [detail.mismatch_summary, detail.stack_diagnostic, ...(detail.source_diagnostics || [])].filter(Boolean)) {
+    cards.push(card("Comparison note", message, "note"));
+  }
+  return cards.join("");
+}
+
 function renderDiff(d) {
   if (!S.editDirty && typeof d.source === "string") setEditor(d.source, S.fnDetail);
   setEditorSourceMapping(d);
@@ -545,18 +584,6 @@ function renderDiff(d) {
   const label = { matched: "Matching C", best: "Best attempt", latest: S.ov.kind === "fork" ? "The source now" : "Latest attempt" }[d.kind] || "Attempt";
   sum.innerHTML = `<b>${label}</b> · ${d.percent === 100 && d.score === 0 ? `<span class="ok">byte-identical</span>` : `${d.percent}%${d.score != null ? ` · score ${d.score}` : ""}`} · ${same} of ${target} instructions identical
     <span class="diff-key"><i class="k arg"></i>operands <i class="k repl"></i>different <i class="k mov"></i>moved</span>`;
-  if (d.mismatch_summary) {
-    const diagnostic = document.createElement("p");
-    diagnostic.className = "muted"; diagnostic.textContent = d.mismatch_summary; probs.append(diagnostic);
-  }
-  if (d.stack_diagnostic) {
-    const diagnostic = document.createElement("p"); diagnostic.className = "small muted";
-    diagnostic.textContent = d.stack_diagnostic; probs.append(diagnostic);
-  }
-  for (const hint of d.source_diagnostics || []) {
-    const diagnostic = document.createElement("p"); diagnostic.className = "small muted";
-    diagnostic.textContent = hint; probs.append(diagnostic);
-  }
   const html = [];
   const addressRows = new Map((d.address_rows || []).map((a) => [a.row, a]));
   const rowIndices = new Map(rows.map((r, i) => [r, i]));
@@ -586,8 +613,7 @@ function renderDiff(d) {
   flush(html.length ? "end" : "all");
   box.innerHTML = `<div class="dh"><span></span><span>Target (your game)</span><span></span><span>${esc(label)}</span></div>` + html.join("");
   box.querySelectorAll(".dfold").forEach((b) => { b.onclick = () => { b.nextElementSibling.hidden = false; b.remove(); }; });
-  const advisory = [d.checks?.link?.message, d.checks?.export?.state !== "unmatched" ? d.checks?.export?.message : null].filter(Boolean);
-  probs.innerHTML = [...advisory, ...(d.problems || [])].map((p) => `<li>${esc(p)}</li>`).join("");
+  probs.innerHTML = diffProblemsHTML(d);
 }
 async function loadDiff() {
   const d0 = S.fnDetail, slug = S.slug, gen = S.gen, which = S.which, nav = S.fnNav;

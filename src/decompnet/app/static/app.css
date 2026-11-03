@@ -673,8 +673,26 @@ a.ghost, a.primary { text-decoration: none; }
 .dr.mov .dm { color: var(--move); }
 .dfold { display: block; width: 100%; text-align: center; font: 500 11.5px/2.2 var(--mono); color: var(--muted); background: var(--bg-alt); border-block: 1px solid var(--line-soft); }
 .dfold:hover { color: var(--ink); }
-.problems { margin: 10px 0 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; color: var(--miss); }
+.problems { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
 .problems:empty { display: none; }
+.diagnostic-card { min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-left: 3px solid var(--miss); border-radius: var(--r); background: var(--panel); color: var(--ink-2); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.diagnostic-note { border-left-color: var(--muted); }
+.diagnostic-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.diagnostic-head h3 { margin: 0; color: var(--ink); font-size: 13px; font-weight: 600; }
+.diagnostic-icon { display: grid; place-items: center; width: 20px; height: 20px; flex: none; border: 1px solid var(--line); border-radius: 50%; color: var(--miss); background: var(--miss-bg); font: 600 12px var(--mono); }
+.diagnostic-note .diagnostic-icon { color: var(--muted); background: var(--bg-alt); }
+.diagnostic-count { border-radius: var(--r-sm); background: var(--bg-alt); color: var(--muted); padding: 1px 6px; font: 11px/1.6 var(--mono); }
+.diagnostic-message { margin: 8px 0 0; white-space: pre-wrap; }
+.diagnostic-symbols { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; padding: 0; margin: 12px 0; max-height: 168px; overflow-y: auto; }
+.diagnostic-symbols li { min-width: 0; max-width: 100%; padding: 4px 8px; border: 1px solid var(--line-soft); border-radius: var(--r-sm); background: var(--bg-alt); }
+.diagnostic-symbols code { font: 12px/1.5 var(--mono); color: var(--ink); }
+.diagnostic-guidance { margin: 8px 0 0; font-size: 12px; color: var(--ink-2); }
+.diagnostic-details { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); font-size: 12px; }
+.diagnostic-details summary { width: fit-content; cursor: pointer; color: var(--muted); }
+.diagnostic-details summary:hover { color: var(--ink); }
+.diagnostic-details summary:focus-visible, .diagnostic-details > ul:focus-visible, .diagnostic-symbols:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.diagnostic-details > ul { margin: 10px 0 0; padding-left: 18px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.diagnostic-details li + li { margin-top: 8px; }
 .errlog { max-height: 40vh; color: var(--miss); white-space: pre-wrap; }
 .editor { position: relative; height: min(58vh, 560px); border-radius: var(--r); background: var(--code-bg); border: 1px solid var(--line-soft); overflow: hidden; }
 .editor:focus-within { border-color: color-mix(in srgb, var(--match) 55%, var(--line)); }
