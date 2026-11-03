@@ -381,6 +381,7 @@ def _ago(ts: float | None) -> str:
 # check after a match), and a large PS2 project's are 2 MB, read on every compile and brief. A few versions are kept; each
 # change of a project's settings is a new text, so the cache turns over on its own with nothing to invalidate.
 SETTINGS_KEPT = 8
+ASM_BRIEF_LINES = 1500  # claim_function/get_function show at most this many asm (or draft) lines; read_asm pages the rest
 _settings: dict[str, dict] = {}
 _settings_lock = threading.Lock()
 
@@ -939,6 +940,30 @@ class Network:
     def get_function(self, function: str, project: str | None = None, agent: Agent | None = None) -> str:
         return self._brief(self._function(function, project), agent, header="VIEW")
 
+    def read_asm(self, function: str, start: int = 0, count: int = ASM_BRIEF_LINES, part: str = "asm",
+                 project: str | None = None, agent: Agent | None = None) -> str:
+        """A page of a big function's target assembly (part="asm") or its current draft/best C (part="draft"),
+        for functions whose full text does not fit in one claim_function/get_function reply."""
+        fn = self._function(function, project)
+        proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
+        if getattr(self, "fork_slug", lambda s: None)(proj["slug"]):
+            raise NetworkError("read_asm is for ROM projects; read a source file with read_file instead.")
+        if part == "draft":
+            text = (fn["best_source"] or fn["seed"] or "").strip()
+            if not text:
+                return (f'{fn["name"]}: no draft yet. Claim it (claim_function) for the machine draft, or '
+                        f'read_asm("{fn["name"]}") for the target assembly.')
+            label, fence, part_arg = "draft", "c", ', part="draft"'
+        else:
+            text = scoring.compact_asm(self._asm_text(fn, proj))
+            label, fence, part_arg = "assembly", "asm", ""
+        page, total, nxt = scoring.asm_page(text, int(start), int(count))
+        lo = max(0, int(start))
+        hi = lo + (len(page.splitlines()) if page else 0)
+        tail = (f'Next page: read_asm("{fn["name"]}"{part_arg}, start={nxt})' if nxt is not None
+                else f"(end of {label})")
+        return f"## {proj['slug']}/{fn['name']} {label} \u2014 lines {lo}\u2013{hi} of {total}\n```{fence}\n{page}\n```\n{tail}"
+
     def _brief(self, fn, agent: Agent | None, header: str) -> str:
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         ctx = self._context(proj["id"], fn["unit"])
@@ -960,16 +985,31 @@ class Network:
         if fn["status"] == "matched":
             lines += [f"MATCHED by {self._agent_name(fn['matched_agent_id'])} {_ago(fn['matched_at'])}:",
                       "```c", fn["matched_source"].strip(), "```"]
-        lines += ["", "### Target assembly", "```asm", scoring.compact_asm(self._asm_text(fn, proj)), "```"]
+        asm = scoring.compact_asm(self._asm_text(fn, proj))
+        apage, atotal, anext = scoring.asm_page(asm, 0, ASM_BRIEF_LINES)
+        ahead = "### Target assembly"
+        if anext is not None:
+            ahead += (f" (first {ASM_BRIEF_LINES} of {atotal} lines \u2014 it is large; page the rest with "
+                      f'read_asm("{fn["name"]}", start={ASM_BRIEF_LINES}), advancing start until it says end)')
+        lines += ["", ahead, "```asm", apage, "```"]
         lines += self._extra_brief(fn, proj)
         if fn["status"] != "matched":
             if fn["best_source"]:
-                lines += ["", f"### Best attempt so far: score {fn['best_score']} by "
-                              f"{self._agent_name(fn['best_agent_id'])} ({fn['attempts']} attempts total) — "
-                              f"start from this", "```c", fn["best_source"].strip(), "```"]
+                dpage, dtotal, dnext = scoring.asm_page(fn["best_source"].strip(), 0, ASM_BRIEF_LINES)
+                dhead = (f"### Best attempt so far: score {fn['best_score']} by "
+                         f"{self._agent_name(fn['best_agent_id'])} ({fn['attempts']} attempts total) — start from this")
+                if dnext is not None:
+                    dhead += (f" (first {ASM_BRIEF_LINES} of {dtotal} lines; page the rest with "
+                              f'read_asm("{fn["name"]}", part="draft", start={ASM_BRIEF_LINES}))')
+                lines += ["", dhead, "```c", dpage, "```"]
             elif fn["seed"]:
-                lines += ["", "### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
-                              "and names usually wrong. Start from it and fix those", "```c", fn["seed"].strip(), "```"]
+                spage, stotal, snext = scoring.asm_page(fn["seed"].strip(), 0, ASM_BRIEF_LINES)
+                shead = ("### Machine draft (m2c): its control flow and arithmetic are usually right, its types "
+                         "and names usually wrong. Start from it and fix those")
+                if snext is not None:
+                    shead += (f" (first {ASM_BRIEF_LINES} of {stotal} lines; page the rest with "
+                              f'read_asm("{fn["name"]}", part="draft", start={ASM_BRIEF_LINES}))')
+                lines += ["", shead, "```c", spage, "```"]
         notes = self.notes_for_brief(fn)
         if notes:
             lines += ["", "### Notes from previous agents on this function", *notes]
