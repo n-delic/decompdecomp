@@ -38,6 +38,26 @@ def validate(path, repo):
     return path,git
 
 
+def checkpoint(net, state):
+    """Park a continuous service only after its submitted work has joined."""
+    while getattr(net, 'source_update_pending', False) and not state.stop.is_set():
+        state.state = 'update_wait'
+        state.stop.wait(.2)
+    if not state.stop.is_set():
+        state.state = 'running'
+
+
+def idle_wait(net, state, seconds):
+    """Idle services must notice a queued update without waiting minutes to poll."""
+    import time
+    until = time.monotonic() + seconds
+    while not state.stop.is_set() and time.monotonic() < until:
+        if getattr(net, 'source_update_pending', False):
+            checkpoint(net, state)
+            return
+        state.stop.wait(min(.2, max(0, until - time.monotonic())))
+
+
 class Runtime:
     def __init__(self, app):
         self.app=app
@@ -59,6 +79,8 @@ class Runtime:
         if any(j['state']=='running' for j in app.jobs.jobs.values()):
             return True
         net=app.net
+        if getattr(net, '_repair_analysis_pending', None):
+            return True
         for owner in (net.drafter,net.permuter,net.twins):
             if any(s.state=='running' for s in owner.jobs.values()):
                 return True
@@ -92,8 +114,9 @@ class Runtime:
             self.cancel.clear()
             self.app.settings.data['source_runtime_path']=str(folder)
             self.app.settings.save()
-            self.job={'state':'waiting','message':'Waiting for current sessions and background jobs to finish. New agent sessions and jobs are held.', 'path':str(folder)}
+            self.job={'state':'waiting','message':'Waiting for active sessions and current background batches to save their work. Usage-limit waits do not block restart; agents resume with their saved limits.', 'path':str(folder)}
             with self.app.manager._lock, self.app.jobs._lock:
+                self.app.net.source_update_pending=True
                 self.app.manager.source_update_pending=True
                 self.app.jobs.source_update_pending=True
         threading.Thread(target=self.run,args=(folder,git,uv,target,repo),daemon=True,name='source-runtime').start()
@@ -144,6 +167,7 @@ class Runtime:
         except (OSError,ValueError,subprocess.SubprocessError) as error:
             self.job.update(state='error',message=str(error) + (' Restart failed after shutdown; reopen decompdecomp from the checkout.' if self.job['state']=='restarting' else ' Current app has not been restarted.'))
         finally:
+            self.app.net.source_update_pending=False
             self.app.manager.source_update_pending=False
             self.app.jobs.source_update_pending=False
             self.app.jobs.source_update_preparing=False

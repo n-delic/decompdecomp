@@ -77,7 +77,7 @@ def resume(feedback):
     pending=feedback.net.__dict__.setdefault('_repair_analysis_pending',set())
     def run():
         try:
-            while enabled(feedback):
+            while enabled(feedback) and not getattr(feedback.net, 'source_update_pending', False):
                 prepare(feedback)
                 row=feedback.store.one('SELECT * FROM repair_analysis_queue ORDER BY created_at,example_id LIMIT 1')
                 if not row:break

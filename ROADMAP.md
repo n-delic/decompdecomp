@@ -1927,7 +1927,10 @@ had identical statuses, scores and saved sources. Actual game import speed depen
 Implemented: explicit clean-main Git/uv runtime handoff from Settings. Users choose current data or
 separate development data; new managed agent sessions/jobs are held until known background work
 finishes, then fast-forward/locked sync/import preflight precede a process replacement. Waiting can
-be cancelled. Ordinary development launch remains isolated by default; packaged bundles are untouched.
+be cancelled. Continuous draft/permutation services park between joined batches instead of blocking
+forever while polling; usage-limit waits are idle, and persisted provider cooldowns survive restart.
+Active provider processes and finite jobs still finish before files change. Automatic repair analysis
+stops taking queued captures during handoff. Ordinary development launch remains isolated by default; packaged bundles are untouched.
 
 Implemented: checkout-only frontend revision polling, in-place CSS updates and debounced interface
 reload for scripts/markup/assets. Project/tab, open function, disclosure and main scroll state are

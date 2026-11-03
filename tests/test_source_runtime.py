@@ -123,3 +123,46 @@ def test_separate_data_launch_does_not_replace_current_app(tmp_path,monkeypatch)
     assert r.job['state']=='done'
     env=launched[0][1]['env']
     assert env['DECOMP_HOME']==str(tmp_path/'separate') and 'DECOMP_RESTART' not in env
+
+
+def test_usage_limit_wait_does_not_block_but_live_session_does(tmp_path):
+    app = make_app(tmp_path)
+    session = NS(state='waiting', proc=NS(poll=lambda: 0), until=9999999999)
+    app.manager.sessions['helper'] = session
+    r = runtime.Runtime(app)
+    assert not r.busy()
+    session.proc = NS(poll=lambda: None)
+    assert r.busy()  # Never interrupt an active provider process.
+    session.proc = None
+    session.state = 'working'
+    assert r.busy()  # API providers have no subprocess.
+
+
+def test_continuous_service_parks_and_resumes_without_stopping(tmp_path):
+    app = make_app(tmp_path)
+    app.net.source_update_pending = True
+    state = NS(state='running', stop=threading.Event())
+    app.net.permuter.jobs['game'] = state
+    thread = threading.Thread(target=runtime.idle_wait, args=(app.net, state, 60))
+    thread.start()
+    try:
+        import time
+        until = time.monotonic() + 2
+        while state.state != 'update_wait' and time.monotonic() < until:
+            threading.Event().wait(.01)
+        assert state.state == 'update_wait'
+        assert not runtime.Runtime(app).busy()
+        assert not state.stop.is_set()
+    finally:
+        app.net.source_update_pending = False
+        thread.join(2)
+    assert not thread.is_alive()
+    assert state.state == 'running'
+
+
+def test_failed_update_releases_background_checkpoint(tmp_path, monkeypatch):
+    app = make_app(tmp_path)
+    app.net.source_update_pending = True
+    monkeypatch.setattr(runtime, 'validate', lambda *args: (_ for _ in ()).throw(ValueError('changed')))
+    runtime.Runtime(app).run(tmp_path, 'git', 'uv', tmp_path, 'example/repo')
+    assert not app.net.source_update_pending

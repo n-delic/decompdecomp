@@ -207,7 +207,7 @@ class Permuter:
     def start(self, slug: str) -> State | None:
         """Run on the project's near misses until there are none (looking again every few minutes while the
         app runs: agents make new ones)."""
-        if (st := self.jobs.get(slug)) is not None and st.state == "running":
+        if (st := self.jobs.get(slug)) is not None and st.state in ("running", "update_wait"):
             return st
         if slug in self.net.links:  # a room member: the host's copy permutes, and its matches come back here
             return None
@@ -237,6 +237,10 @@ class Permuter:
         idle = 0
         try:
             while not st.stop.is_set():
+                from .source_runtime import checkpoint, idle_wait
+                checkpoint(self.net, st)
+                if st.stop.is_set():
+                    return
                 try:
                     proj = self.net.project_row(slug)
                 except NetworkError:
@@ -250,7 +254,7 @@ class Permuter:
                     idle += 1
                     if idle > IDLE_LOOKS:
                         return
-                    st.stop.wait(IDLE_SECONDS)
+                    idle_wait(self.net, st, IDLE_SECONDS)
                     continue
                 idle = 0
                 wait([workers.pool().submit(self._turn, agent, proj, fn, st) for fn in todo])
