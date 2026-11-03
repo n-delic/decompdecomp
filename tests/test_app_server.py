@@ -1793,6 +1793,38 @@ def test_source_runtime_route_reports_home_and_requires_explicit_data_choice(app
     assert rejected.status_code==400 and 'Choose current' in rejected.json()['error']
 
 
+def test_background_agent_creation_keeps_server_responsive_and_reports_steps(tmp_path,monkeypatch):
+    from .test_loading import tiny_game
+    net=RomNetwork(tmp_path/'app.db',tmp_path);tiny_game(net)
+    mcp,manager,security,_=build(net,tmp_path,PORT,SECRET)
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),
+                      base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    entered,release=threading.Event(),threading.Event()
+    monkeypatch.setattr(net,'warm_briefs_soon',lambda slug:None)
+    def start(*args):
+        agents.report_start('Waiting for saved project verification in test')
+        entered.set()
+        assert release.wait(5)
+        return ['new-worker']
+    monkeypatch.setattr(manager,'start',start)
+    try:
+        response=client.post('/api/agents/start',headers={'X-Decomp':'1'},json={
+            'kind':'claude','slug':'game','background':True,'options':{'model':'opus'}})
+        assert response.status_code==200
+        job=response.json()['job'];assert entered.wait(3)
+        status=client.get('/api/job?id='+job).json()
+        assert status['state']=='running'
+        assert any('saved project verification' in line for line in status['log'])
+        assert client.get('/api/close').status_code==200
+    finally:
+        release.set()
+    for _ in range(100):
+        status=client.get('/api/job?id='+job).json()
+        if status['state']!='running':break
+        time.sleep(.01)
+    assert status['state']=='done' and status['result']=={'started':['new-worker']}
+
+
 def test_map_reads_do_not_start_saved_progress_verification(tmp_path,monkeypatch):
     from .test_loading import tiny_game
     net=RomNetwork(tmp_path/'app.db',tmp_path)

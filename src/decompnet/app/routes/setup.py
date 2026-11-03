@@ -4,6 +4,7 @@ restarting helpers, and the settings.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 
@@ -149,6 +150,30 @@ def register(app: App) -> None:
         if (bad := guard(request, write=True)):
             return bad
         data = await body(request)
+        if data.get('background'):
+            def create(log):
+                token = agents.start_progress.set(log)
+                try:
+                    log('Checking project, model and work-selection settings…')
+                    response = create_agents(data)
+                    result = json.loads(response.body)
+                    if response.status_code >= 400:
+                        raise ValueError(result.get('error') or 'Agent creation failed.')
+                    log(f"Created {len(result['started'])} agents. Watch their cards for preparation, sign-in, limits or available-work status.")
+                    return result
+                except Exception:
+                    log('Creation stopped. Check the Agents list before retrying: earlier steps may already have created a worker.')
+                    raise
+                finally:
+                    agents.start_progress.reset(token)
+            try:
+                return JSONResponse({'job':jobs.start('Create agents',create)})
+            except ValueError as error:
+                return fail(error)
+        # Legacy callers keep the immediate response, but preparation must never block the event loop.
+        return await call(create_agents, data)
+
+    def create_agents(data):
         kind, slug = str(data.get("kind", "")), str(data.get("slug", ""))
         given = data.get("options") or {}
         requested_models = given.get("models", [])

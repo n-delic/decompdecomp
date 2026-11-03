@@ -37,6 +37,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +48,14 @@ from .. import agents, consoles, network
 from ..network import NetworkError
 from . import tools
 from .engine import RomNetwork
+
+start_progress = ContextVar('agent-start-progress', default=None)
+
+
+def report_start(message):
+    if (report := start_progress.get()) is not None:
+        report(message)
+
 
 log = logging.getLogger("decompdecomp")
 _windows_jobs: dict[int, object] = {}
@@ -638,6 +647,7 @@ class Manager:
     def start(self, kind: str, slug: str, count: int = 1, options: dict | None = None) -> list[str]:
         if getattr(self, 'source_update_pending', False):
             raise ValueError('A source update is queued. Cancel it before adding new agents.')
+        report_start("Validating worker selection…")
         options = dict(options or {})
         options["selection"] = self.net.validate_selection(options.get("selection"))
         agent = agents.get(kind)  # (an unknown kind is a ValueError that says which there are)
@@ -647,9 +657,12 @@ class Manager:
         if self._down:
             raise ValueError("decompdecomp is quitting")
         ids = []
+        report_start("Preparing the project before creating workers…")
         self._prepare(slug)
+        report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
-            for _ in range(max(1, min(int(count), MAX_AT_ONCE))):
+            for index in range(max(1, min(int(count), MAX_AT_ONCE))):
+                report_start(f"Creating worker {index+1} / {max(1, min(int(count), MAX_AT_ONCE))}…")
                 model = options.get("model") or agent.config_model() or ""
                 if options.get("effort") and "#" not in model:  # an effort is a record of its own, as with the others
                     model = f"{model}#{options['effort']}"
@@ -660,6 +673,7 @@ class Manager:
                 name = helper_name(kind, model, reserved)
                 s = self._record(slug, kind, name, self._label(kind, name, options), options)
                 s.restarts = 0
+                report_start(f"Launching {s.label}…")
                 self._launch(s)
                 ids.append(s.id)
         return ids
@@ -795,7 +809,9 @@ class Manager:
         left for last meanwhile), and on a GameCube/Wii decomp where code has no source file yet, files for it
         (start_files, checked against the game's checksum), or they'd all share the few hard functions left."""
         try:
+            report_start("Refreshing identical-function matches; saved-file verification may need to finish first…")
             self.net.twins.refresh(slug)
+            report_start("Preparing background permutation work…")
             self.net.permuter.start(slug)  # near misses agents leave, on spare CPU
         except Exception:  # agents work without them
             log.exception("twins or the permuter didn't start for %s", slug)

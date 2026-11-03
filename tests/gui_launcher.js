@@ -31,7 +31,7 @@ class Box extends Element {
   set innerHTML(html) {
     this.html = html;
     this.elements = [];
-    const tagPattern = /<(button|input|select|option|output|a|span)\b([^>]*)>/g;
+    const tagPattern = /<(button|input|select|option|output|a|span|pre)\b([^>]*)>/g;
     for (const match of html.matchAll(tagPattern)) {
       const attrs = {};
       for (const item of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[item[1]] = item[2] ?? "";
@@ -82,17 +82,21 @@ const calls = [];
 const endpoint = { id: "e1", name: "Local", model: "base", base_url: "http://127.0.0.1:8080/v1", max_sessions: 4 };
 const ctx = {
   console, Promise, Map, Set, JSON, Math, Date, Object, Array, String, Number, Symbol, Error, RegExp, encodeURIComponent,
+  setInterval:()=>1, clearInterval(){},
   document: { addEventListener() {}, getElementById: get },
   $: get, S: { slug: "game", settings: {}, st: { settings: { endpoints: [endpoint], per_session: 4 }, agents: [] } },
   AUTO: "autopilot", esc: (value) => String(value ?? ""), setHtml: (el, html) => { el.innerHTML = html; },
   wireCopies() {}, wireEndpointFields() {}, endpointFields: () => "", hostOf: () => "127.0.0.1",
   polishOffered: () => false, cFunctions: () => 0, cmdBox: () => "", effortOf: () => "", EFFORT_NAMES: {},
   MAX_PER_SESSION: 20, MAX_AT_ONCE: 8, poll() {}, loadNav() {}, hideLaunch() {}, toast() {},
-  beginWork() { return () => {}; }, showJobError() {}, followJob: async () => {},
+  beginWork() { return () => {}; }, showJobError() {}, followJob: async (job,log,update) => {
+    if(update) update(['Preparing project in test'],{state:'running'});
+    return {started:['helper']};
+  },
   api: async (url, options = {}) => {
     if (url.startsWith("/api/endpoints/models")) return { models: [{ id: "m-one", name: "Model one" }, { id: "m-two", name: "Model two" }] };
     calls.push({ url, body: options.body });
-    return { started: ["helper"] };
+    return url === "/api/agents/start" ? {job:"creation-job"} : { started: ["helper"] };
   },
   TASKS: [["", "Decompile", "decompile"]], location: { hash: "" },
 };
@@ -138,6 +142,7 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   const apiStart = box.querySelector('[data-act="start"]');
   await apiStart.onclick();
   const apiCall = calls.find((call) => call.url === "/api/agents/start" && call.body.kind === "api");
+  requireOk(apiCall.body.background === true, "launcher must use nonblocking agent creation");
   requireOk(apiCall && apiCall.body.options.multiple_models && apiCall.body.options.models[0].endpoint === "e1" &&
     apiCall.body.options.models[0].model === "m-one", "API launch must send only selected endpoint/model pairs");
 
@@ -236,5 +241,13 @@ function requireOk(test, message) { if (!test) throw new Error(message); }
   box.querySelectorAll("[data-step]").find((button) => button.dataset.step === "1").onclick();
   requireOk(box.querySelector("[data-model-limit]").textContent.includes("2 sessions"),
     "API per-model count guidance must update with the How many control");
+  let accepted, submissions=0;
+  ctx.api=()=>{submissions++;return new Promise(resolve=>{accepted=resolve;});};
+  const pending=ctx.startAgents(cliAgent,'opus',1,null);
+  await ctx.startAgents(cliAgent,'opus',1,null);
+  requireOk(submissions===1,'a pending creation must not submit duplicates');
+  ctx.renderLauncher(box);
+  requireOk(box.html.includes('Creating agents for') && box.html.includes('request continues'), 'reopening launcher must show pending creation');
+  accepted({started:['new-worker']});await pending;
   console.log("launcher model selections passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });

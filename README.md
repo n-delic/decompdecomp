@@ -1337,6 +1337,15 @@ must remain assigned/reachable and any external proxy/named tunnel must be runni
 the room API, not the app GUI or agent MCP endpoint. A fixed endpoint does not make an offline host
 available; clients reconnect when the host and endpoint return.
 
+Agent creation in **Add agents** is a background job. Its progress bar, elapsed time and log distinguish
+request acceptance, project/model checks, project preparation, identity reservation and worker launch.
+Closing/reopening the popover retains the in-progress view during the same page session; duplicate
+submissions are held. Creation completion means the worker records were launched, not that a provider
+request is already running: each agent card then shows preparation, sign-in/usage limits and work waits.
+If a multi-worker start fails partway through, check the Agents list before retrying; already-created
+workers are preserved rather than stopped or duplicated automatically.
+
+
 
 ### Opening a project while verification is running
 

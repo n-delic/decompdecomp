@@ -503,8 +503,24 @@ function launchLabel(a, model, count, models = []) {
     : label;
 }
 
+let agentCreation = null;
 async function startAgents(a, model, count, btn, extra = {}, models = []) {
+  if (agentCreation) return toast("Agent creation is already running. Reopen Add agents to see its progress.", "err");
+  agentCreation = {slug:S.slug,lines:[],status:"Waiting for the app to accept the request…",stage:"Waiting for the app to accept the request…"};
+  const slug = S.slug, panel = btn?.closest(".lz-body");
+  const log = panel?.querySelector('[data-start-log]');
+  if (log) {log.hidden = false; log.textContent = ""; showJobError(log, "");}
+  const finish = log ? beginWork(log, "Creating agents", [...panel.querySelectorAll("button, input, select")], "Agents created. Check their cards for startup status.") : () => {};
   if (btn) btn.disabled = true;
+  const began = Date.now();
+  const updateStatus = () => {
+    if (!agentCreation) return;
+    agentCreation.status = `${Math.floor((Date.now()-began)/1000)}s elapsed · ${agentCreation.stage}`;
+    const active = $("launchPopBody").querySelector('[data-creation-status]');
+    if (active) active.textContent = agentCreation.status;
+    if (log?._workStatus) log._workStatus.textContent = `Creating agents · ${agentCreation.status}`;
+  };
+  const elapsedTimer = setInterval(updateStatus, 1000);
   try {
     const options = { ...extra };
     if (models.length) options.models = models;
@@ -516,7 +532,15 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     if (LZ.task) options.task = LZ.task;
     if (!LZ.task) options.selection = btn?.closest(".lz-body")?.querySelector("[data-selection-strategy]")
       ? readSelection(btn.closest(".lz-body")) : LZ.selection;
-    await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug: S.slug, count, options } });
+    const result = await api("/api/agents/start", { method: "POST", body: { kind: a.id, slug, count, options, background: true } });
+    if (result.job) await followJob(result.job, log, (lines) => {
+      agentCreation.lines = lines;
+      agentCreation.stage = lines.at(-1) || "Waiting for preparation to start…";
+      updateStatus();
+      const activeLog = $("launchPopBody").querySelector('[data-creation-log]');
+      if (activeLog) activeLog.textContent = lines.join("\n");
+
+    });
     S.st.settings.launcher = { kind: a.id, model: model || "", models, multiple: LZ.multiple, count,
       ...(a.uses_endpoints && LZ.apiSingleModel ? { api_model: LZ.apiSingleModel } : {}),
       ...(a.uses_endpoints ? { endpoints: LZ.eps || [] } : {}) };
@@ -524,12 +548,21 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
       const rec = (S.st.settings.recent_models ||= {});
       rec[a.id] = [model, ...(rec[a.id] || []).filter((m) => m !== model)].slice(0, 8);
     }
-    hideLaunch();
+    if (S.slug === slug) hideLaunch();
     const total = LZ.multiple ? models.length * count : count;
     toast(`${esc(a.uses_endpoints ? "Your API model" : a.name)}: ${total} ${total === 1 ? "agent is" : "agents are"} starting. ${LZ.task === "readable" ? "Matched functions get real names, types and a comment, one by one" : "Watch the map fill in"}; Agents says what each one does.`, "match");
     poll(false);
     loadNav();
-  } catch (e) { toast(esc(e.message), "err"); } finally { if (btn) btn.disabled = false; }
+  } catch (e) {
+    if (log) showJobError(log, e.message);
+    const active = $("launchPopBody").querySelector('[data-creation-status]');
+    if (active) {
+      active.textContent = `Creation stopped: ${e.message}. Check the Agents list before retrying.`;
+      const bar = $("launchPopBody").querySelector('.workbar'); if (bar) bar.hidden = true;
+    }
+    toast(esc(e.message), "err");
+  }
+  finally { clearInterval(elapsedTimer); agentCreation = null; finish(); if (btn) btn.disabled = false; }
 }
 
 /* The launcher, in the header's Start agents popover: the one place agents start from. `compact`: an API endpoint
@@ -541,6 +574,10 @@ const POLISH_FROM_SHARE = 0.5;  // polishing comes once most of the work is matc
 // to choose, its 241 set-aside ones (library code, assembly) counted against it
 const polishOffered = (ov) => !!ov && cFunctions(ov) > 0 && ov.matched >= cFunctions(ov) * POLISH_FROM_SHARE;
 function renderLauncher(box, compact = true) {
+  if (agentCreation) {
+    box.innerHTML = `<p>Creating agents for <b>${esc(agentCreation.slug)}</b></p><p class="small muted" data-creation-status role="status">${esc(agentCreation.status)}</p><div class="workbar" role="progressbar" aria-label="Creating agents"><i></i></div><pre class="joblog" data-creation-log>${esc(agentCreation.lines.join("\n"))}</pre><p class="small muted">This request continues if you close the popover. New agent cards show sign-in, preparation, usage limits or work-selection waits once created.</p>`;
+    return;
+  }
   if (!box || !S.st) return;
   launcherInit();
   const list = [...S.st.agents].sort((x, y) => y.recommended - x.recommended);
@@ -608,6 +645,7 @@ function renderLauncher(box, compact = true) {
         <label class="field"><span>Functions per session</span><input data-f="per" type="number" min="1" max="${MAX_PER_SESSION}" value="${LZ.per || S.st.settings.per_session}"></label>
         <span class="grow"></span>
         <button class="primary" data-act="start" type="button">${esc(launchLabel(a, LZ.model, LZ.count, LZ.models))}</button></div>
+        <pre class="joblog" data-start-log hidden></pre>
         <p class="muted small">${a.uses_endpoints ? "A built-in agent loop drives the model through the decomp tools." : esc(a.signin)} Each agent takes a different function; a fresh session every few functions keeps its context small.</p>` : ""}
     </div>`;
   const selectionBox = box.querySelector("[data-launch-selection]");
@@ -753,7 +791,7 @@ function renderLauncher(box, compact = true) {
       }
       return startAgents(a, "", LZ.count, go, { endpoints: LZ.eps });
     }
-    startAgents(a, LZ.model, LZ.count, go, {}, LZ.models);
+    return startAgents(a, LZ.model, LZ.count, go, {}, LZ.models);
   };
 }
 
