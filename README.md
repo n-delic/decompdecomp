@@ -181,6 +181,33 @@ rechecks one saved exact source/header/profile bundle per function. Each is inde
 ROM-data verified before publication. Busy or stale failures are listed and leave other functions eligible.
 Imported projects keep their build-owned headers and profile workflow.
 
+**Settings → Local source preparation → Run a resumable CPU source queue** works through
+mapped functions and saved exact bundles without model calls. It checkpoints each function,
+resumes after restart, and shows matches, scores, errors and deferred busy work. Pause finishes
+the current bounded check; resuming retains the original approval options. Each function gets
+up to three preparation rounds, each at most 32 trials /180 seconds; ordinary compile timeouts
+still apply. A new queue can revisit checked misses using cached trial progress.
+
+The assembly checkbox is explicit: only mapped or prepared assembly candidates are included.
+Misses remain set aside. Fresh exact C, private header and settings are published atomically
+with the status change; failed claims, changed inputs or bad data roll the whole operation back.
+Restart recovery releases only the dedicated queue identity's interrupted claim, never agents'
+claims. Busy functions are listed as deferred instead of stealing their work.
+
+MIPS ROM preparation discovers bounded actual caller/callee units and up to three real predecessor
+functions from authorized mapped source. It preserves physical lines, static linkage, referenced
+SDK macros/types and actual static helper bodies. Every emitted real body must independently
+match its known original entry before only the selected entry is exported. No guessed padding
+or target instructions are inserted. Up to sixteen explicitly selected coherent SDK source/header
+alternatives share the pass budget; measured ranking is specific to the source, header, target
+scope and compiler profile. A failed base mapping does not hide valid explicit alternatives.
+Other processors retain single-body trials until their compiler-unit reader/judge supports them.
+
+A function match is not a full cartridge verification. Use **repository sync** and its complete
+original-image comparison before committing/exporting a verified checkpoint. Imported projects
+keep their owned headers, compiler profiles and existing build workflow; a durable queue adapter
+for those builds remains planned.
+
 Mapped ROM preparation also queues bounded **CPU-only source recovery** trials before broader flag
 searches. It can restore actual reference prototypes (including aggregate returns/arguments), preserve
 a target call instead of a header macro, reuse verified named record declarations, try a small record

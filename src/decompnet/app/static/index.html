@@ -407,9 +407,9 @@
         <label>Other symbol aliases (reference name = destination name)<textarea id="sourcePrepAliases" rows="2" placeholder="gObjects = D_80010000"></textarea></label>
         <label>Original object definitions (optional: reference_symbol @ relative/file.c)<textarea id="sourcePrepDefinitions" rows="2" placeholder="gManager @ manager.c"></textarea></label>
         <label>Coherent source/header alternatives (optional: destination = symbol @ file.c | header.h)<textarea id="sourcePrepContexts" rows="2"></textarea></label>
-        <p class="muted">Use complete matching SDK revisions. Up to two alternatives per function share the pass budget; record gaps are bounded private hypotheses and are never written into your reference source.</p>
+        <p class="muted">Use complete matching SDK revisions. Up to sixteen alternatives per function share the pass budget; record gaps are bounded private hypotheses and are never written into your reference source.</p>
         <label>Original static helpers (optional: helper_name @ relative/file.c)<textarea id="sourcePrepHelpers" rows="2"></textarea></label>
-        <p class="muted">Only referenced, explicitly selected static helpers are retained for inlining. Extra emitted functions are rejected by the existing export guard. Selected object definitions keep their original bit patterns and expression order.</p>
+        <p class="muted">Only referenced, explicitly selected static helpers are retained for inlining. Bounded real mapped caller/helper or predecessor units are also tried for supported ROM judges; every emitted body must independently match its known entry. Selected object definitions keep their original bit patterns and expression order.</p>
 
         <p class="small muted">Only selected objects referenced by the candidate are included. The app tries preserved definitions before the version without them; exact judging and export data checks still apply. Split multiple object declarations into a prepared subset.</p>
         <label>Retail macro values (numeric, one per line)<textarea id="sourcePrepOverrides" rows="2" placeholder="OBJECT_LIMIT=128"></textarea></label>
@@ -417,6 +417,13 @@
         <label>Exact functions blocked from export (up to 20 names, separated by spaces)<input id="sourcePrepExportNames" placeholder="func_80001000"></label>
         <button id="sourcePrepExportRun" class="ghost" type="button">Repair export constant pools</button>
         <div class="row"><button id="sourcePrepSave" class="ghost" type="button">Save source settings</button><button id="sourcePrepRun" class="primary" type="button">Try preparation pass</button></div>
+        <details><summary>Run a resumable CPU source queue</summary>
+          <p class="small muted">Try mapped source and coherent SDK alternatives, then freshly verify prepared source/header/profile bundles. Progress is saved after each function and resumes after an app restart. No model calls. Local ROM projects only; imported projects keep their own build workflow.</p>
+          <label class="check"><input id="sourceQueueAssembly" type="checkbox"><span>Also recheck mapped or prepared assembly candidates; keep them set aside unless exact C is verified</span></label>
+          <div class="row"><button id="sourceQueueStart" type="button">Start / resume CPU queue</button><button id="sourceQueueStop" class="ghost" type="button">Pause after current check</button><button id="sourceQueueRefresh" class="ghost" type="button">Refresh saved progress</button></div>
+          <p class="small muted">Resuming keeps the original assembly choice. Each function gets up to three bounded preparation rounds. Checked misses can be retried in a new queue. Exact function checks do not verify a complete cartridge: use repository sync and its full rebuild before committing.</p>
+          <div id="sourceQueueLog"></div><div id="sourceQueueResults"></div>
+        </details>
         <details><summary>Try a source body and header directly</summary>
           <p class="small muted">Keep these separate to preserve source line positions. Add a #line directive if needed. A match saves this function’s source, private header and profile together; a miss leaves the working candidate unchanged. Local ROM projects only.</p>
           <label>Function<input id="sourcePairFunction" placeholder="func_80001000"></label>

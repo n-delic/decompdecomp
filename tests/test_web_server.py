@@ -341,3 +341,16 @@ def test_github_exchange_contacts_only_github_and_keeps_credentials_server_side(
     body=seen[0].content.decode()
     assert 'client_secret=server-secret' in body and 'code_verifier=pkce-verifier' in body
     assert b'server-secret' not in seen[1].content
+
+
+def test_source_queue_routes_use_existing_write_guard(web,monkeypatch):
+    client,net,login=web
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('test','Test','mips','.', '{}')")
+    sign_in(client,login)
+    called=[]
+    monkeypatch.setattr(net.source_queue,'start',lambda slug,assembly:called.append((slug,assembly)) or {'state':'running','job':'queued'})
+    body={'slug':'test','action':'queue-start','include_assembly':True}
+    assert client.post('/api/source-preparation',json=body).status_code==403 and not called
+    response=client.post('/api/source-preparation',json=body,headers={'X-Decomp':'1','Origin':ORIGIN})
+    assert response.status_code==200 and response.json()['job']=='queued' and called==[('test',True)]

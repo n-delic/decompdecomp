@@ -39,6 +39,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     jobs = Jobs(home / "logs" / "decomp.log")
     from .deep_sweep import Sweeps
     net.deep_sweeps = Sweeps(net, jobs)
+    from .source_queue import Queue
+    net.source_queue = Queue(net, jobs)
 
     def busy() -> bool:
         return bool(getattr(jobs, "source_update_pending", False)) or bool(manager.running()) or any(j["state"] == "running" for j in jobs.jobs.values())
@@ -151,6 +153,10 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     def resume_work():
         # Project synchronization can rejudge thousands of saved functions. It must not block the HTTP server
         # and window from starting, while the existing project locks still protect the restored work.
+        try:
+            net.source_queue.resume()
+        except Exception:
+            jobs.logger.exception("Could not resume local source recovery")
         try:
             net.deep_sweeps.resume()
         except Exception:

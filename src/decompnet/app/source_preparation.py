@@ -290,36 +290,41 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
         item={'symbol':origin[1],'file':origin[2]}
         existing=reader.origins.setdefault(pair,{**item,'family':'original-context','alternatives':[]})
         if item not in existing['alternatives']:existing['alternatives'].append(item)
-    add(prepare(reader,{**cfg,'_same_file_definitions':True},mapping,aliases,fallback),mapping)
-    add(prepare(reader,cfg,mapping,aliases,fallback),mapping)
-    if cfg.get('definitions'):add(prepare(reader,{**cfg,'definitions':''},mapping,aliases,fallback),mapping)
+    for variant_cfg in ({**cfg,'_same_file_definitions':True},cfg,*([{**cfg,'definitions':''}] if cfg.get('definitions') else [])):
+        try:add(prepare(reader,variant_cfg,mapping,aliases,fallback),mapping)
+        except NetworkError as error:reader.advisories.append('Base source context unavailable: '+str(error))
     count=0
     for dest,symbol,file,header in contexts(cfg.get('contexts','')):
         if dest!=mapping[0]:continue
         origin=(dest,symbol,file)
-        add(prepare(reader,{**cfg,'header':str(reader.root/header)},origin,{**aliases,symbol:dest},fallback),origin)
+        try:add(prepare(reader,{**cfg,'header':str(reader.root/header)},origin,{**aliases,symbol:dest},fallback),origin)
+        except NetworkError as error:reader.advisories.append('Alternative source/header unavailable: '+str(error))
         count+=1
-        if count>=2:break
+        if count>=16:break
+    if not result:raise NetworkError('No coherent source/header candidate could be prepared. Check the mapping and include folders.')
     from .reference_context_recovery import configurations
     for family,s,h in configurations(reader,cfg,mapping,aliases,fallback,prepare):
         add((s,h),mapping);reader.origins[(s,h)]['family']=family
     from . import source_conditions
     from .source_predicates import variants as predicate_contexts
     from .source_signedness import variants as signed_contexts
-    for pair in list(result)[:2]:
+    for pair in list(result):
+        origin=reader.origins[pair]
+        origin_mapping=(mapping[0],origin['symbol'],origin['file'])
+        pair_aliases={**aliases,origin['symbol']:mapping[0]}
         reference=''
         try:
             _,macrovalues=source_conditions.select(pair[1],reader.overrides,reader.overrides)
-            reference,_=source_conditions.select(reader.file(reader.root/mapping[2]),macrovalues,reader.overrides)
-            reference=rename(reference,aliases)
+            reference,_=source_conditions.select(reader.file(reader.root/origin_mapping[2]),macrovalues,reader.overrides)
+            reference=rename(reference,pair_aliases)
         except NetworkError as error:
             reader.advisories.append('Predicate helper context unavailable; retaining the original candidate. '+str(error))
         from .cpu_source_context import variants as reference_trials
         hypotheses=[(family,(s,h)) for family,s,h in reference_trials(pair[0], pair[1], reference, cfg.get('_target_calls',[]))] if reference else []
-        if cfg.get('header') and '#include' in reader.file(reader.root/mapping[2]):
+        if cfg.get('header') and '#include' in reader.file(reader.root/origin_mapping[2]):
             try:
-                included,_=source_conditions.select(reader.flatten(reader.root/mapping[2]),macrovalues,reader.overrides)
-                included=rename(included,aliases)
+                included,_=source_conditions.select(reader.flatten(reader.root/origin_mapping[2]),macrovalues,reader.overrides)
+                included=rename(included,pair_aliases)
                 hypotheses += [(family,(s,h)) for family,s,h in reference_trials(pair[0],pair[1],included,cfg.get('_target_calls',[]))]
             except NetworkError as error:
                 reader.advisories.append('Include ABI recovery unavailable: '+str(error))
@@ -334,8 +339,17 @@ def prepare_variants(reader, cfg, mapping, aliases, fallback):
         for family,candidate in hypotheses:
             if cfg.get('_build_owned') and candidate[1]!=pair[1]:continue
             if candidate in result:continue
-            add(candidate,mapping)
+            add(candidate,origin_mapping)
             reader.origins[candidate]['family']=family
+    if cfg.get('_compiler_units'):
+        from .source_units import variants as compiler_units
+        for pair in list(result):
+            origin=reader.origins[pair]
+            if origin.get('family')!='original-context':continue
+            origin_mapping=(mapping[0],origin['symbol'],origin['file'])
+            for family,s,h in compiler_units(reader,cfg,origin_mapping,{**aliases,origin['symbol']:mapping[0]},*pair):
+                if (s,h) not in result:
+                    add((s,h),origin_mapping);reader.origins[(s,h)]['family']=family
     from .helper_expansion import variants as expand_helpers
     for pair in list(result)[:2]:
         for _, expanded in expand_helpers(pair[0],mapping[0],pair[1]):
@@ -424,15 +438,16 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
         from .cpu_source_repairs import locations
         measurement.update(rows=[list(r) for r in diff.rows[:512]],
                            lines=locations(result.obj,fn['name'],diff.rows,source))
-    if fn['best_score'] is None or score < fn['best_score']:
+    assembly=fn['status']=='asm'
+    if (not assembly or diff.bytes_match) and (fn['best_score'] is None or score < fn['best_score'] or assembly and diff.bytes_match):
         net._record(fn, agent, score, source, 0, matched=diff.bytes_match, via='local-source',
                     effective_settings=getattr(result, 'effective_settings', None),
-                    prepared_header=header, prepared_inputs=expected)
+                    prepared_header=header, prepared_inputs=expected, prepared_assembly=assembly, restoring_exact=assembly)
         net.keep_diff(agent.id, fn['id'], diff.rows)
     return score
 
 
-def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, only=None):
+def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, only=None, include_assembly=False, agent=None):
     """A bounded, cached preparation round before ordinary deterministic/random permutations."""
     net = permuter.net
     cfg = settings(net, proj)
@@ -447,7 +462,8 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
             if source in aliases and aliases[source] != dest:
                 raise NetworkError('A function mapping conflicts with a symbol alias. Keep one destination per source symbol.')
             aliases[source] = dest
-        agent, _ = net.local_agent('autopilot')
+        if agent is None:agent, _ = net.local_agent('autopilot')
+        st.preparation_agent=agent
         fork = net.fork_slug(proj['slug'])
         deadline = time.monotonic() + seconds
         for mapping in mapped:
@@ -455,7 +471,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 continue
             if st.stop.is_set() or report['tested'] >= budget or time.monotonic() >= deadline:
                 break
-            fn = net.store.one("SELECT * FROM functions WHERE project_id=? AND name=? AND status='open'", proj['id'], mapping[0])
+            fn = net.store.one("SELECT * FROM functions WHERE project_id=? AND name=? AND (status='open' OR (? AND status='asm'))", proj['id'], mapping[0],bool(include_assembly and not fork))
             if not fn or not permuter._hold(agent, fn, count_turn=False, seconds=seconds):
                 continue
             st.holding(fn['name'], True)
@@ -464,9 +480,9 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
             try:
                 fresh = net.project_row(proj['slug'])
                 fn = net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
-                if fn['status'] != 'open':
+                if fn['status'] != 'open' and not (include_assembly and fn['status']=='asm'):
                     continue
-                if not fork and cfg.get('auto_exact'):
+                if not fork and fn['status']=='open' and cfg.get('auto_exact'):
                     from .prepared_evidence import auto_existing
                     checked=auto_existing(net,fresh,fn,agent)
                     if checked:
@@ -482,7 +498,8 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 log_line(fn['name'] + ': reading and preparing selected source context…')
                 from .source_lead_analysis import features
                 target_calls=features([line.split('*/',1)[-1].strip() for line in (fn['asm'] or '').splitlines()], fresh['arch'])['calls']
-                variants = prepare_variants(reader, {**cfg,'_build_owned':bool(fork),'_target_calls':target_calls}, mapping, aliases, fallback)
+                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])]}
+                variants = prepare_variants(reader, {**cfg,**unit_cfg,'_build_owned':bool(fork),'_target_calls':target_calls}, mapping, aliases, fallback)
                 if time.monotonic() >= deadline:
                     log_line(fn['name'] + ': source preparation used this round’s time allowance before compilation. Use a smaller coherent header before retrying.')
                     break
@@ -529,7 +546,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                         break
                     fresh = net.project_row(proj['slug'])
                     fn = net.store.one('SELECT * FROM functions WHERE id=?', fn['id'])
-                    if fn['status'] != 'open':
+                    if fn['status'] != 'open' and not (include_assembly and fn['status']=='asm'):
                         break
                     # Imported build files can change independently: retry on a new explicit pass/session.
                     from .permuter_inputs import build_state
@@ -570,6 +587,10 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                 variants.append(next((pair for pair in rebuilt if pair[0]==source),rebuilt[0]))
                                 log_line(fn['name'] + ': inputs changed; retrying once against fresh destination state.')
                                 continue
+                            if not fork and lead.get('family') in ('cpu-private-source-unit','cpu-source-predecessors') and str(exc).startswith('Prepared declarations emitted extra function bodies'):
+                                # A valid real unit can fail the all-body guard under the wrong optimization.
+                                # Try bounded installed profiles; do not weaken that guard to score a partial unit.
+                                private_profiles(net,fresh,fn,source,header,st,report,log_line,min(budget,report['tested']+3),deadline,lead)
                             report['errors'].append(f'{fn["name"]}: {exc}')
                             log_line(report['errors'][-1])
                             if not str(exc).startswith(('The function, header or build inputs changed', 'The function claim changed')):
@@ -583,7 +604,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                         st.source_measurement={'pair':(source,header),**measurement}
                         from .cpu_source_recovery import extend
                         extend(net,fresh,fn,variants,reader.origins,source,header,measurement,lead)
-                    if score is not None and (fn['best_score'] is None or score < fn['best_score']):
+                    if score is not None and (fn['status']=='open' or score==0) and (fn['best_score'] is None or score < fn['best_score'] or fn['status']=='asm' and score==0):
                         improved_source = True
                         report['improved'] += 1
                         st.add(improved=1)
@@ -714,7 +735,9 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         if exact:
             if settings(net,proj).get('auto_exact'):
                 from .prepared_evidence import promote_measured
-                agent,_=net.local_agent('autopilot')
+                agent=getattr(st,'preparation_agent',None)
+                if agent is None:agent,_=net.local_agent('autopilot')
+                if fn['status']!='open':return  # exact assembly evidence needs explicit queue approval
                 if st.stop.is_set() or report['tested']>=budget or time.monotonic()>=deadline:return
                 report['tested']+=1;st.add(variants=1)
                 promote_measured(net,proj,fn,source,header,{'toolchain':own['toolchain'],'flags':flags},agent,expected)

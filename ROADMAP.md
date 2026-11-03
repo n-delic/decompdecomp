@@ -1,5 +1,12 @@
 # Roadmap
 
+Implemented: resumable local-ROM CPU source queues, explicit mapped/prepared assembly reconsideration
+with atomic exact-only publication, dedicated interrupted-claim recovery, bounded real mapped
+caller/callee and predecessor discovery for MIPS compiler-unit judges, and measured coherent SDK-pair
+ranking. Up to sixteen explicit alternatives share the bounded pass budget. Queue status is not a
+complete-image verdict; repository sync retains the full rebuild gate. Imported-build queues and
+non-MIPS compiler-unit readers remain planned.
+
 Implemented: bounded typed pointer/index plus one-shot-scope repairs in shared source search,
 agent experiments and the existing permuter pre-pass. One copied KMC register-only case
 recovered exactly; broader compiler/processor evidence and additional slot shapes remain planned.
@@ -226,6 +233,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Drafts follow the header, made in the background; `redraft` | ✓ | ✓ | ✓ | ✓ | — | ✓ Ghidra's | — | — |
 | C++ methods drafted as `Class::method` | ✓ | ✓ | ✓ | ✓ | — | ✓ (RTTI, and classes from the vtables constructors store) | — | — |
 | Twins: free matches from identical code | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Resumable source/profile queue and explicit assembly reconsideration | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned | — owned-build adapter planned |
 | Local mapped source preparation | ✓ | ✓ | ✓ | ✓ | body only¹ | body only¹ | body only¹ | body only¹ |
 | Verified neighbour context hypotheses and separate body/header bundles | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build adapter planned | — own build adapter planned | — own build adapter planned | — own build adapter planned |
 | Bounded flag preflight before long search | ✓ ROM | ✓ ROM | ✓ ROM | ✓ ROM | — own build | — own build | — own build | — own build |

@@ -118,3 +118,19 @@ def test_identity_ranking_is_scoped_to_complete_measured_pair(monkeypatch):
     assert analysis.rank_pairs(net,proj,fn,pairs,{})==[pairs[2],pairs[1],pairs[0]]
     monkeypatch.setattr(analysis,'destination',lambda *a:'changed')
     assert analysis.rank_pairs(net,proj,fn,pairs,{})==pairs
+
+
+def test_sdk_pair_rank_uses_only_this_exact_scope_and_source_header_profile(monkeypatch):
+    import hashlib
+    net,proj,fn=prepared_net()
+    own={'toolchain':'ido-5.3','flags':['-O3']}
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=?',(json.dumps({'compiler':own}),))
+    proj=net.store.one('SELECT * FROM projects WHERE id=1')
+    monkeypatch.setattr(analysis,'listing',lambda *args:{'families':[],'leads':[]})
+    monkeypatch.setattr(analysis,'destination',lambda *args:'now')
+    pairs=[('old source','old header'),('new source','new header')]
+    def put(key,pair,scope,score):
+        item={'source_sha256':hashlib.sha256(pair[0].encode()).hexdigest(),'header_sha256':hashlib.sha256(pair[1].encode()).hexdigest(),'scope':scope,'profile':own,'score':score}
+        with net.store.tx() as db:db.execute('INSERT INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(1,?,?,?,?)',(analysis.PREFIX+key,str(score),'test',json.dumps(item)))
+    put('old',pairs[0],'obsolete',0);put('new',pairs[1],'now',10)
+    assert analysis.rank_pairs(net,proj,fn,pairs,{})[0]==pairs[1]

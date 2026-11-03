@@ -201,3 +201,12 @@ A bounded unit is accepted only after every known body independently matches its
 fixed ROM entry. Only the chosen entry is published/exported; auxiliary context
 is not counted as another match. Ordinary isolated helpers are insufficient to
 reproduce these interprocedural choices.
+
+
+For private ABI or alignment misses with authorized local source, use **Local source preparation →
+Run a resumable CPU source queue** before paid agents. Mapped actual callers/callees and up to three
+predecessors can supply compiler context; every body must independently match, and only the chosen
+entry is published. Preserve actual SDK macros, types, helper bodies and physical lines. Select
+coherent source/header revisions rather than mixing declarations. Assembly reconsideration is an
+explicit option and publishes only freshly exact C; a miss stays set aside. Queue completion is
+not a cartridge rebuild: repository sync must verify the complete original image.

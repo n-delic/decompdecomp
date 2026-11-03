@@ -237,4 +237,18 @@ def rank_pairs(net, proj, fn, pairs, families):
         hashes=tuple(hashlib.sha256(text.encode()).hexdigest() for text in pair)
         comparison=measured.get(hashes)
         return (bool(identity(comparison)), -comparison.get('support',0)) if comparison else (False,0)
-    return sorted(interleaved,key=priority)
+    trials=net.store.all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 512',fn['id'],PREFIX+'%')
+    scores={}
+    for row in trials:
+        item=json.loads(row['feedback'] or '{}')
+        if item.get('scope')!=scope or item.get('profile')!=own or item.get('rejected'):continue
+        hashes=(item.get('source_sha256'),item.get('header_sha256'))
+        scores.setdefault(hashes,item.get('score'))
+    def measured_priority(pair):
+        hashes=tuple(hashlib.sha256(text.encode()).hexdigest() for text in pair)
+        score=scores.get(hashes)
+        family=families.get(pair,'')
+        # Known exact/better-supported pairs first, but new SDK contexts precede known failures.
+        return (*priority(pair), 0 if score is not None else 1 if hashes not in scores else 2,
+                score if score is not None else 0, 0 if family in ('cpu-private-source-unit','cpu-source-predecessors') else 1)
+    return sorted(interleaved,key=measured_priority)

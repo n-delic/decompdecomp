@@ -2681,3 +2681,39 @@ rejudged. The running app accepted the entry through its existing predecessor
 path, and the complete original-cartridge export passed. The context constructor
 is not a new match. This is a separate live recovery from the staged private-unit
 candidates above.
+
+
+### From manual private-unit recovery to resumable CPU discovery
+
+The 32 prepared source-assisted entries were subsequently promoted through the live app and
+selected in the standalone build. All 32 /22,532 bytes passed fresh linked code/data judging
+and complete original-cartridge comparison. Two had previously been set aside as assembly.
+The boot entry uses IDO 5.3 O2 with three real predecessors; the other entries use O3, with
+`-mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`. These are measured working profiles,
+not proof of the historical compiler release. No target extents or judge gates changed.
+
+The CPU preparation path now proposes bounded actual mapped call-neighbour units and real
+predecessors while preserving original line positions, private linkage, reached macros/types
+and static inline dependencies. A unit that fails the all-body guard under the current profile
+gets bounded installed-profile hypotheses; the guard is never relaxed to score it partially.
+A read-only replay using actual reference source and ROM targets generated two normal sequence
+unit candidates and verified both exactly. This replays existing matches, not two new matches
+or evidence of equivalent recovery rates on other games/compilers.
+A second read-only envelope replay exposed a context-only table definition and a missing
+floating-return callee prototype. Carrying their actual original declarations/definitions
+made two generated unit variants pass the all-body byte/data guard. The smaller variant
+keeps an exact chosen entry but is correctly rejected because its full context is not exact.
+These are existing checkpoint replays, not additional live matches.
+
+Coherent explicitly selected SDK revisions are ranked from compilation evidence for the exact
+source/header/profile and target scope. They are never cross-combined. A broken base mapping
+must not prevent an explicit valid alternative from being tried. Existing macro/type preservation
+is shared with the new unit trials, not replaced with guessed ABI declarations.
+
+A durable CPU queue saves the remaining function list and results. A fresh check is mandatory
+after restart; a saved exact label never authorizes publication. Dedicated queue claims can be
+recovered without releasing paid helpers' work. Assembly reconsideration is explicit, limited
+to mapped/prepared source, and the status/source/header/profile change is transactional. Misses
+and failed claims leave assembly classification intact. Full-image verification remains a
+separate repository-sync gate. Imported builds retain their owned-header path until an adapter
+exists; non-MIPS compiler units still require supported metadata and normalization readers.

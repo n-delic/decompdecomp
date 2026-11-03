@@ -284,6 +284,12 @@ def register(app: App) -> None:
         proj = net.project_row(slug)
         if request.method == "GET":
             return source_preparation.settings(net, proj)
+        if data.get('action') == 'queue-status':
+            return net.source_queue.status(slug)
+        if data.get('action') == 'queue-start':
+            return net.source_queue.start(slug,data.get('include_assembly',False))
+        if data.get('action') == 'queue-stop':
+            return net.source_queue.stop(slug)
         if data.get('action') == 'analysis':
             from ..source_lead_analysis import listing
             return listing(net, proj)

@@ -55,7 +55,7 @@ def publish_profile(net, db, fn, expected, settings, agent):
     return prep.inputs(net,{**dict(proj),'config':json.dumps(cfg)},fn)
 
 
-def apply(net, proj, key, log, refresh=False):
+def apply(net, proj, key, log, refresh=False, include_assembly=False, agent=None):
     from .compiler_context import acceptable
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):
         raise NetworkError('Prepared profile bundles are available for local ROM projects; imported builds own their headers and compiler settings.')
@@ -65,11 +65,11 @@ def apply(net, proj, key, log, refresh=False):
     if not row:raise NetworkError('This prepared bundle is no longer available. Run preparation again.')
     item=json.loads(row['feedback'] or '{}')
     fn=net.store.one('SELECT * FROM functions WHERE id=?',row['function_id'])
-    if (not item.get('exact') or not item.get('inputs') or fn['status']!='open'
+    if (not item.get('exact') or not item.get('inputs') or fn['status'] not in (('open','asm') if include_assembly else ('open',))
             or not all(k in item for k in ('source','header','toolchain','flags'))
             or (not refresh and item['inputs']!=digest(net,proj,fn))):
         raise NetworkError('This prepared bundle is stale or not exact. Run preparation again.')
-    agent,_=net.local_agent('autopilot')
+    if agent is None:agent,_=net.local_agent('autopilot')
     if not net.permuter._hold(agent,fn,count_turn=False,seconds=60):
         raise NetworkError('This function is being worked on. Wait until it is released.')
     try:
@@ -88,7 +88,8 @@ def apply(net, proj, key, log, refresh=False):
             raise NetworkError('Build inputs changed while rechecking. Run preparation again.')
         net._record(fn,agent,0,item['source'],0,matched=True,via='local-source-review',
                     effective_settings=result.effective_settings,prepared_header=item['header'],
-                    prepared_inputs=expected,prepared_compiler=settings)
+                    prepared_inputs=expected,prepared_compiler=settings,
+                    prepared_assembly=fn['status']=='asm',restoring_exact=fn['status']=='asm')
         log('Exact source, private header and function-only compiler profile saved together.')
         return {'matched':True,'function':fn['name']}
     finally:net.permuter._let_go(agent,fn)

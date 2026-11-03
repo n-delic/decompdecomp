@@ -1307,3 +1307,30 @@ $("codeAuditBtn").onclick = async () => {
     renderCodeAudit(result);
   } catch(e) {showJobError(log,e.message);} finally {finish();button.disabled=false;}
 };
+
+
+async function sourceQueueProgress() {
+  const data = await api("/api/source-preparation", {method:"POST",body:{slug:S.slug,action:"queue-status"}});
+  const items = data.items || [], done = items.filter(r => !["pending","running"].includes(r.state)).length;
+  $("sourceQueueResults").innerHTML = `<p>${esc(data.state || "Not started")} · ${done}/${items.length} checked · ${items.filter(r => r.matched && !r.already_matched).length} matched</p><progress value="${done}" max="${Math.max(1,items.length)}"></progress>` + items.map(r => `<div class="card"><strong>${esc(r.function)}</strong> · ${esc(r.state)}${r.starting_score != null ? ` · score ${esc(r.starting_score)} → ${esc(r.new_score ?? "—")}` : ""}${r.error ? `<p>${esc(r.error)}</p>` : ""}</div>`).join("");
+  return data;
+}
+$("sourceQueueRefresh").onclick = async () => {
+  const done = beginWork($("sourceQueueLog"), "Loading saved source queue", [$("sourceQueueRefresh")], "Saved progress loaded.");
+  try { await sourceQueueProgress(); } catch(error) { showJobError($("sourceQueueLog"),error.message); } finally { done(); }
+};
+$("sourceQueueStart").onclick = async () => {
+  const log = $("sourceQueueLog"), slug = S.slug;
+  const done = beginWork(log, "Recovering local source", [$("sourceQueueStart")], "Source queue finished.");
+  try {
+    const data = await api("/api/source-preparation", {method:"POST",body:{slug,action:"queue-start",include_assembly:$("sourceQueueAssembly").checked}});
+    await sourceQueueProgress();
+    if (data.job) await followJob(data.job, log);
+    if (S.slug === slug) { await sourceQueueProgress(); refreshMap(); }
+  } catch(error) { showJobError(log,error.message); } finally { done(); }
+};
+$("sourceQueueStop").onclick = async () => {
+  const done = beginWork($("sourceQueueLog"), "Pausing source queue", [$("sourceQueueStop")], "Pause requested; current check will finish.");
+  try { await api("/api/source-preparation", {method:"POST",body:{slug:S.slug,action:"queue-stop"}}); await sourceQueueProgress(); }
+  catch(error) { showJobError($("sourceQueueLog"),error.message); } finally { done(); }
+};
