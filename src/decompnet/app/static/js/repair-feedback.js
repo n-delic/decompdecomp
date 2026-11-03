@@ -16,7 +16,9 @@ $("repairExamples").onclick = async () => {
     <p class="small muted">Agent-reported concerns, not proven errors. Review the evidence before changing a candidate.</p>
     <section data-quality class="repair-list" aria-label="Candidate quality review"></section></details>
     <div class="repair-list-heading"><h3>Source repairs</h3><p data-count class="repair-count" role="status"></p></div>
-    <div data-list class="repair-list"></div><button data-more hidden type="button">Load older examples</button>
+    <div data-list class="repair-list"></div>
+    <details class="repair-section" data-first-reports hidden><summary>First matches · no failed baseline</summary><p class="small muted">Useful starting code, but no captured failed version to isolate a repair.</p><div data-first-list class="repair-list"></div></details>
+    <details class="repair-section" data-context-reports hidden><summary>Compiler or header changes</summary><p class="small muted">Inputs changed together. Local replay can test compiler-only and header-only combinations before attributing an improvement.</p><div data-context-list class="repair-list"></div></details><button data-more hidden type="button">Load older examples</button>
     <details class="repair-section" data-build-reports hidden><summary>Build reports</summary><p class="small muted">Grouped by source unit and one-minute window. These are build status captures, not isolated source repairs.</p><div data-build-list class="repair-list"></div></details>
     <details class="repair-section" data-tools><summary>Testing &amp; analysis <span class="muted small">Local compiler tools · no AI tokens</span></summary>
     <p class="small muted">These tests measure saved evidence. They do not apply source, change game progress or mark repairs as implemented.</p>
@@ -55,7 +57,7 @@ $("repairExamples").onclick = async () => {
   setupCandidateRecovery(dialog, slug, () => load());
   const replay = setupRepairReplay(dialog, () => ({slug, all:all.checked, category:category.value, status:status.value, comparable:comparable.checked}));
   const auto = get('[data-auto-analysis]');
-  api('/api/repair-examples/analysis').then(info => { auto.checked=info.enabled; get('[data-auto-budget]').textContent=info.budget; }).catch(error => toast(error.message));
+  api('/api/repair-examples/analysis').then(info => { auto.checked=info.enabled; get('[data-auto-budget]').textContent=info.budget+' '+Object.entries(info.backlog || {}).map(([state,count]) => `${count} ${state}`).join(' · '); }).catch(error => toast(error.message));
   auto.onchange = async () => {
     auto.disabled=true;
     try { await api('/api/repair-examples/analysis',{method:'POST',body:{enabled:auto.checked}}); }
@@ -120,6 +122,7 @@ $("repairExamples").onclick = async () => {
           raw.append(analysis);
           const report=data.automatic_analysis.report;
           if(report.minimization) change.textContent+=` Automatic analysis reverted ${report.minimization.reverted} of ${report.minimization.edits} captured edits without changing frozen compiler output. Selected source is unchanged.`;
+          else if(report.context_trials) change.textContent+=' Context isolation: '+report.context_trials.filter(trial => !['before','after'].includes(trial.combination)).map(trial => `${trial.combination}: ${trial.error ? 'compile failed' : trial.control_output_recovered ? 'reproduced successful output' : 'did not reproduce output'}`).join('; ')+'. No settings applied.';
           else if(report.skipped) change.textContent+=' Automatic analysis: '+report.skipped;
         }
         const review = document.createElement('select'); review.setAttribute('aria-label', `Review state for example ${row.id}`);
@@ -212,7 +215,7 @@ $("repairExamples").onclick = async () => {
       const data = await api(`/api/repair-examples?${filters()}&before=${reset ? 0 : before}`);
       if (!dialog.isConnected) return;
       if (reset) {
-        shown = 0; list.replaceChildren(); get('[data-build-list]').replaceChildren(); get('[data-build-reports]').hidden = true;
+        shown = 0; list.replaceChildren(); for (const group of ['first','context']) { get(`[data-${group}-list]`).replaceChildren(); get(`[data-${group}-reports]`).hidden = true; } get('[data-build-list]').replaceChildren(); get('[data-build-reports]').hidden = true;
         const quality = await api(`/api/repair-examples/quality?${scope()}`);
         const area = get('[data-quality]'); area.replaceChildren();
         get('[data-quality-panel]').hidden = !(quality.reports || []).length;
@@ -268,10 +271,10 @@ $("repairExamples").onclick = async () => {
       get('[data-breakdown]').textContent = data.groups.map((group) => `${group.count} captures · ${group.category.replaceAll('_', ' ')} (${group.status})`).join(' · ') || 'No examples for these filters.';
       if (reset && !data.examples.length) { const empty = document.createElement('p'); empty.className = 'repair-empty'; empty.textContent = 'No examples match these filters. Choose another review status or turn off “Source changes only” to include settings changes and captures without a failed baseline.'; list.append(empty); }
       for (const row of data.examples) {
-        const build = row.evidence_kind === 'build report';
-        if (build) get('[data-build-reports]').hidden = false;
-        (build ? get('[data-build-list]') : list).append(card(row, data.states, data.categories)); before = row.id;
-        if (!build) shown++;
+        const group = row.review_group || (row.evidence_kind === 'build report' ? 'build' : 'source');
+        if (group !== 'source') get(`[data-${group}-reports]`).hidden = false;
+        (group === 'source' ? list : get(`[data-${group}-list]`)).append(card(row, data.states, data.categories)); before = row.id;
+        shown++;
       }
       get('[data-count]').textContent = `${shown} ${shown === 1 ? 'example' : 'examples'} shown`;
       get('[data-more]').hidden = !data.more;

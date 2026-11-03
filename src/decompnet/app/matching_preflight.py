@@ -38,14 +38,14 @@ def _run(net, proj, fn, log, check, max_profiles):
     own = compiler_for(cfg, fn['vram'])
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:
         return {'tested': 0}
-    from .profile_hypotheses import neighbours, prioritized
+    from .profile_hypotheses import captured, neighbours, prioritized
     choices = [list(own['flags'])]
     # Debug labels can change old GCC assembler scheduling. A near match deserves
     # these cheap same-toolchain checks before broad optimization exploration.
     count = dict(fn).get('n_insns') or 0
     promising = count > 0 and fn['best_score'] is not None and fn['best_score'] <= count * 10
     debug = net.debug_flag_variants(own['toolchain'], list(own['flags'])) if promising and hasattr(net, 'debug_flag_variants') else []
-    for flags in debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
+    for flags in captured(net,proj,own)+debug+prioritized(proj, fn, own)+neighbours(net, proj, fn, own):
         if flags not in choices:choices.append(flags)
     # Other candidates retain the existing optimization-first exploration order.
     for flags in net.flag_variants(own['toolchain'], list(own['flags'])):

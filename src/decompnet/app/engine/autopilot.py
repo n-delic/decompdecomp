@@ -196,7 +196,8 @@ class AutopilotMixin:
             _, toolchain, context = self._draft_plan(fn, proj, ctx=ctx)
             own = compiler_for(self.cfg(proj), fn["vram"])
             data_asm = "\n".join(self._jtbl_asm(proj, fn)) if "jtbl_" in (fn["asm"] or "") else None
-            draft = seeds.generate_from_asm(self._asm_text(fn, proj), fn["name"], toolchain, context, data_asm, valid=True)
+            target_asm = self._asm_text(fn, proj)
+            draft = seeds.generate_from_asm(target_asm, fn["name"], toolchain, context, data_asm, valid=True)
             if not draft:
                 return "fail"
             # (its compiler named in it: the same draft is worth judging again with another compiler)
@@ -204,9 +205,15 @@ class AutopilotMixin:
             candidates = [('raw_m2c', f"{note}{seeds.M2C_MACROS}\n{draft}\n")]
             if (seeds.m2c_target(toolchain) or "").startswith("mips"):
                 # next to m2c's own draft, the same with its usual mistakes undone (m2cfix.py): few lines change
-                refined = m2cfix.refine_draft(draft, fn["name"], fn["asm"] or "")
+                refined = m2cfix.refine_draft(draft, fn["name"], target_asm)
                 if refined:
                     candidates.append(('refined_m2c', f"{note}{seeds.M2C_MACROS}\n{refined}\n"))
+            from ..capture_followup_repairs import callee_evidence
+            from ..recent_capture_repairs import variants as captured_variants
+            known_callees=callee_evidence(self,proj,fn,draft)
+            for family,source in captured_variants(draft,fn['name'],'mips' if (seeds.m2c_target(toolchain) or '').startswith('mips') else '',target_asm,ctx['header'],known_callees):
+                if family in ('overlay_callee_alias','argument_home_slot','untouched_argument_forwarding'):
+                    candidates.append((family,f"{note}{seeds.M2C_MACROS}\n{source}\n"))
             for canonical in (False,True):
                 if array := m2cfix.stack_array(draft,fn['name'],canonical):
                     family = 'stack_array_indexed' if canonical else 'stack_array'

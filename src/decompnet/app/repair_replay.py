@@ -57,6 +57,12 @@ def replay(example, *, trials=24, seconds=120, measure=None, root=None, check_ca
         expected = (stage.get('settings') or {}).get('context_sha256')
         if expected and digest(header) != expected:
             return report | {'skipped':'Captured header hash does not match.'}
+    if (before['source']==after['source'] and
+        (before.get('settings')!=after.get('settings') or before['header']!=after['header'])):
+        if measure is not None:
+            return report | {'skipped':'Context isolation needs a measurement accepting source, header and compiler.'}
+        from .repair_context_replay import replay as context_replay
+        return report | context_replay(evidence,seconds=seconds,root=root,check_cancel=check_cancel)
     differences = {key for key in set(before.get('settings') or {}) | set(settings)
                    if (before.get('settings') or {}).get(key) != settings.get(key)}
     judge_only = differences == {'scoring_revision'} and before['header'] == after['header']

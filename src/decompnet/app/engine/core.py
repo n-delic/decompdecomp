@@ -73,6 +73,9 @@ class Core(Network):
         self.find_moved_projects()
         from ..progress import Progress
         self.progress = Progress(self)
+        from .. import repair_outcomes
+        repair_outcomes.prepare(self.repair_feedback)
+        repair_outcomes.resume(self.repair_feedback)
 
     def _project(self, slug: str | None):
         row = super()._project(slug)

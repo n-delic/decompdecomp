@@ -121,3 +121,12 @@ def test_the_permuters_inline_helper_is_static():
     src = "inline char *inline_fn(void *a)\n{\n  return (char *) a;\n}\n\nvoid f(void *a) { inline_fn(a); }\n"
     out = m2cfix.static_helpers(src)
     assert out.startswith("static inline char *inline_fn") and m2cfix.static_helpers(out) == out
+
+
+def test_overlay_aliases_use_explicit_target_not_address_guess():
+    from decompnet.m2cfix import overlay_call_aliases
+    source='void f(void) { func_80100000_ovl_12(); /* func_80100000_ovl_12 */ }'
+    changed=overlay_call_aliases(source,'jal func_80100000_overlay_027')
+    assert 'func_80100000_overlay_027();' in changed
+    assert '/* func_80100000_ovl_12 */' in changed
+    assert overlay_call_aliases(source,'jal func_80100000_overlay_027\njal func_80100000_overlay_028')==source

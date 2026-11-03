@@ -16,8 +16,10 @@ def register(app):
             if request.method=='POST':
                 data=await app.body(request)
                 await app.call(repair_outcomes.configure,feedback,data['enabled'])
+            await app.call(repair_outcomes.resume,feedback)
             return JSONResponse({'enabled':await app.call(repair_outcomes.enabled,feedback),
-                                 'budget':'One background analysis at a time; four ablations, 20-second soft deadline plus in-flight capped compiler work. Busy captures remain available for manual replay.'})
+                                 'backlog':await app.call(repair_outcomes.backlog,feedback),
+                                 'budget':'One background analysis at a time; four ablations, 20-second soft deadline plus in-flight capped compiler work. New captures wait in a saved queue; disabling analysis pauses it.'})
         except (NetworkError,ValueError,KeyError,TypeError) as error:return app.fail(error)
 
     @app.mcp.custom_route('/api/repair-examples/replay', methods=['POST'])

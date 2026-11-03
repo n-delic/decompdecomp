@@ -9,16 +9,17 @@ def order(families, rows):
     from .matching_investigations import paired_loads
     from .normalization_repairs import frame_gap
     register_priority = (
+            'shared_store_constant', 'nested_halfword_arithmetic',
             'block_accumulator_lifetime', 'inline_copy_loop', 'typed_command_record', 'pointer_index_scope', 'pointer_index_order', 'store_value_lifetime', 'assignment_chain_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'float_call_staging', 'inline_scalar_chain', 'paired_operand_reuse', 'cfg_equal_value_increment', 'equal_value_increment', 'loop_weight_scope', 'decision_address_bundle', 'qualified_selector_load', 'selector_address_staging', 'single_case_switch', 'halfword_arithmetic', 'branch_pointer_lifetimes', 'branch_pointer_declarations', 'typed_clamp_load', 'typed_pointer_load', 'loop_update_order', 'pointer_argument_alias', 'allocation_schedule_bridge', 'allocation_initialization_order', 'byte_fill_constant', 'spill_declaration_order', 'record_value_forwarding', 'narrow_definition_lifetime', 'sink_zero_initialization', 'structured_backedge', 'pointer_call_staging', 'pointer_load_inline', 'word_zero_test_reuse', 'pointer_local_reuse', 'independent_field_store_order', 'paired_pointer_declarations', 'copy_register_reuse', 'constant_index_temporary', 'balanced_call_references', 'balanced_pointer_calls', 'call_return_normalization', 'split_narrow_lifetime', 'combined_call_lifetimes', 'branch_tail_lifetimes', 'staged_call_arguments', 'single_field_record', 'record_access_shape', 'split_call_result', 'direct_mask_condition', 'inline_scalar_shape', 'expression_placement', 'scalar_schedule_order', 'combined_scheduling', 'direct_compound_store', 'address_association', 'masked_value_reuse', 'paired_integer_lifetimes', 'split_integer_phase', 'cfg_integer_lifetimes', 'constant_register_reuse', 'last_shift_reuse', 'unsigned_assignment_reuse', 'table_slot_lifetime', 'store_address_lifetime', 'pointer_cast_inline', 'comparison_reuse', 'integer_address_order',
             'comparison_operand_order', 'integer_product_order', 'arithmetic_operand_order', 'typed_temporary', 'value_lifetime', 'split_integer_lifetime', 'merge_integer_lifetimes',
             'split_scalar_lifetime', 'array_index_width', 'local_width', 'declaration_order')
     if paired_loads(rows):
         preferred = ('paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
     elif markers and markers <= {'s'}:
-        preferred = ('modular_guard_width', 'local_width', 'spill_normalization', 'unused_scalar_local',
+        preferred = ('argument_home_slot', 'callee_array_extent', 'modular_guard_width', 'local_width', 'spill_normalization', 'unused_scalar_local',
                      'local_storage', 'parameter_storage', 'local_declaration_order', 'stack_padding')
     elif frame_gap(rows):
-        preferred = ('spill_normalization', 'split_narrow_lifetime', 'call_return_normalization',
+        preferred = ('argument_home_slot', 'callee_array_extent', 'spill_normalization', 'split_narrow_lifetime', 'call_return_normalization',
                      'stack_address_temporary', 'combined_scheduling', 'stack_padding')
     elif diagnose(rows)['register_only'] or diagnose(rows)['copy_near_miss']:
         preferred = ('cfg_equal_value_increment','equal_value_increment','loop_weight_scope',
@@ -29,7 +30,7 @@ def order(families, rows):
         preferred = ('paired_operand_reuse', 'affine_counter_guard', 'affine_counter',
                      'allocation_initialization_order', 'scalar_schedule_order', 'combined_scheduling')
     elif focus == 'call':
-        preferred = ('float_call_staging', 'success_pointer_update', 'branch_pointer_lifetimes', 'branch_pointer_declarations', 'known_call_excess_arguments', 'known_call_signature', 'call_postincrement', 'target_call_argument', 'target_local_bundle', 'float_argument_bits', 'runtime_scalar_signature', 'call_forwarded_arguments', 'call_arity', 'callee_parameter_width', 'callee_return_width', 'call_result_inline', 'parameter_width', 'parameter_storage')
+        preferred = ('overlay_callee_alias', 'untouched_argument_forwarding', 'float_call_staging', 'success_pointer_update', 'branch_pointer_lifetimes', 'branch_pointer_declarations', 'known_call_excess_arguments', 'known_call_signature', 'call_postincrement', 'target_call_argument', 'target_local_bundle', 'float_argument_bits', 'runtime_scalar_signature', 'call_forwarded_arguments', 'call_arity', 'callee_parameter_width', 'callee_return_width', 'call_result_inline', 'parameter_width', 'parameter_storage')
     elif markers and markers <= {'r', 's'}:
         preferred = ('callee_buffer_extent', 'local_declaration_order', 'spill_declaration_order', 'small_helper_expansion', 'stack_address_temporary', 'combined_scheduling', 'stack_padding', 'unused_scalar_local', 'local_storage', 'parameter_storage',
                      'spill_declaration_order', 'allocation_schedule_bridge', 'local_declaration_order', 'stack_array', 'parameter_width', 'declaration_order') if 's' in markers else register_priority

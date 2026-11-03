@@ -176,11 +176,25 @@ def _pass_arguments_through(body: str, name: str, written: set[int]) -> str:
     return head + tail[:call.end()] + through + (", " if inner.strip() else "") + tail[call.end():]
 
 
+def overlay_call_aliases(source: str, asm: str) -> str:
+    """Use explicit target call labels; never resolve an overlay from its shared VRAM alone."""
+    targets=set(re.findall(r'\bjal\s+(func_[0-9A-Fa-f]+_(?:ovl_\d+|overlay_\d+))\b',asm))
+    aliases={}
+    for old in set(re.findall(r'\bfunc_[0-9A-Fa-f]+_(?:ovl_\d+|overlay_\d+)\b',source)):
+        matches=[t for t in targets if t.split('_')[1].lower()==old.split('_')[1].lower()]
+        if len(matches)==1:aliases[old]=matches[0]
+    from .forks.csource import _blank
+    clean=_blank(source)
+    for hit in reversed(list(re.finditer(r'\bfunc_[0-9A-Fa-f]+_(?:ovl_\d+|overlay_\d+)\b',clean))):
+        if hit[0] in aliases:source=source[:hit.start()]+aliases[hit[0]]+source[hit.end():]
+    return source
+
+
 def refine_draft(draft: str, name: str, asm: str) -> str | None:
     """`draft` (m2c's C for `name`, from `asm`, without the macro block) with the usual mistakes undone, for MIPS
     GCC games. Still uses m2c's macros for what it can't write plainly: the caller puts seeds.M2C_MACROS before it.
     None when the function's header can't be read."""
-    body = draft
+    body = overlay_call_aliases(draft,asm)
     globals_: dict[str, str] = {}
 
     def own_variable(m: re.Match) -> str:

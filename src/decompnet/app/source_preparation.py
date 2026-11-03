@@ -670,7 +670,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     from .. import toolchains
     from ..project import compiler_for
     from .compiler_context import acceptable
-    from .profile_hypotheses import neighbours, prioritized
+    from .profile_hypotheses import captured, neighbours, prioritized
     if not hasattr(net, 'is_rom') or not net.is_rom(proj):return
     # An unsupported identity should be remapped before broad profile search. This
     # uses compiled evidence cached for this exact pair, never a source-name guess.
@@ -683,7 +683,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     if own.get('cmd') or not own.get('toolchain') or toolchains.installed(own['toolchain']) is None:return
     expected=inputs(net,proj,fn)
     choices=[]
-    for flags in prioritized(proj,fn,own)+(neighbours(net,proj,fn,own) if hasattr(net,'cfg') else [])+net.flag_variants(own['toolchain'],list(own['flags'])):
+    for flags in captured(net,proj,own)+prioritized(proj,fn,own)+(neighbours(net,proj,fn,own) if hasattr(net,'cfg') else [])+net.flag_variants(own['toolchain'],list(own['flags'])):
         if list(flags)!=list(own['flags']) and list(flags) not in choices:choices.append(list(flags))
     from .source_next_steps import untested_profiles
     def signature(flags):

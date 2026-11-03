@@ -2757,6 +2757,34 @@ and failed claims leave assembly classification intact. Full-image verification 
 separate repository-sync gate. Imported builds retain their owned-header path until an adapter
 exists; non-MIPS compiler units still require supported metadata and normalization readers.
 
+### Captured store constants, nested halfword casts and build context (2026-11-03)
+
+A read-only review of 1,018 recent local captures found 826 without a failed baseline,
+137 comparable source pairs, and 12 unchanged-C pairs that changed both compiler flags
+and header context. Ten of those 12 added `-mcpu=r4600`; this is a useful ranked profile
+hypothesis, **not evidence that the CPU flag alone caused a match**. Context replay now
+compares before/after controls, compiler-only and header-only combinations. Neither this
+replay nor a recorded successful profile bypasses the ordinary linked/objdiff judge.
+
+Two private, hash-validated captures were replayed with their recorded headers: GCC
+2.7.2 KMC with `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, and GCC 2.8.1 with the bundled
+SN assembler and `-G0 -mips3 -mgp32 -mfp32 -O1`. Redistributing an unsigned-halfword cast across a subtraction inside an outer
+addition recovered the successful normalized function output (baseline difference score 10).
+Sharing repeated `-1` stores through an integer local recovered a second control (baseline
+205); initializing the local at entry instead improved only to 60. Declaration and bounded
+initialization placement therefore remain separate hypotheses. These are compiler-output
+regressions of existing matches, not newly linked game matches or general equivalence proofs.
+Synthetic tests cover the shapes without publishing game code. The generated casts are not
+unconditional algebraic rewrites: promotions and wraparound can differ.
+
+MIPS argument-home candidates derive offsets from the target frame and O32 register home,
+never an absolute frame-address builtin. Forwarding requires a known callee arity and untouched
+argument registers, including the delay slot. Overlay aliases require an explicit unambiguous
+target call label; equal VRAM alone is insufficient. Escaped array resizing requires a complete
+simple callee write footprint, bounded caller accesses and stack-relative argument evidence.
+Complex/unknown callees remain excluded. Source-only constant/cast candidates reach both search
+modes; these ABI/frame candidates are MIPS-specific and still need normal judging.
+
 ### Automatic global-identity and scoped-accumulator replay (3 November 2026)
 
 Evidence: controlled replay of the previously matched private 1,023-instruction

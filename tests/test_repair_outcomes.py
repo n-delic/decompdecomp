@@ -114,3 +114,48 @@ def test_match_capture_enqueues_the_new_evidence_hash(setup,monkeypatch):  # noq
     case_id=match(setup)
     assert len(seen)==1 and seen[0][1]==case_id
     assert seen[0][2]==net.repair_feedback.detail('demo',case_id)['evidence']['after']['source_sha256']
+
+
+def test_busy_captures_are_durable_and_drained_by_one_worker(setup,monkeypatch):  # noqa: F811
+    net,*_=setup;net.forks=object();queue=[]
+    monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
+    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    first=match(setup)
+    # A second independent capture can wait while the first worker is scheduled.
+    with net.store.tx() as db:
+        db.execute('INSERT INTO repair_examples(project_id,function_id,attempt_id,created_at,evidence) SELECT project_id,function_id,attempt_id,created_at,evidence FROM repair_examples WHERE id=?',(first,))
+        second=db.execute('SELECT MAX(id) FROM repair_examples').fetchone()[0]
+    repair_outcomes.schedule(net.repair_feedback,second)
+    assert len(queue)==1 and repair_outcomes.backlog(net.repair_feedback)['pending']==2
+    monkeypatch.setattr(repair_outcomes,'analyze',lambda _: {'summary':{}})
+    queue.pop()()
+    assert repair_outcomes.backlog(net.repair_feedback)['done']==2
+    assert not net.store.all('SELECT * FROM repair_analysis_queue')
+
+
+def test_disabled_analysis_retains_queue_for_resume(setup,monkeypatch):  # noqa: F811
+    net,*_=setup;net.forks=object();queue=[]
+    monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
+    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    repair_outcomes.configure(net.repair_feedback,False)
+    case_id=match(setup)
+    assert not queue and repair_outcomes.backlog(net.repair_feedback)['pending']==1
+    repair_outcomes.configure(net.repair_feedback,True)
+    repair_outcomes.resume(net.repair_feedback)
+    monkeypatch.setattr(repair_outcomes,'analyze',lambda _: {'skipped':'No failed baseline'})
+    queue.pop()()
+    assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='skipped'
+
+
+def test_restart_resumes_durable_interrupted_work(setup,monkeypatch):  # noqa: F811
+    net,*_=setup;case_id=match(setup);net.forks=object();queue=[]
+    repair_outcomes.prepare(net.repair_feedback)
+    with net.store.tx() as db:
+        db.execute('INSERT INTO repair_outcome_analysis VALUES(?,?,?,?)',(case_id,'running','{}',0))
+        db.execute('INSERT INTO repair_analysis_queue VALUES(?,?,?)',(case_id,None,0))
+    monkeypatch.delenv('DECOMP_REPAIR_ANALYSIS',raising=False)
+    monkeypatch.setattr(repair_outcomes.workers,'pool',lambda:SimpleNamespace(submit=queue.append))
+    monkeypatch.setattr(repair_outcomes,'analyze',lambda _: {'summary':{}})
+    assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='pending'
+    repair_outcomes.resume(net.repair_feedback);queue.pop()()
+    assert repair_outcomes.result(net.repair_feedback,case_id)['state']=='done'

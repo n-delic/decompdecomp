@@ -16,6 +16,7 @@ class Element {
   remove() { this.isConnected = false; }
 }
 const body = new Element('body'), button = new Element('button');
+let triage = false;
 let state = 'new', qualityPending = true, confirmed = false, configFails = false;
 const row = () => ({id: 42, project: '<b>demo</b>', function: 'target', category: 'types', status: state});
 const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => new Element(tag)}, $: () => button,
@@ -42,7 +43,7 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
     const query = new URL(url, 'http://test').searchParams;
     if (query.get('id')) return {...row(), explanation: 'Changed a type.', automation: 'Try signedness.',
       evidence: {source_change_label: 'C tokens changed', diff: '- old\n+ <script>neverExecute()</script>', after: {source: '<script>neverExecute()</script>'}}, review_note: ''};
-    return {examples: [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
+    return {examples: triage ? ['source','first','context','build'].map((review_group,index) => ({...row(),id:42+index,review_group})) : [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
       groups: [{category: 'types', status: state, count: 1}], more: false};
   }};
 vm.createContext(context);
@@ -125,5 +126,12 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
   const failedSetup=fresh.children[1].children[4];failedSetup.open=true;await failedSetup.listeners.toggle();
   assert.equal(errors.at(-1),'Agent setup unavailable');
   assert.equal(failedSetup.children[2].children[1].disabled,true);
+  triage=true; await dialog.querySelector('[data-refresh]').onclick();
+  assert.equal(list.children.length,1);
+  for (const group of ['first','context','build']) {
+    assert.equal(dialog.querySelector(`[data-${group}-list]`).children.length,1);
+    assert.equal(dialog.querySelector(`[data-${group}-reports]`).hidden,false);
+  }
+  assert.equal(dialog.querySelector('[data-count]').textContent,'4 examples shown');
   console.log('Repair evidence rendering, review, filtering and explicit source export passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

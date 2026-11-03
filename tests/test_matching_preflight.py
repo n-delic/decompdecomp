@@ -155,3 +155,20 @@ def test_promising_candidates_test_debug_profiles_before_optimization():
     result=preflight.run(net,proj,fn,max_profiles=2)
     assert result['best']['exact'] and result['applied']
     assert seen==[['-O2','-g3'],['-O2']]
+
+
+def test_captured_profiles_are_ranked_but_rejudged_with_current_inputs():
+    import json
+
+    from decompnet.app.profile_hypotheses import captured
+    net,proj,fn,state=setup();net.repair_feedback=object()
+    with net.store.tx() as db:
+        db.execute('CREATE TABLE repair_examples(id INTEGER PRIMARY KEY, project_id INTEGER, evidence TEXT)')
+        for flags in (['-O1'],['-O3'],['-O3']):
+            evidence={'before':{'source_sha256':'same'},'after':{'source_sha256':'same',
+                'settings':{'compiler':{'toolchain':'example','flags':flags},'context_sha256':'changed too'}}}
+            db.execute('INSERT INTO repair_examples(project_id,evidence) VALUES(?,?)',(proj['id'],json.dumps(evidence)))
+    assert captured(net,proj,net.cfg(proj)['compiler'])==[['-O3'],['-O1']]
+    assert preflight.run(net,proj,fn,max_profiles=2)['best']['exact']
+    assert state['calls']==[['-O2'],['-O3']]
+    assert not state['applied']

@@ -35,6 +35,7 @@ function setupRepairReplay(dialog, scope) {
       summary.textContent = report.message;
       results.textContent = (report.examples || []).map(row => `#${row.id} ${row.function || ''}\n` +
         (row.skipped ? `Skipped: ${row.skipped}` : Object.entries(row.summary || {}).map(([key,value]) => `${key.replaceAll('_',' ')}: ${value}`).join(' · ')) +
+        (row.context_trials ? '\n'+row.context_trials.map(trial => `${trial.combination}: ${trial.error ? 'compile failed' : trial.control_output_recovered ? 'reproduces successful output' : 'differs from successful output'}`).join('\n')+'\nCompiler-output evidence only; no settings applied.' : '') +
         (row.context_note ? `\n${row.context_note}` : '') +
         (row.candidate_compiles != null ? `\n${row.candidate_compiles} candidate compiles + ${row.control_compiles} controls · ${Number(row.elapsed_seconds || 0).toFixed(1)}s elapsed` : '') +
         (row.reason ? `\nStopped: ${row.reason.replaceAll('_',' ')}` : '') +

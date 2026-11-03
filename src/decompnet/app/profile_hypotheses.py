@@ -44,3 +44,25 @@ def neighbours(net, proj, fn, own):
         if profile.get('toolchain')==own.get('toolchain') and not profile.get('cmd') and flags!=list(own['flags']) and flags not in ranked:
             ranked.append(flags)
     return ranked[:2]
+
+
+def captured(net, proj, own):
+    """Prior successful same-project profiles; rejudge with today's header before adoption.
+
+    Captures can change headers too. Frequency ranks a hypothesis, never proves the flag's effect.
+    """
+    if not hasattr(net,'repair_feedback'):return []
+    rows=net.store.all("SELECT evidence FROM repair_examples WHERE project_id=? ORDER BY id DESC LIMIT 128",proj['id'])
+    ranked={}
+    for row in rows:
+        try:
+            evidence=json.loads(row['evidence']);after=evidence['after'];before=evidence.get('before') or {}
+            profile=after['settings']['compiler']
+            if not isinstance(profile,dict) or profile.get('cmd') or profile.get('toolchain')!=own.get('toolchain'):continue
+            if not before or before.get('source_sha256')!=after.get('source_sha256'):continue
+            flags=profile.get('flags')
+            if not isinstance(flags,list) or not all(isinstance(f,str) for f in flags) or len(flags)>64:continue
+            if flags==list(own['flags']):continue
+            key=tuple(flags);ranked[key]=ranked.get(key,0)+1
+        except (ValueError,KeyError,TypeError):continue
+    return [list(flags) for flags in sorted(ranked,key=lambda f:-ranked[f])[:2]]
