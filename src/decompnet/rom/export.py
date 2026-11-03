@@ -149,7 +149,15 @@ def _single_definition(obj: bytes, name: str) -> bool:
     if len(_function_symbols(ELFFile(BytesIO(obj)))) != 1:
         return False
     obj = unmangle(obj, lambda symbol: symbol == name)
-    return set(_function_symbols(ELFFile(BytesIO(obj)))) == {name}
+    elf=ELFFile(BytesIO(obj))
+    if set(_function_symbols(elf))!={name}:return False
+    # A debug-only static procedure has no linkable entry symbol. It needs the
+    # same freshly judged matching-only extraction as a real multi-body unit.
+    symtab=elf.get_section_by_name('.symtab')
+    section,start,_=_function_symbols(elf)[name]
+    return bool(symtab and any(s.name==name and s['st_info']['bind']=='STB_GLOBAL'
+                              and s['st_shndx']==section and s['st_value']==start
+                              for s in symtab.iter_symbols()))
 
 
 def _section_bases(placements: dict) -> tuple[dict, str | None]:
@@ -246,7 +254,7 @@ def export_rom(net, slug: str, out: Path, console, log=print) -> dict:
             as_fallback.append((f["name"], "doesn't compile any more"))
             f["kind"] = "asm"
             continue
-        from ..app.predecessor_context import verified
+        from ..app.compiler_context import verified
         predecessor=None if _single_definition(compiled.obj,row['name']) else verified(net,proj,row,compiled.obj)
         if not _single_definition(compiled.obj, row["name"]) and not predecessor:
             as_fallback.append((f["name"], "its C also defines other functions; split their bodies into separate source files"))

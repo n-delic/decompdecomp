@@ -53,3 +53,38 @@ def test_output_cache_is_scoped_to_build_inputs():
     with trial({'family':'test','base_source_sha256':base}):
         evidence.measured(owner,AGENT,proj,fn,source+'\n',40,None)
     assert net.store.one('SELECT * FROM repair_input_effects')['same_output']==0
+
+
+def test_imported_compiler_label_does_not_enter_rom_identity(monkeypatch):
+    from decompnet import match_bundle
+    from decompnet.app import agent_tokens
+    net=FakeNet();fn=net.function();proj=net.project_row('game')
+    net.cfg=lambda _: {'kind':'fork','compiler':'GCC 2.95.3'}
+    net.fork_slug=lambda _: 'game'
+    build=['project-unit-v1']
+    monkeypatch.setattr(agent_tokens,'target_scope',lambda *args: build[0])
+    original=match_bundle.compiler_identity
+    seen=[]
+    def identity(settings):
+        seen.append(settings)
+        return original(settings)
+    monkeypatch.setattr(match_bundle,'compiler_identity',identity)
+    before=evidence.build_scope(net,proj,fn)
+    build[0]='project-unit-v2'
+    assert evidence.build_scope(net,proj,fn) != before
+    assert seen == [{},{}]
+    owner=SimpleNamespace(net=net,_score_work=lambda *args: 35)
+    with trial({'family':'test'}):
+        assert evidence.measured(owner,AGENT,proj,fn,fn['best_source']+'\n',40,object()) == 35
+
+
+def test_rom_compiler_identity_still_scopes_evidence(monkeypatch):
+    from decompnet import match_bundle
+    from decompnet.app import agent_tokens
+    net=FakeNet();fn=net.function();proj=net.project_row('game')
+    monkeypatch.setattr(agent_tokens,'target_scope',lambda *args: 'same-target')
+    identity=['installed-v1']
+    monkeypatch.setattr(match_bundle,'compiler_identity',lambda settings: (settings['toolchain'],identity[0]))
+    before=evidence.build_scope(net,proj,fn)
+    identity[0]='installed-v2'
+    assert evidence.build_scope(net,proj,fn) != before

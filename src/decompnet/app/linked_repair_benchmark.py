@@ -102,7 +102,7 @@ def benchmark(root, name, source, header, *, trials=128, seconds=120, families=(
         return sorted([(labels[c],c) for c in candidates if not families or labels[c] in families],
                       key=lambda item:order.index(item[0]))
     result = repair_benchmark.run(source,baseline['score'],evaluate,generate,trials=trials,
-                                  deadline=time.monotonic()+seconds)
+                                  deadline=time.monotonic()+seconds,arch=arch,header=header)
     return {**result,'scope':scope,'starting_source_sha256':hashlib.sha256(source.encode()).hexdigest(),
             'compiler_invocations':len(cache),'verdict':'Normal linked-byte and ROM-data judge; read-only, no adoption.'}
 

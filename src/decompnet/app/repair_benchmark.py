@@ -4,11 +4,11 @@ import time
 from collections import Counter
 from itertools import zip_longest
 
-from . import allocation_evidence, iterative_repairs, repair_selection
+from . import allocation_evidence, iterative_repairs, paired_local_repairs, repair_selection
 
 
 def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_cancel=lambda: None,
-        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True):
+        progress=lambda value: None, collect_exact=False, generate_report=False, arch=None, paired_search=True, output_diversity=True, header=''):
     """Measure rediscovery effort, including failures; evaluator must supply its exact control verdict."""
     if type(paired_search)!=bool or type(output_diversity)!=bool:raise ValueError('Search ablations must be boolean.')
     started = time.monotonic()
@@ -46,7 +46,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
     def stopped():
         check_cancel()
         return len(results) >= trials or time.monotonic() >= deadline
-    matched = iterative_repairs.advance(state, judge, variants, stopped, stop_on_match=not collect_exact, arch=arch)
+    matched = iterative_repairs.advance(state, judge, variants, stopped, stop_on_match=not collect_exact, arch=arch,header=header)
     reason = ('control_output_recovered' if matched else 'time_budget' if time.monotonic() >= deadline
               else 'trial_budget' if len(results) >= trials and state['pending'] else state['reason'])
     return {'baseline_score': baseline.get('score'), 'baseline_exact': bool(baseline.get('matched')),
@@ -61,6 +61,7 @@ def run(source, baseline_score, evaluate, generate, *, trials, deadline, check_c
             'productive_followups':state.get('productive_bursts',0), 'allocation_followups':state.get('allocation_bursts',0),
             'no_effect_families':sum(n>=2 for n in state.get('family_no_effect',{}).values()), 'deferred_pages':len(state.get('deferred',[])), 'paired_proposals':state.get('paired_trials',0), 'paired_evaluations':state.get('counts',{}).get('paired_evaluations',0),
             'search_policy':dict(paired_search=paired_search,output_diversity=output_diversity),
+            'pair_coverage':paired_local_repairs.coverage(source,header),
             'residual_diagnosis':allocation_evidence.plan(baseline.get('rows'),arch)}
 
 
@@ -79,7 +80,7 @@ def batch(cases, evaluate, generate, *, trials=32, seconds=30, check_cancel=lamb
         result = run(case['source'], case['baseline_score'], lambda s, case=case: evaluate(case, s),
                      lambda s, report=None, case=case: generate(case, s, report) if generate_report else generate(case, s),
                      trials=trials, deadline=started+seconds,
-                     check_cancel=check_cancel, collect_exact=True, generate_report=generate_report, arch=case.get('arch'))
+                     check_cancel=check_cancel, collect_exact=True, generate_report=generate_report, arch=case.get('arch'),header=case.get('header',''))
         reports.append({'case': case['scope'], 'source_sha256': hashlib.sha256(case['source'].encode()).hexdigest(), **result})
     return {'cases': reports, 'trial_budget': trials, 'seconds_budget': seconds, 'functions': len(reports),
             'matched_functions': sum(r['first_exact_trial'] is not None and not r['baseline_exact'] for r in reports),

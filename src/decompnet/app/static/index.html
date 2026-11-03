@@ -3,8 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; worker-src 'self'; manifest-src 'self'">
 <title>decompdecomp</title>
+<link rel="manifest" href="/assets/manifest.webmanifest">
+<meta name="theme-color" content="#1d1b14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="decompdecomp">
+<link rel="apple-touch-icon" href="/assets/pwa-192.png">
 <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/tokens.css">
 <link rel="stylesheet" href="/assets/app.css">
@@ -815,5 +820,6 @@
 <script src="/assets/js/code-audit.js"></script>
 <script src="/assets/js/steering.js"></script>
 <script src="/assets/js/pages.js"></script>
+<script src="/assets/js/pwa.js"></script>
 </body>
 </html>

@@ -85,9 +85,13 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     from .agent_local_pass import configure as configure_local_repairs
     configure_local_repairs(net,settings.data)
     manager.budget = lambda: float(settings.data.get("budget_usd") or 0)
-    from .web_login import WebLogin
-    net.web_login = WebLogin(port) if headless or settings.data.get('web_interface_enabled', False) else None
+    from .web_login import WebLogin, remote_origin
+    remote_url = remote_origin(settings.data.get('web_remote_url', ''))
+    net.web_login = WebLogin(port, remote_url) if headless or settings.data.get('web_interface_enabled', False) else None
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    if remote_url:
+        from urllib.parse import urlsplit
+        allowed_hosts.add(urlsplit(remote_url).netloc)
 
     from . import manual_mcp
 

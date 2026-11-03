@@ -1390,3 +1390,11 @@ th[aria-sort="ascending"] .table-sort, th[aria-sort="descending"] .table-sort { 
 .update-source .joblog { white-space: pre-wrap; overflow-wrap: anywhere; }
 .update-footer { display: flex; justify-content: flex-end; padding-top: 6px; }
 @media (max-width: 560px) { .update-option { align-items: flex-start; flex-direction: column; gap: 12px; } .update-builds { gap: 12px; padding: 14px; } .update-builds strong { font-size: 15px; } }
+
+/* Installed browser app: keep the offline snapshot warning visible on phones. */
+.pwa-status { position:fixed; bottom:0; left:0; right:0; z-index:10000; padding:12px 16px calc(12px + env(safe-area-inset-bottom)); background:var(--work-bg); color:var(--ink); border-top:1px solid var(--line); font-size:13px; }
+.pwa-status[hidden] { display:none; }
+body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
+
+.pwa-status:not([hidden]) { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.pwa-status span { flex:1; min-width:200px; }

@@ -53,4 +53,4 @@ def brief(net, proj, fn):
     cached = net.store.all("SELECT family,COUNT(*) AS n FROM agent_family_targets WHERE function_id=? AND scope=? AND family IN ('compiled-miss','compiled-error') GROUP BY family", fn['id'], agent_tokens.target_scope(net,fn,''))
     if cached:
         lines.append('Previously tested candidates under current build inputs: '+', '.join(f"{r['n']} {r['family']}" for r in cached)+'. Local repairs skip these exact source hashes; change source/build inputs before retrying. This is not proof that a whole family is exhausted.')
-    return '\n\nLocal search evidence:\n'+'\n'.join(lines)+'\nRequest full diff/history only when needed.' if lines else ''
+    return '\n\nLocal search evidence:\n'+'\n'.join(lines)+'\nPage full evidence if needed.' if lines else ''

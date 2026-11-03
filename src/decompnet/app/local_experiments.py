@@ -147,6 +147,7 @@ def available(net, agent, slug, fn, source, revision, requested, *, deadline=Non
     with repair_generation.session(net,scope,deadline,requested,accept=eligible,goal=desired) as state:
         result = Pools(_available(net,agent,slug,fn,source,revision,requested))
         result.incomplete = state.incomplete
+        result.generation_metrics = state.metrics
         return result
 
 
@@ -161,7 +162,7 @@ def _available(net, agent, slug, fn, source, revision, requested):
             pools[family].append(candidate)
     if pointer_index_scope.FAMILY in pools:
         ctx=net._context(proj['id'],fn['unit'])
-        pools[pointer_index_scope.FAMILY]=[s for _,s in pointer_index_scope.variants(source,fn['name'],ctx['header'] if ctx else '')]
+        pools[pointer_index_scope.FAMILY]=[s for _,s in _generated(pointer_index_scope.variants, source,fn['name'],ctx['header'] if ctx else '')]
     if prototype_reuse.FAMILY in pools:
         pools[prototype_reuse.FAMILY]=[s for _,s in _generated(prototype_reuse.variants, net,proj,fn,source)]
     if 'verified_unit_helpers' in pools:

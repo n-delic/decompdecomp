@@ -52,7 +52,11 @@ compiled source-identity evidence before broad mutation. Scalar-pool repairs can
 try per-use precision and signed constant bindings; near scheduling differences
 also get token-preserving statement line variants. All still require exact judging. A small verified predecessor context can reproduce
 internal compiler alignment; each predecessor is rejudged and only the selected
-entry is exported, without adding padding to source.
+entry is exported, without adding padding to source. For IDO private calling
+conventions, the app can also read explicit procedure metadata from `.mdebug` and
+verify a bounded real caller/callee unit. Every body must match its known ROM
+entry; only the selected function is published and exported. Compiler context
+is not counted as additional progress.
 
 Iterative repairs now interleave first-block and whole-function priorities, reserve bounded
 regional combination probes, and show compact mismatch clues to agents. Captured fixes
@@ -416,6 +420,43 @@ guest's own game is planned. Disc-project identities can refer to an extracted p
 rather than the disc image: use the exact program the host imported (up to 256 MiB), not
 an RVZ/compressed image. Projects without an identity retain the existing room join rules.
 
+## Sign in with GitHub
+
+In the native app’s **Settings → This computer → Sign in with GitHub**, register a GitHub OAuth App and use the
+**Authorization callback URL** shown there. This is the trusted private remote address followed by
+`/login/github/callback`. Set the OAuth App’s homepage to the same private remote address.
+
+Enter the app’s **Client ID**, **Client secret**, and your allowed **GitHub username**, check **Use GitHub sign-in**,
+and save. The app verifies and pins that account’s permanent numeric ID. The browser login page then offers
+**Sign in with GitHub** instead of the code form. It requests no repository permissions. Keep the OAuth secret
+in the native Settings fields, not in a repository or chat; it is stored only in the host’s private settings file.
+Setup requires a registered OAuth App; decompdecomp does not ship shared OAuth credentials.
+
+Only the pinned account can gain full web access, even if its username later changes. Login uses a browser-bound,
+short-lived, single-use state and PKCE; GitHub tokens are used transiently to verify identity and are not stored,
+cached or sent to the browser. Settings changes revoke browser sessions. The native desktop window remains
+accessible to disable GitHub sign-in or fix its credentials. If the private remote address changes, update the
+OAuth App’s callback URL on GitHub too. GitHub login needs an internet connection; existing offline snapshots
+remain available under the offline-storage rules below. OAuth endpoints bypass the service worker so browser
+redirects and authentication cookies are handled directly by the browser, including on iOS.
+
+## Install on your phone and use saved views offline
+
+Open the private HTTPS web interface in Safari on iPhone, sign in, then choose **Share → Add to Home Screen**.
+On Android, use the browser’s **Install app** or **Add to Home screen** action. The installed app opens in its own
+window with the decompdecomp icon.
+
+After opening the app online, its interface, project list and recently viewed project, agent and function data
+are saved on that device. Offline, you can reopen those saved views; a banner marks them as snapshots rather
+than live progress. New views need to be opened online first. Compiling, agents and project changes require the
+host Mac: offline actions are rejected and never queued or submitted later. Reconnecting resumes live reads.
+
+Sign-out and an online authentication failure clear saved data. **Settings → Clear offline data on this device**
+and the offline banner’s **Clear saved data** button clear it manually. Offline copies remain on the device until
+cleared; disabling access on the host cannot erase a disconnected phone. Sign-in codes, API keys, ROMs and
+uploads are not cached. Browser storage is bounded and may also be cleared by the operating system. A normal
+desktop app window does not register the service worker or store these browser snapshots.
+
 ## Run without a desktop window
 
 ```sh
@@ -432,7 +473,14 @@ To use the browser and desktop window together, open **Settings** in the desktop
 **Enable web interface**. Click **Open web interface**, then enter the sign-in code shown there. Both interfaces
 share one running app, project database and set of agents. The setting is remembered across launches; each
 launch creates a fresh sign-in code. Turning the toggle off immediately signs out all browsers while the desktop
-app keeps running. Access is limited to browsers on this computer.
+app keeps running. For private phone or laptop access, enable **Tailscale Serve** on the host computer, enter its exact HTTPS
+`.ts.net` address under **Settings → This computer → Private remote address**, and save. Run
+`tailscale serve --bg http://127.0.0.1:6464` (use the app’s actual port). Both devices must be connected to the
+same tailnet. Open the remote HTTPS link and enter the code from the desktop app. Tailscale provides the private
+network and TLS; decompdecomp still requires its own sign-in. Public Funnel access is not needed.
+Changing or clearing the trusted remote address revokes browser sessions. Disabling the web interface blocks
+browser access even if the Tailscale proxy remains configured. Use `tailscale serve --https=443 off` to stop that
+proxy. Remote addresses must be set from the native app; remote browsers cannot authorize a new destination.
 
 `serve` uses the usual home (`~/Decomp` for an installed copy; `~/Decomp-dev` from a checkout). If an app is already
 running for that home, it refuses to replace it. Stop that app deliberately with `decomp stop`, or choose another
@@ -440,8 +488,8 @@ home and port, for example `DECOMP_HOME=/path/to/server-projects decomp serve --
 `uv run decomp serve --port 6474`. Stop the server with Ctrl-C or `decomp stop` using the same home. Updates preserve
 server mode; they do not open a native window.
 
-It binds **127.0.0.1 only**. LAN binding, reverse-proxy deployment and public HTTPS serving are not enabled by this
-mode. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
+It binds **127.0.0.1 only**. Direct LAN binding and public HTTPS serving are not enabled. Private HTTPS through Tailscale Serve uses
+the explicitly trusted remote address configured in Settings. A private SSH forward can reach a remote machine's localhost server while keeping the same forwarded port.
 Browser file uploads still work; folder/file-path chooser buttons ask for a path **on the server computer**.
 Opening its folder in a desktop file manager is unavailable. Compiler and platform runtime requirements remain
 the same; only native-window/tray dependencies are bypassed at runtime.

@@ -22,6 +22,43 @@ Use these evidence levels:
 
 ## KMC GCC 2.7.2, 32-bit big-endian MIPS
 
+### Verified case: register allocation after late cancellation
+
+Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+A 662-instruction menu renderer reached an identical opcode sequence and frame, but seven linked
+instruction words still differed: two saved-register lifetimes were exchanged. The normal live
+judge subsequently accepted all 2,648 linked bytes, with the original target, context and flags.
+Evidence: [published source and complete-cartridge verification](https://github.com/RetroReversing/v-rally-decomp/commit/78f6bd8).
+
+- Reference counts and live ranges mattered after expression simplification. In captured GCC dumps,
+  the final two allocnos moved from the wrong order to the required order. The accepted case had
+  12 references / 62 live instructions for one, versus 8 / 43 for the other. The corresponding
+  public GCC 2.7.2.3 [`allocno_compare`](https://sources.debian.org/src/altgcc/1:2.7.2.3-2/global.c/)
+  orders by `floor_log2(refs) * refs / live_length`, with size and tie-break adjustments. This is
+  supporting compiler evidence; the dump and linked verdict establish the actual KMC result.
+- Pure unsigned/bitwise identities affected early compiler bookkeeping and disappeared from the
+  final code. Moving an exactly-zero expression and its zero product past the final drawing call
+  recovered the allocation. That expression leaves the context argument unchanged for all bit
+  patterns. This is a source-shape workaround, not evidence that the original game used it.
+- Keeping the raw coordinate live beyond its narrowing conversion prevented an unwanted local
+  register coalescing preference. Substituting an equivalent carrier first improved allocation,
+  but left two wrong operands; restoring raw-value uses with the longer lifetime recovered them.
+- The path was staged: weighted scores 365 → 320 → 285 → 275 → an exact linked match. These are
+  sequential improvements, not isolated attribution for every edit. Final acceptance used the
+  normal judge; symbolic relocation display scores alone were not authoritative.
+
+Failed probes included broad `register` qualifiers, unsigned retyping, named sign-extension
+temporaries, prototype widening with explicit casts, and unconstrained reference-count boosts.
+Some algebraic variants retained the instruction count but grew the frame by eight bytes. Compare
+linked words, frame, spills and the value's actual internal pseudo-register before expanding a
+search. A named C temporary can be distinct from the sign-extension pseudo that needs repairing.
+The stopped local permuter pass from score 320 tested 213 candidates with no improvement.
+
+Automation opportunity: expose a small register-cycle diagnosis and bounded lifetime alternatives,
+then check full linked bytes. Do not generate arbitrary padding identities by default: this is one
+verified case, no general repair generator or held-out evaluation, and the compiler's phase order
+must be checked. Preserve input-keyed failures and source/header/profile provenance.
+
 ### Verified case: a large rendering/menu function
 
 Profile: `gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
@@ -2554,3 +2591,93 @@ cache/control-register routines and incomplete prologue fragments remain separat
 Apply the verified profile per function through normal judging; do not change an
 entire game's compiler to recover a runtime island. Standalone O32 object tagging
 and the final original-cartridge comparison remain required export gates.
+
+
+### Macro-safe pairing, generation telemetry and a broader control
+
+The blanket preprocessor rejection in local pairing is now replaced by the existing macro-region
+protection. Simple unchanged defines can coexist with edits in unaffected C windows. Directives,
+macro-dependent statements, hidden header dependencies and the complete span between paired edits
+remain opaque. Conditional/include/multiline/token-pasting directives still decline analysis.
+The unchanged header now follows live iterative search, frozen replay and exported-ROM adapters;
+without it a source-only check could miss a hidden macro dependency. Unsupported macro coverage is
+reported rather than expanded or guessed. The ordinary linked code/data judge remains mandatory.
+
+Private reduction of the 124-instruction score-15 input removed 196 of 1450 non-whitespace characters
+while preserving its bad local register sequence over 20 compiler checks. This is a debugging
+reproducer: deleting control flow does not preserve game semantics and none of that C was adopted.
+The necessary surrounding context remains substantial; it is not an isolated constant-store recipe.
+Another 32 typed-constant/pointer, inline-store and register-hint probes (including C89 declaration
+rejections) produced no exact match. No automated repair or priority boost is inferred from this
+failure. The original residual and the macro-heavy shifted-result residual remain unresolved.
+
+A larger frozen replay compared main `1446d5b` to the treatment: 19 unresolved checkpoints across
+KMC GCC 2.7.2, GCC 2.8.1 PM/SN-as, IDO 5.3, SN N64 2.81 and SN N64 2.72. Each case had 24 candidate
+slots and 45 seconds. Both sides recovered the same two existing controls at trials 4 and 11, using
+269 candidate compiles plus 19 baselines (288 invocations each). No treatment score regression, new
+recovery or first-exact saving was observed. One additional candidate case was excluded because its
+frozen target did not equal the copied ROM bytes. Keep both V-Rally regions in the same development
+cohort: the 11 checkpoints from other games form the held-out subset, not the homologous region.
+That subset used 151 candidate compiles on each side and produced no new recovery. Some fresh
+baseline scores differ from historical saved scores; comparisons use the newly compiled baseline.
+These small budgets across five profiles are coverage, not proof of general compiler equivalence.
+
+Generation-only cold/warm measurements on five copied inputs confirmed the cache already present
+on main: treatment cold discovery took 21–185 ms versus 1.5–4.3 ms warm. Warm calls reused 17–67 raw
+stages and generated no stages on these repeated identical-input sessions. The time until the first
+selected variant's compiler call, including compiler configuration, was about 29–280 ms cold versus
+9–16 ms warm. Main's timings were similar: this patch measures reuse rather than claiming to invent
+that speedup. These are a few local repeats, not live-agent token or dollar measurements. Eligibility
+still runs again; raw-stage reuse never substitutes for a compiler verdict or authorizes retransmission
+of an already tested candidate. Instrumentation distinguishes wrapped-stage generation, cache hits,
+first eligible candidate, and total session wall time, avoiding nested-stage double counting.
+
+
+### A third verified predecessor can restore internal entry alignment
+
+A second source-assisted IDO 5.3 O2 MIPS II entry differed only by four internal
+NOPs before its unreachable epilogue (score 400). Its real contiguous preceding
+functions were 788, 352 and 92 bytes. Preserving those three matched definitions
+produced a 288-byte exact entry; all four bodies independently passed code/data
+judging. Their combined prefix is 1,232 bytes, well within the existing 16 KiB
+bound. This is actual compiler context, not invented padding or newly recovered
+predecessors. The bounded context path now permits four total entries, still
+requiring the current entry last, exact known extents/order, already-matched
+auxiliary entries, and independent freshly linked byte/data proof for every body.
+Other processors and object-project builds retain their existing paths.
+
+### IDO O3 private calling conventions require actual caller/callee context
+
+Thirty-one previously unmatched N64 SDK/libc entries (22,244 bytes) were independently
+recovered in read-only byte/data replay by compiling small actual caller/callee
+units at IDO 5.3 `-O3 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`.
+The cases cover formatting, normal/compressed MIDI readers, bank patching, sequence/sound players, the envelope mixer and ADPCM loading.
+Compiling helpers globally or alone had changed the private argument registers and
+callee clobber information; large scores were not evidence that their algorithms
+were missing from available source. These are new source-assisted candidates,
+not additional live matches until normal promotion and complete export succeed.
+
+IDO's assembler omits private procedure symbols from `.symtab` while retaining
+explicit starts, sizes and names in ECOFF `.mdebug`. The shared ELF reader now uses
+validated processor metadata, with bounds/endian/overlap checks and agreement with
+ordinary function symbols. Relocations into a same-file private procedure resolve
+through that compiler-recorded name. No target bytes or inferred boundaries supply
+this metadata. Referenced bodies remain bodies; only explicit unused `jr ra; nop`
+inline placeholders may be omitted, preserving existing prefix-normalization cases.
+
+Bounded private compiler units can keep up to four known real entries. Every body
+must independently pass the ordinary linked code/data judge at its existing ROM
+address, with its original size; auxiliary statuses are unchanged. The unit's
+compiler order need not be its retail link order: addresses come only from known
+ROM names, never a guessed offset delta. Only the chosen freshly linked entry is
+exported through matching-only extraction, so context is not exported or counted
+again. Other architectures without this metadata reader and PROJECT builds keep
+their existing function/build paths.
+
+An additional SDK callback at IDO 5.3 O1 (the same MIPS II flags) was missing
+six internal alignment NOPs in isolation, score 600. Preserving its real 392-byte
+constructor before it produced an exact 460-byte entry; both bodies were freshly
+rejudged. The running app accepted the entry through its existing predecessor
+path, and the complete original-cartridge export passed. The context constructor
+is not a new match. This is a separate live recovery from the staged private-unit
+candidates above.

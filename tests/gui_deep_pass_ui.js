@@ -55,6 +55,19 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.match(element("deepSweepResults").innerHTML,/class="table-sort"/);
   assert.doesNotMatch(element("deepSweepResults").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
   assert.ok(element("deepSweepResults").innerHTML.indexOf("Starting score") < element("deepSweepResults").innerHTML.indexOf("New score"));
+  status.recipe_wins = [
+    {function:"a",created_at:20,previous_score:5,new_score:0,family:"last_fix",provenance:{lineage:["first", "last"]}},
+    {function:"a",created_at:10,previous_score:10,new_score:5,family:"first_fix",provenance:{}},
+    {function:"b",created_at:30,previous_score:100,new_score:50,family:"other_fix",provenance:{}}];
+  ctx.renderDeepSweepResults(status);
+  assert.doesNotMatch(element("deepSweepRecipes").innerHTML,/Recent verified rewrite improvements|data-deep-win/);
+  assert.deepEqual(order(),["a","b","c"]);
+  assert.match(element("deepSweepResults").innerHTML,/2 verified improvements/);
+  assert.match(element("deepSweepResults").innerHTML,/first → last/);
+  assert.match(element("deepSweepResults").innerHTML,/10 → 5/);
+  assert.match(element("deepSweepResults").innerHTML,/Latest improvement/);
+  sort("created_at"); assert.deepEqual(order(),["b","a","c"]);
+  sort("created_at"); assert.deepEqual(order(),["c","a","b"]);
   oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156,matches:0}});
   assert.equal(element("deepSweepActive").textContent,"2");
   assert.doesNotMatch(element("deepSweepStatus").textContent,/functions active|functions tested/);

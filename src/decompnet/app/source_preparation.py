@@ -391,7 +391,7 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     for hint in compiler_hints(result.log):
         log.warning('source preparation %s: %s', fn['name'], hint)
         if diagnostic:diagnostic(fn['name'] + ': ' + hint)
-    from .predecessor_context import acceptable
+    from .compiler_context import acceptable
     if net.is_rom(proj) and not acceptable(net,proj,fn,result.obj):
         record(net,proj,fn,source,header,None,[],lead,(time.monotonic()-started)*1000,error='Extra emitted function bodies',scope=scope)
         raise NetworkError('Prepared declarations emitted extra function bodies. Supply a declarations-only header.')
@@ -648,7 +648,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     """Probe unpromoted context too; retain evidence without bypassing profile/context approval gates."""
     from .. import toolchains
     from ..project import compiler_for
-    from .predecessor_context import acceptable
+    from .compiler_context import acceptable
     from .profile_hypotheses import neighbours, prioritized
     if not hasattr(net, 'is_rom') or not net.is_rom(proj):return
     # An unsupported identity should be remapped before broad profile search. This

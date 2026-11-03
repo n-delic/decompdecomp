@@ -47,7 +47,7 @@ class JudgeMixin:
         checks = {'linked_bytes': {'exact': res.exact}, 'link': unresolved(res.problems),
                   'export': export_layout(obj, fn['name'], res.exact, res.placements)}
         if res.exact and not checks['export'].get('ready'):
-            from ..predecessor_context import verified
+            from ..compiler_context import verified
             context=verified(self,proj,fn,obj)
             if context:checks['export']=context
         checks['instructions'] = {'exact': res.instructions_exact}

@@ -192,3 +192,12 @@ required its legacy K&R unsigned-short parameter declaration: modernizing it cha
 argument conversion instructions. Keep hardware control/cache instructions and
 incomplete function fragments separate. Record function-specific evidence and
 retain the normal standalone ABI and original-image validation gates.
+
+If source is correct but private helper registers differ, preserve the actual
+caller/callee bodies and try O3 before rewriting their algorithms. IDO can assign
+private arguments to registers outside the public ABI and narrow its clobber set.
+The app reads those private procedure names/extents from compiler `.mdebug` metadata.
+A bounded unit is accepted only after every known body independently matches its
+fixed ROM entry. Only the chosen entry is published/exported; auxiliary context
+is not counted as another match. Ordinary isolated helpers are insufficient to
+reproduce these interprocedural choices.

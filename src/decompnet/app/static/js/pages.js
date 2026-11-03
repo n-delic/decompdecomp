@@ -199,6 +199,37 @@ async function prepareLinuxVm() {
   } catch (e) { showJobError(log, e.message); } finally { finish(); }
 }
 
+async function renderWebGithubSettings(onSaved) {
+  const box = $("webGithubSettings");
+  if (!box) return;
+  try {
+    const info = await api('/api/web-github');
+    if (!info.can_configure) {
+      box.innerHTML = `<p class="small muted">GitHub sign-in: ${info.enabled ? `enabled for ${esc(info.login)}` : 'not configured'}. Configure it in the native desktop app.</p>`;
+      return;
+    }
+    box.innerHTML = `<details><summary>Sign in with GitHub</summary>
+      <p class="small muted">Register an <a class="link" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">OAuth App on GitHub</a> using this callback URL. Keep its Client secret on this Mac. Sign-in checks only the selected GitHub identity and requests no repository permissions.</p>
+      <div class="field"><span>Authorization callback URL</span>${cmdBox(info.callback_url || 'Save a private remote address first.')}</div>
+      <label class="field"><span>OAuth Client ID</span><input id="webGithubClient" value="${esc(info.client_id)}" autocomplete="off"></label>
+      <label class="field"><span>OAuth Client secret</span><input type="password" id="webGithubSecret" autocomplete="new-password" placeholder="${info.secret_set ? 'Configured; leave blank to keep it' : 'Paste the Client secret from GitHub'}"></label>
+      <label class="field"><span>Allowed GitHub account</span><input id="webGithubOwner" value="${esc(info.login)}" placeholder="Your GitHub username" autocomplete="off"></label>
+      ${info.user_id ? `<p class="small muted">Verified account ID: ${esc(info.user_id)}. Access follows this identity even if its username changes.</p>` : ''}
+      <label class="check"><input type="checkbox" id="webGithubEnabled" ${info.enabled ? 'checked' : ''}><span><b>Use GitHub sign-in</b> instead of the sign-in code. The desktop window stays accessible.</span></label>
+      <button type="button" class="ghost small-btn" id="webGithubSave">Save GitHub sign-in</button>
+      <p class="small" id="webGithubStatus" role="status"></p></details>`;
+    wireCopies(box);
+    $("webGithubSave").onclick = async () => {
+      const button = $("webGithubSave"); button.disabled = true;
+      try {
+        await api('/api/web-github', {method:'POST',body:{enabled:$("webGithubEnabled").checked,
+          client_id:$("webGithubClient").value,client_secret:$("webGithubSecret").value,login:$("webGithubOwner").value}});
+        await onSaved(); toast('GitHub sign-in saved. Existing browser sessions were signed out.');
+      } catch(error) { $("webGithubStatus").textContent = error.message; button.disabled = false; }
+    };
+  } catch(error) { box.textContent = error.message; }
+}
+
 /* ------------------------------------------------------------------ settings page */
 async function showSettingsPage() {
   show("settingsPage");
@@ -238,12 +269,27 @@ async function showSettingsPage() {
   $("setComputer").innerHTML = `
     <div class="field"><span>Appearance</span><div class="seg" id="themeSeg">${THEMES.map(([k, l]) => `<button type="button" data-theme="${k}" class="${theme === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
     <div class="field"><span>Projects live in</span>${cmdBox(st.home)}</div>
-    <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser on this computer while the desktop window stays open.</span></label>
+    <label class="check"><input type="checkbox" id="webInterfaceEnabled"><span><b>Enable web interface</b>: use the full app in a browser while the desktop window stays open.</span></label>
     <div id="webInterfaceDetails" hidden></div>`;
   const renderWebInterface = info => {
     $("webInterfaceEnabled").checked = info.enabled;
     $("webInterfaceDetails").hidden = !info.enabled;
-    $("webInterfaceDetails").innerHTML = info.enabled ? `<p class="small"><a class="link" href="${esc(info.url)}" target="_blank" rel="noopener">Open web interface</a></p>${info.code ? `<div class="field"><span>Web sign-in code</span>${cmdBox(info.code)}</div>` : '<p class="small muted">The sign-in code is shown in the desktop app’s Settings.</p>'}<p class="small muted">The browser shares this app’s projects and agents. Disabling access signs out all browsers. Keep the sign-in code private: it grants full access.</p>` : "";
+    $("webInterfaceDetails").innerHTML = info.enabled ? `<p class="small"><a class="link" href="${esc(info.url)}" target="_blank" rel="noopener">Open web interface</a></p>${info.auth_method === "github" ? '<p class="small">Sign in with your approved GitHub account.</p>' : info.code ? `<div class="field"><span>Web sign-in code</span>${cmdBox(info.code)}</div>` : '<p class="small muted">Use the configured GitHub sign-in, or find the sign-in code in desktop Settings.</p>'}<p class="small muted">The browser shares this app’s projects and agents. Disabling access signs out all browsers. ${info.auth_method === "github" ? "Only the approved GitHub account can sign in." : "Keep the sign-in code private: it grants full access."}</p>` : "";
+    if (info.enabled) {
+      $("webInterfaceDetails").insertAdjacentHTML('beforeend', `<label class="field"><span>Private remote address (Tailscale HTTPS)</span><input id="webRemoteUrl" type="url" placeholder="https://my-computer.my-tailnet.ts.net" value="${esc(info.remote_url || '')}"></label><button type="button" class="ghost small-btn" id="webRemoteSave">Save remote address</button>${info.remote_url ? `<p class="small"><a class="link" href="${esc(info.remote_url)}" target="_blank" rel="noopener">Open remote web interface</a></p>` : ''}<p class="small muted">Connect both devices to Tailscale. On this computer, run <code>tailscale serve --bg http://127.0.0.1:${new URL(info.url).port}</code> to route the private HTTPS address to this app. Saving a new address signs out existing browser sessions. Set this address from the desktop app.</p>`);
+      $("webRemoteSave").onclick = async () => {
+        try { renderWebInterface(await api('/api/web-interface', {method:'POST', body:{enabled:true,remote_url:$("webRemoteUrl").value}})); toast('Remote address saved.'); }
+        catch(error) { toast(esc(error.message), 'err'); }
+      };
+    }
+    if (info.enabled && window.clearDecompOffline) {
+      $("webInterfaceDetails").insertAdjacentHTML('beforeend', '<p class="small muted">Install on iPhone: open this address in Safari, tap Share, then Add to Home Screen. Recently opened views are saved on this device for offline reading; compiling and changes need your Mac. Offline copies remain on this device until cleared or you sign out.</p><button type="button" class="ghost small-btn" id="clearOfflineData">Clear offline data on this device</button>');
+      $("clearOfflineData").onclick = async () => { await window.clearDecompOffline(); toast('Offline data cleared.'); };
+    }
+    if (info.enabled) {
+      $("webInterfaceDetails").insertAdjacentHTML('beforeend', '<div id="webGithubSettings"></div>');
+      renderWebGithubSettings(async () => renderWebInterface(await api('/api/web-interface')));
+    }
     wireCopies($("webInterfaceDetails"));
   };
   renderWebInterface(await api('/api/web-interface'));
