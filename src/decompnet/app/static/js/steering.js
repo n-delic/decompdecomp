@@ -1036,10 +1036,16 @@ function renderDeepSweepResults(status) {
   const detailsOpen = new Map([...$("deepSweepRecipes").querySelectorAll("details")].map((d,i) => [d.dataset?.performanceFamily || d.dataset?.kind || i,d.open]));
   renderRewritePerformance(status);
   const wins = status.recipe_wins || [];
-  if (wins.length) $("deepSweepRecipes").innerHTML += `<details class="deep-recipe-results" data-kind="wins"><summary>Recent verified rewrite improvements</summary><div class="compiler-table"><table><thead><tr><th>Date / time</th><th>Function</th><th>Rewrite history</th><th>Score before → after</th></tr></thead><tbody>${wins.map((w, i) => `<tr><td><time datetime="${esc(new Date(w.created_at * 1000).toISOString())}">${esc(new Date(w.created_at * 1000).toLocaleString())}</time></td><td><button type="button" class="ghost small-btn mono" data-deep-win="${i}">${esc(w.function)}</button></td><td>${esc((w.provenance.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</td><td>${w.previous_score} → ${w.new_score}</td></tr>`).join("")}</tbody></table></div><p class="small muted">The latest 50 improvements are shown; the complete history is stored locally. Rewrites in a random history build on one another.</p></details>`;
   $("deepSweepRecipes").querySelectorAll("details").forEach((detail, i) => { detail.open = !!detailsOpen.get(detail.dataset?.performanceFamily || detail.dataset?.kind || i); });
-  $("deepSweepRecipes").querySelectorAll("[data-deep-win]").forEach(button => {
-    button.onclick = () => openFn(wins[Number(button.dataset.deepWin)].function);
+  const histories = new Map();
+  for (const win of wins) {
+    if (!histories.has(win.function)) histories.set(win.function, []);
+    histories.get(win.function).push(win);
+  }
+  const merged = (status.improvements || []).map(row => {
+    const history = (histories.get(row.function) || []).sort((a,b) => b.created_at - a.created_at);
+    return {...row, history, created_at: history[0]?.created_at || 0,
+      rewrite: history.map(w => (w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " ")).join("; ")};
   });
   const resultHost = $("deepSweepResults");
   if (resultHost.dataset.slug !== S.slug) {
@@ -1048,17 +1054,17 @@ function renderDeepSweepResults(status) {
   const sortKey = resultHost.dataset.sortKey || "difference", descending = resultHost.dataset.sortDirection !== "asc";
   const value = (row, key) => key === "difference" ? row.starting_score - row.new_score
     : key === "starting_percent_text" || key === "new_percent_text" ? parseFloat(row[key]) : row[key];
-  const rows = [...(status.improvements || [])].sort((a,b) => {
+  const rows = merged.sort((a,b) => {
     const x = value(a, sortKey), y = value(b, sortKey);
     const comparison = typeof x === "string" ? x.localeCompare(String(y)) : (Number.isFinite(x) ? x : -Infinity) - (Number.isFinite(y) ? y : -Infinity);
     return (descending ? -comparison : comparison) || a.function.localeCompare(b.function);
   });
-  const columns = [["function", "Function"], ["starting_score", "Starting score"], ["new_score", "New score"], ["difference", "Score difference"], ["starting_percent_text", "Starting match"], ["new_percent_text", "New match"]];
+  const columns = [["function", "Function"], ["starting_score", "Starting score"], ["new_score", "New score"], ["difference", "Score difference"], ["starting_percent_text", "Starting match"], ["new_percent_text", "New match"], ["created_at", "Latest improvement"], ["rewrite", "Rewrite history"]];
   const headings = columns.map(([key,label]) => `<th aria-sort="${sortKey === key ? descending ? "descending" : "ascending" : "none"}"><button class="table-sort" type="button" data-deep-sort="${key}">${label}${sortKey === key ? descending ? " ↓" : " ↑" : ""}</button></th>`).join("");
   $("deepSweepMatched").textContent = (status.improvements || []).filter(r => r.new_score === 0).length.toLocaleString();
   $("deepSweepImproved").textContent = (status.improved || (status.improvements || []).length || 0).toLocaleString();
   $("deepSweepResults").innerHTML = `<p><b>${status.improved || rows.length} functions improved</b> by deep permutation</p>`
-    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td>${esc(r.starting_score)}</td><td><b>${esc(r.new_score)}</b></td><td>${esc(r.starting_score - r.new_score)}</td><td>${esc(r.starting_percent_text)}</td><td><b>${esc(r.new_percent_text)}</b></td></tr>`).join("")}</tbody></table></div><p class="small muted">Lower scores and higher match percentages are better. Score difference is starting minus new score. Saved across restarts and repeat passes; each function appears once, from its first recorded improvement to its best deep-pass result.</p>` : "");
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td>${esc(r.starting_score)}</td><td><b>${esc(r.new_score)}</b></td><td>${esc(r.starting_score - r.new_score)}</td><td>${esc(r.starting_percent_text)}</td><td><b>${esc(r.new_percent_text)}</b></td><td>${r.created_at ? `<time datetime="${esc(new Date(r.created_at * 1000).toISOString())}">${esc(new Date(r.created_at * 1000).toLocaleString())}</time>` : "—"}</td><td>${r.history.length ? `<details><summary>${esc(r.history.length)} verified improvement${r.history.length === 1 ? "" : "s"}</summary>${r.history.map(w => `<p><time datetime="${esc(new Date(w.created_at * 1000).toISOString())}">${esc(new Date(w.created_at * 1000).toLocaleString())}</time> · ${esc(w.previous_score)} → ${esc(w.new_score)}<br>${esc((w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</p>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table></div><p class="small muted">Lower scores and higher match percentages are better. Score difference is starting minus new score. Saved across restarts and repeat passes; each function appears once, from its first recorded improvement to its best deep-pass result. Expand rewrite history for individual verified changes. History covers the latest 50 improvements across functions; older details remain stored locally. Rewrites in each history build on one another.</p>` : "");
   ["deepSweepRecipes", "deepSweepResults"].forEach((id, group) => {
     $(id).querySelectorAll(".compiler-table").forEach((table, i) => {
       const position = scrollPositions[group][i];
