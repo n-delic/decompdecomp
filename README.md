@@ -1336,3 +1336,13 @@ reachable LAN/Tailscale/server address and its room port. Share that fixed link 
 must remain assigned/reachable and any external proxy/named tunnel must be running. This serves only
 the room API, not the app GUI or agent MCP endpoint. A fixed endpoint does not make an offline host
 available; clients reconnect when the host and endpoint return.
+
+
+### Opening a project while verification is running
+
+Project overview/map reads show the latest saved database snapshot without starting a full saved-file
+verification pass. Existing verification continues in the background; changes and judging still use
+the synchronization gate. The loading panel reports four actual loading steps (app settings, project
+summary, function list, view rendering), elapsed time, and available saved-file verification counts.
+Step completion is not an estimate of time remaining; a large function/attempt history may still
+make the function-list step longer than the others.

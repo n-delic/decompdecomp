@@ -330,6 +330,13 @@ def register(app: App) -> None:
                             headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
         return Response(raw, media_type="application/json")
 
+    @mcp.custom_route('/api/project-loading', methods=['GET'])
+    async def api_project_loading(request: Request) -> Response:
+        if (bad := guard(request)):
+            return bad
+        # In-memory activity only: never start a sync or queue behind expensive UI reads.
+        return JSONResponse({'verification':net.progress.status(request.query_params.get('slug',''))})
+
     @mcp.custom_route("/api/map", methods=["GET"])
     async def api_map(request: Request) -> Response:
         """Every function, for the map and the table. `since`: the signature the GUI has; when nothing changed, the
@@ -347,7 +354,10 @@ def register(app: App) -> None:
             keys = list(rows[0]) if rows else []  # every field function_map gives: a list of them here lost polished and not_c
             return {"sig": sig, "keys": keys, "rows": [[r[k] for k in keys] for r in rows]}
         try:
-            data = await call(build)
+            def snapshot():
+                with net.progress.view():
+                    return build()
+            data = await (app.ui_call or call)(snapshot)
         except (NetworkError, ValueError) as e:
             return fail(e)
         return packed(request, data)
@@ -358,7 +368,10 @@ def register(app: App) -> None:
         if (bad := guard(request)):
             return bad
         try:
-            rows = await call(net.map_columns, request.query_params.get("slug", ""))
+            def snapshot():
+                with net.progress.view():
+                    return net.map_columns(request.query_params.get("slug", ""))
+            rows = await (app.ui_call or call)(snapshot)
         except (NetworkError, ValueError) as e:
             return fail(e)
         return packed(request, {"keys": COLUMN_KEYS, "rows": rows})

@@ -2,9 +2,9 @@
 const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
 const read = name => fs.readFileSync(`src/decompnet/app/static/js/${name}.js`, 'utf8');
 function setup() {
-  const elements = new Map(), calls = [], errors = [];
+  const elements = new Map(), calls = [], errors = [], timers = [];
   const el = id => {
-    if (!elements.has(id)) elements.set(id, {hidden: true, value: '', textContent: '', innerHTML: '', dataset: {}, attrs: {},
+    if (!elements.has(id)) elements.set(id, {hidden: true, value: '', textContent: '', innerHTML: '', dataset: {}, attrs: {}, style: {},
       classList: {toggle() {}, add() {}, remove() {}},
       setAttribute(k,v) { this.attrs[k] = v; }, removeAttribute(k) { delete this.attrs[k]; },
       append() {}, remove() {}, replaceChildren() { this.innerHTML = ''; }, querySelectorAll: () => [], querySelector: selector => el(id+selector)});
@@ -22,11 +22,11 @@ function setup() {
     nameChangeBusy: false, clock: String, groups: new Set(), L: {}, FUNCTION_ROWS: 200,
     renderLog: () => {}, renderHeader: () => {}, renderStats: () => {}, renderForkSetup: () => {},
     setTab: tab => {S.tab=tab;}, poll: async () => {}, loadStats: () => {},
-    setInterval: () => 1, clearInterval: () => {}, loadState: async () => {},
+    setInterval: fn => {timers.push(fn);return timers.length;}, clearInterval: () => {}, loadState: async () => {},
     renderMapView: () => {}, layoutMap: () => {}, applyClaims: () => {}, renderList: () => {},
     renderProgress: () => {}, renderOverview: () => {}, renderSessions: () => {}, loadMapColumns: () => {}});
   function $(id) {return el(id);}
-  return {ctx,S,el,calls,errors};
+  return {ctx,S,el,calls,errors,timers};
 }
 const flush = async () => {for(let i=0;i<8;i++) await Promise.resolve();};
 const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`source ${name}`,asm:`asm ${name}`,notes:[],scores:[],calls:[],called_by:[]});
@@ -82,10 +82,15 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   vm.runInContext(project.slice(project.indexOf('async function refreshMap'),project.indexOf('/* A poll belongs')),p.ctx);
   const old=p.ctx.openProject('A'), oldProject=p.calls[1], oldMap=p.calls[0];
   assert.equal(p.calls.length,2,'Overview and map requests start concurrently');
+  assert.match(p.el('projectLoadingDetail').textContent,/reading project summary; loading function list/);
+  assert.equal(p.el('projectLoadBar').attrs['aria-valuenow'],'1');
   assert.equal(p.S.ov,null); assert.equal(p.el('project').attrs['aria-busy'],'true');
   const fresh=p.ctx.openProject('B');
   assert.equal(oldProject.signal.aborted,true); assert.equal(oldMap.signal.aborted,true);
-  p.calls[3].resolve({slug:'B',kind:'rom'}); p.calls[2].resolve({sig:'B',keys:['name'],rows:[['B fn']]}); await fresh;
+  p.calls[3].resolve({slug:'B',kind:'rom'}); await flush();
+  assert.match(p.el('projectLoadingDetail').textContent,/loading function list/);
+  assert.equal(p.el('projectLoadBar').attrs['aria-valuenow'],'2');
+  p.calls[2].resolve({sig:'B',keys:['name'],rows:[['B fn']]}); await fresh;
   assert.equal(p.S.ov.slug,'B'); assert.equal(p.S.map[0].name,'B fn');
   assert.equal(p.el('projectLoading').hidden,true);
   oldProject.resolve({slug:'A',kind:'rom'}); oldMap.resolve({sig:'A',keys:['name'],rows:[['A fn']]}); await old;
@@ -133,5 +138,16 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   assert.equal(close.ctx.location.hash,'#/project/other','Closing an old import must not navigate away from a new project');
   assert.equal(workFinishes,3);
   assert.match(project,/id="fsClose"/);
+  const q=setup();
+  vm.runInContext(project.slice(project.indexOf('const POLL_MS'),project.indexOf('function stopPolling')),q.ctx);
+  vm.runInContext(project.slice(project.indexOf('async function refreshMap'),project.indexOf('/* A poll belongs')),q.ctx);
+  const opening=q.ctx.openProject('slow');
+  const status=q.timers[0]();
+  assert.match(q.calls[2].url,/project-loading/);
+  q.calls[2].resolve({verification:{phase:'Verifying saved functions',done:12,total:40}});await status;
+  assert.match(q.el('projectLoadingDetail').textContent,/12 \/ 40 functions checked/);
+  q.calls[0].resolve({sig:'slow',keys:['name'],rows:[['f']]});
+  q.calls[1].resolve({slug:'slow',kind:'rom'});await opening;
+  assert.equal(q.el('projectLoading').hidden,true);
   console.log('Navigation loading, parallel reads, retry, same-name and out-of-order guards passed.');
 })().catch(error => {console.error(error);process.exitCode=1;});

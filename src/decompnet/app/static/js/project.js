@@ -3,8 +3,11 @@
 const POLL_MS = 1000;  // the open project's live poll: claims, attempts, events
 const STATS_EVERY_MS = 8000;  // its numbers that change slowly (pace, cost)
 const MAP_EVERY_MS = 20000;  // its whole map again, even when nothing said it changed
-let projectLoad = null;
-function cancelProjectLoad() { projectLoad?.abort(); projectLoad = null; }
+let projectLoad = null, projectLoadTimer = null;
+function cancelProjectLoad() {
+  projectLoad?.abort(); projectLoad = null;
+  clearInterval(projectLoadTimer); projectLoadTimer = null;
+}
 async function openProject(slug, tab = "overview") {
   cancelProjectLoad();
   const controller = projectLoad = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -22,15 +25,42 @@ async function openProject(slug, tab = "overview") {
   S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
   S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
+  const expectedFunctions = (S.projects || []).find(p => p.slug === slug)?.functions;
+  const startedAt = Date.now(), steps = {settings:!!S.st, summary:false, functions:false, view:false};
+  let verification = null, statusPending = false;
+  const paintLoading = () => {
+    if (gen !== S.gen || $("projectLoading").hidden) return;
+    const done = Object.values(steps).filter(Boolean).length;
+    const pending = [!steps.settings && "reading app settings", !steps.summary && "reading project summary",
+      !steps.functions && (expectedFunctions ? `loading ${Number(expectedFunctions).toLocaleString()} functions and their history` : "loading function list"), steps.summary && steps.functions && !steps.view && "drawing project view"].filter(Boolean);
+    $("projectLoadBar").setAttribute("aria-valuenow", String(done));
+    $("projectLoadFill").style.width = `${done * 25}%`;
+    const checking = verification ? ` Saved files: ${verification.phase || "verification"}${verification.total ? ` (${verification.done || 0} / ${verification.total} functions checked)` : ""}.` : "";
+    $("projectLoadingDetail").textContent = `${done} / 4 loading steps complete · ${pending.join("; ")} · ${Math.floor((Date.now()-startedAt)/1000)}s elapsed.${checking}`;
+  };
+  paintLoading();
+  projectLoadTimer = setInterval(async () => {
+    paintLoading();
+    if (statusPending || gen !== S.gen) return;
+    statusPending = true;
+    try {
+      const info = await api(`/api/project-loading?slug=${encodeURIComponent(slug)}`, {signal:controller?.signal});
+      if (gen === S.gen) { verification = info.verification; paintLoading(); }
+    } catch { /* Loading requests retain their own errors and retry controls. */ }
+    finally { statusPending = false; }
+  }, 1000);
   // Overview and function-map reads are independent. Do not serialize their latency.
-  const mapRequest = api(`/api/map?slug=${slug}`, {signal:controller?.signal});
+  const mapRequest = api(`/api/map?slug=${slug}`, {signal:controller?.signal}).then(data => { steps.functions = true; paintLoading(); return data; });
   mapRequest.catch(() => {});  // setup-only projects may not need this response
   try {
-    const [ov] = await Promise.all([api(`/api/project?slug=${slug}`, {signal:controller?.signal}), S.st ? null : loadState()]);
+    const [ov] = await Promise.all([
+      api(`/api/project?slug=${slug}`, {signal:controller?.signal}).then(data => { steps.summary = true; paintLoading(); return data; }),
+      S.st ? null : loadState().then(() => { steps.settings = true; paintLoading(); })]);
     if (gen !== S.gen) return;  // another project opened meanwhile
     S.ov = ov;
   } catch (e) {
     if (gen !== S.gen) return;
+    clearInterval(projectLoadTimer);
     $("projectLoadingText").textContent = `Could not load ${slug}: ${e.message}`;
     $("projectLoading").querySelector(".workbar").hidden = true;
     $("projectRetry").hidden = false;
@@ -57,6 +87,7 @@ async function openProject(slug, tab = "overview") {
   try { await refreshMap(true, mapRequest); }
   catch (e) {
     if (gen !== S.gen) return;
+    clearInterval(projectLoadTimer);
     $("projectLoadingText").textContent = `Could not load functions for ${slug}: ${e.message}`;
     $("projectLoading").querySelector(".workbar").hidden = true;
     $("projectRetry").hidden = false;
@@ -64,6 +95,7 @@ async function openProject(slug, tab = "overview") {
     return;
   }
   if (gen !== S.gen) return;
+  steps.view = true; paintLoading();
   finishProjectLoading(gen);
   await poll();
   if (gen !== S.gen) return;  // (or its timers would poll the next project too)
@@ -74,6 +106,7 @@ async function openProject(slug, tab = "overview") {
 
 function finishProjectLoading(gen) {
   if (gen !== S.gen) return;
+  clearInterval(projectLoadTimer); projectLoadTimer = null;
   $("project").removeAttribute("data-loading");
   $("project").setAttribute("aria-busy", "false");
   $("projectLoading").hidden = true;

@@ -1791,3 +1791,25 @@ def test_source_runtime_route_reports_home_and_requires_explicit_data_choice(app
     assert status.status_code==200 and status.json()['home']
     rejected=client.post('/api/update/runtime',json={'path':'/not/a/checkout'},headers={'X-Decomp':'1'})
     assert rejected.status_code==400 and 'Choose current' in rejected.json()['error']
+
+
+def test_map_reads_do_not_start_saved_progress_verification(tmp_path,monkeypatch):
+    from .test_loading import tiny_game
+    net=RomNetwork(tmp_path/'app.db',tmp_path)
+    tiny_game(net)
+    mcp,_,security,_=build(net,tmp_path,PORT,SECRET)
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),
+                      base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('map read must not trigger verification'))
+    response=client.get('/api/map?slug=game')
+    assert response.status_code==200 and len(response.json()['rows'])==4
+    assert client.get('/api/map?slug=game&since='+response.json()['sig']).json()['same']
+    def columns(slug):
+        assert net.progress.viewing
+        net._project(slug)
+        return []
+    monkeypatch.setattr(net,'map_columns',columns)
+    assert client.get('/api/mapcolumns?slug=game').status_code==200
+    net.progress._activity('game',phase='Verifying saved functions',done=2,total=4)
+    activity=client.get('/api/project-loading?slug=game').json()['verification']
+    assert activity['done']==2 and activity['total']==4
