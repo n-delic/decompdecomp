@@ -736,31 +736,41 @@
         <p class="small muted" id="fnVerificationStatus"></p>
         <button class="ghost small-btn" type="button" id="fnVerificationDownload">Download source, header and verification inputs</button>
       </details>
-      <div class="row" id="fnFocusPanel" hidden><button class="primary small-btn" type="button" id="fnFocusAgent">Focus an agent on this function</button><span class="small muted">One function · time limit · AI tokens</span></div>
-      <details class="more deep-search" id="fnDeepPanel" hidden>
-        <summary>Deep permuter · this function <span class="deep-free">No AI tokens</span></summary>
-        <p class="small muted" id="fnDeepHistory"></p>
-        <p class="small muted">Try local repairs, then random rewrites. Verified improvements save immediately.</p>
-        <div class="deep-controls">
-          <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
-          <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
-          <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
-          <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
-        </div>
-        <div class="deep-dashboard" id="fnDeepMetrics" hidden>
-          <dl class="deep-scores">
-            <div><dt>Starting match</dt><dd id="fnDeepStartPercent">—</dd><span id="fnDeepStartScore">Score —</span></div>
-            <div class="deep-best"><dt>Current best</dt><dd id="fnDeepBestPercent">—</dd><span id="fnDeepBestScore">Score —</span></div>
-            <div><dt>Improvements</dt><dd id="fnDeepImproved">0</dd><span>Verified score reductions</span></div>
-          </dl>
-          <div class="deep-counters"><span><b id="fnDeepTested">0</b> tested</span><span><b id="fnDeepSkipped">0</b> cached skips</span><span id="fnDeepTime">—</span></div>
-        </div>
-        <p class="small muted" id="fnDeepStatus" role="status"></p>
-        <div id="fnDeepWork"></div>
-        <details class="deep-output" id="fnDeepOutput"><summary>Technical output</summary>
-          <p class="small muted" id="fnDeepNow" role="status">Waiting for the first candidate.</p><pre class="joblog" id="fnDeepLog" hidden></pre></details>
-        <p class="small muted deep-note">Search is bounded by these limits; it cannot try every possible C program.</p>
-      </details>
+      <section class="function-work" id="fnWorkPanel" aria-labelledby="fnWorkTitle" hidden>
+        <header class="function-work-heading"><h3 id="fnWorkTitle">Work on this function</h3><p class="small muted">Choose an AI agent or a local compiler search.</p></header>
+        <details class="collapsible-box function-work-card" id="fnFocusPanel" hidden>
+          <summary><span class="function-work-cost">AI tokens</span>AI agent</summary>
+          <div class="collapsible-box-body"><p class="small muted">Give one agent a model and time limit. It stays on this function and saves verified improvements.</p>
+            <div class="row"><button class="primary small-btn" type="button" id="fnFocusAgent">Set up focused agent</button><span class="small muted">Stops on a match or when time runs out.</span></div>
+          </div>
+        </details>
+        <details class="collapsible-box function-work-card deep-search" id="fnDeepPanel" hidden>
+          <summary><span class="function-work-cost">No AI tokens</span>Deep permuter</summary>
+          <div class="collapsible-box-body">
+          <p class="small muted" id="fnDeepHistory"></p>
+          <p class="small muted">Try local repairs and random rewrites with your installed compiler. Verified improvements save automatically.</p>
+          <div class="deep-controls">
+            <label class="field"><span>Time limit · minutes</span><input id="fnDeepMinutes" type="number" min="1" max="120" value="30"></label>
+            <label class="field"><span>Compile limit</span><input id="fnDeepVariants" type="number" min="1" max="1000000" value="100000"></label>
+            <div class="deep-actions"><button class="primary small-btn" id="fnDeepRun" type="button">Run deep permuter</button>
+            <button class="ghost small-btn" id="fnDeepStop" type="button" hidden>Stop</button></div>
+          </div>
+          <div class="deep-dashboard" id="fnDeepMetrics" hidden>
+            <dl class="deep-scores">
+              <div><dt>Starting match</dt><dd id="fnDeepStartPercent">—</dd><span id="fnDeepStartScore">Score —</span></div>
+              <div class="deep-best"><dt>Current best</dt><dd id="fnDeepBestPercent">—</dd><span id="fnDeepBestScore">Score —</span></div>
+              <div><dt>Improvements</dt><dd id="fnDeepImproved">0</dd><span>Verified score reductions</span></div>
+            </dl>
+            <div class="deep-counters"><span><b id="fnDeepTested">0</b> tested</span><span><b id="fnDeepSkipped">0</b> cached skips</span><span id="fnDeepTime">—</span></div>
+          </div>
+          <p class="small muted" id="fnDeepStatus" role="status"></p>
+          <div id="fnDeepWork"></div>
+          <details class="deep-output" id="fnDeepOutput"><summary>Technical output</summary>
+            <p class="small muted" id="fnDeepNow" role="status">Waiting for the first candidate.</p><pre class="joblog" id="fnDeepLog" hidden></pre></details>
+          <p class="small muted deep-note">Search is bounded by these limits; it cannot try every possible C program.</p>
+          </div>
+        </details>
+      </section>
       <div class="fn-tabs">
         <div class="tabs" role="tablist" aria-label="Function view">
           <button role="tab" class="tab on" data-ftab="diff" type="button">Diff</button>

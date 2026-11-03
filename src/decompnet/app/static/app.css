@@ -1170,6 +1170,22 @@ details.more[open] > summary::before { content: "− "; }
 .agent-result-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
 .agent-result-row button { text-align: left; overflow-wrap: anywhere; font-family: var(--mono); }
 
+/* Function actions share the same disclosure component as compiler settings and peer projects. */
+.function-work { margin: 8px 0 24px; display: grid; gap: 12px; }
+.function-work[hidden] { display: none; }
+.function-work-heading h3 { margin: 0 0 5px; font-size: 14px; font-weight: 650; }
+.function-work-heading p { margin: 0; }
+.function-work-card { margin: 0; }
+.function-work-card.deep-search { padding: 0; }
+.function-work-card > summary { font-weight: 650; min-height: 24px; line-height: 24px; }
+.function-work-cost { float: right; margin-left: 12px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; color: var(--muted); font-size: 11px; font-weight: 500; line-height: 22px; }
+.function-work-card .collapsible-box-body > p { margin: 0; }
+.function-work-card .collapsible-box-body > div:empty { display: none; }
+.function-work-card .deep-controls { margin: 4px 0; }
+.function-work-card .deep-output { margin-top: 2px; }
+.function-work-card .row { gap: 10px 14px; }
+#fnDeepStatus:empty { display: none; }
+
 /* Deep search keeps its scores visible while optional technical output grows separately. */
 .deep-search { padding: 16px; border: 1px solid var(--line); border-radius: var(--r); background: var(--raise); }
 .deep-search > summary { font-weight: 600; }

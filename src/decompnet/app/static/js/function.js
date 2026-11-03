@@ -181,6 +181,7 @@ async function openFn(name) {
     $("fnCompilerSummary").hidden = true;
     $("fnCompilerLog").textContent = "";
     $("fnCompilerLog").hidden = true;
+    $("fnWorkPanel").hidden = true;
     $("fnDeepMetrics").hidden = true;
     $("fnDeepStatus").textContent = "";
     $("fnDeepLog").textContent = ""; $("fnDeepLog").hidden = true;
@@ -305,6 +306,7 @@ async function refreshFn(first) {
     $("fnFocusAgent").onclick = () => openFocusedAgent(slug, d.name);
     if (d.deep_job && !deepPermuterTarget) followFunctionDeep(d.deep_job);
     $("fnDeepPanel").hidden = !deepPermuterBusy && (d.status !== "open" || d.best == null);
+    $("fnWorkPanel").hidden = $("fnFocusPanel").hidden && $("fnDeepPanel").hidden;
     const pass = d.deep_pass || {};
     $("fnDeepHistory").textContent = deepPermuterBusy ? "Following this function’s deep search. Improvements save immediately." : pass.completed ? `Deep pass completed · ${pass.minutes} min / ${Number(pass.max_variants).toLocaleString()} variants budget` : pass.stale ? "Previous pass saved; inputs changed, so this function is eligible again." : pass.state === "error" ? `Deep pass needs attention: ${pass.error}` : `Deep pass: ${pass.state || "not tried"}`;
     $("fnCompilerTest").hidden = S.ov.kind === "fork" || !S.ov.compilers?.length;
