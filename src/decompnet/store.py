@@ -318,6 +318,10 @@ class Store:
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
+        # Map recency needs scores/timestamps, never saved C. Cover the window query so opening
+        # a project does not read hundreds of MB of historical source from attempt table pages.
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_recency ON "
+                          "attempts(function_id,id,compiled,score,created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
         # the room looks a function up by its address for every match, best attempt and note the host sends: without

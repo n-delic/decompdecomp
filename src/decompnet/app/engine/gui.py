@@ -163,7 +163,7 @@ class GuiMixin:
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
         from ..function_names import state as name_state
         recency = {r['function_id']: dict(r) for r in self.store.all(
-            'WITH history AS (SELECT t.*,f.n_insns, '
+            'WITH history AS (SELECT t.id,t.function_id,t.compiled,t.score,t.created_at,f.n_insns, '
             'MIN(CASE WHEN t.compiled THEN t.score END) OVER (PARTITION BY t.function_id ORDER BY t.id '
             'ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous '
             'FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) '

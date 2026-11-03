@@ -95,3 +95,35 @@ def test_function_recency_ignores_ties_failed_checks_and_worse_scores(tmp_path):
     rows={r['name']:r for r in net.function_map('demo')}
     assert rows['checked']['last_checked']==50 and rows['checked']['last_improved']==20
     assert rows['never']['last_checked'] is None and rows['never']['last_improved'] is None
+
+
+def test_function_map_recency_reads_covering_index_without_saved_source(tmp_path):
+    import sqlite3
+
+    net = RomNetwork(tmp_path/'map.db', tmp_path)
+    with net.store.tx() as db:
+        db.execute("INSERT INTO projects(slug,name,arch,root,config) VALUES('game','Game','mips',?,'{}')",
+                   (str(tmp_path),))
+        db.execute("INSERT INTO functions(project_id,name,n_insns,size) VALUES(1,'f',10,40)")
+        for score, stamp in [(900, 10), (700, 20), (700, 30), (800, 40)]:
+            db.execute('INSERT INTO attempts(function_id,score,compiled,created_at,source) VALUES(1,?,1,?,?)',
+                       (score, stamp, '/* large historical C */'*10000))
+    queries = []
+    reader = net.store._reader()
+    reader.set_trace_callback(queries.append)
+
+    def metadata_only(action, table, column, *_):
+        if action == sqlite3.SQLITE_READ and table == 'attempts' and column == 'source':
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    reader.set_authorizer(metadata_only)
+    try:
+        row = net.function_map('game')[0]
+        assert row['last_checked'] == 40 and row['last_improved'] == 20
+        history = next(query for query in queries if query.startswith('WITH history'))
+        plan = net.store.all('EXPLAIN QUERY PLAN '+history)
+        assert any('COVERING INDEX idx_attempts_recency' in r['detail'] for r in plan)
+    finally:
+        reader.set_authorizer(None)
+        reader.set_trace_callback(None)
