@@ -29,7 +29,7 @@ async function showHome() {
   const box = $("projects");
   box.innerHTML = "";
   $("recent").hidden = !projects.length;
-  $("home").classList.toggle("returning", projects.length > 0);  // your projects first once you have some
+  $("home").classList.toggle("returning", projects.length > 0);
   for (const p of projects) {
     const pct = codePct(p);
     const a = document.createElement("a");
