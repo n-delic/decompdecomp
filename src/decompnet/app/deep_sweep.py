@@ -4,7 +4,7 @@ import json
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
@@ -19,20 +19,29 @@ SCHEMA = '''CREATE TABLE IF NOT EXISTS deep_permutation_passes(
  result TEXT NOT NULL DEFAULT '{}', error TEXT NOT NULL DEFAULT '')'''
 
 
-def signature(net, proj, fn, minutes, variants, compiler_profiles=None):
+def signature(net, proj, fn, minutes, variants, compiler_profiles=None, shared=None):
     sweeps = getattr(net, 'deep_sweeps', None)
     count = compiler_profiles
     if count is None:
         count = sweeps.config(proj['slug']).get('compiler_profiles', 1) if sweeps else 1
-    inputs = ('deep-pass-profiles-v1', count, agent_tokens.target_scope(net, fn, ''), fn['best_source'], minutes, variants)
+    target = (agent_tokens.target_scope(net, fn, '') if shared is None else
+              hashlib.sha256(repr(('', candidate_scope.key(net, proj, fn, shared), claim_stalls.repair_rules())).encode()).hexdigest())
+    inputs = ('deep-pass-profiles-v1', count, target, fn['best_source'], minutes, variants)
     # Retry the two formerly blocked states once under the new recovery rules. Keep unrelated
     # completed passes resumable; users can explicitly repeat them to try the new search recipes.
     if fn['status'] == 'open' and fn['best_score'] == 0:
         inputs += ('reverify-zero-v1',)
     elif fn['best_source'] and not net.fork_slug(proj['slug']):
+        from .prototype_alignment import prepare
         from .prototype_alignment import variants as align
-        ctx = net._context(proj['id'], fn['unit'])
-        if ctx and align(fn['best_source'], fn['name'], ctx['header']):
+        ctx = candidate_scope.context(net, proj, fn['unit'], shared)
+        prepared = None
+        if shared is not None and ctx:
+            alignments = shared.setdefault('alignments', {})
+            if fn['unit'] not in alignments:
+                alignments[fn['unit']] = prepare(ctx['header'])
+            prepared = alignments[fn['unit']]
+        if ctx and align(fn['best_source'], fn['name'], ctx['header'], prepared):
             inputs += ('return-alignment-v1',)
     return hashlib.sha256(repr(inputs).encode()).hexdigest()
 
@@ -196,10 +205,12 @@ class Sweeps:
             f"WHERE f.project_id=? AND f.status='open' AND f.{IN_BUILD} AND d.state='error'",
             proj['id'])
         issues = []
+        shared = {'contexts': {}}
+        profiles = self.config(proj['slug']).get('compiler_profiles', 1)
         for fn in rows:
             if not fn['best_source'] or fn['best_score'] is None:
                 continue
-            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants']):
+            if fn['pass_scope'] != signature(self.net, proj, fn, fn['pass_minutes'], fn['pass_variants'], profiles, shared):
                 continue
             error = fn['pass_error'] or 'The search stopped without recording an error message.'
             lower = error.lower()
@@ -233,6 +244,7 @@ class Sweeps:
         with self.lock:
             current = dict(self.active.get(slug, {}))
         def count_queue():
+            shared = {'contexts': {}}
             done_open = done_matched = rotated = blocked = 0
             rows = self.net.store.all("""SELECT f.*,d.scope AS pass_scope,d.minutes AS pass_minutes,
                 d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
@@ -240,7 +252,7 @@ class Sweeps:
             for row in rows:
                 if (row['best_source'] and row['best_score'] is not None
                         and row['pass_minutes'] == cfg['minutes'] and row['pass_variants'] == cfg['max_variants']
-                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'])):
+                        and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'], cfg.get('compiler_profiles', 1), shared)):
                     if row['pass_state'] == 'completed':
                         if row['status'] == 'open':
                             done_open += 1
@@ -349,61 +361,92 @@ class Sweeps:
             log.check_cancel()
             proj = self.net.project_row(slug)
             pending = waiting = 0
-            batch = []
-            total = 0
-            offset = 0
-            while True:
-                rows = self.net.store.all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
-                    f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
-                    c.expires_at AS claim_expires FROM functions f
-                    LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
-                    LEFT JOIN claims c ON c.function_id=f.id
-                    WHERE f.project_id=? AND f.status='open' AND {IN_BUILD}
-                    AND f.id>? ORDER BY f.id LIMIT 128""", proj['id'], offset)
-                if not rows:
-                    break
-                offset = rows[-1]['id']
-                total += len(rows)
-                for fn in rows:
-                    log.check_cancel()
-                    if fn['id'] in visited_turns:
-                        continue
-                    if not fn['best_source'] or fn['best_score'] is None:
-                        waiting += 1
-                        continue
-                    scope = signature(self.net, proj, fn, minutes, variants)
-                    if fn['pass_scope'] == scope and fn['pass_state'] in ('completed', 'error'):
-                        continue
-                    pending += 1
-                    if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
-                        waiting += 1
-                        continue
-                    # Keep only identity/scope between selection and dispatch, not every source/target.
-                    batch.append(({'id': fn['id'], 'name': fn['name'], 'size': fn['size']}, scope))
-            batch.sort(key=lambda item: (item[0]['size'] or 0, item[0]['id']))
-            # Random order without replacement: interrupted restarts do not always favor small functions.
-            random.shuffle(batch)
-            blocked = waiting
+            # Shuffle lightweight identities first. Never fingerprint the entire project before
+            # dispatching work; keep at most two turns per worker queued ahead of execution.
+            identities = [dict(r) for r in self.net.store.all(f"SELECT id,name,size FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])]
+            random.shuffle(identities)
+            total = len(identities)
+            scanned = submitted = 0
+            shared = {'contexts': {}}
+            profiles = self.config(slug).get('compiler_profiles', 1)
+            def preparing(checked, eligible, blocked, done=False, total=total):
+                stats['activity'].publish({'preparation': {'checked': checked, 'total': total,
+                    'eligible': eligible, 'waiting': blocked, 'done': done}}, force=False)
+            preparing(scanned, pending, waiting)
 
-            def search(item, proj=proj, total=total, blocked=blocked):
-                fn = self.net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item[0]['id'], proj['id'])
+            failed = threading.Event()
+            def execute(item, blocked, proj=proj, total=total):
+                log.check_cancel()
+                fn = self.net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item['id'], proj['id'])
                 if not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
                     return
+                # Dispatch always uses fresh inputs, never the producer's shared snapshot.
                 scope = signature(self.net, proj, fn, minutes, variants)
+                previous = self.net.store.one('SELECT scope,state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
+                if previous and previous['scope'] == scope and previous['state'] in ('completed', 'error'):
+                    return
                 self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked)
-                previous = self.net.store.one('SELECT state FROM deep_permutation_passes WHERE function_id=?',item[0]['id'])
+                previous = self.net.store.one('SELECT state FROM deep_permutation_passes WHERE function_id=?', fn['id'])
                 if previous and previous['state'] == 'rotated':
                     with lock:
-                        visited_turns.add(item[0]['id'])
+                        visited_turns.add(fn['id'])
                         stats['rotated'] += 1
-            if count == 1:
-                for item in batch:
-                    search(item)
-            elif batch:
-                pool = ThreadPoolExecutor(count, thread_name_prefix='deep-pass', initializer=workers.lower_priority)
+
+            def search(item, blocked, execute=execute, failed=failed):
+                if failed.is_set():
+                    return
                 try:
-                    list(pool.map(search, batch))
-                finally:  # (what has not started is dropped: on a stop, or when one search raised)
+                    return execute(item, blocked)
+                except BaseException:
+                    failed.set()
+                    raise
+
+            pool = None
+            futures = set()
+            chunk = min(128, max(8, count * 2))
+            try:
+                for offset in range(0, total, chunk):
+                    log.check_cancel()
+                    ids = [r['id'] for r in identities[offset:offset + chunk]]
+                    rows = {r['id']: r for r in self.net.store.all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
+                        f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
+                        c.expires_at AS claim_expires FROM functions f
+                        LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
+                        LEFT JOIN claims c ON c.function_id=f.id
+                        WHERE f.project_id=? AND f.status='open' AND {IN_BUILD}
+                        AND f.id IN (SELECT value FROM json_each(?))""", proj['id'], json.dumps(ids))}
+                    for fid in ids:
+                        log.check_cancel()
+                        preparing(scanned, pending, waiting)
+                        scanned += 1
+                        fn = rows.get(fid)
+                        if fn is None or fid in visited_turns:
+                            continue
+                        if not fn['best_source'] or fn['best_score'] is None:
+                            waiting += 1
+                            continue
+                        # Never-tried/pending candidates need no costly historical-scope comparison.
+                        if fn['pass_state'] in ('completed', 'error') and fn['pass_scope'] == signature(
+                                self.net, proj, fn, minutes, variants, profiles, shared):
+                            continue
+                        pending += 1
+                        if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
+                            waiting += 1
+                            continue
+                        while len(futures) >= count * 2:
+                            log.check_cancel()
+                            finished, futures = wait(futures, timeout=.1, return_when=FIRST_COMPLETED)
+                            for future in finished:
+                                future.result()
+                        if pool is None:
+                            pool = ThreadPoolExecutor(count, thread_name_prefix='deep-pass', initializer=workers.lower_priority)
+                        futures.add(pool.submit(search, {'id': fid}, waiting))
+                        submitted += 1
+                preparing(scanned, pending, waiting, done=True)
+                for future in futures:
+                    future.result()
+            finally:
+                if pool is not None:
                     pool.shutdown(wait=True, cancel_futures=True)
             if not pending and not waiting:
                 self.save(slug, self.config(slug) | {'enabled': False})
@@ -411,7 +454,7 @@ class Sweeps:
                 if stats['rotated']:
                     log(f"{stats['rotated']} functions rotated early and remain eligible for the next run.")
                 return {'functions_tested': stats['visited'], 'tested': stats['tested'], 'matched': stats['matched'], 'rotated':stats['rotated']}
-            if batch:
+            if submitted:
                 continue  # Refill immediately; only genuinely blocked queues need a timed wait.
             stats['activity'].publish({'phase': 'waiting for host claims or scored C', 'functions_tested': stats['visited'],
                           'matches': stats['matched'], 'waiting': waiting, 'total_unmatched': total})

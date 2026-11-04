@@ -10,12 +10,25 @@ from .integer_repair_support import IDENT, INTEGER, edit, split_args
 from .repair_preflight import _PROTO
 
 
-def variants(source, name, header):
+def prepare(header):
+    shared = _blank(header)
+    prototypes = {}
+    conditional = bool(re.search(r'^\s*#\s*(?:if|ifdef|ifndef|include)\b|::', shared, re.M))
+    if not conditional:
+        for proto in _PROTO.finditer(shared):
+            prototypes.setdefault(proto[1], []).append(proto)
+    return shared, prototypes, conditional
+
+
+def variants(source, name, header, prepared=None):
     span = find(source, name)
-    clean, shared = _blank(source), _blank(header)
-    if not span or re.search(r'^\s*#\s*(?:if|ifdef|ifndef|include)\b|::', shared, re.M):
+    if not span:
         return []
-    protos = [p for p in _PROTO.finditer(shared) if p[1] == name]
+    clean = _blank(source)
+    shared, prototypes, conditional = prepared if prepared is not None else prepare(header)
+    if conditional:
+        return []
+    protos = prototypes.get(name, [])
     if len(protos) != 1 or not protos[0][2].strip() or '...' in protos[0][2]:
         return []
     proto = protos[0]

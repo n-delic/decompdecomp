@@ -1367,13 +1367,23 @@ function renderDeepQueueState(status) {
   const stopped = status.state === "cancelled" || /^Deep pass stopped(?:[.!]|$)/i.test(error);
   const rotated = status.queue_rotated || 0, blocked = status.queue_blocked || 0, waiting = status.awaiting_source || 0;
   const active = running ? (status.progress?.workers || []).length : 0;
+  const preparation = status.progress?.preparation;
+  const preparing = running && preparation && !preparation.done;
+  $("deepSweepPreparation").hidden = !preparing;
+  if (preparing) {
+    const checked = preparation.checked || 0, count = preparation.total || 0;
+    $("deepSweepPreparationText").textContent = `Checking candidates: ${checked.toLocaleString()} / ${count.toLocaleString()} · ${count ? Math.floor(100 * checked / count) : 0}% · ${preparation.eligible || 0} eligible so far`;
+    $("deepSweepPreparationBar").max = Math.max(1, count);
+    $("deepSweepPreparationBar").value = checked;
+  }
   const done = status.queue_done || 0, total = done + left + blocked;
   $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
-  $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : "Running — preparing the next search"
+  $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : preparing ? "Running — checking candidates" : "Running — preparing the next search"
     : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
     : blocked ? "Paused — remaining functions need attention" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
   $("deepSweepQueueReason").textContent = running
-    ? !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
+    ? preparing ? active ? "Searching while preparing the queue. More candidates are checked as workers become free." : "Checking saved candidates and previous passes. Searches start as soon as work is ready."
+    : !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
     : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
     : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`

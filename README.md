@@ -1674,6 +1674,13 @@ A separate status bar follows those details, with retry on failure. Imported pro
 then load their current source and object comparison. Late responses are scoped to the selected function and
 never overwrite unsaved edits. Existing full function API responses and the normal byte judge are unchanged.
 
+Deep passes shuffle lightweight function identities and dispatch eligible work while preparing the queue.
+The queue keeps at most two turns per worker outstanding, loads candidate source data in small batches, and
+shows checked/total/percentage progress while preparation is underway. Never-tried candidates skip historical
+scope comparisons; completed/error records still receive them. Shared headers, declaration indexes and symbol
+lookups are reused during preparation. Each dispatched search checks fresh build inputs, preserving existing
+completion fingerprints, cancellation and normal byte verification.
+
 ### Incremental history and map refreshes
 
 History readers track the latest correction for each attempt. Attaching score metadata to a new attempt no

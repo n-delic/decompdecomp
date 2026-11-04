@@ -2263,6 +2263,10 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
   and imported projects retain full analysis; late detailed responses preserve edits and navigation. Baseline
   evidence lookups use a function/score index and no longer materialize entire historical attempts.
 
+- Done: pipeline deep-pass preparation and execution with shuffled lightweight identities, bounded queued turns,
+  live candidate-scan progress, shared header/symbol/declaration preparation, skipped unnecessary historical
+  fingerprints and fresh dispatch validation.
+
 - Done: correction-aware incremental history and agent counters, copy-on-write summary records, incremental
   map row reads with structural fallbacks, score-independent boundary/SDK caches, indexed worker handoffs,
   covering history metadata reads and separate database connection/lock/execute/fetch diagnostics.

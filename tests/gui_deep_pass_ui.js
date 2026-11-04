@@ -68,6 +68,11 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepStop").hidden, true);
   assert.equal(element("deepSweepBlocked").textContent, "2");
   assert.equal(element("deepSweepStart").hidden, false);
+  ctx.renderDeepQueueState({state:"running",progress:{preparation:{checked:250,total:2000,eligible:125,done:false}}});
+  assert.match(element("deepSweepQueueTitle").textContent,/checking candidates/);
+  assert.match(element("deepSweepPreparationText").textContent,/250 \/ 2,000 · 12%/);
+  assert.equal(element("deepSweepPreparationBar").value,250);
+  assert.equal(element("deepSweepPreparation").hidden,false);
   ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
   assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
   assert.equal(element("deepSweepStart").hidden, true);

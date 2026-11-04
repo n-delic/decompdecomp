@@ -368,7 +368,7 @@ def test_random_queue_uses_only_eligible_functions_once(sweep, monkeypatch, thre
     obj, net, calls, _ = sweep
     shuffled = []
     def reverse(batch):
-        shuffled.append([fn['name'] for fn, scope in batch])
+        shuffled.append([fn['name'] for fn in batch])
         batch.reverse()
     monkeypatch.setattr(deep_sweep.random, 'shuffle', reverse)
     obj.run('game', 1, 10, Log(), threads)
@@ -594,14 +594,14 @@ def test_queue_batches_state_and_loads_fresh_function_at_dispatch(sweep, monkeyp
         return original(sql,*args)
     monkeypatch.setattr(net.store,'all',read)
     def shuffle(batch):
-        assert all(set(fn) == {'id','name','size'} for fn,scope in batch)
+        assert all(set(fn) == {'id','name','size'} for fn in batch)
         # A concurrent worker removes this candidate after the queue snapshot.
         with net.store.tx() as db:
             db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
     monkeypatch.setattr(deep_sweep.random,'shuffle',shuffle)
     obj.run('game',1,10,Log())
     assert calls == ['f1']
-    assert any('LEFT JOIN deep_permutation_passes' in sql and 'LIMIT 128' in sql for sql in reads)
+    assert any('LEFT JOIN deep_permutation_passes' in sql and 'json_each' in sql for sql in reads)
 
 
 def test_cached_queue_and_attention_refresh_when_profile_count_changes(sweep):
@@ -618,3 +618,41 @@ def test_cached_queue_and_attention_refresh_when_profile_count_changes(sweep):
     changed=obj.status('game')
     assert changed['queue_done']==0 and changed['queue_blocked']==0 and changed['queue_left']==2
     assert changed['attention']==[]
+
+
+def test_shared_preparation_preserves_scope_and_reads_context_once(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    proj = net.project_row('game')
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,unit,version,header) VALUES(1,'',1,'void f0(void); int f1(void);')")
+    functions = [net._function(name, 'game') for name in ('f0', 'f1')]
+    expected = [deep_sweep.signature(net, proj, fn, 1, 10) for fn in functions]
+    contexts = []
+    original = net._context
+    def context(*args):
+        contexts.append(args)
+        return original(*args)
+    monkeypatch.setattr(net, '_context', context)
+    shared = {'contexts': {}}
+    actual = [deep_sweep.signature(net, proj, fn, 1, 10, 1, shared) for fn in functions]
+    assert actual == expected and len(contexts) == 1
+
+
+def test_search_starts_before_full_preparation_and_reports_checked_total(sweep, monkeypatch):
+    obj, net, calls, _ = sweep
+    with net.store.tx() as db:
+        for i in range(32):
+            db.execute("INSERT INTO functions(project_id,name,status,size,vram,best_source,best_score) VALUES(1,?,'open',16,?,'int x(void){return 1;}',50)",
+                       (f'extra{i}', 0x80002000+i*32))
+    log = Log()
+    seen = []
+    def search(net, slug, name, minutes, variants, function_log):
+        prep = log.updates[-1]['preparation']
+        seen.append(dict(prep))
+        return {'tested': 0, 'matched': False, 'reason': 'Time limit reached', 'best_score': 50}
+    monkeypatch.setattr(deep_permuter, 'run', search)
+    result = obj.run('game', 1, 10, log, 1)
+    assert result['functions_tested'] == 34
+    assert seen[0]['checked'] < seen[0]['total'] == 34
+    assert all('preparation' in update for update in log.updates)
+    assert log.updates[-1]['preparation']['done']
