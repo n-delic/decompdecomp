@@ -104,6 +104,12 @@ ctx.window = ctx;
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "src", "decompnet", "app", "static", "js", "agents.js"), "utf8"), ctx);
 
+const discovered = {takes_effort:true, efforts:["low","high"], models:[{id:"example",efforts:["high"]}]};
+ctx.discovered=discovered;
+vm.runInContext('LZ.model="example"; LZ.effort="low";',ctx);
+requireOk(vm.runInContext('effortOf(discovered)',ctx)==="", "unsupported discovered effort must not be sent");
+requireOk(!vm.runInContext('effortField(discovered)',ctx).includes('value="low"'), "only supported model efforts are offered");
+vm.runInContext('LZ.model=""; LZ.effort="";',ctx);
 const apiAgent = { id: "api", name: "API", uses_endpoints: true, installed: true, recommended: true, takes_effort: false };
 const cliAgent = { id: "claude", name: "Claude Code", installed: true, recommended: false, takes_effort: false,
   models: [{ id: "opus", name: "Opus" }, { id: "sonnet", name: "Sonnet" }, { id: "haiku", name: "Haiku" }] };

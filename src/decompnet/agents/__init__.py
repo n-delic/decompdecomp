@@ -176,6 +176,10 @@ class Agent:
             known_versions[self.id] = cached = (time.time(), version)
         return cached[1] if cached else None
 
+    def forget_models(self) -> None:
+        """Let an explicit refresh ask the CLI again, keeping normal polling cached."""
+        _models.pop(self.id, None)
+
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         """Models to offer: [{"id", "name", "note"}]. By default what `<path> <models_args>` lists (what the user's
         sign-in offers), read by read_models, asked at most every MODELS_CACHE seconds (`run` False: only what was

@@ -119,6 +119,9 @@ def register(app: App) -> None:
         """Look again which agents are installed and their models (a sign-in since): in the background."""
         if (bad := guard(request, write=True)):
             return bad
+        from decompnet.agents import AGENTS
+        for agent in AGENTS:
+            agent.forget_models()
         manager.refresh_detected()
         return JSONResponse({"detecting": True})
 

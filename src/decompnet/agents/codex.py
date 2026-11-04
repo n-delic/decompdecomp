@@ -3,11 +3,30 @@ and the user's own MCP servers switched off for the run; it prints one JSON even
 
 from __future__ import annotations
 
+import json
 import os
+import queue
 import re
+import subprocess
+import threading
+import time
 from pathlib import Path
 
-from . import SAID_CHARS, Agent, args_brief, error_text, number, tool_name, usage_item
+from . import (
+    MODELS_CACHE,
+    MODELS_LISTED,
+    MODELS_TIMEOUT,
+    NO_WINDOW,
+    SAID_CHARS,
+    Agent,
+    _models,
+    args_brief,
+    cli_argv,
+    error_text,
+    number,
+    tool_name,
+    usage_item,
+)
 
 TOKEN_ENV = "DECOMP_TOKEN"  # the session's token reaches Codex through its environment, never its command line
 TOOL_TIMEOUT = 180  # seconds a tool call may take (a fork's build)
@@ -36,6 +55,96 @@ class Codex(Agent):
     family = "gpt"
     takes_effort = True  # Codex's model_reasoning_effort
     efforts = ("minimal", "low", "medium", "high", "xhigh", "max")
+
+    def models(self, path: str | None, run: bool = True) -> list[dict]:
+        cached = _models.get(self.id)
+        if cached and (not run or time.time() - cached[0] < MODELS_CACHE):
+            return cached[1]
+        if not run or not path:
+            return []
+        try:
+            out = self._discover_models(path)
+        except (OSError, ValueError, KeyError, TypeError, queue.Empty):
+            out = cached[1] if cached else []
+        _models[self.id] = (time.time(), out)
+        return out
+
+    def _discover_models(self, path: str) -> list[dict]:
+        # Metadata only: never create a thread/turn or connect the user's MCP servers.
+        command = [path]
+        for name in (codex_config().get("mcp_servers") or {}):
+            command += ["-c", f"mcp_servers.{json.dumps(name)}.enabled=false"]
+        command += ["app-server"]
+        proc = subprocess.Popen(cli_argv(command),
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
+        replies = queue.Queue()
+
+        def read():
+            for line in proc.stdout:
+                replies.put(line)
+            replies.put(None)
+
+        reader = threading.Thread(target=read, daemon=True, name="codex-model-catalog")
+        reader.start()
+        deadline = time.monotonic() + MODELS_TIMEOUT
+
+        def send(message):
+            proc.stdin.write(json.dumps(message) + "\n")
+            proc.stdin.flush()
+
+        def response(request_id):
+            while True:
+                if time.monotonic() >= deadline:
+                    raise queue.Empty
+                line = replies.get(timeout=max(.001, deadline - time.monotonic()))
+                if line is None:
+                    raise ValueError("Codex model discovery ended")
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if message.get("id") == request_id:
+                    if "error" in message:
+                        raise ValueError("Codex model discovery failed")
+                    return message["result"]
+
+        try:
+            send({"id": 1, "method": "initialize", "params": {
+                "clientInfo": {"name": "decompdecomp", "version": "1"}}})
+            response(1)
+            send({"method": "initialized"})
+            out, cursor, seen = [], None, set()
+            while len(out) < MODELS_LISTED:
+                send({"id": 2, "method": "model/list", "params": {
+                    "limit": min(100, MODELS_LISTED - len(out)), "includeHidden": False,
+                    **({"cursor": cursor} if cursor else {})}})
+                result = response(2)
+                for model in result["data"]:
+                    name = model.get("model") or model["id"]
+                    if model.get("hidden") or any(m["id"] == name for m in out):
+                        continue
+                    out.append({"id": name, "name": model.get("displayName") or name,
+                                "note": "Codex default" if model.get("isDefault") else "",
+                                "is_default": bool(model.get("isDefault")),
+                                "efforts": [e["reasoningEffort"] for e in model.get("supportedReasoningEfforts", [])],
+                                "default_effort": model.get("defaultReasoningEffort", "")})
+                cursor = result.get("nextCursor")
+                if not cursor or cursor in seen:
+                    break
+                seen.add(cursor)
+            return out[:MODELS_LISTED]
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            reader.join(timeout=2)
+            proc.stdin.close()
+            proc.stdout.close()
 
     def fatal(self, error: str) -> bool:
         # A rejected model/effort setting cannot recover by retrying the same command.

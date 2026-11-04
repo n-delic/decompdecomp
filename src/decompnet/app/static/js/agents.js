@@ -433,10 +433,18 @@ function readSelection(box) {
     ...(max === null ? {} : { max_tries: max }) };
 }
 const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
-const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...(a.efforts || []).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
+const modelEfforts = (a) => {
+  const catalog = a.models || [];
+  const ids = LZ.multiple ? LZ.models.filter((m) => typeof m === "string") :
+    [LZ.model || a.default_model || catalog.find((m) => m.is_default)?.id || ""];
+  const models = ids.map((id) => catalog.find((m) => m.id === id.split("#")[0]));
+  const supported = models.filter((m) => Array.isArray(m?.efforts)).map((m) => m.efforts);
+  return supported.length ? supported[0].filter((e) => supported.every((list) => list.includes(e))) : (a.efforts || []);
+};
+const effortField = (a) => (a.takes_effort ? `<label class="field"><span>Effort (how hard the model thinks, for models that offer it)</span><select data-f="effort">${[["", "Model's default"], ...modelEfforts(a).map((e) => [e, EFFORT_NAMES[e] || e])].map(([v, l]) => `<option value="${v}" ${effortOf(a) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>` : "");
 // an agent that takes an effort (opencode 2, Claude Code) gets it with the model's name: provider/model#high. The
 // launcher keeps the last one picked, which another agent may not offer (Claude Code's xhigh)
-const effortOf = (a) => (a.takes_effort && (a.efforts || []).includes(LZ.effort) ? LZ.effort : "");
+const effortOf = (a) => (a.takes_effort && modelEfforts(a).includes(LZ.effort) ? LZ.effort : "");
 const withEffort = (a, model) => (effortOf(a) && model ? `${model.split("#")[0]}#${effortOf(a)}` : model);
 function launcherInit() {
   if (LZ.kind || !S.st) return;
@@ -634,7 +642,7 @@ function renderLauncher(box, compact = true) {
     const known = opts.some((o) => o.id === LZ.model);
     const custom = LZ.customModel || (!known && !!LZ.model);
     LZ.models = LZ.models.filter((id) => available.some((m) => m.id === id));
-    body = `<label class="field"><span>Model</span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${(!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple") ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}</select></label>
+    body = `<label class="field"><span>Model <button type="button" class="link-btn small" data-act="detect">Refresh models</button></span><select data-f="model">${opts.map((o) => `<option value="${esc(o.id)}" ${(!LZ.multiple && (custom ? o.id === "__other" : o.id === LZ.model)) || (LZ.multiple && o.id === "__multiple") ? "selected" : ""}>${esc(o.name)}${o.note ? ` — ${esc(o.note)}` : ""}</option>`).join("")}</select></label>
       ${LZ.multiple ? `<div class="field"><span>Choose models</span><div class="lz-models">${available.map((m) => `<label class="check inline"><input type="checkbox" data-model-choice="${esc(m.id)}" ${LZ.models.includes(m.id) ? "checked" : ""}><span><b>${esc(m.name)}</b>${m.note ? ` <span class="muted small">${esc(m.note)}</span>` : ""}</span></label>`).join("")}</div>
       <span class="muted small" data-model-limit>Each selected model gets ${LZ.count} session${LZ.count === 1 ? "" : "s"}.</span>
       ${!(a.models || []).length ? `<div class="row"><input data-f="manual-model" class="mono" placeholder="Model name"><button type="button" class="ghost small-btn" data-act="add-cli-model">Add model</button></div>` : ""}</div>` : ""}
