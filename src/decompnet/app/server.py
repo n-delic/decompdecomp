@@ -122,6 +122,24 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
 
     mcp = tools.build_mcp(net, agent_of)
 
+    async def personalized_instructions(ctx, call_next):
+        result = await call_next(ctx)
+        if ctx.method not in {'initialize', 'server/discover'}:
+            return result
+        auth = (getattr(ctx.request, 'headers', None) or {}).get('authorization', '')
+        try:
+            agent = net.authenticate(auth.removeprefix('Bearer ').strip() or None)
+            slug = project_for(agent.id)
+            if slug:
+                instructions = manager.instructions_for(agent, slug)
+                return ({**result, 'instructions': instructions} if isinstance(result, dict)
+                        else result.model_copy(update={'instructions': instructions}))
+        except NetworkError:
+            pass
+        return result
+
+    mcp._lowlevel_server.middleware.append(personalized_instructions)
+
     # Each helper sees only the work tools for its project's kind (fewer tool definitions in every request, nothing
     # it shouldn't call).
     from mcp_types import ListToolsResult, PaginatedRequestParams
@@ -136,7 +154,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str):
         slug = project_for(agent.id)
         if not slug:
             return ListToolsResult(tools=[])
-        keep = set(tools.project_tools(net, slug))
+        keep = set(tools.project_tools(net, slug, agent))
         return ListToolsResult(tools=[t for t in everything if t.name in keep])
 
     mcp._lowlevel_server.add_request_handler("tools/list", PaginatedRequestParams, scoped_tools)

@@ -11,6 +11,10 @@
    one defines. Not ES modules: they would need an import for every name used across files. */
 
 const $ = (id) => document.getElementById(id);
+function disclosureContext(id, text) {
+  const el = $(id);
+  if (el) el.textContent = `— ${text}`;
+}
 if (new URLSearchParams(location.search).get("native") === "1") document.documentElement.classList.add("windows-window");
 window.addEventListener("pywebviewready", () => {
   if (!window.pywebview.api.set_theme) return;

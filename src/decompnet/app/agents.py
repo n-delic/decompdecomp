@@ -345,6 +345,7 @@ class Session:
     error: str = ""  # the last error
     feed: collections.deque = field(default_factory=lambda: collections.deque(maxlen=FEED_LINES))
     seq: int = 0
+    prompt_config: dict | None = field(default=None, repr=False)
     stop: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
     proc: subprocess.Popen | None = None
@@ -554,6 +555,57 @@ class Manager:
                        "started_at=?, restarts=?, sessions=?, usd=?, tokens=?, pid=?, pid_start=? WHERE id=?",
                        (s.label, s.state, s.why, s.todo, s.until, s.stopped_by, s.last_message, s.started_at,
                         s.restarts, s.runs, s.usd, s.tokens, pid, s.pid_start if pid else None, s.id))
+
+    def set_prompts(self, sid: str, overrides: dict) -> None:
+        from .prompt_settings import validate
+        overrides = validate(overrides)
+        with self._lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                raise ValueError("This agent no longer exists. Refresh the agents list.")
+            session.options['prompts'] = overrides
+            with self.net.store.tx() as db:
+                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
+                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
+
+    def set_tool(self, sid: str, name: str, enabled: bool) -> None:
+        from .tool_policy import validate
+        validate([name])
+        if type(enabled) is not bool:
+            raise ValueError('Tool enabled must be true or false.')
+        with self._lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                raise ValueError("This agent no longer exists. Refresh the agents list.")
+            blocked = set(session.options.get('disabled_tools', []))
+            blocked.discard(name) if enabled else blocked.add(name)
+            session.options['disabled_tools'] = sorted(blocked)
+            with self.net.store.tx() as db:
+                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
+                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
+
+    def set_tools(self, sid: str, disabled: list[str]) -> None:
+        from .tool_policy import validate
+        disabled = validate(disabled)
+        with self._lock:
+            session = self.sessions.get(sid)
+            if session is None:
+                raise ValueError("This agent no longer exists. Refresh the agents list.")
+            session.options['disabled_tools'] = disabled
+            with self.net.store.tx() as db:
+                kept = {k: v for k, v in session.options.items() if k != 'api_key'}
+                db.execute('UPDATE helpers SET options=? WHERE id=?', (json.dumps(kept), session.id))
+
+    def app_instructions(self, session: Session) -> str:
+        from .prompt_settings import for_session
+        return for_session(self.net, session)['instructions']
+
+    def instructions_for(self, agent, slug: str) -> str:
+        from .prompt_settings import effective
+        for session in list(self.sessions.values()):
+            if session.agent_name == agent.name and session.slug == slug:
+                return self.app_instructions(session)
+        return effective(self.net, {})['instructions']
 
     def _record(self, slug: str, kind: str, name: str, label: str, options: dict) -> Session:
         """The helper `name` on this project: its record from before (it carries on its numbers), or a new one."""
@@ -1068,6 +1120,8 @@ class Manager:
         self.net.release_stopped([agent_id], (s.why or "it stopped")[:200])
 
     def _session_begin(self, s: Session) -> int:
+        from .prompt_settings import effective
+        s.prompt_config = effective(self.net, s.options)
         s.usage = _fresh_usage()
         with self.net.store.tx() as db:
             return db.execute("INSERT INTO helper_sessions(helper_id, project, kind, model, agent, started_at, task) "
@@ -1105,20 +1159,22 @@ class Manager:
         return text
 
     def _prompt(self, s: Session) -> str:
+        from .prompt_settings import for_session
+        templates = for_session(self.net, s)
         ov = self.net.overview(s.slug)
         count = s.options.get("per_session", PER_SESSION)
         if s.options.get("task") == "readable":  # (in either mode: the step that differs is the mode's)
-            return tools.READABLE_PROMPT.format(title=ov["title"], count=count, names=tools.READABLE_FORK
+            return templates['initial_readable'].format(title=ov["title"], count=count, names=tools.READABLE_FORK
                                                 if ov.get("kind") == "fork" else tools.READABLE_ROM)
         if ov.get("kind") == "fork":
             guides = ["fork", "objdiff", *consoles.get(ov.get("platform")).guides]
             platform = ov.get("platform_name") or "its platform"
             what = tools.FORK_SCRATCH if ov.get("origin") == "scratch" else tools.FORK_PUBLIC
-            return tools.FORK_PROMPT.format(title=ov["title"], what=what.format(platform=platform),
+            return templates['initial_project'].format(title=ov["title"], what=what.format(platform=platform),
                                             count=count, budget=network.stall_budget_text(),
                                             guides=", ".join(f'guide("{g}")' for g in guides))
         guide = consoles.get(ov.get("platform")).up_front_guide(ov["compiler"]["toolchain"])
-        return tools.WORK_PROMPT.format(title=ov["title"], count=count, budget=network.stall_budget_text(),
+        return templates['initial_rom'].format(title=ov["title"], count=count, budget=network.stall_budget_text(),
                                         compiler_guide=guide)
 
     def _command(self, s: Session, token: str, workdir: Path) -> tuple[list[str], dict, str | None]:

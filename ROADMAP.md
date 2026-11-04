@@ -107,6 +107,10 @@ Where to start on a gap:
 
 ## Recently done
 
+- **Agents & models controls.** Collapsible sections show installed agent apps, prompt templates, optional tool
+  visibility and recorded usage, manual project-scoped MCP connections, and saved API endpoints. Global and
+  per-helper prompt and tool choices take effect on new sessions; disabled tool calls are rejected immediately.
+
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
   it, said as the closest). A game of a version the packs don't have builds with the nearest by year, and the import

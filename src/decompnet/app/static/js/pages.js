@@ -5,10 +5,15 @@ async function showAgentsPage() {
   $("agList").innerHTML = `<p class="muted small">Looking for your agents…</p>`;
   await loadState();
   loadManualMcp();
+  loadGlobalPrompts();
+  loadGlobalAgentTools();
   renderAgentsPage();  // again when the search for agents ends (base.js agentsFound)
 }
 function renderAgentsPage() {
   const rows = S.st.agents.filter((a) => !a.uses_endpoints);
+  disclosureContext('agAppsContext', `${rows.filter(a => a.installed).length} installed${S.st.agents_detecting ? ' · checking…' : ''}`);
+  const savedEndpoints = (S.st.settings.endpoints || []).length;
+  disclosureContext('agApiContext', `${savedEndpoints} saved endpoint${savedEndpoints === 1 ? '' : 's'}`);
   $("agList").innerHTML = rows.map((a) => `<div class="agent-row">
       <div class="ar-head"><b>${esc(a.name)}</b><span class="muted small">${esc(a.vendor)}</span><span class="grow"></span>
         ${a.installed ? `<span class="ok-mark">installed</span>` : `<button class="primary small-btn" data-inst="${esc(a.id)}" type="button" ${a.needs ? "disabled" : ""}>Install</button>`}</div>
@@ -62,7 +67,15 @@ function renderAgentsPage() {
   });
   if ($("epAdd")) $("epAdd").onclick = () => { S.addingEndpoint = true; renderAgentsPage(); };
 }
-$("agRefresh").onclick = showAgentsPage;
+$("agRefresh").onclick = async event => {
+  event.preventDefault();
+  event.stopPropagation();
+  const button = $("agRefresh");
+  button.disabled = true;
+  try { await showAgentsPage(); }
+  catch (error) { toast(esc(error.message), 'err'); }
+  finally { button.disabled = false; }
+};
 
 /* ------------------------------------------------------------------ compilers & tools page */
 let toolFilter = "";
@@ -348,14 +361,30 @@ setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
 
 /* Manual clients have project-scoped credentials, independent of managed helper processes. */
-let manualMcpRead = 0;
+let manualMcpRead = 0, manualMcpProjectsRead = 0;
 async function loadManualMcp() {
   const select = $("mcpProject"), previous = select.value;
-  select.innerHTML = S.projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join("");
-  if (S.projects.some(p => p.slug === previous)) select.value = previous;
+  select.innerHTML = '<option value="">Loading projects…</option>';
+  select.disabled = true;
+  const read = ++manualMcpProjectsRead, log = $("mcpLog");
+  const done = beginWork(log, 'Loading MCP projects');
+  let projects;
+  try { projects = await api('/api/projects'); }
+  catch (error) {
+    if (read === manualMcpProjectsRead) {
+      select.innerHTML = '<option value="">Could not load projects — try Refresh</option>';
+      showJobError(log, error.message);
+    }
+    return;
+  } finally { done(); }
+  if (read !== manualMcpProjectsRead) return;
+  select.innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join('');
+  select.disabled = !projects.length;
+  if (!projects.length) select.innerHTML = '<option value="">No open projects</option>';
+  select.value = projects.some(p => p.slug === previous) ? previous : projects[0]?.slug || '';
   $("mcpCreate").disabled = !select.value;
-  select.onchange = () => { $("mcpConfig").replaceChildren(); refreshManualMcp(); };
-  $("mcpRefresh").onclick = refreshManualMcp;
+  select.onchange = () => { $("mcpCreate").disabled = !select.value; $("mcpConfig").replaceChildren(); refreshManualMcp(); };
+  $("mcpRefresh").onclick = loadManualMcp;
   $("mcpCreate").onclick = async () => {
     const slug = select.value, button = $("mcpCreate"), log = $("mcpLog");
     const finish = beginWork(log, "Creating MCP connection", [], "Connection created.");
@@ -379,6 +408,7 @@ async function refreshManualMcp() {
     const info = await api(`/api/manual-mcp${slug ? `?slug=${encodeURIComponent(slug)}` : ""}`);
     if (read !== manualMcpRead) return;
     const port = new URL(info.url).port;
+    disclosureContext('agMcpContext', `${info.connections.length} connection${info.connections.length === 1 ? '' : 's'} · local server`);
     $("mcpStatus").innerHTML = `<p><b>Running locally</b> · ${esc(info.transport)} · Port ${esc(port)}</p>${cmdBox(info.url)}<p class="small muted">Local clients only (127.0.0.1). No public endpoint or OAuth sign-in. Choose a project to see its tools.</p>`;
     wireCopies($("mcpStatus"));
     $("mcpToolCount").textContent = `(${info.tools.length})`;
