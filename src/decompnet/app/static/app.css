@@ -1689,3 +1689,55 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
   .deep-advanced { border-left:0; border-top:1px solid var(--line-soft); padding:10px 0 0; }
   .deep-advanced-fields { grid-template-columns:1fr; }
 }
+
+/* One live dashboard; compact controls stay below the work in progress. */
+#deepSweepPanel > summary > span { border:1px solid var(--line-soft); border-radius:99px; padding:3px 9px; font-size:10px; white-space:nowrap; }
+#deepSweepPanel > .pad { gap:18px; }
+.deep-dashboard { display:grid; gap:16px; border:1px solid var(--line-soft); border-radius:var(--r); padding:18px 20px; background:var(--raise); min-width:0; }
+.deep-dashboard .deep-queue-state { border:0; border-bottom:1px solid var(--line-soft); border-radius:0; padding:0 0 16px; background:transparent; }
+.deep-dashboard .deep-queue-state h3 { font-size:16px; letter-spacing:-.02em; display:flex; align-items:center; gap:9px; }
+.deep-dashboard .deep-queue-state h3::before { content:""; width:8px; height:8px; flex:none; border-radius:50%; background:var(--muted); }
+.deep-dashboard .deep-queue-state[data-state="running"] h3::before { background:var(--hl); box-shadow:0 0 0 4px color-mix(in srgb,var(--hl) 12%,transparent); }
+.deep-dashboard .deep-queue-state[data-state="error"] h3::before { background:var(--miss); }
+.deep-dashboard .deep-queue-state p { font-size:12px; padding-left:17px; }
+.deep-dashboard .deep-sweep-counts { border:0; background:transparent; gap:0; border-radius:0; }
+.deep-dashboard .deep-sweep-counts div { background:transparent; padding:2px 20px; gap:5px; border-left:1px solid var(--line-soft); }
+.deep-dashboard .deep-sweep-counts div:first-child { border:0; padding-left:0; }
+.deep-dashboard .deep-sweep-counts b { font-size:30px; font-weight:650; letter-spacing:-.04em; }
+.deep-dashboard #deepSweepImproved { color:var(--ink); }
+.deep-dashboard #deepSweepActive { color:var(--ink); }
+.deep-progress-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; padding-top:6px; font-size:11px; color:var(--muted); }
+.deep-progress-heading > span:first-child { font-weight:600; color:var(--ink); }
+.deep-dashboard .deep-sweep-bar { height:7px; margin-top:-7px; }
+.deep-dashboard .deep-sweep-progress-text { margin-top:-8px; font-size:11px; }
+.deep-dashboard .deep-queue-details { gap:6px; font-size:11px; margin-top:-3px; }
+.deep-dashboard .deep-queue-details > span:not([hidden]) { border:1px solid var(--line-soft); padding:4px 8px; border-radius:var(--r-sm); }
+.deep-dashboard .deep-queue-details b { font-weight:600; color:var(--ink); }
+#deepSweepBlockedGroup { color:var(--miss); }
+.deep-sweep-settings { grid-template-columns:auto minmax(0,1fr); align-items:start; padding:0; border:0; background:transparent; gap:16px 24px; }
+.deep-main-budget { display:flex; align-items:center; gap:9px; padding-top:2px; }
+.deep-main-budget input { width:76px; padding:7px 9px; }
+.deep-budget-unit { font-size:11px; color:var(--muted); }
+.deep-advanced { padding:8px 0 0; border:0; }
+.deep-advanced > summary { padding:0; font-size:12px; }
+.deep-advanced-fields { padding:16px; border:1px solid var(--line-soft); border-radius:var(--r); margin-top:12px; background:var(--raise); }
+.deep-sweep-tools { display:flex; flex-wrap:wrap; align-items:start; gap:12px 24px; padding-bottom:16px; border-bottom:1px solid var(--line-soft); }
+.deep-sweep-tools .deep-sweep-help { border:0; padding:0; flex:1; }
+.deep-sweep-tools .deep-sweep-help[open] { flex-basis:100%; order:1; }
+.deep-sweep-tools summary { font-size:11px; }
+.deep-sweep-tools .deep-sweep-more { margin-left:auto; }
+@media(max-width:700px) {
+ .deep-dashboard { padding:16px; }
+ .deep-dashboard .deep-queue-state { flex-direction:row; align-items:center; gap:16px; }
+ .deep-dashboard .deep-queue-state h3 { font-size:14px; }
+ .deep-sweep-settings { grid-template-columns:1fr; gap:12px; }
+ .deep-advanced { padding-top:0; }
+ .deep-dashboard .deep-sweep-counts div { padding:2px 12px; }
+ .deep-dashboard .deep-sweep-counts b { font-size:26px; }
+}
+@media(max-width:420px) {
+ .deep-dashboard .deep-queue-state { flex-wrap:wrap; }
+ .deep-dashboard .deep-queue-state p { padding-left:0; }
+ .deep-main-budget { flex-wrap:wrap; }
+ .deep-dashboard .deep-sweep-counts div { padding:2px 8px; }
+}

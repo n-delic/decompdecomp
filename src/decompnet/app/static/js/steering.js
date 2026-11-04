@@ -1203,19 +1203,24 @@ function renderDeepSweepResults(status) {
 function renderDeepQueueState(status) {
   deepSweepSnapshot = status;
   const running = status.state === "running", left = status.queue_left || 0;
+  // A previous job's error must never contradict the current live state.
+  $("deepSweepStatus").textContent = "";
+  $("deepSweepStatus").hidden = true;
+  const error = running ? "" : (status.error || "").replace(/^(?:Deep pass stopped:\s*)+/i, "");
+  const stopped = status.state === "cancelled" || /^Deep pass stopped(?:[.!]|$)/i.test(error);
   const rotated = status.queue_rotated || 0, blocked = status.queue_blocked || 0, waiting = status.awaiting_source || 0;
   const active = running ? (status.progress?.workers || []).length : 0;
   const done = status.queue_done || 0, total = done + left + blocked;
-  $("deepSweepQueueState").dataset.state = running ? "running" : status.error ? "error" : "idle";
+  $("deepSweepQueueState").dataset.state = running ? "running" : stopped ? "stopped" : error ? "error" : "idle";
   $("deepSweepQueueTitle").textContent = running ? active ? `Running — searching ${active} function${active === 1 ? "" : "s"}` : status.progress?.phase === "waiting for host claims or scored C" ? "Running — waiting for available functions" : "Running — preparing the next search"
-    : status.error ? "Search stopped with an error" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
+    : stopped ? "Search stopped" : error ? "Search needs attention" : left && status.has_activity ? `Paused — ${left} function${left === 1 ? "" : "s"} available`
     : blocked ? "Paused — remaining functions need attention" : status.has_activity ? "Finished — no eligible functions left" : "Ready to search";
-  $("deepSweepQueueReason").textContent = status.error || (running
-    ? !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Verified improvements save automatically."
-    : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
+  $("deepSweepQueueReason").textContent = running
+    ? !active && status.progress?.phase === "waiting for host claims or scored C" ? "Waiting for available functions or saved C. The queue is checked automatically." : "Improvements are verified and saved as they happen."
+    : stopped ? "Your improvements and completed searches are saved." : error ? error : left ? `${rotated ? `${rotated} paused early without further progress. ` : ""}Continue gives remaining functions a fresh search; completed turns stay saved.`
     : blocked ? "Open the reasons below, fix the affected functions, then run again."
     : waiting ? `${waiting} functions need saved C with a measured score before they can be searched.`
-    : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.");
+    : status.has_activity ? "Each eligible function finished a bounded turn. Run again repeats completed turns to try more rewrites." : "Start with untested or changed functions that have saved C.";
   $("deepSweepStart").hidden = running;
   $("deepSweepStart").textContent = left && status.has_activity ? "Continue search" : status.has_activity ? "Run again" : "Start search";
   $("deepSweepStart").disabled = false;
@@ -1233,7 +1238,7 @@ function renderDeepQueueState(status) {
     ? `${running ? "This run" : "Last run"}: ${status.progress.functions_tested.toLocaleString()} functions checked` : "";
   $("deepSweepBar").max = Math.max(1, total);
   $("deepSweepBar").value = done;
-  $("deepSweepProgressText").textContent = total ? `${Math.floor(100 * done / total)}% have a saved completed turn · ${done.toLocaleString()} of ${total.toLocaleString()} functions` : "";
+  $("deepSweepProgressText").textContent = total ? `${done.toLocaleString()} of ${total.toLocaleString()} functions completed · ${Math.floor(100 * done / total)}%` : "";
 }
 
 async function renderDeepSweep() {
@@ -1283,8 +1288,6 @@ async function renderDeepSweep() {
     renderDeepQueueState(status);
     renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
     $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
-    $("deepSweepStatus").textContent = status.error ? `Deep pass stopped: ${status.error}` : "";
-    $("deepSweepStatus").hidden = !$("deepSweepStatus").textContent;
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
   } catch (error) { if (S.slug === slug && version === deepSweepProjectVersion) { $("deepSweepLogSection").hidden = false; showJobError($("deepSweepLog"), error.message); } }
 }

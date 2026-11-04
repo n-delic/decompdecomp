@@ -69,6 +69,21 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
   assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
   assert.equal(element("deepSweepStart").hidden, true);
+  element("deepSweepStatus").textContent = "Deep pass stopped: Deep pass stopped.";
+  ctx.renderDeepQueueState({state:"running",error:"Deep pass stopped.",progress:{workers:[{}]}});
+  assert.match(element("deepSweepQueueTitle").textContent,/Running/);
+  assert.doesNotMatch(element("deepSweepQueueReason").textContent,/stopped/);
+  assert.equal(element("deepSweepStatus").hidden,true);
+  assert.equal(element("deepSweepStatus").textContent,"");
+  ctx.renderDeepQueueState({state:"cancelled",error:"Deep pass stopped. Verified improvements and completed passes are saved."});
+  assert.equal(element("deepSweepQueueTitle").textContent,"Search stopped");
+  assert.equal(element("deepSweepQueueReason").textContent,"Your improvements and completed searches are saved.");
+  ctx.renderDeepQueueState({state:"error",error:"Compiler failed"});
+  assert.equal(element("deepSweepQueueTitle").textContent,"Search needs attention");
+  assert.equal(element("deepSweepQueueReason").textContent,"Compiler failed");
+  ctx.renderDeepQueueState({state:"done",has_activity:true,queue_done:34,queue_left:12,queue_blocked:1});
+  assert.equal(element("deepSweepBar").max,47);
+  assert.equal(element("deepSweepProgressText").textContent,"34 of 47 functions completed · 72%");
   await ctx.renderDeepSweep();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
 
@@ -142,3 +157,12 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(finished,1);
 })().catch(error=>{console.error(error);process.exitCode=1;});
+
+// Integration with the match-ranked profile controls: one field in the compact Advanced disclosure.
+const html=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
+const panel=html.slice(html.indexOf('id="deepSweepPanel"'),html.indexOf('id="deepSweepAttention"'));
+for (const id of ['deepSweepMinutes','deepSweepVariants','deepSweepProfiles','deepSweepThreads','deepSweepRepeat']) {
+  assert.equal((panel.match(new RegExp('id="'+id+'"','g')) || []).length,1,`${id} must occur exactly once`);
+}
+assert.match(panel,/<details class="deep-advanced">[\s\S]*?id="deepSweepProfiles"[^>]*min="1"[^>]*max="16"[\s\S]*?<\/details>/);
+assert.match(panel,/<div class="deep-dashboard">/);
