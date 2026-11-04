@@ -1617,3 +1617,28 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .background-table th:nth-child(4), .background-table th:nth-child(5) { width:10%; }
 .background-table th:nth-child(6) { width:12%; }
 .background-table td:first-child b, .background-table .mono { overflow-wrap:anywhere; }
+
+/* Inspector notes: attribution and measured outcomes stay visible above readable, bounded text. */
+.function-notes-section { margin:20px 0; }
+.function-notes-section > summary h3 { margin:0; font-size:14px; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; }
+.agent-note-list { padding:16px; display:grid; gap:12px; }
+.agent-note-card { border:1px solid var(--line); border-radius:var(--r); padding:16px; min-width:0; background:var(--raise); }
+.agent-note-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.agent-note-head > div { display:grid; gap:4px; min-width:0; }
+.agent-note-head b { font-size:13px; overflow-wrap:anywhere; }
+.agent-note-head time { color:var(--ink-2); font-size:11.5px; }
+.agent-note-remove { font-size:11.5px; color:var(--ink-2); flex:none; }
+.agent-note-score { display:flex; align-items:center; flex-wrap:wrap; gap:10px; margin:12px 0; }
+.agent-note-outcome { border:1px solid var(--line); border-radius:var(--r-sm); padding:3px 7px; font-size:11px; color:var(--ink-2); }
+.agent-note-outcome.improved { color:var(--match); border-color:var(--match); }
+.agent-note-outcome.increased { color:var(--miss); border-color:var(--miss); }
+.agent-note-text,.agent-note-preview { font-size:13px; line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; }
+.agent-note-head + .agent-note-text,.agent-note-head + .agent-note-content { margin-top:12px; }
+.agent-note-content > summary { list-style:none; cursor:pointer; }
+.agent-note-content > summary::-webkit-details-marker { display:none; }
+.agent-note-expand { display:block; margin-top:8px; color:var(--ink-2); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
+.agent-note-expand::after { content:'Read full note'; }
+.agent-note-content[open] .agent-note-expand::after { content:'Hide full note'; }
+.agent-note-content[open] .agent-note-preview { display:none; }
+.agent-note-content[open] .agent-note-text { margin-top:12px; }
+.agent-note-content > summary:focus-visible { outline:2px solid var(--hl); outline-offset:4px; }

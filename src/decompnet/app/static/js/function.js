@@ -1,5 +1,19 @@
 "use strict";  // each script is strict on its own (see base.js)
 /* ------------------------------------------------------------------ inspector */
+function functionNoteCard(n) {
+  const measured=n.score_before!=null && n.score_after!=null, delta=measured ? n.score_before-n.score_after : 0;
+  const outcome=!measured ? 'No measured baseline' : delta>0 ? `Improved by ${delta.toLocaleString()}` : delta<0 ? `Increased by ${(-delta).toLocaleString()}` : 'No score change';
+  const score=n.agent==='you' ? '' : `<div class="agent-note-score"><span class="agent-note-outcome ${measured && delta>0 ? 'improved' : measured && delta<0 ? 'increased' : ''}">${esc(outcome)}</span>${measured ? `<span class="mono small muted">${esc(String(n.score_before))} → ${esc(String(n.score_after))}</span>` : ''}</div>`;
+  const text=String(n.text || ''), long=text.length>420 || text.split('\n').length>6;
+  const content=long ? `<details class="agent-note-content" data-note-key="${esc(String(n.id))}"><summary><span class="agent-note-preview">${esc(text.slice(0,280).replace(/\s+/g,' ').replace(/\s+\S*$/, '').trimEnd())}…</span><span class="agent-note-expand"></span></summary><div class="agent-note-text">${esc(text)}</div></details>` : `<div class="agent-note-text">${esc(text)}</div>`;
+  return `<article class="agent-note-card"><header class="agent-note-head"><div><b>${esc(n.agent)}</b><time datetime="${new Date(n.created_at*1000).toISOString()}">${esc(new Date(n.created_at*1000).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}))}</time></div><button type="button" class="link-btn agent-note-remove" data-remove-note="${esc(JSON.stringify(n.ids || [n.id]))}" aria-label="Remove note from ${esc(n.agent)}">Remove</button></header>${score}${content}</article>`;
+}
+function functionNotesHTML(notes) {
+  return [[true,'Your notes'],[false,'Notes from agents']].map(([mine,title])=>{
+    const rows=notes.filter(n=>(n.agent==='you')===mine);
+    return rows.length ? `<details class="panel settings-disclosure function-notes-section" data-note-section="${mine ? 'mine' : 'agents'}" open><summary class="panel-head"><h3>${title} <span class="disclosure-context">— ${rows.length} ${rows.length===1 ? 'note' : 'notes'}</span></h3></summary><div class="agent-note-list">${rows.map(functionNoteCard).join('')}</div></details>` : '';
+  }).join('');
+}
 // Copy the source assembly, never the highlighted DOM's address column.
 function assemblyForClipboard(text) {
   return text.split("\n").map(line => line
@@ -390,13 +404,13 @@ async function refreshFn(first) {
     $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
     renderFunctionCalls(d);
     prepareProjectPeers(d);
-    // your own notes (written here, as "you") apart from the agents': they aren't notes from an agent
-    const noteRow = (n) => {
-      const gain = n.score_before != null && n.score_after != null ? `Score ${n.score_before} → ${n.score_after} · ${n.score_before === n.score_after ? "no change (0)" : `reduced by ${n.score_before - n.score_after}`}` : 'No measured baseline recorded for this older note';
-      return `<div class="note"><small>${esc(n.agent)} · ${clock(n.created_at)} <button type="button" class="ghost small-btn" data-remove-note="${esc(JSON.stringify(n.ids || [n.id]))}">Remove</button></small>${n.agent === "you" ? "" : `<p class="small muted">${esc(gain)}</p>`}<div style="white-space:pre-wrap">${esc(n.text)}</div></div>`;
-    };
-    const notesOf = (mine, title) => { const ns = d.notes.filter((n) => (n.agent === "you") === mine); return ns.length ? `<p class="col-title">${title}</p>` + ns.map(noteRow).join("") : ""; };
-    $("fnNotes").innerHTML = notesOf(true, "Your notes") + notesOf(false, "Notes from agents");
+    const notesHost=$("fnNotes"), sameNotes=notesHost.dataset.function===d.name && notesHost.dataset.project===S.slug;
+    const expanded=sameNotes ? new Set([...notesHost.querySelectorAll('[data-note-key][open]')].map(el=>el.dataset.noteKey)) : new Set();
+    const closed=sameNotes ? new Set([...notesHost.querySelectorAll('[data-note-section]:not([open])')].map(el=>el.dataset.noteSection)) : new Set();
+    notesHost.innerHTML=functionNotesHTML(d.notes);
+    notesHost.dataset.function=d.name; notesHost.dataset.project=S.slug;
+    notesHost.querySelectorAll('[data-note-key]').forEach(el=>{el.open=expanded.has(el.dataset.noteKey);});
+    notesHost.querySelectorAll('[data-note-section]').forEach(el=>{el.open=!closed.has(el.dataset.noteSection);});
     $("fnNotes").querySelectorAll('[data-remove-note]').forEach(button => { button.onclick = async () => {
       const slug = S.slug, name = d.name;
       button.disabled = true;

@@ -491,3 +491,10 @@ def test_function_suggestion_card_shows_narrow_scope():
 def test_retry_paused_dialog_validates_allowance_and_cleans_up_progress():
     if NODE is None:pytest.skip('needs node')
     subprocess.run([NODE,str(Path(__file__).with_name('gui_retry_paused.js'))],check=True,capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_function_note_cards_escape_source_and_explain_score_outcomes():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_function_notes.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
