@@ -665,7 +665,8 @@ class Manager:
             raise ValueError("decompdecomp is quitting")
         ids = []
         report_start("Preparing the project before creating workers…")
-        self._prepare(slug)
+        if options.get("task") != "readable":
+            self._prepare(slug)
         report_start("Waiting for the worker registry, then reserving new identities…")
         with self._lock:
             for index in range(max(1, min(int(count), MAX_AT_ONCE))):
@@ -796,7 +797,8 @@ class Manager:
                 raise ValueError("its API endpoint was removed: start a new helper on another one")
             options.pop('focus_until',None)  # A manual restart explicitly begins a fresh time allowance.
             s.options, s.restarts = options, 0
-            self._prepare(s.slug)
+            if s.options.get("task") != "readable":
+                self._prepare(s.slug)
             self._launch(s)
 
     def resume(self) -> list[str]:
@@ -812,7 +814,7 @@ class Manager:
             except NetworkError:
                 continue
             options = self.options_now(s.kind, dict(s.options))
-            if options is not None:
+            if options is not None and options.get("task") != "readable":
                 self._prepare(s.slug)
             with self._lock:
                 if self._down or not resumable(s):
@@ -1188,11 +1190,13 @@ class Manager:
         workdir = self.home / "agents" / s.agent_name
         workdir.mkdir(parents=True, exist_ok=True)
         s.push("info", f"{s.label} starting on {s.slug}")
-        if (prep := self._prep.get(s.slug)) is not None:
+        # Polishing consumes matched C, so matching preparation cannot unlock its work.
+        polishing = s.options.get("task") == "readable"
+        if not polishing and (prep := self._prep.get(s.slug)) is not None:
             self._set(s, "starting", "first giving the game's code without a source file one (about a minute)")
             prep.wait(PREP_WAIT)
         twins = getattr(getattr(self.net, "twins", None), "jobs", {}).get(s.slug)
-        if twins is not None and not twins.ordered.is_set():
+        if not polishing and twins is not None and not twins.ordered.is_set():
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)

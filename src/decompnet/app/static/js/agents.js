@@ -224,8 +224,8 @@ document.addEventListener('keydown', event => {
 });
 $("agentSort").onchange = () => { agentSort = $("agentSort").value; renderSessions(S.sessions || []); };
 
-function renderSessions(sessions) {
-  renderCosts();
+function renderSessions(sessions, refreshCosts = true) {
+  if (refreshCosts) renderCosts();
   const box = $("sessions");
   const board = new Map((S.stats?.agents || []).map((r) => [r.agent, r]));
   const running = sessions.filter((s) => LIVE.includes(s.state));
@@ -270,7 +270,8 @@ function renderSessions(sessions) {
       ${s.last_message ? `<div class="agent-message"><b class="small">Latest agent reply${["starting", "working", "waiting"].includes(s.state) ? " · helper continues" : ""}</b><q class="said">${esc(s.last_message)}</q></div>` : ''}
       </div></details></div>`;
   }).join("");
-  setHtml(box, html);
+  const pending = typeof agentCreation !== "undefined" && agentCreation?.slug === S.slug;
+  setHtml(box, (pending ? `<div class="session" role="status"><b>Creating ${agentCreation.task === "readable" ? "polishing " : ""}agents</b><span class="small muted" data-agent-creation-status>${esc(agentCreation.status)}</span><div class="workbar" role="progressbar" aria-label="Creating agents"><i></i></div></div>` : "") + html);
   for (const [selector, state] of [['[data-agent-details]', agentDetailsOpen], ['[data-agent-menu]', agentMenusOpen]]) {
     box.querySelectorAll(selector).forEach(details => {
       details.ontoggle = () => {
@@ -525,7 +526,8 @@ function launchLabel(a, model, count, models = []) {
 let agentCreation = null;
 async function startAgents(a, model, count, btn, extra = {}, models = []) {
   if (agentCreation) return toast("Agent creation is already running. Reopen Add agents to see its progress.", "err");
-  agentCreation = {slug:S.slug,lines:[],status:"Waiting for the app to accept the request…",stage:"Waiting for the app to accept the request…"};
+  agentCreation = {slug:S.slug,task:LZ.task,lines:[],status:"Waiting for the app to accept the request…",stage:"Waiting for the app to accept the request…"};
+  renderSessions(S.sessions || [], false);
   const slug = S.slug, panel = btn?.closest(".lz-body");
   const log = panel?.querySelector('[data-start-log]');
   if (log) {log.hidden = false; log.textContent = ""; showJobError(log, "");}
@@ -537,6 +539,8 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     agentCreation.status = `${Math.floor((Date.now()-began)/1000)}s elapsed · ${agentCreation.stage}`;
     const active = $("launchPopBody").querySelector('[data-creation-status]');
     if (active) active.textContent = agentCreation.status;
+    const cardStatus = $("sessions").querySelector("[data-agent-creation-status]");
+    if (cardStatus) cardStatus.textContent = agentCreation.status;
     if (log?._workStatus) log._workStatus.textContent = `Creating agents · ${agentCreation.status}`;
   };
   const elapsedTimer = setInterval(updateStatus, 1000);
@@ -581,7 +585,7 @@ async function startAgents(a, model, count, btn, extra = {}, models = []) {
     }
     toast(esc(e.message), "err");
   }
-  finally { clearInterval(elapsedTimer); agentCreation = null; finish(); if (btn) btn.disabled = false; }
+  finally { clearInterval(elapsedTimer); agentCreation = null; renderSessions(S.sessions || [], false); finish(); if (btn) btn.disabled = false; }
 }
 
 /* The launcher, in the header's Start agents popover: the one place agents start from. `compact`: an API endpoint

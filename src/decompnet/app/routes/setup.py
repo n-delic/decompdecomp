@@ -212,7 +212,8 @@ def register(app: App) -> None:
         picked: list[str] = []
         try:
             net.project_row(slug)
-            net.warm_briefs_soon(slug)  # ready before the helpers' first claims
+            if options.get("task") != "readable":
+                net.warm_briefs_soon(slug)  # matching briefs and machine drafts are not polishing inputs
             if given.get("effort") in kinds.get(kind).efforts:  # an endpoint helper's (the others' rides on the model)
                 options["effort"] = given["effort"]
             if kinds.get(kind).uses_endpoints:

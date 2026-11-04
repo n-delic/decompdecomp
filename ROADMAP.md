@@ -515,6 +515,8 @@ similar C through objdiff. Other processors need an instruction reader for this 
 
 ## Recently done
 
+- Polishing agents skip matching-only preparation and waits on start, restart and resume; agent creation remains visible in the Agents panel when the launcher closes.
+
 - **Your own compiler on every ROM console.** N64, PS1, PS2, PSP and GBA games can be built with your own copy of
   a compiler they use, a build no pack has (an EE-GCC, a CodeWarrior PS2, an SNC, a PSP GCC, a KMC GCC, an IDO, an
   agbcc): Setup, Compilers & tools, "Your own PS2 compiler" (one per console, in its group), given the folder it's

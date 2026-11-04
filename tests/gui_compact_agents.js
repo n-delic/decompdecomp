@@ -56,3 +56,16 @@ const recentAgents=[
 assert.deepEqual(Array.from(c.sortAgentCards(recentAgents,new Map([['fallback',{last_improvement:150}]]),'recent_improvement'),s=>s.agent),['recent','fallback','old','never']);
 assert.deepEqual(recentAgents.map(s=>s.agent),['old','never','recent','fallback'],'sorting must not reorder the underlying live sessions');
 assert(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8').includes('<option value="recent_improvement">Most recently improved</option>'));
+
+// A creation request remains visible in the project panel even after its popover closes.
+c.S.slug='game';
+vm.runInContext('var agentCreation = {slug:"game",task:"readable",status:"Preparing startup"}',c);
+c.renderSessions([]);
+assert(elements.get('sessions').html.includes('Creating polishing agents'));
+assert(elements.get('sessions').html.includes('role="progressbar"'));
+vm.runInContext('agentCreation.slug="other"',c);
+c.renderSessions([]);
+assert(!elements.get('sessions').html.includes('data-agent-creation-status'));
+vm.runInContext('agentCreation=null',c);
+c.renderSessions([]);
+assert(!elements.get('sessions').html.includes('data-agent-creation-status'));

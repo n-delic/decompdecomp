@@ -1336,3 +1336,45 @@ def test_rejected_codex_model_pauses_siblings_before_a_provider_session(tmp_path
     assert second.snapshot()['configuration_error'] and 'Choose another model' in second.todo
     changed = manager._record('game', 'codex', 'codex-three', 'third', {'model':'different'})
     assert session_followups.configuration_error(manager, changed) is None
+
+
+def test_polishing_start_and_restart_skip_matching_preparation(tmp_path, quiet, monkeypatch):
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    calls = []
+    monkeypatch.setattr(manager, '_prepare', lambda slug: calls.append(slug))
+    sid = manager.start('codex', 'game', options={'task': 'readable'})[0]
+    assert manager.sessions[sid].state == 'starting'
+    assert calls == []
+    manager.sessions[sid].state = 'stopped'
+    manager.restart(sid)
+    assert calls == []
+    manager.sessions[sid].state = 'stopped'
+    manager.sessions[sid].stopped_by = agents.BY_QUIT
+    assert manager.resume() == [sid]
+    assert calls == []
+    manager.start('codex', 'game')
+    assert calls == ['game']
+
+
+def test_polishing_does_not_wait_for_matching_jobs(tmp_path, quiet, monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app import focused_agents
+    net = _game(tmp_path)
+    manager = agents.Manager(net, tmp_path, URL)
+    sid = manager.start('codex', 'game', options={'task': 'readable'})[0]
+    class MatchingWait:
+        def is_set(self):
+            return False
+        def wait(self, timeout):
+            pytest.fail('Polishing waited for unrelated matching preparation')
+    manager._prep['game'] = MatchingWait()
+    monkeypatch.setattr(net.twins, 'jobs', {'game': SimpleNamespace(ordered=MatchingWait())})
+    class Ready(Exception):
+        pass
+    def ready(*args):
+        raise Ready()
+    monkeypatch.setattr(focused_agents, 'ready', ready)
+    with pytest.raises(Ready):
+        manager._run_work(manager.sessions[sid])
