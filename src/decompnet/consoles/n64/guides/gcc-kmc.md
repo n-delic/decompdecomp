@@ -494,3 +494,26 @@ Four frozen cases retained the same exact recovery and best scores under equal b
 these additions have not yet demonstrated an extra match. A moved instruction multiset
 keeps scheduling priority, and a literal-only edit inside an existing delay slot remains a
 constant residual. The compiler-matching ledger records failed trials as well as recoveries.
+
+### Separate branch-local coordinates before forcing a cast register
+
+For a wide coordinate used by one call and then narrowed for another, separate
+branch-specific locals can matter even when a single function-wide scalar has the
+same C value. In a newly matched 253-instruction case (`-G0 -mips3 -mgp32 -mfp32
+-O2 -g3`), the separate lifetime made the cast's intermediate shift reuse the
+dying coordinate register. An explicit in-place shift alone was optimized back
+into a differently allocated temporary.
+
+An actually inlined ordinary-C helper for the real decrement/call/returned-count
+sequence fixed a different argument-setup ordering issue. Finally assigning the
+coordinate inside its call argument, and retaining it for the next call, recovered
+the remaining schedule. Keep alternatives that fix a particular instruction even
+when another allocation changes; their useful transformations may combine.
+
+Check object ownership and aliases first: moving a store onto the wrong constructed
+object is not a valid repair. A fresh snapshot of a global pointer before byte
+stores may expose the target load order, but only where those accesses and aliases
+permit it. Preserve real widths, call effects and nonoverlapping lifetimes. These
+hypotheses still require the ordinary exact linked-byte/data judge. This case
+passed that judge and standalone layout checks, not a complete ROM rebuild; see
+`docs/COMPILER_MATCHING_LEARNINGS.md` for the measured steps and failed trials.

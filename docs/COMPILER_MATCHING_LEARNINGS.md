@@ -3174,3 +3174,52 @@ multisets must keep scheduling priority, and an immediate literal change inside 
 delay slot must remain a literal change; neither alone proves a control-flow repair is
 needed. The short chain lane rotates eligible families so one scalar/pointer pool cannot
 consume all eight slots.
+
+## Branch-local coordinate lifetimes and inlined call setup (KMC GCC 2.7.2)
+
+A newly recovered 253-instruction UI-construction function matched with installed
+`gcc-2.7.2-kmc`, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Experiments went through the
+running app's normal API and linked-byte judge. The final saved attempt has score
+zero, identical instructions and linked bytes, no address/data discrepancies, and a
+successful standalone layout check. A complete exported image rebuild was not run.
+Game source, target assembly, headers and raw compiler dumps remain private.
+
+The initial score-1250 candidate also assigned an object pointer to the wrong one
+of two constructed widgets. Correct the stores before optimizing allocation: a
+lower score is not evidence that a source's object lifetimes are right. Separate
+experiments established this useful progression:
+
+- Capture the global object pointer in a **fresh**, short-lived temporary before
+  adjacent colour-byte stores. This exposes the target's earlier load while
+  keeping each widget's pointer store on the correct widget. Reusing an older
+  pointer instead changed its initial allocation and was worse. The corrected
+  candidate reached 820.
+- Reuse a compatible scalar whose previous value is dead on each state-zero path
+  for the signed-halfword coordinate conversion. This changed allocation priority
+  for two long-lived values and reached 725. Donor eligibility depends on all
+  paths; do not overwrite a value still needed by another call in the same path.
+- A small, actually inlined C helper that decrements a count, performs the real
+  call and returns the count changed argument-setup scheduling, reaching 525.
+  It is a lowering hypothesis, not evidence that the original source had a helper.
+- Give the two branch-specific coordinate calculations separate local variables
+  rather than overwriting one function-wide variable. In combination with that
+  helper, the intermediate left shifts now reuse the target's dying coordinate
+  register; the score became 270. The sole remaining difference was the ordering
+  of the first call's argument setup and coordinate arithmetic.
+- Move that first coordinate assignment into its actual call argument, retaining
+  the local for the following call. This recovered score **0**, all 253
+  instructions, with the original compiler flags unchanged.
+
+Raw dump comparison explains why an explicit in-place shift alone was insufficient:
+GCC initially emitted the variable assignment, but a later optimization replaced
+it with a local temporary. Diagnostics with `-da` preserved ordinary output for
+both measured precursor sources. A block-local lifetime changed the allocator's
+result where merely spelling out the shift pair did not.
+
+Negative evidence: whitespace/multiline call changes, explicit shift/mask spelling,
+several alternate donor types, and one-shot scopes did not solve this case.
+Disabling either scheduling pass or delayed branches was substantially worse;
+disabling caller saves, expensive optimizations or strength reduction did not
+improve either tested seed. Do not generalize IDO line-layout findings to this
+GCC case. These are one-function observations, not an automated-repair success
+rate or a proof of the original source's spelling.
