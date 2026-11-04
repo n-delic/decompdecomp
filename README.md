@@ -1496,3 +1496,8 @@ result; 100% of that transfer stage does not mean later synchronization has fini
 In **Room match verification**, **Retry all** checks the current pending submissions one at a time,
 continuing past individual errors. Individual Retry buttons and Retry all immediately show a spinner,
 with duplicate clicks disabled while the job runs. The shared progress display shows processed counts.
+
+Project maps clear the previous project's canvas as soon as you switch games and draw their first
+frame only after the loading cover is removed. Late map responses cannot replace a newer refresh.
+Compiler-colour analysis is requested when you select the Compiler map, keeping it off the default
+Progress view's loading path.

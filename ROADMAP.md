@@ -2116,3 +2116,7 @@ template and renderer. The function drawer consumes live job progress for combin
 percentage, saved/best match, current best profile and exact-match count; project queue/result
 actions are hidden in function scope. Navigation guards prevent late results updating another
 function or overwriting the project-wide progress card.
+
+- Done: project map first-paint ordering and canvas-cache reset on navigation, with stale-response
+  ordering guards and lazy compiler-colour loading. Maps no longer wait for a resize after being
+  measured under a hidden loading cover or display cached pixels from the previous project.

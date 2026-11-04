@@ -2,6 +2,14 @@
 /* ------------------------------------------------------------------ map */
 let colors = null, geo = null, animating = false;
 
+function resetMap() {
+  geo = null; base = null; baseDirty = true; shown = null;
+  moving = []; dirtyCells.clear(); ccIndex = new Map();
+  const canvas = $("map");
+  // Resetting dimensions clears pixels immediately, including a previous project's map.
+  canvas.width = 1; canvas.height = 1; canvas.style.height = "0px";
+}
+
 // a 1×1 canvas turns any CSS colour (oklch, color-mix, color(srgb …)) into the sRGB bytes the map is drawn with
 const swatch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
 function cssColor(name) {
@@ -72,6 +80,7 @@ $("mapView").addEventListener("click", (ev) => {
   if (!b) return;
   S.mapView = b.dataset.view;
   renderMapView(); mapChanged(); drawMap();
+  if (S.mapView === "compiler" && S.slug && S.ov?.kind !== "fork") loadMapColumns(S.slug);
 });
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
 const rgb = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;

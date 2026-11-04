@@ -86,6 +86,7 @@ const reset = () => { drawn.base.length = 0; drawn.map.length = 0; };
   await settle();
   // the first drawing: every cell once
   assert.equal(fills("base"), FUNCTIONS);
+  assert.equal(asked.filter(u=>u.startsWith('/api/mapcolumns')).length,0,'Progress view does not request compiler analysis');
 
   // a poll that brings a better score for one function and a claim on another: those two cells, not all 2,000
   reset();

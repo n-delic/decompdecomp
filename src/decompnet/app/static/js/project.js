@@ -22,7 +22,7 @@ async function openProject(slug, tab = "overview") {
   $("projectRetry").hidden = true;
   $("projectLoading").querySelector(".workbar").hidden = false;
   S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
-  S.apFeed = null; S.stats = null; S.map = []; S.mapSig = null; geo = null;
+  S.apFeed = null; S.stats = null; S.map = []; S.byName = new Map(); S.mapSig = null; resetMap();
   S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
   const expectedFunctions = (S.projects || []).find(p => p.slug === slug)?.functions;
@@ -110,6 +110,8 @@ function finishProjectLoading(gen) {
   $("project").removeAttribute("data-loading");
   $("project").setAttribute("aria-busy", "false");
   $("projectLoading").hidden = true;
+  // data-loading hides the map's ancestors: only measure after removing it.
+  if (S.tab === "overview" && S.map.length) layoutMap();
 }
 
 function stopPolling() {
@@ -143,8 +145,9 @@ document.querySelectorAll("[data-goto]").forEach((a) => {
 /* The whole map only when something changed (`force`: a rename or a split, which the signature can't see). */
 async function refreshMap(force = true, prefetched = null) {
   const slug = S.slug, gen = S.gen;
+  const request = S.mapRequestToken = (S.mapRequestToken || 0) + 1;
   const data = await (prefetched || api(`/api/map?slug=${slug}${!force && S.mapSig ? `&since=${encodeURIComponent(S.mapSig)}` : ""}`));
-  if (slug !== S.slug || gen !== S.gen) return;
+  if (slug !== S.slug || gen !== S.gen || request !== S.mapRequestToken) return;
   S.lastMapFetch = Date.now();
   if (data.same) return;
   S.mapSig = data.sig;
@@ -160,11 +163,13 @@ async function refreshMap(force = true, prefetched = null) {
   baseDirty = true;
   renderMapView();
   $("fnTabCount").textContent = S.map.length.toLocaleString();
-  if (S.tab === "overview") layoutMap(); else applyClaims(false);
+  // Initial rows arrive under the loading cover; finishProjectLoading performs
+  // their first layout once the panel has a measurable width.
+  if (S.tab === "overview" && !prefetched) layoutMap(); else applyClaims(false);
   renderList();
   renderProgress();
   renderOverview();
-  if (S.ov && S.ov.kind !== "fork") loadMapColumns(slug);
+  if (S.mapView === "compiler" && S.ov && S.ov.kind !== "fork") loadMapColumns(slug);
 }
 
 /* A poll belongs to the opening of the project it was made for (S.gen). With one flag for all of them, the left

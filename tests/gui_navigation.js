@@ -23,7 +23,7 @@ function setup() {
     renderLog: () => {}, renderHeader: () => {}, renderStats: () => {}, renderForkSetup: () => {},
     setTab: tab => {S.tab=tab;}, poll: async () => {}, loadStats: () => {},
     setInterval: fn => {timers.push(fn);return timers.length;}, clearInterval: () => {}, loadState: async () => {},
-    renderMapView: () => {}, layoutMap: () => {}, applyClaims: () => {}, renderList: () => {},
+    renderMapView: () => {}, resetMap: () => {}, layoutMap: () => {}, applyClaims: () => {}, renderList: () => {},
     renderProgress: () => {}, renderOverview: () => {}, renderSessions: () => {}, loadMapColumns: () => {}});
   function $(id) {return el(id);}
   return {ctx,S,el,calls,errors,timers};
@@ -103,19 +103,25 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   const p=setup(), project=read('project');
   vm.runInContext(project.slice(project.indexOf('const POLL_MS'),project.indexOf('function stopPolling')),p.ctx);
   vm.runInContext(project.slice(project.indexOf('async function refreshMap'),project.indexOf('/* A poll belongs')),p.ctx);
+  let resets=0;p.ctx.resetMap=()=>resets++;
   const old=p.ctx.openProject('A'), oldProject=p.calls[1], oldMap=p.calls[0];
   assert.equal(p.calls.length,2,'Overview and map requests start concurrently');
   assert.match(p.el('projectLoadingDetail').textContent,/reading project summary; loading function list/);
   assert.equal(p.el('projectLoadBar').attrs['aria-valuenow'],'1');
   assert.equal(p.S.ov,null); assert.equal(p.el('project').attrs['aria-busy'],'true');
   const fresh=p.ctx.openProject('B');
+  assert.equal(resets,2,'Every project change clears the prior canvas');
+  assert.equal(p.S.byName.size,0,'Old function indexes are removed before loading');
   assert.equal(oldProject.signal.aborted,true); assert.equal(oldMap.signal.aborted,true);
   p.calls[3].resolve({slug:'B',kind:'rom'}); await flush();
   assert.match(p.el('projectLoadingDetail').textContent,/loading function list/);
   assert.equal(p.el('projectLoadBar').attrs['aria-valuenow'],'2');
+  let visibleLayouts=0;
+  p.ctx.layoutMap=()=>{if(!('data-loading' in p.el('project').attrs))visibleLayouts++;};
   p.calls[2].resolve({sig:'B',keys:['name'],rows:[['B fn']]}); await fresh;
   assert.equal(p.S.ov.slug,'B'); assert.equal(p.S.map[0].name,'B fn');
   assert.equal(p.el('projectLoading').hidden,true);
+  assert.equal(visibleLayouts,1,'Map is measured after its project becomes visible');
   oldProject.resolve({slug:'A',kind:'rom'}); oldMap.resolve({sig:'A',keys:['name'],rows:[['A fn']]}); await old;
   assert.equal(p.S.ov.slug,'B'); assert.equal(p.S.map[0].name,'B fn');
   vm.runInContext(project.slice(project.indexOf('let statsLoading'),project.indexOf('/* Agents at work')),p.ctx);
@@ -125,6 +131,12 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   const map=p.ctx.refreshMap(), heldMap=p.calls.at(-1); p.S.gen++;
   heldMap.resolve({sig:'late',keys:['name'],rows:[['late']]}); await map;
   assert.equal(p.S.map[0].name,'B fn');
+
+  const olderMap=p.ctx.refreshMap(), olderResponse=p.calls.at(-1);
+  const newerMap=p.ctx.refreshMap(), newerResponse=p.calls.at(-1);
+  newerResponse.resolve({sig:'new',keys:['name'],rows:[['newer']]});await newerMap;
+  olderResponse.resolve({sig:'old',keys:['name'],rows:[['older']]});await olderMap;
+  assert.equal(p.S.map[0].name,'newer','Late map responses cannot replace newer data in the same project');
 
   vm.runInContext(source.slice(source.indexOf('async function loadDiff'),source.indexOf('function stepFn')),f.ctx);
   f.S.fnDetail=detail('same'); f.S.which='best'; f.S.diffKey=null;
