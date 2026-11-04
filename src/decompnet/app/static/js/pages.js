@@ -17,6 +17,7 @@ async function renderPairings() {
   let pending;
   try { pending = (await api("/api/pair/requests")).requests; } catch { return; }
   panel.hidden = !pending.length;
+  disclosureContext('agPairContext', `${pending.length} pending`);
   if (!pending.length) return;
   const projects = S.projects && S.projects.length ? S.projects : (S.projects = await api("/api/projects").catch(() => []));
   box.innerHTML = `<p class="muted small">Agents outside the app asked to work on a project. Approving mints one a token for the single project you pick; it reads the token itself, with the secret only it holds.</p>` +
@@ -43,6 +44,7 @@ async function renderPairings() {
 setInterval(() => { if (!$("agentsPage").hidden) renderPairings(); }, 5000);
 function renderAgentsPage() {
   const rows = S.st.agents.filter((a) => !a.uses_endpoints);
+  disclosureContext('agAppsContext', `${rows.filter(a=>a.installed).length} installed${S.st.agents_detecting ? ' · checking…' : ''}`);
   $("agList").innerHTML = rows.map((a) => `<div class="agent-row">
       <div class="ar-head"><b>${esc(a.name)}</b><span class="muted small">${esc(a.vendor)}</span><span class="grow"></span>
         ${a.installed ? `<span class="ok-mark">installed</span>` : `<button class="primary small-btn" data-inst="${esc(a.id)}" type="button" ${a.needs ? "disabled" : ""}>Install</button>`}</div>
@@ -66,6 +68,7 @@ function renderAgentsPage() {
     };
   });
   const eps = S.st.settings.endpoints || [];
+  disclosureContext('agApiContext', `${eps.length} saved endpoint${eps.length===1 ? '' : 's'}`);
   const card = (e) => `<div class="ep-card" data-id="${esc(e.id || "")}">
       ${e.id ? `<div class="ar-head"><b>${esc(e.name)}</b><span class="muted small mono">${esc(e.model)} · ${esc(hostOf(e.base_url))}</span></div>` : `<div class="ar-head"><b>A new endpoint</b></div>`}
       <div class="lz-fields">${endpointFields(e)}</div>
@@ -96,7 +99,14 @@ function renderAgentsPage() {
   });
   if ($("epAdd")) $("epAdd").onclick = () => { S.addingEndpoint = true; renderAgentsPage(); };
 }
-$("agRefresh").onclick = showAgentsPage;
+$("agRefresh").onclick = async event => {
+  event.preventDefault(); // Refresh without toggling the disclosure.
+  event.stopPropagation();
+  const button=$("agRefresh"); button.disabled=true; button.textContent='↻ Checking…';
+  try { await showAgentsPage(); }
+  catch(error) { toast(esc(error.message),'err'); }
+  finally { button.disabled=false; button.textContent='↻ Refresh'; }
+};
 
 /* ------------------------------------------------------------------ compilers & tools page */
 let toolFilter = "";
@@ -647,6 +657,7 @@ async function refreshManualMcp() {
     const info = await api(`/api/manual-mcp${slug ? `?slug=${encodeURIComponent(slug)}` : ""}`);
     if (read !== manualMcpRead) return;
     const port = new URL(info.url).port;
+    disclosureContext('agMcpContext', `${info.connections.length} connection${info.connections.length===1 ? '' : 's'} · local server`);
     $("mcpStatus").innerHTML = `<p><b>Running locally</b> · ${esc(info.transport)} · Port ${esc(port)}</p>${cmdBox(info.url)}<p class="small muted">Local clients only (127.0.0.1). No public endpoint or OAuth sign-in. Choose a project to see its tools.</p>`;
     wireCopies($("mcpStatus"));
     $("mcpToolCount").textContent = `(${info.tools.length})`;

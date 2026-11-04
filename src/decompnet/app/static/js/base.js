@@ -392,3 +392,9 @@ function compilerRankedTable(rows, selectable = false, usage = null) {
   if (!rows.length) return "";
   return `<div class="compiler-table"><table><thead><tr><th>Match</th><th>Compiler</th><th>Flags</th>${usage ? '<th title="Functions in this project currently using this exact compiler and flag order, including this function">Used by</th>' : ""}<th>Result</th>${selectable ? "<th>Action</th>" : ""}</tr></thead><tbody>${rows.map((r, index) => ({r, index})).sort((a, b) => Number(!!(b.r.default && b.r.exact)) - Number(!!(a.r.default && a.r.exact))).map(({r, index}) => `<tr><td><b>${r.percent == null ? "—" : `${r.percent.toFixed(2)}%`}</b></td><td>${esc(r.toolchain)}${r.default ? ` <span class="chip-s">Default</span>` : ""}${r.selected ? ` <span class="chip-s compiler-selected">Currently selected</span>` : ""}</td><td class="mono">${esc(r.flags.join(" "))}</td>${usage ? `<td>${compilerProfileUsage(r, usage)}</td>` : ""}<td>${r.untested ? "Not verified with this source" : r.exact ? "Exact match" : r.percent == null ? "Could not compile or compare" : "Partial match"}${r.current && !r.selected ? " · settings at test time" : ""}</td>${selectable ? `<td><button type="button" class="ghost small-btn" data-compiler-choice="${index}" ${r.percent == null || r.apply_disabled ? "disabled" : ""}>${r.selected ? "Selected" : r.default ? "Use default" : "Apply"}</button></td>` : ""}</tr>`).join("")}</tbody></table></div>`;
 }
+
+// Shared secondary context stays visible when a settings disclosure is collapsed.
+function disclosureContext(id, text) {
+  const el = $(id);
+  if (el) el.textContent = `— ${text}`;
+}

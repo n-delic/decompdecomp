@@ -1545,4 +1545,10 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 /* Agent settings share equal columns; disclosures keep their natural independent height. */
 #agentsPage .ag-cols { margin-top: 0; }
 #agentsPage .ag-cols > .panel { min-width: 0; margin: 0; }
-#agentsPage .ag-apps .pad > button { margin-bottom: 16px; }
+
+
+/* Reusable disclosure title + secondary context + compact trailing action. */
+.settings-disclosure > summary h2 { flex-wrap: wrap; gap: 4px 8px; min-width: 0; text-align: left; }
+.disclosure-context { font-size: 12.5px; font-weight: 400; font-stretch: normal; color: var(--ink-2); }
+.disclosure-action { flex: none; margin-left: auto; padding: 4px 6px; min-height: 28px; border: 0; background: transparent; color: var(--ink-2); font-size: 12px; }
+.disclosure-action:hover { color: var(--ink); background: var(--bg-alt); }

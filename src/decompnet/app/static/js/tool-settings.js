@@ -4,11 +4,14 @@ async function loadToolSettings(host, log, helper = '') {
   try {
     const info = await api(`/api/agent-tools${helper ? `?helper=${encodeURIComponent(helper)}` : ''}`);
     if (!host.isConnected) return;
+    const context=()=>{if(!helper)disclosureContext('agToolsContext', `${info.tools.filter(t=>t.enabled!==false).length} / ${info.tools.length} tools enabled`);};
+    context();
     host.replaceChildren(toolCatalog([...info.tools].sort((a,b)=>a.calls-b.calls || a.name.localeCompare(b.name)), {editable:true, helper, onToggle:async(name, enabled, toggle)=>{
       log.textContent=''; log.hidden=true;
       const finish = beginWork(log, 'Saving tool settings', [toggle]);
       try {
         await api('/api/agent-tools',{method:'POST',body:{helper,name,enabled}});
+        const tool=info.tools.find(t=>t.name===name);if(tool)tool.enabled=enabled;context();
         toast('Tool settings saved. Start a new session or reconnect MCP to refresh the tool list.','match');
       } catch(error) { toggle.checked=!enabled; showJobError(log,error.message); }
       finally { finish(); }

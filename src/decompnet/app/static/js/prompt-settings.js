@@ -4,6 +4,7 @@ async function loadPromptSettings(host, log, helper = '') {
   try {
     const info=await api(`/api/agent-prompts${helper ? `?helper=${encodeURIComponent(helper)}` : ''}`);
     if (!host.isConnected) return;
+    if (!helper) { const count=info.fields.filter(f=>f.custom).length; disclosureContext('agPromptsContext', count ? `${count} custom override${count===1 ? '' : 's'}` : 'Built-in defaults'); }
     const fields=info.fields.map(field=>{
       const box=document.createElement('div'); box.className='prompt-setting';
       const label=document.createElement('label'), check=document.createElement('input'), title=document.createElement('span');
