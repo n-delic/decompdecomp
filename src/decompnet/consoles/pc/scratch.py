@@ -1300,15 +1300,23 @@ def _full_reg(md, reg: int) -> str:
             "cx": "ecx", "dl": "edx", "dh": "edx", "dx": "edx", "si": "esi", "di": "edi", "bp": "ebp"}.get(name, name)
 
 
+_LOADS = frozenset({x86.X86_INS_MOV, x86.X86_INS_MOVZX, x86.X86_INS_MOVSX})
+
+
 def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int, list[int]]:
     """(where the function's code ends, where its data ends, the jump table entries' offsets): MSVC puts a switch's
     jump table (and its byte index table) right after the function's code (a 64-bit one's: _tables_x64)."""
     if pe.x64:
         return _tables_x64(md, pe, start, code_end, sweep=False)
     tables, bytes_at = [], []
-    index_regs, loaded = set(), {}  # the registers jump tables are indexed by; a byte table's -> the register it loads
+    # which byte table's byte each register holds now (a load puts it there, a plain `mov` moves it on, anything else
+    # that writes the register ends it), and the byte tables a jump's index came from
+    holds, indexing = {}, set()
     for ins in _disasm(md, pe.read(start, code_end - start), start):
-        for op in ins.operands:
+        ops = ins.operands
+        load = ins.id in _LOADS and len(ops) == 2 and ops[0].type == x86.X86_OP_REG
+        gets = holds.get(_full_reg(md, ops[1].reg)) if load and ops[1].type == x86.X86_OP_REG else None
+        for i, op in enumerate(ops):
             if op.type != x86.X86_OP_MEM or ins.disp_size != 4:
                 continue
             disp = op.mem.disp & 0xFFFFFFFF
@@ -1316,11 +1324,16 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
                 continue
             if op.mem.scale == 4 and ins.id == x86.X86_INS_JMP:
                 tables.append(disp)
-                index_regs.add(_full_reg(md, op.mem.index))
+                if (b := holds.get(_full_reg(md, op.mem.index))) is not None:
+                    indexing.add(b)
             elif op.size == 1:
                 bytes_at.append(disp)
-                if ins.operands[0].type == x86.X86_OP_REG:
-                    loaded.setdefault(disp, set()).add(_full_reg(md, ins.operands[0].reg))
+                if load and i == 1:
+                    gets = disp
+        for reg in ins.regs_access()[1]:
+            holds.pop(_full_reg(md, reg), None)
+        if gets is not None:
+            holds[_full_reg(md, ops[0].reg)] = gets
     code_end = min([code_end, *tables, *bytes_at])
     data_end, entries = code_end, []
     for t in sorted(set(tables)):
@@ -1335,8 +1348,8 @@ def _tables(md, pe: PE, start: int, code_end: int, limit: int) -> tuple[int, int
         data_end = max(data_end, at)
     for b in sorted(set(bytes_at)):  # a byte table runs to the next function, less its padding
         tail = pe.read(b, limit - b).rstrip(b"\x90\xcc")
-        if entries and loaded.get(b, set()) & index_regs:
-            # a byte table that indexes the jump table (what it loads is the jump's index) has every byte below its
+        if entries and b in indexing:
+            # a byte table that indexes the jump table (the byte it loads is the jump's index) has every byte below its
             # entry count: the first one that isn't is past the table (an x86 game: code that only a vtable reaches
             # followed a byte table and was swallowed). Any other byte table (a lookup) keeps its whole run
             n = len(entries)
