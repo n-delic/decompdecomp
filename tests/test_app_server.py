@@ -2070,3 +2070,36 @@ def test_join_existing_project_passes_stored_copy_to_normal_join(app, tmp_path, 
     rejected = client.post('/api/collab/join?project=existing&link=http://host/join/open&name=sam',
                            content=b'', headers={'X-Decomp':'1'})
     assert rejected.status_code == 400
+
+
+def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app, monkeypatch, tmp_path):
+    from decompnet.app import room_matches
+    from decompnet.network import NetworkError
+    client, net, *_ = app
+    slug='retry-all-room'
+    with net.store.tx() as db:
+        pid=db.execute("INSERT INTO projects(slug,root,config) VALUES(?,?,'{\"kind\":\"rom\"}')",(slug,str(tmp_path))).lastrowid
+    rows=[{'key':f'{room_matches.PREFIX}{pid}:{i}','function':f'f{i}','direction':'host'} for i in range(8)]
+    monkeypatch.setattr(room_matches,'pending',lambda *args:rows)
+    calls=[]
+    def retry(n,s,key):
+        calls.append(key)
+        if key==rows[1]['key']:raise NetworkError('Compiler unavailable')
+        return {'matched':True}
+    monkeypatch.setattr(room_matches,'retry',retry)
+    response=client.post('/api/collab/matches',json={'slug':slug,'all':True},headers={'X-Decomp':'1'})
+    assert response.status_code==200
+    for _ in range(100):
+        job=client.get('/api/job',params={'id':response.json()['job']}).json()
+        if job['state']!='running':break
+        time.sleep(.01)
+    assert job['state']=='done' and job['result']=={'matched':7,'failed':1,'total':8}
+    assert calls==[r['key'] for r in rows]
+    assert job['progress']['finished']==8 and job['progress']['total']==8
+    calls.clear()
+    response=client.post('/api/collab/matches',json={'slug':slug,'key':rows[0]['key']},headers={'X-Decomp':'1'})
+    for _ in range(100):
+        job=client.get('/api/job',params={'id':response.json()['job']}).json()
+        if job['state']!='running':break
+        time.sleep(.01)
+    assert job['state']=='done' and calls==[rows[0]['key']]

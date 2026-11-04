@@ -126,6 +126,7 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
   bar.setAttribute("aria-label", label);
   bar.append(document.createElement("i"));
   log.before(bar);
+  log._workBar = bar;
   const disabled = controls.map((control) => control.disabled);
   controls.forEach((control) => { control.disabled = true; });
   return () => {
@@ -136,6 +137,27 @@ function beginWork(log, label, controls = [], completed = "Finished.") {
     }
     controls.forEach((control, index) => { control.disabled = disabled[index]; });
   };
+}
+
+function updateWorkProgress(log, progress) {
+  if (!progress || !log._workStatus || !log._workBar) return;
+  const bar = log._workBar, phase = progress.phase || "Working";
+  const total = Number(progress.total), done = Number(progress.finished ?? progress.done);
+  const counted = Number.isFinite(total) && total > 0 && Number.isFinite(done) && done >= 0;
+  const finished = counted ? Math.min(done, total) : 0;
+  const percent = counted ? Math.floor(100 * finished / total) : 0;
+  log._workStatus.textContent = phase + (counted ? ` · ${finished.toLocaleString()} / ${total.toLocaleString()} processed (${percent}%)` : "")
+    + (progress.function ? ` · ${progress.function}` : "")
+    + (progress.confirmed != null ? ` · ${progress.confirmed} matches confirmed` : "")
+    + (progress.submitted != null ? ` · ${progress.submitted} better attempts submitted` : "");
+  bar.setAttribute("aria-label", phase);
+  bar.className = counted ? "workbar counted" : "workbar";
+  if (counted) {
+    bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", String(total)); bar.setAttribute("aria-valuenow", String(finished));
+    bar.style.setProperty("--work-progress", `${percent}%`);
+  } else {
+    bar.removeAttribute("aria-valuemin"); bar.removeAttribute("aria-valuemax"); bar.removeAttribute("aria-valuenow");
+  }
 }
 
 async function followJob(id, logEl, onUpdate, active = () => true) {
@@ -152,6 +174,7 @@ async function followJob(id, logEl, onUpdate, active = () => true) {
         logEl.scrollTop = follow ? logEl.scrollHeight : top;
       }
     }
+    if (logEl?._showJobProgress) updateWorkProgress(logEl, job.progress);
     if (onUpdate) onUpdate(job.log, job);
     if (job.state === "done") return job.result;
     if (job.state === "error" || job.state === "cancelled") {

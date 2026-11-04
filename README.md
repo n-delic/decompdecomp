@@ -1487,3 +1487,12 @@ With any project open, choose **Decompile together → Join room…** to join so
 room. Paste their invite link or public room address and enter your room name. Joining from a project
 uses its stored game copy automatically; New project → Join a team’s room still offers a file picker. Existing projects remain in the sidebar. The join option is also available while hosting,
 waiting for a room, or restoring a hosted room.
+
+While joining, the progress display identifies connection, game checks, local setup, host verification
+and synchronization stages. During saved-work transfer it shows the current function, processed
+count, stage percentage, confirmed matches and submitted better attempts. The host rechecks each
+result; 100% of that transfer stage does not mean later synchronization has finished.
+
+In **Room match verification**, **Retry all** checks the current pending submissions one at a time,
+continuing past individual errors. Individual Retry buttons and Retry all immediately show a spinner,
+with duplicate clicks disabled while the job runs. The shared progress display shows processed counts.

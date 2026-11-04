@@ -1002,6 +1002,12 @@ def _saved_progress(net, *, slug: str | None = None, identity: str | None = None
     return candidates
 
 
+def _join_progress(log, phase, **counts):
+    """Publish a foreground snapshot without requiring every background sync logger to support it."""
+    if hasattr(log, 'progress'):
+        log.progress({'phase': phase, **counts})
+
+
 def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *, fork: bool,
                           best_comparable: bool = False, log, sync_room: bool = True,
                           forget=None) -> None:
@@ -1010,6 +1016,8 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     for the next sync."""
     if not candidates:
         return
+    _join_progress(log, "Comparing your saved work with the host")
+    log(f"Comparing {len(candidates)} saved functions with the host's existing results.")
     state = link._req("GET", "/collab/state", link.cursor | {"fresh": 1})
     matched_names = {row["name"] for row in state.get("matched", [])}
     matched_vrams = {row["vram"] for row in state.get("matched", [])}
@@ -1057,7 +1065,12 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
     matches = best_attempts = 0
     if transfers:
         agent, _ = net.local_agent("saved-progress")
-    for kind, function, source, score, candidate in transfers:
+    total = len(transfers)
+    log(f"Sending {total} saved functions to the host. Each is checked there before it counts.")
+    for index, (kind, function, source, score, candidate) in enumerate(transfers, 1):
+        _join_progress(log, "Host checking saved work", finished=index-1, total=total,
+                       function=function, confirmed=matches, submitted=best_attempts)
+        log(f"Host checking saved function {index} of {total}: {function}")
         try:
             if kind == "match":
                 result = link.attempt(agent, function, source)
@@ -1076,7 +1089,10 @@ def _share_saved_progress(net, slug: str, link: Link, candidates: list[dict], *,
             raise
         else:
             done(candidate)
+        _join_progress(log, "Host checking saved work", finished=index, total=total,
+                       function=None, confirmed=matches, submitted=best_attempts)
 
+    _join_progress(log, "Synchronizing the host's results")
     if sync_room:
         try:
             link.sync()
@@ -1093,6 +1109,7 @@ def reconnect(net, slug: str, link: str, log=print, client: httpx.Client | None 
     """Guest: the host restarted and shared a new link. Reconnect this project as the same member if the host still
     knows us, or join again with the invite."""
     http = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
+    _join_progress(log, "Connecting to the host")
     url, code, hello = _hello(http, link)
     proj = net.project_row(slug)
     cfg = json.loads(proj["config"])
@@ -1171,6 +1188,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     from .. import consoles
 
     http = client or httpx.Client(timeout=httpx.Timeout(60, connect=15))
+    _join_progress(log, "Connecting to the host")
     url, code, hello = _hello(http, link)
     slug, _info = _linked_project(net, hello["sha1"], hello["room"])
     if slug:
@@ -1182,6 +1200,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
         return _join_fork(net, http, url, code, hello, name, rom, log, client, start)
     if isinstance(rom, Path):
         rom = rom.read_bytes()
+    _join_progress(log, "Checking your game matches the host")
     picked = consoles.identify(rom).read_game(rom)
     if picked.info["sha1"] != hello["sha1"]:
         raise NetworkError(f"this ROM isn't the same as the host's: the room is for {hello['title']} "
@@ -1190,6 +1209,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
     # #80: import before joining, so a join the host refuses (a bad name) or a guest that quits while the game is
     # split never leaves a member behind on the host. An import that was already there stays if the join fails.
     before = {p["slug"] for p in net.store.all("SELECT slug FROM projects")}
+    _join_progress(log, "Opening your local project")
     slug = net.import_rom(rom, toolchain=hello["compiler"]["toolchain"], flags=hello["compiler"]["flags"],
                           confirmed=True, log=log)
     try:
@@ -1230,6 +1250,7 @@ def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: h
                     room_link.sync()
                 except NetworkError as e:
                     log(f"Couldn't sync the room after sending saved progress: {e}")
+    _join_progress(log, "Finishing room setup")
     if start:
         room_link.run()
     log(f"linked as {joined['name']}: your agents now work with the room")
@@ -1271,6 +1292,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         headers = {"authorization": f"Bearer {joined['token']}", "x-room": hello["room"]}
         if joined.get("waiting"):  # the host's files come only to members it let in
             log("waiting for the host to let you in")
+            _join_progress(log, "Waiting for the host to approve your join")
             _wait_to_be_let_in(http, url, hello["room"], headers)
 
         def get_bundle(have: str) -> bytes:
@@ -1286,6 +1308,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         slug = net.forks._free_slug(re.sub(r"[^a-z0-9]+", "-", hello["title"].lower()).strip("-")[:40] or "room")
         dest = net.workspace / slug
         try:
+            _join_progress(log, "Receiving the host's project files")
             forkroom.clone(dest, hello, get_bundle, log=log)
             forkroom.register_member(net, slug, dest, hello, hello["title"])
         except BaseException:
@@ -1294,6 +1317,7 @@ def _join_fork(net, http: httpx.Client, url: str, code: str, hello: dict, name: 
         info = {"url": url, "room": hello["room"], "token": joined["token"], "member": joined["name"],
                 "host_title": hello["title"], "head": forkroom.head(dest)}
         room_link = net.link_project(slug, info, client=client, start=False)  # its agents wait for the room from the start
+        _join_progress(log, "Building the room project locally")
         log("building the project with your copy of the game and your tools")
         net.forks.setup(slug, game, game.name if tmp is None else "", log=log, move=tmp is not None)
         if candidates:

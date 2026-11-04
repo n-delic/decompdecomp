@@ -597,17 +597,25 @@ async function openRoomMatchReview() {
   const load=async () => {
     const data=await api('/api/collab/matches?slug='+encodeURIComponent(slug));
     box.innerHTML=`<p class="muted small">Client matches count on the host only after its own byte verification. Compiler profiles and private headers travel with new submissions. Older submissions can be recovered using bounded searches of installed host compilers.</p>
-      ${data.rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Why pending</th><th></th></tr></thead><tbody>${data.rows.map(r=>`<tr><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td>${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
+      ${data.rows.length ? `<div class="row"><button class="primary" type="button" data-retry-all-matches>Retry all · ${data.rows.length}</button></div><div class="project-peer-table"><table><thead><tr><th>Function</th><th>Agent</th><th>Why pending</th><th></th></tr></thead><tbody>${data.rows.map(r=>`<tr><td class="mono">${esc(r.function)}</td><td>${esc(r.agent)}</td><td>${esc(r.reason)}</td><td><button class="ghost small-btn" data-retry-match="${esc(r.key)}">Retry</button></td></tr>`).join('')}</tbody></table></div>` : '<p>No pending submissions.</p>'}
       <div class="row"><button class="ghost" data-refresh-matches>Refresh</button>${!data.guest ? '<button class="ghost" data-recover-matches>Recover older submissions</button>' : ''}</div><pre class="joblog" id="roomMatchLog" hidden></pre>`;
-    const run=async payload=>{
-      const log=box.querySelector('#roomMatchLog');log.hidden=false;
+    let retrying=false;
+    const run=async (payload,button)=>{
+      if(retrying)return;
+      retrying=true;
+      const log=box.querySelector('#roomMatchLog');log.hidden=false;log._showJobProgress=true;
+      const original=button.innerHTML;
       const done=beginWork(log,'Verifying saved room matches',[...box.querySelectorAll('button')]);
+      button.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Retrying…';
+      button.setAttribute('aria-busy','true');
       try { const {job}=await api('/api/collab/matches',{method:'POST',body:{slug,...payload}}); await followJob(job,log);await load(); }
-      catch(error){showJobError(log,error.message);}finally{done();}
+      catch(error){showJobError(log,error.message);}finally{done();button.innerHTML=original;button.removeAttribute('aria-busy');retrying=false;}
     };
-    box.querySelectorAll('[data-retry-match]').forEach(b=>{b.onclick=()=>run({key:b.dataset.retryMatch});});
+    box.querySelectorAll('[data-retry-match]').forEach(b=>{b.onclick=()=>run({key:b.dataset.retryMatch},b);});
+    const retryAll=box.querySelector('[data-retry-all-matches]');
+    if(retryAll)retryAll.onclick=()=>run({all:true},retryAll);
     box.querySelector('[data-refresh-matches]').onclick=()=>load().catch(e=>toast(e.message));
-    if(box.querySelector('[data-recover-matches]'))box.querySelector('[data-recover-matches]').onclick=()=>run({recover:true});
+    if(box.querySelector('[data-recover-matches]'))box.querySelector('[data-recover-matches]').onclick=(event)=>run({recover:true},event.currentTarget);
   };
   try{await load();}catch(error){box.textContent=error.message;}
 }
@@ -812,6 +820,7 @@ function openJoin(project = null) {
     <label class="field" ${project ? "hidden" : ""}><span>Your copy of the game: its path on this computer (it's read where it is)</span><span class="pick-row"><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="jPath" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="jOwn"><span>This is my own copy of this game, obtained legally. I'll keep what the room makes private.</span></label>
     <p class="muted small">A GameCube, Wii or PC project comes with its whole source tree from the host, and is then built here with your copy and your compilers: the first time takes a few minutes.</p>
+    <p class="muted small">If you have saved work, the host checks it before sharing it. This can take a few minutes; progress below shows the current stage and function.</p>
     <div class="row"><button class="primary" id="jGo" type="button" disabled>Join</button><span class="muted small" id="jWhy"></span></div><pre class="joblog" id="jLog" hidden></pre>`);
   const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: project || $("jPath").value.trim(), own: $("jOwn").checked });
   // the sentence waits until something is typed: a fresh dialog shouldn't open on a complaint
@@ -823,6 +832,7 @@ function openJoin(project = null) {
     if (joinProblem(fields())) return check();
     const log = body.querySelector("#jLog");
     showJobError(log, "");
+    log._showJobProgress = true;
     const finish = beginWork(log, "Joining room", [...body.querySelectorAll("input"), $("jGo")], "Joined the room.");
     try {
       // by its path, never through the page: a GameCube disc picked as a file turned the window black on Join

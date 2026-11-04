@@ -147,19 +147,27 @@ def register(app: App) -> None:
             def work(log):
                 if data.get('recover') and slug not in net.links:
                     log(f'Recovered {room_matches.recover_legacy(net,slug)} older submissions.')
-                rows=[r for r in room_matches.pending(net,slug) if not key or r['key']==key][:5]
-                matched=0
+                rows=[r for r in room_matches.pending(net,slug) if not key or r['key']==key]
+                if data.get('all') is not True:
+                    rows=rows[:5]
+                matched=failed=0
                 for index,row in enumerate(rows):
                     if getattr(log,'cancelled',False):break
+                    if hasattr(log,'progress'):log.progress({'finished':index,'total':len(rows),'phase':'Host verification','function':row['function']})
                     log(f"Verifying {row['function']} ({index+1}/{len(rows)})")
-                    if row['direction']=='client':
-                        if slug not in net.links:raise NetworkError('Reconnect to this room before resubmitting.')
-                        result=room_matches.resend(net.links[slug],row['key'])
-                    else:result=room_matches.retry(net,slug,row['key'])
-                    matched+=bool(result.get('matched'))
-                    log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
+                    try:
+                        if row['direction']=='client':
+                            if slug not in net.links:raise NetworkError('Reconnect to this room before resubmitting.')
+                            result=room_matches.resend(net.links[slug],row['key'])
+                        else:result=room_matches.retry(net,slug,row['key'])
+                        matched+=bool(result.get('matched'))
+                        log(result.get('reason') or ('Host confirmed match' if result.get('matched') else 'Still pending'))
+                    except (NetworkError,ValueError) as error:
+                        if data.get('all') is not True:raise
+                        failed+=1
+                        log(f"Could not verify {row['function']}: {error}")
                     if hasattr(log,'progress'):log.progress({'finished':index+1,'total':len(rows),'phase':'Host verification'})
-                return {'matched':matched}
+                return {'matched':matched,'failed':failed,'total':len(rows)}
             return JSONResponse({'job':jobs.start('room match verification',work)})
         except (NetworkError,ValueError) as error:return fail(error)
 
