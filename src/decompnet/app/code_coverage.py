@@ -8,13 +8,13 @@ LIMITS=('candidate_limit','mapping_limit','pointer_probe_limit','callback_scan_l
 def _view(net, proj, kind, build):
     # Target decoding is diagnostic work, not a per-poll scan. Function edits
     # invalidate the map revision; audit reviews and project mappings have their own keys.
-    from .view_snapshots import cache
     if getattr(net.store._local, 'in_tx', False):
         return build()
-    row = net.store.one('SELECT map_revision FROM project_totals WHERE project_id=?', proj['id'])
     audit = net.store.one('SELECT value FROM settings WHERE key=?', code_audit_reviews.key(proj['id']))
-    key = (kind, proj['id'], row['map_revision'] if row else None, proj['config'], audit['value'] if audit else None)
-    return cache(net).get(key, build, weight=lambda result: len(result) if isinstance(result, list) else 1)
+    version = (net.store.read_version('targets'), net.store.read_version('compiler_rows', proj['id']),
+               proj['config'], audit['value'] if audit else None)
+    return net.store.read_cache.get((kind, proj['id']), version, build)
+
 
 
 def boundaries(net, proj):

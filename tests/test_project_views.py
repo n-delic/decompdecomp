@@ -117,7 +117,7 @@ def test_full_map_refresh_does_not_reuse_old_attempt_or_claim_counts(tmp_path,mo
     with net.store.tx() as db:
         db.execute('UPDATE functions SET attempts=attempts+1')
     fresh=map_payload(net,'game')
-    assert fresh['sig']==first['sig']  # Ordinary polling still relies on incremental live attempts.
+    assert fresh['sig']!=first['sig']  # Row-change markers also cover attempt counts and claims.
     assert fresh['rows']!=first['rows'] and len(calls)==2
 
 

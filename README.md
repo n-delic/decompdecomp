@@ -1667,3 +1667,19 @@ C and assembly before generating a machine draft or loading history, calls, comp
 A separate status bar follows those details, with retry on failure. Imported projects show saved C first and
 then load their current source and object comparison. Late responses are scoped to the selected function and
 never overwrite unsaved edits. Existing full function API responses and the normal byte judge are unchanged.
+
+### Incremental history and map refreshes
+
+History readers track the latest correction for each attempt. Attaching score metadata to a new attempt no
+longer forces a full recount; corrections behind the reader's cursor, deletions and layout changes still rebuild
+results. Contributor summaries copy only changed nested records when extending a snapshot.
+
+Function maps retain immutable previous snapshots and reread changed function rows, falling back to full maps
+for structural or shared-evidence changes. Latest-row markers are retained per function rather than recording
+an unbounded stream of map events. Boundary analysis ignores score-only changes. SDK identity caches depend on
+fingerprints, naming metadata, selected libraries and inventory changes; imported objects keep a short expiry.
+Session handoffs use indexed lookups within the selected helper's project sessions.
+
+Slow-read logs now break out connection setup, Python lock waiting, SQL execution and row fetching. With
+`DECOMP_PERF=1`, these phases also appear in `Server-Timing`. Execution includes waiting within SQLite or the
+operating system; the lock-wait figure measures the app's Python lock only. Logs do not include SQL or bindings.

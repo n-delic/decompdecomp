@@ -7,11 +7,13 @@ from contextvars import ContextVar
 _current = ContextVar('request_timing', default=None)
 
 
-def sql_read(seconds):
+def sql_read(seconds, phases=None):
     current = _current.get()
     if current is not None:
         current['sql'] += seconds
         current['queries'] += 1
+        for name, value in (phases or {}).items():
+            current['sql_' + name] = current.get('sql_' + name, 0.) + value
 
 
 def response(work, queued_at, encode, label):
@@ -30,7 +32,7 @@ def response(work, queued_at, encode, label):
         _current.reset(token)
     queue = max(0, started - queued_at)
     result.headers['Server-Timing'] = ', '.join(f'{key};dur={value*1000:.3f}' for key, value in
-        [('queue', queue), ('work', built-started), ('sql', metrics['sql']), ('encode', encoded-built)])
+        [('queue', queue), ('work', built-started), ('sql', metrics['sql']), ('encode', encoded-built)] + [(k, metrics.get(k, 0.)) for k in ('sql_connection', 'sql_lock_wait', 'sql_execute', 'sql_fetch')])
     logging.getLogger('decompdecomp').info('UI timing %s queue=%.1fms work=%.1fms sql=%.1fms queries=%d encode=%.1fms',
         label, queue*1000, (built-started)*1000, metrics['sql']*1000, metrics['queries'], (encoded-built)*1000)
     return result

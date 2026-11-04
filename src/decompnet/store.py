@@ -470,6 +470,12 @@ class Store:
                               "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
         self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_baseline ON attempts(function_id,score,id)")
+        from .history_changes import install as install_history_changes
+        install_history_changes(self.conn)
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_history ON functions(project_id,id,n_insns)")
+        self._track_reads('functions', 'naming', 'name,meta,project_id')
+        from .map_changes import install as install_map_changes
+        install_map_changes(self.conn)
         self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
@@ -534,12 +540,14 @@ class Store:
 
     def _read(self, sql: str, args: tuple, single: bool):
         started = time.monotonic()
+        self._local.read_phases = {}
         try:
             return self._read_rows(sql, args, single)
         finally:
             elapsed = time.monotonic() - started
             from .request_timing import sql_read
-            sql_read(elapsed)
+            phases = self._local.read_phases
+            sql_read(elapsed, phases)
             if elapsed >= 0.25:
                 # Never log bindings or SQL text: either can contain private source or credentials.
                 key = hashlib.sha256(sql.encode()).hexdigest()[:12]
@@ -549,23 +557,31 @@ class Store:
                     self._slow_queries[key] = started
                     caller = sys._getframe(2)
                     logging.getLogger('decompdecomp').warning(
-                        'Slow database read %.3fs [%s] at %s:%s (%s)', elapsed, key,
-                        Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name)
+                        'Slow database read %.3fs [%s] at %s:%s (%s) connection=%.3fs lock_wait=%.3fs execute=%.3fs fetch=%.3fs', elapsed, key,
+                        Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name,
+                        *(phases.get(k, 0) for k in ('connection', 'lock_wait', 'execute', 'fetch')))
 
     def _read_rows(self, sql: str, args: tuple, single: bool):
+        started = time.perf_counter()
         conn = self._reader()
+        phases = self._local.read_phases
+        phases['connection'] = time.perf_counter() - started
+        def query(connection):
+            executing = time.perf_counter()
+            cur = connection.execute(sql, args)
+            phases['execute'] = time.perf_counter() - executing
+            fetching = time.perf_counter()
+            try:
+                return cur.fetchone() if single else cur.fetchall()
+            finally:
+                cur.close()
+                phases['fetch'] = time.perf_counter() - fetching
         if conn is None:
+            waiting = time.perf_counter()
             with self.lock:
-                cur = self.conn.execute(sql, args)
-                try:
-                    return cur.fetchone() if single else cur.fetchall()
-                finally:
-                    cur.close()
-        cur = conn.execute(sql, args)
-        try:
-            return cur.fetchone() if single else cur.fetchall()
-        finally:
-            cur.close()  # an open statement would hold its snapshot, and the log could never be checkpointed
+                phases['lock_wait'] = time.perf_counter() - waiting
+                return query(self.conn)
+        return query(conn)
 
     def one(self, sql: str, *args) -> sqlite3.Row | None:
         return self._read(sql, args, single=True)

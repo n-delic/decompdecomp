@@ -956,6 +956,10 @@ class Network:
 
     def sdk_functions(self, proj) -> dict:
         """Recorded SDK identities; identification is separate from a verified C match."""
+        return self.store.read_cache.get(('recorded-sdk', proj['id']), self.store.read_version('naming', proj['id']),
+                                         lambda: self._recorded_sdk_functions(proj))
+
+    def _recorded_sdk_functions(self, proj):
         out = {}
         for row in self.store.all("SELECT id,meta FROM functions WHERE project_id=? AND "
                                   "json_extract(meta, '$.naming.method')='sdk_signature'", proj["id"]):

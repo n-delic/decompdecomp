@@ -3,10 +3,11 @@
 A project revision detects appends, deletions, score corrections and function moves.
 The cache belongs to a Store, so separate homes cannot share project IDs or results.
 """
-import copy
 import threading
 import weakref
 from collections import defaultdict
+
+from ..history_changes import append_only
 
 _caches = weakref.WeakKeyDictionary()
 _lock = threading.Lock()
@@ -25,8 +26,9 @@ def summary(store, project):
         previous = cache.get(project)
         if previous and previous[0] == fingerprint:
             return previous[1]
-        incremental = previous is not None and previous[0][1] == fingerprint[1] and previous[1]['last_id'] is not None
-        state = copy.deepcopy(previous[1]) if incremental else {}
+        incremental = previous is not None and previous[1]['last_id'] is not None and append_only(store, project, previous[0], fingerprint, previous[1]['last_id'])
+        state = {k: dict(v) if isinstance(v, dict) else v for k, v in previous[1].items()} if incremental else {}
+        changed_agents, changed_functions = set(), set()
         agents = defaultdict(lambda: {'compiles': 0, 'worked': set(), 'improved': set(),
                                      'verified_improved': set(), 'last': None}, state.get('agents', {}))
         recency = state.get('recency', {})
@@ -40,12 +42,18 @@ def summary(store, project):
                 ' ORDER BY t.function_id,t.id', *args):
             last_id = row['id'] if last_id is None else max(last_id, row['id'])
             fid, aid, score = row['function_id'], row['agent_id'], row['score']
+            if incremental and aid not in changed_agents and aid in agents:
+                agents[aid] = {k: set(v) if isinstance(v, set) else v for k, v in agents[aid].items()}
+            changed_agents.add(aid)
             agent = agents[aid]
             agent['compiles'] += 1
             agent['worked'].add(fid)
             at = row['created_at']
             if at is not None:
                 agent['last'] = max(agent['last'] or at, at)
+            if incremental and fid not in changed_functions and fid in recency:
+                recency[fid] = dict(recency[fid])
+            changed_functions.add(fid)
             recent = recency.setdefault(fid, {'last_checked': None, 'last_improved': None})
             if at is not None:
                 recent['last_checked'] = max(recent['last_checked'] or at, at)

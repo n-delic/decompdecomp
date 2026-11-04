@@ -32,3 +32,13 @@ def test_timings_capture_sql_and_encoding_and_reset_after_error(tmp_path, monkey
         pass
     assert request_timing._current.get() is None
     store.conn.close()
+
+
+def test_timings_expose_connection_lock_execute_and_fetch(tmp_path, monkeypatch):
+    store = Store(tmp_path / 'phases.db')
+    monkeypatch.setenv('DECOMP_PERF', '1')
+    response = request_timing.response(lambda: dict(store.one('SELECT 1 AS n')), time.monotonic(), JSONResponse, '/api/test')
+    header = response.headers['Server-Timing']
+    assert all(name + ';dur=' in header for name in ('sql_connection', 'sql_lock_wait', 'sql_execute', 'sql_fetch'))
+    phases = store._local.read_phases
+    assert all(phases[name] >= 0 for name in ('connection', 'execute', 'fetch'))

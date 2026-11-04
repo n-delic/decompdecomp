@@ -28,8 +28,9 @@ def capture(net, agent, slug, since, session=None):
 
 def previous(net, helper, slug):
     try:
-        row = net.store.one("SELECT m.text FROM helper_messages m JOIN helper_sessions s ON s.id=m.session_id "
-                            "WHERE s.helper_id=? AND s.project=? AND m.kind='handoff' ORDER BY m.id DESC LIMIT 1", helper, slug)
+        row = net.store.one("SELECT m.text FROM helper_sessions s JOIN helper_messages m ON m.id=("
+                            "SELECT MAX(h.id) FROM helper_messages h WHERE h.session_id=s.id AND h.kind='handoff') "
+                            "WHERE s.helper_id=? AND s.project=? ORDER BY m.id DESC LIMIT 1", helper, slug)
     except sqlite3.OperationalError as error:
         if 'no such table' in str(error):
             return ''  # engine-only callers have no session/transcript service

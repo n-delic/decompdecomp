@@ -2,6 +2,8 @@
 import json
 import time
 
+from ..history_changes import append_only
+
 
 def results(net, slug, sessions):
     pid = net.project_row(slug)['id']
@@ -19,7 +21,7 @@ def results(net, slug, sessions):
         revision = tuple(revision) if revision else (0, 0)
         key = tuple(boundaries)
         old = None if transactional else cache.get('state')
-        incremental = old is not None and old['key'] == key and old['revision'][1] == revision[1]
+        incremental = old is not None and old['key'] == key and append_only(net.store, pid, old['revision'], revision, old['last'])
         if not incremental:
             old = {'key': key, 'revision': None, 'last': 0, 'best': {}, 'agents': {}}
         if old['revision'] != revision:

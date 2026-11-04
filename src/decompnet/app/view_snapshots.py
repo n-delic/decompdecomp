@@ -19,6 +19,8 @@ class Snapshots:
         self.lock = threading.Lock()
         self.ready = OrderedDict()
         self.pending = {}
+        self.maps = {}
+        self.map_locks = {}
 
     def get(self, key, build, weight=lambda value: 1, ttl=30):
         with self.lock:
@@ -89,7 +91,7 @@ def map_payload(net, slug, since=None, delta=False):
                                 "JOIN projects p ON p.id=f.project_id WHERE p.slug=? ORDER BY c.function_id",slug)
         link = net.links.get(slug)
         fingerprint = (tuple(freshness),tuple(tuple(c) for c in claims),repr(link.claims) if link else '')
-        rows = snapshots.get(('map',slug,sig,fingerprint),lambda:net.function_map(slug),weight=len)
+        rows = snapshots.get(('map',slug,sig,fingerprint),lambda:incremental_map(net, slug),weight=len)
     keys = list(rows[0]) if rows else []
     def arrays():
         return MapPayload(sig=sig,keys=keys,rows=[[r[k] for k in keys] for r in rows])
@@ -124,3 +126,38 @@ def persistent(store, key, version, build):
         db.execute('INSERT INTO read_snapshots VALUES(?,?,?) ON CONFLICT(key) DO UPDATE '
                    'SET version=excluded.version,value=excluded.value', (key, version, json.dumps(value)))
     return value
+
+
+def incremental_map(net, slug):
+    """Patch changed function rows, retaining full rebuilds for layout or shared evidence changes."""
+    snapshots = cache(net)
+    proj = net._project(slug)
+    pid = proj['id']
+    with snapshots.lock:
+        lock = snapshots.map_locks.setdefault(pid, threading.Lock())
+    with lock:
+        revision = net.store.one('SELECT revision FROM map_clock WHERE id=1')['revision']
+        shared = (net.store.read_version('targets'), net.store.read_version('fingerprints', pid),
+                  net.store.read_version('naming', pid), net.store.read_version('sdk_names'), proj['config'],
+                  repr(net.links[slug].claims) if slug in net.links else '')
+        old = snapshots.maps.get(pid)
+        rows = None
+        if old and old[0] == shared:
+            ids = [r['function_id'] for r in net.store.all(
+                'SELECT function_id FROM map_changes WHERE project_id=? AND revision>?', pid, old[1])]
+            positions = {r['id']: i for i, r in enumerate(old[2]) if 'id' in r}
+            if len(positions) == len(old[2]) and len(ids) < max(1, len(old[2]) // 2):
+                changed = net.function_map(slug, function_ids=ids) if ids else []
+                structural = ('name', 'vram', 'size', 'unit')
+                if len(changed) == len(ids) and all(r['id'] in positions and all(
+                    r[k] == old[2][positions[r['id']]][k] for k in structural) for r in changed):
+                    rows = list(old[2])
+                    for row in changed:
+                        rows[positions[row['id']]] = row
+        if rows is None:
+            rows = net.function_map(slug)
+        with snapshots.lock:
+            snapshots.maps[pid] = (shared, revision, rows)
+            while len(snapshots.maps) > 16:
+                snapshots.maps.pop(next(iter(snapshots.maps)))
+        return rows

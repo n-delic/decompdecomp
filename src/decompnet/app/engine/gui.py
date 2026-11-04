@@ -171,16 +171,18 @@ class GuiMixin:
             return {"role": "host", "members": self.rooms[slug].members(refresh=refresh)}
         return None
 
-    def function_map(self, slug: str) -> list[dict]:
+    def function_map(self, slug: str, *, function_ids=None) -> list[dict]:
         """Every function of the project for the map and the list; not one gone from the build (network.IN_BUILD: a
         piece joined to its function, kept for its attempts and notes), which the totals leave out too."""
         proj = self._project(slug)
+        subset = " AND f.id IN (SELECT value FROM json_each(?))" if function_ids is not None else ""
+        args = (proj['id'], json.dumps(function_ids)) if function_ids is not None else (proj['id'],)
         rows = self.store.all(
             "SELECT f.id, f.name, f.vram, f.size, f.n_insns, f.status, f.best_score, f.attempts, f.unit, f.matched_at, f.meta, "
             "f.readable, "
             "a.name AS agent, m.name AS matched_by FROM functions f LEFT JOIN claims c ON c.function_id=f.id "
             "LEFT JOIN agents a ON a.id=c.agent_id LEFT JOIN agents m ON m.id=f.matched_agent_id "
-            f"WHERE f.project_id=? AND f.{IN_BUILD} ORDER BY f.vram, f.unit, f.id", proj["id"])
+            f"WHERE f.project_id=? AND f.{IN_BUILD}" + subset + " ORDER BY f.vram, f.unit, f.id", *args)
         link = self.links.get(slug)
         # who works on what in the room: by address, or by name in a git project (its functions have no addresses)
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
@@ -193,7 +195,7 @@ class GuiMixin:
         from ..code_coverage import boundaries
         incomplete = {r["function"]: r["reason"] for r in boundaries(self, proj)}
         sdk = self.sdk_functions(proj)
-        return [{"cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
+        return [{"id": r["id"], "cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
                  "best": r["best_score"], "attempts": r["attempts"], "agent": r["agent"] or remote.get(key(r)),
                  "matched_at": r["matched_at"], "matched_by": r["matched_by"],
@@ -240,7 +242,8 @@ class GuiMixin:
         proj = self._project(slug)
         revision = self.store.one("SELECT map_revision FROM project_totals WHERE project_id=?", proj['id'])
         layout = self.store.one("SELECT revision FROM layout_revision WHERE id=1")['revision']
-        return f"{proj['id']}.{layout}.{revision['map_revision'] if revision else 'empty'}"
+        changed = self.store.one('SELECT COALESCE(MAX(revision),0) AS n FROM map_changes WHERE project_id=?', proj['id'])['n']
+        return f"{proj['id']}.{layout}.{revision['map_revision'] if revision else 'empty'}.{changed}"
 
     def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest

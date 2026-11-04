@@ -11,6 +11,15 @@ def identify(net, proj, recorded):
     Both ROM and imported projects use the target fingerprints cached by Twins.
     Nothing is written to project settings or counted as matching C.
     """
+    version = (net.store.read_version('fingerprints', proj['id']), net.store.read_version('sdk_names'),
+               repr(net.cfg(proj).get('sdk_libraries')))
+    discovered = net.store.read_cache.get(('sdk-identities', proj['id']), version,
+                                         lambda: _identify(net, proj), ttl=10 if net.cfg(proj).get('kind') == 'fork' else None)
+    return dict(recorded) | discovered
+
+
+def _identify(net, proj):
+    recorded = {}
     from .shared_reuse import machine
     processor, big = machine(net, proj)
     signatures = net.store.all("SELECT corpus,name,fingerprint,size FROM sdk_signatures WHERE arch=? AND big_endian=?",

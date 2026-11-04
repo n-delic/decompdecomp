@@ -165,6 +165,7 @@ SCHEMA = (
       cache_write_tokens INTEGER NOT NULL DEFAULT 0, tokens INTEGER NOT NULL DEFAULT 0,
       turns INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, compiles INTEGER NOT NULL DEFAULT 0,
       matches INTEGER NOT NULL DEFAULT 0, task TEXT NOT NULL DEFAULT '')""",
+    "CREATE INDEX IF NOT EXISTS idx_helper_sessions_handoff ON helper_sessions(helper_id,project,id)",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_worker ON helper_sessions(helper_id,agent,ended_at)",
 )
