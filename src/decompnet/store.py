@@ -458,11 +458,32 @@ class Store:
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_compiler_rows ON "
                           "functions(project_id,vram,id,name,size,n_insns,status)")
         self.conn.execute("CREATE TABLE IF NOT EXISTS read_snapshots(key TEXT PRIMARY KEY, version TEXT NOT NULL, value TEXT NOT NULL)")
-        for table, columns in (('functions', 'target,relocs,status,project_id'),
-                               ('projects', 'arch,big_endian,config'), ('symbols', None)):
-            self._track_reads(table, 'fingerprints', columns,
+        self.conn.execute('SAVEPOINT fingerprint_trigger_upgrade')
+        try:
+            # Replace the older broad config/preview triggers when upgrading an existing database.
+            for table in ('functions', 'projects', 'symbols'):
+                for event in ('insert', 'delete', 'update'):
+                    self.conn.execute(f'DROP TRIGGER IF EXISTS read_fingerprints_{table}_{event}')
+            self._track_reads('functions', 'fingerprints', 'target,relocs,status,project_id',
                 "OLD.target IS NOT NEW.target OR OLD.relocs IS NOT NEW.relocs OR OLD.project_id IS NOT NEW.project_id OR "
-                "(OLD.status='asm') != (NEW.status='asm')" if table == 'functions' else None)
+                "(OLD.status='asm') != (NEW.status='asm')")
+            self._track_reads('projects', 'fingerprints', 'arch,big_endian,config',
+                "OLD.arch IS NOT NEW.arch OR OLD.big_endian IS NOT NEW.big_endian OR "
+                "json_extract(OLD.config,'$.big_endian') IS NOT json_extract(NEW.config,'$.big_endian') OR "
+                "json_extract(OLD.config,'$.kind') IS NOT json_extract(NEW.config,'$.kind')")
+            self._track_reads('symbols', 'fingerprints', 'name,address,size,kind,project_id')
+        except BaseException:
+            self.conn.execute('ROLLBACK TO fingerprint_trigger_upgrade')
+            self.conn.execute('RELEASE fingerprint_trigger_upgrade')
+            raise
+        else:
+            self.conn.execute('RELEASE fingerprint_trigger_upgrade')
+        self._track_reads('symbols', 'scope_symbols', 'name,address,size,kind,project_id')
+        self._track_reads('context_versions', 'scope_context')
+        self._track_reads('cross_game_index', 'reuse_index')
+        self._track_reads('functions', 'matched_evidence', 'name,status,matched_source,project_id')
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_cross_game_compiler_size ON cross_game_index(compiler,size,project_id,fingerprint,function_id)')
+        self.conn.execute('CREATE INDEX IF NOT EXISTS idx_functions_matched_id ON functions(status,id)')
         # SDK inventory is global, unlike the project-owned tables tracked above.
         for event in ('INSERT', 'UPDATE', 'DELETE'):
             self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_sdk_inventory_{event} AFTER {event} ON sdk_signatures "

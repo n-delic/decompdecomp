@@ -112,6 +112,7 @@ class Room:
                 db.execute("UPDATE agents SET origin=?, token_hash=? WHERE id=?",
                            (self.origin + ":declined", "declined:" + secrets.token_hex(16), row["id"]))
         self._members = (0.0, [])
+        self._members_lock = threading.Lock()
 
     @property
     def cfg(self) -> dict:
@@ -164,9 +165,14 @@ class Room:
         at, cached = self._members
         if not refresh or time.time() - at < 3:
             return cached
-        out = self._members_now()
-        self._members = (time.time(), out)
-        return out
+        lock = self.__dict__.setdefault('_members_lock', threading.Lock())
+        with lock:
+            at, cached = self._members
+            if time.time() - at < 3:
+                return cached
+            out = self._members_now()
+            self._members = (time.time(), out)
+            return out
 
     def _members_now(self) -> list[dict]:
         # in the order they joined: each member's colour on every computer's screen (agents.js: computerColour)
@@ -181,17 +187,24 @@ class Room:
         from .history_summary import summary as history_summary
         history = history_summary(self.net.store, self.proj['id'])['agents']
         improvements = {}
-        for agent in self.net.store.all('SELECT id,owner FROM agents WHERE origin=? AND owner IS NOT NULL', self.origin):
+        children = self.net.store.all('SELECT id,name,owner FROM agents WHERE origin=? AND owner IS NOT NULL', self.origin)
+        by_owner = {}
+        for agent in children:
+            by_owner.setdefault(agent['owner'], []).append(agent)
             improvements.setdefault(agent['owner'], set()).update(history.get(agent['id'], {}).get('verified_improved', ()))
+        ids_json = json.dumps([a['id'] for a in children])
+        matched_by_agent = {r['matched_agent_id']:r['n'] for r in self.net.store.all(
+            'SELECT matched_agent_id,COUNT(*) AS n FROM functions WHERE project_id=? AND matched_agent_id IN '
+            '(SELECT value FROM json_each(?)) GROUP BY matched_agent_id', self.proj['id'], ids_json)}
+        working_by_agent = {}
+        for claim in self.net.store.all('SELECT c.agent_id,f.name FROM claims c JOIN functions f ON f.id=c.function_id '
+                                       'WHERE c.agent_id IN (SELECT value FROM json_each(?))', ids_json):
+            working_by_agent.setdefault(claim['agent_id'], []).append(claim['name'])
         out = []
         for r in rows:
-            agents = self.net.store.all("SELECT id, name FROM agents WHERE origin=? AND owner=?", self.origin, r["name"])
-            ids = [a["id"] for a in agents] or [-1]
-            matched = self.net.store.one(
-                f"SELECT COUNT(*) AS n FROM functions WHERE project_id=? AND matched_agent_id IN ({','.join('?' * len(ids))})", self.proj["id"], *ids)["n"]
-            working = [c["name"] for c in self.net.store.all(
-                f"SELECT f.name FROM claims c JOIN functions f ON f.id=c.function_id WHERE c.agent_id IN "
-                f"({','.join('?' * len(ids))})", *ids)]
+            agents = by_owner.get(r['name'], [])
+            matched = sum(matched_by_agent.get(a['id'], 0) for a in agents)
+            working = [name for a in agents for name in working_by_agent.get(a['id'], ())]
             out.append({"name": r["name"], "joined": r["created_at"], "last_seen": r["last_seen"],
                         "online": bool(r["last_seen"]) and time.time() - r["last_seen"] < 30,
                         "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "improved": len(improvements.get(r["name"], ())), "working": working})

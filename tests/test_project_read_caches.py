@@ -69,7 +69,7 @@ def test_captured_profiles_cache_extraction_across_flag_requests(tmp_path):
     net.store._reader().set_trace_callback(queries.append)
     assert captured(net, {'id': 1}, {'toolchain': 'gcc-test', 'flags': ['-O2']}) == [['-O1']]
     assert captured(net, {'id': 1}, {'toolchain': 'gcc-test', 'flags': ['-O1']}) == []
-    assert sum('SELECT json_extract(evidence' in q for q in queries) == 1
+    assert sum('FROM repair_profile_evidence' in q for q in queries) == 1
     with net.store.tx() as db:
         db.execute('UPDATE repair_examples SET evidence=?', (evidence(['-O3']),))
     assert captured(net, {'id': 1}, {'toolchain': 'gcc-test', 'flags': ['-O2']}) == [['-O3']]

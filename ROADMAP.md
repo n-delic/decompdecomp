@@ -2278,3 +2278,7 @@ bounded asynchronous CPU handoffs with cancellation and existing repair-trial hi
 - Done: correction-aware incremental history and agent counters, copy-on-write summary records, incremental
   map row reads with structural fallbacks, score-independent boundary/SDK caches, indexed worker handoffs,
   covering history metadata reads and separate database connection/lock/execute/fetch diagnostics.
+
+- Done: indexed metadata-first cross-project suggestion ranking, narrow and single-flight ROM fingerprint
+  invalidation, transactionally maintained compact profile evidence, coalesced/batched room members, shared
+  worker scope inputs and an LRU read cache that protects active builds from eviction.

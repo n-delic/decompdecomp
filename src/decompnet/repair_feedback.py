@@ -81,6 +81,8 @@ class RepairFeedback:
             for statement in SCHEMA:
                 db.execute(statement)
             self.store._track_reads('repair_examples', 'repair_profiles', 'evidence,project_id')
+            from .repair_profile_index import install
+            install(db)
             # Older automatic captures predate their implemented default. Preserve deliberate
             # reviews and agent annotations; only move untouched, provenance-backed captures.
             db.execute("UPDATE repair_examples SET status='implemented',review_note=? WHERE status='new' "

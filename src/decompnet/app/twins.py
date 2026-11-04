@@ -295,6 +295,7 @@ class Twins:
         self.net = net
         self._prints: dict[int, tuple[float, tuple | None, dict[int, Print]]] = {}  # (when, ROM layout, prints)
         self._index_stamps: dict[int, tuple] = {}
+        self._print_generations = defaultdict(int)
         self._index_lock = threading.Lock()  # full refresh and new matches cannot erase each other's rows
         self._lock = threading.Lock()
         self._queue: dict[int, set[int]] = defaultdict(set)  # project id -> newly matched functions to propagate
@@ -316,13 +317,14 @@ class Twins:
         if not fork and getattr(self.net.store._local, 'in_tx', False):
             return self._build_rom_prints(proj)  # Never publish values from a transaction that may roll back.
         layout = None if fork else self.net.store.read_version('fingerprints', proj['id'])
+        def build():
+            return self._fork_prints(proj) if fork else self._rom_prints(proj)
         with self._lock:
-            hit = self._prints.get(proj["id"])
-        if hit and (hit[1] == layout if layout is not None else time.time() - hit[0] < FORK_PRINTS_TTL):
-            return hit[2]
-        prints = self._fork_prints(proj) if fork else self._rom_prints(proj)
+            generation = self._print_generations[proj['id']]
+        prints = self.net.store.read_cache.get(('twin-prints', proj['id']), (fork, layout, generation), build,
+                                              ttl=FORK_PRINTS_TTL if fork else None)
         with self._lock:
-            self._prints[proj["id"]] = (time.time(), layout, prints)
+            self._prints[proj['id']] = (time.time(), layout, prints)
         return prints
 
     def _rom_prints(self, proj) -> dict[int, Print]:
@@ -330,7 +332,7 @@ class Twins:
         revision = self.net.store.read_version('fingerprints', proj['id'])
         def build():
             return {str(fid): asdict(p) for fid, p in self._build_rom_prints(proj).items()}
-        values = persistent(self.net.store, ('rom-fingerprints', proj['id']), (1, revision), build)
+        values = persistent(self.net.store, ('rom-fingerprints', proj['id']), (2, revision, self._print_generations[proj['id']]), build)
         return {int(fid): Print(**value) for fid, value in values.items()}
 
     def _build_rom_prints(self, proj) -> dict[int, Print]:
@@ -389,6 +391,7 @@ class Twins:
     def forget(self, proj) -> None:
         with self._lock:
             self._prints.pop(proj["id"], None)
+            self._print_generations[proj['id']] += 1
 
     # ------------------------------------------------------------------ who's whose twin
 
@@ -862,24 +865,31 @@ class Twins:
         hints += library_hints(self.net, proj, fn, limit)
         if proj["arch"] != "mips" or len(hints) >= limit:
             return finish(hints)
-        rows = self.net.store.all(
-            "SELECT i.*, f.name, f.target, f.vram, p.name AS game,p.arch,p.big_endian "
-            "FROM cross_game_index i JOIN functions f ON f.id=i.function_id AND f.status='matched' "
-            "JOIN projects p ON p.id=i.project_id WHERE i.project_id!=? AND p.arch=? AND p.big_endian=? "
-            "AND i.fingerprint!=? AND i.compiler=? AND i.size BETWEEN ? AND ? "
-            "ORDER BY ABS(i.size - ?) LIMIT 400",
-            proj["id"], proj["arch"], proj["big_endian"], target.key, compiler,
-            max(ACROSS_MIN_BYTES, int(target.size * .75)), int(target.size / .75), target.size)
-        if rows:
-            ops = similarity.mips_mnemonics(fn["target"], bool(proj["big_endian"]), fn["vram"] or 0)
-            candidates = {str(r["function_id"]): similarity.mips_mnemonics(
-                r["target"], bool(proj["big_endian"]), r["vram"] or 0) for r in rows
-                if r["target"]}
-            by_id = {str(r["function_id"]): r for r in rows}
-            for fid, score in similarity.rank(ops, candidates, top=limit, floor=.8):
-                r = by_id[fid]
-                hints.append({"name": r["name"], "game": r["game"], "score": round(score, 3),
-                              "kind": "similar code; unverified", "function_id": r["function_id"]})
+        def candidates():
+            # Limit indexed metadata before reading any target blobs. Sorting the old joined
+            # projection materialized code bytes for every size-compatible function.
+            rows = self.net.store.all("""WITH shortlist AS MATERIALIZED (
+                SELECT i.function_id,i.project_id,i.size FROM cross_game_index i INDEXED BY idx_cross_game_compiler_size
+                JOIN functions f INDEXED BY idx_functions_matched_id ON f.id=i.function_id AND f.status='matched'
+                JOIN projects p ON p.id=i.project_id
+                WHERE i.project_id!=? AND p.arch=? AND p.big_endian=? AND i.fingerprint!=?
+                AND i.compiler=? AND i.size BETWEEN ? AND ? ORDER BY ABS(i.size-?),i.function_id LIMIT 400)
+                SELECT s.function_id,f.name,f.target,f.vram,p.name AS game FROM shortlist s
+                JOIN functions f ON f.id=s.function_id JOIN projects p ON p.id=s.project_id""",
+                proj['id'], proj['arch'], proj['big_endian'], target.key, compiler,
+                max(ACROSS_MIN_BYTES, int(target.size * .75)), int(target.size / .75), target.size)
+            ops = similarity.mips_mnemonics(fn['target'], bool(proj['big_endian']), fn['vram'] or 0)
+            by_id = {str(r['function_id']):r for r in rows}
+            decoded = {str(r['function_id']):similarity.mips_mnemonics(r['target'], bool(proj['big_endian']), r['vram'] or 0)
+                       for r in rows if r['target']}
+            return [{'name':by_id[fid]['name'], 'game':by_id[fid]['game'], 'score':round(score,3),
+                     'kind':'similar code; unverified', 'function_id':by_id[fid]['function_id']}
+                    for fid, score in similarity.rank(ops, decoded, top=limit, floor=.8)]
+        version = (self.net.store.read_version('reuse_index'), self.net.store.read_version('fingerprints'),
+                   self.net.store.read_version('matched_evidence'), self.net.store.read_version('project_list'))
+        # Keep only the strongest names/IDs/scores, never the 400 target blobs or decoded instruction lists.
+        hints += self.net.store.read_cache.get(('suggestion-shortlist', proj['id'], target.key, compiler, target.size, limit),
+                                              version, candidates)
         return finish(hints)
 
     def import_sdk_objects(self, path: Path, corpus: str) -> int:

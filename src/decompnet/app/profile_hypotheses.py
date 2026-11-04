@@ -62,12 +62,9 @@ def captured(net, proj, own):
 
 
 def _captured(net, proj):
-    # Extract compact fields in SQLite; do not transfer complete before/after C to Python.
-    rows = net.store.all("SELECT json_extract(evidence,'$.after.settings.compiler') profile, "
-        "json_extract(evidence,'$.before.source_sha256') before_hash, "
-        "json_extract(evidence,'$.after.source_sha256') after_hash FROM "
-        "(SELECT evidence FROM repair_examples WHERE project_id=? ORDER BY id DESC LIMIT 128) "
-        "WHERE json_valid(evidence)", proj['id'])
+    # Maintained when evidence changes, so hypothesis reads never parse historical C JSON.
+    rows = net.store.all('SELECT profile,before_hash,after_hash FROM repair_profile_evidence '
+                         'WHERE project_id=? ORDER BY example_id DESC LIMIT 128', proj['id'])
     profiles = []
     for row in rows:
         try:

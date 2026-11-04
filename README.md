@@ -1698,3 +1698,19 @@ Session handoffs use indexed lookups within the selected helper's project sessio
 Slow-read logs now break out connection setup, Python lock waiting, SQL execution and row fetching. With
 `DECOMP_PERF=1`, these phases also appear in `Server-Timing`. Execution includes waiting within SQLite or the
 operating system; the lock-wait figure measures the app's Python lock only. Logs do not include SQL or bindings.
+
+### Suggestion and worker evidence reads
+
+Cross-project name suggestions shortlist indexed metadata before fetching target bytes. Only the strongest
+ranked names/IDs/scores are cached; source details remain a separate final-result lookup. ROM fingerprints
+ignore compiler/room settings and symbol previews, rebuild for actual byte/relocation/name/ABI inputs, and share
+concurrent builds. Explicit refreshes and imported-object expiry still apply.
+
+Repair examples maintain a compact compiler-profile projection transactionally, including migration of existing
+evidence, updates and deletion. Profile reads retain the newest-128-example scope without parsing full source
+JSON. Room member requests share a three-second refresh and batch worker, match and claim lookups.
+
+Worker candidate scopes reuse revision-tracked headers, symbol indexes and hashed matched-callee evidence.
+Transactions bypass these caches, and external imported-project dependencies keep their fresh file checks.
+The bounded shared cache retains recently used entries and never evicts an active build. None of these caches
+accepts a match: the normal compiler and byte judge remain authoritative.
