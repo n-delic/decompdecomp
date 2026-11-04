@@ -1285,9 +1285,8 @@ inherit the global defaults. Global initial templates are separate for ROM work,
 projects and polishing. Use the displayed placeholders, and double literal braces as
 `{{` / `}}` in initial-prompt templates. App instructions are literal text.
 
-Preview shows the proposed text without saving; an agent preview expands project values
-and includes its current continuation context. Restore built-in defaults globally or use
-global defaults for one agent. Changes apply to its next session. Project instructions,
+Save prompts applies changes to new sessions. Restore built-in defaults removes global overrides;
+individual agents can return to the global defaults. Project instructions,
 guides and handoff context are still appended to the initial prompt. App instructions are
 decompdecomp’s MCP/API instructions, not the CLI provider’s private system prompt.
 Effective session text is recorded in transcripts; prompt profiles distinguish efficiency cohorts.

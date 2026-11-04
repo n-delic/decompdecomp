@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 
-def test_prompt_editor_inheritance_preview_save_reset_and_errors():
+def test_prompt_editor_inheritance_save_reset_and_errors():
     node = shutil.which('node')
     if not node:
         pytest.skip('needs node')

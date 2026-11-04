@@ -1424,8 +1424,6 @@ th[aria-sort="ascending"] .table-sort, th[aria-sort="descending"] .table-sort { 
 .deep-activity-controls { display:flex; flex-wrap:wrap; align-items:center; gap:20px; margin:12px 0; }
 .deep-activity-controls label { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
 .deep-worker[hidden] { display:none; }
-.prompt-setting { margin-bottom:20px; }
-.prompt-setting textarea { width:100%; box-sizing:border-box; font:12px/1.6 var(--mono); resize:vertical; }
 
 .agent-results-summary { flex-wrap:wrap; }
 
@@ -1547,18 +1545,25 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 #agentsPage .ag-cols > .panel { min-width: 0; margin: 0; }
 
 /* Prompt editors use the shared disclosure header, with controls inside the expanded body. */
-.prompt-setting { margin-bottom: 12px; }
-.prompt-setting > summary h3 { font-size: 13.5px; font-weight: 650; margin: 0; }
-.prompt-setting > summary { gap: 10px; flex-wrap: wrap; }
-.prompt-setting > summary::before { margin-right: 2px; }
-.prompt-setting-body { padding: 16px; display: grid; gap: 12px; }
-.prompt-setting-body > p { margin: 0; line-height: 1.6; }
-.prompt-setting-body > .check { border: 0; padding: 0; background: transparent; }
-.prompt-setting textarea { min-height: 220px; max-height: 65vh; padding: 12px; }
-
-.prompt-setting .disclosure-context { font-weight: 400; }
-.prompt-setting textarea { border: 1px solid var(--line); border-radius: var(--r); background: var(--paper); color: var(--ink); }
-.prompt-setting textarea:focus-visible { outline: 2px solid var(--hl); outline-offset: 2px; }
+.prompt-setting { margin-bottom:10px; overflow:hidden; }
+.prompt-setting > .panel-head { padding:14px 18px; gap:12px; }
+.prompt-setting > .panel-head h3 { flex:1; margin:0; font-size:14px; }
+.prompt-setting-status { flex-shrink:0; border:1px solid var(--line); border-radius:4px;
+  padding:3px 8px; font-size:11px; font-weight:500; color:var(--muted); }
+.prompt-setting-status[data-custom="true"] { color:var(--ink); background:color-mix(in srgb, var(--hl) 12%, transparent); }
+.prompt-setting-body { display:grid; gap:12px; padding:16px 18px 18px; border-top:1px solid var(--line); }
+.prompt-setting-body .check, .prompt-setting-body p { margin:0; }
+.prompt-setting-body .check { border:0; padding:0; }
+.prompt-setting-actions { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:20px;
+  padding-top:16px; border-top:1px solid var(--line); }
+.prompt-setting-actions > span { margin-left:auto; }
+@media (max-width:600px) { .prompt-setting-actions > span { margin-left:0; width:100%; } }
+.prompt-setting textarea { width:100%; box-sizing:border-box; font:12px/1.6 var(--mono); resize:vertical; }
+.prompt-setting > summary { flex-wrap:wrap; }
+.prompt-setting > summary::before { margin-right:2px; }
+.prompt-setting textarea { min-height:220px; max-height:65vh; padding:12px;
+  border:1px solid var(--line); border-radius:var(--r); background:var(--paper); color:var(--ink); }
+.prompt-setting textarea:focus-visible { outline:2px solid var(--hl); outline-offset:2px; }
 
 
 /* Reusable disclosure title + secondary context + compact trailing action. */
