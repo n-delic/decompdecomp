@@ -56,6 +56,9 @@ class FakeNet:
         self.priority, self.notes, self.events, self.applied = [], [], [], []
         self.sql, self.judged = [], []  # what was read, and what the judge was asked
         self.store = self
+        from decompnet.read_cache import ReadCache
+        self.read_cache = ReadCache(bypass=lambda: True)  # this scripted store has no revision triggers
+        self.read_version = lambda *args: 0
         self.rangechecks = RangeChecks(self)
         self.rangechecks.background = False
 

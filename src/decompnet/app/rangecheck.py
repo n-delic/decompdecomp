@@ -133,8 +133,9 @@ class RangeChecks:
     # ------------------------------------------------------------------ evidence
 
     def _rows(self, proj) -> list:
-        return self.net.store.all(f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL "
-                                  "ORDER BY vram", proj["id"])
+        return self.net.store.read_cache.get(('compiler-range-rows', proj['id']),
+            self.net.store.read_version('compiler_rows', proj['id']), lambda: self.net.store.all(
+                f"SELECT {ROW_COLUMNS} FROM functions WHERE project_id=? AND vram IS NOT NULL ORDER BY vram", proj['id']))
 
     @staticmethod
     def _at(rows, vram: int):

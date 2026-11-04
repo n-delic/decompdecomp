@@ -52,17 +52,32 @@ def captured(net, proj, own):
     Captures can change headers too. Frequency ranks a hypothesis, never proves the flag's effect.
     """
     if not hasattr(net,'repair_feedback'):return []
-    rows=net.store.all("SELECT evidence FROM repair_examples WHERE project_id=? ORDER BY id DESC LIMIT 128",proj['id'])
-    ranked={}
+    profiles = net.store.read_cache.get(('profile-hypotheses', proj['id']),
+        net.store.read_version('repair_profiles', proj['id']), lambda: _captured(net, proj))
+    ranked = {}
+    for toolchain, flags in profiles:
+        if toolchain == own['toolchain'] and list(flags) != list(own['flags']):
+            ranked[flags] = ranked.get(flags, 0) + 1
+    return [list(flags) for flags in sorted(ranked, key=lambda f: -ranked[f])[:2]]
+
+
+def _captured(net, proj):
+    # Extract compact fields in SQLite; do not transfer complete before/after C to Python.
+    rows = net.store.all("SELECT json_extract(evidence,'$.after.settings.compiler') profile, "
+        "json_extract(evidence,'$.before.source_sha256') before_hash, "
+        "json_extract(evidence,'$.after.source_sha256') after_hash FROM "
+        "(SELECT evidence FROM repair_examples WHERE project_id=? ORDER BY id DESC LIMIT 128) "
+        "WHERE json_valid(evidence)", proj['id'])
+    profiles = []
     for row in rows:
         try:
-            evidence=json.loads(row['evidence']);after=evidence['after'];before=evidence.get('before') or {}
-            profile=after['settings']['compiler']
-            if not isinstance(profile,dict) or profile.get('cmd') or profile.get('toolchain')!=own.get('toolchain'):continue
-            if not before or before.get('source_sha256')!=after.get('source_sha256'):continue
-            flags=profile.get('flags')
-            if not isinstance(flags,list) or not all(isinstance(f,str) for f in flags) or len(flags)>64:continue
-            if flags==list(own['flags']):continue
-            key=tuple(flags);ranked[key]=ranked.get(key,0)+1
-        except (ValueError,KeyError,TypeError):continue
-    return [list(flags) for flags in sorted(ranked,key=lambda f:-ranked[f])[:2]]
+            profile = json.loads(row['profile'])
+            if not isinstance(profile, dict) or profile.get('cmd') or row['before_hash'] is None or row['before_hash'] != row['after_hash']:
+                continue
+            flags = profile.get('flags')
+            if not isinstance(flags, list) or len(flags) > 64 or not all(isinstance(f, str) for f in flags):
+                continue
+            profiles.append((profile.get('toolchain'), tuple(flags)))
+        except (ValueError, TypeError):
+            continue
+    return profiles

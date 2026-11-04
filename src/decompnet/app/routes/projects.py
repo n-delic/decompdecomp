@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+import threading
 import time
 from pathlib import Path
 
@@ -163,6 +164,9 @@ def register(app: App) -> None:
         return {"job": jobs.start(
             "reimport", lambda log: net.reimport_rom(slug, path, confirmed=True, name=path.name, log=log))}
 
+    compiler_maintenance = {}
+    compiler_maintenance_lock = threading.Lock()
+
     def p_compilermap(slug, request, data):
         """The compiler answer (GET): which compiler built the game, and its parts; the app checks by itself when the
         answer is old. POST: check again now (the survey and the applied ranges)."""
@@ -174,7 +178,25 @@ def register(app: App) -> None:
             return {"job": jobs.start("installed compilers", lambda log: net.run_compiler_comparison(
                 slug, log=log, function=data.get("function", ""), untested_only=data.get("untested_only", True), flags_only=bool(data.get("flags_only", False)), auto_apply=data.get("auto_apply", False)),
                 cancel_message="Compiler comparison stopped. Completed results are saved.")}
-        return net.compiler_answer(slug, check_now=request.method == "POST")
+        if request.method == 'POST':
+            return net.compiler_answer(slug, check_now=True)
+        project = net.store.one('SELECT id FROM projects WHERE slug=?', slug)
+        version = net.store.read_version('inputs', project['id'] if project else None)
+        with compiler_maintenance_lock:
+            previous = compiler_maintenance.get(slug)
+            if previous is None or (not previous['running'] and (previous['version'] != version or time.monotonic()-previous['at'] > 60)):
+                state = {'version': version, 'at': time.monotonic(), 'running': True}
+                compiler_maintenance[slug] = state
+                def maintain():
+                    try:
+                        net.compiler_answer(slug)
+                    except Exception:
+                        jobs.logger.exception('Automatic compiler checks failed for %s', slug)
+                    finally:
+                        with compiler_maintenance_lock:
+                            state['running'] = False
+                threading.Thread(target=maintain, daemon=True, name=f'compiler-status-{slug}').start()
+        return net.compiler_answer(slug, display_only=True)
 
     def p_verification(slug, request, data):
         if data.get("paused"):

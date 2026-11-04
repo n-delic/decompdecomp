@@ -270,9 +270,10 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
     marks = lambda s: {r["name"]: (r["aside_mark"], r["gone_mark"]) for r in s.all("SELECT * FROM functions")}  # noqa: E731
     assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
     # a database from before the marks: its functions get theirs when it opens
-    for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'view_%'").fetchall():
+    for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND (name LIKE 'view_%' OR name LIKE 'read_%')").fetchall():
         store.conn.execute(f'DROP TRIGGER {row[0]}')
     store.conn.execute('DROP TABLE project_totals')
+    store.conn.execute('DROP INDEX idx_functions_deep_ready')
     store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
                              "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
                              "ALTER TABLE functions DROP COLUMN gone_mark")

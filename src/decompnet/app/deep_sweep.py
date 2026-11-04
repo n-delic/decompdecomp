@@ -6,7 +6,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from .. import candidate_scope, scoring
+from .. import candidate_scope, claim_stalls, scoring
 from ..network import IN_BUILD, NetworkError
 from . import agent_tokens, deep_permuter, workers
 from .deep_activity import Activity
@@ -41,6 +41,7 @@ class Sweeps:
         self.lock = threading.RLock()
         with net.store.tx() as db:
             db.execute(SCHEMA)
+            net.store._track_reads('deep_permutation_passes', 'passes')
             db.execute('''CREATE TABLE IF NOT EXISTS deep_permutation_recipes(
                 function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE, family TEXT NOT NULL,
                 tested INTEGER NOT NULL, skipped INTEGER NOT NULL, rejected INTEGER NOT NULL,
@@ -178,6 +179,11 @@ class Sweeps:
                              'new_percent_text': scoring.percent_text(row['new_percent'])} for row in rows]
 
     def attention(self, proj):
+        return self.net.store.read_cache.get(('deep-attention', proj['id']),
+            (self.net.store.read_version('inputs', proj['id']), self.net.store.read_version('passes', proj['id']), claim_stalls.repair_rules()),
+            lambda: self._attention(proj), ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(proj['slug']) else None)
+
+    def _attention(self, proj):
         """Only failures that still block this build's unchanged, eligible candidates."""
         rows = self.net.store.all(
             'SELECT f.*,d.scope AS pass_scope,d.error AS pass_error,d.minutes AS pass_minutes, '
@@ -220,13 +226,9 @@ class Sweeps:
         # Matching the current build can inspect project files. Cache the result briefly so opening
         # details or polling a running pass does not repeatedly hash every completed function.
         ready = counts['ready'] or 0
-        cache_key = (proj['id'], cfg['minutes'], cfg['max_variants'])
         with self.lock:
-            cached = self.queue_cache.get(cache_key)
             current = dict(self.active.get(slug, {}))
-        if cached and cached[0] > time.monotonic():
-            done_open, done_matched, rotated, blocked = cached[1:]
-        else:
+        def count_queue():
             done_open = done_matched = rotated = blocked = 0
             rows = self.net.store.all("""SELECT f.*,d.scope AS pass_scope,d.minutes AS pass_minutes,
                 d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
@@ -243,8 +245,11 @@ class Sweeps:
                     elif row['status'] == 'open':
                         rotated += int(row['pass_state'] == 'rotated')
                         blocked += int(row['pass_state'] == 'error')
-            with self.lock:
-                self.queue_cache[cache_key] = (time.monotonic() + QUEUE_CACHE_SECONDS, done_open, done_matched, rotated, blocked)
+            return done_open, done_matched, rotated, blocked
+        done_open, done_matched, rotated, blocked = self.net.store.read_cache.get(
+            ('deep-queue', proj['id']),
+            (cfg['minutes'], cfg['max_variants'], self.net.store.read_version('inputs', proj['id']), self.net.store.read_version('passes', proj['id']), claim_stalls.repair_rules()),
+            count_queue, ttl=QUEUE_CACHE_SECONDS if self.net.fork_slug(slug) else None)
         job = self.jobs.jobs.get(current.get('job'), {})
         recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
         reset = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')

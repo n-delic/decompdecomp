@@ -37,6 +37,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     build_id = (build_info.commit() or updates.installed().get("commit") or "")[:12]  # a branch install: the commit it came from
     manager = agents.Manager(net, home, mcp_url)
     jobs = Jobs(home / "logs" / "decomp.log")
+    from .startup import StartupQueue
+    startup = StartupQueue(jobs.logger)
     from .deep_sweep import Sweeps
     net.deep_sweeps = Sweeps(net, jobs)
     from .source_queue import Queue
@@ -56,6 +58,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
 
     def quit_app() -> None:
         """Quit means quit: the window, every helper with everything it started, then the server."""
+        startup.close()
         window.close_app()
         net.deep_sweeps.shutdown()
         manager.shutdown()
@@ -118,21 +121,24 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     net.restore_links()
 
     from .routes import pairing
-    from .sdk_names import name_projects
-    threading.Thread(target=lambda: name_projects(net), daemon=True, name="sdk-names").start()
-
-    def consoles_start() -> None:  # what each console does for its projects at start (Console.on_start)
-        for row in net.store.all("SELECT slug, config FROM projects"):
-            try:
-                cfg = json.loads(row["config"])
-                if cfg.get("kind") == "fork" and not cfg.get("platform"):
-                    row = net.forks.get(row["slug"])[0]  # recover metadata missing from older public imports
-                if net.is_rom(row):
-                    net.rangechecks.reopen(row["slug"])
-                net.console(row).on_start(net, row["slug"], log=jobs.logger.info)
-            except Exception:  # never stands between the user and the app
-                jobs.logger.exception("%s's console work at start failed", row["slug"])
-    threading.Thread(target=consoles_start, daemon=True, name="consoles-start").start()
+    from .sdk_names import name_functions
+    def console_start(slug):
+        row = net.project_row(slug)
+        cfg = json.loads(row['config'])
+        if cfg.get('kind') == 'fork' and not cfg.get('platform'):
+            row = net.forks.get(slug)[0]
+        if net.is_rom(row):
+            net.rangechecks.reopen(slug)
+        net.console(row).on_start(net, slug, log=jobs.logger.info)
+    startup_projects = list(net.store.all('SELECT slug FROM projects'))
+    startup_projects.sort(key=lambda r: r['slug'] != settings.data.get('last_project'))
+    for row in startup_projects:
+        slug = row['slug']
+        startup.add(f'Console startup {slug}', lambda slug=slug: console_start(slug))
+    for row in startup_projects:
+        slug = row['slug']
+        startup.add(f'SDK names {slug}', lambda slug=slug: name_functions(net, slug))
+    startup.start()
     saves.Autosave(net).start()  # follow work and contributions in each ROM project's authoritative progress folder
 
     def options_now(kind: str, options: dict) -> dict | None:
@@ -224,6 +230,8 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         if getattr(jobs, 'source_update_preparing', False) and request.url.path not in (
                 '/api/update/runtime', '/api/close', '/api/log'):
             return JSONResponse({'error':'Preparing the source runtime. Wait for restart; no new operations can start.'}, status_code=503)
+        if request.url.path in ('/api/project', '/api/function', '/api/map', '/api/compilermap'):
+            startup.touch()
         return None
 
     async def body(request: Request) -> dict:
@@ -256,6 +264,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
         return JSONResponse({"error": str(e)}, status_code=code)
 
     def before_restart() -> None:  # helpers stop now and resume in the new version; the window closes with the process
+        startup.close()
         net.deep_sweeps.shutdown()
         manager.shutdown()
         flush_progress()

@@ -1,6 +1,7 @@
 """Keep automatic workers from passing an unchanged failed candidate around indefinitely."""
 import hashlib
 import json
+from functools import lru_cache
 from pathlib import Path
 
 VERSION = 'local-repairs-v21'
@@ -23,9 +24,16 @@ def repair_rules():
 
 def file_digest(path):
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        stamp = path.stat()
+        return _code_digest(path, stamp.st_mtime_ns, stamp.st_ctime_ns, stamp.st_size, stamp.st_ino)
     except OSError:
         return 'unavailable'
+
+
+@lru_cache(maxsize=512)
+def _code_digest(path, mtime, ctime, size, inode):
+    # Only implementation files use this cache; game/header byte verification is unchanged.
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def signature(net, proj, fn, common=None):

@@ -604,7 +604,7 @@ class CompilerMixin:
         own = self.cfg(proj).get("auto_compiler")
         return self.auto_compiler if own is None else bool(own)
 
-    def compiler_answer(self, slug: str, check_now: bool = False) -> dict:
+    def compiler_answer(self, slug: str, check_now: bool = False, *, display_only=False) -> dict:
         """Which compiler built the game, as one answer for the GUI: the project's compiler, the parts built with
         another one (each with what checking it said), and the stretches whose code looks like another compiler's
         that nothing applies yet. The app does the checking itself: the judge's survey runs in the background when
@@ -615,7 +615,7 @@ class CompilerMixin:
             files = self.filecompilers
             if files.applies(slug):  # the survey and the checks, as below, over its files (app/filecompilers.py)
                 last = self.cfg(self._project(slug)).get("file_survey") or {}
-                if len(files.candidates(slug)) > 1 and (check_now or time.time() - (last.get("t") or 0) >
+                if not display_only and len(files.candidates(slug)) > 1 and (check_now or time.time() - (last.get("t") or 0) >
                                                          self.SURVEY_AGAIN_SECONDS):
                     files.start_survey(slug)
                 if check_now:
@@ -631,10 +631,10 @@ class CompilerMixin:
         if cmap is not None:
             last = cfg.get("compiler_survey") or {}
             several = len({main} | {(r["toolchain"], tuple(r["flags"])) for r in ranges}) > 1  # (one compiler: nothing to try)
-            if several and state.get("state") != "running" and (check_now or time.time() - (last.get("t") or 0) > self.SURVEY_AGAIN_SECONDS):
+            if not display_only and several and state.get("state") != "running" and (check_now or time.time() - (last.get("t") or 0) > self.SURVEY_AGAIN_SECONDS):
                 state = self.start_survey(slug)
             audited = {(tuple(map(tuple, c["spans"])), c["toolchain"]) for c in cfg.get("range_checks", []) if c.get("audit")}
-            if ranges and (check_now or any((((r["start"], r["end"]),), r["toolchain"]) not in audited for r in ranges)):
+            if not display_only and ranges and (check_now or any((((r["start"], r["end"]),), r["toolchain"]) not in audited for r in ranges)):
                 self.rangechecks.audit(proj)
                 cfg = self.cfg(self._project(slug))
         checks = [dict(c) for c in cfg.get("range_checks", [])]
@@ -645,7 +645,7 @@ class CompilerMixin:
                     c["said"] = self.rangechecks.waiting_reason(c, rows)
         audits = {tuple(map(tuple, c["spans"])): c for c in checks if c.get("audit")}
         parts = []
-        function_rows = self.store.all("SELECT name,vram,status FROM functions WHERE project_id=? AND vram IS NOT NULL", proj["id"])
+        function_rows = self.rangechecks._rows(proj)
         for r in ranges:
             c = audits.get(((r["start"], r["end"]),)) or {}
             parts.append({"start": r["start"], "end": r["end"], "compiler": consoles.compiler_name(r["toolchain"]),
@@ -653,7 +653,7 @@ class CompilerMixin:
                           "default": (r["toolchain"], tuple(r["flags"])) == main,
                           "family": toolchains.compiler_family(r["toolchain"]) or r["toolchain"],
                           "functions": sum(r["start"] <= f["vram"] < r["end"] for f in function_rows),
-                          "function_list": [dict(f) for f in function_rows if r["start"] <= f["vram"] < r["end"]],
+                          "function_list": [{k: f[k] for k in ("name", "vram", "status")} for f in function_rows if r["start"] <= f["vram"] < r["end"]],
                           "check": c.get("status", ""), "said": c.get("said", "")})
         elsewhere = sorted((r for r in (cmap.runs if cmap else []) if r.differs()), key=lambda r: -r.functions)
         def uses_default(fn):

@@ -13,6 +13,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from .read_cache import ReadCache
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, owner TEXT, token_hash TEXT UNIQUE NOT NULL,
@@ -439,9 +441,53 @@ class Store:
         install_views(self.conn)
         # what the last run left in the log goes into the database now, and the log starts empty
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS read_revisions(kind TEXT PRIMARY KEY, revision INTEGER NOT NULL)")
+        self.read_cache = ReadCache(lambda: getattr(getattr(self, '_local', None), 'in_tx', False))
+        for table, columns in (
+                ('functions', 'target,relocs,asm,seed,name,unit,vram,n_insns,size,status,best_source,best_score,matched_source,meta,project_id,gone_mark,aside_mark'),
+                ('projects', 'config,arch,big_endian,root'), ('symbols', None), ('context_versions', None)):
+            self._track_reads(table, 'inputs', columns)
+        self._track_reads('functions', 'targets', 'target,status,project_id,gone_mark,aside_mark',
+            "OLD.target IS NOT NEW.target OR OLD.project_id IS NOT NEW.project_id OR "
+            "OLD.gone_mark IS NOT NEW.gone_mark OR OLD.aside_mark IS NOT NEW.aside_mark OR "
+            "(OLD.status='asm') != (NEW.status='asm')")
+        self._track_reads('projects', 'targets', 'arch,big_endian')
+        self._track_reads('functions', 'compiler_rows', 'name,vram,size,n_insns,status,project_id')
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_deep_ready ON "
+                          "functions(project_id,status,gone_mark,(best_source IS NOT NULL),best_score)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_compiler_rows ON "
+                          "functions(project_id,vram,id,name,size,n_insns,status)")
         self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
+
+    def _track_reads(self, table, kind, columns=None, condition=None):
+        """Internal schema names only. Revisions commit/roll back with their source changes."""
+        for event in ('INSERT', 'DELETE', 'UPDATE'):
+            clause = f'UPDATE OF {columns}' if event == 'UPDATE' and columns else event
+            if event == 'UPDATE' and columns and condition is None:
+                condition_sql = ' OR '.join(f'OLD.{c} IS NOT NEW.{c}' for c in columns.split(','))
+            else:
+                condition_sql = condition if event == 'UPDATE' else None
+            when = f'WHEN {condition_sql}' if condition_sql else ''
+            records = ('NEW', 'OLD') if event == 'UPDATE' else (('NEW',) if event == 'INSERT' else ('OLD',))
+            def project(record):
+                if table == 'projects':
+                    return f'{record}.id'
+                if table == 'deep_permutation_passes':
+                    return f'(SELECT project_id FROM functions WHERE id={record}.function_id)'
+                return f'{record}.project_id'
+            affected = ' UNION '.join(f'SELECT {project(r)} AS pid' for r in records)
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_{kind}_{table}_{event.lower()} AFTER {clause} ON {table} {when} "
+                f"BEGIN INSERT INTO read_revisions VALUES('{kind}',1) "
+                "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; "
+                f"INSERT INTO read_revisions SELECT '{kind}:' || pid,1 FROM ({affected}) WHERE pid IS NOT NULL "
+                "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+
+    def read_version(self, kind, project=None):
+        key = kind if project is None else f'{kind}:{project}'
+        row = self.one('SELECT revision FROM read_revisions WHERE kind=?', key)
+        return row['revision'] if row else 0
 
     @contextmanager
     def tx(self):

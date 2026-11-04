@@ -549,6 +549,25 @@ def test_queue_separates_rotated_errors_and_removed_functions(sweep):
     assert calls == []
 
 
+def test_status_reuses_scope_checks_until_header_or_pass_changes(sweep, monkeypatch):
+    obj, net, _, _ = sweep
+    obj.save('game', {'enabled': False, 'minutes': 1, 'max_variants': 10})
+    obj.run('game', 1, 10, Log())
+    calls = []
+    original = deep_sweep.signature
+    def measured(*args):
+        calls.append(1)
+        return original(*args)
+    monkeypatch.setattr(deep_sweep, 'signature', measured)
+    obj.status('game')
+    first = len(calls)
+    obj.status('game')
+    assert len(calls) == first
+    with net.store.tx() as db:
+        db.execute("INSERT INTO context_versions(project_id,version,unit,header,created_at) VALUES(1,1,'','/* declaration edit */',0)")
+    obj.status('game')
+    assert len(calls) > first
+
 def test_queue_batches_state_and_loads_fresh_function_at_dispatch(sweep, monkeypatch):
     obj, net, calls, _ = sweep
     reads=[]
