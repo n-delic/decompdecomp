@@ -15,6 +15,7 @@ async function openProject(slug, tab = "overview") {
   show("project");
   const gen = ++S.gen;
   S.ov = null; S.fnDetail = null; S.fn = null; S.tab = tab;
+  $("codeCoveragePanel").hidden=true;
   $("project").setAttribute("data-loading", "");
   $("project").setAttribute("aria-busy", "true");
   $("projectLoading").hidden = false;
@@ -427,9 +428,10 @@ function renderStats(ov) {
   $("pctSub").textContent = (ov.bytes ? `${bytes(ov.matched_bytes)} of ${bytes(codeBytes(ov))}` : "") + linkedText(ov) + (S.today ? ` · ${S.today} matched today` : "");
   if (ov.status_breakdown?.total_bytes) {
     const b=ov.status_breakdown;
-    $("pctSub").textContent += ` · ${pctNum(100*b.exact_c_bytes/b.total_bytes)}% of all code bytes in C (including assembly in the total)`;
+    $("pctSub").textContent += ` · ${pctNum(100*b.exact_c_bytes/b.total_bytes)}% of detected code bytes in C (including assembly in the total)`;
   }
   $("fnCount").textContent = `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()}`;
+  renderCodeCoverage(ov);
   const coverageNotes = ov.coverage_notes || [];
   $("coverageNotice").hidden = !coverageNotes.length;
   $("coverageNotice").textContent = coverageNotes.join(" ");
@@ -511,7 +513,7 @@ function renderCompilerNotice(ov) {
 }
 
 function fnCounts() {
-  const c = { matched: 0, working: 0, tried: 0, open: 0, asm: 0 };
+  const c = { matched: 0, working: 0, tried: 0, open: 0, asm: 0, boundary: 0 };
   for (const f of S.map) c[fnState(f)]++;
   return c;
 }
@@ -521,13 +523,13 @@ function renderOverview() {
   if (!S.ov || S.tab !== "overview") return;
   const c = fnCounts(), total = Math.max(1, S.map.length);
   const seg = (k, cls) => (c[k] ? `<i class="${cls}" data-w="${(100 * c[k]) / total}" title="${c[k]} ${k === "open" ? "to do" : k}"></i>` : "");
-  $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("open", "s-open");
+  $("fnStack").innerHTML = seg("matched", "s-match") + seg("working", "s-work") + seg("tried", "s-tried") + seg("asm", "s-asm") + seg("boundary", "s-work") + seg("open", "s-open");
   setWidths($("fnStack"));
   const togo = cFunctions(S.ov) - S.ov.matched;
   $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
   if (S.ov.status_breakdown) {
     const b=S.ov.status_breakdown;
-    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${b.other_assembly.toLocaleString()} other assembly · ${b.open.toLocaleString()} open${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
+    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${b.other_assembly.toLocaleString()} other set-aside entries · ${b.open.toLocaleString()} open${c.boundary ? ` · ${c.boundary} require boundary review (included in saved counts)` : ""}${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
     $("fnSub").title="Verified source assembly is checked against supplied local source. Other assembly includes unverified fallbacks. Zero open functions does not mean 100% C.";
   }
 
@@ -581,6 +583,11 @@ function renderNext(ov) {
   const w = workingAgents();
   const done = ov.functions > 0 && ov.matched >= ov.functions;
   const compilerOk = ov.kind === "fork" || ov.compiler.installed;
+  if (ov.code_coverage?.queue_empty) {
+    box.hidden=false;
+    setHtml(box, `<div class="next-text"><b>Detected queue resolved — coverage still needs review.</b><span class="muted small">Raw bytes and incomplete boundaries may contain undiscovered functions. Use Code coverage review above; exporting an identical game does not establish complete source recovery.</span></div>`);
+    return;
+  }
   if (done) {
     box.hidden = false;
     setHtml(box, `<div class="next-text"><b>Every function matches.</b><span class="muted small">Export the project: a source tree that rebuilds your game byte for byte.</span></div><button class="primary small-btn" id="nextExport" type="button">Export</button>`);
@@ -1324,3 +1331,40 @@ window.addEventListener('decomp-reconnected', () => {
   if (!$("projectRetry").hidden) openProject(S.slug, S.tab);
   else if (S.ov) poll();
 });
+
+// Completion runs the bounded CPU audit once per layout revision in this page.
+// Failures remain visible and require an explicit retry, never a polling loop.
+const completionAuditAttempts=new Set();
+let coverageAuditRunning=false, coverageAuditSlug=null;
+function renderCodeCoverage(ov) {
+  const c=ov.code_coverage, panel=$("codeCoveragePanel"), box=$("codeCoverageSummary");
+  panel.hidden=!c;
+  if (!c) return;
+  $("coverageAuditLog").hidden=coverageAuditSlug!==ov.slug;
+  const states={required:"CPU coverage audit required",needs_review:"Coverage findings need review",no_pending_findings:"No pending findings in the bounded audit",unsupported:"Coverage audit is not supported for this project format yet"};
+  const entries=c.incomplete_entries || [];
+  setHtml(box, `<p><b>${esc(states[c.audit_state] || "Coverage not established")}</b> · ${esc(c.scope)}.</p><p class="small">${esc(c.note)}</p><p>${entries.length} incomplete / boundary-review entries · ${c.unresolved_candidates} unresolved raw-region candidates${c.raw_bytes!=null ? ` · ${bytes(c.raw_bytes)} raw gaps · ${bytes(c.interior_bytes)} unclassified segment interiors` : " · raw-region bytes not yet audited"}${c.search_limited ? " · search limits reached" : ""}.</p>${entries.length ? `<details><summary>Review incomplete entries (${entries.length})</summary>${entries.map(r=>`<p><button class="link-btn" data-coverage-function="${esc(r.function)}">${esc(r.function)}</button> · ${r.size} bytes · incomplete (saved status: ${esc(r.stored_status)})<br><span class="small">${esc(r.reason)}</span></p>`).join("")}</details>` : ""}`);
+  box.querySelectorAll("[data-coverage-function]").forEach(b=>b.onclick=()=>openFn(b.dataset.coverageFunction));
+  const button=$("coverageAuditBtn");button.hidden=!c.supported;
+  button.onclick=()=>runCoverageAudit();
+  const key=ov.slug+":"+c.audit_revision;
+  if (c.completion_audit_required && !coverageAuditRunning && !completionAuditAttempts.has(key)) {
+    completionAuditAttempts.add(key);
+    void runCoverageAudit();
+  }
+}
+async function runCoverageAudit() {
+  if (coverageAuditRunning) return;
+  coverageAuditRunning=true;coverageAuditSlug=S.slug;
+  const slug=S.slug, button=$("coverageAuditBtn"), log=$("coverageAuditLog");
+  const finish=beginWork(log,"Auditing code coverage",[button,$("codeAuditBtn")]);
+  try {
+    const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
+    const result=await followJob(job,log);
+    if (S.slug!==slug) return;
+    renderCodeAudit(result);
+    const ov=await api("/api/project?slug="+encodeURIComponent(slug));
+    if (S.slug!==slug) return;
+    S.ov=ov;renderStats(ov);renderNext(ov);
+  } catch(error) {showJobError(log,error.message);} finally {coverageAuditRunning=false;finish();}
+}

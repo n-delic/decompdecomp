@@ -1643,6 +1643,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .agent-note-content[open] .agent-note-text { margin-top:12px; }
 .agent-note-content > summary:focus-visible { outline:2px solid var(--hl); outline-offset:4px; }
 
+.st.boundary { background:var(--hl); color:var(--ink); }
+
 
 /* Repository sync: one purpose, one destination, and two clearly different outcomes. */
 .repository-sync { margin-top:22px; padding:18px; border:1px solid var(--line); border-radius:var(--r); background:var(--panel); }

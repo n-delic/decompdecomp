@@ -131,7 +131,8 @@ function applyAttempts(attempts) {
 function cellColor(f) {
   if (S.mapView === "compiler" && f.cc) return [colors.cc[ccIndex.get(f.cc) ?? 0], 1];
   if (f.status === "matched") return [f.polished ? colors.polished : colors.match, 1];
-  // set aside: red, as no C makes it; lighter when its shape told (assembly, a piece), full when agents agreed
+  if (f.analysis_state === "boundary_review") return [colors.work, 1];
+  // Set-aside assessments are not assembly provenance; incomplete extents stay yellow.
   if (f.status === "asm") return [colors.notC, f.not_c ? 1 : 0.45];
   if (f.best != null) return [mix(colors.tried, colors.hi, Math.pow(pctOf(f.best, f.insns) || 0, 3)), 1];
   return [colors.open, 1];
@@ -237,7 +238,7 @@ $("map").addEventListener("mousemove", (ev) => {
   if (i < 0) { tip.hidden = true; return; }
   const f = S.map[i];
   const p = pctOf(f.best, f.insns);
-  const status = f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
+  const status = f.analysis_state === "boundary_review" ? "incomplete extent — boundary review" : f.status === "matched" ? `matched${f.matched_by ? " by " + esc(f.matched_by) : ""}` : f.status === "working" ? `${esc(f.agent)} is on it` : f.best != null ? `best ${pctText(p)}` : "not started";
   const where = S.ov && S.ov.kind === "fork" ? esc(f.unit || "") : hex8(f.vram);
   const cc = f.cc ? `<br>looks built by ${esc(f.cc)}${f.ccx ? ", not its compiler today" : ""}` : "";
   tip.innerHTML = `<b>${esc(f.name)}</b><br>${where} · ${f.insns} instructions<br>${status}${cc}`;

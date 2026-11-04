@@ -199,6 +199,7 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
     and seconds when the rows weren't in memory). Every query they make on functions and events reads an index alone."""
     net = RomNetwork(tmp_path / "app.db", tmp_path)
     tiny_game(net)
+    net.overview("game")  # Cold diagnostics decode target boundaries once; repeated polls use the snapshot.
     asked = []
     read = net.store._read
     monkeypatch.setattr(net.store, "_read", lambda sql, args, single: asked.append((sql, args)) or read(sql, args, single))
@@ -209,7 +210,8 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
              for sql, args in asked if (" functions" in sql or " events" in sql)
              and not sql.startswith("SELECT a.outcome")
              and "json_type(meta,'$.verified_assembly')" not in sql}  # donor detail reads names, not just counts
-    assert len(plans) >= 2  # Summary totals and map revisions no longer scan functions.
+    assert plans  # Warm diagnostics, summary totals and map revisions no longer scan functions.
+    assert not any("target" in sql and "FROM functions" in sql for sql, _ in asked)
     for sql, plan in plans.items():
         steps = [step for step in plan if " functions" in step or " events" in step or " f " in step]
         assert steps and all("COVERING INDEX" in step for step in steps), (f"SQLite {sqlite3.sqlite_version}", sql, plan)

@@ -15,7 +15,7 @@ def revision(net,pid):
     proj=net.store.one('SELECT config FROM projects WHERE id=?',pid)
     cfg=json.loads(proj['config'])
     layout=[tuple(r) for r in net.store.all('SELECT name,vram,rom_offset,size FROM functions WHERE project_id=? ORDER BY id',pid)]
-    return hashlib.sha256(json.dumps([3,cfg.get('rom'),cfg.get('segments'),cfg.get('platform'),cfg.get('big_endian'),cfg.get('audit_data_mappings'),layout],sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([4,cfg.get('rom'),cfg.get('segments'),cfg.get('platform'),cfg.get('big_endian'),cfg.get('audit_data_mappings'),layout],sort_keys=True).encode()).hexdigest()
 
 
 def load(net,pid):

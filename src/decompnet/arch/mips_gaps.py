@@ -2,7 +2,7 @@
 from bisect import bisect_right
 from collections import Counter
 
-from .mips import JR_RA, is_frame, rabbitizer_category
+from .mips import JR_RA, boundary_reason, is_frame, rabbitizer_category
 
 MAX_STEPS = 4096
 MAX_CANDIDATES = 128
@@ -112,6 +112,18 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
             overflow=True;return None
         return candidates.setdefault(key,dict(rom_offset=offset,vram=target,gap_start=region[0],gap_end=region[1],
                                               region=region[2],evidence=evidence,incoming=[],pointer_references=[]))
+    boundary_candidates=[]
+    for fn in functions:
+        if fn.get('handwritten'):continue
+        reason=boundary_reason(image[fn['rom']:fn['rom']+fn['size']],big_endian)
+        if not reason:continue
+        offset=fn['rom']+fn['size'];target=fn['vram']+fn['size']
+        boundary_candidates.append({'function':fn['name'],'vram':fn['vram'],'rom_offset':fn['rom'],
+                                    'size':fn['size'],'continuation_offset':offset,'reason':reason})
+        row=seed(offset,target,'fallthrough from incomplete detected entry')
+        if row is not None:
+            row['incomplete_function']=fn['name']
+            row['incoming'].append({'function':fn['name'],'address':target-4,'kind':'fallthrough'})
     for fn in functions:
         if fn.get('handwritten'):continue  # microcode and kernel register conventions are not CPU-call evidence
         for at in range(fn['rom'],fn['rom']+fn['size']-3,4):
@@ -150,11 +162,11 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                 pointer_count+=1
                 if len(row['pointer_references'])<8:row['pointer_references'].append({'rom_offset':at,'value':value})
     # Quiet framed bodies with no incoming transfer are weaker hints; cap them separately.
-    hints=0
+    hints=0;hint_limit=False
     for lo,hi,region_name in regions:
         progress({'phase':'Auditing binary gaps','start':lo,'end':hi})
         for at in range((lo+3)&~3,hi-3,4):
-            if hints>=32:break
+            if hints>=32:hint_limit=True;break
             w=int.from_bytes(image[at:at+4],order)
             if not is_frame(w):continue
             for mapping in mapping_choices[:1]:
@@ -173,6 +185,6 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
     consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks)
     rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],r['rom_offset'],r['vram']))
     return {'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
-            'unresolved_callbacks':unresolved_callbacks,'callback_scan_limit':consumer_limit,'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
-            'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
+            'unresolved_callbacks':unresolved_callbacks,'callback_scan_limit':consumer_limit,'boundary_candidates':boundary_candidates,'interior_bytes':sum(b-a for a,b in interiors),'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
+            'hint_scan_limit':hint_limit,'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
             'note':'Review evidence only. Valid instructions, calls and returns can occur in data or microcode. No targets, statuses, source or compiler settings changed.'}

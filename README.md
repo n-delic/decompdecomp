@@ -31,6 +31,12 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Match through the live app
 
+Local MIPS ROM projects expose incomplete function boundaries and raw-region
+coverage separately from matching progress. When the detected queue empties, the
+overview runs a bounded CPU coverage audit; it never infers whole-game completion
+from an empty queue or a byte-identical build. See [code coverage review](docs/CODE_COVERAGE_REVIEW.md).
+
+
 [The live API workflow](docs/LIVE_API_WORKFLOW.md) shows how to use the existing judge, preserve attempt
 history, distinguish linking blockers from instruction differences, and synchronize a verified standalone build.
 Compiler preflight checks precede long ROM searches; typed SDK and structure-return hypotheses share the ordinary

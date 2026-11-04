@@ -5,10 +5,9 @@
   instead (allegrex_lines);
 - code no compiler makes (asm_reason): coprocessor 0 (the system: mfc0, mtc0, rfe, eret) or a console's coprocessor 2
   (the PS2's VU0: ctc2, mtc2, lwc2, cop2 commands), which C compilers never emit (C that drives VU0 does it with
-  inline asm, which decompdecomp doesn't take), or the Allegrex's VFPU; a system call (a kernel entry stub); code
-  that ends without a return or a jump and so runs on into the next function (an extra entry point into hand-written
-  code: the splitter cut it off); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
+  inline asm, which decompdecomp doesn't take), or the Allegrex's VFPU; a system call (a kernel entry stub); or a first block that reads a temporary register (at, v0, v1, t0-t9) or k0/k1 before setting it (compiled
   code gets its arguments in a0-a3);
+- incomplete extents (boundary_reason) are advisory flow/boundary findings, never assembly provenance;
 - where a stretch of code is loaded (place): its calls are absolute, so they say it. The N64's code segments that
   load later (consoles/n64/code.py) and the PS2's overlays (consoles/ps2/overlays.py) are both found this way.
 """
@@ -426,13 +425,39 @@ def prepared_call_arguments(assembly: str, callee: str) -> int:
 
 
 def boundary_reason(code: bytes, big_endian: bool = True, **_facts) -> str | None:
-    """A fall-through extent needs review, not an assembly verdict or an automatic pause."""
-    if not code or len(code)%4:
-        return None
-    words=[int.from_bytes(code[i:i+4],'big' if big_endian else 'little') for i in range(0,len(code),4)]
-    while len(words)>1 and not words[-1]:words.pop()
-    if not any(_mips_transfer(w) for w in words[-2:]):
-        return ('Target ends without a terminal return or jump. It may be truncated or a separate entry into a larger function. '
+    """Follow reachable direct flow: a call is not a terminal return; delay slots need bytes.
+
+    This only detects falling out of the supplied extent, not the historical
+    language. Indirect/tail jumps and closed loops are allowed, without proving
+    their destinations. Never extend a target from this advisory result.
+    """
+    if not code or len(code)%4 or not any(code):return None
+    order='big' if big_endian else 'little'
+    words=[int.from_bytes(code[i:i+4],order) for i in range(0,len(code),4)]
+    pending=[0];seen=set();incomplete=False
+    while pending and len(seen)<8192:
+        i=pending.pop()
+        if i in seen:continue
+        if i>=len(words):incomplete=True;break
+        if i<0:continue  # a tail branch into another known region is not fallthrough
+        seen.add(i);w=words[i];op,rs,rt,_,funct=fields(w)
+        branch=op in BRANCHES or op==REGIMM or (op==COP1 and rs==BC1)
+        jump=op in (J,JAL) or (op==SPECIAL and funct in (JR,JALR))
+        if not branch and not jump:
+            pending.append(i+1);continue
+        if i+1>=len(words):incomplete=True;break
+        if jump:
+            if op==JAL or (op==SPECIAL and funct==JALR):pending.append(i+2)
+            continue  # jr/j: terminal or tail transfer, not proof of a complete CFG
+        # Calls through REGIMM link instructions return to the fallthrough path.
+        if op==REGIMM and rt in (0x10,0x11,0x12,0x13):pending.append(i+2)
+        else:
+            dest=i+1+signed_immediate(w)
+            if 0<=dest<len(words):pending.append(dest)
+            unconditional=(op==BEQ and rs==rt) or (op==REGIMM and rs==ZERO and rt==BGEZ)
+            if not unconditional:pending.append(i+2)
+    if incomplete:
+        return ('Target falls through its extent or lacks a transfer delay slot. It may be truncated or a separate entry into a larger function. '
                 'Inspect adjacent original bytes and segment boundaries before spending candidate compiles; reimport or join proven pieces. '
                 'This is not proof of handwritten assembly. This warning does not pause the function or change its status.')
     return None

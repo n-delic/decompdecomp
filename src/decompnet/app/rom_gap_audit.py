@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .. import consoles
 from ..arch.mips_gaps import audit
-from ..network import NetworkError
+from ..network import IN_BUILD, NetworkError
 from ..rom.split import parse_function
 
 
@@ -17,10 +17,13 @@ def run(net,slug,log=print):
     from .code_audit_reviews import revision
     input_revision=revision(net,proj['id'])
     image,segments=net._rom(proj)
+    expected=net.cfg(proj).get('rom',{}).get('sha1')
+    if expected and hashlib.sha1(image).hexdigest()!=expected:
+        raise NetworkError('The analysis image differs from the recorded ROM hash. Restore the original image before auditing.')
     console=net.console(proj)
     functions=[dict(name=f['name'],rom=f['rom_offset'],vram=f['vram'],size=f['size'],
                     handwritten=bool(console.asm_reason(f['target']))) for f in net.store.all(
-                        'SELECT name,rom_offset,vram,size,target FROM functions WHERE project_id=?',proj['id']) if f['rom_offset'] is not None]
+                        f'SELECT name,rom_offset,vram,size,target FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id']) if f['rom_offset'] is not None]
     log('Reading frozen ROM bytes and known code segment mappings; no build or compiler is run.')
     result=audit(image,[vars(s) for s in segments],functions,big_endian=bool(proj['big_endian']),cpu=console.cpu_variant,progress=getattr(log,'progress',lambda _:None),data_mappings=net.cfg(proj).get('audit_data_mappings',[]))
     log(f"Reviewed {result['gaps']} gaps; {len(result['candidates'])} bounded candidates need human review.")

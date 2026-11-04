@@ -231,7 +231,7 @@ function fnBadge(d = S.fnDetail) {
   const working = S.claims.find((c) => c.name === d.name);
   const st = $("fnStatus");
   st.className = "badge " + (d.status === "matched" ? "matched" : d.not_c ? "not-c" : working ? "working" : "");
-  st.textContent = d.status === "matched" ? "matched" : d.status === "asm" ? (d.not_c ? "not C" : "set aside") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
+  st.textContent = d.boundary_review ? "incomplete · boundary review" : d.status === "matched" ? "matched" : d.status === "asm" ? (d.assembly_verification?.verified ? "verified source assembly" : "set aside · assessment") : d.can_handover ? "Reserved by you · C editor" : working ? `${working.agent} working` : d.best != null ? `best ${pctText(pctOf(d.best, d.insns))}` : "not started";
 }
 
 function showFnTab(tab) {
@@ -666,14 +666,14 @@ $("fnNext").onclick = () => stepFn(1);
 /* ------------------------------------------------------------------ function list */
 const FUNCTION_ROWS = 200, MORE_ROWS = 500;  // rows the list shows at first, and "Show more" adds: a big game has tens of thousands
 const L = { q: "", filter: "all", sort: "i", dir: 1, limit: FUNCTION_ROWS, rows: [] };
-const FILTERS = [["all", "All"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"], ["cross_project", "Cross project"]];
+const FILTERS = [["all", "All"], ["boundary", "Boundary review"], ["open", "To do"], ["working", "Working"], ["tried", "Tried"], ["matched", "Matched"], ["polished", "Polished"], ["first", "★ First"], ["cross_project", "Cross project"]];
 // polished: matched, and made readable (real names, types, a comment) by polishing helpers; still counted as matched
 const polished = (f) => f.status === "matched" && !!f.polished;
 // ★: the functions agents take before the others (it was "Next in line", which nobody could place); ROM projects only
 const starred = (f) => !!(S.ov && (S.ov.priority || []).includes(f.name));
 const canStar = () => !!(S.ov && S.ov.kind !== "fork");
-const fnState = (f) => (f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
-const STATE_RANK = { working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
+const fnState = (f) => (f.analysis_state === "boundary_review" ? "boundary" : f.status === "matched" ? "matched" : f.status === "asm" ? "asm" : f.status === "working" ? "working" : f.best != null ? "tried" : "open");
+const STATE_RANK = { boundary: -1, working: 0, tried: 1, open: 2, matched: 3, asm: 4 };
 
 /* The functions a search (lowercase) finds: by name or address. A fork's list shows each function's source file, so
    the file counts there too; a ROM's segment only when no name or address has the text ("ma" found every function of
@@ -700,7 +700,7 @@ function functionAge(stamp, now = Date.now() / 1000) {
 
 function renderList() {
   if (!S.map.length || S.tab !== "functions") return;
-  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, polished: 0, first: 0, cross_project: 0 };
+  const counts = { all: S.map.length, open: 0, working: 0, tried: 0, matched: 0, asm: 0, boundary: 0, polished: 0, first: 0, cross_project: 0 };
   for (const f of S.map) { counts[fnState(f)]++; if (starred(f)) counts.first++; if (polished(f)) counts.polished++; if (f.cross_project) counts.cross_project++; }
   const star = canStar();
   if (!star && L.filter === "first") L.filter = "all";
@@ -720,9 +720,9 @@ function renderList() {
   $("fnRows").innerHTML = rows.slice(0, L.limit).map((f) => {
     const st = fnState(f), p = pctOf(f.best, f.insns);
     const best = st === "matched" ? `<span class="ok">100%</span>` : p == null ? `<span class="dim">–</span>` : pctText(p);
-    const status = st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.not_c ? `<span class="st not-c" title="agents agreed no C makes it: set aside">not C</span>` : `<span class="st" title="no C compiles to it (hand-written assembly, or a piece of another function): set aside">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
+    const status = st === "boundary" ? `<span class="st boundary" title="Incomplete extent; saved classification requires review">incomplete</span>` : st === "matched" ? (polished(f) ? `<span class="st matched polished" title="matched, and polished: real names, types and a comment">polished</span>` : `<span class="st matched" title="${esc(f.matched_by ? "by " + f.matched_by : "")}">matched</span>`) : st === "asm" ? (f.not_c ? `<span class="st not-c" title="Agent assessment only, not verified assembly provenance">agent set-aside</span>` : `<span class="st" title="Set aside by classification; this does not establish original assembly provenance">set aside</span>`) : st === "working" ? `<span class="st working">${esc(f.agent || "working")}</span>`
       : st === "tried" ? `<span class="st tried">tried</span>` : `<span class="st">to do</span>`;
-    const on = starred(f), open = st !== "matched" && st !== "asm";
+    const on = starred(f), open = f.status !== "matched" && f.status !== "asm";
     const starCell = !star ? "" : `<td class="star-col">${open || on ? `<button type="button" class="star-btn${on ? " on" : ""}" data-star="${esc(f.name)}" aria-pressed="${on}" aria-label="${on ? "Agents take it first: click to stop" : "Agents take it first"}" title="${on ? "Agents take it first (click to stop)" : "Agents take it first"}">${on ? "★" : "☆"}</button>` : ""}</td>`;
     return `<tr data-fn="${esc(f.name)}" class="${S.fn === f.name ? "sel" : ""}" tabindex="0">${starCell}<td class="mono dim">${fork ? esc(f.unit || "") : hex8(f.vram)}</td>
       <td class="mono name">${esc(f.name)}${sdkBadge(f)}${f.boundary_review ? `<span class="badge" title="${esc(f.boundary_review)}">boundary review</span>` : ""}</td><td class="r mono">${f.insns.toLocaleString()}</td><td class="r mono">${best}</td>
