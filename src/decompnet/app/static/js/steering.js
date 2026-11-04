@@ -1347,19 +1347,27 @@ $("repositorySyncStop").onclick = async () => {
   try { if (repositorySyncJob) await api("/api/job/cancel", {method:"POST", body:{id:repositorySyncJob}}); }
   catch (error) { showJobError($("repositorySyncLog"), error.message); }
 };
-$("repositorySyncGo").onclick = async () => {
+async function syncRepository(commitPush = false) {
   const log = $("repositorySyncLog"), button = $("repositorySyncGo"), stop = $("repositorySyncStop");
-  const finish = beginWork(log, "Verifying repository progress", [button], "Repository sync finished.");
+  const finish = beginWork(log, "Verifying repository progress", [button, $("repositoryCommitGo")], "Repository sync finished.");
   showJobError(log, "");
   try {
-    const {job} = await api("/api/repository-sync", {method:"POST", body:{slug:S.slug, folder:$("repositoryFolder").value.trim()}});
+    const {job} = await api("/api/repository-sync", {method:"POST", body:{slug:S.slug, folder:$("repositoryFolder").value.trim(), commit_push:commitPush}});
     repositorySyncJob = job; stop.hidden = false;
     const result = await followJob(job, log);
     log.textContent += `\n${result.verified_build ? "Full rebuilt image verified." : "No source additions; no full rebuild was needed."}\n${result.accepted.length} functions synced; ${result.skipped.length} could not be integrated.\n${result.changes || "No Git changes."}`;
+    if (result.commit) log.textContent += `\nCommit: ${result.commit}\n${result.pushed ? "Pushed to " + result.upstream : result.push_error || "Saved locally."}`;
     for (const item of result.skipped) log.textContent += `\n${item.function}: ${item.reason}`;
+    if (result.commit_url && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/commit\/[a-f0-9]+$/.test(result.commit_url)) {
+      const link = document.createElement("a"); link.href = result.commit_url;
+      link.textContent = "View commit"; link.target = "_blank"; link.rel = "noopener noreferrer";
+      log.append(document.createTextNode("\n"), link);
+    }
   } catch (error) { showJobError(log, error.message); }
   finally { repositorySyncJob = null; stop.hidden = true; finish(); }
-};
+}
+$("repositorySyncGo").onclick = () => syncRepository();
+$("repositoryCommitGo").onclick = () => syncRepository(true);
 
 
 $("sourcePrepReviewsRefresh").onclick = async () => {

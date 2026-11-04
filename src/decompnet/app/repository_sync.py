@@ -217,7 +217,7 @@ def integrate(net, proj, root, stage, log):
     return manifest,owned,files,accepted,skipped,rollbacks
 
 
-def run(net, slug, folder, log=print):
+def run(net, slug, folder, log=print, *, commit_push=False):
     """Stage, verify and publish commit-ready source additions; preserve the live checkout on failure."""
     if not _LOCK.acquire(blocking=False):
         raise NetworkError('Another repository sync is running. Wait for it to finish.')
@@ -226,6 +226,10 @@ def run(net, slug, folder, log=print):
         if not net.is_rom(proj):
             raise NetworkError('This project already works in its checkout. Commit its source there; no export sync is needed.')
         root=checkout(folder);head=git(root,'rev-parse','HEAD')
+        upstream = None
+        if commit_push:
+            from . import repository_git
+            upstream = repository_git.prepare(root, log)
         if not (root/'build.json').is_file() or not (root/'build.py').is_file():
             raise NetworkError('Choose an existing decompdecomp build.json/build.py export checkout. No files were changed.')
         baseline={p: digest(inside(root,p)) for p in filter(None,git(root,'ls-files','-z').decode().split('\0'))}
@@ -245,6 +249,16 @@ def run(net, slug, folder, log=print):
             report={'format':1,'owned':owned,'accepted':sorted(set(previous.get('accepted',[])+accepted)),'skipped':skipped,
                     'verified_build':bool(accepted) or previous.get('verified_build',False),'matched_app':net.store.one("SELECT COUNT(*) n FROM functions WHERE project_id=? AND status='matched'",proj['id'])['n']}
             (stage/STATE).write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8');files.add(STATE)
+            if commit_push:
+                from . import saves
+                log('Saving all portable progress, including drafts, notes and compiler settings…')
+                destination = inside(stage, 'progress')
+                snapshot, _ = saves._render(net, slug, destination, chosen=True)
+                if (destination/'README.md').is_file():
+                    snapshot['README.md'] = (destination/'README.md').read_text(encoding='utf-8')
+                previous_save = saves._read_owned(inside(root, 'progress'))
+                saves._publish(destination, snapshot, previous_save, chosen=True)
+                files.update('progress/' + name for name in snapshot.keys() | previous_save.keys())
             # Recheck before writing: never overwrite work made while the long build ran.
             checkout(root)
             if git(root,'rev-parse','HEAD')!=head or any(digest(inside(root,p))!=v for p,v in baseline.items()):
@@ -255,7 +269,10 @@ def run(net, slug, folder, log=print):
         net._update_cfg(slug,lambda cfg:cfg.update(repository_sync_folder=str(root)))
         changed=git(root,'status','--short','--untracked-files=all').decode()
         log('Sync complete. Review and commit these files:\n'+changed)
-        return {'folder':str(root),'accepted':accepted,'skipped':skipped,'changes':changed,'verified_build':bool(accepted)}
+        result = {'folder':str(root),'accepted':accepted,'skipped':skipped,'changes':changed,'verified_build':bool(accepted)}
+        if commit_push:
+            result.update(repository_git.finish(root, files, upstream, log))
+        return result
     finally:
         _LOCK.release()
 
@@ -289,8 +306,13 @@ def publish(root,stage,files,baseline,log):
             backups[name]=target.read_bytes() if target.exists() else None
             target.parent.mkdir(parents=True,exist_ok=True)
             with tempfile.NamedTemporaryFile(dir=target.parent,delete=False) as temp:
-                temp.write(inside(stage,name).read_bytes());temporary=Path(temp.name)
-            os.replace(temporary,target);written.append(name)
+                source = inside(stage,name)
+                if source.exists():temp.write(source.read_bytes())
+                temporary=Path(temp.name)
+            if source.exists():os.replace(temporary,target)
+            else:
+                temporary.unlink();target.unlink(missing_ok=True)
+            written.append(name)
     except BaseException:
         for name in reversed(written):
             target=inside(root,name)

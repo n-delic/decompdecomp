@@ -26,3 +26,10 @@ def test_repository_sync_route_guards_and_duplicate_jobs(repository_app,monkeypa
         assert first.status_code==200 and 'job' in first.json() and started.wait(1)
         assert client.post('/api/repository-sync',json=data,headers={'X-Decomp':'1'}).status_code==400
     finally:release.set()
+
+
+def test_repository_commit_requires_boolean(repository_app):
+    client, _, _ = repository_app
+    response = client.post('/api/repository-sync', json={'slug':'game', 'folder':'/repo', 'commit_push':'yes'},
+                           headers={'X-Decomp':'1'})
+    assert response.status_code == 400

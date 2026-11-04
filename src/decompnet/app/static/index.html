@@ -579,9 +579,9 @@
             <pre class="joblog" id="saveLog" hidden></pre>
             <section id="repositorySync" class="note">
               <h3>Sync to Git repository</h3>
-              <p class="muted small">Add verified app matches to an existing decompdecomp export checkout. Its build setup and hand-maintained C stay intact. Sync updates only sources it previously created, verifies in a private copy, then shows files ready to commit. Commit or move existing checkout changes first. No automatic commits or pushes.</p>
+              <p class="muted small">Add verified app matches to an existing decompdecomp export checkout. Its build setup and hand-maintained C stay intact. Sync updates only sources it previously created, verifies in a private copy, then shows files ready to commit. Commit or move existing checkout changes first. Verify and sync leaves files ready to review. Verify, commit and push also saves all portable progress and pushes the current branch to its configured upstream using your Git credentials.</p>
               <label class="field"><span>Git checkout root</span><span class="pick-row"><input id="repositoryFolder" class="mono" placeholder="/path/to/my-game-decomp"><button class="ghost small-btn" type="button" data-pick="folder" data-for="repositoryFolder" data-title="Git checkout root">Choose…</button></span></label>
-              <div class="row"><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and sync</button><button class="ghost small-btn" id="repositorySyncStop" type="button" hidden>Stop</button></div>
+              <div class="row"><button class="primary small-btn" id="repositorySyncGo" type="button">Verify and sync</button><button class="primary small-btn" id="repositoryCommitGo" type="button">Verify, commit and push</button><button class="ghost small-btn" id="repositorySyncStop" type="button" hidden>Stop</button></div>
               <pre class="joblog" id="repositorySyncLog" hidden></pre>
             </section>
           </div>

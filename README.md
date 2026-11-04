@@ -1505,3 +1505,17 @@ Project maps clear the previous project's canvas as soon as you switch games and
 frame only after the loading cover is removed. Late map responses cannot replace a newer refresh.
 Compiler-colour analysis is requested when you select the Compiler map, keeping it off the default
 Progress view's loading path.
+
+### Commit verified progress from Settings
+
+For ROM projects with a decompdecomp export, open **Settings → Sync to Git repository**,
+choose the checkout root, and click **Verify, commit and push**. The app checks new matches
+in a private build, saves all portable progress under `progress/` (including drafts, names,
+notes, headers and compiler settings), commits those files and pushes the current branch
+to its configured upstream using your existing Git credentials. The result shows the commit
+and, for GitHub remotes, a link. **Verify and sync** still leaves changes for manual review.
+
+Start with a clean checkout, a configured Git author and an upstream branch. If the remote
+has commits missing locally, pull them first. A failed push keeps the local commit; fix the
+credentials or upstream and retry. Nothing is force-pushed. Imported projects already work
+in their own source checkout; this export-sync button is currently for ROM projects.

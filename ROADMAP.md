@@ -2150,6 +2150,11 @@ exposes the shared draft/permuter thread limit. CPU is measured for the Python p
 (100% per core); accurate per-job and compiler-subprocess attribution remains planned work.
 Automatic evidence checks and room services remain read-only here and use their project controls.
 
+- Done: explicit ROM export **Verify, commit and push** saves all portable progress and
+  verified build changes, commits only sync-owned paths and pushes the configured upstream.
+  Failed pushes retain the commit for retry. Imported-project commit/push UI remains planned;
+  those projects already keep their source in their own checkout.
+
 The background-work thread table explains registered thread roles, shows native IDs and sorts
 by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO); Linux
 uses /proc/self/task counters. First observations show Measuring; unsupported/failed reads show
