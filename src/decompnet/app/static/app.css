@@ -1801,3 +1801,18 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .deep-metric-list p { margin:8px 0 0; font-size:12px; line-height:1.6; }
 .deep-metric-list .deep-metric-match { font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
 .deep-metric-empty { padding:24px 16px; border:1px dashed var(--line-soft); border-radius:var(--r); color:var(--muted); }
+
+/* Profile repair results stay in the dialog's scroll flow, with one shared job log. */
+.profile-failure-list { margin-top:12px; }
+.profile-failure-body { padding:16px; }
+.profile-range-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:16px; }
+.profile-range-toolbar p { flex:1 1 280px; margin:0; line-height:1.6; }
+.profile-failure-cards { display:grid; gap:12px; }
+.profile-failure-card { padding:14px; border:1px solid var(--line); border-radius:var(--r); background:var(--paper); }
+.profile-failure-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.profile-failure-heading > button { font-weight:600; }
+.profile-failure-card > p { margin:10px 0 6px; }
+.profile-related-functions { display:flex; flex-wrap:wrap; gap:6px 14px; }
+.profile-failure-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.profile-failure-card button.link { overflow-wrap:anywhere; text-align:left; }
+.profile-failure-card [data-blocker-result]:empty { display:none; }

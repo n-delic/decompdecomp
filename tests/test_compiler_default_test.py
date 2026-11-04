@@ -231,3 +231,21 @@ def test_safe_range_isolates_overlapping_extent_and_preserves_other_match(net, m
     assert net._function('neighbor', 'game')['matched_source'] == 'saved neighbor'
     assert net._function('neighbor', 'game')['status'] == 'matched'
     assert next(r for r in after['compiler_ranges'] if r['start'] == 0x80001030)['end'] == 0x80001040
+
+
+def test_bulk_safe_range_repairs_continue_after_a_skipped_function(net, monkeypatch):
+    monkeypatch.setattr(net, '_comparison_source', lambda fn:'saved C')
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
+    applied=[]
+    def apply(slug, name, tc, flags, **options):
+        applied.append((name, options))
+        return {'newly_matched':True}
+    monkeypatch.setattr(net, 'apply_function_compiler', apply)
+    progress=[]
+    def log(line):pass
+    log.progress=progress.append
+    result=trial.apply_matches(net, 'game', PROFILE, ['f0','f3','f3'], log, safe_ranges=True)
+    assert result['total']==2 and result['passed']==1 and result['failed']==1
+    assert applied==[('f3', {'preserve_other_profiles':True})]
+    assert result['matches']==['f3'] and result['failures'][0]['function']=='f0'
+    assert progress[-1]['checked']==2

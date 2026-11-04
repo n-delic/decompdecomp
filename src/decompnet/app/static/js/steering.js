@@ -836,9 +836,9 @@ function profileFailureGroups(failures) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(failure);
   }
-  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="panel-body">
-    ${key==='affected_matches' ? '<p class="small muted">The candidate matched, but its compiler range also changes other saved matches. These are affected functions, not necessarily callers. No range change was saved. Fix range &amp; apply match narrows the override to this function’s start, preserving the profiles of other functions.</p>' : ''}
-    <table><thead><tr><th>Function</th><th>Result</th></tr></thead><tbody>${rows.map(f => `<tr><td>${link(f.function)}</td><td>${f.blockers?.length ? `Existing matches that would fail: ${f.blockers.map(b=>link(b.function)).join(', ')}<div><button class="ghost small-btn" type="button" data-check-profile-blockers="${esc(JSON.stringify(f.blockers.map(b=>b.function)))}">Check affected functions with this profile</button> <button class="primary small-btn" type="button" data-safe-profile-range="${esc(f.function)}">Fix range &amp; apply match</button><div data-blocker-result></div></div>` : esc(f.reason)}</td></tr>`).join('')}</tbody></table></div></details>`).join('');
+  return [...groups].map(([key, rows]) => `<details class="panel settings-disclosure profile-failure-group" open><summary class="panel-head"><h3>${esc(titles[key] || key)} <span class="disclosure-context">— ${rows.length}</span></h3></summary><div class="profile-failure-body">
+    ${key==='affected_matches' ? `<div class="profile-range-toolbar"><p class="small muted">Narrow each override to its function. Existing matches keep their profiles and are protected by verification. Affected functions are not necessarily callers.</p><button class="primary small-btn" type="button" data-safe-profile-ranges="${esc(JSON.stringify(rows.map(f=>f.function)))}">Fix all ${rows.length} ranges &amp; apply matches</button></div>` : ''}
+    <div class="profile-failure-cards">${rows.map(f => `<article class="profile-failure-card"><div class="profile-failure-heading">${link(f.function)}<span class="small muted">${f.blockers?.length ? 'Range blocked' : 'Needs review'}</span></div>${f.blockers?.length ? `<p class="small muted">Protect these existing matches</p><div class="profile-related-functions">${f.blockers.map(b=>link(b.function)).join('')}</div><div class="profile-failure-actions"><button class="primary small-btn" type="button" data-safe-profile-range="${esc(f.function)}">Fix range &amp; apply match</button><button class="ghost small-btn" type="button" data-check-profile-blockers="${esc(JSON.stringify(f.blockers.map(b=>b.function)))}">Check affected functions</button></div><div data-blocker-result class="small" role="status"></div>` : `<p class="small muted">${esc(f.reason)}</p>`}</article>`).join('')}</div></div></details>`).join('');
 }
 
 async function testProfileAsDefault(button, action="test") {
@@ -853,32 +853,47 @@ async function testProfileAsDefault(button, action="test") {
     <section class="default-profile-test" aria-label="Default profile test progress"><p data-default-status role="status">Counting default-profile matches…</p>
     <progress class="deep-sweep-bar" data-default-bar value="0" max="1" aria-label="Functions checked"></progress>
     <dl class="default-profile-counts"><div><dt>Passed</dt><dd class="ok" data-default-passed>0</dd></div><div><dt>Did not pass</dt><dd data-default-failed>0</dd></div><div><dt>Remaining</dt><dd data-default-left>—</dd></div></dl></section>
-    <p data-default-verdict></p><div data-apply-matches hidden><button type="button" class="primary" data-apply-matches-button>Apply verified matches</button><p class="small muted">Rechecks the saved C, assigns this profile to passing functions and saves exact byte matches. Busy functions are skipped.</p></div><details data-default-matches hidden><summary>Functions that match this profile</summary><div data-default-match-list class="mono"></div></details><details data-default-failures hidden><summary>Functions that did not pass</summary><div class="compiler-table" data-default-failure-list></div></details>
+    <p data-default-verdict></p><div data-apply-matches hidden><button type="button" class="primary" data-apply-matches-button>Apply verified matches</button><p class="small muted">Rechecks the saved C, assigns this profile to passing functions and saves exact byte matches. Busy functions are skipped.</p></div><details data-default-matches hidden><summary>Functions that match this profile</summary><div data-default-match-list class="mono"></div></details><details data-default-failures hidden><summary>Functions that did not pass</summary><div class="profile-failure-list" data-default-failure-list></div></details>
     <div data-default-work></div><details class="more"><summary>Test log</summary><pre class="joblog" data-default-log></pre></details>`, 'compiler-default-test');
   const get = selector=>body.querySelector(selector), log=get('[data-default-log]'), work=get('[data-default-work]');
   const active=()=>S.dialogKind==='compiler-default-test' && !$("dialog").hidden && get('[data-default-log]')===log;
+  let rangeBusy=false, currentResult=null;
   body.addEventListener('click', async event=>{
     const fn=event.target.closest('[data-profile-function]');
     if(fn){$("dialog").hidden=true;openFn(fn.dataset.profileFunction);return;}
-    const fix=event.target.closest('[data-safe-profile-range]');
+    const fix=event.target.closest('[data-safe-profile-range], [data-safe-profile-ranges]');
     if(fix){
-      const result=fix.parentElement.querySelector('[data-blocker-result]');
-      const done=beginWork(result,'Narrowing range and verifying match',[fix],'Range check finished.');
+      if(rangeBusy)return;
+      rangeBusy=true;
+      const functions=fix.dataset.safeProfileRanges ? JSON.parse(fix.dataset.safeProfileRanges) : [fix.dataset.safeProfileRange];
+      const controls=[...body.querySelectorAll('[data-safe-profile-range], [data-safe-profile-ranges], [data-check-profile-blockers]')];
+      const done=beginWork(work,`Fixing ${functions.length} compiler ranges`,controls,'Range repairs finished.');
       try{
-        const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-safe-range',functions:[fix.dataset.safeProfileRange]}});
-        const saved=await followJob(job,result);
-        if(saved)result.appendChild(Object.assign(document.createElement('p'),{textContent:saved.passed ? 'Match saved. The range stops before the next function; other functions keep their profiles.' : saved.failures.map(f=>f.reason).join(' ')}));
-        if(saved?.passed && S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);}
-      }catch(error){showJobError(result,error.message);}finally{done();}
+        const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'apply-safe-range',functions}});
+        const saved=await followJob(job,log,(_lines,state)=>{
+          if(!active() || !state.progress)return;
+          const p=state.progress;
+          get('[data-default-status]').textContent=`Repairing ranges · ${p.checked || 0} / ${p.total || functions.length} checked`;
+          get('[data-default-bar]').max=p.total || functions.length;get('[data-default-bar]').value=p.checked || 0;
+        },active);
+        if(saved && active()){
+          const successful=new Set(saved.matches || []), attempted=new Set(functions);
+          const failures=[...(currentResult?.failures || []).filter(f=>!successful.has(f.function) && !attempted.has(f.function)),...(saved.failures || [])];
+          const previous=currentResult || {total:saved.total,checked:saved.total,passed:0,matches:[]};
+          render({...previous,passed:previous.passed+saved.passed,failed:failures.length,failures,matches:[...(previous.matches || []),...(saved.matches || [])]});
+          get('[data-default-verdict]').textContent=`${saved.passed} matches saved by range repair. ${saved.failed} could not be repaired; remaining issues are listed below. Existing matches remain protected.`;
+        }
+        if(saved?.passed && S.slug===slug){S.ov=await api(`/api/project?slug=${encodeURIComponent(slug)}`);renderStats(S.ov);renderProjectSettings();}
+      }catch(error){if(active())showJobError(work,error.message);}finally{done();rangeBusy=false;}
       return;
     }
     const check=event.target.closest('[data-check-profile-blockers]');
-    if(!check)return;
+    if(!check || rangeBusy)return;
     const result=check.parentElement.querySelector('[data-blocker-result]');
     const done=beginWork(result,'Checking affected functions',[check],'Read-only check complete; no settings changed.');
     try{
       const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile,action:'check-affected',functions:JSON.parse(check.dataset.checkProfileBlockers)}});
-      const checked=await followJob(job,result);
+      const checked=await followJob(job,log);
       if(checked)result.appendChild(Object.assign(document.createElement('p'),{textContent:checked.results.map(r=>`${r.function}: ${r.reason}`).join(' ')}));
     }catch(error){showJobError(result,error.message);}finally{done();}
   });
@@ -886,6 +901,7 @@ async function testProfileAsDefault(button, action="test") {
   const waitingBar=work.previousElementSibling;
   const render=p=>{
     if(!p)return;
+    if(p.checked!==undefined)currentResult=p;
     if(p.checked===undefined){get('[data-default-status]').textContent=`${p.phase || 'Checking settings'} · ${p.done || 0} / ${p.total || 0}`;get('[data-default-bar]').max=p.total || 1;get('[data-default-bar]').value=p.done || 0;return;}
     if(work._workStatus)work._workStatus.textContent=nonmatches ? 'Testing non-matches…' : 'Testing default-profile matches…';
     get('[data-default-status]').textContent=`${p.checked.toLocaleString()} / ${p.total.toLocaleString()} functions checked · ${p.total ? Math.round(100*p.checked/p.total) : 100}%`;
