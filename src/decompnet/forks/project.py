@@ -860,8 +860,8 @@ class ForkProject:
         return [u for u in self.units() if u.name == p.stem.split(".")[0] and u.base is not None]
 
     def _includers(self, rel: str) -> set[str] | None:
-        """The project's C and C++ files that include `rel`, directly or through others (`#include "..."` and
-        `<...>` resolved as the build's compiler does: beside the file, then include/ and harness/), or None when a
+        """The project's C and C++ files that include `rel`, directly or through others (resolved as the build's
+        compiler does: `#include "..."` beside the file, then include/ and harness/; `<...>` only in those), or None when a
         header does (a header can be included anywhere: only a whole build knows), or when a file includes what a
         macro names (no reading of the files says what that is)."""
         files: dict[str, str] = {}
@@ -876,7 +876,8 @@ class ForkProject:
             for m in _INCLUDE.finditer(text):
                 if m.group(3):
                     return None
-                for where in (Path(name).parent, Path("include"), Path("harness")):
+                beside = (Path(name).parent,) if m.group(1) else ()
+                for where in (*beside, Path("include"), Path("harness")):
                     target = os.path.normpath(where / (m.group(1) or m.group(2))).replace(os.sep, "/")
                     if target in files:
                         included_by.setdefault(target, set()).add(name)
