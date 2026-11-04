@@ -79,8 +79,13 @@ function renderTools() {
   $("toolChips").innerHTML = groups.map(([k, label]) => `<button class="chip ${toolFilter === k ? "on" : ""}" data-g="${k}" type="button">${label} <span>${k ? all.filter((t) => group(t) === k).length : all.length}</span></button>`).join("");
   $("toolChips").querySelectorAll("[data-g]").forEach((b) => { b.onclick = () => { toolFilter = b.dataset.g; renderTools(); }; });
   const rows = all.filter((t) => !toolFilter || group(t) === toolFilter);
-  $("toolGrid").innerHTML = rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
-      <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}</div>
+  const vm = S.st.linux_vm;
+  const vmCard = vm && (!toolFilter || rows.some((t) => t.linux_vm)) ? `<div class="tool-card ${vm.ready ? "ok" : ""}"><div class="tc-top"><b>Local Linux compiler runner</b><span class="chip-s">macOS</span></div>
+    <p class="muted small">Runs Linux-only compiler packs in a dedicated Colima VM. Compiles stay local and have no network access.</p>
+    <p class="small">${vm.ready ? "✓ Ready" : esc(vm.why)}</p>
+    <button class="ghost small-btn" id="prepareLinuxVm" type="button">${vm.ready ? "Check Linux runner" : "Prepare Linux runner"}</button></div>` : "";
+  $("toolGrid").innerHTML = vmCard + rows.map((t) => `<div class="tool-card ${t.installed ? "ok" : ""}">
+      <div class="tc-top"><b>${esc(t.name)}</b>${t.license === "proprietary" ? `<span class="chip-s warn">proprietary</span>` : ""}${t.platform ? `<span class="chip-s">${esc(t.platform)}</span>` : ""}${t.linux_vm ? `<span class="chip-s">Linux VM</span>` : ""}</div>
       <p class="muted small">${esc(t.use)}</p>
       ${(t.copies || []).map((c) => `<div class="row copy"><span class="grow copy-text"><span class="ok-mark">✓ ${esc(c.build || "your copy")}</span>`
         + `${c.verified ? `<span class="muted small">${esc(c.verified)}</span>` : ""}`
@@ -93,6 +98,7 @@ function renderTools() {
         : `${t.changed ? `<span class="muted small grow">changed since you installed it</span>` : ""}`
           + `<button class="ghost small-btn" data-tc="${esc(t.id)}" data-prop="${t.license === "proprietary" ? 1 : ""}"`
           + ` type="button">${t.changed ? "Install again" : "Install"}</button>`}</div></div>`).join("");
+  if ($("prepareLinuxVm")) $("prepareLinuxVm").onclick = prepareLinuxVm;
   $("toolGrid").querySelectorAll("[data-tc]").forEach((b) => { b.onclick = () => { b.disabled = true; installToolchain(b.dataset.tc, !!b.dataset.prop).finally(() => { b.disabled = false; }); }; });
   $("toolGrid").querySelectorAll("[data-local]").forEach((b) => { b.onclick = () => useLocalToolchain(b.dataset.local); });
   $("toolGrid").querySelectorAll("[data-remove]").forEach((b) => {
@@ -143,6 +149,18 @@ function useLocalToolchain(id) {
       form.querySelector("[type=submit]").disabled = false;
     } finally { finish(); }
   };
+}
+
+async function prepareLinuxVm() {
+  const body = dialog("Prepare Linux compiler runner", `<pre class="joblog tall" id="linuxVmLog"></pre>`);
+  const log = body.querySelector("#linuxVmLog");
+  const finish = beginWork(log, "Preparing local Linux runner", [], "Linux runner ready.");
+  try {
+    const { job } = await api("/api/linux-vm", { method: "POST", body: {} });
+    await followJob(job, log);
+    await loadState();
+    renderTools();
+  } catch (e) { showJobError(log, e.message); } finally { finish(); }
 }
 
 /* ------------------------------------------------------------------ settings page */
