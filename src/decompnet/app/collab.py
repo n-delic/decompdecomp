@@ -711,6 +711,10 @@ class Link:
         except httpx.HTTPError as e:
             self.error = f"can't reach the host ({type(e).__name__})"
             raise NetworkError(f"the room's host isn't reachable right now: {self.error}") from None
+        if r.status_code >= 500 or r.status_code in (408, 429):
+            # A tunnel failure is not a rejection: saved-progress upload must retain this candidate for retry.
+            self.error = f"host connection temporarily unavailable (HTTP {r.status_code})"
+            raise NetworkError(f"{self.error}; try again when the connection recovers")
         out = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code != 200:
             raise Refused(out.get("error") or f"host answered {r.status_code}")

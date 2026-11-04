@@ -257,3 +257,48 @@ def test_rejected_heartbeat_does_not_count_as_contact(connection, status):
     link.stop()
     assert link.last_contact == 0
     assert link.status()["state"] == "offline"
+
+
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+def test_temporary_http_errors_are_not_host_refusals(connection, status):
+    # Gateways may label a non-JSON error page as JSON; classify its status before parsing it.
+    link = connection(lambda _: httpx.Response(status, content=b"gateway unavailable",
+                                               headers={"content-type": "application/json"}))
+    with pytest.raises(NetworkError, match=f"HTTP {status}") as error:
+        link._req("POST", "/collab/attempt", {})
+    assert type(error.value) is NetworkError
+    assert link.last_ok == 0
+
+
+@pytest.mark.parametrize("fork,matched", [(False, True), (False, False), (True, True)])
+def test_gateway_failure_keeps_saved_candidate_until_retry_succeeds(connection, monkeypatch, fork, matched):
+    calls = 0
+
+    def host(request):
+        nonlocal calls
+        if request.method == "GET":
+            return httpx.Response(200, json={"functions": [{"name": "saved", "vram": 0x1000, "size": 4}]})
+        calls += 1
+        return httpx.Response(502) if calls == 1 else httpx.Response(200, json={"matched": True, "text": "saved"})
+
+    link = connection(host, fork=fork)
+    link.cursor = {}
+    link.net.local_agent = lambda _: (SimpleNamespace(name="saved-progress"), None)
+    link.net.project_row = lambda _: {"id": 1}
+    link.net.store = SimpleNamespace(all=lambda *_: [{"name": "saved"}])
+    monkeypatch.setattr(link, "attempt", lambda agent, function, source: link._req(
+        "POST", "/collab/attempt", {"function": function, "source": source}))
+    candidates = [{"name": "saved", "vram": 0x1000, "size": 4, "status": "matched" if matched else "open",
+                   "matched_source": "saved C", "best_source": "saved C", "best_score": 1}]
+    forgotten, log = [], []
+
+    def upload():
+        collab._share_saved_progress(link.net, "project", link, candidates, fork=fork, best_comparable=True,
+                                     log=log.append, sync_room=False, forget=forgotten.append)
+
+    with pytest.raises(NetworkError, match="HTTP 502"):
+        upload()
+    assert forgotten == []
+    assert not any("refused" in line for line in log)
+    upload()
+    assert forgotten == ["saved"] and calls == 2

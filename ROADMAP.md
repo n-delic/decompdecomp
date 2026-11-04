@@ -1,5 +1,8 @@
 # Roadmap
 
+Implemented: temporary room HTTP failures (including gateway errors) preserve queued saved progress for retry
+in ROM and project rooms, instead of treating them as the host rejecting the candidate.
+
 Implemented: bounded residual follow-ups in iterative and deep search; typed later-local reuse for
 subtraction, bitwise operations, unsigned literal shifts and scalar call results; dominated acyclic
 branch regions and optional unambiguous GCC donor ranking. Shared source hypotheses retain the
