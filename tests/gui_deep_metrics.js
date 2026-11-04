@@ -7,7 +7,7 @@ const get = id => {
   return elements.get(id);
 };
 let posts = [], confirmed = true, finished = 0, release;
-const ctx = {deepSweepProjectVersion:0, $:get, esc:String, openFn:()=>{}, S:{slug:"game"}, renderDeepActivity:()=>{},
+const ctx = {deepSweepProjectVersion:0, deepSweepSnapshot:null, $:get, esc:String, openFn:()=>{}, S:{slug:"game"}, renderDeepActivity:()=>{},
   confirm:()=>confirmed, beginWork:()=>()=>finished++, showJobError:()=>{},
   api:async (url,options)=>{await new Promise(resolve => {release=resolve;}); posts.push([url,options.body]);return {has_activity:false,completed:12,improvements:[]};}};
 vm.createContext(ctx);

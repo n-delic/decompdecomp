@@ -59,14 +59,16 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.equal(element("deepSweepAttention").hidden,true);
   assert.equal(element("deepSweepAttentionList").innerHTML,"");
   ctx.renderDeepQueueState({state:"done", has_activity:true, queue_left:19, queue_rotated:19, queue_blocked:2, awaiting_source:1});
-  assert.match(element("deepSweepQueueTitle").textContent, /paused/);
+  assert.match(element("deepSweepQueueTitle").textContent, /Paused/);
   assert.match(element("deepSweepQueueReason").textContent, /19 paused early/);
-  assert.match(element("deepSweepQueueReason").textContent, /2 blocked by errors/);
-  assert.match(element("deepSweepQueueReason").textContent, /No workers are running/);
-  assert.equal(element("deepSweepContinue").hidden, false);
+  assert.equal(element("deepSweepActive").textContent, "0");
+  assert.equal(element("deepSweepStart").textContent, "Continue search");
+  assert.equal(element("deepSweepStop").hidden, true);
+  assert.equal(element("deepSweepBlocked").textContent, "2");
+  assert.equal(element("deepSweepStart").hidden, false);
   ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
-  assert.match(element("deepSweepQueueReason").textContent, /Waiting for host claims/);
-  assert.equal(element("deepSweepContinue").hidden, true);
+  assert.match(element("deepSweepQueueReason").textContent, /Waiting for available functions/);
+  assert.equal(element("deepSweepStart").hidden, true);
   await ctx.renderDeepSweep();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
 
@@ -88,14 +90,15 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   const order=()=>Array.from(element("deepSweepResults").innerHTML.matchAll(/data-deep-result="\d+">([^<]+)/g),m=>m[1]);
   assert.deepEqual(order(),["b","a","c"]);
   const sort=key=>element("deepSweepResults").querySelectorAll("[data-deep-sort]").find(b=>b.dataset.deepSort===key).onclick();
-  sort("new_score"); assert.deepEqual(order(),["b","c","a"]);
-  sort("new_score"); assert.deepEqual(order(),["a","c","b"]);
-  ctx.renderDeepSweepResults(status); assert.deepEqual(order(),["a","c","b"]);
+  sort("new_percent_text"); assert.deepEqual(order(),["a","c","b"]);
+  sort("new_percent_text"); assert.deepEqual(order(),["b","c","a"]);
+  ctx.renderDeepSweepResults(status); assert.deepEqual(order(),["b","c","a"]);
   sort("function"); assert.deepEqual(order(),["a","b","c"]);
-  assert.match(element("deepSweepResults").innerHTML,/Score difference/);
+  assert.match(element("deepSweepResults").innerHTML,/Improvement/);
   assert.match(element("deepSweepResults").innerHTML,/class="table-sort"/);
   assert.doesNotMatch(element("deepSweepResults").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
-  assert.ok(element("deepSweepResults").innerHTML.indexOf("Starting score") < element("deepSweepResults").innerHTML.indexOf("New score"));
+  assert.match(element("deepSweepResults").innerHTML, /<details class="deep-result-detail" data-result-detail="a"><summary>Scores & rewrites/);
+  assert.match(element("deepSweepResults").innerHTML, /\+30 points/);
   status.recipe_wins = [
     {function:"a",created_at:20,previous_score:5,new_score:0,family:"last_fix",provenance:{lineage:["first", "last"]}},
     {function:"a",created_at:10,previous_score:10,new_score:5,family:"first_fix",provenance:{}},
@@ -107,11 +110,23 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.match(element("deepSweepResults").innerHTML,/first → last/);
   assert.match(element("deepSweepResults").innerHTML,/10 → 5/);
   assert.match(element("deepSweepResults").innerHTML,/Latest improvement/);
-  sort("created_at"); assert.deepEqual(order(),["b","a","c"]);
-  sort("created_at"); assert.deepEqual(order(),["c","a","b"]);
+  sort("match_gain"); assert.deepEqual(order(),["b","a","c"]);
+  sort("match_gain"); assert.deepEqual(order(),["c","a","b"]);
   oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156,matches:0}});
   assert.equal(element("deepSweepActive").textContent,"2");
   assert.doesNotMatch(element("deepSweepStatus").textContent,/functions active|functions tested/);
+  assert.match(element("deepSweepQueueTitle").textContent,/Running — searching 2 functions/);
+  assert.equal(element("deepSweepRunChecked").textContent,"This run: 156 functions checked");
+  ctx.renderDeepQueueState({state:"done",has_activity:true,queue_done:4,queue_left:0,progress:{workers:[{},{}],functions_tested:9}});
+  assert.equal(element("deepSweepActive").textContent,"0");
+  assert.equal(element("deepSweepStop").hidden,true);
+  assert.equal(element("deepSweepStart").textContent,"Run again");
+  assert.equal(element("deepSweepPausedGroup").hidden,true);
+  assert.equal(element("deepSweepBlockedGroup").hidden,true);
+  assert.equal(element("deepSweepWaitingGroup").hidden,true);
+  assert.match(element("deepSweepRunChecked").textContent,/Last run: 9/);
+  oldFollower.callback([], {progress:{workers:[{},{}],functions_tested:156}});
+  assert.equal(element("deepSweepActive").textContent,"0", "late progress cannot revive a finished search");
   ctx.S.slug="game-b";
   const pending=ctx.renderDeepSweep();
   assert.equal(element("deepSweepStop").hidden,true);

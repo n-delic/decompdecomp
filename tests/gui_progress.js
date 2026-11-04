@@ -53,7 +53,7 @@ function setup(file, marker, end, logId, buttonId, ranges = "") {
   let polls = 0;
   const ctx = {
     $: get, document: { createElement: element },
-    followDeepSweep: () => {}, deepPermuterBusy: false, deepPermuterJob: null, refreshFn: async () => {},
+    followDeepSweep: () => {}, renderDeepQueueState: () => {}, deepSweepSnapshot: null, deepPermuterBusy: false, deepPermuterJob: null, refreshFn: async () => {},
     S: { slug: "test", fn: "f", ov: { kind: "fork" } }, info: {}, box, body: box, n: get("compilerNotice"), log, inst: button,
     b: Object.assign(button, { dataset: { inst: "test" } }), a: { id: "test", name: "Test" }, ROOM_PORT: 6481,
     results: get("localResults"), scan: { folder: "/synthetic/collection", projects: [] }, picked: new Set(), renderList() {},
@@ -142,6 +142,16 @@ async function main() {
     assert.equal(test.log.bar.removed, true);
     assert.equal(test.button.disabled, false);
     assert.equal(followed.length, failed ? 0 : 1);
+  }
+  // Run again explicitly repeats saved completed turns, even with Advanced unchecked.
+  {
+    const test = setup("steering", '$("deepSweepStart").onclick = async () => {', '\n};', "deepSweepLog", "deepSweepStart");
+    test.ctx.deepSweepSnapshot = {has_activity:true, queue_left:0, queue_done:12};
+    test.ctx.$("deepSweepRepeat").checked = false;
+    let request;
+    test.ctx.api = async (url, options) => {request = options.body; return {};};
+    await test.ctx.run();
+    assert.equal(request.repeat, true);
   }
   for (const outcome of ["done", "error", "cancelled", "detached"]) {
     const test = setup("steering", 'async function followDeepSweep(slug, job) {', '\n}\n', "deepSweepLog", "deepSweepStart");

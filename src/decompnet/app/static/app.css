@@ -1225,13 +1225,13 @@ details.more[open] > summary::before { content: "− "; }
 #deepSweepPanel > summary h2 { flex: 1; }
 #deepSweepPanel > .pad { gap: 16px; padding: 20px; }
 .deep-sweep-intro { font-size: 13px; color: var(--muted); margin: 0; max-width: 76ch; }
-.deep-sweep-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 20px; padding: 16px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--raise); }
+.deep-sweep-settings { display: grid; grid-template-columns: minmax(150px, 220px) minmax(0, 1fr); gap: 16px 20px; padding: 16px; border: 1px solid var(--line-soft); border-radius: var(--r); background: var(--raise); }
 .deep-sweep-settings small { font-size: 11px; line-height: 1.5; color: var(--muted); }
 .deep-sweep-repeat { display: flex; align-items: flex-start; gap: 10px; grid-column: 1 / -1; font-size: 13px; cursor: pointer; }
 .deep-sweep-repeat span { display: grid; gap: 2px; }
-.deep-sweep-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.deep-sweep-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .deep-sweep-actions #deepSweepReset { margin-left: auto; }
-.deep-sweep-counts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line-soft); background: var(--line-soft); border-radius: var(--r); overflow: hidden; }
+.deep-sweep-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line-soft); background: var(--line-soft); border-radius: var(--r); overflow: hidden; }
 .deep-sweep-counts div { padding: 16px 14px; background: var(--panel); display: grid; align-content: start; gap: 7px; }
 .deep-sweep-counts b { font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 #deepSweepMatched, #deepSweepImproved { color: var(--match); }
@@ -1267,7 +1267,7 @@ details.more[open] > summary::before { content: "− "; }
   #deepSweepPanel > summary h2 { flex: 1 1 calc(100% - 32px); }
   #deepSweepPanel > summary > span { margin-left: 20px; }
   .deep-sweep-settings { grid-template-columns: 1fr; gap: 14px; }
-  .deep-sweep-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .deep-sweep-counts div { padding: 14px 10px; }
   .deep-sweep-actions #deepSweepReset { margin-left: 0; }
 }
 .deep-recipe-results { margin: 14px 0; }
@@ -1663,3 +1663,29 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .repository-sync-help li + li { margin-top:6px; }
 .repository-sync > .joblog { max-height:170px; margin:12px 0 0; font-size:11px; }
 .repository-sync > .workbar { margin:10px 0; }
+
+/* Deep permuter: primary decisions first, technical controls on demand. */
+.deep-sweep-settings .field { align-self:start; }
+.deep-activity-section > summary { cursor:pointer; font-size:14px; font-weight:600; }
+.deep-activity-section[open] > summary { margin-bottom:14px; }
+.deep-advanced { align-self:start; padding:8px 0 0 16px; border-left:1px solid var(--line-soft); }
+.deep-advanced > summary { cursor:pointer; font-size:12px; color:var(--muted); padding:4px 0; }
+.deep-advanced-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; padding-top:16px; }
+.deep-sweep-actions { flex:none; }
+.deep-queue-details { display:flex; flex-wrap:wrap; gap:8px 20px; }
+.deep-queue-details > [hidden] { display:none; }
+.deep-sweep-more { font-size:12px; color:var(--muted); }
+.deep-sweep-more > summary { cursor:pointer; }
+.deep-sweep-more > button { margin-top:10px; }
+#deepSweepRunChecked { margin:0; font-variant-numeric:tabular-nums; }
+#deepSweepRunChecked:empty, #deepSweepStatus:empty { display:none; }
+.deep-match-change, .deep-match-gain { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.deep-match-gain { color:var(--match); font-weight:600; }
+.deep-result-detail { min-width:145px; max-width:360px; font-size:12px; }
+.deep-result-detail summary { cursor:pointer; color:var(--muted); }
+.deep-result-detail p { line-height:1.6; overflow-wrap:anywhere; }
+.deep-sweep-results table { min-width:650px; }
+@media (max-width:600px) {
+  .deep-advanced { border-left:0; border-top:1px solid var(--line-soft); padding:10px 0 0; }
+  .deep-advanced-fields { grid-template-columns:1fr; }
+}
