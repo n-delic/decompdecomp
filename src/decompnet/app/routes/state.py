@@ -408,6 +408,22 @@ def register(app: App) -> None:
         return Response(text, media_type="text/plain; charset=utf-8",
                         headers={"Content-Disposition": 'inline; filename="decomp.log"'})
 
+    from ..work_monitor import Monitor
+    monitor = Monitor(net, jobs, manager)
+
+    @mcp.custom_route("/api/background-work", methods=["GET", "POST"])
+    async def background_work(request: Request) -> Response:
+        if (bad := guard(request, write=request.method == "POST")):
+            return bad
+        try:
+            if request.method == "POST":
+                data = await body(request)
+                return JSONResponse(await call(monitor.stop, str(data.get('kind','')), str(data.get('key',''))))
+            snapshot = await (app.ui_call or call)(monitor.snapshot)
+            return JSONResponse(snapshot | {'worker_setting':settings.data.get('worker_threads',0)})
+        except NetworkError as error:
+            return fail(error)
+
     @mcp.custom_route("/api/job", methods=["GET"])
     async def api_job(request: Request) -> Response:
         if (bad := guard(request)):

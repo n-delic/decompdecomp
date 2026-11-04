@@ -2142,3 +2142,10 @@ saved matches that fail the new profile. The guarded compiler commit rechecks af
 and rescores attempts before publishing. A separate read-only trial checks all non-matches'
 saved C against a selected profile, reporting exact matches and unavailable sources. PROJECT
 mode still needs the temporary own-build implementation described above.
+
+Background work has a global inventory for GUI jobs, managed agents, machine drafts, the
+background permuter, autopilot, twin reuse, saved-file verification, compiler surveys and room
+services, plus all live app thread names. It delegates Stop to existing safe worker controls and
+exposes the shared draft/permuter thread limit. CPU is measured for the Python process only
+(100% per core); accurate per-job and compiler-subprocess attribution remains planned work.
+Automatic evidence checks and room services remain read-only here and use their project controls.

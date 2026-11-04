@@ -2105,6 +2105,17 @@ def test_room_retry_all_processes_snapshot_beyond_five_and_continues_errors(app,
     assert job['state']=='done' and calls==[rows[0]['key']]
 
 
+def test_background_work_routes_are_guarded(app):
+    client, *_=app
+    endpoint='/api/background-work'
+    assert client.get(endpoint, headers={'User-Agent':'external'}).status_code==401
+    assert client.get(endpoint).status_code==200
+    snapshot=client.get(endpoint).json()
+    assert 'cpu_note' in snapshot and 'threads' in snapshot
+    assert client.post(endpoint,json={'kind':'service','key':'x'}).status_code==403
+    assert client.post(endpoint,json={'kind':'service','key':'x'},headers={'X-Decomp':'1'}).status_code==400
+
+
 def test_brief_project_list_skips_progress_summaries(app, monkeypatch, tmp_path):
     client, net, _ = app
     with net.store.tx() as db:

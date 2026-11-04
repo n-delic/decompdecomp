@@ -1579,3 +1579,13 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .tool-settings-stats { margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r); background: var(--paper); font-size: 12px; color: var(--ink-2); }
 .tool-coverage { margin: 12px 0; }
 .tool-coverage > summary { font-size: 12px; color: var(--ink-2); cursor: pointer; }
+
+.background-metrics { display:flex; flex-wrap:wrap; gap:36px; margin-bottom:16px; }
+.background-metrics > div { display:grid; gap:6px; }
+.background-metrics strong { font-size:28px; font-variant-numeric:tabular-nums; }
+.background-table { overflow-x:auto; margin-top:20px; }
+.background-table table { width:100%; border-collapse:collapse; font-size:13px; }
+.background-table th { text-align:left; color:var(--ink-2); font-size:12px; }
+.background-table td,.background-table th { border-bottom:1px solid var(--line-soft); padding:12px 10px; vertical-align:top; }
+.background-table td:first-child { min-width:220px; }
+.background-table td .small { margin-top:5px; max-width:65ch; overflow-wrap:anywhere; }

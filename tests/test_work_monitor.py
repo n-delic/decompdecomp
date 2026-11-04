@@ -1,0 +1,53 @@
+import threading
+from types import SimpleNamespace as NS
+
+import pytest
+
+from decompnet.app.support import Jobs
+from decompnet.app.work_monitor import Monitor
+from decompnet.network import NetworkError
+
+
+def monitor():
+    stop=threading.Event()
+    component=NS(jobs={'game':NS(state='running',stop=stop)},stop=lambda slug:stop.set())
+    net=NS(drafter=component,permuter=NS(jobs={}),twins=NS(jobs={}),autopilots={},rooms={},links={},
+           progress=NS(activity={},activity_lock=threading.Lock()))
+    jobs=Jobs()
+    return Monitor(net,jobs,NS(sessions={})),stop
+
+
+def test_inventory_and_safe_stop():
+    m,stop=monitor()
+    result=m.snapshot()
+    assert result['cpu_percent'] is None
+    assert result['items'][0]['title']=='Machine drafts'
+    assert result['items'][0]['cpu_percent'] is None
+    assert not stop.is_set()
+    m.stop('drafter','game')
+    assert stop.is_set()
+    assert m.snapshot()['items'][0]['state']=='stopping'
+    with pytest.raises(NetworkError):
+        m.stop('service','unknown')
+
+
+def test_cpu_is_interval_process_usage(monkeypatch):
+    from decompnet.app import work_monitor
+    m,_=monitor()
+    monkeypatch.setattr(work_monitor.time,'monotonic',lambda:10)
+    monkeypatch.setattr(work_monitor.os,'times',lambda:(1,1,0,0,0))
+    assert m.snapshot()['cpu_percent'] is None
+    monkeypatch.setattr(work_monitor.time,'monotonic',lambda:12)
+    monkeypatch.setattr(work_monitor.os,'times',lambda:(2,1,0,0,0))
+    assert m.snapshot()['cpu_percent']==50
+
+
+def test_jobs_stop_requested_not_claimed_finished():
+    m,_=monitor()
+    event=threading.Event()
+    m.jobs.jobs['j']={'state':'running','kind':'Test search'}
+    m.jobs.cancel_events['j']=event
+    m.stop('job','j')
+    assert event.is_set()
+    assert m.jobs.jobs['j']['state']=='running'
+    assert next(x for x in m.snapshot()['items'] if x['kind']=='job')['state']=='stopping'
