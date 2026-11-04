@@ -258,6 +258,8 @@ class EditMixin:
             "status", "applied" if apply else "dismissed"))
 
     def rename_symbol(self, agent: Agent, project: str | None, old: str, new: str, message: str = "", *, progress=None) -> str:
+        from ..function_names import check_rename
+        check_rename(old.strip(), new.strip())
         if (fork := self.fork_slug(project)):  # the project's own config and files (ForkEngine.rename_symbol)
             return self.forks.rename_symbol(agent, fork, old, new, message)
         proj = self._project(project)
@@ -279,6 +281,9 @@ class EditMixin:
         pairs = [(old.strip(), new.strip()) for old, new in pairs]
         if not pairs:
             return "nothing to rename"
+        from ..function_names import check_rename
+        for old, new in pairs:
+            check_rename(old, new)
         syms = self.symbols(proj["id"])
         trial = SymbolTable([Symbol(s.name, s.address, s.size, s.kind) for s in syms.by_name.values()])
         addresses = {}

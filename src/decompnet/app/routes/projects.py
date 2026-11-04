@@ -489,6 +489,8 @@ def register(app: App) -> None:
 
     def p_cross_name(slug, request, data):
         old, new = str(data.get("function") or ""), str(data.get("name") or "")
+        if new.startswith('func_'):
+            raise ValueError('This is a generated function name. Keep the current name or choose a descriptive naming lead.')
         if data.get('peer_id'):
             from ..project_functions import listing
             peers = listing(net, slug, old)['rows']

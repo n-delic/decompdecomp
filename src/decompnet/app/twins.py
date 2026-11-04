@@ -941,7 +941,7 @@ class Twins:
                 for row in rows:
                     p = prints.get(row["id"])
                     name = (json.loads(row["meta"] or "{}").get("real") or p.name or row["name"].split("@")[0]) if p else ""
-                    if p and p.key in wanted and not p.asm and IDENT.fullmatch(name) and not generated(name):
+                    if p and p.key in wanted and not p.asm and IDENT.fullmatch(name) and not generated(name) and not name.startswith('func_'):
                         donors[p.key].setdefault(name, {"source_project": other["slug"],
                                                        "source_function_id": row["id"], "source_name": name})
             except (NetworkError, OSError, ValueError):

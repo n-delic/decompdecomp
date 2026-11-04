@@ -13,6 +13,10 @@ ctx.data={exact:false,rows:[{...row,score:.875,identical:false,status:'matched'}
 html=vm.runInContext('projectPeersHTML(data,"local")',ctx);
 assert.ok(html.includes('87.5% instruction pattern') && html.includes('not proof of identity'));
 assert.ok(html.includes('Use name'));
+ctx.generated={exact:true,rows:[{...row,name:'func_8000C0D0'}],total:1};
+const generatedHTML=vm.runInContext('projectPeersHTML(generated,"__osDevMgrMain")',ctx);
+assert.ok(generatedHTML.includes('Generated name') && !generatedHTML.includes('data-name='));
+
 assert.ok(!vm.runInContext('projectPeersHTML(data,"knownName")',ctx).includes('data-name='));
 assert.ok(vm.runInContext('projectPeersHTML({rows:[],total:0},"local")',ctx).includes('No similar functions found'));
 const page=fs.readFileSync('src/decompnet/app/static/index.html','utf8');
@@ -30,6 +34,8 @@ ctx.hints=[
   {name:'sdkName',game:'Unmatched game',kind:'shared target code; unverified C',score:1,source_slug:'third',source_function:'candidate'},
 ];
 const hintsHTML=vm.runInContext('nameHintsHTML(hints,"local")',ctx);
+assert.ok(!vm.runInContext('nameHintsHTML([{name:"func_placeholder",game:"Donor",kind:"verified C in another game",score:1}],"__osDevMgrMain")',ctx).includes('data-name='));
+
 assert.ok(hintsHTML.includes('3 sources agree') && hintsHTML.includes('Supporting sources'));
 assert.ok(hintsHTML.includes('SDK archive') && hintsHTML.includes('SDK object signature; name only'));
 assert.ok(hintsHTML.includes('shared target code; unverified C') && hintsHTML.includes('data-related-project="third"'));

@@ -86,7 +86,7 @@ function nameHintsHTML(hints, current) {
   return groupNameHints(hints).map((g) => {
     const sources = g.hints.length;
     const details = g.hints.map((h) => `<li>${relatedFunctionLink(h.source_slug, h.source_function, h.game.replace(/\s*\/\s*sha256:.*$/, ""))} · ${esc(h.kind)}${h.score < 1 ? ` · ${Math.round(h.score * 100)}% similar` : ""}</li>`).join("");
-    return `<div class="note"><b class="mono">${esc(g.name)}</b> · ${sources} source${sources === 1 ? "" : "s"}${sources > 1 ? " agree" : ""}${g.exact && g.name !== current ? ` <button class="link-btn" type="button" data-name="${esc(g.name)}">Use name</button>` : ""}<details><summary>Supporting sources</summary><ul>${details}</ul></details></div>`;
+    return `<div class="note"><b class="mono">${esc(g.name)}</b> · ${sources} source${sources === 1 ? "" : "s"}${sources > 1 ? " agree" : ""}${g.exact && g.name !== current && !g.name.startsWith('func_') ? ` <button class="link-btn" type="button" data-name="${esc(g.name)}">Use name</button>` : ""}<details><summary>Supporting sources</summary><ul>${details}</ul></details></div>`;
   }).join("");
 }
 let nameChangeBusy = false;
@@ -125,7 +125,7 @@ function projectPeersHTML(data, current) {
   const rows = data.rows || [];
   const note = data.unavailable ? esc(data.unavailable) : data.exact ? 'Identical target bytes in other open projects. C does not need to be matched.'
     : 'No identical target bytes found. These are instruction-pattern similarities, ignoring operands; names are suggestions, not proof of identity or matching C. At most 400 similarly sized functions are compared.';
-  return `<p class="small muted">${note}</p>${rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Project</th><th>Function</th><th>Similarity</th><th>C status</th><th>Action</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.project)}</td><td class="mono">${relatedFunctionLink(r.slug, r.name)}</td><td>${r.identical ? 'Identical bytes' : (r.score * 100).toFixed(1) + '% instruction pattern'}</td><td>${r.status === 'matched' ? 'Matched' : 'Not matched'}</td><td>${r.name === current ? 'Same name' : `<button type="button" class="ghost small-btn" data-name="${esc(r.name)}" data-peer-id="${r.id}">Use name</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No similar functions found in other open projects.</p>'}${data.total > rows.length ? `<p class="small muted">Showing ${rows.length} of ${data.total} identical functions.</p>` : ''}`;
+  return `<p class="small muted">${note}</p>${rows.length ? `<div class="project-peer-table"><table><thead><tr><th>Project</th><th>Function</th><th>Similarity</th><th>C status</th><th>Action</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.project)}</td><td class="mono">${relatedFunctionLink(r.slug, r.name)}</td><td>${r.identical ? 'Identical bytes' : (r.score * 100).toFixed(1) + '% instruction pattern'}</td><td>${r.status === 'matched' ? 'Matched' : 'Not matched'}</td><td>${r.name === current ? 'Same name' : r.name.startsWith('func_') ? 'Generated name' : `<button type="button" class="ghost small-btn" data-name="${esc(r.name)}" data-peer-id="${r.id}">Use name</button>`}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">No similar functions found in other open projects.</p>'}${data.total > rows.length ? `<p class="small muted">Showing ${rows.length} of ${data.total} identical functions.</p>` : ''}`;
 }
 let projectPeersRequest = 0;
 function prepareProjectPeers(detail) {

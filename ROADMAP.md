@@ -2073,3 +2073,10 @@ reports checked/total counts and percentages; suggestion cards distinguish defau
 from local address ranges. All affected byte-match checks and atomic stale-input validation
 remain mandatory. Broad default changes can still be expensive; narrow range suggestions
 avoid rechecking functions whose effective settings do not change.
+
+
+Naming upgrades preserve descriptive names when a donor proposes a `func_*` placeholder.
+Cross-project name actions reject these placeholders server-side and hide their Use name controls;
+automatic name inference ignores them. ROM batch/single renames and PROJECT-mode renames also
+reject descriptive-to-placeholder downgrades. Source-reuse provenance comments remain intact:
+they record donor history and do not themselves change a function's symbol.

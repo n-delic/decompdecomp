@@ -94,6 +94,8 @@ def test_routes_validate_peer_and_allow_explicit_similar_name(net,tmp_path,monke
     assert client.post('/api/cross-game/name',json=body).status_code==403
     assert client.post('/api/cross-game/name',json=body,headers={'X-Decomp':'1'}).status_code==200
     assert renamed[0][1:4]==('1','local','named')
+    generated = client.post('/api/cross-game/name',json={**body,'name':'func_8000C0D0'},headers={'X-Decomp':'1'})
+    assert generated.status_code==400 and 'generated function name' in generated.json()['error']
     body['name']='staleName'
     assert client.post('/api/cross-game/name',json=body,headers={'X-Decomp':'1'}).status_code==400
     assert len(renamed)==1

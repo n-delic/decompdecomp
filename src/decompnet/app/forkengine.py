@@ -1743,6 +1743,8 @@ class ForkEngine:
         data_0222f194. The function's row keeps its history under the new name. Where the report keeps the original's
         symbol (Console.renames_in_report: a PC game's _func_0041B470@8), the row keeps that name too, and the new one
         is the function's real name (Console.real_names), how its source spells it."""
+        from .function_names import check_rename
+        check_rename(old.strip(), new.strip())
         # (`old` as the report gives a PC function: _func_0041B470@8, @func_0041B470@8)
         if not re.fullmatch(r"[A-Za-z_]\w*", new) or not re.fullmatch(r"@?[A-Za-z_]\w*(?:@\d+)?", old) or old == new:
             raise NetworkError("rename_symbol takes two different C names: old and new")

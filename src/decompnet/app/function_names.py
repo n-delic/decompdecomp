@@ -17,6 +17,13 @@ def generated(name: str) -> bool:
     return bool(_GENERATED.fullmatch(name))
 
 
+def check_rename(old: str, new: str):
+    """A donor's placeholder must never erase an established descriptive symbol."""
+    if old != new and not generated(old) and not old.startswith('func_') and new.startswith('func_'):
+        from ..network import NetworkError
+        raise NetworkError(f"Keep {old}: {new} is a generated function name, not a naming improvement.")
+
+
 def state(fn) -> dict:
     meta = json.loads(fn["meta"] or "{}")
     naming = meta.get("naming")
