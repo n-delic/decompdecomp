@@ -1021,11 +1021,20 @@ function autopilotLine(t, first, done) {
     if (a.li !== $("activity").firstElementChild) $("activity").prepend(a.li);  // newest first, like every line
   } else a.li = addLine(t, html, first);
 }
+function improvementActivityHtml(attempt) {
+  // Only recorded best-score improvements, never a comparison with an arbitrary earlier attempt.
+  if (!attempt.score_improved || attempt.score_before == null || attempt.score == null ||
+      attempt.score <= 0 || attempt.score >= attempt.score_before) return "";
+  return `<span class="ok">↗</span> ${whoHtml(attempt.agent)} improved ${fnLink(attempt.function)} <span class="score activity-improvement">score ${esc(attempt.score_before)} → <b>${esc(attempt.score)}</b> <span class="muted">(−${esc(attempt.score_before-attempt.score)}; lower is better)</span></span>`;
+}
+
 function addActivity(events, attempts, first) {
   const items = [...events.map((e) => ({ t: e.created_at, ev: e })), ...attempts.map((a) => ({ t: a.created_at, at: a }))];
   // in the same second, the attempt before its match: else the match closed the line and the attempt opened a new one
   items.sort((a, b) => a.t - b.t || (a.at ? 0 : 1) - (b.at ? 0 : 1));
   for (const it of items) {
+    const improvement = it.at && improvementActivityHtml(it.at);
+    if (improvement) addLine(it.t, improvement, first, it.at.agent);
     const auto = (who) => who === AUTO || who === "@" + AUTO;  // ours, or the room host's
     if ((it.at && auto(it.at.agent)) || (it.ev && auto(it.ev.agent) && ["match", "claim", "autopilot"].includes(it.ev.kind))) {
       const a = S.apFeed || (S.apFeed = { tried: 0, matched: 0, li: null });

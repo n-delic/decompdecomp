@@ -435,7 +435,7 @@ class GuiMixin:
             f"ON a.id=e.agent_id WHERE e.project_id=? AND e.id>? ORDER BY e.id DESC LIMIT {LIVE_EVENTS}", proj["id"],
             since_event)
         attempts = self.store.all(
-            "SELECT t.id, t.score, t.compiled, t.created_at, f.name AS function, f.n_insns, a.name AS agent "
+            "SELECT t.id, t.score, t.score_before, t.score_improved, t.compiled, t.created_at, f.name AS function, f.n_insns, a.name AS agent "
             "FROM attempts t JOIN functions f ON f.id=t.function_id LEFT JOIN agents a ON a.id=t.agent_id "
             f"WHERE f.project_id=? AND t.id>? ORDER BY t.id DESC LIMIT {LIVE_ATTEMPTS}", proj["id"], since_attempt)
         claims = self.store.all(

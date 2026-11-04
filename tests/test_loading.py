@@ -279,3 +279,16 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
                              "ALTER TABLE functions DROP COLUMN gone_mark")
     store.conn.close()
     assert marks(Store(tmp_path / "app.db")) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
+
+
+def test_live_feed_returns_recorded_score_change_without_source_payloads(tmp_path):
+    net = RomNetwork(tmp_path / 'app.db', tmp_path)
+    proj = tiny_game(net)
+    fid = net.store.one('SELECT id FROM functions WHERE project_id=? LIMIT 1', proj['id'])['id']
+    agent, _ = net.local_agent('helper')
+    with net.store.tx() as db:
+        db.execute('INSERT INTO attempts(function_id,agent_id,score,score_before,score_improved,compiled,source,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                   (fid,agent.id,95,100,1,1,'private source',time.time()))
+    attempt = net.live('game')['attempts'][0]
+    assert attempt['score_before'] == 100 and attempt['score'] == 95 and attempt['score_improved'] == 1
+    assert 'source' not in attempt

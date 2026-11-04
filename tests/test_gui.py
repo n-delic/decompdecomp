@@ -498,3 +498,10 @@ def test_function_note_cards_escape_source_and_explain_score_outcomes():
         pytest.skip("needs node to run the GUI's scripts")
     subprocess.run([NODE, str(Path(__file__).with_name('gui_function_notes.js'))], check=True,
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_activity_feed_shows_recorded_score_improvements():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_activity_improvements.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
