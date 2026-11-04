@@ -547,3 +547,14 @@ two extra levels and four proposals, inside the existing budget. Unchanged outpu
 families are deferred across equivalent source parents, retaining a third direct
 probe and occasional exploration. None of this supplies an exact verdict; the
 ordinary compiler/link/data checks remain mandatory.
+
+### Local repairs and measured sequence history
+
+Use line associations from the current compiled object to narrow a standalone
+call/operand repair. Do not treat an assembly window as a C-line map, or split
+connected declaration/lifetime/control-flow edits. The app interleaves bounded local
+hypotheses with the original whole-function candidates; missing debug information
+keeps ordinary search. Changed-output and score-improvement history can suggest
+continuations under the same compiler/flags, but only the exact judge proves a match.
+Imported ELF trials now retain their function-output fingerprint before restoration;
+COFF section-level evidence is useful for rotation, not an earned deeper function path.

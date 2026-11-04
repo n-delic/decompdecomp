@@ -307,6 +307,8 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
     lane = allocation_search.proposals(source,fn['name'],arch,report.get('rows'),result,labels,
                                        {'value_trace':report.get('value_trace')},header)
     tagged = list(dict.fromkeys(lane+tagged))
+    from . import repair_localisation
+    tagged = repair_localisation.proposals(source,tagged,report.get("repair_locations"))
     # Retain established operand-supported focus. Broad reordering needs held-out replay evidence.
     use_focus=focused and bool(operand_focused or report.get('broad_focus_approved'))
     return first_difference.order(source,tagged,report.get('rows')) if use_focus else tagged
@@ -314,7 +316,7 @@ def targeted_pool(source, report, fn, arch, flags, header='', tables=(), callees
 
 def targeted_variants(source, report, fn, arch, flags, header='', tables=(), callees='', *, tagged=False,
                       selection=None, limit=20, pool_cache=None, focused=True):
-    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), fn['name'], fn['asm'],
+    key = hashlib.sha256(repr((source, report.get('rows'), report.get('repair_path'), report.get('value_trace'), report.get('broad_focus_approved'), report.get('repair_locations'), fn['name'], fn['asm'],
                               arch, flags, header, tables, callees, focused)).encode()).hexdigest()
     result = pool_cache.get(key) if pool_cache is not None else None
     if result is None:
@@ -446,6 +448,7 @@ def _run(twins, slug, job):
                     state.setdefault('counts',{})['trace_compiles']=spent[0]
                     report['value_trace']=state['value_trace']
                     state['value_trace_rows']=report.get('rows') or []
+            state.setdefault('sequence_focus',repair_sequences.focus(report.get('rows'),proj['arch']))
             return report
 
         def evaluate(source):
@@ -470,6 +473,13 @@ def _run(twins, slug, job):
             adaptive_repairs.record(net, policy_profile, classify(node.get('baseline_rows') or []),
                 (node.get('path') or [None])[-1], node.get('ceiling'), report.get('score'),
                 (time.monotonic()-started)*1000, origin='iterative repairs', exact=bool(report.get('matched')))
+            path=node.get('path') or []
+            if path:
+                repair_sequences.observe(net,recipe_profile,state.get('sequence_focus',''),path[:-1],path[-1],
+                    node.get('ceiling'),report.get('score'),node.get('parent_output'),output_key(report),exact=bool(report.get('matched')))
+                if report.get('matched'):
+                    repair_sequences.learn(net,recipe_profile,state.get('sequence_focus',''),path,
+                        max_steps=DEPTH+repair_sequence_lane.EXTRA_DEPTH if node.get('sequence_loan') else DEPTH)
             if report.get('matched') and state['pending'] and state['pending'][0].get('parent_source'):
                 expression_recipes.learn(net,recipe_profile,state['pending'][0]['parent_source'],source)
             report=initial_trace(source,report)
@@ -537,10 +547,16 @@ def _run(twins, slug, job):
             families = list(dict.fromkeys(family for family, _ in targeted))
             ordered = repair_selection.order(adaptive_repairs.order(net, proj, fn, report.get('rows') or [], families),
                                              report.get('repair_path', []))
+            preferred=repair_sequences.next_families(net,recipe_profile,state.get('sequence_focus',''),report.get('repair_path',[]))
+            # Alternate history-led and ordinary passes; no family is removed.
+            if state.get('counts',{}).get('scored',0)%2==0:
+                ordered=sorted(ordered,key=lambda f:(f not in preferred,ordered.index(f)))
             targeted.sort(key=lambda item: ordered.index(item[0]))
             # Interleave pools so address proposals cannot starve targeted families (or vice versa).
             learned = expression_recipes.variants(net, recipe_profile, source)
-            pools = [shared, [('address_or_literal', s) for s in guided[:4]], targeted,
+            from . import repair_localisation
+            guided_tagged=repair_localisation.proposals(source,[('address_or_literal',s) for s in guided[:4]],report.get('repair_locations'))
+            pools = [shared, guided_tagged, targeted,
                      [('similar_repair', s) for s in similar_matches.repair_variants(source, report)[:4]],
                      [('learned_expression', s) for s in learned[:2]],unit_candidates]
             return repair_selection.Page(dict.fromkeys(item for group in zip_longest(*pools)

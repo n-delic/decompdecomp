@@ -3152,18 +3152,24 @@ class ForkEngine:
             from ..source_lines import render_candidate
             mapped, mapped_source = self._source_mismatches(fp, unit, fn, d.rows)
             line_note = render_candidate(mapped, mapped_source, source)
+            from . import imported_output, repair_localisation
+            compiled_output=imported_output.read(unit.base,symbol)
+            evidence={'compiled_output':compiled_output}
+            locations=repair_localisation.rebase(source,mapped_source,mapped)
+            if locations:evidence['repair_locations']=locations
+
             pct = d.match_percent if d.match_percent is not None else 0.0
             score = max(1, len(d.literals)) if d.literals else scaled(pct, fn["n_insns"])
             matched = d.matched
             if diagnostic:
                 undo()
-                return {'text': ('MATCH! diagnostic only' if matched else f'score {score} ({pct:.1f}%)')+'; source restored.',
+                return {**evidence,'text': ('MATCH! diagnostic only' if matched else f'score {score} ({pct:.1f}%)')+'; source restored.',
                         'score':score,'matched':matched,'percent':pct,'rows':d.rows,'line_note':line_note}
             if not matched and not keep and not was_matched:  # tried, not kept: the file stays as it was
                 undo()
                 if quiet is None or score < quiet:
                     self.net._record(fn, agent, score, code, 0, compiled=True)
-                return {"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
+                return {**evidence,"text": f"{percent_text(pct)} match (score {score}); not kept in {unit.source}", "score": score,
                         "matched": False, "percent": pct}
             best = fn["best_score"]
             if (not matched and not was_matched and d.match_percent is not None and best is not None
@@ -3177,7 +3183,7 @@ class ForkEngine:
                 text = remembered(f"{percent_text(pct)} match (score {score}), worse than the best so far (score "
                                   f"{best}), so {unit.source} keeps what it had; your attempt is recorded.\n"
                                   f"{d.render()}{line_note}", score)
-                return {"text": text + stall, "score": score, "matched": False, "percent": pct}
+                return {**evidence,"text": text + stall, "score": score, "matched": False, "percent": pct}
             self._keep_scores(proj, unit, after, d.unit_scores)
             self._hold(fn, code if d.literals else None)
             if was_matched:  # a rewrite of a matched function must keep matching
@@ -3191,7 +3197,7 @@ class ForkEngine:
                             "score": score, "matched": False}
                 self._commit_paths(proj, fp, committed, f"Tidy {meta.get('demangled') or symbol} (still matches)\n\n"
                                                         f"Edited by {agent.name} with decompdecomp.")
-                return {"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
+                return {**evidence,"text": f"✅ {fn['name']} still matches; your tidier version is committed.{_renamed_note(d)}",
                         "score": 0, "matched": True}
             self.net._record(fn, agent, score, code, 0, matched=matched)
             self._apply_scores(proj, fn["unit"], d.unit_scores, skip=fn["id"], agent=agent, text=after,
@@ -3200,7 +3206,7 @@ class ForkEngine:
             if matched:
                 self._commit_paths(proj, fp, committed, f"Match {meta.get('demangled') or symbol}\n\n"
                                                         f"Decompiled by {agent.name} with decompdecomp.")
-                return {"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
+                return {**evidence,"text": f"✅ MATCH! {fn['name']} is 100% identical to the original. Committed to git in the "
                                 f"project. Call claim_function for the next one.{_renamed_note(d)}"
                                 f"{self.net.dependents_note(fn['id'])}"
                                 f"{self._file_done(slug, proj, fp, unit, d.unit_scores, agent)}", "score": 0,
@@ -3213,7 +3219,7 @@ class ForkEngine:
             text = f"score {score} (0 = identical). {d.literals_note()}{missing}"
         else:
             text = f"{percent_text(pct)} match (score {score}; 0 = identical).\n{d.render()}{line_note}{missing}"
-        return {"text": remembered(text, score) + stall, "score": score, "matched": False}
+        return {**evidence,"text": remembered(text, score) + stall, "score": score, "matched": False}
 
     def try_compiler(self, agent: Agent, slug: str, function: str, compiler: str, flags: str = "",
                      source: str = "", keep_match: bool = True) -> str:

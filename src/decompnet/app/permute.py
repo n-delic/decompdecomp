@@ -694,11 +694,18 @@ class Permuter:
 
     def _score_work(self, agent, proj, fn, source: str, best: int, fork: str | None) -> int | None:
         self._trial_outcome = 'unscored'
+        self._trial_output = None
+        self._trial_locations = None
+        self._trial_output_granularity = None
         if fork:
             res = self.net.forks.attempt(agent, fork, fn["name"], source, keep=False, quiet=best,
                                          **({"background": True} if getattr(self, "parallel_claims", False) else {}))
             if res.get('score') is not None:
                 self._trial_outcome = 'scored'
+                measured=res.get('compiled_output') or {}
+                self._trial_output=measured.get('fingerprint')
+                self._trial_output_granularity=measured.get('granularity')
+                self._trial_locations=res.get('repair_locations')
             return res.get("score")
         ctx = self.net._context(proj["id"], fn["unit"])
         from .repair_preflight import invalid_call
@@ -743,6 +750,13 @@ class Permuter:
         self._trial_outcome = 'scored'
         from .experiment_evidence import output
         self._trial_output = output(cand)
+        self._trial_output_granularity = 'function'
+        from ..source_lines import mismatches
+        from .repair_localisation import bind
+        # Use this actual compiled object; never recompile with different debug flags.
+        raw_rows=scoring.diff(self.net._target_obj(fn,proj),cand).rows
+        self._trial_locations=bind(source,mismatches(result.obj,fn['name'],raw_rows,source,
+            filename='func.cpp' if getattr(result,'language','c')=='c++' else 'func.c'))
         d = scoring.diff(self.net._target_obj(fn, proj), cand)
         if verdict is not None:
             d = scoring.DiffResult(0 if verdict else max(1, d.score), d.max_score, d.rows, verdict)

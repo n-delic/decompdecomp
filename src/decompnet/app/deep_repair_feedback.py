@@ -6,13 +6,13 @@ from . import repair_effects, repair_sequence_lane
 
 
 class Feedback:
-    def __init__(self, source, score, rows, output=None):
+    def __init__(self, source, score, rows, output=None, granularity="function"):
         self.state=dict(pending=[],seen=[],counts={})
         self.proofs={source:dict(source=source,score=score,depth=0,path=[],productive_steps=0,
-                                report={'rows':rows},output=output)}
+                                report={'rows':rows},output=output,granularity=granularity)}
         self.loan_sources=set()
 
-    def record(self, parent, candidate, family, path, score, rows, output, reused=False):
+    def record(self, parent, candidate, family, path, score, rows, output, reused=False, granularity="function"):
         before=self.proofs.get(parent,{})
         node=dict(source=candidate,parent_source=parent,parent_output=before.get('output'),path=path+[family])
         changed=output is not None and before.get('output') is not None and output!=before['output']
@@ -23,7 +23,7 @@ class Feedback:
             counts[kind]=counts.get(kind,0)+1
         if score is not None:
             self.proofs[candidate]={**node,'score':score,'ceiling':before.get('score',score),'depth':len(path)+1,
-                'baseline_rows':before.get('report',{}).get('rows'),'report':{'rows':rows},'output':output,
+                'baseline_rows':before.get('report',{}).get('rows'),'report':{'rows':rows},'output':output,'granularity':granularity,
                 'productive_steps':before.get('productive_steps',0)+int(productive),
                 'unchanged_steps':int(output is not None and output==before.get('output'))}
 
@@ -35,7 +35,8 @@ class Feedback:
         queue[:]=[n['source'] for n in self.state['pending']]
 
     def eligible(self, source, depth, arch):
-        return repair_sequence_lane.eligible(self.proofs.get(source,{}),depth,arch)
+        proof=self.proofs.get(source,{})
+        return proof.get('granularity','function')=='function' and repair_sequence_lane.eligible(proof,depth,arch)
 
     def continuation(self, source, choices, labels, seen):
         self.state['seen']=seen

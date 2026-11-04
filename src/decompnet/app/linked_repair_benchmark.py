@@ -74,7 +74,11 @@ def evaluator(root, name, header):
             else:
                 raw = FunctionObj(name,console.arch,target.big_endian,linked.linked_code,cpu=console.cpu_variant)
                 score = 0 if linked.exact else max(1,scoring.diff(canonical,linked.candidate).score)
-                result = dict(score=score,rows=scoring.diff(linked_target,raw).rows,matched=linked.exact,
+                from ..source_lines import mismatches
+                from .repair_localisation import bind
+                rows=scoring.diff(linked_target,raw).rows
+                result = dict(score=score,rows=rows,matched=linked.exact,
+                              repair_locations=bind(source,mismatches(built.obj,name,rows,source)),
                               outcome='exact_linked' if linked.exact else 'scored',
                               candidate_target=hashlib.sha256(linked.linked_code).hexdigest(),
                               candidate_relocs=repr(linked.problems))
@@ -130,7 +134,10 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
             pool_cache=case['pool_cache'],focused=focused)
     result=repair_benchmark.batch(prepared,lambda c,s:c['evaluate'](s),generate,
         trials=trials,seconds=seconds,generate_report=True)
-    return result | {'focused':focused,'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
+    # Case scope includes precursor ids; count actual functions independently of those ids.
+    distinct=len({c['name'] for c in prepared})
+    return result | {'coverage':dict(cases=len(prepared),distinct_functions=distinct,repeated_precursors=len(prepared)-distinct),
+                     'focused':focused,'verdict':'Copied ROM-backed linked judge; no adoption or live project writes.'}
 
 
 def main():

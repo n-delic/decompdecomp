@@ -3367,3 +3367,62 @@ instruction bits and consistent ELF relocations, and try real independently veri
 with bounded profiles. All alternatives must pass the existing linked byte/data and unit guards.
 Do not replace the real helper with a guessed inline expression, erase branches to lower a score,
 or treat raw address inference as a verified source identity.
+
+## Source-bound local repairs and productive sequence outcomes
+
+The pinned GCC KMC 2.7.2 replay profile remains `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`.
+A diff's instruction region is not a C source location. Local hypotheses now require
+line associations from the **actual compiled object**, bound to the source hash;
+there is no debug-flag recompile. Missing, ambiguous, or stale maps leave whole-function
+search intact. At most four standalone mapped call/operand edits are interleaved with
+all original proposals. Declaration, lifetime and control-flow families are not split:
+they may require connected changes outside the displayed mismatch. An optimizer's
+line association remains advice, never a semantic proof or an acceptance criterion.
+
+Sequence history now records fresh measured output changes, score improvements and
+exact results by compiler/build profile, initial mismatch shape and connected family
+prefix. Two improvements or four output changes are required before nonmatching
+history can rank a continuation. Exact recipes lead; alternate ordinary passes and
+all candidate families remain available. Cached/unknown outputs do not train this
+history. It stores aggregate family names and counters, not game source or addresses.
+A changed output alone is not evidence of a better match, so its rank is weaker than
+measured score improvements and exact recoveries.
+
+Imported builds supply evidence **before** their trial is undone. ELF fingerprints
+include the named function's raw code, processor/endianness and symbolic relocations.
+COFF fingerprints conservatively cover the named containing section: these can rotate
+no-effect work but cannot earn function-sized continuation. Unsupported formats and
+remote host trials without such evidence remain unknown. The ordinary objdiff,
+protected-function and linked-image checks continue to decide acceptance.
+
+Controlled tests exercise local-first proposals through both iterative and deep
+search, genuine pinned-compiler ELF/relocation changes, COFF format fallback, source-map
+rebasing and an imported build/objdiff trial whose source/object are restored. A
+wider private replay adds four distinct functions to the earlier four precursors of
+one function; reports now count distinct functions separately from saved cases.
+
+Expanded copied-project replay against main `5f8ec979`: eight frozen precursors,
+**five distinct functions**, same source/header/target scopes and 32-candidate /
+30-second budgets per case. The older additional set's compiler-registry descriptor
+hash had changed; it was frozen as a separate comparison set after checking original
+source/header hashes and unchanged compiler executable hashes, rather than bypassing
+the scope check. The ordinary linker/data judge decides every recovery.
+
+| Precursor starting score | Main first exact trial | New first exact trial | Main / new best score |
+| --- | --- | --- | --- |
+| 1355 | 10 | 10 | 0 / 0 |
+| 725 | 18 | 16 | 0 / 0 |
+| 525 | 18 | 8 | 0 / 0 |
+| 270 | 1 | 1 | 0 / 0 |
+| 115 | 3 | 3 | 0 / 0 |
+| 790 | None | None | 550 / 550 |
+| 60 | None | None | 60 / 60 |
+| 230 | None | None | 230 / 230 |
+
+Five precursors of two distinct functions recover in both builds; two precursors
+recover sooner. This is a controlled replay of existing sources, **not new live game
+matches**. The 790 case spent its time allowance after 29 baseline trials versus 32
+new trials; it reached the same best score. No whole-run timing or universal token
+saving is claimed. The suite reports distinct-function coverage separately from its
+legacy per-case counters. A public, homemade three-function frozen suite exercises
+real pinned compilation and exact controls without requiring private game data.

@@ -289,3 +289,19 @@ def test_browser_room_contribution_uses_real_project_judge(fork):
                          json={'function': 'scale', 'source': SCALE}).json()
     assert result['matched'] and result['score'] == 0, result
     assert _status(net, slug, 'scale') == 'matched' and _status(net, slug, 'offset') == 'matched'
+
+
+def test_imported_trial_fingerprint_is_captured_before_undo(fork):
+    from decompnet.app import imported_output
+    net,slug,agent=fork
+    _,fp,_=net.forks.get(slug)
+    fn=net._function('scale',slug);unit=fp.unit(fn['unit'])
+    before=(fp.root/unit.source).read_text()
+    prior=imported_output.read(unit.base,'scale')
+    out=net.forks.attempt(agent,slug,'scale',SCALE.replace('1.1','1.2'),keep=False,quiet=10**9)
+    assert out['score'] is not None and not out['matched']
+    assert out['compiled_output']['granularity']=='function'
+    assert (fp.root/unit.source).read_text()==before
+    assert imported_output.read(unit.base,'scale')==prior
+    # This is the candidate's evidence, not a late read of the restored build.
+    assert out['compiled_output']!=prior

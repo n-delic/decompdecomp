@@ -641,6 +641,7 @@ def test_deep_search_has_the_same_earned_complementary_sequence_limits(monkeypat
     def judge(self,agent,proj,fn,source,best,fork):
         tested.append(source);index=sources.index(source);score=40-index*6 if index<6 else 0
         self._trial_output=source
+        self._trial_output_granularity='function'
         self._trial_outcome='scored'
         net._last_diffs[agent.id,fn['id']]=(rows,'')
         with net.store.tx() as db:

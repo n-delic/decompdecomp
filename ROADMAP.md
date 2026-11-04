@@ -212,8 +212,12 @@ bitfield frame hypotheses require explicit local-family selection.
 Narrow call-argument donor staging is shared by local search. Iterative and one-function deep
 search share output-scoped ineffective-family rotation and an earned two-level continuation
 for measured complementary repairs, within their existing time/compile limits. Imported
-builds without function-output fingerprints retain ordinary ordering/depth: add genuine
-per-function output/relocation readers before enabling this feedback/continuation there.
+ELF builds now read real function bytes/relocations before trial restoration. COFF uses conservative
+section-level output for rotation only, never function-depth continuation. Unsupported object formats
+and remote room trials without host output evidence retain ordinary ordering/depth; add genuine readers
+or host evidence before enabling continuation there. Source-bound debug-line associations can split
+independent call/operand repairs into bounded local hypotheses while retaining original candidates.
+Compiler/profile-scoped productive sequence outcomes now guide alternating exploration passes.
 
 Connected exact repair sequences now guide shared family ordering and deep local follow-ups.
 Each candidate retains its own mismatch advice. Compact build-scoped evidence reaches agents;

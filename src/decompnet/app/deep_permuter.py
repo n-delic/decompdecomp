@@ -365,7 +365,8 @@ class Search(Permuter):
         source_rows = {source:initial_rows}
         lineage = repair_sequences.Lineage(self.net,proj,fn,source,initial_rows)
         current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
-        feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None)
+        feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None,getattr(self,'winner_output_granularity','function'))
+        source_locations={source:getattr(self,'winner_locations',None)}
         expanded = set()
         residual_bursts = 0
         counters = {'compile_failed': 0, 'frontier_pruned': 0, 'depth_limit': 0}
@@ -407,6 +408,10 @@ class Search(Permuter):
 
             choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
 
+            from . import repair_localisation
+            localised=repair_localisation.proposals(source,[(labels.get(c,'local_repair'),c) for c in choices],source_locations.get(source))
+            choices=[c for family,c in localised]
+            labels.update({c:family for family,c in localised})
             queue = list(dict.fromkeys(choices))
             if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             parents = {}
@@ -441,7 +446,14 @@ class Search(Permuter):
                     del self._parent_rows
                 measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
                 measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
-                feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False))
+                feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False),getattr(self,'_trial_output_granularity','function'))
+                if not getattr(self,'_trial_reused',False):
+                    proof=feedback.proofs.get(parent_source,{})
+                    repair_sequences.observe(self.net,lineage.profile,lineage.focus,parent_path,
+                        labels.get(candidate,'local_repair'),proof.get('score'),score,proof.get('output'),
+                        measured_output,exact=score==0)
+                    source_locations[candidate]=getattr(self,'_trial_locations',None)
+
                 if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
                 if score is None:
                     counters['compile_failed'] += 1
@@ -584,6 +596,8 @@ class Search(Permuter):
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
         reused = not self.measuring_baseline and isinstance(score, int) and score >= best
         self._trial_reused = reused
+        self._trial_locations = None
+        self._trial_output_granularity = None
         self._trial_output = feedback.get('output') if reused and isinstance(feedback,dict) else None
         elapsed_ms = 0
         if reused:
@@ -642,6 +656,8 @@ class Search(Permuter):
                 self.winner_diff = getattr(self.net, '_last_diffs', {}).get((agent.id, fn['id']))
                 self.winner_source = source
                 self.winner_output = getattr(self,'_trial_output',None)
+                self.winner_output_granularity = getattr(self,'_trial_output_granularity','function')
+                self.winner_locations = getattr(self,'_trial_locations',None)
                 self.winner_scope = scope
         self.report()
         return score

@@ -5,6 +5,7 @@ They never generate C themselves, remove exploration, or turn similarity into a 
 """
 import hashlib
 import json
+import math
 import time
 
 from ..match_bundle import compiler_identity
@@ -35,6 +36,33 @@ def learn(net, profile, focus, steps, *, max_steps=MAX_STEPS):
                    (profile,focus,json.dumps(steps),time.time()))
 
 
+def observe(net, profile, focus, prefix, family, before, after, prior_output, output, *, exact=False):
+    """Fresh compiler trials only; retain aggregate outcomes, never source or addresses."""
+    if (not family or len(prefix)>5 or not isinstance(before,(int,float))
+            or not isinstance(after,(int,float)) or not math.isfinite(before) or not math.isfinite(after) or prior_output is None or output is None):return
+    prepare(net)
+    with net.store.tx() as db:
+        db.execute("""CREATE TABLE IF NOT EXISTS repair_sequence_outcomes(
+          profile TEXT, focus TEXT, prefix TEXT, family TEXT, attempted INTEGER,
+          changed INTEGER, improved INTEGER, exact INTEGER,
+          PRIMARY KEY(profile,focus,prefix,family))""")
+        db.execute("""INSERT INTO repair_sequence_outcomes VALUES(?,?,?,?,1,?,?,?)
+          ON CONFLICT(profile,focus,prefix,family) DO UPDATE SET attempted=attempted+1,
+          changed=changed+excluded.changed,improved=improved+excluded.improved,exact=exact+excluded.exact""",
+          (profile,focus,json.dumps(list(prefix)),family,int(output!=prior_output),int(after<before),int(exact)))
+
+
+def productive(net, profile, focus, prefix):
+    # Require two improvements or four changed outputs before nonmatching history affects ordering.
+    # Existing exact recipes lead, and callers retain ordinary exploration.
+    table=net.store.one("SELECT name FROM sqlite_master WHERE type='table' AND name='repair_sequence_outcomes'")
+    if not table:return []
+    rows=net.store.all("""SELECT family FROM repair_sequence_outcomes WHERE profile=? AND focus=? AND prefix=?
+      AND ((improved>=2 AND changed>=2) OR (attempted>=4 AND changed>=4 AND changed*2>=attempted)) ORDER BY (improved+3.0*exact)/attempted DESC,changed*1.0/attempted DESC,family LIMIT 8""",
+      profile,focus,json.dumps(list(prefix)))
+    return [r['family'] for r in rows]
+
+
 def next_families(net, profile, focus, prefix):
     prepare(net)
     rows = net.store.all('SELECT steps FROM repair_sequences WHERE profile=? AND focus=? ORDER BY successes DESC,updated_at DESC LIMIT 16',profile,focus)
@@ -43,7 +71,7 @@ def next_families(net, profile, focus, prefix):
         steps = json.loads(row['steps'])
         if len(prefix) < len(steps) and steps[:len(prefix)] == list(prefix) and steps[len(prefix)] not in result:
             result.append(steps[len(prefix)])
-    return result
+    return list(dict.fromkeys(result+productive(net,profile,focus,prefix)))
 
 
 def profile(net, proj, fn):
