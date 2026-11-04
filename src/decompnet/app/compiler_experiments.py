@@ -62,7 +62,7 @@ def run(net,agent,slug,function,revision,trials):
         scope=hashlib.sha256(repr((agent_tokens.target_scope(net,fn,revision),dict(fn),
             [dict(r) for r in net.store.all('SELECT * FROM symbols WHERE project_id=? ORDER BY name',fn['project_id'])],
             net._generation.get(fn['project_id'],0))).encode()).hexdigest()
-        began=time.monotonic();out=[];seen=set()
+        began=time.monotonic();out=[];seen=set();promotion_hint=''
         ledger=getattr(net,'_compiler_trials',{})
         net._compiler_trials=ledger
         for i,(t,text) in enumerate(planned,1):
@@ -93,8 +93,10 @@ def run(net,agent,slug,function,revision,trials):
             status='EXACT (diagnostic only)' if exact else 'score '+score[1] if score else result.splitlines()[0][:180]
             out.append(f'{i}: {status}; {tag}; trial_id={key}; compiler={t["compiler"]}; flags={t.get("flags","") or "platform defaults"}')
             if exact:
+                if not fork:
+                    promotion_hint=(f'\nTo save this exact pair, retrieve trial {key}, then suggest(function=\"{fn["name"]}\", compiler=\"{t["compiler"]}\", flags=\"{t.get("flags","")}\", source=<the exact trial C>). No ranges argument is needed: function-only suggestions reverify and save only that entry; automatic changes must be enabled, otherwise they wait for review.')
                 break
-        return '\n'.join(out)+f'\nCandidate revision {actual} unchanged. get_compiler_trial retrieves the exact C/profile pair. No match credited or compiler choice applied.'
+        return '\n'.join(out)+f'\nCandidate revision {actual} unchanged. get_compiler_trial retrieves the exact C/profile pair. No match credited or compiler choice applied.'+promotion_hint
 
 
 def retrieve(net,agent,slug,function,trial_id,include_header=False):

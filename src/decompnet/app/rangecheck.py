@@ -339,6 +339,9 @@ class RangeChecks:
                 f"Either answer helps.")
 
     def _finish(self, proj, c: dict, rows, status: str, start: int, end: int, evidence: dict, why: str = "") -> None:
+        stored = next((row for row in self.net.cfg(self.net._project(proj['slug'])).get('range_checks', []) if row['id']==c['id']), None)
+        if stored and stored.get('status')=='function_applied':
+            return  # An exact function bundle settled this check while the background job compiled.
         c["status"], c["range"], c["evidence"] = status, [start, end], evidence
         short = self.net._short((c["toolchain"], tuple(c["flags"])))
         agent, _ = self.net.local_agent("autopilot")
@@ -379,6 +382,8 @@ class RangeChecks:
         c["said"] = said
         stored = next((old for old in self.net.cfg(self.net._project(proj["slug"])).get("range_checks", [])
                        if old["id"] == c["id"]), None)
+        if stored and stored.get('status')=='function_applied' and c.get('status')!='function_applied':
+            return
         if c == stored and resolve is None:
             return  # nothing new (GTA San Andreas's 60 unsettled audits were written again on every run)
 

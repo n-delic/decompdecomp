@@ -47,6 +47,7 @@ class GuiMixin:
     def overview(self, slug: str) -> dict:
         proj = self._project(slug)
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
+        from .. import function_profile_suggestions
         cfg = self.cfg(proj)
         # matches by the helper agents the app runs (their spend is what `spend` counts)
         helpers = self.store.one(
@@ -69,7 +70,7 @@ class GuiMixin:
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                        "priority": cfg.get("priority", []),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
-                       "suggestions": [s for s in cfg.get("suggestions", []) if s["status"] == "open"
+                       "suggestions": [function_profile_suggestions.public(s) for s in cfg.get("suggestions", []) if s["status"] == "open"
                                        and not re.search(r"does not match|doesn't compile", s["check"] or "")],
                        "boundaries": [r for r in cfg.get("boundaries", []) if r["status"] == "open"],
                        # (a fork whose files each have a compiler says its own: DS)

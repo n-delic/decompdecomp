@@ -50,6 +50,8 @@ def publish_profile(net, db, fn, expected, settings, agent):
                   (fn['project_id'],fn['id'],fn['vram']+fn['size'],fn['vram'])).fetchone():
         raise NetworkError('The compiler range overlaps another function. Resolve the boundary before applying this bundle.')
     cfg=scoped_config(proj,fn,settings)
+    from .function_profile_suggestions import settle_checks
+    settle_checks(cfg,fn,settings)
     db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
     net._event(db,proj['id'],agent.id,'compiler','Approved source/header/profile bundle for '+fn['name'])
     return prep.inputs(net,{**dict(proj),'config':json.dumps(cfg)},fn)

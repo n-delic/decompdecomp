@@ -545,7 +545,7 @@ class CompilerMixin:
                 raise NetworkError("a fork builds with its project's own compilers: suggest the change in words only")
             tc = self._toolchain_named(cfg, compiler)
             flag_list = flags.split() or consoles.default_flags(cfg, tc)
-            if not spans and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
+            if not spans and not function and (tc, flag_list) == (cfg["compiler"]["toolchain"], cfg["compiler"]["flags"]):
                 raise NetworkError("that's already the project's compiler and flags")
             if function:
                 check = self._check_compiler(proj, tc, flag_list, function, source)
@@ -553,15 +553,21 @@ class CompilerMixin:
                     raise NetworkError(f"not suggested: {check.removeprefix('checked: ')}. Test compilers with "
                                        "try_compiler first; suggest the one its C matches with")
 
+        from .. import function_profile_suggestions
+        bundle = function_profile_suggestions.capture(self, proj, function, spans, source) if tc and function else None
+
         def change(cfg):
             items = cfg.setdefault("suggestions", [])
             same = next((s for s in items if tc and s["status"] == "open" and s["toolchain"] == tc
-                         and s["flags"] == flag_list and s.get("ranges", []) == spans), None)
+                         and s["flags"] == flag_list and s.get("ranges", []) == spans
+                         and (s.get("function_match") or {}).get("function") == (bundle or {}).get("function")), None)
             if same is None:
                 same = {"id": max((s["id"] for s in items), default=0) + 1, "text": text, "toolchain": tc,
                         "flags": flag_list, "ranges": spans, "agents": [], "check": None, "status": "open",
                         "t": time.time()}
                 items.append(same)
+            if bundle:
+                same["function_match"] = bundle
             same["agents"] = sorted({*same["agents"], agent.name})
             if check and (not same["check"] or "matches the game" in check):
                 same["check"] = check
@@ -570,6 +576,15 @@ class CompilerMixin:
         self._update_cfg(slug, change)
         s = found[0]
         note = f" ({check})" if check else ""
+        if bundle:
+            if not self.auto_adjusts(self._project(slug)):
+                return f"Suggested function-only compiler bundle for {function}; automatic compiler changes are off. Apply it to recheck and save the source/header/profile together.{note}"
+            try:
+                function_profile_suggestions.apply(self, agent, self._project(slug), bundle, tc, flag_list)
+                self._update_cfg(slug, lambda cfg: next(item for item in cfg['suggestions'] if item['id']==s['id']).__setitem__('status','applied'))
+            except NetworkError as error:
+                return f"Suggested function-only bundle, not applied: {error}. No broader compiler range was changed.{note}"
+            return f"MATCH: {function}'s exact source, header and compiler flags were saved together for this function only. Neighbouring settings are unchanged."
         if spans and tc:  # a hypothesis: its neighbours decide (rangecheck.py), not its size
             return f"Suggested.{note} " + self.rangechecks.propose(proj, s, function, tc, flag_list, spans, source)
         if tc and self.auto_adjusts(proj) and ("matches the game" in (s["check"] or "") or len(s["agents"]) >= self.AGREE):
@@ -695,7 +710,7 @@ class CompilerMixin:
         """Whether a function's C (`source`, else its best attempt, else its latest) matches the game when built with
         this compiler."""
         fn = self._function(function, proj["slug"])
-        source = source.strip() or self._source_of(fn)
+        source = source if source.strip() else self._source_of(fn)
         if not source:
             return f"not checked: {fn['name']} has no attempt yet"
         ok, d, _ = self._judge_with(proj, fn, toolchain, flags, source)
@@ -717,7 +732,7 @@ class CompilerMixin:
         tc = self._toolchain_named(cfg, compiler)
         flag_list = flags.split() or consoles.default_flags(cfg, tc)
         fn = self._function(function, slug)
-        source = source.strip() or self._source_of(fn)
+        source = source if source.strip() else self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         ok, d, problem = self._judge_with(proj, fn, tc, flag_list, source)
@@ -727,7 +742,7 @@ class CompilerMixin:
         if ok:
             self.rangechecks.tried(proj, fn, tc, flag_list, source, True)
             return (f"{what}: MATCHES the game byte for byte. Suggest it: suggest(compiler=\"{tc}\", flags=\"{' '.join(flag_list)}\", "
-                    f"function=\"{fn['name']}\", ranges=<the address range it built>, source=<this C>)")
+                    f"function=\"{fn['name']}\", source=<this exact C>). A function-specific suggestion rechecks and saves only this function; broader ranges require separate neighbour evidence.")
         return f"{what}: score {d.score} ({d.percent:.1f}%), not a match\n{d.render(context=1, max_rows=40)}"
 
     @staticmethod
@@ -779,7 +794,7 @@ class CompilerMixin:
         own = compiler_for(cfg, fn["vram"])
         tc = self._toolchain_named(cfg, compiler) if compiler else own["toolchain"]
         base = list(own["flags"]) if tc == own["toolchain"] else consoles.default_flags(cfg, tc)
-        source = source.strip() or self._source_of(fn)
+        source = source if source.strip() else self._source_of(fn)
         if not source:
             raise NetworkError(f"{fn['name']} has no attempt yet: pass the C as source")
         results = []
@@ -798,7 +813,7 @@ class CompilerMixin:
             if tc == own["toolchain"]:
                 self.rangechecks.tried(proj, fn, tc, best, source, True)
             return (head + "\n".join(lines) + f"\nIt MATCHES with {' '.join(best)}. Suggest it: suggest(compiler=\"{tc}\", "
-                    f"flags=\"{' '.join(best)}\", function=\"{fn['name']}\", ranges=<the address range it built>, "
+                    f"flags=\"{' '.join(best)}\", function=\"{fn['name']}\", "
                     f"source=<this C>)")
         own_score = next((score for score, flags in results if flags == base), None)
         verdict = ("The flags aren't the problem: the project's are as good as any." if own_score == best_score
@@ -810,7 +825,14 @@ class CompilerMixin:
         hit = next((s for s in self.cfg(self._project(slug)).get("suggestions", []) if s["id"] == sid), None)
         if hit is None:
             raise NetworkError(f"no suggestion {sid}")
-        if apply and hit["toolchain"] and hit.get("ranges") and self.fork_slug(slug):  # (its files: each if it holds)
+        from .. import function_profile_suggestions
+        bundle = function_profile_suggestions.saved(self, self._project(slug), hit) if apply and hit['toolchain'] and not self.fork_slug(slug) else None
+        if bundle:
+            agent, _ = self.local_agent('you')
+            log('Rechecking exact source/header/profile for '+bundle['function']+' only…')
+            function_profile_suggestions.apply(self, agent, self._project(slug), bundle, hit['toolchain'], hit['flags'])
+            log('Exact source/header/profile saved for '+bundle['function']+' only.')
+        elif apply and hit["toolchain"] and hit.get("ranges") and self.fork_slug(slug):  # (its files: each if it holds)
             self.forks.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], log=log)
         elif apply and hit["toolchain"] and hit.get("ranges"):
             self.set_compiler_ranges(slug, hit["ranges"], hit["toolchain"], hit["flags"], log=log)

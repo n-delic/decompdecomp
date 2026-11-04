@@ -220,3 +220,24 @@ job. The bounded pass reads existing target constants, tries private scalar-refe
 rewrite only if linked bytes/data and export layout pass again. Coverage and readability do not increase.
 Retry repository sync afterwards: its complete original-image build is the final gate. Ambiguous pool values or
 unsupported arithmetic remain manual work. This pass needs the updated app; it does not restart an installed one.
+
+### Apply a compiler experiment to one function
+
+`compiler_experiments` and `try_compiler` remain diagnostics. After an exact trial,
+retrieve its exact C with `get_compiler_trial`, then call `suggest` with `function`,
+`compiler`, `flags` and that unmodified `source`. Omit `ranges` for a function-only
+change. A range wholly contained in that function also takes this path.
+
+With automatic compiler changes enabled, the suggestion rechecks the proposed source
+and captured header using the selected profile, then atomically saves the exact
+source/header/profile for that entry. It does not wait for neighbours or change the
+project default. Claims, current inputs, boundaries and linked ROM data are checked;
+a failed recheck leaves the selected source and settings unchanged. Wider ranges still
+need neighbouring evidence. Imported projects retain their existing file/build workflow.
+
+With automatic changes off, the suggestion waits for **Apply**, which performs the same
+fresh verification. Existing single-function range suggestions with a saved origin C
+also use this path when applied, even if their neighbour check is waiting or was rejected.
+Those old checks have no historical private header, so their saved C must verify against
+the current header before publication. Already-matched functions are not overwritten.
+A completed single-function check is labelled separately from a confirmed broader range.

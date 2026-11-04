@@ -135,10 +135,11 @@ const saidText = (text) => `<div class="said-text">${miniMarkdown(text)}</div>`;
 const tcName = (id) => (S.st?.toolchains || []).find((t) => t.id === id)?.name || id;
 function suggestionHtml(s) {
   const ok = s.check && s.check.includes("matches the game");
+  const single = s.function_scope?.function;
   return `<div class="note">${saidHead(s.agents.length > 1 ? `${s.agents.length} agents agree` : "suggested", s.agents, s.t, true)}${saidText(s.text)}
     ${s.check ? `<p class="said-check${ok ? " ok" : ""}">${ok ? "✓ " : ""}${esc(s.check)}</p>` : ""}
-    ${s.toolchain ? `<p class="small muted">${(s.ranges || []).length ? 'Scope: selected address ranges. Only functions whose settings change are checked.' : 'Scope: project default. This can require checking thousands of existing matches; use a range suggestion for a local change.'}</p>` : ''}
-    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${(s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
+    ${s.toolchain ? `<p class="small muted">${single ? `Scope: ${esc(single)} only. Rechecks and saves its exact source, header and flags together; neighbours are unchanged.` : (s.ranges || []).length ? 'Scope: selected address ranges. Only functions whose settings change are checked.' : 'Scope: project default. This can require checking thousands of existing matches; use a range suggestion for a local change.'}</p>` : ''}
+    <div class="row">${s.toolchain ? `<button class="primary small-btn" type="button" data-apply="${s.id}">Use ${esc(tcName(s.toolchain))} ${esc(s.flags.join(" "))}${single ? ` for ${esc(single)} only` : (s.ranges || []).length ? ` for ${plural(s.ranges.length, "part")}` : ""}</button>` : ""}<button class="ghost small-btn" type="button" data-dismiss="${s.id}">${s.toolchain ? "Not now" : "Dismiss"}</button></div></div>`;
 }
 $("suggestList").onclick = $("compilerWaiting").onclick = async (e) => {
   const cut = e.target.closest("button[data-bapply], button[data-bdismiss]");
@@ -758,6 +759,7 @@ $("saveGo").onclick = async () => {
 const COMPILER_ANSWER_EVERY_MS = 5000;  // while the app checks, the answer is asked again this often
 const PART_STATE = {
   confirmed: ["checked", "its neighbours agree"],
+  function_applied: ["function applied", "exact source and compiler settings saved for this function only"],
   quirk: ["doubtful", "its neighbours don't agree: it may be one function's quirk"],
   checking: ["being checked", "the app tries its neighbours with that compiler"],
   waiting: ["waiting", "agents try its neighbours when they take them"],

@@ -2885,6 +2885,24 @@ bytes with independently written target shapes. They test generation, not ROM-li
 All production candidates still require the ordinary linked-byte or objdiff judge. Macro-heavy
 inputs, unsupported syntax and unsafe lifetimes yield no new candidates.
 
+## Diagnostic compiler matches and function-only promotion (November 2026)
+
+A 126-instruction / 504-byte GCC candidate was exact with pinned KMC GCC 2.7.2
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3 -ffast-math`. Its saved single-function range
+suggestion waited for neighbouring evidence, although `auto_compiler` was enabled.
+A copied replay of the saved C under the current shared header scored 2013 with the
+project-default profile and zero with the function-specific fast-math profile. This
+revalidates an existing diagnostic result; it is not an additional live match.
+
+The workflow now separates evidence for one exact C/profile pair from evidence for a
+broader compiler range. Diagnostics still do not publish automatically. An explicit
+function-specific suggestion rechecks and atomically publishes source, private header
+and flags through the existing prepared-bundle judge, respecting automatic-change and
+claim settings. A matching diagnostic string or an old score alone cannot change flags.
+Neighbour rejection does not invalidate a freshly verified single-entry bundle.
+Preserve source line breaks and leading blank lines across checking and publication;
+period debug-enabled compilers can schedule differently after formatting changes.
+
 ## Separate later scalar lifetimes prevent unwanted local coalescing (3 November 2026)
 
 **Evidence: verified case and controlled private replay.** Native KMC GCC 2.7.2,

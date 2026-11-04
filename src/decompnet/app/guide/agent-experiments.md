@@ -22,3 +22,10 @@ Candidate-quality warnings are agent reports, not proofs. Read get_function(sect
 ## Assembly paging
 
 Prefer get_assembly(focus='mismatch:N') for a later differing instruction, focus='body' for a bounded post-entry page, or focus='callee_symbol' before reading full assembly pages. get_assembly and last_diff are paged.
+
+An exact compiler trial is still diagnostic. Retrieve the exact C/profile pair, then
+call `suggest` with that `function`, `compiler`, `flags` and unchanged `source` to save it.
+Omit `ranges` for one function: this uses fresh linked-byte/data verification and saves
+its source/header/profile together when automatic compiler changes are enabled. Otherwise
+it waits for user review. Do not propose or wait for a neighbouring range to save a
+verified single-function pair. Broader ranges require separate neighbouring evidence.

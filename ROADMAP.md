@@ -1,5 +1,10 @@
 # Roadmap
 
+Implemented: explicit ROM function compiler suggestions freshly verify and atomically save
+source/header/profile for one entry without neighbour confirmation. Disabled auto-apply waits
+for review; legacy single-function range suggestions with saved C recheck on Apply. Broader
+ranges and imported file/build settings retain their existing verification workflows.
+
 Implemented: NOP-only MIPS targets remain rebuildable as set-aside assembly in ROM imports and project objects;
 Check again applies the same classification to existing targets.
 Incomplete nonzero targets still receive advisory boundary review; original bytes, symbols, matches and explicit

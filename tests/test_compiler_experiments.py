@@ -62,3 +62,18 @@ def test_later_mismatch_focus_and_draft_aliases(tmp_path,monkeypatch):
         agent_tokens.assembly(net,'game','f',focus='mismatch:1:2',agent=a)
     with net.store.tx() as db:db.execute("UPDATE functions SET seed='int f(){return 0;}'")
     assert 'Stored machine draft' in agent_tokens.function_view(net,a,'game','f','draft')
+
+
+def test_exact_diagnostic_points_to_explicit_function_only_promotion(tmp_path,monkeypatch):
+    net,_=_game(tmp_path,[('f',10,'open')]);agent,_=net.local_agent('a')
+    with net.store.tx() as db:
+        db.execute("UPDATE projects SET config=?",(json.dumps({'kind':'rom'}),))
+        db.execute("UPDATE functions SET best_source='int f(){return 1;}'")
+    net.claim_row(agent,'game','f');_,revision=agent_tokens.candidate(net,agent,'game','f')
+    monkeypatch.setattr(net,'_toolchain_named',lambda cfg,c:c)
+    monkeypatch.setattr(net,'try_compiler',lambda *a,**k:'MATCHES the game byte for byte')
+    result=compiler_experiments.run(net,agent,'game','f',revision,[{'compiler':'fake','flags':'-O2'}])
+    assert 'EXACT (diagnostic only)' in result
+    assert 'suggest(function="f"' in result and 'No ranges argument is needed' in result
+    assert net._function('f','game')['status']=='open'
+    assert net.store.one('SELECT COUNT(*) n FROM attempts')['n']==0
