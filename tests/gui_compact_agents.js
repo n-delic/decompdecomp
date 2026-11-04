@@ -47,3 +47,12 @@ assert.equal(c.helperState({state:'working'},{name:'f',n_insns:85,best_score:85,
 c.esc=String; c.hhmm=()=> '12:54';
 assert.match(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/next check at 12:54/);
 assert.doesNotMatch(c.helperState({state:'waiting',why:'3 unchanged candidates paused',until:100}),/carries on/);
+
+const recentAgents=[
+ {agent:'old',label:'Older',state:'working',metrics:{last_improvement:100}},
+ {agent:'never',label:'No recorded improvement',state:'working',metrics:{last_improvement:null}},
+ {agent:'recent',label:'Recent',state:'stopped',metrics:{last_improvement:200}},
+ {agent:'fallback',label:'Fallback',state:'working'}];
+assert.deepEqual(Array.from(c.sortAgentCards(recentAgents,new Map([['fallback',{last_improvement:150}]]),'recent_improvement'),s=>s.agent),['recent','fallback','old','never']);
+assert.deepEqual(recentAgents.map(s=>s.agent),['old','never','recent','fallback'],'sorting must not reorder the underlying live sessions');
+assert(fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8').includes('<option value="recent_improvement">Most recently improved</option>'));

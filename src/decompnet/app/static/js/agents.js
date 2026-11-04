@@ -135,6 +135,7 @@ function sortAgentCards(sessions, board, mode, now = Date.now() / 1000) {
     const x = a.metrics || board.get(a.agent), y = b.metrics || board.get(b.agent);
     const value = mode === "matches" ? (y?.matched || 0) - (x?.matched || 0)
       : mode === "improved" ? (y?.improved || 0) - (x?.improved || 0)
+      : mode === "recent_improvement" ? (y?.last_improvement || 0) - (x?.last_improvement || 0)
       : mode === "runtime" ? agentRuntime(b, now) - agentRuntime(a, now)
       : mode === "model" ? (a.model || a.agent).localeCompare(b.model || b.agent)
       : mode === "efficiency" ? (agentTokenRate(a, x) ?? Infinity) - (agentTokenRate(b, y) ?? Infinity)
