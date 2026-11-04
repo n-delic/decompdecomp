@@ -11,7 +11,7 @@ import pytest
 
 from decompnet.app import saves
 from decompnet.app.engine import RomNetwork
-from decompnet.app.progress import Progress, _initial_merge, _merge_manifest, _read
+from decompnet.app.progress import Progress, _initial_merge, _manifest, _merge_manifest, _read
 from decompnet.network import NetworkError
 from decompnet.rom import split
 
@@ -1093,10 +1093,14 @@ def test_a_first_sync_keeps_a_new_function_at_an_address_another_overlay_has():
 def test_a_first_sync_adds_a_new_function_where_another_at_its_address_was_renamed():
     """Rename and new-function at one address at once: a saved layout entry renamed in the database (same address
     and size) keeps its saved name, while a different function the database gained at that same address still joins
-    the layout (and its source is published). The rename must not block the genuinely new sibling."""
+    the layout and its source is published. The renamed entry's own source must not be queued (that would make the
+    folder refuse the save), and the merged manifest must pass _manifest."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
     def files(layout, sources=()):
-        manifest = {"format": saves.FORMAT, "layout": layout, "headers": {"": "common.h"}}
-        return {saves.MANIFEST: json.dumps(manifest)} | {f"src/{name}.c": "int x;" for name in sources}
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
 
     disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36}
     crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 40}
@@ -1106,6 +1110,10 @@ def test_a_first_sync_adds_a_new_function_where_another_at_its_address_was_renam
     manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
     assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
     assert "src/ovl_b_crit_004BF720.c" in pending
+    assert "src/ovl_a_disp_004BF720.c" not in pending   # the renamed entry's source is the saved file, not a new one
+    merged = (disk | pending)
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})            # the folder saves: no "Add ... to the function layout"
 
 
 def test_a_first_sync_keeps_set_aside_functions_sharing_an_address():
@@ -1140,3 +1148,34 @@ def test_a_piece_named_by_its_label_saves_and_opens_again(project):
     net.progress.sync("game", force=True)
     names = [row["name"] for row in json.loads((folder / saves.MANIFEST).read_text())["layout"]]
     assert ".L00001004" in names
+
+
+def test_a_first_sync_keeps_a_same_size_overlay_sibling_by_unit():
+    """Two overlay functions of the same size at one address: the saved name matches the database entry of its own
+    unit, so the sibling in the other overlay still joins instead of being taken as the same rename and dropped.
+    This needs the rendered layout to carry unit, and the rename to fire only on exactly one matching candidate."""
+    sha = "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+
+    def files(layout, sources=()):
+        manifest = {"format": saves.FORMAT, "game": {"sha1": sha}, "layout": layout, "headers": {"": "common.h"}}
+        return ({saves.MANIFEST: json.dumps(manifest), "include/common.h": "/* */"}
+                | {f"src/{name}.c": "int x;" for name in sources})
+
+    disp = {"name": "ovl_a_disp_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}
+    crit = {"name": "ovl_b_crit_004BF720", "vram": 0x4BF720, "size": 36, "unit": "ovl_b"}   # same size, other overlay
+    renamed = {"name": "draw_sprite", "vram": 0x4BF720, "size": 36, "unit": "ovl_a"}         # disp's saved (old) name
+    disk = files([renamed])
+    projected = files([disp, crit], ["ovl_a_disp_004BF720", "ovl_b_crit_004BF720"])
+    manifest, pending = _initial_merge(json.loads(disk[saves.MANIFEST]), projected, disk)
+    assert [f["name"] for f in manifest["layout"]] == ["draw_sprite", "ovl_b_crit_004BF720"]
+    assert "src/ovl_b_crit_004BF720.c" in pending and "src/ovl_a_disp_004BF720.c" not in pending
+    merged = (disk | pending)
+    merged[saves.MANIFEST] = json.dumps(manifest)
+    _manifest(merged, {"rom": {"sha1": sha}})
+
+
+def test_the_rendered_layout_carries_each_functions_unit(project):
+    """#174: each rendered layout entry carries its unit, so a first sync can tell same-size overlay siblings apart."""
+    net, folder, _ = project
+    man = json.loads((folder / saves.MANIFEST).read_text())
+    assert man["layout"] and all("unit" in entry for entry in man["layout"])
