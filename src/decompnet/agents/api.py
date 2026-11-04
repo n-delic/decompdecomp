@@ -490,7 +490,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                            "notes and a draft. count > 1: a batch of small functions to judge together.",
                            s(function=st("optional name or address"), strategy=st("no_compiling_c | finish | easiest | least_tried | oldest_checked | untried | closest | hardest | random"),
                              count=it("up to 6 small functions at once"))),
-        "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("summary (default) | brief | all | history | candidate | quality | notes | declarations | compiler | layouts"), start=it("Character offset for supporting sections"), limit=it("Page characters, default 6000, maximum 12000; complete editable C is not truncated"))),
+        "get_function": ("Show any function by name or address.", s(function=st("name or address", True), section=st("summary (default) | brief | all | history | candidate | experiment | quality | notes | declarations | compiler | layouts"), start=it("Character offset for supporting sections"), limit=it("Page characters, default 6000, maximum 12000; complete editable C is not truncated"))),
         "compile_and_diff": ("Whole-function rewrite: small edits should use compile_patch. Compile, link and diff against the ROM. "
                              "Score 0 = matched. Several functions: names comma-separated, all definitions in source.",
                              s(function=st("function name, or several: a, b, c", True), source=st("C source", True),
@@ -512,6 +512,7 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                              s(function=st("function", True), notes=st("what you tried, what is left", True),
                                not_c=bo("True only with evidence of handwritten assembly or non-function code. Unsupported compiler extensions, asm-register restrictions, return-address builtins or build flags are blockers, not no-C proof; release normally with notes."),
                                move_on=bo("Explicitly release now with precise notes explaining why; bypasses the one-time pushback"),
+                               next_experiment={"type":"object","description":"Optional untested exact patch. Anchor/revision are validated; retrieve with get_function(section=experiment).", "properties":{key:{"type":"string"} for key in ('revision','old','new','title')}, "required":["revision","old","new"],"additionalProperties":False},
                                needs=st("Optional direct callee in original assembly; obeys pauses and allows one pivot per unchanged input. Explain inline/header concerns in notes."))),
         "get_context": ("The header used by function; omit only for one held claim or a single-header project.", s(function=st("Function whose per-file header is needed"))),
         "edit_context": ("Replace `old` (exactly once) with `new` in the shared header, or append when old is empty.",

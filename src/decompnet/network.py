@@ -1148,6 +1148,9 @@ class Network:
             row = db.execute("SELECT agent_id FROM claims WHERE function_id=?", (fn["id"],)).fetchone()
             if row is None or row["agent_id"] != agent.id:
                 raise NetworkError(f"you don't hold a claim on {fn['name']}")
+            from .app import agent_review
+            review_facts = (agent_review.facts(self,self.store.one('SELECT * FROM projects WHERE id=?',fn['project_id']),fn)
+                            if agent_review.CONCERN.search(notes) or agent_review.load(self,agent_review.PREFIX+str(fn['id'])) else None)
             db.execute("DELETE FROM claims WHERE function_id=?", (fn["id"],))
             db.execute("UPDATE functions SET abandons=abandons+1 WHERE id=?", (fn["id"],))
             if notes.strip() and notes.strip() != "Deep permutation turn ended; improvements shared.":
@@ -1158,6 +1161,8 @@ class Network:
         claim_stalls.released(self,fn,agent=agent,exhausted=bool(progress and progress['compiles'] and progress['no_better'] >= progress['after']))
         from . import candidate_quality
         candidate_quality.capture(self,fn,agent,notes,progress)
+        from .app import agent_review
+        agent_review.observe(self,fn,agent,notes,progress,snapshot=review_facts)
         return (f"Released {fn['name']}. Your best attempt and notes are saved so the next agent starts "
                 f"where you left off.{said} Call claim_function for a new one.")
 

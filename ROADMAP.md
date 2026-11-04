@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: revision-scoped agent blocker review and retry explanations, validated structured
+handoff experiments, bounded claim evidence, and immediate shared CLI usage-limit publication.
+See docs/AGENT_WORKFLOW_EFFICIENCY.md.
+
 Implemented: explicit reviewed MIPS raw-tail recovery with staged disassembly, original-prefix and overlap guards,
 saved progress, and raw/export boundary reconciliation. Added a source-independent corruption benchmark
 and bounded leaf review hints. New-function adoption and other-processor/imported-build extent recovery remain planned.

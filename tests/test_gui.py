@@ -507,6 +507,13 @@ def test_activity_feed_shows_recorded_score_improvements():
                    capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
 
 
+def test_agent_blocker_review_cards_show_evidence_and_retry_context():
+    if NODE is None:
+        pytest.skip("needs node to run the GUI's scripts")
+    subprocess.run([NODE, str(Path(__file__).with_name('gui_agent_blocker_reviews.js'))], check=True,
+                   capture_output=True, text=True, timeout=GUI_TIMEOUT_SECONDS)
+
+
 def test_repository_folder_restores_checkout_without_overwriting_edits_or_other_projects():
     if NODE is None:
         pytest.skip("needs node to run the GUI's scripts")

@@ -274,6 +274,8 @@ def brief(net, text, slug=None, agent=None):
                     text += agent_targets.suggestions(source)
                     text += f"{fn['name']}: candidate revision {revision}; use compile_patch directly on the candidate above.\n"
                     line_note = candidate_line_note(net, agent, slug, fn, source)
+                    if len(line_note)>900:
+                        line_note=line_note[:900]+'\nMore instruction/line evidence: get_function(section="candidate").\n'
                     # Startup packets are bounded: keep this short evidence ahead of long assembly/source sections.
                     from . import agent_evidence
                     evidence_key = agent_evidence.scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
@@ -285,7 +287,15 @@ def brief(net, text, slug=None, agent=None):
                     text = f"{fn['name']} · candidate revision {revision}:\n" + baseline + line_note + '\n\n' + text
 
                     from . import local_experiments
-                    text += local_experiments.summary(net,agent,slug,fn,source,revision)+'\n'
+                    experiments = local_experiments.summary(net,agent,slug,fn,source,revision)
+                    if len(experiments)>800:
+                        experiments=experiments[:800]+'\nFull failed-experiment evidence: get_function(section="history").'
+                    from . import agent_review
+                    proj=net.project_row(slug)
+                    review=agent_review.brief(net,proj,fn)
+                    pending=agent_review.load(net,agent_review.EXPERIMENT+str(fn['id']))
+                    next_step='\nStructured next experiment available: get_function(section="experiment"). It is untested and must pass current revision/anchor checks.' if pending else ''
+                    text = experiments+'\n'+review+next_step+'\n'+text
         except NetworkError:
             pass
     return text
@@ -526,6 +536,9 @@ def _function_view(net, agent, slug, function, section='all'):
         return '```c\n'+fn['matched_source']+'\n```' if fn['matched_source'] else 'No verified matched source; use section=candidate for the current attempt.'
     if section == 'source':
         section = 'candidate'
+    if section == 'experiment':
+        from .agent_review import experiment
+        return experiment(net,agent,slug,function)
     if section == 'quality':
         from .. import candidate_quality
         return candidate_quality.view(net,net._function(function,slug))
@@ -535,7 +548,7 @@ def _function_view(net, agent, slug, function, section='all'):
     if section == 'candidate':
         return get_candidate(net, agent, slug, function)
     if section not in ('all', 'notes', 'declarations', 'compiler', 'layouts'):
-        raise NetworkError('Choose section all, history, candidate, notes, declarations, compiler or layouts.')
+        raise NetworkError('Choose section all, history, candidate, experiment, quality, notes, declarations, compiler or layouts.')
     text = assembly_blocks(net, slug, agent, net.get_function(function, slug, agent))
     if section == 'all':
         return text + history(net, net._function(function, slug))

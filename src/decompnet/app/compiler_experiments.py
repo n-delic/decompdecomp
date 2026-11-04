@@ -78,7 +78,7 @@ def run(net,agent,slug,function,revision,trials):
             else:
                 result=net.try_compiler(agent,slug,function,t['compiler'],t.get('flags',''),text,keep_match=False)
                 from .session_followups import diagnostic_completed
-                diagnostic_completed(net,agent)
+                diagnostic_completed(net,agent,fn['name'],slug)
                 ledger[key]={'agent':agent.id,'slug':slug,'function':fn['name'],'source':text,'compiler':t['compiler'],
                              'flags':t.get('flags',''),'revision':revision,'scope':scope,'project_config':cfg,'flags_source':'project build owns per-file flags' if fork else 'explicit effective flags','result':result}
                 header = (net._context(fn['project_id'],fn['unit']) or {'header':''})['header']

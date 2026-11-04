@@ -555,7 +555,32 @@ function projectCompilerFacts(ov) {
     c.sources?.length ? ["Compiler settings read from", c.sources.join(", ") + ". " + c.note] : null].filter(Boolean);
 }
 
+function blockerReviewHTML(items) {
+  return items.length ? items.map(item=>`<article class="profile-failure-card"><div class="profile-failure-heading"><button type="button" class="link mono" data-blocker-function="${esc(item.function)}">${esc(item.function)}</button><span class="small muted">${item.historical ? 'Historical evidence' : item.needs_review ? 'Review requested' : 'Inputs changed'}</span></div><p class="small">${item.no_compile_releases} blocker ${item.no_compile_releases===1 ? 'report' : 'reports'} without compilation${item.score!=null ? ` · saved score ${esc(item.score)}` : ''}</p>${item.historical ? '<p class="small muted">Earlier notes are not tied to the current build. Recheck before drawing a conclusion.</p>' : ''}${item.changed.length ? `<p class="small muted">Retry context: ${esc(item.changed.join(', '))} changed.</p>` : ''}<details class="more"><summary>Agent evidence · ${item.releases.length} recent ${item.releases.length===1 ? 'release' : 'releases'}</summary>${item.releases.map(r=>`<p class="small"><b>${esc(r.agent)}</b> · ${r.compiled ? 'compiled' : 'no compilation'}<br>${esc(r.notes)}</p>`).join('')}</details>${item.needs_review ? `<button type="button" class="ghost small-btn" data-ack-blocker="${esc(item.function)}">Acknowledge review</button>` : ''}</article>`).join('') : '<p class="small muted">No repeated blocker reports currently need review.</p>';
+}
+async function loadBlockerReviews() {
+  const slug=S.slug, gen=S.gen;
+  const work=$("agentBlockerWork"), finish=beginWork(work,'Loading blocker reports',[], '');
+  try{
+    const result=await api(`/api/agent-reviews?slug=${encodeURIComponent(slug)}`);
+    if(S.slug!==slug || S.gen!==gen)return;
+    $("agentBlockerContext").textContent=`— ${result.items.filter(i=>i.needs_review).length} need review`;
+    $("agentBlockerItems").innerHTML=blockerReviewHTML(result.items);
+  }catch(error){if(S.slug===slug)showJobError(work,error.message);}finally{finish();}
+}
+$("agentBlockerRefresh").onclick=event=>{event.preventDefault();event.stopPropagation();loadBlockerReviews();};
+$("agentBlockerItems").onclick=async event=>{
+  const link=event.target.closest('[data-blocker-function]');
+  if(link){openFn(link.dataset.blockerFunction);return;}
+  const ack=event.target.closest('[data-ack-blocker]');
+  if(!ack)return;
+  const work=$("agentBlockerWork"), finish=beginWork(work,'Acknowledging review',[ack],'');
+  try{await api('/api/agent-review',{method:'POST',body:{slug:S.slug,function:ack.dataset.ackBlocker}});await loadBlockerReviews();}
+  catch(error){showJobError(work,error.message);}finally{finish();}
+};
+
 async function renderProjectSettings() {
+  loadBlockerReviews();
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
   loadCodeAudit();
   const settingsGen = S.gen, settingsSlug = S.slug;

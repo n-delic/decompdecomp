@@ -73,3 +73,32 @@ pause grants, skipping provider startup, concurrent baseline sharing, source/tar
 failed probes, stale score comparisons, normalized focus/insertion windows, quality references,
 and asynchronous CPU handoff deduplication, input checks and cancellation. All fixtures are
 synthetic and use scratch state; no new real-game matches are claimed.
+
+## Transcript review follow-up
+
+Settings → Agent blocker review lists repeated concern reports without compilation. New reports
+are scoped to source, header, compiler/build inputs, symbols, callees, target bytes, instructions
+and repair implementation hashes. Changed fields are named in the review and the next claim brief.
+Three unchanged concern releases without recorded compilation request review. Completed explicit compiler diagnostics count as work even when they create no scored attempt; their per-function timestamps are compared with the claim start. This does not suppress explicit claims, change
+eligibility rules, label assembly, or change a match. Acknowledge records that the user reviewed
+the current evidence; it does not grant a retry or resume workers.
+
+Earlier notes explicitly reporting no compilation can also appear after three concern reports.
+Their historical build scope is unrecorded and shown as such: they are not assertions about the
+current candidate. The list is bounded to 200 functions and twelve recent releases/notes per item.
+
+Agents can include `next_experiment` in `release_function`: `revision`, `old`, `new` and an optional
+`title`. The revision must match and the old anchor must appear exactly once; unchanged, stale,
+ambiguous or oversized proposals are rejected. This stores an untested proposal, without compiling
+or changing source. `get_function(section="experiment")` rechecks source and build fingerprints
+and supplies current `compile_patch` arguments only while they still fit. The ordinary judge
+remains authoritative. Natural-language notes are never automatically converted into edits.
+
+Claim packets retain complete editable C and user instructions. Auxiliary line evidence is bounded
+to 900 characters and experiment summaries to 800, with supporting reads on demand. The failed-family
+summary and retry context precede the candidate so agents can avoid known ineffective work.
+
+Provider-account cooldowns already persist across restarts and are credential/endpoint scoped for
+API workers. CLI limit detection now publishes the wait immediately before session exit handling,
+so sibling workers see it before starting another request. The generic exit-code error is not also
+emitted for the same quota stop. Already-running workers are not killed.

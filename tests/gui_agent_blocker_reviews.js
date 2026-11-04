@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('node:fs'),assert=require('node:assert/strict'),vm=require('node:vm'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
+const ctx=vm.createContext({esc:value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;')});
+vm.runInContext(source.slice(source.indexOf('function blockerReviewHTML'),source.indexOf('async function loadBlockerReviews')),ctx);
+const current={function:'example',score:95,no_compile_releases:3,needs_review:true,changed:['header'],releases:[{agent:'agent-1',compiled:false,notes:'A reported blocker <unsafe>'}]};
+const html=ctx.blockerReviewHTML([current]);
+assert.match(html,/data-blocker-function="example"/);
+assert.match(html,/Acknowledge review/);assert.match(html,/header changed/);
+assert(!html.includes('<unsafe>'));assert.match(html,/3 blocker reports/);
+const historical=ctx.blockerReviewHTML([{...current,historical:true}]);
+assert.match(historical,/Historical evidence/);assert.match(historical,/not tied to the current build/);
+assert.match(ctx.blockerReviewHTML([]),/No repeated blocker/);

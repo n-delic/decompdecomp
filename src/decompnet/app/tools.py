@@ -204,8 +204,8 @@ repair_automation in compile_and_diff (single function only). These are saved on
 Explain what changed and how a deterministic repair could do it; omit uncertain explanations. No extra compile
 is needed. report_repair can annotate your captured match afterwards. These are review ideas, never live rules.
 """
-WORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
-FORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+WORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
+FORK_PROMPT += "\n" + REPAIR_GUIDANCE + 'Prefer compile_patch for small edits and compile_and_diff for substantial rewrites. Keep the returned candidate revision. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves an exact-anchor proposal. Retrieve it with get_function(section="experiment") and test through the normal judge. Do not fetch get_candidate after a successful patch unless the source is lost or stale. Same-function edits must be sequential. When handing off a precise untested edit, release_function with next_experiment fields revision, old, new, title saves a validated exact-anchor proposal. Retrieve it with get_function(section="experiment"); it remains untested until the normal judge runs. compile_variants runs up to six independent supplied alternatives against one revision and returns the chosen continuation; keep the baseline on ties. Automatic repairs are explicit via try_local_repairs, never a substitute for submitted variants. A saved historical score can differ from the current verified baseline; compare current trials to the rechecked baseline. Release with precise function notes when the move-on budget is exhausted, then take eligible work. Global share_knowledge is only for reusable game/compiler matching tips; function-specific findings belong in release notes. Optional tools may be disabled: use the available schema. guide(topic="agent-experiments") explains repair families, selectors, recovery, compiler trials and paging. Detailed tool help is guide(topic="tool:NAME").'
 
 
 def _console_guides() -> dict:
@@ -305,6 +305,12 @@ def _project_info(net: RomNetwork, slug: str, detail: bool = True) -> str:
 
 
 # name -> handler(net, agent, slug, **args); every handler returns text for the model
+def _release_with_experiment(net, agent, slug, function, notes, needs, not_c, move_on, next_experiment):
+    from . import agent_review
+    saved = agent_review.save_experiment(net,agent,slug,function,next_experiment) if next_experiment is not None else ''
+    return agent_tokens.brief(net,net.release_function(agent,function,notes,slug,needs or '',bool(not_c),bool(move_on)),slug,agent) + ('\n'+saved if saved else '')
+
+
 def _claim(net: RomNetwork, agent: Agent, slug: str, function: str, strategy: str, count: int = 1) -> str:
     """A claim; one asked for that's matched, set aside (no C makes it) or someone else's is the next free function
     instead (an agent asking for those has nothing better to do than the next one, and is told why). count > 1: a
@@ -455,8 +461,8 @@ HANDLERS: dict[str, Callable[..., str]] = {
     "last_diff": agent_tokens.diff_page,
     "report_candidate_issue": lambda net, agent, slug, function, revision, issue, reason, alternative_revision="":
         candidate_quality.report(net,agent,slug,function,revision,issue,reason,alternative_revision),
-    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False:
-        agent_tokens.brief(net,net.release_function(agent, function, notes, slug, needs or "", bool(not_c), bool(move_on)),slug,agent),
+    "release_function": lambda net, agent, slug, function, notes, needs="", not_c=False, move_on=False, next_experiment=None:
+        _release_with_experiment(net,agent,slug,function,notes,needs,not_c,move_on,next_experiment),
     "get_context": _get_context,
     "edit_context": lambda net, agent, slug, old, new, message, function="":
         net.edit_context(agent, slug, old, new, message, function or None),
@@ -565,7 +571,7 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
         result=HANDLERS[name](net,agent,slug,**named)
         if name == 'try_compiler':
             from .session_followups import diagnostic_completed
-            diagnostic_completed(net,agent)
+            diagnostic_completed(net,agent,named.get('function',''),slug)
         result=after_tool(net,agent,slug,name,named,result)
         if name in {'compile_patch','compile_and_diff','try_local_repairs','compile_family','compile_variants','compiler_experiments'}:
             function=named.get('function','')
@@ -662,7 +668,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
     @tool
     async def get_function(ctx: Context, function: str, section: str = 'summary', start: int = 0, limit: int = 6000) -> str:
         """Show any function (by name or address): assembly, status, best attempt, notes. Read matched
-        functions to learn how this codebase is written. section: summary (default), brief, all, history, candidate, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
+        functions to learn how this codebase is written. section: summary (default), brief, all, history, candidate, experiment, quality, notes, declarations, compiler, layouts. start/limit page supporting sections by character offset; candidate/brief always return complete C. Prefer the specific section you need."""
         return await run(ctx, "get_function", function=function, section=section, start=start, limit=limit)
 
     @tool
@@ -758,7 +764,7 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
                          reason=reason, alternative_revision=alternative_revision)
 
     @tool
-    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False) -> str:
+    async def release_function(ctx: Context, function: str, notes: str, needs: str = "", not_c: bool = False, move_on: bool = False, next_experiment: dict | None = None) -> str:
         """Give up a function you're stuck on, once compile_and_diff says to move on. Notes are required: what you
         tried, what is left. Your best attempt is kept for the next agent. Released before that (fewer compiles than
         the move-on rule), it answers once with what to try instead; call it again to release anyway.
@@ -766,13 +772,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         Args:
             function: the function you hold
             notes: what you tried, what is left
+            next_experiment: optional untested exact patch with revision, old, new and title. Validated against your current candidate; rejected if stale or ambiguous. The next agent can retrieve it with get_function(section="experiment") and test through compile_patch.
             needs: optional: a direct callee recorded in the original assembly that blocks this function. Paused
                 candidates cannot be selected this way. Explain indirect/inline/header concerns in notes instead.
             move_on: explicitly release now with precise notes explaining why further exploration is unproductive. Skips the one-time release pushback; does not mark a match or no-C verdict.
             not_c: true only with evidence no C makes its code at all (hand-written assembly), saying why in notes. Unsupported compiler extensions, asm-register/tool restrictions, return-address builtins or unsuitable build flags are not proof; describe those as blockers and release normally:
                 once agents of two models agree, it's set aside and no one is handed it again.
         """
-        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on)
+        return await run(ctx, "release_function", function=function, notes=notes, needs=needs, not_c=not_c, move_on=move_on, next_experiment=next_experiment)
 
     @tool
     async def get_context(ctx: Context, function: str = "") -> str:

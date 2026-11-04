@@ -62,12 +62,18 @@ CONTINUATION = ('The previous session ended early while eligible work remained. 
                 'specific blocker and release the claim; do not invent changes or compile merely to meet a quota.')
 
 
-def diagnostic_completed(net, agent):
+def diagnostic_completed(net, agent, function="", slug=None):
     """A completed diagnostic build is work even though it intentionally creates no scored attempt."""
     counts = getattr(net, '_session_diagnostic_compiles', None)
     if counts is None:
         counts = net._session_diagnostic_compiles = {}
     counts[agent.id] = counts.get(agent.id, 0) + 1
+    if function:
+        fn=net._function(function,slug)
+        ledger=net.__dict__.setdefault('_function_diagnostic_compiles',{})
+        ledger[agent.id,fn['id']]=time.time()
+        while len(ledger)>256:
+            del ledger[next(iter(ledger))]
 
 
 def configuration_key(session):

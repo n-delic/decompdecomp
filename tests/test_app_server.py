@@ -2194,3 +2194,24 @@ def test_map_encoding_runs_in_worker_reuses_bytes_and_invalidates_on_edit(app, m
         db.execute("UPDATE functions SET attempts=attempts+1 WHERE project_id=(SELECT id FROM projects WHERE slug='wire-cache')")
     assert client.get('/api/map?slug=wire-cache').json()['rows'] != first['rows']
     assert len(encoded)==2
+
+
+def test_agent_blocker_review_routes_are_guarded_and_acknowledgment_keeps_status(app,tmp_path,monkeypatch):
+    client,net,_=app
+    slug='blocker-review-test'
+    agent,_=net.local_agent('review-worker')
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                       (slug,'Review test',str(tmp_path),json.dumps({'kind':'rom','platform':'n64'}))).lastrowid
+        fid=db.execute("INSERT INTO functions(project_id,name,status) VALUES(?,'review_fn','open')",(pid,)).lastrowid
+        for _ in range(3):
+            db.execute('INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)',
+                       (pid,fid,agent.id,'No compile: unresolved asm concern',time.time()))
+    response=client.get('/api/agent-reviews',params={'slug':slug})
+    assert response.status_code==200 and response.json()['items'][0]['historical']
+    assert client.post('/api/agent-review',json={'slug':slug,'function':'review_fn'}).status_code==403
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kwargs:pytest.fail('Acknowledging evidence must not reverify project code'))
+    response=client.post('/api/agent-review',json={'slug':slug,'function':'review_fn'},headers={'X-Decomp':'1'})
+    assert response.status_code==200 and response.json()['reviewed']
+    assert client.get('/api/agent-reviews',params={'slug':slug}).json()['items']==[]
+    assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='open'
