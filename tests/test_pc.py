@@ -3136,6 +3136,27 @@ def test_a_jumps_index_table_ends_at_its_first_byte_past_the_cases_and_a_lookup_
     assert [(fn.addr, fn.size) for fn in found] == [(LOW + 0x1000, 0x2C)]
 
 
+def _one_switch(f: bytes, end: int, after: bytes) -> list[tuple[int, int]]:
+    rows = [{"entry": LOW + 0x1000, "end": LOW + end, "name": "", "source": "DEFAULT"}]
+    return [(fn.addr, fn.size) for fn in scratch_pe.analyse(_code(f + after + b"\xcc" * 3), rows)]
+
+
+def test_a_byte_table_indexes_a_jump_only_through_the_value_it_loads():
+    """Which register a byte was loaded into isn't enough: the register may be overwritten before the jump, or the
+    byte only compared, and the byte may be moved to another register first. The value is followed."""
+    # movzx eax, byte [ecx+B]; mov eax, 1; jmp [eax*4+T]: eax isn't B's byte any more, so B is a lookup that runs on
+    f = bytes.fromhex("0fb681 1c100010" "b8 01000000" "ff2485 14100010" "c3") + struct.pack("<2I", *[LOW + 0x1013] * 2)
+    assert _one_switch(f, 0x1014, bytes([5, 6]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x21)]
+    # cmp al, byte [ecx+B]; jmp [eax*4+T]: a compare loads nothing
+    f = bytes.fromhex("3a81 16100010" "ff2485 0e100010" "c3") + struct.pack("<2I", *[LOW + 0x100D] * 2)
+    assert _one_switch(f, 0x100E, bytes([5, 6]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x1B)]
+    # movzx eax, byte [ecx+B]; mov ecx, eax; jmp [ecx*4+T]: B's byte indexes T from ecx, so B ends at its cases and
+    # the code after it is a function of its own
+    f = bytes.fromhex("0fb681 19100010" "8bc8" "ff248d 11100010" "c3") + struct.pack("<2I", *[LOW + 0x1010] * 2)
+    assert _one_switch(f, 0x1011, bytes([0, 1]) + bytes.fromhex("33c0c3")) == [(LOW + 0x1000, 0x1B),
+                                                                               (LOW + 0x101B, 0x3)]
+
+
 def test_a_mask_equal_to_a_functions_start_is_a_number():
     f = bytes.fromhex("81e2 10100010" "c3").ljust(0x10, b"\xcc")  # and edx, <G's start>; ret
     rows = [{"entry": LOW + 0x1000, "end": LOW + 0x1007, "name": "", "source": "DEFAULT"},
