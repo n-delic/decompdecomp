@@ -58,6 +58,8 @@ def test_a_diff_says_what_differs_once_registers_and_order_are_set_aside():
     ("X86", ["32"], "8b448c18", "8b548c1c", True),  # another register and slot: the same
     # ARM: a shift in a stack slot likewise; another offset is the frame's
     ("ARM", ["ARM"], "02019de7", "82019de7", False),  # [sp, r2, lsl #2] vs lsl #3
+    ("ARM", ["ARM"], "02019de7", "42019de7", False),  # [sp, r2, lsl #2] vs asr #2: another shift
+    ("ARM64", ["ARM"], "e05b61b8", "e0db61b8", False),  # [sp, w1, uxtw #2] vs sxtw #2: another extend
     ("ARM", ["ARM"], "10009de5", "14109de5", True),  # ldr r0, [sp, #0x10] vs ldr r1, [sp, #0x14]
     # MIPS and PowerPC: a load of another size differs, another slot doesn't
     ("MIPS", ["MIPS32", "BIG_ENDIAN"], "8fa20054", "87a20054", False),

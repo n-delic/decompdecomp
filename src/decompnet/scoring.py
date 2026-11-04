@@ -198,13 +198,16 @@ _NOTE = re.compile(r"\s+;.*$")  # what the judge adds to a row (`; target's D_00
 _NAME = re.compile(r"(?<![\w$@?.])[$?.]?[A-Za-z_][\w$@?.]*")
 _NUMBER = re.compile(r"(?<![\w$@?.])(?:0x[0-9a-fA-F]+|\d+)(?![\w$@?])")
 _KEYWORDS = {"ptr", "byte", "word", "dword", "qword", "tbyte", "xmmword", "short", "near", "far", "offset", "st",
-             "lo", "hi", "ha", "l", "h", "sda21", "sda2rel", "gp_rel", "got", "call16", "got_disp"}
+             "lo", "hi", "ha", "l", "h", "sda21", "sda2rel", "gp_rel", "got", "call16", "got_disp",
+             # ARM's shifts and extends: `lsl #2` and `asr #2` are other instructions
+             "lsl", "lsr", "asr", "ror", "rrx", "uxtb", "uxth", "uxtw", "uxtx", "sxtb", "sxth", "sxtw", "sxtx"}
 _PADDING = {"nop", "int3", "lea R, [R]", "lea R, [R+0x0]"}
 # a memory operand through the stack pointer: x86 [esp+0x18], MIPS 0x54($sp), PowerPC 0x10(r1), ARM [sp, #0x10]
 _STACK_SLOT = re.compile(r"\[[^\]]*\b(?:esp|ebp|rsp|rbp|sp)\b[^\]]*\]|-?(?:0x[0-9a-fA-F]+|\d+)\((?:\$sp|\$fp|r1|sp)\)")
-# a number in a stack slot, and what comes before it: an index's scale (`ecx*4`) or shift (ARM's `lsl #2`) is the
-# element's size, not the frame's layout, and stays
-_SLOT_NUMBER = re.compile(r"(\*\s*|\b(?:lsl|lsr|asr|ror)\s+#?)?(?<![\w$@?.])(-?(?:0x[0-9a-fA-F]+|\d+))(?![\w$@?])")
+# a number in a stack slot, and what comes before it: an index's scale (`ecx*4`) or shift (ARM's `lsl #2`, `uxtw #2`)
+# is the element's size, not the frame's layout, and stays
+_SLOT_NUMBER = re.compile(r"(\*\s*|\b(?:lsl|lsr|asr|ror|[us]xt[bhwx])\s+#?)?(?<![\w$@?.])(-?(?:0x[0-9a-fA-F]+|\d+))"
+                          r"(?![\w$@?])")
 # x86 prefixes: `lock add` is an add, not a lock of something called add
 _PREFIXES = {"lock", "rep", "repe", "repz", "repne", "repnz", "xacquire", "xrelease", "bnd", "notrack"}
 RESIDUE_SHOWN = 5
