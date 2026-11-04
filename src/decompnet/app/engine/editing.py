@@ -271,6 +271,12 @@ class EditMixin:
             self._xrefs.pop(pid, None)
         if hasattr(self, "_ops"):
             self._ops.pop(pid, None)
+        try:   # a decompdecomp "joined" note, so a later check-again (not_c_from_notes) discounts the pieces'
+            self.add_note(self.local_agent("decompdecomp")[0], proj["slug"],  # old no-C notes, not set it aside
+                          f"Agents ({', '.join(said)}) found the analysis cut this; the pieces are joined into "
+                          "one function now, whatever older notes say.", first["name"])
+        except NetworkError:
+            pass
         tail_names = ", ".join(t["name"] for t in tails)
         return (f"✅ joined: {tail_names} {'is' if len(tails) == 1 else 'are'} part of {first['name']} now "
                 f"({console.function_insns(joined)} instructions, {joined.size} bytes). Continue with "
