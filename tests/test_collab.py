@@ -766,3 +766,49 @@ def test_the_hosts_layout_applies_when_a_local_function_has_the_name_it_gives_a_
     assert tail["name"] == "func_800007D0" and tail["id"] != clash["id"]
     mine = net.store.one("SELECT * FROM functions WHERE id=?", clash["id"])
     assert mine["name"] != "func_800007D0" and mine["matched_source"] == "/* mine */"
+
+
+def test_apply_remote_layout_joins_what_the_host_joined(built, tmp_path):  # noqa: F811
+    # apply_remote_layout mirrors the host's splits; it must mirror joins too. When the host's layout has one
+    # function spanning what the guest holds as two (an over-split head + tail), the guest joins them back.
+    net = RomNetwork(tmp_path / "d.db", tmp_path)
+    slug = net.import_rom(built, confirmed=True, log=lambda *_: None)
+    agent, _ = net.local_agent("tester")
+    orig = net._function("func_800007C4", slug)
+    orig_size, orig_target, pid = orig["size"], orig["target"], orig["project_id"]
+    net.split_function(agent, slug, "func_800007C4", "0x800007D0")       # guest is over-split: head + tail
+    assert net._function("func_800007C4", slug)["size"] < orig_size
+    net.apply_remote_layout(slug, [{"name": "func_800007C4", "vram": orig["vram"], "size": orig_size}], [])
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'", pid) is None
+    joined = net._function("func_800007C4", slug)
+    assert joined["size"] == orig_size, (joined["size"], orig_size)
+    assert joined["target"] == orig_target                               # original bytes restored
+
+
+def test_a_hosts_join_reaches_the_guest(built, tmp_path):  # noqa: F811
+    # End to end with an isolated host+guest (not the shared module room, which other tests mutate): the host
+    # splits, the guest mirrors it, the host joins the pieces back, and the join reaches the guest on the next
+    # sync (collab layout trigger + Link.apply + apply_remote_layout).
+    host_home = tmp_path / "host"
+    host_home.mkdir()
+    host = RomNetwork(host_home / "d.db", host_home)
+    slug = host.import_rom(built, confirmed=True, log=lambda *_: None)
+    ha, _ = host.local_agent("tester")
+    assert host.split_function(ha, slug, "func_800007C4", "0x800007D0").startswith("✅")
+    host.rooms[slug] = collab.Room(host, slug)
+    code = host.rooms[slug].open_invite()
+    client = TestClient(collab.host_app(host, host.rooms), base_url="https://abc.trycloudflare.com")
+    link = f"https://abc.trycloudflare.com/join/{code}#room={slug}"
+    guest = RomNetwork(tmp_path / "g.db", tmp_path)
+    gslug = collab.join_room(guest, link, "bea", built, log=lambda *_: None, client=client, start=False)
+    guest.links[gslug].sync()
+    assert guest._function("func_800007D0", gslug)                       # guest mirrored the split
+    out = ""
+    for nm in ("aa-1", "aa-2", "bb-1"):                                  # host joins the pieces back (3 agents)
+        ag, _ = host.local_agent(nm)
+        out = host.join_functions(ag, slug, "func_800007C4", "func_800007D0", "one function, no prologue")
+    assert out.startswith("✅"), out
+    guest.links[gslug].sync()
+    gone = guest.store.one("SELECT 1 FROM functions WHERE project_id=? AND name='func_800007D0'",
+                           guest.project_row(gslug)["id"])
+    assert gone is None                                                  # the host's join reached the guest
