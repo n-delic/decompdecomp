@@ -148,7 +148,8 @@ class ForkProject:
         """The named console, or each console's file preparation when a public project's platform is unknown."""
         from .. import consoles
 
-        return [consoles.get(self.platform)] if self.platform else consoles.startable()
+        platform = self.detect_platform()
+        return [consoles.get(platform)] if platform else consoles.startable()
 
     # ------------------------------------------------------------------ what is it
 
@@ -221,6 +222,42 @@ class ForkProject:
                 return p
         return None
 
+    def detect_platform(self) -> str:
+        """Use the declared platform, or read it from a Splat config without running project code."""
+        if self.platform:
+            return self.platform
+        if value := (self.manifest or {}).get("platform"):
+            return value
+        path = self._splat_yaml()
+        if path is None:
+            return ""
+        import yaml
+
+        try:
+            config = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
+            return ""
+        options = config.get("options") if isinstance(config, dict) else None
+        value = options.get("platform") if isinstance(options, dict) else None
+        if not isinstance(value, str):
+            return ""
+        from .. import consoles
+
+        console = consoles.get(value.strip().lower())
+        return console.id if console.id in {c.id for c in consoles.CONSOLES} else ""
+
+    def fork_game_versions(self) -> dict[str, str]:
+        """Original game hashes, when the project's console recognizes versioned public builds."""
+        from .. import consoles
+
+        return consoles.get(self.detect_platform()).fork_game_versions(self)
+
+    def default_game_version(self) -> str | None:
+        """The default build version, when the project's console recognizes its version layout."""
+        from .. import consoles
+
+        return consoles.get(self.detect_platform()).default_fork_game_version(self)
+
     def _inside(self, rel: str) -> str | None:
         """`rel` as a clean path inside the project, or None if it points outside or is a template."""
         if not rel or "__" in rel or "$" in rel or "{" in rel:
@@ -254,6 +291,10 @@ class ForkProject:
                         "sha1": None, "auto": True, "help": "The build checks the game against the project's hashes."}
             return manual
         if kind == "splat":
+            from .. import consoles
+
+            if need := consoles.get(self.detect_platform()).fork_game_need(self, version):
+                return need
             y = self._splat_yaml().read_text(errors="replace", encoding="utf-8")
             target = re.search(r"^\s*target_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
             base = re.search(r"^\s*base_path:\s*['\"]?([^'\"\n#]+)", y, re.M)
@@ -287,6 +328,16 @@ class ForkProject:
             from ..rom import RomError
 
             dest = self.root / need["path"]
+            if src.resolve() == dest.resolve():
+                if not need.get('sha1') or _sha1(src) == need['sha1']:
+                    return dest
+                try:
+                    for console in self._game_consoles():
+                        if console.prepare_fork_game(src, dest, need['sha1'], move=False):
+                            return dest
+                except RomError as error:
+                    raise ForkError(str(error)) from error
+                raise ForkError("the game already in this project does not match its expected SHA-1")
             try:
                 for console in self._game_consoles():
                     if console.prepare_fork_game(src, dest, need.get("sha1"), move=move):
@@ -352,19 +403,23 @@ class ForkProject:
             return [[sys.executable, "configure.py"], [_tool("ninja") or "ninja"]]
         if kind == "splat":
             make = (self.root / "Makefile").read_text(errors="replace", encoding="utf-8")
-            steps = [["make", t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)][:1]
-            return steps + [["make", f"-j{os.cpu_count() or 4}"]]
+            chosen = [f"VERSION={version}"] if version and self.fork_game_versions() else []
+            steps = [["make", *chosen, t] for t in ("setup", "extract") if re.search(rf"^{t}\s*:", make, re.M)][:1]
+            return steps + [["make", *chosen, f"-j{os.cpu_count() or 4}"]]
         if kind == "objdiff":
             cfg = self.objdiff_config()
             return [[cfg.get("custom_make") or "make", *cfg.get("custom_args", [])]]
         raise ForkError("decompdecomp can't tell how to build this project; follow its README, then refresh")
 
-    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None) -> tuple[bool, str]:
+    def run(self, cmd: list[str], log=print, timeout: float = 3600, failed: list[str] | None = None,
+            platform: str | None = None) -> tuple[bool, str]:
         """Run a build step in the project. Targets the build reports as failed (ninja's FAILED:, make's Error lines)
-        are added to `failed`."""
+        are added to `failed`. `platform`: its console, for a project whose manifest isn't written yet (its import's
+        first build: a game built with Visual C++ 2017 then built without wine's settings)."""
         env = dict(os.environ)
         env["PATH"] = os.pathsep.join([*(str(d) for d in _tool_dirs()), env.get("PATH", "")])
-        if (platform := (self.manifest or {}).get("platform")):  # what its console's builds need (Console.build_env)
+        # what its console's builds need (Console.build_env)
+        if (platform := (self.manifest or {}).get("platform") or platform):
             from .. import consoles
 
             env.update(consoles.get(platform).build_env())
@@ -402,7 +457,14 @@ class ForkProject:
         # what failed, not the warnings after it: dsd's hundreds of "[WARN ] No module for relocation" lines came after
         # a compiler's error and pushed it out of the tail agents and the user read
         said = [ln for ln in out if not _NOISE.match(ln) and not ln.lstrip().startswith("[WARN")] or out
-        return code == 0, "\n".join(said[-60:])
+        tail = "\n".join(said[-60:])
+        if code:
+            from .buildhelp import explain
+
+            if hints := explain(self.root, executable, "\n".join(out)):
+                log(hints)
+                tail = tail + "\n\n" + hints
+        return code == 0, tail
 
     def unpack_disc(self, version: str | None, log=print) -> int:
         """A dtk project that reads an extracted disc (orig/<version>/sys/main.dol, files/...) instead of the disc

@@ -71,7 +71,8 @@ works on which platform: every — in it is a gap to fill.
 ### Every console gets every feature
 
 decompdecomp is one pipeline for every console: whatever helps agents on one console should work on all of them,
-in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When you add a feature:
+in ROM mode (N64, PS1, PS2, PS3, PSP, GBA) and project mode (GameCube, Wii, PC, Xbox, DS, public decomps) alike. When
+you add a feature:
 
 1. Build the shared part where every console uses it: `app/` and `network.py` for the engine, `rom/` and `forks/`
    for each mode, `arch/` for what depends on the processor.
@@ -226,9 +227,12 @@ Example: PC has Visual C++ 6.0 to 2010, and you want Visual C++ 2012 (11.0).
    accepts its licence in Setup. Never download it in code, a test or CI: public CI can't have it, and its tests
    skip there.
 3. **How it runs on Linux.** Windows compilers run through wibo (a pinned tool); check that the new `cl.exe` runs
-   there. One wibo can't run (2015 and newer) goes in a pack marked `wine = true`, run through the user's wine
-   (`wine.py`). wibo stops at the first Windows function it doesn't have and names it (2010's compiler needed
-   `msvcp100.dll` beside it; 2005's and later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need `requires = ["runtime-i386"]`.
+   there. One wibo can't run goes in a pack marked `wine = true`, run through the user's wine (`wine.py`): the pack
+   decides, not the version number, so a 2012-2013 pack can be either (the app tells the build which packs in
+   `$DECOMPNET_WINE_PACKS`; a project's `configure.py` run by hand sends 2015 and newer to wine). wibo stops at the
+   first Windows function it doesn't have and names it (2010's compiler needed `msvcp100.dll` beside it; 2005's and
+   later linkers stop at `lstrcmpiW` in wibo 1.2.0). A Linux compiler needs nothing; a 32-bit one may need
+   `requires = ["runtime-i386"]`.
 4. **The console lists it**: `consoles/pc/__init__.py`, `MSVC_VERSIONS`. A ROM console's compilers are its
    `compilers` tuple: `Compiler(id, name, built, guess)` (see `consoles/ps2/__init__.py`).
 5. **Which game used it.** PC reads the program's Rich header: `RICH_COMPILERS` in `consoles/pc/scratch.py`

@@ -215,8 +215,9 @@ not touch it.
 
 ## 11. Commits and releases
 
-- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from.
-  CI (`.github/workflows/labels.yml`) fails a pull request from any other branch, and labels it by the prefix.
+- A change goes on a branch named `<type>/<short-name>`, the type one of `feat`, `fix`, `refactor`, `perf`, `docs`,
+  `test`, `ci`, `build`, `chore`, `revert` (`fix/ps2-long-symbol-names`). `main` is what users update from. CI
+   (`.github/workflows/labels.yml`) fails a pull request from any other branch, and labels it by the prefix.
 - An issue gets a label for its kind (`bug`, `enhancement`, `documentation`, `question`) and for each console and
   system it's about (`gh label list`). The issue forms add them; an agent's `gh issue create` passes `--label`.
 - A commit's subject says what users (or contributors) get, in one sentence. The body says why.

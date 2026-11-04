@@ -130,6 +130,17 @@ def piece(before: bytes, code: bytes) -> str | None:
     return None
 
 
+def resumes(code: bytes, at: int, start: int, end: int) -> bool:
+    """Whether `code` (at address `at`) is a catch block with nothing to do: `mov eax, <address>; ret`, where MSVC's
+    catch funclets give the address their function goes on at, after `start` (its function's) and up to `end`. It
+    uses no register of the frame, so piece doesn't see the function it belongs to (`catch (...) {}`)."""
+    ins = list(_READER.disasm(code, at))
+    return len(ins) == 2 and sum(i.size for i in ins) == len(code) and ins[0].id == cs_x86.X86_INS_MOV and \
+        ins[0].operands[0].type == cs_x86.X86_OP_REG and ins[0].operands[0].reg == cs_x86.X86_REG_EAX and \
+        ins[0].operands[1].type == cs_x86.X86_OP_IMM and start < ins[0].operands[1].imm <= end and \
+        ins[1].mnemonic == "ret" and not ins[1].operands
+
+
 # A memory operand naming data by its address (D_00412340, _D_00412340, D_00412340+0x4), as delinked targets name it
 _DATA_OPERAND = re.compile(r"\[\s*_?D_([0-9A-Fa-f]{8})(?:\s*\+\s*(0x[0-9A-Fa-f]+|\d+))?\s*\]")
 

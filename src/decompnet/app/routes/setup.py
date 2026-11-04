@@ -285,5 +285,7 @@ def register(app: App) -> None:
             settings.data["notes_cleared_to"] = max(0, int(data["notes_cleared_to"] or 0))
         if "bridges_removed_seen" in data:  # the notice of what the cleanup removed (cleanup.report), seen
             settings.data["bridges_removed_seen"] = bool(data["bridges_removed_seen"])
+        if "rom_library" in data:
+            settings.data["rom_library"] = str(data["rom_library"] or "").strip()
         settings.save()
         return JSONResponse(settings.public())

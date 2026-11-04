@@ -913,6 +913,9 @@ class Autosave:
             try:
                 if self.net.progress.sync(row["slug"], force=True, retry=False):  # (a failed one waits: RETRY_FAILED_SECONDS)
                     saved.append(row["slug"])
-            except Exception:  # never stands between the user and their work
-                log.exception("saving %s failed", row["slug"])
+            except Exception as e:  # never stands between the user and their work
+                from .progress import _StillFailing
+
+                if not isinstance(e, _StillFailing):  # (#167: the same failure, logged once, not every second)
+                    log.exception("saving %s failed", row["slug"])
         return saved
