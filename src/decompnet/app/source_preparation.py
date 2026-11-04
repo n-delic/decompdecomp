@@ -88,7 +88,7 @@ def contexts(text):
 
 
 def configure(net, proj, data):
-    cfg = {key: str(data.get(key, '')).strip() for key in ('root', 'header', 'include_roots', 'mappings', 'overrides', 'aliases', 'definitions', 'contexts', 'helpers')}
+    cfg = {key: str(data.get(key, '')).strip() for key in ('root', 'header', 'include_roots', 'mappings', 'overrides', 'aliases', 'definitions', 'contexts', 'helpers', 'assembly_header', 'assembly_mappings')}
     cfg['enabled'] = bool(data.get('enabled'))
     if type(data.get('auto_exact',False)) is not bool:
         raise NetworkError('Choose the automatic exact-bundle option with its checkbox.')
@@ -100,11 +100,17 @@ def configure(net, proj, data):
     source_definitions.mappings(cfg['helpers'])
     contexts(cfg['contexts'])
     mappings(cfg['mappings'])
+    assembly=mappings(cfg['assembly_mappings'])
+    for _,_,file in assembly:
+        if Path(file).suffix.lower() not in ('.s','.asm'):raise NetworkError('Assembly mappings need .s, .S or .asm source files.')
     overrides(cfg['overrides'])
-    symbol_aliases(cfg['aliases'])
+    bindings=symbol_aliases(cfg['aliases'])
+    for dest,symbol,_ in mappings(cfg['mappings'])+assembly:
+        if symbol in bindings and bindings[symbol]!=dest:raise NetworkError('Source and assembly aliases must agree on each symbol destination.')
+        bindings[symbol]=dest
     if cfg['enabled']:
         reader = Reader(cfg)
-        for _, _, file in mappings(cfg['mappings']):
+        for _, _, file in mappings(cfg['mappings'])+assembly:
             reader.file(reader.root / file)
         for _, file in source_definitions.mappings(cfg['definitions']):
             reader.file(reader.root / file)
@@ -113,8 +119,8 @@ def configure(net, proj, data):
         for _, _, file, header in contexts(cfg['contexts']):
             reader.file(reader.root / file)
             reader.file(reader.root / header)
-        if cfg['header']:
-            reader.file(Path(cfg['header']).expanduser())
+        for key in ('header','assembly_header'):
+            if cfg[key]:reader.file(Path(cfg[key]).expanduser())
     with net.store.tx() as db:
         db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)',
                    (f'source-preparation:{proj["id"]}', json.dumps(cfg)))
@@ -132,19 +138,21 @@ class Reader:
             raise NetworkError('The reference folder and each include root must be existing folders.')
         self.overrides = overrides(cfg.get('overrides', ''))
         self.cache, self.bytes = {}, 0
+        self.hashes = {}
         self.advisories = []
 
     def file(self, path):
         path = path.resolve()
         if not any(path.is_relative_to(root) for root in self.roots):
             raise NetworkError('A reference file leaves the selected source/include folders. Add its folder explicitly.')
-        if path.suffix.lower() not in {'.c', '.h', '.cc', '.cpp', '.hpp', '.inc'} or not path.is_file():
-            raise NetworkError('Choose an existing C/C++ source or declarations header.')
+        if path.suffix.lower() not in {'.c', '.h', '.cc', '.cpp', '.hpp', '.inc', '.s', '.asm'} or not path.is_file():
+            raise NetworkError('Choose an existing C/C++ or assembly source, or declarations header.')
         if path not in self.cache:
             if len(self.cache) >= MAX_FILES or path.stat().st_size + self.bytes > MAX_BYTES:
                 raise NetworkError('Reference reads exceed 512 files / 16 MB. Choose a smaller source subset.')
             text = path.read_bytes()
             self.bytes += len(text)
+            self.hashes[path] = hashlib.sha256(text).hexdigest()
             self.cache[path] = text.decode('utf-8', errors='replace').replace('\r\n', '\n')
         return self.cache[path]
 
@@ -466,6 +474,11 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
         st.preparation_agent=agent
         fork = net.fork_slug(proj['slug'])
         deadline = time.monotonic() + seconds
+        if cfg.get('assembly_mappings') and not fork:
+            from .source_assembly import run as assemble
+            assembly=assemble(net,proj,cfg,log_line,lambda:st.stop.is_set() or time.monotonic()>=deadline,budget,only,agent)
+            report['assembly_verified']=assembly['verified']+assembly['cached'];report['tested']+=assembly['tested'];report['errors']+=assembly['errors']
+            st.add(variants=assembly['tested'])
         for mapping in mapped:
             if only is not None and mapping[0] not in only:
                 continue
@@ -498,7 +511,8 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 log_line(fn['name'] + ': reading and preparing selected source context…')
                 from .source_lead_analysis import features
                 target_calls=features([line.split('*/',1)[-1].strip() for line in (fn['asm'] or '').splitlines()], fresh['arch'])['calls']
-                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])]}
+                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])],
+                          '_matched_functions':[r['name'] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",proj['id'])]}
                 variants = prepare_variants(reader, {**cfg,**unit_cfg,'_build_owned':bool(fork),'_target_calls':target_calls}, mapping, aliases, fallback)
                 if time.monotonic() >= deadline:
                     log_line(fn['name'] + ': source preparation used this round’s time allowance before compilation. Use a smaller coherent header before retrying.')
@@ -512,6 +526,11 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                             pair=(s,h)
                             if pair not in variants:
                                 variants.append(pair);reader.origins[pair]={**reader.origins[(body,context)],'family':family}
+                    from .source_units import matched_owners
+                    for body,context in list(variants)[:1]:
+                        for family,s,h in matched_owners(net,fresh,fn,body,context):
+                            if (s,h) not in variants:
+                                variants.append((s,h));reader.origins[(s,h)]={**reader.origins[(body,context)],'family':family}
                     from .reference_context_recovery import neighbours
                     for body,context in list(variants)[:2]:
                         for family,s,h in neighbours(net,fresh,fn,body,context):
@@ -537,6 +556,9 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                         variants.extend(extra)
                     from .source_lead_analysis import rank_pairs
                     variants=rank_pairs(net,fresh,fn,variants,{p:m['family'] for p,m in reader.origins.items()})
+                    # Reserve early compile budget for the baseline and a real callback owner.
+                    address=[p for p in variants if reader.origins.get(p,{}).get('family')=='cpu-address-source-unit']
+                    if address:variants=variants[:1]+address+[p for p in variants[1:] if p not in address]
                 for hint in dict.fromkeys(reader.advisories):log_line(fn['name'] + ': ' + hint)
                 retried = False
                 for source, header in variants:
@@ -587,7 +609,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                 variants.append(next((pair for pair in rebuilt if pair[0]==source),rebuilt[0]))
                                 log_line(fn['name'] + ': inputs changed; retrying once against fresh destination state.')
                                 continue
-                            if not fork and lead.get('family') in ('cpu-private-source-unit','cpu-source-predecessors') and str(exc).startswith('Prepared declarations emitted extra function bodies'):
+                            if not fork and lead.get('family') in ('cpu-private-source-unit','cpu-source-predecessors','cpu-address-source-unit') and str(exc).startswith('Prepared declarations emitted extra function bodies'):
                                 # A valid real unit can fail the all-body guard under the wrong optimization.
                                 # Try bounded installed profiles; do not weaken that guard to score a partial unit.
                                 private_profiles(net,fresh,fn,source,header,st,report,log_line,min(budget,report['tested']+3),deadline,lead)

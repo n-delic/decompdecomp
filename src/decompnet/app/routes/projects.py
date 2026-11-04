@@ -315,6 +315,12 @@ def register(app: App) -> None:
         proj = net.project_row(slug)
         if request.method == "GET":
             return source_preparation.settings(net, proj)
+        if data.get('action') == 'assembly-scan':
+            from ..source_assembly import scan
+            return {'candidates':scan(net,proj,source_preparation.settings(net,proj))}
+        if data.get('action') == 'assembly-run':
+            from ..source_assembly import run
+            return {'job':jobs.start('source-assembly',lambda log:run(net,net.project_row(slug),source_preparation.settings(net,proj),log,retry=True))}
         if data.get('action') == 'queue-status':
             return net.source_queue.status(slug)
         if data.get('action') == 'queue-start':

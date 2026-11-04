@@ -36,7 +36,7 @@ from . import save_readme
 FORMAT = 1
 MANIFEST = "decompdecomp.json"
 SAVE_FOLDER = "progress"  # in the project's folder, unless the user picks another
-SET_ASIDE_META = ("asm_code", "not_c", "asm_twin")  # why an agent or user set a function aside
+SET_ASIDE_META = ("asm_code", "not_c", "asm_twin", "verified_assembly")  # why an agent or user set a function aside
 GIT_TIMEOUT = 300
 log = logging.getLogger("decompdecomp")
 
@@ -683,7 +683,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
             row = _set_aside_row(db, pid, item)
             if row is None:
                 continue
-            why = {key: value for key, value in item.items() if key in SET_ASIDE_META}
+            why = restored_aside(item)
             meta = json.loads(row["meta"] or "{}") | why
             db.execute("UPDATE functions SET status='asm',meta=? WHERE id=?", (json.dumps(meta), row["id"]))
 
@@ -735,7 +735,7 @@ def _apply_context(net, slug: str, folder: Path, manifest: dict, log,
         for item in manifest.get("set_aside") or []:
             row = _set_aside_row(db, pid, item)
             if row is not None:
-                why = {k: v for k, v in item.items() if k in SET_ASIDE_META}
+                why = restored_aside(item)
                 db.execute("UPDATE functions SET status='asm', meta=? WHERE id=?",
                            (json.dumps({**json.loads(row["meta"] or "{}"), **why}), row["id"]))
     by_name = {r["name"]: r for r in net.store.all("SELECT name,vram FROM functions WHERE project_id=?", pid)}
@@ -1020,3 +1020,12 @@ class Autosave:
                               "Do not delete or overwrite progress files. Build: %s",
                               row['slug'], folder, type(error).__name__, str(error), action, build_info.label())
         return saved
+
+
+def restored_aside(item):
+    """Keep assembly provenance on restore, but require a fresh local assembler/data check."""
+    meta={k:v for k,v in item.items() if k in SET_ASIDE_META}
+    if isinstance(meta.get('verified_assembly'),dict):
+        meta['verified_assembly']={**meta['verified_assembly'],'verified':False}
+    else:meta.pop('verified_assembly',None)
+    return meta

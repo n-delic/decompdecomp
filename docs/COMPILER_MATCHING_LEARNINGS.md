@@ -2859,6 +2859,35 @@ publish the context bodies twice or change their statuses. A zero disassembly
 score alone is insufficient: an initial whole-file probe still had unresolved
 symbols/data despite matching instructions.
 
+
+## CPU callback-owner and supplied-assembly recovery
+
+The address-taking context finding now drives bounded CPU discovery from the
+selected source file and from saved exact callback owners in other units. A
+read-only replay of the isolated 1,190-score IDO 5.3 source discovered two context
+hypotheses; the first independently linked exactly, with its real constructor.
+This reproduces an existing match, not new live coverage. No live project was changed.
+The existing profile was `-O2 -mips2 -G 0 -non_shared -Xcpluscomm -Wab,-r4300_mul`.
+
+Five private original-assembly preparations also passed the new pinned-driver
+preprocess/assemble helper and ordinary code/data judge in read-only replay,
+including the coefficient data of a decoder. This verifies prepared assembly
+inputs, not automatic reconstruction of arbitrary SDK macros or historical
+compiler flags. A small homemade driver regression checks actual emitted bytes;
+negative tests require binary/file directives, including macro-generated ones,
+to be refused. Supplied assembly is a separate proof/status and never C credit.
+
+A copied five-entry verification run exercised the full new assembly pipeline:
+six profile checks verified all five entries (the queue helper needed its private
+O1 alternative), with 1,256 bytes classified as verified assembly and zero C credit.
+An unchanged second pass performed zero compiles and reused all five scoped proofs.
+The source inputs were the existing prepared original-assembly references; SDK
+preparation itself was not inferred. The live app and its project were untouched.
+
+Installed-driver regressions cover IDO 5.3, KMC GCC 2.7.2 and PS1 GCC 2.7.2
+through maspsx/GNU as. The PS1 wrapper requires explicit pinned assembly-stage
+commands: replacing its shell's `-c` with `-E` is invalid. Registry templates now
+provide those stages, keeping console decisions out of the shared verifier.
 ## Captured index and lifetime repairs (3 November 2026)
 
 Evidence level: verified capture observations, plus controlled synthetic regressions. The review

@@ -94,6 +94,8 @@ class CompilerConfig:
     prelude: str = ""  # the toolchain's prelude (Toolchain.prelude)
     cplusplus: bool = False  # it compiles C++ too: what doesn't compile as C is tried as C++ (Toolchain.cplusplus)
     linux_vm: bool = False  # Linux-only compiler on macOS, isolated local VM jobs
+    assembly_preprocess: tuple[str, ...] = ()
+    assembly_compile: tuple[str, ...] = ()
 
 
 @dataclass
@@ -284,3 +286,50 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     if proc.returncode != 0 or not obj.exists():
         return CompileResult(False, None, log[-4000:] or f"compiler exited with {proc.returncode}")
     return CompileResult(True, obj.read_bytes(), log[-2000:], "c++" if ext == "cpp" else "c")
+
+
+def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileResult:
+    """Preprocess supplied assembly with the pinned driver, then assemble it under the normal limits.
+
+    References must already be flattened from authorized roots. No assembler file
+    directives may read arbitrary files or inject a binary as purported source.
+    This result never passes through the C match/promotion path.
+    """
+    text=prelude+'\n'+source
+    try:
+        check_source(text)
+        if re.search(r'(?im)(?:^\s*#\s*include\b|\.(?:include|incbin)\b)',text):
+            raise SourceRejected('Flatten includes from the selected source roots before assembly verification.')
+    except SourceRejected as error:return CompileResult(False,None,'rejected: '+str(error))
+    with tempfile.TemporaryDirectory(prefix='decompnet-assembly-') as tmp:
+        work=Path(tmp);root=_root(cfg,work)
+        (work/'input.c').write_text(text,encoding='utf-8',newline='\n')
+        def argv(src,obj,preprocess=False):
+            subst={'{src}':root+'/'+src,'{obj}':root+'/'+obj,'{include}':root}
+            explicit=cfg.assembly_preprocess if preprocess else cfg.assembly_compile
+            args=[a.replace('{include}',root) if a not in subst else subst[a] for a in explicit or cfg.cmd]
+            if preprocess and not explicit:
+                if Path(args[0]).name in ('sh','bash','cmd.exe') or '-c' not in args:raise SourceRejected('Assembly verification needs a compiler driver with a -c command.')
+                args[args.index('-c')]='-E'
+            return args
+        try:
+            for src,obj,pp in [('input.c','func.s',True),('func.s','func.o',False)]:
+                if not pp and re.search(r'(?i)\.(?:include|incbin)\b',_COMMENTS_AND_STRINGS.sub(' ',(work/src).read_text())):
+                    raise SourceRejected('Preprocessed assembly must not include files or binary data.')
+                args=argv(src,obj,pp)
+                check=_CANCEL_CHECK.get()
+                while not _SLOTS.acquire(timeout=0.1):
+                    if check:check()
+                try:
+                    if check:check()
+                    proc=_exec(cfg,work,args,cfg.timeout,**({'inputs':[src],'outputs':[obj],'stage':root} if _sandbox_mode(cfg) in ('wsl','linux-vm') else {}))
+                finally:_SLOTS.release()
+                log=(proc.stdout+proc.stderr).replace(root+'/','')
+                # IDO writes -E output to stdout even with -o; GCC writes the file.
+                if pp and proc.returncode==0 and not (work/obj).is_file() and proc.stdout:
+                    if len(proc.stdout.encode())>16*1024*1024:return CompileResult(False,None,'Preprocessed assembly exceeds the verification limit.')
+                    (work/obj).write_text(proc.stdout,encoding='utf-8',newline='\n')
+                if proc.returncode or not (work/obj).is_file():return CompileResult(False,None,log or 'Compiler driver did not produce '+obj)
+                if (work/obj).stat().st_size>16*1024*1024:return CompileResult(False,None,'Assembly output exceeds the verification limit.')
+        except (subprocess.TimeoutExpired,SourceRejected) as error:return CompileResult(False,None,str(error))
+        return CompileResult(True,(work/'func.o').read_bytes(),log,language='assembly')

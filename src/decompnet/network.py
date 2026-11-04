@@ -1260,7 +1260,7 @@ class Network:
         """The user gives a set-aside function back to the agents (they think C makes it after all): the agents'
         verdicts on it are forgotten, and no check sets it aside again."""
         fn = self._function(function, project)
-        meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k not in ("not_c", "asm_code", "asm_twin")}
+        meta = {k: v for k, v in json.loads(fn["meta"] or "{}").items() if k not in ("not_c", "asm_code", "asm_twin", "verified_assembly")}
         with self.store.tx() as db:
             db.execute("UPDATE functions SET status='open', meta=? WHERE id=? AND status='asm'",
                        (json.dumps({**meta, "reopened": True}), fn["id"]))

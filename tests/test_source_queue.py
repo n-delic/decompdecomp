@@ -129,3 +129,14 @@ def test_start_failure_does_not_leave_a_phantom_active_job(monkeypatch):
     monkeypatch.setattr(q.jobs,'start',lambda *args:(_ for _ in ()).throw(OSError('thread unavailable')))
     with pytest.raises(OSError):q.start('game')
     assert not q.active and q.status('game')['state']=='interrupted'
+
+
+def test_source_assembly_queue_records_verification_without_a_c_match(monkeypatch):
+    net,proj,q=setup()
+    with net.store.tx() as db:
+        db.execute('UPDATE settings SET value=? WHERE key=?',(json.dumps({'enabled':True,'assembly_mappings':'f = original @ game.S'}),'source-preparation:1'))
+    q.start('game')
+    monkeypatch.setattr(q,'_one',lambda *args:{'matched':False,'assembly_verified':True})
+    q.jobs.work['0'](Log())
+    item=q.status('game')['items'][0]
+    assert item['state']=='verified_assembly' and item['matched'] is False

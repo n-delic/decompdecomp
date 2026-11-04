@@ -38,6 +38,7 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         return _own_config(root, c, own)
     ro_paths = [str((root / p).resolve()) for p in c.get("ro_paths", [])]
     runtime32 = None
+    assembly_preprocess, assembly_compile = (), ()
     linux = False
     vm = False
     prelude, cplusplus, intrinsics = "", False, ""
@@ -79,15 +80,20 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         # The bundled Mac app owns a supported Python; /usr/bin/python3 may still be 3.9 and cannot run maspsx.
         # Linux sandboxes and WSL use their own python3, not a host interpreter outside their mounts.
         python = sys.executable if sys.platform == "darwin" and not vm else "python3"
-        cmd = [a.replace("{tc}", tc_dir).replace("{python}", python) for a in base]
-        if driver:
-            cmd = [a.replace("{driver}", where_tools[-1] + "/" + driver.name) for a in cmd]
-        for dep, where in zip(tc.requires, where_tools[1:]):  # {tc:<id>} is another toolchain this one needs
-            cmd = [a.replace(f"{{tc:{dep}}}", where) for a in cmd]
+        def resolve(template):
+            expanded=[x for a in template for x in (flags if a=="{flags}" else [a])]
+            result=[a.replace("{tc}",tc_dir).replace("{python}",python) for a in expanded]
+            if driver:result=[a.replace("{driver}",where_tools[-1]+"/"+driver.name) for a in result]
+            for dep,where in zip(tc.requires,where_tools[1:]):
+                result=[a.replace(f"{{tc:{dep}}}",where) for a in result]
+            return result
+        cmd=resolve(base)
+        assembly_preprocess=tuple(resolve(tc.assembly_preprocess))
+        assembly_compile=tuple(resolve(tc.assembly_compile))
     else:
         cmd = list(c["cmd"])
     return CompilerConfig(
-        cmd=cmd,
+        cmd=cmd, assembly_preprocess=assembly_preprocess, assembly_compile=assembly_compile,
         timeout=float(c.get("timeout", 15)),
         sandbox=c.get("sandbox", "auto"),
 

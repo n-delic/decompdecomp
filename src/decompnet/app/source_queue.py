@@ -54,7 +54,7 @@ class Queue:
             state = self._load(proj['id'])
             if state.get('state') not in ('running','paused','interrupted'):
                 cfg = prep.settings(self.net, proj)
-                mapped = {m[0] for m in prep.mappings(cfg.get('mappings',''))} if cfg.get('enabled') else set()
+                mapped = {m[0] for m in (prep.mappings(cfg.get('mappings',''))+prep.mappings(cfg.get('assembly_mappings','')))} if cfg.get('enabled') else set()
                 names = []
                 for fn in self.net.store.all("SELECT name,status FROM functions WHERE project_id=? AND status IN ('open','asm') ORDER BY vram", proj['id']):
                     if fn['status']=='asm' and not include_assembly:continue
@@ -121,7 +121,7 @@ class Queue:
                 name = item['function'];log(name+': preparing and freshly judging source bundles…')
                 try:
                     result = self._one(slug, name, agent, state['include_assembly'], log)
-                    item.update(state='pending' if result.get('paused') else 'deferred' if result.get('deferred') else 'matched' if result['matched'] else 'checked', **result)
+                    item.update(state='pending' if result.get('paused') else 'deferred' if result.get('deferred') else 'matched' if result['matched'] else 'verified_assembly' if result.get('assembly_verified') else 'checked', **result)
                 except (NetworkError, ValueError, OSError) as error:
                     item.update(state='error', error=str(error));log(name+': '+str(error))
                 with self.lock:
@@ -156,7 +156,7 @@ class Queue:
                     return {'matched':True,'starting_score':before['best_score'],'new_score':0}
                 except NetworkError as error:log(name+': bundle retained, recheck did not promote: '+str(error))
             cfg = prep.settings(self.net, proj)
-            if not cfg.get('enabled') or name not in {m[0] for m in prep.mappings(cfg.get('mappings',''))}:break
+            if not cfg.get('enabled') or name not in {m[0] for m in (prep.mappings(cfg.get('mappings',''))+prep.mappings(cfg.get('assembly_mappings','')))}:break
             st = State()
             # Pause requests do not interrupt atomic publication; stop at the next bounded round.
             with self.lock:
@@ -164,6 +164,7 @@ class Queue:
             report = prep.run(self.net.permuter, proj, st, log, budget=32, seconds=180, only={name}, include_assembly=assembly, agent=agent)
             current = self.net._function(name, slug)
             if current['status']=='matched':return {'matched':True,'starting_score':before['best_score'],'new_score':0}
+            if report.get('assembly_verified'):return {'matched':False,'assembly_verified':True}
             if not report['tested']:
                 if report['errors']:raise NetworkError('; '.join(report['errors'])[:2000])
                 break

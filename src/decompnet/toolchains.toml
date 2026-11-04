@@ -70,6 +70,8 @@ license = "GPL-2.0"
 source = "GNU GCC 2.6.3 (Slackware 2.2.0); PS1 patches from decompals/old-gcc 0.17"
 description = "GCC 2.6.3 with the PlayStation patches, an early PlayStation compiler variant; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.34 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -97,6 +99,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-cdk)"
 description = "The 2.7.2 build from Cygnus' PlayStation Developer's Kit (CDK), the compiler of PSY-Q 4.1 (1997); its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.67 did, then GNU as. It is not the same build as the 2.7.2 PSY-Q compiler: code generation differs."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 [["gcc-2.7.2-cdk-psx".parts]]
@@ -118,6 +122,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-psx)"
 description = "GCC 2.7.2 with the PlayStation patches, a PSY-Q 4.0-era compiler; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.56 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.56", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -140,6 +146,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.8.1-psx)"
 description = "GCC 2.8.1 with the PlayStation patches, a PSY-Q 4.4-era compiler; its assembly goes through maspsx, which does what Sony's assembler ASPSX 2.79 did, then GNU as."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.79", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -161,6 +169,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.5.7-psx)"
 description = "Early PS1 code; uses ASPSX 2.08 behaviour, as in a matching early platform game build."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; case \"$src\" in *.cpp) set -- -x c++ \"$@\";; esac; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; case "$src" in *.cpp) set -- -x c++ "$@";; esac; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.08", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -177,6 +187,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.6.0-psx)"
 description = "Early PSY-Q-era GCC; uses ASPSX 2.34 behaviour. Some original SDK releases paired this compiler with older assemblers."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.34", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -205,6 +217,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.7.2-cdk)"
 description = "Cygnus CDK GCC variant for PS1, corresponding to the PSY-Q 4.1-era compiler and ASPSX 2.67."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.67", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -225,6 +239,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.8.0-psx)"
 description = "PSY-Q 4.3-era GCC with ASPSX 2.77 behaviour."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.77", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -253,6 +269,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.91.66-psx)"
 description = "EGCS 1.1.2 (GCC 2.91.66), corresponding to PSY-Q 4.5, with ASPSX 2.81 behaviour."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.81", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.81", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8"]
 cplusplus = true
@@ -269,6 +287,8 @@ license = "GPL-2.0"
 source = "decompals/old-gcc 0.17 (gcc-2.95.2-psx)"
 description = "PSY-Q 4.6-era GCC 2.95.2 with ASPSX 2.86 behaviour."
 requires = ["maspsx", "binutils-mips"]
+assembly_preprocess = ["{tc}/gcc", "-B{tc}/", "-E", "{flags}", "-I{include}", "{src}", "-o", "{obj}"]
+assembly_compile = ["/bin/sh", "-c", "tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; \"$py\" -E -s \"$mas/maspsx.py\" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < \"$src\" > \"$obj.m.s\" && \"$bin/mips-ps2-decompals-as\" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o \"$obj\" \"$obj.m.s\"", "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.86", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 cmd = ["/bin/sh", "-c", 'tc=$1 mas=$2 bin=$3 aspsx=$4 src=$5 obj=$6 py=$7; shift 7; g=-G0; for a; do case $a in -G*) g=$a;; esac; done; "$tc/gcc" -B"$tc/" -S "$@" "$src" -o "$obj.s" && "$py" -E -s "$mas/maspsx.py" --force-stdin --expand-div --use-comm-section --aspsx-version=$aspsx $g < "$obj.s" > "$obj.m.s" && "$bin/mips-ps2-decompals-as" -EL -march=r3000 -mtune=r3000 -no-pad-sections -O1 -G0 -o "$obj" "$obj.m.s"', "psyq", "{tc}", "{tc:maspsx}", "{tc:binutils-mips}", "2.86", "{src}", "{obj}", "{python}", "-I{include}", "{flags}"]
 flags = ["-O2", "-G8", "-mel"]
 cplusplus = true

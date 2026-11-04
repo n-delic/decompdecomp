@@ -56,8 +56,9 @@ class GuiMixin:
         twins = self.twins.jobs.get(proj["slug"])
         base = self._overview(slug, proj)
         from ..libultra import report as libultra_report
+        from ..source_assembly import breakdown
         from ..source_preparation import settings as source_settings
-        return base | {"libultra": base["libultra"] if "libultra" in base else libultra_report(self, proj), "last_activity": last, "autopilot": self.autopilot_status(slug),
+        return base | {"status_breakdown":breakdown(self,proj),"libultra": base["libultra"] if "libultra" in base else libultra_report(self, proj), "last_activity": last, "autopilot": self.autopilot_status(slug),
                        "permuter": self.permuter.status(proj["slug"]), "source_preparation": source_settings(self, proj),
                        "twins": None if twins is None else {
                            k: getattr(twins, k) for k in ("state", "pairs", "tried", "matched", "asm",
@@ -311,7 +312,9 @@ class GuiMixin:
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":
             self._seed_for(fn, proj)  # (made again first when what it's made from changed)
             fn = self._function(fn["name"], slug)
+        from ..source_assembly import detail as assembly_detail
         return {
+            "assembly_verification":assembly_detail(proj,fn),
             **name_state(fn), "name": fn["name"], "vram": fn["vram"], "rom_offset": fn["rom_offset"], "size": fn["size"],
             "insns": fn["n_insns"], "status": fn["status"], "best": fn["best_score"], **set_aside(fn),
             "boundary_review": self.console(proj).boundary_reason(fn["target"] or b"") if fn["status"]!="matched" else None,

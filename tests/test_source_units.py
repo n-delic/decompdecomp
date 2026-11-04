@@ -78,3 +78,35 @@ def test_context_external_call_keeps_actual_float_prototype(tmp_path):
     r,cfg=setup(tmp_path,text)
     pairs=source_units.variants(r,cfg,('entry','caller','game.c'),{'caller':'entry'},'int entry(int x){return helper(x);}','extern int helper(int x);')
     assert pairs and 'double external(double,int*);' in pairs[0][2]
+
+
+def test_matched_address_taking_owner_is_prioritized_without_a_direct_call(tmp_path):
+    text='void entry(int);\nvoid install(void){ callback=(void *)entry; }\nvoid entry(int x){use(x);}'
+    r,cfg=setup(tmp_path,text)
+    cfg.update(mappings='entry = entry @ game.c',_known_functions=['entry','install'],_matched_functions=['install'])
+    pairs=source_units.variants(r,cfg,('entry','entry','game.c'),{'install':'install'},'void entry(int x){use(x);}','void entry(int);')
+    family,source,header=pairs[0]
+    assert family=='cpu-address-source-unit'
+    assert 'callback=(void *)entry' in source
+    assert source.index('void entry(int);')<source.index('void install(')
+    cfg['_matched_functions']=[]
+    assert not any(f=='cpu-address-source-unit' for f,_,_ in source_units.variants(r,cfg,('entry','entry','game.c'),{'install':'install'},'void entry(int x){use(x);}','void entry(int);'))
+
+
+def test_address_scanner_does_not_confuse_calls_or_literals_with_callback_values():
+    assert source_units.address_reference('void install(){ table[0]=&entry; }','entry')
+    assert not source_units.address_reference('void run(){ entry(1); puts("entry"); /* entry */ }','entry')
+
+
+def test_saved_matched_callback_owner_can_come_from_another_source_unit(monkeypatch):
+    from types import SimpleNamespace
+
+    from decompnet.app import repository_candidates
+    rows=[{'name':'install','matched_source':'void install(void){ callback=&entry; }','meta':'{}','vram':8192}]
+    net=SimpleNamespace(is_rom=lambda p:True,fork_slug=lambda s:None,store=SimpleNamespace(all=lambda *a:rows))
+    monkeypatch.setattr(repository_candidates,'contexts',lambda *a:iter(['void entry(void);']))
+    pairs=source_units.matched_owners(net,{'slug':'game','id':1,'arch':'mips'},{'id':1,'vram':4096,'name':'entry'},'void entry(void){ work(); }','void work(void);')
+    assert pairs[0][0]=='cpu-address-source-unit' and 'callback=&entry' in pairs[0][1]
+    assert pairs[0][1].startswith('void entry(void);')
+    rows[0]['matched_source']='void install(void){ entry(); }'
+    assert not source_units.matched_owners(net,{'slug':'game','id':1,'arch':'mips'},{'id':1,'vram':4096,'name':'entry'},'void entry(void){}','')

@@ -81,6 +81,8 @@ class Toolchain:
         self.requires = [*self.requires, *(h for h in self.headers if h not in self.requires)]
     linux_vm: bool = False  # this Linux pack may use the optional macOS VM runner
     case_sensitive: bool = False  # proxy hosts must preserve archives until extraction on Linux
+    assembly_preprocess: list[str] = field(default_factory=list)
+    assembly_compile: list[str] = field(default_factory=list)
 
     @property
     def local(self) -> bool:

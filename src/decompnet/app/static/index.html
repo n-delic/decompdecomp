@@ -417,6 +417,13 @@
         <p class="small muted">Reference paths and mappings stay on this machine; accepted C and declarations are included in saved/exported work. Use a declarations header with the retail layouts, not debug settings. Imported projects keep their existing build headers; the reference body must compile against those. Each preparation pass is limited to 8 compiles / 20 seconds; unchanged trials are skipped.</p>
         <label>Exact functions blocked from export (up to 20 names, separated by spaces)<input id="sourcePrepExportNames" placeholder="func_80001000"></label>
         <button id="sourcePrepExportRun" class="ghost" type="button">Repair export constant pools</button>
+        <details><summary>Verify supplied assembly before spending agent tokens</summary>
+          <p>Scan the selected source folder for assembly labels, then map the routines you want to verify. A label is only a candidate. Verification assembles the source and checks linked code and data; it adds no C coverage. Provenance stays local. A restored proof needs a fresh check.</p>
+          <label>Assembly prelude (optional header inside a selected folder)<input id="sourcePrepAssemblyHeader" placeholder="/path/to/source/assembly-context.h"></label>
+          <label>Assembly mappings<textarea id="sourcePrepAssemblyMappings" rows="3" placeholder="func_80001000 = OriginalRoutine @ routine.S"></textarea></label>
+          <div class="row"><button id="sourceAssemblyScan" class="ghost">Find source assembly</button><button id="sourceAssemblyRun" class="ghost">Verify mapped assembly</button></div>
+          <div id="sourceAssemblyLog"></div>
+        </details>
         <div class="row"><button id="sourcePrepSave" class="ghost" type="button">Save source settings</button><button id="sourcePrepRun" class="primary" type="button">Try preparation pass</button></div>
         <details><summary>Run a resumable CPU source queue</summary>
           <p class="small muted">Try mapped source and coherent SDK alternatives, then freshly verify prepared source/header/profile bundles. Progress is saved after each function and resumes after an app restart. No model calls. Local ROM projects only; imported projects keep their own build workflow.</p>

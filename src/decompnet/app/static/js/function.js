@@ -341,7 +341,13 @@ async function refreshFn(first) {
     $("fnBoundaryReview").hidden = !d.boundary_review;
     $("fnBoundaryReview").textContent = d.boundary_review ? `Boundary review: ${d.boundary_review}` : "";
     $("fnAside").hidden = !d.set_aside;
+    if (d.assembly_verification) {
+      const a=d.assembly_verification;
+      $("fnAsideWhy").title=`${a.verified ? "Verified supplied source assembly" : "Previous proof; fresh verification required"}: ${a.source_file || ""} · source SHA-256 ${a.original_file_sha256 || a.source_sha256 || "unavailable"}`;
+    } else $("fnAsideWhy").title="";
     $("fnAsideWhy").textContent = d.set_aside ? `Set aside, agents aren't handed it: ${d.set_aside}.` : "";
+    if (d.assembly_verification && !d.assembly_verification.verified) $("fnAsideWhy").textContent="Previous source-assembly proof; fresh verification required. Kept as assembly, not matching C.";
+
     $("fnReopen").onclick = async () => {
       try {
         await api("/api/reopen", { method: "POST", body: { slug: S.slug, name: d.name } });

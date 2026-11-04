@@ -45,6 +45,12 @@ limits and the read-only command-line audit.
 
 ## Automatic repairs before paid agents
 
+Source preparation can now find real matched callback owners as CPU-only compiler
+context, including saved C from another unit. It can separately assemble supplied
+local assembly and verify linked code/data without claiming C coverage. The overview
+separates exact C, verified source assembly, other assembly and open functions.
+See [local source preparation](docs/LOCAL_SOURCE_PREPARATION.md).
+
 Register-only MIPS near misses now identify closed register swaps from actual linked bytes,
 including cases obscured by relocation-label rendering. Deep search prioritizes up to 24
 lifetime candidates within its existing budget. Optional installed-GCC captures expose actual

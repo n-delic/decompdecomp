@@ -581,7 +581,7 @@ async function renderProjectSettings() {
   const prep = ov.source_preparation || {};
   $("sourcePrepEnabled").checked = !!prep.enabled;
   $("sourcePrepAutoExact").checked = !!prep.auto_exact;
-  for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"]]) $("sourcePrep" + id).value = prep[key] || "";
+  for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"], ["AssemblyHeader", "assembly_header"], ["AssemblyMappings", "assembly_mappings"]]) $("sourcePrep" + id).value = prep[key] || "";
   await renderSdkSelection();
   const facts = [["Platform", ov.platform_name], ["Game", ov.rom?.title || ov.title], [fork ? "Version" : "Game code", ov.rom?.game_code || ov.version],
     !fork && ov.rom?.region ? ["Region", ov.rom.region] : null, fork ? ["Layout", ov.origin === "scratch" ? (ov.layout || "decomp") + " (from scratch)" : ov.fork_kind] : ["Compiler", `${ov.compiler.name} ${ov.compiler.flags.join(" ")}`],
@@ -1090,7 +1090,7 @@ $("sourcePrepSave").onclick = async () => {
   const finish = beginWork(log, "Saving reference source settings", [button], "Reference source settings saved.");
   try {
     const body = { slug: S.slug, enabled: $("sourcePrepEnabled").checked, auto_exact: $("sourcePrepAutoExact").checked };
-    for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"]]) body[key] = $("sourcePrep" + id).value;
+    for (const [id, key] of [["Root", "root"], ["Header", "header"], ["Includes", "include_roots"], ["Mappings", "mappings"], ["Overrides", "overrides"], ["Aliases", "aliases"], ["Definitions", "definitions"], ["Contexts", "contexts"], ["Helpers", "helpers"], ["AssemblyHeader", "assembly_header"], ["AssemblyMappings", "assembly_mappings"]]) body[key] = $("sourcePrep" + id).value;
     const saved = await api("/api/source-preparation", { method: "POST", body });
     if (S.ov) S.ov.source_preparation = saved;
   } catch (e) { showJobError(log, e.message); } finally { finish(); }
@@ -1477,4 +1477,19 @@ $("sourceQueueStop").onclick = async () => {
   const done = beginWork($("sourceQueueLog"), "Pausing source queue", [$("sourceQueueStop")], "Pause requested; current check will finish.");
   try { await api("/api/source-preparation", {method:"POST",body:{slug:S.slug,action:"queue-stop"}}); await sourceQueueProgress(); }
   catch(error) { showJobError($("sourceQueueLog"),error.message); } finally { done(); }
+};
+
+$("sourceAssemblyScan").onclick = async () => {
+  const log=$("sourceAssemblyLog"), button=$("sourceAssemblyScan");
+  const finish=beginWork(log,"Reading assembly labels",[button],"Scan finished.");
+  try {
+    const result=await api("/api/source-preparation",{method:"POST",body:{slug:S.slug,action:"assembly-scan"}});
+    log.textContent=result.candidates.length ? result.candidates.map(c=>`${c.function} = ${c.symbol} @ ${c.file} — unverified`).join("\n") : "No known source assembly labels found. Save source settings first.";
+  } catch(error) { showJobError(log,error.message); } finally { finish(); }
+};
+$("sourceAssemblyRun").onclick = async () => {
+  const log=$("sourceAssemblyLog"), button=$("sourceAssemblyRun");
+  const finish=beginWork(log,"Verifying supplied assembly",[button],"Assembly pass finished.");
+  try { const result=await api("/api/source-preparation",{method:"POST",body:{slug:S.slug,action:"assembly-run"}}); await followJob(result.job,log); await refreshMap(true); }
+  catch(error) { showJobError(log,error.message); } finally { finish(); }
 };

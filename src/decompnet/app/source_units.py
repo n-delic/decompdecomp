@@ -21,6 +21,7 @@ def variants(reader, cfg, mapping, aliases, source, header):
     original, _ = select(reader.file(reader.root / mapping[2]), values, reader.overrides)
     names = {symbol for _, symbol, _ in mappings(cfg.get('mappings', ''))}
     names.add(mapping[1])
+    names.update(name for name,dest in aliases.items() if dest in cfg.get('_known_functions', ()))
     known = set(cfg.get('_known_functions', ()))
     bodies = {}
     for name in sorted(names):
@@ -36,6 +37,12 @@ def variants(reader, cfg, mapping, aliases, source, header):
     ordered = sorted(bodies, key=lambda name:bodies[name][0])
     edges = {n:called(original[a:b]) & bodies.keys() - {n} for n,(a,b) in bodies.items()}
     groups = []
+    # Callback registration is not a call edge. Prefer its real, already-matched
+    # owner before broad source mutations; all bodies still pass the unit judge.
+    matched=set(cfg.get('_matched_functions', ()))
+    for name in ordered:
+        if name!=entry and aliases.get(name,name) in matched and address_reference(original[slice(*bodies[name])],entry):
+            groups.append(('cpu-address-source-unit',{entry,name}))
     # Grow the actual caller/callee component, preserving original definition order.
     selected = {entry}
     for _ in range(MAX_BODIES - 1):
@@ -98,6 +105,8 @@ def variants(reader, cfg, mapping, aliases, source, header):
                 for declaration in prototypes or [head]:
                     if name == entry:declaration=re.sub(r'\bstatic\b','      ',declaration)
                     private += '\n' + rename(declaration, aliases) + ';\n'
+                    # Export renames source identifiers and declarations as one unit.
+                    if name==entry:text=rename(declaration,aliases)+';\n'+text
         # Real unselected static inline helpers may disappear or leave a compiler-only
         # placeholder. Keep their actual bodies; any unknown emitted code still fails the judge.
         from .reference_context_recovery import static_helpers
@@ -130,4 +139,42 @@ def variants(reader, cfg, mapping, aliases, source, header):
         pair = (family, text, private)
         if pair not in result:result.append(pair)
         if len(result) >= 6:break
+    return result
+
+
+def address_reference(source, name):
+    """A bare function value (possibly cast or addressed), never a call or text in a literal."""
+    clean=_blank(source)
+    for hit in re.finditer(r'\b'+re.escape(name)+r'\b',clean):
+        tail=clean[hit.end():].lstrip()
+        if not tail.startswith('('):return True
+    return False
+
+
+def matched_owners(net, proj, fn, source, header):
+    """Also try saved exact callback owners outside the selected reference file.
+
+    Headers are private alternatives, not silently merged shared declarations.
+    Every resulting body is still independently rejudged by compiler_context.
+    """
+    if not getattr(net,'is_rom',lambda p:False)(proj) or net.fork_slug(proj['slug']) or proj['arch']!='mips':return []
+    rows=net.store.all("SELECT * FROM functions WHERE project_id=? AND status='matched' AND id!=? "
+                       "AND instr(matched_source,?)>0 ORDER BY ABS(vram-?) LIMIT 32",
+                       proj['id'],fn['id'],fn['name'],fn['vram'])
+    from .function_names import canonical_source
+    from .repository_candidates import contexts
+    result=[];span=find(source,fn['name'])
+    if not span:return []
+    declaration=source[span[0]:span[0]+_blank(source[span[0]:span[1]]).index('{')].strip()+';\n'
+    for row in rows:
+        owner=canonical_source(row,row['matched_source'])
+        if not address_reference(owner,fn['name']) or find(owner,fn['name']):continue
+        combined=declaration+owner+'\n'+source
+        if len(combined.encode())>MAX_SOURCE:continue
+        try:private_headers=[header,*list(contexts(net,proj,row))[:1]]
+        except NetworkError:private_headers=[header]
+        for private in private_headers:
+            pair=('cpu-address-source-unit',combined,private)
+            if pair not in result:result.append(pair)
+            if len(result)>=4:return result
     return result

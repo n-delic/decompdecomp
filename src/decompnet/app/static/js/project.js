@@ -411,6 +411,10 @@ function renderStats(ov) {
   const pct = codePct(ov);
   $("pct").textContent = pctNum(pct);
   $("pctSub").textContent = (ov.bytes ? `${bytes(ov.matched_bytes)} of ${bytes(codeBytes(ov))}` : "") + linkedText(ov) + (S.today ? ` · ${S.today} matched today` : "");
+  if (ov.status_breakdown?.total_bytes) {
+    const b=ov.status_breakdown;
+    $("pctSub").textContent += ` · ${pctNum(100*b.exact_c_bytes/b.total_bytes)}% of all code bytes in C (including assembly in the total)`;
+  }
   $("fnCount").textContent = `${ov.matched.toLocaleString()} / ${cFunctions(ov).toLocaleString()}`;
   const coverageNotes = ov.coverage_notes || [];
   $("coverageNotice").hidden = !coverageNotes.length;
@@ -507,6 +511,12 @@ function renderOverview() {
   setWidths($("fnStack"));
   const togo = cFunctions(S.ov) - S.ov.matched;
   $("fnSub").textContent = `${togo.toLocaleString()} to go${c.tried ? ` · ${c.tried.toLocaleString()} tried` : ""}${c.working ? ` · ${c.working} in progress` : ""}${c.asm ? ` · ${c.asm} set aside (no C makes them)` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable (renamed, typed and commented, still matching)` : ""}${S.ov.left_out ? ` · ${plural(S.ov.left_out, "function")} left out: library code (see Settings)` : ""}`;
+  if (S.ov.status_breakdown) {
+    const b=S.ov.status_breakdown;
+    $("fnSub").textContent = `${b.exact_c.toLocaleString()} exact C · ${b.verified_source_assembly.toLocaleString()} verified source assembly · ${b.other_assembly.toLocaleString()} other assembly · ${b.open.toLocaleString()} open${c.working ? ` · ${c.working} working` : ""}${S.ov.readable ? ` · ${S.ov.readable.toLocaleString()} readable` : ""}`;
+    $("fnSub").title="Verified source assembly is checked against supplied local source. Other assembly includes unverified fallbacks. Zero open functions does not mean 100% C.";
+  }
+
   const st = S.stats;
   if (st) {
     const ph = st.matches_per_hour, max = Math.max(1, ...ph);
