@@ -1,5 +1,11 @@
 # Roadmap
 
+Implemented: processor-owned MIPS local acyclic register-chain advice routes a bounded eight-proposal
+lifetime/declaration lane in iterative and deep search without diagnostic compiles. Branch-target and
+delay-slot residuals prioritize source control-flow repairs over literal edits. Closed-cycle budgets
+and exact acceptance are unchanged. Readers for other processors and numeric register aliases remain
+planned.
+
 Implemented: temporary room HTTP failures (including gateway errors) preserve queued saved progress for retry
 in ROM and project rooms, instead of treating them as the host rejecting the candidate.
 
@@ -248,6 +254,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
 | Frozen multi-case exported-ROM repair CLI | ✓ MIPS | ✓ MIPS | ✓ MIPS | ✓ MIPS | — copied evaluator | — copied evaluator | — copied evaluator | — copied evaluator |
+| Local register-chain and jump/delay-slot search hints | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | ✓ MIPS; other readers planned |
 | Targeted scalar scheduling repairs and experiment costs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Portable last-exact evidence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ historical, own build |
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | — GUI adapter planned |

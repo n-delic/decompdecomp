@@ -311,13 +311,14 @@ class Search(Permuter):
     def allocation_choices(self, proj, fn, source, rows, choices, labels, header, fork):
         """One bounded lane before broad mutation, charged to the same global limit/deadline."""
         diagnosis = allocation_evidence.diagnose(rows,proj['arch'])
-        if not diagnosis['register_only'] or not diagnosis['register_cycles'] or self.allocation_trials >= allocation_search.LIMIT:
+        allowance=allocation_search.allowance(diagnosis)
+        if not allowance or self.allocation_trials >= allowance:
             return choices,set()
         self.log(allocation_evidence.text(rows,proj['arch']))
         evidence = {}
         if not fork and proj['slug'] not in self.net.links and self.net.is_rom(proj):
             evidence = allocation_search.saved(self.net,proj,fn,source)
-            if (evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
+            if (diagnosis['register_cycles'] and evidence is None and self.allocation_captures < 2 and self.tested+2 < self.limit
                     and time.monotonic()+40 < self.deadline):
                 self.allocation_captures += 1
                 def charged():
@@ -336,7 +337,7 @@ class Search(Permuter):
             if hint := brief(evidence.get('allocation'),diagnosis['register_cycles']):self.log(hint)
             if evidence.get('skipped'):self.log(evidence['skipped'])
         lane = allocation_search.proposals(source,fn['name'],proj['arch'],rows,choices,labels,evidence,header)
-        lane = [c for _,c in lane if c not in self.local_seen][:allocation_search.LIMIT-self.allocation_trials]
+        lane = [c for _,c in lane if c not in self.local_seen][:allowance-self.allocation_trials]
         return lane+[c for c in choices if c not in lane],set(lane)
 
     def local_repairs(self, agent, proj, fn, best, fork, max_trials=None, phase_deadline=None):
@@ -411,7 +412,7 @@ class Search(Permuter):
                     self.log(f'Local search paused at its burst budget; {trials} proposals visited.')
                     return best, self.net._function(fn['name'], proj['slug'])['best_source']
                 if candidate in allocation_lane:
-                    self.phase = 'register-cycle lifetimes'
+                    self.phase = 'register allocation lifetimes'
                     self.allocation_trials += 1
                 else:
                     self.phase = ordinary_phase

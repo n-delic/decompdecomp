@@ -1,4 +1,4 @@
-"""A bounded register-cycle lane sharing the normal judge, full-input cache and search budget."""
+"""Bounded register-cycle and local-chain lanes sharing the normal judge, full-input cache and search budget."""
 import hashlib
 import json
 
@@ -8,6 +8,14 @@ from . import allocation_evidence, compiler_diagnostics, gcc_allocation, rtl_val
 
 VERSION = 'allocation-cycle-v1'
 LIMIT = 24
+CHAIN_LIMIT = 8
+
+
+def allowance(diagnosis):
+    """Local acyclic chains get a short lane; cycles retain their existing allowance."""
+    if (not diagnosis["register_only"] or diagnosis["target_instructions"]!=diagnosis["candidate_instructions"]
+            or diagnosis["target_frame"]!=diagnosis["candidate_frame"]):return 0
+    return LIMIT if diagnosis["register_cycles"] else CHAIN_LIMIT if diagnosis["register_chains"] else 0
 
 
 def key(net, proj, fn, source):
@@ -58,7 +66,8 @@ def capture(net, proj, fn, source, *, on_compile, rows=()):
 def proposals(source, name, arch, rows, choices, labels, evidence=None, header=''):
     """Use conservative existing generators; no new padding identities or assembly renaming."""
     diagnosis = allocation_evidence.diagnose(rows,arch)
-    if not diagnosis['register_only'] or not diagnosis['register_cycles']:
+    budget=allowance(diagnosis)
+    if not budget:
         return []
     from . import identity_lifetime_repairs, later_local_repairs, value_trace_repairs
     extra = later_local_repairs.variants(source,name,header,arch,evidence)
@@ -70,13 +79,26 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     allowed = {*later_local_repairs.FAMILIES,'split_integer_phase','paired_integer_lifetimes','split_narrow_lifetime','narrow_definition_lifetime',
                'merge_integer_lifetimes','split_integer_lifetime','value_lifetime','loop_weight_scope',
                'allocation_initialization_order','local_declaration_order','declaration_order',
-               'value_trace_bundle','existing_identity_lifetime'}
+               'value_trace_bundle','existing_identity_lifetime','pointer_local_reuse','pointer_load_inline',
+               'pointer_index_scope','pointer_argument_alias','paired_pointer_declarations','copy_register_reuse',
+               'spill_declaration_order','pointer_index_order','dead_pointer_clear'}
     selected = [(labels.get(c,''),c) for c in choices if labels.get(c) in allowed]
     selected = extra+selected
     lines = rtl_value_trace.focus(trace,source,rows,header)
     if lines:
         selected.sort(key=lambda pair:not value_trace_repairs.touches(source,value_trace_repairs.changes(source,pair[1]),lines,1))
-    return list(dict.fromkeys(selected))[:LIMIT]
+    selected=list(dict.fromkeys(selected))
+    if not diagnosis['register_cycles']:
+        # A scalar donor pool must not crowd the short pointer-chain lane out.
+        from itertools import zip_longest
+        preferred=('pointer_local_reuse','pointer_load_inline','pointer_argument_alias',
+                   'paired_pointer_declarations','spill_declaration_order','pointer_index_scope',
+                   'pointer_index_order','copy_register_reuse','dead_pointer_clear')
+        selected.sort(key=lambda p:preferred.index(p[0]) if p[0] in preferred else len(preferred))
+        pools={}
+        for item in selected:pools.setdefault(item[0],[]).append(item)
+        selected=[p for row in zip_longest(*pools.values()) for p in row if p]
+    return selected[:budget]
 
 
 def brief(net, proj, fn, source, rows):

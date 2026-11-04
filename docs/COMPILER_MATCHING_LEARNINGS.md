@@ -3097,3 +3097,51 @@ revision. Both evaluated 80 candidates with no compile/link failures; the other 
 scores remained 790, 60 and 230. Observed summed trial times were 49.57 seconds before /
 49.13 after. The changed per-case counts versus the earlier live-export run reflect the
 time cap and local load; they are not additional recovery evidence or a speed claim.
+
+## Local register chains and jump/delay-slot residuals (4 November 2026)
+
+The earlier frozen failures exposed two gaps in search advice, not in the judge. A short
+pointer-chain function had same-length register-only rows without a coherent global closed
+cycle. A separate loop residual changed a jump destination and delay-slot placement, but
+its `i` marker sent search toward literal constants.
+
+`Arch.repair_search_hints` now delegates bounded displayed-row analysis to the MIPS reader.
+It recognizes acyclic substitutions in contiguous 2–16-row runs, with unique outgoing and
+incoming mappings, ordinary named GPRs and chains of at most eight registers. Separate runs
+can describe unrelated values in the same physical register; no C identity is inferred.
+Ambiguous runs, special-register edits, changed operation/immediate forms and incomplete
+rows give no chain. A chain-only lane offers at most eight existing source lifetime,
+pointer reuse or declaration hypotheses, with unchanged instruction count/frame. It shares
+the existing iterative/deep budget and starts no optional diagnostic compiles. Closed
+cycles retain their 24-proposal allowance. Neither lane renames generated assembly.
+
+Changed direct branch/jump targets and changed instructions following a MIPS branch/jump
+are now control-flow advice ahead of literal changes. Ordinary constants remain constants;
+changed call rows retain call priority and pure register substitutions retain allocation
+priority. The reader requires canonical MIPS register spelling or the direct `j` opcode
+when legacy callers lack processor metadata, avoiding invented delay slots for ARM/PPC
+branch mnemonics. Labels/targets stay different for scoring and exact acceptance.
+
+Both search paths use the shared source generators and normal linked-byte/data or objdiff
+judge. Other processors retain existing repairs and need their own new hint readers; numeric
+MIPS register aliases and broader ambiguous allocation runs remain unsupported. Synthetic
+fixtures cover the evidence boundaries, category/priority changes, short-lane limit, no
+extra capture compiles, and unchanged cycle handling.
+
+Controlled replay against main `a6fce523` used the same isolated four-case export snapshot,
+20 candidates / 30 seconds each, native KMC GCC 2.7.2 and pinned per-case profiles (including
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3` for the 567-instruction case). Both recovered one of four
+on candidate 3. Both best-score sets were **0, 550, 60, 230**; there were no new recoveries
+or score regressions. Counts were 71 vs 73 candidate evaluations, because the 999-instruction
+case exhausted its time budget at 11 vs 13 trials. Observed summed trial times were 53.22
+vs 54.38 seconds; these single observations do not establish a speedup. All trials compiled
+and linked; no live project/database was changed and no AI helper was started.
+
+The 30-instruction case now offers spill declaration order and existing dead-pointer
+lifetime hypotheses first, but these do not improve its score. The 54-instruction case now
+reports branch-target/delay-slot advice rather than a constant miss, also without a new
+match. Preserve these failures for future generator work. Ordinary moved-instruction
+multisets must keep scheduling priority, and an immediate literal change inside an existing
+delay slot must remain a literal change; neither alone proves a control-flow repair is
+needed. The short chain lane rotates eligible families so one scalar/pointer pool cannot
+consume all eight slots.

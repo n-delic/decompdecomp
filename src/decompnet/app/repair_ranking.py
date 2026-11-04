@@ -18,6 +18,13 @@ def order(families, rows):
     if diagnose(rows)['register_cycles']:
         preferred = ('later_local_reuse','pointer_integer_phase_union','paired_integer_lifetimes','split_integer_lifetime',
                      'merge_integer_lifetimes','block_accumulator_lifetime','local_declaration_order') + register_priority
+    elif diagnose(rows)['register_chains'] and diagnose(rows)['register_only']:
+        preferred = ('pointer_local_reuse','pointer_load_inline','pointer_argument_alias','paired_pointer_declarations',
+                     'copy_register_reuse','split_integer_lifetime','merge_integer_lifetimes','local_declaration_order') + register_priority
+    elif focus=='control' and (diagnose(rows)['branch_target'] or
+            (diagnose(rows)['delay_slot'] and not diagnose(rows)['scheduling'])):
+        preferred = ('structured_backedge','guard_forward_jump','branch_orientation','loop_update_order',
+                     'goto_leaf','shared_return_tail','redundant_loop_guard','combined_scheduling')
     elif paired_loads(rows):
         preferred = ('paired_load_order','scalar_schedule_order','local_declaration_order','small_helper_expansion','combined_scheduling')
     elif markers and markers <= {'s'}:

@@ -392,7 +392,7 @@ def _run(twins, slug, job):
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v12', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v13', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

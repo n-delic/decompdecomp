@@ -9,6 +9,9 @@ REGISTER = re.compile(r'\$[A-Za-z0-9]+\b')
 
 def diagnose(rows, arch=None):
     rows = permuter_focus.normalized(rows)
+    from ..arch import get
+    reader=get(arch or "mips").repair_search_hints
+    hints=reader(rows) if reader else {}
     valid = all(isinstance(r,(list,tuple)) and len(r)==3 and all(isinstance(c,str) for c in r) for r in rows)
     rows = [r for r in rows if isinstance(r,(list,tuple)) and len(r)==3 and all(isinstance(c,str) for c in r)]
     changed = [r for r in rows if r[0]!=' ']
@@ -43,7 +46,7 @@ def diagnose(rows, arch=None):
     copy_near=bool(changed) and sum(r[0]=='>' for r in changed)==1 and all(
         (m=='r' and REGISTER.sub('$reg',a)==REGISTER.sub('$reg',b)) or
         (m=='>' and not a and re.fullmatch(r'move\s+\$\w+,\s*\$\w+',b)) for m,a,b in changed)
-    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
+    return {'target_instructions':target_count,'candidate_instructions':candidate_count,'possible_tail_merging':merging,'copy_near_miss':copy_near,'register_only': valid and bool(changed) and all(marker=='r' and REGISTER.sub('$reg',left)==REGISTER.sub('$reg',right) for marker,left,right in changed), 'register_map':swaps, 'register_cycles':cycles(swaps), 'register_chains':hints.get('register_chains',[]), 'branch_target':hints.get('branch_target',False), 'delay_slot':hints.get('delay_slot',False), 'scheduling':scheduling, 'allocation_schedule':allocation_schedule,
             'target_frame':(frame or {}).get('target_frame'), 'candidate_frame':(frame or {}).get('candidate_frame'),
             'spill_offsets':slots, 'differences':len(changed)}
 
@@ -64,6 +67,10 @@ def text(rows, arch=None):
     if d['register_cycles']:
         hints.append('closed register cycles '+', '.join(' ↔ '.join(c) for c in d['register_cycles'])+
                      '; keep logic, header, target and compiler profile fixed; inspect narrowing/coalescing and lifetime order, not assembly register renaming')
+    if d['register_chains']:
+        hints.append('local acyclic register chains '+', '.join(' → '.join(c) for c in d['register_chains'])+'; try bounded source lifetime/declaration repairs, not register substitution')
+    if d['branch_target'] or d['delay_slot']:
+        hints.append('jump/branch target or delay-slot residual; prioritize source control flow before literal edits')
     if d['register_map']:
         hints.append('consistent register substitution '+', '.join(a+'→'+b for a,b in d['register_map'][:6])+
                      '; try lifetime/split-reuse repairs before broad flag search')
@@ -84,6 +91,8 @@ def plan(rows, arch=None):
     d=diagnose(rows,arch)
     if d['register_only']:
         category='allocation';families=['later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
+    elif d['branch_target'] or (d['delay_slot'] and not d['scheduling']):
+        category='control';families=['structured_backedge','guard_forward_jump','branch_orientation','loop_update_order','goto_leaf','shared_return_tail']
     elif d['scheduling'] or d['allocation_schedule']:
         category='scheduling';families=['call_one_shot_scope','debug_initialization_group','debug_constant_initialization','initialization_cluster','paired_operand_reuse','affine_counter_guard']
     elif d['spill_offsets'] or d['target_frame']!=d['candidate_frame']:
@@ -96,7 +105,8 @@ def plan(rows, arch=None):
     return dict(category=category,first_difference_row=first,changed_rows=d['differences'],
                 target_instructions=d['target_instructions'],candidate_instructions=d['candidate_instructions'],
                 target_frame=d['target_frame'],candidate_frame=d['candidate_frame'],families=families,
-                register_cycles=d['register_cycles'],
+                register_cycles=d['register_cycles'],register_chains=d['register_chains'],
+                branch_target=d['branch_target'],delay_slot=d['delay_slot'],
                 context='Header/prototype correctness cannot be inferred from assembly rows.',
                 verdict='Advisory; register substitution is not permission to rename assembly registers.')
 

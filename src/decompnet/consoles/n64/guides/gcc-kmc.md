@@ -475,3 +475,22 @@ lane ahead of residual detours. A remaining acyclic register chain needs differe
 allocation targeting; a jump/delay-slot residual should not be treated as a literal
 constant change. The wider hypotheses are supported/tested, not evidence of a general
 speedup or extra matches.
+
+### Register-only does not require a closed global cycle
+
+A pointer-load chain can use different registers locally even when reused physical registers
+prevent a single global substitution map. Search now gives proven local acyclic chains up
+to eight existing source-lifetime/declaration proposals, within the normal budget and
+without extra diagnostic captures. This is allocation advice, not permission to substitute
+register names or infer original variable names. Ambiguous runs and changed frames/counts
+do not get this lane.
+
+A differing jump destination or delay-slot instruction is a control-flow residual, even
+when the displayed marker is `i`. Try structured backedges, guard/goto/branch orientation or
+loop-update placement before treating a label as a literal constant. Calls and true literal
+changes keep their own priorities; all acceptance still requires exact normal judging.
+
+Four frozen cases retained the same exact recovery and best scores under equal budgets;
+these additions have not yet demonstrated an extra match. A moved instruction multiset
+keeps scheduling priority, and a literal-only edit inside an existing delay slot remains a
+constant residual. The compiler-matching ledger records failed trials as well as recoveries.

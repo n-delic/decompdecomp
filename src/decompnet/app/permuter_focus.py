@@ -64,7 +64,7 @@ def normalized(rows, resolve=None):
     return result
 
 
-def classify(rows):
+def classify(rows, arch=None):
     changed = [row for row in normalized(rows) if row and row[0] != ' ']
     markers = {row[0] for row in changed}
     text = ' '.join(str(cell) for row in changed for cell in row[1:])
@@ -75,6 +75,10 @@ def classify(rows):
         return 'call'
     if 's' in markers:
         return 'stack'
+    from ..arch import get
+    reader=get(arch or 'mips').repair_search_hints
+    hints=reader(normalized(rows)) if reader else {}
+    if hints.get('branch_target') or hints.get('delay_slot'):return 'control'
     if 'i' in markers or re.search(r'\b(?:lui|li|ldc1|lwc1|movabs)\b', text):
         return 'constant'
     return 'control' if markers & {'<', '>', '|', 'o'} else ''
