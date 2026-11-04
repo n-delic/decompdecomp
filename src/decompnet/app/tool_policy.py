@@ -68,7 +68,7 @@ def disabled(net):
 def visible(net, slug, names, agent=None):
     ensure(net)
     blocked = disabled(net)
-    if agent:
+    if agent and net.store.one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='helpers'"):
         row = net.store.one('SELECT options FROM helpers WHERE project=? AND name=?', slug, agent.name)
         if row:
             blocked.update(json.loads(row['options'] or '{}').get('disabled_tools', []))
