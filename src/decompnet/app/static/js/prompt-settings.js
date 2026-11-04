@@ -4,19 +4,27 @@ async function loadPromptSettings(host, log, helper = '') {
   try {
     const info=await api(`/api/agent-prompts${helper ? `?helper=${encodeURIComponent(helper)}` : ''}`);
     if (!host.isConnected) return;
+    const opened=new Set((host._promptFields || []).filter(f=>f.box.open).map(f=>f.key));
     if (!helper) { const count=info.fields.filter(f=>f.custom).length; disclosureContext('agPromptsContext', count ? `${count} custom override${count===1 ? '' : 's'}` : 'Built-in defaults'); }
     const fields=info.fields.map(field=>{
-      const box=document.createElement('div'); box.className='prompt-setting';
+      const box=document.createElement('details'); box.className='panel settings-disclosure prompt-setting'; box.open=opened.has(field.key);
+      const summary=document.createElement('summary'); summary.className='panel-head';
+      const heading=document.createElement('h3'), status=document.createElement('span');
+      heading.textContent=field.label; status.className='disclosure-context small muted';
+      const body=document.createElement('div'); body.className='prompt-setting-body';
+      summary.append(heading,status);
       const label=document.createElement('label'), check=document.createElement('input'), title=document.createElement('span');
-      check.type='checkbox'; check.checked=field.custom; title.textContent=`Override ${field.label}`;
+      check.type='checkbox'; check.checked=field.custom; title.textContent='Use a custom override';
       label.className='check'; label.append(check,title);
       const text=document.createElement('textarea'); text.value=field.value; text.rows=12; text.disabled=!field.custom;
       text.setAttribute('aria-label',field.label); text.spellcheck=false;
-      check.onchange=()=>{text.disabled=!check.checked;};
+      const update=()=>{text.disabled=!check.checked;status.textContent=check.checked ? '— Custom override' : helper ? '— Inherits global defaults' : '— Built-in default';};
+      check.onchange=update;update();
       const hint=document.createElement('p'); hint.className='small muted';
       hint.textContent=field.placeholders.length ? `Placeholders: ${field.placeholders.map(key=>'{'+key+'}').join(', ')}. Write literal braces as {{ and }}.` : 'Literal app instructions; no template placeholders.';
-      box.append(label,hint,text);return {box,check,text,key:field.key};
+      body.append(label,hint,text);box.append(summary,body);return {box,check,text,key:field.key};
     });
+    host._promptFields=fields;
     const controls=document.createElement('div'); controls.className='row';
     const save=document.createElement('button'),preview=document.createElement('button'),reset=document.createElement('button');
     save.textContent='Save prompts';save.className='primary';preview.textContent='Preview';reset.textContent=helper?'Use global defaults':'Restore built-in defaults';
