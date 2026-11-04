@@ -33,7 +33,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Permuter on near misses | ✓ | ✓ | ✓ | ✓ | — | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hand-written assembly set aside | ✓ | ✓ | ✓ | ✓ (`sc` stubs) | — | ✓ | ✓ (`_call_via` helpers, `svc`/`swi` stubs) | ✓ | Visual C++'s exception-handling stubs (64-bit: the funclets its exception data names) | Visual C++'s exception-handling stubs | BIOS call stubs, pieces of functions | MIPS, PowerPC, ARM's BIOS stubs and pieces of functions |
 | Source splitting (`split_file`) | — | — | — | — | — | — | — | ✓ | ✓ | ✓ | ✓ | by project |
-| Pieces of functions joined to their function | — | — | — | — | — | — | — | — | ✓ (`scratch.merge_pieces`; 64-bit: .pdata's extents, none to join) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
+| Pieces of functions joined to their function | ✓ (agents, `join_functions`) | ✓ (agents) | ✓ (agents) | ✓ (agents) | — | ✓ (agents) | ✓ (agents) | — | ✓ (`scratch.merge_pieces`; 64-bit: .pdata's extents, none to join) | ✓ (`scratch.merge_pieces`) | ✓ (`recover.merge_pieces`) | — |
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ | partly: code no C makes set aside; no new analysis yet | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | ✓ import stubs (NIDs) and `sc` calls | — | set aside, named by library and NID | set aside (BIOS calls) | — | ✓ import thunks | ✓ import thunks, named from the kernel export list | — (BIOS calls set aside, not named) | — |
@@ -449,7 +449,8 @@ Where to start on a gap:
   across two source files too), checked as an analysis is (the game rebuilt byte for byte, else taken back), never a
   matched function; a refused join is remembered. Check again only ever joins, so what agents joined stays. A
   console that can't join yet (GameCube/Wii) isn't offered `join_functions`, and a join is refused before any votes
-  are recorded, so nothing goes into `joins_refused`.
+  are recorded, so nothing goes into `joins_refused`. ROM projects join too: the pieces are reassembled by
+  their ROM run (`engine.join_functions`, `console.join_saved_functions`), across overlay copies of one address.
 - **What no C makes is out of agents' way, and progress counts the rest.** On a DS game 159 of 557 open functions
   were pieces of others (ds-decomp's symbols in the middle of functions: a lone epilogue, a register save running on
   into the next symbol, a lone `bx ip`), each given up on by five to seven agents in turn. ARM code that pops pc
