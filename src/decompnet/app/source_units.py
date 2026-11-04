@@ -7,6 +7,7 @@ from .source_next_steps import called
 
 MAX_BODIES = 4
 MAX_SOURCE = 128 * 1024
+MAX_UNLOCATED_SOURCE = 512
 
 
 def variants(reader, cfg, mapping, aliases, source, header):
@@ -23,9 +24,18 @@ def variants(reader, cfg, mapping, aliases, source, header):
     names.add(mapping[1])
     names.update(name for name,dest in aliases.items() if dest in cfg.get('_known_functions', ()))
     known = set(cfg.get('_known_functions', ()))
+    unlocated = set()
+    if cfg.get('_helper_units'):
+        entry_span = find(original,mapping[1])
+        for name in sorted(called(original[slice(*entry_span)]) if entry_span else []):
+            span = find(original,name)
+            if name not in names and span and len(original[span[0]:span[1]].encode()) <= MAX_UNLOCATED_SOURCE:
+                unlocated.add(name)
+                if len(unlocated) >= MAX_BODIES-1:break
+        names.update(unlocated)
     bodies = {}
     for name in sorted(names):
-        if aliases.get(name, name) not in known:continue
+        if aliases.get(name, name) not in known and name not in unlocated:continue
         span = find(original, name)
         if not span or is_stub(original[span[0]:span[1]]) or find(original[span[1]:], name):continue
         code = original[span[0]:span[1]]
@@ -50,7 +60,8 @@ def variants(reader, cfg, mapping, aliases, source, header):
         available = neighbours - selected
         if not available:break
         selected.add(min(available, key=lambda n:abs(bodies[n][0] - bodies[entry][0])))
-        groups.append(('cpu-private-source-unit', set(selected)))
+        family = 'cpu-helper-source-unit' if selected & unlocated else 'cpu-private-source-unit'
+        groups.append((family, set(selected)))
     at = ordered.index(entry)
     for count in range(1, min(3, at) + 1):
         groups.append(('cpu-source-predecessors', set(ordered[at-count:at+1])))

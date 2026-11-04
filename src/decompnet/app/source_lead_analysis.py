@@ -90,17 +90,19 @@ def profile(net, proj, fn):
     return compiler_for(json.loads(proj['config']),fn['vram'], fn)
 
 
-def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, error='', scope=None):
+def record(net, proj, fn, source, header, score, rows, lead=None, elapsed_ms=0, error='', scope=None, source_locations=None):
     lead=lead or {};family=lead.get('family','original-context')
     scope=scope or destination(net,proj,fn);settings=profile(net,proj,fn)
     signature=key(scope,source,header,family,settings)
     comparison=compare(rows,proj['arch'],source,fn['name'])
     from .matching_investigations import hints as investigation_hints
+    from .source_branch_review import review
     from .source_context_diagnostics import hints as context_hints
     from .source_context_diagnostics import route
     from .source_next_steps import recommendations
+    comparison['control_flow_review']=review(source,rows,proj['arch'],source_locations)
     comparison['context_route']=route(fn['asm'] or '',rows or [],proj['arch'])
-    comparison['next_steps']=context_hints(source,comparison,fn['asm'] or '',rows or [],proj['arch'])+investigation_hints(rows,proj['arch'])+recommendations(source,dict(fn).get('best_source') or '',comparison)
+    comparison['next_steps']=context_hints(source,comparison,fn['asm'] or '',rows or [],proj['arch'],source_locations)+investigation_hints(rows,proj['arch'])+recommendations(source,dict(fn).get('best_source') or '',comparison)
     from .source_storage import object_hints, scope_hints, typed_object_hints
     comparison['next_steps']+=scope_hints(dict(fn).get('best_source') or '',source,header,fn['name'])+object_hints(rows,header)+typed_object_hints(rows,source,header)
     if proj['arch']=='mips':

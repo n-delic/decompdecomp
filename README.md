@@ -31,6 +31,8 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Match through the live app
 
+Local source preparation recovers referenced enums/object declarations, tries private MIPS symbol aliases only when instruction layouts fully agree, and combines independently verified small helper context with bounded compiler profiles. Source evidence locates branch/statement differences for review; it does not automatically rewrite behavior. See [local source preparation](docs/LOCAL_SOURCE_PREPARATION.md).
+
 Reviewed MIPS raw tails can be recovered through the coverage panel or operator API, with staged disassembly, unchanged original prefixes and export guards. A known-demo corruption benchmark measures detection independently of matching; see [coverage review](docs/CODE_COVERAGE_REVIEW.md).
 
 

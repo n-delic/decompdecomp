@@ -166,6 +166,8 @@ checks, and explicit fresh rechecks of saved exact profile bundles for ROM proje
 context reuse/pair submission needs an adapter for its own build headers; planned. MIPS internal
 temporary-argument caller evidence is advisory; equivalent readers for other architectures are planned.
 
+Implemented: referenced enum/object declaration recovery, strict aligned MIPS relocation hypotheses, unique independently linked small-helper naming and bounded helper/profile retries across budget boundaries. Source call/branch diagnostics retain adjacent instructions and mapped statements. Relocation recovery for other processors/imported-build targets and imported private-header application remain planned; behavioral source changes are advisory only.
+
 Implemented: source preparation advances cached private profile searches, retains scoped link failures,
 and explains reference/saved-draft call differences plus explicit helper declaration conflicts.
 SDK version identification and automatic retail-source patching are not implemented.

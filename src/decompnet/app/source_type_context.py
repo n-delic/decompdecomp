@@ -24,6 +24,13 @@ def referenced(text, source, header):
                     # through the original text slice (or overlap separately chosen macros).
                     first=start+len(part)-len(part.lstrip())
                     blocks.append((alias[1],first,i+1))
+            if re.match(r'\s*(?:typedef\s+)?enum\b',part):
+                enum=re.search(r'\benum(?:\s+'+IDENT+r')?\s*\{([^{}]*)\}',part,re.S)
+                if enum:
+                    first=start+len(part)-len(part.lstrip())
+                    for item in enum[1].split(','):
+                        name=re.match(r'\s*('+IDENT+r')\b',item)
+                        if name:blocks.append((name[1],first,i+1))
             start=i+1
         elif c=='}' and depth==0 and ')' in masked[start:i]:
             start=i+1  # function definitions are not declarations

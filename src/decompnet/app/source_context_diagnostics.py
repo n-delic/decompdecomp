@@ -36,10 +36,12 @@ def route(asm, rows, arch):
     return None
 
 
-def hints(source, comparison, asm, rows, arch):
+def hints(source, comparison, asm, rows, arch, locations=None):
     result=shadows(source)+identity(comparison)
     routed=route(asm,rows,arch)
     if routed:result.append(routed['message'])
+    from .source_branch_review import review
+    result.extend(item['message'] for item in review(source,rows,arch,locations))
     return result
 
 

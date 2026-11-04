@@ -218,3 +218,12 @@ Keep the actual caller body: unused static/inline versions may not have the same
 effect. The app independently rejudges each included body at its known ROM slot
 before allowing matching-only extraction. A zero diff alone does not verify data
 or authorize invented padding or helper bodies.
+
+A small helper can be required as real compiler context even when manually expanding its return
+expression gives the right instruction count. Try the actual helper and caller together with the
+relevant optimization profiles; `-O3` can reproduce inlining and stack allocation that an expression
+rewrite at `-O2` does not. Local source preparation can identify a small relocation-free helper only
+through a unique already-matched body and an independent linked check. Every included body must
+still verify, and a profile change remains function-only and subject to the usual approval policy.
+Check differing branches against the retail game before broad permutation: source from another
+revision can add or omit conditions that no layout permutation will fix.

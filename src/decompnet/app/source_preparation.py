@@ -256,6 +256,12 @@ def prepare(reader, cfg, mapping, aliases, fallback):
         except NetworkError as error:
             reader.advisories.append('Reference include macros could not be read; retaining the explicit private header. Add the matching SDK include roots to recover missing macros. '+str(error))
     header += macro_context(reference_macros, body+helper_context, header)
+    from .source_declarations import referenced as object_declarations
+    # Includes and file-local enums/objects can be absent from an explicit SDK header.
+    # Keep declarations only; initializer placement remains a separate judged trial.
+    references = reference_macros
+    extra = object_declarations(declarations(references), body+helper_context, header)
+    header += '\n'+referenced(references, body+helper_context+extra, header)+'\n'+extra
     header += prototypes(original, body, header, symbol)
     # Include trees may contain declarations absent from an explicitly selected header.
     # Append actual signatures only; unknown types fail compilation without shared edits.
@@ -413,6 +419,10 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     for hint in compiler_hints(result.log):
         log.warning('source preparation %s: %s', fn['name'], hint)
         if diagnostic:diagnostic(fn['name'] + ': ' + hint)
+    if measurement is not None and net.is_rom(proj):
+        from .source_symbol_recovery import helpers
+        aliases = helpers(net,proj,fn,result.obj)
+        if aliases:measurement['helper_aliases'] = aliases
     from .compiler_context import acceptable
     if net.is_rom(proj) and not acceptable(net,proj,fn,result.obj):
         record(net,proj,fn,source,header,None,[],lead,(time.monotonic()-started)*1000,error='Extra emitted function bodies',scope=scope)
@@ -424,15 +434,22 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
     diff = scoring.diff(net._target_obj(fn, proj), candidate)
     if verdict is not None:
         diff = scoring.DiffResult(0 if verdict else max(1, diff.score), diff.max_score, diff.rows, verdict)
+    from .cpu_source_repairs import locations
+    source_locations = locations(result.obj,fn['name'],diff.rows,source) if not diff.bytes_match else {}
+    if measurement is not None and not diff.bytes_match:
+        from .. import arch as arches
+        recover = arches.get(proj['arch']).source_symbol_bindings
+        if recover and net.is_rom(proj):
+            measurement['symbol_bindings'] = recover(result.obj,fn['name'],fn['target'],fn['vram'],net.symbols(proj['id']).resolve)
     record(net,proj,fn,source,header,0 if diff.bytes_match else max(1,diff.score),diff.rows,lead,
-           (time.monotonic()-started)*1000,scope=scope)
+           (time.monotonic()-started)*1000,scope=scope,source_locations=source_locations)
     if diagnostic and dict(proj).get('arch')=='mips':
         from .sdk_io_repairs import hints
         for hint in hints(source,dict(fn).get('asm',''),diff.rows):diagnostic(fn['name']+': '+hint)
     if diagnostic:
         from .source_context_diagnostics import hints as context_hints
         from .source_lead_analysis import compare
-        for hint in context_hints(source,compare(diff.rows,proj['arch']),fn['asm'] or '',diff.rows,proj['arch']):diagnostic(fn['name']+': '+hint)
+        for hint in context_hints(source,compare(diff.rows,proj['arch']),fn['asm'] or '',diff.rows,proj['arch'],source_locations):diagnostic(fn['name']+': '+hint)
         from .source_storage import object_hints, typed_object_hints
         for hint in object_hints(diff.rows,header)+typed_object_hints(diff.rows,source,header):diagnostic(fn['name']+': '+hint)
         if dict(proj).get('arch')=='mips':
@@ -443,9 +460,7 @@ def attempt(permuter, proj, fn, source, header, agent, fork, diagnostic=None, le
         for hint in hints(source,fn['name'],read(net,proj,fn),header):diagnostic(fn['name']+': '+hint)
     score = 0 if diff.bytes_match else max(1, diff.score)
     if measurement is not None and score:
-        from .cpu_source_repairs import locations
-        measurement.update(rows=[list(r) for r in diff.rows[:512]],
-                           lines=locations(result.obj,fn['name'],diff.rows,source))
+        measurement.update(rows=[list(r) for r in diff.rows[:512]],lines=source_locations)
     assembly=fn['status']=='asm'
     if (not assembly or diff.bytes_match) and (fn['best_score'] is None or score < fn['best_score'] or assembly and diff.bytes_match):
         net._record(fn, agent, score, source, 0, matched=diff.bytes_match, via='local-source',
@@ -511,7 +526,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                 log_line(fn['name'] + ': reading and preparing selected source context…')
                 from .source_lead_analysis import features
                 target_calls=features([line.split('*/',1)[-1].strip() for line in (fn['asm'] or '').splitlines()], fresh['arch'])['calls']
-                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])],
+                unit_cfg={'_compiler_units':not fork and fresh['arch']=='mips','_helper_units':not fork and fresh['arch']=='mips','_known_functions':[r['name'] for r in net.store.all('SELECT name FROM functions WHERE project_id=?',proj['id'])],
                           '_matched_functions':[r['name'] for r in net.store.all("SELECT name FROM functions WHERE project_id=? AND status='matched'",proj['id'])]}
                 variants = prepare_variants(reader, {**cfg,**unit_cfg,'_build_owned':bool(fork),'_target_calls':target_calls}, mapping, aliases, fallback)
                 if time.monotonic() >= deadline:
@@ -609,7 +624,10 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                 variants.append(next((pair for pair in rebuilt if pair[0]==source),rebuilt[0]))
                                 log_line(fn['name'] + ': inputs changed; retrying once against fresh destination state.')
                                 continue
-                            if not fork and lead.get('family') in ('cpu-private-source-unit','cpu-source-predecessors','cpu-address-source-unit') and str(exc).startswith('Prepared declarations emitted extra function bodies'):
+                            if not fork and measurement.get('helper_aliases'):
+                                from .cpu_source_recovery import extend
+                                extend(net,fresh,fn,variants,reader.origins,source,header,measurement,lead)
+                            if not measurement.get('helper_aliases') and not fork and lead.get('family') in ('cpu-private-source-unit','cpu-source-predecessors','cpu-address-source-unit','cpu-helper-source-unit','cpu-helper-symbol-context') and str(exc).startswith('Prepared declarations emitted extra function bodies'):
                                 # A valid real unit can fail the all-body guard under the wrong optimization.
                                 # Try bounded installed profiles; do not weaken that guard to score a partial unit.
                                 private_profiles(net,fresh,fn,source,header,st,report,log_line,min(budget,report['tested']+3),deadline,lead)
@@ -620,7 +638,7 @@ def run(permuter, proj, st, log_line=lambda line: None, budget=8, seconds=20, on
                                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason) VALUES(?,?,?,?)',
                                                (fn['id'], cache_key, 'error', str(exc)[:1200]))
                                     db.execute('UPDATE reuse_trials SET feedback=? WHERE function_id=? AND signature=?',
-                                               (json.dumps(trial_feedback(fresh,fn,source,header,error=str(exc))),fn['id'],cache_key))
+                                               (json.dumps(trial_feedback(fresh,fn,source,header,error=str(exc),measurement=measurement)),fn['id'],cache_key))
                             continue
                     if not fork and measurement:
                         st.source_measurement={'pair':(source,header),**measurement}
@@ -708,23 +726,47 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
     for flags in captured(net,proj,own)+prioritized(proj,fn,own)+(neighbours(net,proj,fn,own) if hasattr(net,'cfg') else [])+net.flag_variants(own['toolchain'],list(own['flags'])):
         if list(flags)!=list(own['flags']) and list(flags) not in choices:choices.append(list(flags))
     from .source_next_steps import untested_profiles
-    def signature(flags):
-        return 'local-source-profile-v2:'+hashlib.sha256(repr((expected,source,header,own['toolchain'],flags)).encode()).hexdigest()
+    parent = hashlib.sha256(repr((source,header,expected)).encode()).hexdigest()
+    def signature(flags, body=source, context=header):
+        return 'local-source-profile-v3:'+hashlib.sha256(repr((expected,body,context,own['toolchain'],flags)).encode()).hexdigest()
     choices=untested_profiles(choices,own['flags'],signature,
         lambda key:net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key))
-    for flags in choices:
+    trials = [(flags,source,header,0) for flags in choices]
+    if hasattr(net.store,'all'):
+        for row in net.store.all('SELECT feedback FROM reuse_trials WHERE function_id=? AND signature LIKE ? ORDER BY rowid DESC LIMIT 128',fn['id'],'local-source-profile-v3:%'):
+            saved = json.loads(row['feedback'] or '{}')
+            retry = saved.get('cpu_retry')
+            if retry and saved.get('cpu_parent') == parent:
+                trials.insert(0,(saved['flags'],retry['source'],retry['header'],retry['depth']))
+    while trials:
+        flags,source,header,depth = trials.pop(0)
         if st.stop.is_set() or report['tested']>=budget or time.monotonic()>=deadline:return
-        key=signature(flags)
+        key=signature(flags,source,header)
         if net.store.one('SELECT 1 FROM reuse_trials WHERE function_id=? AND signature=?',fn['id'],key):continue
         private={**dict(proj),'config':json.dumps({**cfg,'compiler':{**own,'flags':flags},'compiler_ranges':[],'function_compilers':{}})}
         from .source_lead_analysis import destination, record
         scope=destination(net,proj,fn);started=time.monotonic()
         report['tested']+=1;st.add(variants=1)
         result=net._compile(private,header,source,fn)
+        retry = None
+        if result.ok and depth < 2 and dict(fn).get('target'):
+            from .source_symbol_recovery import helpers
+            from .source_symbol_recovery import variants as symbol_trials
+            measurement = {'helper_aliases':helpers(net,private,fn,result.obj)}
+            from .. import arch as arches
+            recover = arches.get(proj['arch']).source_symbol_bindings
+            if recover and not measurement['helper_aliases']:
+                measurement['symbol_bindings'] = recover(result.obj,fn['name'],fn['target'],fn['vram'],net.symbols(proj['id']).resolve)
+            alternatives = symbol_trials(source,header,measurement)
+            if alternatives:
+                _,body,context = alternatives[0]
+                retry = {'source':body,'header':context,'depth':depth+1}
+                trials.insert(0,(flags,body,context,depth+1))
+        retry_evidence = {'cpu_parent':parent,'cpu_retry':retry,'toolchain':own['toolchain'],'flags':flags}
         if not result.ok or not acceptable(net,private,fn,result.obj):
             record(net,private,fn,source,header,None,[],{**(lead or {}),'family':'compiler-profile'},
                    (time.monotonic()-started)*1000,error=str(result.log),scope=scope)
-            feedback={'toolchain':own['toolchain'],'flags':flags,'score':None,'exact':False,
+            feedback={**retry_evidence,'score':None,'exact':False,
                       'category':'compile_or_extra_body','diagnostic':str(result.log)[:2000]}
             with net.store.tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
@@ -736,7 +778,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
                    (time.monotonic()-started)*1000,error='; '.join(problems),scope=scope)
             with net.store.tx() as db:
                 db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
-                           (fn['id'],key,'failed','private-context link failure',json.dumps({'category':'link_error','diagnostic':'; '.join(problems),'exact':False})))
+                           (fn['id'],key,'failed','private-context link failure',json.dumps({**retry_evidence,'category':'link_error','diagnostic':'; '.join(problems),'exact':False})))
             continue
         diff=scoring.diff(net._target_obj(fn,proj),candidate)
         exact=verdict is True
@@ -745,7 +787,7 @@ def private_profiles(net, proj, fn, source, header, st, report, log_line, budget
         if inputs(net,net.project_row(proj['slug']),current)!=expected:return
         record(net,private,fn,source,header,score,diff.rows,{**(lead or {}),'family':'compiler-profile'},
                (time.monotonic()-started)*1000,scope=scope)
-        evidence={'toolchain':own['toolchain'],'flags':flags,'source':source,'header':header,
+        evidence={**retry_evidence,'source':source,'header':header,
                   'score':score,'exact':exact,'problems':problems,'review_required':True}
         from .prepared_evidence import digest
         evidence['inputs']=digest(net,proj,fn)

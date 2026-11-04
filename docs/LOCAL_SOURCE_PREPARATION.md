@@ -138,3 +138,31 @@ Zero open functions therefore does not mean 100% C. Source proofs are scoped to 
 ROM, target extent/bytes and compiler profile. Saves retain provenance, but restored
 proofs require fresh local verification before counting as verified. Imported-build
 assembly verification is planned; those projects retain their own assembly workflow.
+
+## Recover declarations, addresses and real helper context before broad search
+
+Source preparation now carries referenced file-level enums and real object declarations from the
+selected source/include tree into the private candidate header. Static object initializers are not
+copied by this step; definition-preserving trials and data placement keep their existing checks.
+No unknown type or enum value is invented. Imported builds continue to own their headers: these
+private-header alternatives cannot replace a project's build setup.
+
+For MIPS ROM candidates whose complete instruction layout agrees outside supported relocation
+fields, the CPU can recover unknown call/data addresses. ELF table order pairs HI16/LO16 entries;
+conflicting occurrences, unsupported relocations and any non-relocation instruction difference
+reject the hypothesis. The resulting source/header pair uses private address aliases and runs next
+through the ordinary compiler, byte and data judge. It never renames shared symbols or infers a match.
+Equivalent relocation readers for other architectures and imported-build object targets are planned.
+
+A small real helper in the authorized mapped file can also supply a compiler-unit trial even when
+its address name is not mapped yet. Only a unique, already matched, relocation-free helper body
+(up to 256 compiled bytes) can supply its private name mapping, after an independent linked check.
+The recompiled unit still has to pass the existing all-body context guard. Bounded profile probes
+can combine this context with optimization flags and aligned-symbol retries. Pending retries retain
+their source/header/profile and input scope, so a later pass can resume after a budget boundary.
+Ordinary profile-review and opt-in automatic exact-bundle approval settings still apply.
+
+The source evidence and diagnostic log now locate differing calls/conditional branches, adjacent
+instructions and, when debug lines or a unique condition call identify them, source statements.
+These are review leads for retail/source differences or inlining/profile issues, not instructions
+to delete or insert game behavior automatically. Pure relocated branch-target changes are excluded.
