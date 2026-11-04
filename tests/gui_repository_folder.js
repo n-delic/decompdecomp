@@ -1,0 +1,35 @@
+"use strict";
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const path = require("node:path");
+const source = fs.readFileSync(path.join(__dirname, "../src/decompnet/app/static/js/steering.js"), "utf8");
+const start = source.indexOf("function loadRepositoryFolder(slug) {");
+const end = source.indexOf("/* What agents said,", start);
+const field = {dataset:{}, value:""}, hint = {textContent:""};
+const requests = [];
+const ctx = {S:{slug:"first"}, $:id=>id === "repositoryFolder" ? field : hint,
+  api:url=>new Promise(resolve=>requests.push({url,resolve}))};
+vm.createContext(ctx); vm.runInContext(source.slice(start,end),ctx);
+(async () => {
+  ctx.loadRepositoryFolder("first");
+  requests[0].resolve({folder:"/known/checkout",message:"Already saves here"});
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(field.value,"/known/checkout");
+  assert.equal(hint.textContent,"Already saves here");
+  ctx.loadRepositoryFolder("first"); assert.equal(requests.length,1);
+  field.value="/my/export";field.oninput();
+  assert.ok(hint.textContent.includes("Commit or move"));
+  ctx.S.slug="second";ctx.loadRepositoryFolder("second");
+  field.value="/typed/while/loading";
+  requests[1].resolve({folder:"/second/checkout",message:"Wrong hint"});
+  await Promise.resolve();await Promise.resolve();
+  assert.equal(field.value,"/typed/while/loading");
+  assert.ok(!hint.textContent.includes("Wrong hint"));
+  ctx.S.slug="third";ctx.loadRepositoryFolder("third");
+  ctx.S.slug="fourth";ctx.loadRepositoryFolder("fourth");
+  requests[2].resolve({folder:"/stale/checkout"});
+  await Promise.resolve();await Promise.resolve();assert.equal(field.value,"");
+  requests[3].resolve({folder:"/fourth/checkout"});
+  await Promise.resolve();await Promise.resolve();assert.equal(field.value,"/fourth/checkout");
+})().catch(error=>{console.error(error);process.exitCode=1;});

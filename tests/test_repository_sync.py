@@ -328,3 +328,35 @@ def test_snapshot_failure_does_not_publish_verified_sources(project, monkeypatch
     with pytest.raises(NetworkError, match='snapshot failed'):
         sync.run(net, 'game', str(root), commit_push=True)
     assert not sync.git(root, 'status', '--porcelain').strip()
+
+
+def test_status_recovers_imported_progress_checkout_without_requiring_clean_git(tmp_path):
+    root = tmp_path / 'checkout'
+    progress = root / 'progress'
+    progress.mkdir(parents=True)
+    (root / '.git').mkdir()
+    (root / 'local-edit.c').write_text('uncommitted work')
+    cfg = {'progress_folder': str(progress), 'repo_url': 'https://example.test/project'}
+    net = SimpleNamespace(project_row=lambda slug: {'root': str(tmp_path / 'game')},
+                          cfg=lambda proj: cfg, is_rom=lambda proj: True)
+    answer = sync.status(net, 'game')
+    assert answer['folder'] == str(root)
+    assert 'saved progress automatically' in answer['message']
+    assert (root / 'local-edit.c').read_text() == 'uncommitted work'
+    cfg['repository_sync_folder'] = str(tmp_path / 'chosen-export')
+    assert sync.status(net, 'game')['folder'] == cfg['repository_sync_folder']
+    assert sync.status(net, 'game')['message'] == ''
+
+
+def test_status_recovers_worktree_checkout_and_does_not_guess_from_repository_url(tmp_path):
+    root = tmp_path / 'worktree'
+    root.mkdir()
+    (root / '.git').write_text('gitdir: /not-read-by-status')
+    cfg = {}
+    net = SimpleNamespace(project_row=lambda slug: {'root': str(root)}, cfg=lambda proj: cfg,
+                          is_rom=lambda proj: False)
+    assert sync.status(net, 'game')['folder'] == str(root)
+    assert not sync.status(net, 'game')['supported']
+    (root / '.git').unlink()
+    cfg['repo_url'] = 'https://example.test/project'
+    assert sync.status(net, 'game')['folder'] == ''

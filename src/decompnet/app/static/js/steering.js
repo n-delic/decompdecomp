@@ -107,14 +107,7 @@ function renderSteering(ov) {
   $("saveAbout").hidden = ov.kind === "fork";
   $("saveAboutFork").hidden = ov.kind !== "fork";
   $("repositorySync").hidden = ov.kind === "fork";
-  if (ov.kind !== "fork" && $("repositoryFolder").dataset.slug !== S.slug) {
-    const slug = S.slug;
-    $("repositoryFolder").dataset.slug = slug;
-    $("repositoryFolder").value = "";
-    api(`/api/repository-sync?slug=${encodeURIComponent(slug)}`).then(r => {
-      if (S.slug === slug && !$("repositoryFolder").value) $("repositoryFolder").value = r.folder || "";
-    }).catch(() => {});
-  }
+  if (ov.kind !== "fork") loadRepositoryFolder(S.slug);
   renderKnowledge();
   // what agents can't change themselves: where a function ends, and suggestions; a compiler's are in Settings → Compiler
   const sg = (ov.suggestions || []).filter((s) => !s.toolchain), bd = ov.boundaries || [];
@@ -125,6 +118,24 @@ function renderSteering(ov) {
     <div class="row"><button class="primary small-btn" type="button" data-bapply="${r.id}">Cut it there</button><button class="ghost small-btn" type="button" data-bdismiss="${r.id}">Dismiss</button></div></div>`).join("") + sg.map(suggestionHtml).join(""));
   if (S.tab === "settings") renderCompilerWaiting(ov);
 }
+// Imported saves already remember their Git checkout; do not overwrite a path the user is editing.
+function loadRepositoryFolder(slug) {
+  const field = $("repositoryFolder"), hint = $("repositorySyncHint");
+  if (field.dataset.slug === slug) return;
+  field.dataset.slug = slug;
+  field.value = "";
+  const defaultHint = "Commit or move any existing checkout changes first.";
+  hint.textContent = defaultHint;
+  field.oninput = () => { hint.textContent = defaultHint; };
+  api(`/api/repository-sync?slug=${encodeURIComponent(slug)}`).then(result => {
+    if (S.slug !== slug || field.dataset.slug !== slug) return;
+    if (!field.value) {
+      field.value = result.folder || "";
+      hint.textContent = result.message || defaultHint;
+    }
+  }).catch(() => {});
+}
+
 /* What agents said, for the user to read (suggestions, what they learned): a status, who (as chips) and when on a
    line of their own, then what they said with its `code` and **bold**. It was one run of plain text, hard to tell
    where one agent's words ended and the next began. */

@@ -86,11 +86,32 @@ def checkout(folder):
     return root
 
 
+def project_checkout(proj, cfg):
+    """Recover the checkout bound at import, including a progress save inside a repository."""
+    for folder in (cfg.get('progress_folder'), dict(proj).get('root')):
+        if not folder:
+            continue
+        path = Path(folder).expanduser()
+        if not path.is_dir():
+            continue
+        for parent in (path, *path.parents):
+            if (parent / '.git').is_dir() or (parent / '.git').is_file():
+                return str(parent)
+    return ''
+
+
 def status(net, slug):
-    """Return the remembered destination and whether this mode needs export synchronization."""
+    """Prefer an explicit export destination, otherwise show the project's existing checkout."""
     proj = net.project_row(slug)
-    return {'folder':net.cfg(proj).get('repository_sync_folder',''), 'supported':net.is_rom(proj),
-            'message':'Imported projects already keep their source in their own checkout.' if not net.is_rom(proj) else ''}
+    cfg = net.cfg(proj)
+    folder = cfg.get('repository_sync_folder') or project_checkout(proj, cfg)
+    message = ''
+    if not net.is_rom(proj):
+        message = 'Imported projects already keep their source in their own checkout.'
+    elif not cfg.get('repository_sync_folder') and folder and cfg.get('progress_folder') and not (Path(folder) / 'build.json').is_file():
+        message = ('This checkout already receives saved progress automatically. '
+                   'Verified export sync needs a rebuildable export checkout.')
+    return {'folder': folder, 'supported': net.is_rom(proj), 'message': message}
 
 
 def copy_checkout(root, stage):
