@@ -2215,3 +2215,22 @@ def test_agent_blocker_review_routes_are_guarded_and_acknowledgment_keeps_status
     assert response.status_code==200 and response.json()['reviewed']
     assert client.get('/api/agent-reviews',params={'slug':slug}).json()['items']==[]
     assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='open'
+
+
+def test_project_overview_serializes_running_source_preparation(app,monkeypatch):
+    from decompnet.app.permute import State
+    from decompnet.network import Agent
+    from tests.test_loading import tiny_game
+    client,net,*_=app
+    slug='source-worker-json'
+    tiny_game(net,slug)
+    state=State(variants=12,matched=1)
+    state.preparation_agent=Agent(1,'autopilot',None)
+    state.source_measurement={'pair':('private body','private header')}
+    monkeypatch.setitem(net.permuter.jobs,slug,state)
+    monkeypatch.setattr(net,'warm_briefs_soon',lambda *a:None)
+    response=client.get('/api/project',params={'slug':slug})
+    assert response.status_code==200,response.text
+    assert response.json()['permuter']['variants']==12
+    assert response.json()['permuter']['matched']==1
+    assert 'preparation_agent' not in response.text and 'private body' not in response.text

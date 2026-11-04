@@ -458,3 +458,20 @@ def test_random_search_skips_new_compound_update_chains_and_retains_checkpoint(m
     assert invalid not in p.judged and 'closer' in p.judged
     assert state.matched==0
     assert SOURCE in '\n'.join(view(net,net.function()))
+
+
+def test_status_is_json_safe_with_internal_source_preparation_state():
+    permuter=Permuter(FakeNet())
+    state=permuter.jobs['game']=State(tried=2,variants=7,improved=1,repairs=3)
+    state.preparation_agent=Agent(1,'autopilot',None)
+    state.source_measurement={'pair':('private source','private header'),'rows':[['i','old','new']]}
+    state.future_internal=object()
+    state.holding('entry',True)
+    response=permuter.status('game')
+    assert json.loads(json.dumps(response))==response
+    assert set(response)=={'state','tried','variants','improved','matched','current','started_at','repairs','threads'}
+    assert response['current']=='entry' and response['repairs']==3 and response['variants']==7
+    assert 'private source' not in json.dumps(response)
+    assert state.preparation_agent.name=='autopilot' and state.source_measurement['pair'][1]=='private header'
+    state.state='stopped'
+    assert json.loads(json.dumps(permuter.status('game')))['state']=='stopped'

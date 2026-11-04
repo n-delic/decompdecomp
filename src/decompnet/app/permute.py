@@ -202,7 +202,13 @@ class Permuter:
         st = self.jobs.get(slug)
         if st is None:
             return None
-        return {k: v for k, v in st.__dict__.items() if k != "stop" and not k.startswith("_")} | {"threads": workers.WORKERS}
+        # Source preparation attaches agents and private source measurements to this
+        # worker. Neither belongs in JSON (or in the UI). New internal attributes
+        # must not break the entire project summary or expose source/header text.
+        with st._lock:
+            return {name:getattr(st,name) for name in (
+                "state", "tried", "variants", "improved", "matched", "current", "started_at", "repairs"
+            )} | {"threads": workers.WORKERS}
 
     def start(self, slug: str) -> State | None:
         """Run on the project's near misses until there are none (looking again every few minutes while the
