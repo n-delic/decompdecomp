@@ -211,3 +211,11 @@
 .focus-log pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:240px; overflow:auto; font-size:12px; line-height:1.7; margin:12px 0 0; }
 
 .focus-target .eyebrow { font:600 11px "IBM Plex Mono",monospace; letter-spacing:.1em; color:var(--ink-2); }
+
+.tool-controls-catalog > p:first-child { display: none; }
+.tool-controls-catalog > .transcript-tool { margin: 0; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; }
+.tool-controls-catalog > .transcript-tool > summary { display: grid; grid-template-columns: 10px minmax(0,1fr) auto 18px; gap: 10px; padding: 12px 0; }
+.tool-controls-catalog > .transcript-tool > summary code { background: transparent; padding: 0; font-size: 12px; overflow-wrap: anywhere; }
+.tool-controls-catalog > .transcript-tool > summary input { grid-column: 4; grid-row: 1; margin: 0; }
+.tool-controls-catalog > .transcript-tool > summary > span { grid-column: 3; grid-row: 1; font-size: 11px; text-align: right; max-width: 130px; }
+.tool-controls-catalog > .transcript-tool > p, .tool-controls-catalog > .transcript-tool > dl { margin: 0 0 14px 20px; }

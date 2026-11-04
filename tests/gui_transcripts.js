@@ -83,7 +83,7 @@ const editable=context.toolCatalog([{...definition,calls:0,enabled:false},{...de
 const toggle=editable.children[1].children[0].children[1];
 assert.equal(toggle.checked,false);toggle.checked=true;toggle.onchange();assert.deepEqual(toggled,['project_info',true]);
 assert.equal(editable.children[2].children[0].children[1].disabled,true);
-assert.match(editable.children[2].children[0].children[2].textContent,/5 recorded calls.*required/);
+assert.match(editable.children[2].children[0].children[2].textContent,/5 calls.*required/);
 vm.runInContext(source.slice(source.indexOf('$("helperTranscript").onclick =')), context);
 (async () => {
   await button.onclick();

@@ -9,7 +9,7 @@ vm.createContext(ctx);vm.runInContext(fs.readFileSync('src/decompnet/app/static/
 (async()=>{
   await ctx.loadToolSettings(host,log,'worker-1');
   const controls=host.children[0],label=controls.children[0],select=label.children[1],apply=controls.children[1];
-  assert.match(host.children[1].textContent,/1 enabled tools.*120 tool-definition characters/);
+  assert.match(host.children[1].textContent,/1 enabled tool.*120 definition characters/);
   assert.equal(select.children.length,2);select.value='matching';await apply.onclick();
   assert.equal(calls[0].preset,'matching');assert.equal(calls[0].helper,'worker-1');
   console.log('Tool preset controls and definition size summary passed.');

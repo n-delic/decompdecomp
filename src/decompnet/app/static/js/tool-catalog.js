@@ -1,6 +1,6 @@
 /* Tool schema cards shared by transcripts, MCP setup and tool controls. */
 function toolCatalog(tools, options = {}) {
-  const catalog = document.createElement("div"); catalog.className = "tool-catalog transcript-tools";
+  const catalog = document.createElement("div"); catalog.className = "tool-catalog transcript-tools" + (options.editable ? " tool-controls-catalog" : "");
   const heading = document.createElement("p"); heading.className = "small muted";
   heading.textContent = `${tools.length} tools`; catalog.append(heading);
   for (const item of tools) {
@@ -19,7 +19,7 @@ function toolCatalog(tools, options = {}) {
     let usageDetail = null;
     if (item.calls != null) {
       const count = document.createElement('span'); count.className = 'small muted';
-      count.textContent = `${item.calls.toLocaleString()} recorded calls${item.required ? ' · required' : options.helper && item.global_disabled ? ' · disabled globally' : ''}`;
+      count.textContent = `${item.calls.toLocaleString()}${options.editable ? ' calls' : ' recorded calls'}${item.required ? ' · required' : options.helper && item.global_disabled ? ' · disabled globally' : ''}`;
       summary.append(count);
       if (item.task_calls || item.schema_chars != null) {
         const detail = document.createElement('p'); detail.className = 'small muted';

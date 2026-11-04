@@ -1566,3 +1566,11 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .disclosure-context { font-size: 12.5px; font-weight: 400; font-stretch: normal; color: var(--ink-2); }
 .disclosure-action { flex: none; margin-left: auto; padding: 4px 6px; min-height: 28px; border: 0; background: transparent; color: var(--ink-2); font-size: 12px; }
 .disclosure-action:hover { color: var(--ink); background: var(--bg-alt); }
+
+/* Tool controls stay compact at full width and inside a half-width settings column. */
+.tool-preset-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin: 16px 0 12px; }
+.tool-preset-controls > .field { flex: 1 1 200px; min-width: 0; }
+.tool-preset-controls select { width: 100%; }
+.tool-settings-stats { margin: 0 0 16px; padding: 10px 12px; border-radius: var(--r); background: var(--paper); font-size: 12px; color: var(--ink-2); }
+.tool-coverage { margin: 12px 0; }
+.tool-coverage > summary { font-size: 12px; color: var(--ink-2); cursor: pointer; }

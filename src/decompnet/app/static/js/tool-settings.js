@@ -4,7 +4,8 @@ async function loadToolSettings(host, log, helper = '') {
   try {
     const info = await api(`/api/agent-tools${helper ? `?helper=${encodeURIComponent(helper)}` : ''}`);
     if (!host.isConnected) return;
-    const context=()=>{if(!helper)disclosureContext('agToolsContext', `${info.tools.filter(t=>t.enabled!==false).length} / ${info.tools.length} tools enabled`);};
+    let stats=null;
+    const context=()=>{if(stats){const enabled=info.tools.filter(t=>t.enabled!==false);stats.textContent=`${enabled.length} enabled tool${enabled.length===1 ? '' : 's'} · ${enabled.reduce((n,t)=>n+(t.schema_chars || 0),0).toLocaleString()} definition characters`;}if(!helper)disclosureContext('agToolsContext', `${info.tools.filter(t=>t.enabled!==false).length} / ${info.tools.length} tools enabled`);};
     context();
     host.replaceChildren(toolCatalog([...info.tools].sort((a,b)=>a.calls-b.calls || a.name.localeCompare(b.name)), {editable:true, helper, onToggle:async(name, enabled, toggle)=>{
       log.textContent=''; log.hidden=true;
@@ -37,15 +38,14 @@ async function loadToolSettings(host, log, helper = '') {
         finally { finish(); }
       };
       const summary = document.createElement('p'); summary.className = 'small muted';
-      const enabled = info.tools.filter(t => t.enabled !== false);
-      summary.textContent = `${enabled.length} enabled tools · ${enabled.reduce((n,t)=>n+(t.schema_chars || 0),0).toLocaleString()} tool-definition characters. Presets replace optional tool toggles; global restrictions still apply.`;
+      stats=summary;summary.className='tool-settings-stats';context();
       host.prepend(controls, summary);
     }
     if (!helper) $('agentToolCoverage').textContent='Least used first. ' + info.coverage;
   } catch(error) { showJobError(log,error.message); }
   finally { done(); }
 }
-function loadGlobalAgentTools() { $('agentToolsRefresh').onclick=loadGlobalAgentTools; return loadToolSettings($('agentToolCatalog'),$('agentToolLog')); }
+function loadGlobalAgentTools() { $('agentToolsRefresh').onclick=async event=>{event.preventDefault();event.stopPropagation();const button=$('agentToolsRefresh');button.disabled=true;try{await loadGlobalAgentTools();}finally{button.disabled=false;}}; return loadToolSettings($('agentToolCatalog'),$('agentToolLog')); }
 async function showAgentTools(session) {
   if (!session) return;
   const panel=dialog(`Tools · ${session.label}`, '<p class="small muted">Disable additional optional tools for this agent. Counts are across all agents on this computer. Globally disabled tools and core tools cannot be changed here. Tool lists refresh at the next session or MCP reconnect.</p><div data-tool-catalog></div><pre data-tool-log hidden></pre><button data-close-tools type="button">Close</button>');
