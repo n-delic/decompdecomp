@@ -395,7 +395,9 @@ def register(app: App) -> None:
 
     def p_function(slug, request, data):
         name = request.query_params.get("name", "")
-        detail = net.function_detail(slug, name)
+        # The drawer loads name suggestions separately when its peers disclosure opens.
+        # Do not delay the core function response by repeating that cross-project search.
+        detail = net.function_detail(slug, name, include_hints=False)
         claim = net.store.one('SELECT a.name FROM claims c JOIN agents a ON a.id=c.agent_id JOIN functions f ON f.id=c.function_id JOIN projects p ON p.id=f.project_id WHERE p.slug=? AND f.name=? AND c.expires_at>?', slug, detail['name'], time.time())
         detail['claim_owner'] = claim['name'] if claim else None
         detail['can_handover'] = bool(claim and claim['name'] == 'you')

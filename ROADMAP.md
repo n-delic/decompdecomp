@@ -2189,3 +2189,7 @@ UI/database diagnostics identify the route/caller without recording private inpu
 Completed: live agent metrics are scoped before querying, use narrow measurement-only history,
 refresh on project attempt revisions, and share concurrent refreshes. Helper-session billing lookups
 have a worker-specific index. Global agent views and reset/lifetime accounting remain available.
+
+
+Completed: the function drawer defers optional cross-project and SDK name similarity work to the
+existing peers disclosure request, for both ROM and imported projects.

@@ -281,14 +281,14 @@ class GuiMixin:
         self._diffs[key] = out
         return out | {"kind": kind}
 
-    def function_detail(self, slug: str, name: str) -> dict:
+    def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
         from ...match_bundle import status as bundle_status
         from ..baseline_status import status as baseline_status
         from ..function_names import state as name_state
         sweep = getattr(self, 'deep_sweeps', None)
         deep_pass = sweep.history(slug, self._function(name, slug)) if sweep else {'state': 'not tried', 'completed': False}
         if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name) | name_state(self._function(name, slug)) | {'deep_pass': deep_pass, 'verification': bundle_status(self,self._function(name,slug))}
+            return self.forks.function_detail(fork, name, include_hints=include_hints) | name_state(self._function(name, slug)) | {'deep_pass': deep_pass, 'verification': bundle_status(self,self._function(name,slug))}
         fn = self._function(name, slug)
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
         attempts = self.store.all(
@@ -325,7 +325,7 @@ class GuiMixin:
             "notes": agent_notes.grouped(self.store, useful(notes), proj["id"])[:FUNCTION_NOTES],
             "calls": [syms.label(a) for a in sorted(x["calls"].get(fn["vram"], ()))],
             "called_by": [syms.label(a) for a in sorted(x["called_by"].get(fn["vram"], ()))],
-            "cross_game_hints": self.twins.suggestions(slug, fn["name"]) if fn["status"] == "open" else [],
+            "cross_game_hints": self.twins.suggestions(slug, fn["name"]) if include_hints and fn["status"] == "open" else [],
         }
 
     def stats(self, slug: str) -> dict:

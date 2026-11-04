@@ -280,3 +280,17 @@ def test_deep_trial_alongside_agent_preserves_claim_and_rejects_stale_context(bu
         assert search._score_work(search_agent, proj, net._function(name, slug), CLAMP, float('inf'), None) == 0
         assert net._function(name, slug)['status'] == 'matched'
         assert net.store.one('SELECT 1 FROM claims WHERE agent_id=?', owner.id) is None
+
+
+def test_function_detail_defers_optional_name_search(net, monkeypatch):
+    fn = net.store.one("SELECT name FROM functions WHERE status='open' ORDER BY id LIMIT 1")
+    assert fn
+    def unexpected(*_):
+        raise AssertionError('Optional similarity search')
+    monkeypatch.setattr(net.twins, 'suggestions', unexpected)
+    monkeypatch.setattr(net, '_seed_for', lambda *_: None)
+    detail = net.function_detail('demo-quest-64', fn['name'], include_hints=False)
+    assert detail['name'] == fn['name'] and detail['asm']
+    assert detail['cross_game_hints'] == []
+    with pytest.raises(AssertionError, match='Optional similarity search'):
+        net.function_detail('demo-quest-64', fn['name'])

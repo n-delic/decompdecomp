@@ -1368,7 +1368,7 @@ def test_function_deep_job_can_be_reattached_and_duplicate_start_is_reused(app, 
     started = threading.Event()
     calls = []
     monkeypatch.setattr(deep_permuter, 'validate', lambda *args: None)
-    monkeypatch.setattr(net, 'function_detail', lambda slug, name: {'name': name})
+    monkeypatch.setattr(net, 'function_detail', lambda slug, name, **kwargs: {'name': name})
 
     def run(net, slug, name, minutes, variants, log):
         calls.append(name)

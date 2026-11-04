@@ -4282,7 +4282,7 @@ class ForkEngine:
                 "mismatch_summary": summary_text(d.rows),
                 "score": None, "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}
 
-    def function_detail(self, slug: str, name: str) -> dict:
+    def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
         proj, fp, cfg = self.get(slug)
         fn = self._fn(slug, name)
         meta = self._meta(fn)
@@ -4307,4 +4307,4 @@ class ForkEngine:
                 ("latest" if current else "best" if fn["best_source"] else None),
                 "match_percent": pct, "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
                 "notes": agent_notes.grouped(self.net.store, notes, fn["project_id"])[:10], "calls": [], "called_by": [],
-                "cross_game_hints": self.net.twins.suggestions(slug, fn["name"])}
+                "cross_game_hints": self.net.twins.suggestions(slug, fn["name"]) if include_hints else []}

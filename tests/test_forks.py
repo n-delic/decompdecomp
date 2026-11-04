@@ -314,6 +314,16 @@ def test_function_detail(fork):
     assert d["status"] == "matched" and "slt" in d["asm"] and "clamp_s32" in d["source"]
 
 
+@needs_tools
+def test_function_detail_can_skip_optional_name_search(fork, monkeypatch):
+    net, slug, _ = fork
+    def unexpected(*_):
+        raise AssertionError('Opening a function must not wait for optional name searches')
+    monkeypatch.setattr(net.twins, 'suggestions', unexpected)
+    d = net.function_detail(slug, "clamp_s32", include_hints=False)
+    assert d['source'] and d['cross_game_hints'] == []
+
+
 def test_search_globs_as_agents_write_them():
     from pathlib import Path
 
