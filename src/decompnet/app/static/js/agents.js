@@ -432,7 +432,7 @@ function readSelection(box) {
     ...(stall === null ? {} : { stall_compiles: stall }),
     ...(max === null ? {} : { max_tries: max }) };
 }
-const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const EFFORT_NAMES = { minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra" };
 const modelEfforts = (a) => {
   const catalog = a.models || [];
   const ids = LZ.multiple ? LZ.models.filter((m) => typeof m === "string") :

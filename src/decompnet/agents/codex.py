@@ -54,7 +54,7 @@ class Codex(Agent):
     docs = "https://github.com/openai/codex"
     family = "gpt"
     takes_effort = True  # Codex's model_reasoning_effort
-    efforts = ("minimal", "low", "medium", "high", "xhigh", "max")
+    efforts = ("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
     def models(self, path: str | None, run: bool = True) -> list[dict]:
         cached = _models.get(self.id)
@@ -73,7 +73,8 @@ class Codex(Agent):
         # Metadata only: never create a thread/turn or connect the user's MCP servers.
         command = [path]
         for name in (codex_config().get("mcp_servers") or {}):
-            command += ["-c", f"mcp_servers.{json.dumps(name)}.enabled=false"]
+            if re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                command += ["-c", f"mcp_servers.{name}.enabled=false"]
         command += ["app-server"]
         proc = subprocess.Popen(cli_argv(command),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,

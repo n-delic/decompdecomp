@@ -9,7 +9,7 @@ def test_catalog_handshake_pagination_and_cache(tmp_path, monkeypatch):
     script = tmp_path / 'codex'
     script.write_text('''#!/usr/bin/env python3
 import json,sys
-assert sys.argv[1:] == ['-c', 'mcp_servers."example".enabled=false', 'app-server']
+assert sys.argv[1:] == ['-c', 'mcp_servers.example.enabled=false', 'app-server']
 initialized=False
 for line in sys.stdin:
     m=json.loads(line)
@@ -75,3 +75,9 @@ def test_unresponsive_cli_is_terminated(tmp_path, monkeypatch):
         assert time.monotonic() - started < 5
     finally:
         agent.forget_models()
+
+
+def test_discovered_ultra_effort_reaches_session_command(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path))
+    cmd, _ = Codex().session_command('codex', tmp_path, 'http://127.0.0.1/mcp', 'test', 'example#ultra')
+    assert 'model_reasoning_effort="ultra"' in cmd
