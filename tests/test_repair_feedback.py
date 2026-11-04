@@ -155,10 +155,14 @@ def test_paging_comparison_filter_and_manual_review_notes(setup):
         net._record(fn(net, fid), winner, 0, f'matched {number}', 1, matched=True)
     page = net.repair_feedback.listing('demo', comparable=True)
     assert len(page['examples']) == 25 and page['more']
+    assert page['total'] == 28
     older = net.repair_feedback.listing('demo', before=page['examples'][-1]['id'], comparable=True)
     assert len(older['examples']) == 3 and not older['more']
+    assert older['total'] == 28
     case = page['examples'][0]['id']
     net.repair_feedback.review('demo', case, 'reviewed', 'casts', 'Try as an AST rewrite; implementation PR pending.')
+    assert net.repair_feedback.listing('demo', status='reviewed', category='casts', comparable=True)['total'] == 1
+    assert net.repair_feedback.listing('demo', status='new', comparable=True)['total'] == 27
     data = net.repair_feedback.detail('demo', case)
     assert data['category'] == 'casts' and 'AST rewrite' in data['review_note']
     net.repair_feedback.report(winner, 'demo', 'target', 'Revised explanation.', 'types')
@@ -434,6 +438,7 @@ def test_review_filter_requires_comparable_settings_and_groups_equivalent_captur
         db.execute('INSERT INTO repair_examples(project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,evidence) SELECT project_id,function_id,attempt_id,before_attempt_id,agent_id,created_at,evidence FROM repair_examples WHERE id=?', (row['id'],))
     examples = net.repair_feedback.listing('demo',comparable=True)['examples']
     assert len(examples) == 1 and examples[0]['repetitions'] == 2
+    assert net.repair_feedback.listing('demo',comparable=True)['total'] == 1
 
 
 def test_converter_infrastructure_failure_does_not_consume_attempt_budget(setup, monkeypatch):

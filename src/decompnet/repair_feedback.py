@@ -223,11 +223,12 @@ class RepairFeedback:
                               'JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id '
                               'LEFT JOIN agents a ON a.id=e.agent_id WHERE e.position=1 '
                               ' AND (?=0 OR e.id<?) ORDER BY e.id DESC LIMIT 26', *args, before, before)
+        total = self.store.one(prefix + 'SELECT COUNT(*) AS n FROM grouped e JOIN projects p ON p.id=e.project_id JOIN functions f ON f.id=e.function_id WHERE e.position=1', *args)['n']
         groups = self.store.all('SELECT e.category,e.status,COUNT(*) AS count FROM repair_examples e WHERE ' + where +
                                 ' GROUP BY e.category,e.status', *args)
         from .app.adaptive_repairs import coverage
         return {'examples': [dict(r) | {'review_group': ('build' if r['evidence_kind']=='build report' else 'first' if r['evidence_kind']=='no failed baseline' else 'context' if r['evidence_kind'] in ('same source / settings','settings also changed') else 'source')} for r in rows[:25]], 'more': len(rows) > 25,
-                'groups': [dict(r) for r in groups], 'categories': CATEGORIES, 'states': STATES,
+                'total': total, 'groups': [dict(r) for r in groups], 'categories': CATEGORIES, 'states': STATES,
                 'metrics': coverage(self.net)}
 
     def detail(self, slug, case_id, include_source=True):

@@ -12,15 +12,15 @@ $("repairExamples").onclick = async () => {
     <button data-refresh type="button">Refresh</button></div>
     <div class="repair-filter-checks"><label><input type="checkbox" data-comparable checked> Source changes only <span class="muted small">Same compiler settings</span></label>
     <label><input type="checkbox" data-all> Include other projects</label></div></div>
-    <details class="repair-section repair-concerns" data-quality-panel hidden><summary>Candidate concerns <span data-quality-count></span></summary>
+    <details class="panel settings-disclosure repair-concerns" data-quality-panel hidden><summary class="panel-head"><h3>Candidate concerns <span class="disclosure-context" data-quality-count></span></h3></summary><div class="pad">
     <p class="small muted">Agent-reported concerns, not proven errors. Review the evidence before changing a candidate.</p>
-    <section data-quality class="repair-list" aria-label="Candidate quality review"></section></details>
-    <div class="repair-list-heading"><h3>Source repairs</h3><p data-count class="repair-count" role="status"></p></div>
+    <section data-quality class="repair-list" aria-label="Candidate quality review"></section></div></details>
+    <details class="panel settings-disclosure repair-source-section" data-source-panel open><summary class="panel-head"><h3>Source repairs <span data-count class="disclosure-context" role="status"></span></h3></summary><div class="pad">
     <div data-list class="repair-list"></div>
     <details class="repair-section" data-first-reports hidden><summary>First matches · no failed baseline</summary><p class="small muted">Useful starting code, but no captured failed version to isolate a repair.</p><div data-first-list class="repair-list"></div></details>
     <details class="repair-section" data-context-reports hidden><summary>Compiler or header changes</summary><p class="small muted">Inputs changed together. Local replay can test compiler-only and header-only combinations before attributing an improvement.</p><div data-context-list class="repair-list"></div></details><button data-more hidden type="button">Load older examples</button>
     <details class="repair-section" data-build-reports hidden><summary>Build reports</summary><p class="small muted">Grouped by source unit and one-minute window. These are build status captures, not isolated source repairs.</p><div data-build-list class="repair-list"></div></details>
-    <details class="repair-section" data-tools><summary>Testing &amp; analysis <span class="muted small">Local compiler tools · no AI tokens</span></summary>
+    </div></details><details class="repair-section" data-tools><summary>Testing &amp; analysis <span class="muted small">Local compiler tools · no AI tokens</span></summary>
     <p class="small muted">These tests measure saved evidence. They do not apply source, change game progress or mark repairs as implemented.</p>
     <label class="small"><input type="checkbox" data-auto-analysis> Automatically analyse new matches locally</label><p class="small muted" data-auto-budget></p>
     <details class="repair-tool" data-replay-panel><summary>Test automatic repairs</summary>
@@ -219,7 +219,7 @@ $("repairExamples").onclick = async () => {
         const quality = await api(`/api/repair-examples/quality?${scope()}`);
         const area = get('[data-quality]'); area.replaceChildren();
         get('[data-quality-panel]').hidden = !(quality.reports || []).length;
-        get('[data-quality-count]').textContent = `· ${(quality.reports || []).length}`;
+        get('[data-quality-count]').textContent = `— ${(quality.reports || []).length} ${(quality.reports || []).length === 1 ? 'concern' : 'concerns'}`;
         for (const report of quality.reports || []) {
           const panel = document.createElement('details'); panel.className = 'repair-card';
           const heading = document.createElement('summary');
@@ -276,7 +276,7 @@ $("repairExamples").onclick = async () => {
         (group === 'source' ? list : get(`[data-${group}-list]`)).append(card(row, data.states, data.categories)); before = row.id;
         shown++;
       }
-      get('[data-count]').textContent = `${shown} ${shown === 1 ? 'example' : 'examples'} shown`;
+      get('[data-count]').textContent = `— Showing ${shown.toLocaleString()}/${data.total.toLocaleString()}`;
       get('[data-more]').hidden = !data.more;
     } catch (error) { toast(esc(error.message), 'err'); }
     finally { done(); }

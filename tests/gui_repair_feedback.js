@@ -44,7 +44,7 @@ const context = { S: {slug: 'demo'}, document: {body, createElement: (tag) => ne
     if (query.get('id')) return {...row(), explanation: 'Changed a type.', automation: 'Try signedness.',
       evidence: {source_change_label: 'C tokens changed', diff: '- old\n+ <script>neverExecute()</script>', after: {source: '<script>neverExecute()</script>'}}, review_note: ''};
     return {examples: triage ? ['source','first','context','build'].map((review_group,index) => ({...row(),id:42+index,review_group})) : [row()], categories: ['unclassified', 'types'], states: ['new', 'reviewed'],
-      groups: [{category: 'types', status: state, count: 1}], more: false};
+      total: 100, groups: [{category: 'types', status: state, count: 1}], more: false};
   }};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/static/js/repair-replay.js'), 'utf8'), context);
@@ -56,10 +56,12 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
   const quality = dialog.querySelector('[data-quality]');
   assert.equal(quality.children.length, 1);
   assert.equal(dialog.querySelector('[data-quality-panel]').hidden,false);
-  assert.equal(dialog.querySelector('[data-quality-count]').textContent,'· 1');
-  assert.equal(dialog.querySelector('[data-count]').textContent,'1 example shown');
+  assert.equal(dialog.querySelector('[data-quality-count]').textContent,'— 1 concern');
+  assert.equal(dialog.querySelector('[data-count]').textContent,'— Showing 1/100');
   assert(dialog.innerHTML.indexOf('data-list') < dialog.innerHTML.indexOf('data-tools'));
   assert(dialog.innerHTML.includes('Export &amp; share'));
+  assert.match(dialog.innerHTML, /settings-disclosure repair-source-section.*data-source-panel open/);
+  assert.match(dialog.innerHTML, /settings-disclosure repair-concerns/);
   assert(!dialog.innerHTML.includes('data-tools open'));
   assert(!dialog.innerHTML.includes('data-quality-panel open'));
   const reportBody = quality.children[0].children[1];
@@ -132,6 +134,6 @@ vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/decompnet/app/stati
     assert.equal(dialog.querySelector(`[data-${group}-list]`).children.length,1);
     assert.equal(dialog.querySelector(`[data-${group}-reports]`).hidden,false);
   }
-  assert.equal(dialog.querySelector('[data-count]').textContent,'4 examples shown');
+  assert.equal(dialog.querySelector('[data-count]').textContent,'— Showing 4/100');
   console.log('Repair evidence rendering, review, filtering and explicit source export passed');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

@@ -219,3 +219,8 @@
 .tool-controls-catalog > .transcript-tool > summary input { grid-column: 4; grid-row: 1; margin: 0; }
 .tool-controls-catalog > .transcript-tool > summary > span { grid-column: 3; grid-row: 1; font-size: 11px; text-align: right; max-width: 130px; }
 .tool-controls-catalog > .transcript-tool > p, .tool-controls-catalog > .transcript-tool > dl { margin: 0 0 14px 20px; }
+
+.repair-dialog .settings-disclosure { margin-top:18px; margin-bottom:0; }
+.repair-dialog .settings-disclosure > summary h3 { margin:0; font-size:14px; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; }
+.repair-dialog .settings-disclosure > summary { justify-content:flex-start; }
+.repair-source-section > .pad > .repair-list > .repair-card:first-child { margin-top:0; }
