@@ -85,11 +85,13 @@ def plan(rows, arch=None):
     if d['register_only']:
         category='allocation';families=['later_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
     elif d['scheduling'] or d['allocation_schedule']:
-        category='scheduling';families=['initialization_cluster','paired_operand_reuse','affine_counter_guard']
+        category='scheduling';families=['call_one_shot_scope','debug_initialization_group','debug_constant_initialization','initialization_cluster','paired_operand_reuse','affine_counter_guard']
     elif d['spill_offsets'] or d['target_frame']!=d['candidate_frame']:
         category='stack';families=['spill_normalization','local_declaration_order','stack_padding']
     else:
         category=permuter_focus.classify(rows);families=[]
+    if d['register_cycles']:
+        families=['pointer_integer_phase_union','paired_integer_lifetimes','split_integer_lifetime','merge_integer_lifetimes']+families
     first=next((i+1 for i,r in enumerate(permuter_focus.normalized(rows)) if r[0]!=' '),None)
     return dict(category=category,first_difference_row=first,changed_rows=d['differences'],
                 target_instructions=d['target_instructions'],candidate_instructions=d['candidate_instructions'],

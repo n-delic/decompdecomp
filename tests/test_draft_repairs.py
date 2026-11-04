@@ -1,5 +1,6 @@
 """Targeted candidates and their independent, cached background budget."""
 
+import re
 import threading
 
 import pytest
@@ -115,7 +116,9 @@ def test_compile_budget_rotates_to_later_functions():
     perm._repair_round(AGENT, proj, state)
     assert len(perm.judged) == 32
     perm._repair_round(AGENT, proj, state)
-    assert perm.judged[32].startswith('int f17(')
+    # Family count can grow; the next round must still start beyond the last visited function.
+    last = int(re.search(r'int f(\d+)\(',perm.judged[31])[1])
+    assert perm.judged[32].startswith(f'int f{last+1}(')
 
 
 def test_failed_judge_releases_claim_without_caching():

@@ -1,5 +1,11 @@
 # Roadmap
 
+Implemented: bounded single-call one-shot scopes, debug-aware initialization grouping and
+repeated-float staging, and disjoint pointer/integer scratch unions. Closed register cycles
+prioritize these lifetime hypotheses. One private KMC known-match replay recovered exact
+bytes through three generated steps. Unknown imported per-file debug/ABI metadata keeps the
+corresponding grouping/union trials disabled; build-owned metadata adapters and wider-pointer
+union support remain planned. Call scopes and allocation advice use the shared source pipeline.
 Implemented: explicit ROM function compiler suggestions freshly verify and atomically save
 source/header/profile for one entry without neighbour confirmation. Disabled auto-apply waits
 for review; legacy single-function range suggestions with saved C recheck on Apply. Broader

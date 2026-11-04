@@ -393,6 +393,37 @@ starting point for a declaration/context repair. Deep search now reserves half
 its remaining time and compile allowance for random rewriting after the initial
 local phase (one in-flight compile can cross the time boundary).
 
+### Call scopes, phase storage and grouped initializers
+
+For a moved argument instruction near a call, try `call_one_shot_scope`: a single
+`do { call(...); } while (0)` can constrain KMC scheduling without duplicating the
+call or changing its arguments. The generator excludes control-bearing macros
+and already wrapped calls. This is a compiler-shape experiment, not a loop the
+original game must have contained.
+
+`pointer_integer_phase_union` proposes separate union members for a pointer phase
+and a later integer phase only when CFG liveness proves non-overlap and every read
+has a dominating initialization. It never reads a pointer's representation as an
+integer. Narrow integer values keep their original casts at reads and writes.
+Escaped storage, captured macro locals, overlapping lifetimes and unknown ABI
+widths are excluded. Do not hand-edit assembly registers to resolve a closed swap.
+
+With known debug flags, `debug_initialization_group` joins existing initializer
+statements; `debug_constant_initialization` can stage an already repeated float
+literal and group the run. A leading initializer may move after independent
+private address calculations, preserving their dependencies. Physical line groups
+can change scheduling with `-g3`; avoid reformatting a verified source wholesale.
+`__LINE__`, line directives and opaque macro effects are not safe grouping targets.
+
+Controlled replay: a previously matched 519-instruction sound update, KMC GCC 2.7.2 /
+GNU as 2.6, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. From a saved score-495 alternate,
+the generated union, constant-initialization and call-scope steps yielded
+495 → 200 → 60 → 0, with exact linked bytes at the end. Separately, initialization
+staging reduced a score-180 seed to 40; its remaining eight rows formed a closed
+`s0`/`s1` swap. Numeric proximity alone did not select the successful path. These
+replay results establish coverage of this known match, not recovery rates for
+other functions or evidence of the original source spelling.
+
 ## An exact operation can still need a different temporary lifetime
 
 A measured 567-instruction function under KMC GCC 2.7.2,

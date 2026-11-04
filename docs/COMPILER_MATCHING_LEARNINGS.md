@@ -2885,6 +2885,43 @@ bytes with independently written target shapes. They test generation, not ROM-li
 All production candidates still require the ordinary linked-byte or objdiff judge. Macro-heavy
 inputs, unsupported syntax and unsafe lifetimes yield no new candidates.
 
+### KMC: call scopes, mixed scratch phases and initialization groups
+
+Measured context: a private 519-instruction / 2,076-byte sound-update routine;
+KMC GCC 2.7.2, GNU as 2.6, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. Target, shared
+header and compiler profile were unchanged. The final source's linked bytes were
+verified identical through the live app's ordinary judge; export layout passed,
+which does not itself establish a complete-image rebuild.
+
+The new deterministic generators were replayed read-only against saved alternates:
+
+| Candidate step | Before → after | Proposals judged |
+| --- | --- | --- |
+| Pointer/integer scratch union with distinct initialized phases | 495 → 200 | 1 |
+| Repeated float staging and grouped initialization | 200 → 60 | 14 |
+| Single-call `do { ... } while (0)` scope | 60 → 0, linked bytes exact | 2 |
+
+This is a controlled replay of an existing match, not three new matches or a timing
+benchmark. Independent initialization replay also reproduced 180 → 40; its eight
+remaining rows were an `s0`/`s1` register cycle. The successful score-60 path had
+one moved call-argument preparation instruction. The single-iteration scope let
+KMC put that move in the target delay slot. Source shape affecting scheduling is
+observed; neither the historical source spelling nor the exact internal optimizer
+cause has been proven.
+
+Negative evidence: changing gear widths, adding redundant masks, staging call
+arguments, reordering declarations and joining the frequency statements did not
+solve the case individually. A bounded full-function random pass also failed to
+improve its score-40 seed before it was stopped after the separate exact discovery.
+Some alternatives had fewer numerical differences but worse paths to an exact
+result; retain different allocation/scheduling shapes under the existing budgets.
+
+The union generator preserves each phase's type and initialization, never type-puns
+a stored pointer. It requires explicit 32-bit metadata and rejects overlap, escapes,
+shadowing, macro captures and unknown narrowing aliases. Call scopes do not wrap
+macros or swallow surrounding loop control. Debug grouping is disabled without
+known debug flags and for line-sensitive macro contexts. All are candidate-only
+hypotheses submitted to the ordinary judge; none weakens byte, data or export checks.
 ## Diagnostic compiler matches and function-only promotion (November 2026)
 
 A 126-instruction / 504-byte GCC candidate was exact with pinned KMC GCC 2.7.2
