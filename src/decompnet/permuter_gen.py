@@ -204,7 +204,7 @@ class Restorer:
 
 
 _ACCESS = re.compile(r"\b(?:public|private|protected)\s*:(?!:)")
-_DROPPED_WORDS = re.compile(r"\b(?:explicit|mutable|virtual)\b\s*|\bextern\s+\"C(?:\+\+)?\"\s*(?!\{)")
+_DROPPED_WORDS = re.compile(r"\b(?:explicit|mutable|virtual)\b\s*|\bextern\s+\"C(?:\+\+)?\"\s*(?!\s*\{)")
 _TAG = re.compile(r"\b(struct|union|class|enum)\s+([A-Za-z_]\w*)")
 _DEFAULT_ARG = re.compile(r"\s*=\s*(?:[^,()]|\([^()]*\))+(?=[,)])")
 _REFERENCE = re.compile(r"(?<=[\w*>\s])&(?=\s*(?:const\b\s*)?[A-Za-z_)\[,])")

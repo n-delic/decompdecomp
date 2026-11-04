@@ -58,6 +58,7 @@ IDLE_SECONDS = 180  # with no near misses, how long until the permuter looks aga
 IDLE_LOOKS = 20  # looks in a row with nothing to do (an hour) and it's done until agents start again
 _NAME = re.compile(r"[A-Za-z_]\w*")
 _CXX = re.compile(r"::|\btemplate\s*<|\b(?:class|operator|static_cast|reinterpret_cast|this)\b")
+_COMMENT_OR_STRING = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'', re.S)
 HOLD_SPARE_SECONDS = 120  # a turn's hold on a function lasts this much longer than the turn, in case it runs over
 _EOF = object()
 # decomp-permuter's weights per compiler (its default_weights.toml), by the start of a toolchain's id
@@ -88,8 +89,9 @@ def permuter_header(header: str, source: str) -> str:
 
 
 def is_cxx(source: str) -> bool:
-    """A function written in C++: a method or a scoped name, a template, a class, an operator, a C++ cast, `this`."""
-    return bool(_CXX.search(source))
+    """A function written in C++: a method or a scoped name, a template, a class, an operator, a C++ cast, `this`;
+    in its code, not in a comment or a string (`/* this adds one */` is C's)."""
+    return bool(_CXX.search(_COMMENT_OR_STRING.sub(" ", source)))
 
 
 def generator_argv() -> list[str]:
@@ -280,7 +282,7 @@ class Permuter:
             if fork:  # its unit is held for the turn and built once at its end, not after every variant (trial_run)
                 held.enter_context(self.net.forks.trial_run(proj, fn["unit"]))
             if available():
-                # (a C function's as m2c reads it: what's only for C++ made pycparser refuse GTA San Andreas's whole
+                # (a C function's as m2c reads it: what's only for C++ made pycparser refuse a PC game's whole
                 # header; a C++ function's with its C++ branch, where its classes are)
                 header = permuter_header(seeds.c_only(self.net.forks.permuter_header(fork, fn["name"]) if fork else
                                                       self.net._context(proj["id"], fn["unit"])["header"],
