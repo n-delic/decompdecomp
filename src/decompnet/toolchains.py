@@ -177,6 +177,8 @@ def get(tid: str) -> Toolchain:
 
 def compiler_family(tid: str) -> str:
     """The backend family explicitly declared by a compiler profile."""
+    if own := _own(tid):
+        tid = own.like or tid
     return _registry_data().get(tid, {}).get("family", "")
 
 

@@ -1198,6 +1198,20 @@ subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 
 
 
+["sn-n64-281"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.8.1"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mcpu=VR4300", "-mhard-float", "-mfp64"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+
+
 ["sn-n64-272-0001"]
 family = "gcc"
 name = "SN Systems N64 GCC 2.7.2 (0001)"
@@ -1312,6 +1326,20 @@ platforms = ["macos-x86_64", "macos-arm64"]
 
 
 
+["sn-n64-272-0004"]
+family = "gcc"
+name = "SN Systems N64 GCC 2.7.2 (0004)"
+arch = "mips"
+platform = "N64"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["wibo", "psyq-obj-parser"]
+driver = "consoles/n64/sn64.py"
+flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
+cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
+
+
 ["sn-n64-272-0006"]
 family = "gcc"
 name = "SN Systems N64 GCC 2.7.2 (0006)"
@@ -1388,6 +1416,64 @@ platforms = ["linux-x86_64"]
 
 
 
+
+
+["ido-5.2"]
+case_sensitive = true
+name = "IDO 5.2 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.2", "{src}", "{obj}", "{include}", "{flags}"]
+
+["ido-5.3-cxx"]
+case_sensitive = true
+name = "IDO 5.3 C++ (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.3-cxx", "{src}", "{obj}", "{include}", "{flags}"]
+cplusplus = true
+
+["ido-6.0"]
+case_sensitive = true
+name = "IDO 6.0 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-6.0", "{src}", "{obj}", "{include}", "{flags}"]
+
+["mipspro-7.4.4"]
+case_sensitive = true
+name = "MIPSpro 7.4.4 (IRIX emulation)"
+platform = "N64"
+arch = "mips"
+family = "ido"
+license = "proprietary"
+source = "your own compiler kit: no download"
+description = "User-supplied original compiler; select your own folder in Setup. No compiler binaries are downloaded."
+requires = ["runtime-irix-host"]
+driver = "consoles/n64/irix.py"
+flags = ["-O2", "-mips3", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
+cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "mipspro-7.4.4", "{src}", "{obj}", "{include}", "{flags}"]
 
 
 ["gcc-2.8.1-pm-sn-as"]

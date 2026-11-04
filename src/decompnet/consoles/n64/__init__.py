@@ -38,7 +38,8 @@ class Nintendo64(Console):
         Compiler("gcc-egcs-1.1.2-4", "Original EGCS 1.1.2-4", "original Linux release; iQue toolchain comparison"),
         Compiler("gcc-4.4.0-n64", "GCC 4.4.0 (MIPS64 ELF)", "experimental modern toolchain; Linux or WSL"),
     )
-    kits = ("own-n64",)  # another build of one of its compilers, the user's (kits/owncompiler.py)
+    kit_only_compilers = ("sn-n64-281", "sn-n64-272-0004", "ido-5.2", "ido-5.3-cxx", "ido-6.0", "mipspro-7.4.4")
+    kits = ("own-n64", *("own-" + profile for profile in kit_only_compilers))
     guides = ("mips",)
     m2c = "mips-gcc"
     ram = (0x80000400, 0x80800000)  # KSEG0 above the exception vectors, up to the Expansion Pak's 8 MiB
