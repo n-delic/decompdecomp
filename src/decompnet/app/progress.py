@@ -302,20 +302,26 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
     # database name isn't added back. Other database functions new at that shared address still join -- overlays load
     # different functions at one address (a PS2 game's ovl_* units).
     local_names = {item.get("name") for item in local.get("layout") or []}
-    for key, identity in identities.items():
+    renamed_db: set[str] = set()  # database names taken as the rename of a saved (now-unknown) name: their src/best
+    for key, identity in identities.items():   # are the saved files, not new ones, so they aren't queued into pending
         current = manifest.get(key) or []
         known = {identity(item) for item in current}
         for item in local.get(key) or []:
             ident = identity(item)
             if ident in known:
                 continue
-            if key == "layout" and any(
-                    row.get("vram") == item.get("vram")
-                    and ((item.get("size") is not None and row.get("size") == item.get("size"))
-                         or (item.get("unit") is not None and row.get("unit") == item.get("unit")))
-                    and row.get("name") not in local_names
-                    for row in current):
-                continue
+            if key == "layout":
+                # A saved entry at this address is this database function renamed when it matches by unit (when both
+                # carry one) or else by size, and its saved name is gone from the database. Take it as a rename only
+                # when exactly one saved entry matches, so same-size siblings in different overlays aren't confused.
+                candidates = [row for row in current
+                              if row.get("vram") == item.get("vram") and row.get("name") not in local_names
+                              and (row.get("unit") == item.get("unit")
+                                   if item.get("unit") is not None and row.get("unit") is not None
+                                   else item.get("size") is not None and row.get("size") == item.get("size"))]
+                if len(candidates) == 1:
+                    renamed_db.add(item.get("name"))
+                    continue
             current.append(item)
             known.add(ident)
         manifest[key] = current
@@ -329,8 +335,9 @@ def _initial_merge(manifest: dict, projected: dict[str, str], disk: dict[str, st
             if name in projected:
                 pending[name] = projected[name]
     manifest["headers"] = headers
+    renamed_files = {f"{d}/{n}.c" for n in renamed_db for d in ("src", "best")}
     for name, text in projected.items():
-        if name.startswith(("src/", "best/")) and name not in disk:
+        if name.startswith(("src/", "best/")) and name not in disk and name not in renamed_files:
             pending[name] = text
     return manifest, pending
 
