@@ -1160,6 +1160,9 @@ Session transcripts now retain structured handoffs with remaining claims, recent
 experiment history and the last exposed reply. A later session receives this as historical data and must
 refresh its candidate/claim state. Credit-required model failures pause with guidance to add credits or
 choose another model.
+Function notes record measured before/after scores, including zero change. Deep permuter summaries
+carry these scores through room sync; older notes recover comparisons when measured history exists.
+Notes written before any measured baseline remain explicitly unscored.
 
 Repair examples offer target-function, supporting-source and full-source diff views. Pattern candidates
 identify edits reproducible by bounded repair families; supporting declarations can still be essential.

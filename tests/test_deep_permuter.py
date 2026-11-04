@@ -537,6 +537,8 @@ def test_room_search_publishes_one_result_note_not_lease_notes(monkeypatch, note
     deep_permuter.run(net, 'game', 'f', 1, 1, Log())
     summaries = [d['text'] for route, d in calls if route == '/collab/note']
     assert len(summaries) == 1
+    payload = next(d for route, d in calls if route == '/collab/note')
+    assert (payload['score_before'], payload['score_after']) == (40, 40)
     assert summaries[0].startswith('Deep permuter: score 40 → 40; 0 improvements; 1 candidates tested;')
     assert 'elapsed' in summaries[0] and 'Variant limit reached' in summaries[0]
     assert all(not d['notes'] for route, d in calls if route == '/collab/release')

@@ -335,7 +335,7 @@ class Room:
             out["context"] = {"version": ctx["version"], "header": ctx["header"]}
         if first or kinds & {"note"}:
             out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.created_at, f.vram, a.name AS agent FROM notes n LEFT JOIN functions f ON f.id=n.function_id "
+                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.vram, a.name AS agent FROM notes n LEFT JOIN functions f ON f.id=n.function_id "
                 "LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
         out["claims"] = [dict(r) for r in net.store.all(
             "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
@@ -358,7 +358,7 @@ class Room:
             out["matched"] = [dict(r) for r in rows if e == 0 or fresh or r["name"] in names]
         if e == 0 or any(ev["kind"] == "note" for ev in events):
             out["notes"] = [dict(r) for r in net.store.all(
-                "SELECT n.id, n.text, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
+                "SELECT n.id, n.text, n.score_before, n.score_after, n.created_at, f.name AS function, a.name AS agent FROM notes n LEFT JOIN functions f "
                 "ON f.id=n.function_id LEFT JOIN agents a ON a.id=n.agent_id WHERE n.project_id=? ORDER BY n.id", pid)]
         out["claims"] = [dict(r) for r in net.store.all(
             "SELECT f.name, f.vram, a.name AS agent FROM claims c JOIN functions f ON f.id=c.function_id JOIN agents a "
@@ -482,7 +482,8 @@ def host_app(net, rooms: dict[str, Room]) -> Starlette:
         agent = room.agent_for(member, d.get("agent"))
         if not d.get("function"):
             return {"text": net.knowledge.share(agent, room.slug, str(d.get("text", "")))}
-        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d["function"])}
+        return {"text": net.add_note(agent, room.slug, str(d.get("text", "")), d["function"],
+                                     score_before=d.get("score_before"), score_after=d.get("score_after"))}
 
     def edit(room, member, d):
         """A member's edit of a git project's file (a header, a new or shared source file): made and checked here."""
@@ -860,7 +861,7 @@ class Link:
             slug, m["vram"], m["matched_source"], m["agent"] or "host"))
         _in_batches(net, st.get("best") or [], lambda b: net.apply_remote_best(slug, b["vram"], b["score"], b["source"]))
         _in_batches(net, st.get("notes") or [], lambda n: net.apply_remote_note(
-            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"]))
+            slug, n["id"], n["vram"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after")))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "rename", "split", "collab", "polish", "readable") and not (ev["agent"] or "").startswith(mine):
                 net.remote_event(pid, ev["kind"], ev["detail"], ev["agent"] or "host", ev["created_at"])
@@ -878,7 +879,7 @@ class Link:
         for m in st.get("matched") or []:
             net.apply_remote_match_named(slug, m["name"], m["agent"] or "host")
         for n in st.get("notes") or []:
-            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"])
+            net.apply_remote_note_named(slug, n["function"], n["text"], n["agent"] or "host", n["created_at"], n.get("score_before"), n.get("score_after"))
         for ev in st.get("events") or []:
             if ev["kind"] in ("match", "claim", "release", "context", "source", "split", "collab", "link", "polish",
                               "readable") \

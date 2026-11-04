@@ -254,3 +254,44 @@ def test_judge_persists_only_real_best_score_improvements(setup, monkeypatch):
         net._record(fn,agent,score,'int target(){return 1;}',0)
     rows = net.store.all('SELECT score_before,score_improved FROM attempts WHERE function_id=? ORDER BY id',fid)
     assert [tuple(row) for row in rows] == [(1040,1),(660,0),(660,0),(660,1)]
+
+
+def test_unmanaged_notes_record_improvement_and_zero_change(setup):
+    from decompnet import agent_notes
+    net, _, _, _ = setup
+    agent = net.authenticate(net.register_agent('unmanaged', 'test'))
+    proj = net._project('demo')
+    with net.store.tx() as db:
+        fid = db.execute('INSERT INTO functions(project_id,name) VALUES(?,?)', (proj['id'], 'target')).lastrowid
+        db.execute('INSERT INTO attempts(function_id,agent_id,score,score_before,created_at) VALUES(?,?,?,?,?)',
+                   (fid, agent.id, 120, 150, 1))
+        agent_notes.save(db, proj['id'], fid, agent.id, 'Improved', at=2)
+        agent_notes.save(db, proj['id'], fid, agent.id, 'No new improvement', at=3)
+        agent_notes.save(db, proj['id'], fid, agent.id, 'Measured local search', at=4, measured=(120, 120))
+    rows = net.store.all('SELECT score_before,score_after FROM notes WHERE function_id=? ORDER BY id', fid)
+    assert [(r['score_before'], r['score_after']) for r in rows] == [(150,120), (120,120), (120,120)]
+
+
+def test_room_notes_preserve_zero_scores_and_update_existing_note(setup):
+    net, _, _, _ = setup
+    proj = net._project('demo')
+    with net.store.tx() as db:
+        fid = db.execute('INSERT INTO functions(project_id,name,vram) VALUES(?,?,?)', (proj['id'], 'target', 4096)).lastrowid
+    net.apply_remote_note('demo', 1, 4096, 'Room note', 'guest', 1)
+    net.apply_remote_note('demo', 1, 4096, 'Room note', 'guest', 1, 120, 0)
+    net.apply_remote_note_named('demo', 'target', 'Other note', 'guest', 2, 0, 0)
+    rows = net.store.all('SELECT score_before,score_after FROM notes WHERE function_id=? ORDER BY id', fid)
+    assert [(r['score_before'], r['score_after']) for r in rows] == [(120,0), (0,0)]
+
+
+def test_deep_note_updates_preserve_measured_scores(setup):
+    net, _, _, _ = setup
+    agent = net.authenticate(net.register_agent('permuter-test', 'test'))
+    proj = net._project('demo')
+    with net.store.tx() as db:
+        fid = db.execute('INSERT INTO functions(project_id,name) VALUES(?,?)', (proj['id'], 'target')).lastrowid
+    net.add_note(agent, 'demo', 'Deep permuter: first turn', 'target', score_before=150, score_after=120)
+    net.add_note(agent, 'demo', 'Deep permuter: second turn', 'target', score_before=120, score_after=120)
+    rows = net.store.all('SELECT score_before,score_after FROM notes WHERE function_id=?', fid)
+    assert len(rows) == 1
+    assert (rows[0]['score_before'], rows[0]['score_after']) == (120, 120)

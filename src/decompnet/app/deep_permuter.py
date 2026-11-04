@@ -726,7 +726,7 @@ def _run(net, slug, name, minutes, max_variants, log):
                     f'{search.skipped} cached skips; {search.rejected} rejected; '
                     f'{round(time.monotonic() - search.started_at)}s elapsed. {reason}.')
             try:
-                link.call('/collab/note', agent, function=name, text=text)
+                link.call('/collab/note', agent, function=name, text=text, score_before=search.starting_score, score_after=search.best)
             except NetworkError:
                 # Notes are advisory; a disconnected host must not mask the search verdict/error.
                 pass

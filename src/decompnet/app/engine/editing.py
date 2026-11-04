@@ -378,12 +378,12 @@ class EditMixin:
             link.sync()
         return text
 
-    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None) -> str:
+    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None, *, score_before=None, score_after=None) -> str:
         link = self._link(project)
         if link is None:
-            return super().add_note(agent, project, text, function)
+            return super().add_note(agent, project, text, function, score_before=score_before, score_after=score_after)
         name = self._function(function, project)["name"] if function else None
-        return link.call("/collab/note", agent, text=text, function=name) or "Noted, and shared with the room."
+        return link.call("/collab/note", agent, text=text, function=name, score_before=score_before, score_after=score_after) or "Noted, and shared with the room."
 
     def set_instructions(self, slug: str, text: str) -> None:
         """What the user wants agents to know or focus on, given to every agent on this project."""

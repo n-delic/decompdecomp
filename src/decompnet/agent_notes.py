@@ -13,23 +13,46 @@ def session_for(db, project, agent, at):
 
 def scores(db, function, agent, session):
     first = db.execute('SELECT MIN(created_at) FROM attempts WHERE function_id=? AND agent_id=? '
-                       'AND created_at>=? AND created_at<=?',
+                       'AND score IS NOT NULL AND created_at>=? AND created_at<=?',
                        (function, agent, session['started_at'], session['ended_at'] or time.time())).fetchone()[0]
     if first is None:
-        return None, None
+        return current_scores(db, function, session["started_at"])
     before = db.execute('SELECT MIN(score) FROM attempts WHERE function_id=? AND created_at<?',
                         (function, first)).fetchone()[0]
     after = db.execute('SELECT MIN(score) FROM attempts WHERE function_id=? AND agent_id=? '
                        'AND created_at>=? AND created_at<=?',
                        (function, agent, session['started_at'], session['ended_at'] or time.time())).fetchone()[0]
+    if before is None:
+        row = db.execute('SELECT score_before,score FROM attempts WHERE function_id=? AND agent_id=? AND created_at=? ORDER BY id LIMIT 1',
+                         (function, agent, first)).fetchone()
+        before = row['score_before'] if row['score_before'] is not None else row['score']
     return before, min(before, after) if before is not None and after is not None else after
 
 
 
-def save(db, project, function, agent, text, at=None):
+def current_scores(db, function, at):
+    # A note without new compiles still records the measured saved score, including zero.
+    score = db.execute('SELECT MIN(score) FROM attempts WHERE function_id=? AND created_at<=?',
+                       (function, at)).fetchone()[0]
+    return score, score
+
+
+def note_scores(db, function, agent, at):
+    previous = db.execute('SELECT MAX(created_at) FROM notes WHERE function_id=? AND agent_id=? AND created_at<?',
+                          (function, agent, at)).fetchone()[0]
+    measured = scores(db, function, agent, {'started_at': previous or 0, 'ended_at': at})
+    return current_scores(db, function, at) if measured == (None, None) else measured
+
+
+def save(db, project, function, agent, text, at=None, measured=None):
     at = time.time() if at is None else at
     session = session_for(db, project, agent, at) if function else None
-    before, after = scores(db, function, agent, session) if session else (None, None)
+    if measured is not None:
+        before, after = measured
+    elif session:
+        before, after = scores(db, function, agent, session)
+    else:
+        before, after = note_scores(db, function, agent, at) if function else (None, None)
     previous = db.execute('SELECT id,text FROM notes WHERE function_id=? AND agent_id=? AND session_id=?',
                           (function, agent, session['id'])).fetchone() if session else None
     if previous:
@@ -54,8 +77,9 @@ def grouped(store, rows, project):
             if key[1] is None or row['agent'] == 'you':
                 key = ('legacy', row['agent_id'], row['created_at']) if row['agent_id'] is not None and row['agent'] != 'you' else ('note', row['id'])
             row['ids'] = [row['id']]
-            if session and row.get('score_before') is None:
-                row['score_before'], row['score_after'] = scores(db, row['function_id'], row['agent_id'], session)
+            if row.get('score_before') is None and row['function_id'] and row['agent_id']:
+                row['score_before'], row['score_after'] = (scores(db, row['function_id'], row['agent_id'], session)
+                    if session else note_scores(db, row['function_id'], row['agent_id'], row['created_at']))
             if key in groups:
                 target = groups[key]
                 target['ids'].append(row['id'])

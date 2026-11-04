@@ -132,16 +132,20 @@ class RoomMixin:
                 db.execute("UPDATE functions SET matched_agent_id=? WHERE id=?", (aid, row["id"]))
             db.execute("DELETE FROM claims WHERE function_id=?", (row["id"],))
 
-    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float) -> None:
+    def apply_remote_note_named(self, slug: str, function: str | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)
         row = self.store.one("SELECT id FROM functions WHERE project_id=? AND name=?", proj["id"], function) if function else None
         fid = row["id"] if row else None
-        if self.store.one("SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid):
+        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        if existing:
+            if score_before is not None and score_after is not None:
+                with self.store.tx() as db:
+                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
     def apply_remote_best(self, slug: str, vram: int, score: int, source: str) -> None:
         proj = self._project(slug)
@@ -149,18 +153,22 @@ class RoomMixin:
             db.execute("UPDATE functions SET best_score=?, best_source=? WHERE project_id=? AND vram=? AND status='open' "
                        "AND (best_score IS NULL OR best_score > ?)", (score, source, proj["id"], vram, score))
 
-    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float) -> None:
+    def apply_remote_note(self, slug: str, host_id: int, vram: int | None, text: str, agent_name: str, created_at: float, score_before=None, score_after=None) -> None:
         proj = self._project(slug)
         fid = None
         if vram is not None:
             row = self.store.one("SELECT id FROM functions WHERE project_id=? AND vram=?", proj["id"], vram)
             fid = row["id"] if row else None
-        if self.store.one("SELECT 1 FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid):
+        existing = self.store.one("SELECT id FROM notes WHERE project_id=? AND text=? AND function_id IS ?", proj["id"], text, fid)
+        if existing:
+            if score_before is not None and score_after is not None:
+                with self.store.tx() as db:
+                    db.execute('UPDATE notes SET score_before=?,score_after=? WHERE id=?', (score_before, score_after, existing['id']))
             return
         aid = self._remote_agent(agent_name)
         with self.store.tx() as db:
-            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at) VALUES(?,?,?,?,?)",
-                       (proj["id"], fid, aid, text, created_at))
+            db.execute("INSERT INTO notes(project_id,function_id,agent_id,text,created_at,score_before,score_after) VALUES(?,?,?,?,?,?,?)",
+                       (proj["id"], fid, aid, text, created_at, score_before, score_after))
 
     def apply_remote_context(self, slug: str, header: str, host_version: int) -> None:
         proj = self._project(slug)

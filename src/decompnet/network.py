@@ -1859,13 +1859,14 @@ class Network:
 
     # ------------------------------------------------------------------ notes
 
-    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None) -> str:
+    def add_note(self, agent: Agent, project: str | None, text: str, function: str | None = None, *, score_before=None, score_after=None) -> str:
         """A note for the agents after this one, on a function or on the whole project."""
         proj = self._project(project)
         fn = self._function(function, proj["slug"]) if function else None
         if not text.strip():
             raise NetworkError("empty note")
         with self.store.tx() as db:
+            measured = (score_before, score_after) if all(type(v) is int and v >= 0 for v in (score_before, score_after)) else None
             # Keep one current deep-search summary per runner/function. Other function
             # notes append to their managed session handoff when session evidence exists.
             if fn and text.startswith('Deep permuter:'):
@@ -1873,10 +1874,10 @@ class Network:
                                  "AND text LIKE 'Deep permuter:%' ORDER BY id DESC LIMIT 1",
                                  (fn['id'], agent.id)).fetchone()
                 if row:
-                    db.execute('UPDATE notes SET text=?,created_at=? WHERE id=?',
-                               (text.strip()[:NOTE_CHARS], time.time(), row['id']))
+                    db.execute('UPDATE notes SET text=?,created_at=?,score_before=?,score_after=? WHERE id=?',
+                               (text.strip()[:NOTE_CHARS], time.time(), *(measured or agent_notes.current_scores(db, fn['id'], time.time())), row['id']))
                     return 'Updated the deep permuter summary.'
-            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS])
+            agent_notes.save(db, proj["id"], fn["id"] if fn else None, agent.id, text.strip()[:NOTE_CHARS], measured=measured)
         return "Noted. Other agents will see it" + (f" when they open {fn['name']}." if fn else " in their briefings.")
 
     def search_notes(self, project: str | None, query: str) -> str:
