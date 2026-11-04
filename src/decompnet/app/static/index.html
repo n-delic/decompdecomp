@@ -618,13 +618,14 @@
 <main id="agentsPage" class="view" hidden>
   <header class="page-head"><p class="eyebrow">Agents &amp; models</p><h1>Your AI agents</h1>
     <p class="muted">Helper agents run in the background on a project. Install the ones you use, pick their models, or add any model with an API key.</p></header>
-  <section class="ag-apps" aria-labelledby="agAppsH">
-    <header class="ag-apps-head"><h2 id="agAppsH">Agent apps on this computer</h2><button class="ghost small-btn" id="agRefresh" type="button">Refresh</button></header>
-    <div class="ag-grid" id="agList"></div>
-  </section>
+  <details class="panel settings-disclosure ag-apps" aria-labelledby="agAppsH" open>
+    <summary class="panel-head"><h2 id="agAppsH">Agent apps on this computer</h2></summary><div class="pad"><button class="ghost small-btn" id="agRefresh" type="button">Refresh</button>
+    <div class="ag-grid" id="agList"></div></div>
+  </details>
   <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent prompts</h2></summary><div class="pad"><p class="small muted">Global defaults for new sessions. Agents can override them individually. Project instructions, guides and continuation context are still appended to the initial prompt.</p><div id="globalPromptSettings"></div><pre id="globalPromptLog" hidden></pre></div></details>
   <details class="panel settings-disclosure"><summary class="panel-head"><h2>Agent tools &amp; usage</h2></summary><div class="pad"><p class="small muted">Disable optional tools to reduce agent context. Global switches apply to every agent; per-agent tools can disable additional tools. Required core tools stay enabled. New tool lists take effect at the next session or MCP reconnect; cached calls to disabled tools are rejected immediately.</p><button id="agentToolsRefresh" class="ghost small-btn" type="button">Refresh tools &amp; counts</button><p id="agentToolCoverage" class="small muted"></p><div id="agentToolCatalog"></div><pre id="agentToolLog" hidden></pre></div></details>
-  <section class="panel" id="pairPanel" hidden><header class="panel-head"><h2>Access requests</h2></header><div class="pad" id="pairBox"></div></section>
+  <details class="panel settings-disclosure" id="pairPanel" hidden open><summary class="panel-head"><h2>Access requests</h2></summary><div class="pad" id="pairBox"></div></details>
+  <div class="cols ag-cols">
   <details class="panel manual-mcp settings-disclosure" aria-labelledby="mcpHeading">
     <summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP</h2></summary>
     <div class="pad">
@@ -638,8 +639,7 @@
       <details><summary>Your manual connections</summary><div id="mcpConnections"></div></details>
     </div>
   </details>
-  <div class="cols ag-cols">
-    <section class="panel"><header class="panel-head"><h2>Models with an API key</h2></header><div class="pad" id="apiBox"></div></section>
+    <details class="panel settings-disclosure" open><summary class="panel-head"><h2>Models with an API key</h2></summary><div class="pad" id="apiBox"></div></details>
   </div>
 </main>
 

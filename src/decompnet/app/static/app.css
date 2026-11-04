@@ -1363,7 +1363,7 @@ details.more[open] > summary::before { content: "− "; }
 
 /* Native disclosures keep their open state while settings data is refreshed. */
 .settings-disclosure { margin-bottom: 20px; }
-.settings-disclosure > summary { cursor: pointer; list-style: none; }
+.settings-disclosure > summary { cursor: pointer; list-style: none; justify-content: flex-start; text-align: left; flex-wrap: nowrap; }
 .settings-disclosure > summary::-webkit-details-marker { display: none; }
 .settings-disclosure > summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); flex: none; }
 .settings-disclosure[open] > summary::before { transform: rotate(45deg); }
@@ -1541,3 +1541,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .default-profile-counts dd { margin:0; font-size:26px; font-weight:700; font-variant-numeric:tabular-nums; }
 .compiler-profile-action > button + button { margin-left:8px; }
 @media(max-width:540px) { .compiler-profile-action > button { margin-bottom:8px; } .compiler-profile-action > button + button { margin-left:0; } }
+
+/* Agent settings share equal columns; disclosures keep their natural independent height. */
+#agentsPage .ag-cols { margin-top: 0; }
+#agentsPage .ag-cols > .panel { min-width: 0; margin: 0; }
+#agentsPage .ag-apps .pad > button { margin-bottom: 16px; }
