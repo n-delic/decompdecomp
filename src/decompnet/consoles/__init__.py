@@ -355,6 +355,22 @@ class Console:
         """Whether a library file is plausible before the search hashes its contents."""
         return True
 
+    def fork_game_versions(self, project) -> dict[str, str]:
+        """Original game hashes for supported versions of a public decomp."""
+        return {}
+
+    def fork_game_need(self, project, version: str | None) -> dict | None:
+        """Versioned game file required by a public decomp, if this console recognizes it."""
+        return None
+
+    def default_fork_game_version(self, project) -> str | None:
+        """Default version of a public decomp, when this console recognizes its build."""
+        return None
+
+    def match_fork_game_version(self, project, game: Path, log=print) -> str | None:
+        """Version matching a supplied game, or None when this console has no versioned build."""
+        return None
+
     def fork_game_help(self, target: str, sha1: str | None) -> str | None:
         """Console-specific guidance for supplying a game file to a public decomp, or None for its usual help."""
         return None
