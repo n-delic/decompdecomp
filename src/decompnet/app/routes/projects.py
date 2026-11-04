@@ -62,6 +62,16 @@ def register(app: App) -> None:
                     jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
 
+    def p_symbol_names(slug, request, data):
+        from .. import symbol_names
+        rows = data.get('names')
+        pairs = symbol_names.prepare(net, slug, rows)
+        message = str(data.get('message') or 'Restore verified symbol names')[:4000]
+        if data.get('preview', False):
+            return {'renames': len(pairs)}
+        return {'job': jobs.start('Restore symbol names',
+                                 lambda log: symbol_names.apply(net, slug, rows, message, log))}
+
     def p_data_regions(slug, request, data):
         from .. import data_regions
         if request.method == 'POST':
@@ -638,6 +648,7 @@ def register(app: App) -> None:
         "/api/function-notes": (p_function_notes, ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
+        "/api/symbol-names": (p_symbol_names, ["POST"]),
         "/api/compiler": (p_compiler, ["POST"]),
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),

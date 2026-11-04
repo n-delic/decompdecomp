@@ -2261,3 +2261,17 @@ def test_project_overview_serializes_running_source_preparation(app,monkeypatch)
     assert response.json()['permuter']['variants']==12
     assert response.json()['permuter']['matched']==1
     assert 'preparation_agent' not in response.text and 'private body' not in response.text
+
+
+def test_batch_naming_route_is_authenticated_and_previews_without_mutation(app, monkeypatch):
+    from decompnet.app import symbol_names
+    client, _, _ = app
+    calls = []
+    monkeypatch.setattr(symbol_names, 'prepare', lambda net, slug, rows: calls.append((slug, rows)) or [('old', 'new')])
+    payload = {'slug': 'game', 'preview': True, 'names': [{'old': 'old', 'new': 'new', 'address': 1}]}
+    assert client.post('/api/symbol-names', json=payload,
+                       headers={'X-Decomp': '1', 'User-Agent': 'outside'}).status_code in (401, 403)
+    assert not calls
+    response = client.post('/api/symbol-names', json=payload, headers={'X-Decomp': '1'})
+    assert response.status_code == 200 and response.json() == {'renames': 1}
+    assert calls == [('game', payload['names'])]
