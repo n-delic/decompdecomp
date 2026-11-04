@@ -8,11 +8,13 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ... import agent_notes, compilermap, consoles, scoring, toolchains
-from ...network import IN_BUILD, PROGRESS_COLUMNS, Network, set_aside
+from ...network import IN_BUILD, Network, set_aside
 from ...project import compiler_for
 
 # What the notification centre tells: news a person wants to hear about, not every claim and attempt agents make.
@@ -49,25 +51,30 @@ class GuiMixin:
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
         from .. import function_profile_suggestions
         cfg = self.cfg(proj)
-        # matches by the helper agents the app runs (their spend is what `spend` counts)
-        helpers = self.store.one(
-            "SELECT COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id WHERE f.project_id=? "
-            "AND f.status='matched' AND a.origin='local' AND a.name NOT IN ('you','autopilot')", proj["id"])["n"]
+        from ..view_snapshots import cache
+        revision = self.store.one('SELECT map_revision FROM project_totals WHERE project_id=?', proj['id'])
+        def diagnostics():
+            from ..libultra import report
+            from ..source_assembly import breakdown
+            return {'status_breakdown':breakdown(self,proj), 'libultra':report(self,proj),
+                    'readable':self.readability.counts(proj)['readable'],
+                    'helper_matches':self.store.one(
+                        "SELECT COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id WHERE f.project_id=? "
+                        "AND f.status='matched' AND a.origin='local' AND a.name NOT IN ('you','autopilot')", proj['id'])['n']}
+        details = diagnostics() if getattr(self.store._local, 'in_tx', False) else cache(self).get(
+            ('overview',slug,revision['map_revision'] if revision else proj['config']),diagnostics,ttl=5)
         twins = self.twins.jobs.get(proj["slug"])
         base = self._overview(slug, proj, room_members=room_members)
-        from ..libultra import report as libultra_report
-        from ..source_assembly import breakdown
         from ..source_preparation import settings as source_settings
-        return base | {"status_breakdown":breakdown(self,proj),"libultra": base["libultra"] if "libultra" in base else libultra_report(self, proj), "last_activity": last, "autopilot": self.autopilot_status(slug),
+        return details | base | {"last_activity": last, "autopilot": self.autopilot_status(slug),
                        "permuter": self.permuter.status(proj["slug"]), "source_preparation": source_settings(self, proj),
                        "twins": None if twins is None else {
                            k: getattr(twins, k) for k in ("state", "pairs", "tried", "matched", "asm",
                                                         "cross_candidates", "cross_tried", "cross_matched")},
                        "cross_game": self.twins.cross_game_results(slug),
                        "free_search": dict(self.store.one('SELECT * FROM reuse_runs WHERE project_id=? ORDER BY id DESC LIMIT 1', proj['id']) or {}),
-                       "helper_matches": helpers, "progress_syncing": self.progress.syncing(slug),
+                       "progress_syncing": self.progress.syncing(slug),
                        "progress_sync": self.progress.status(slug),
-                       "readable": self.readability.counts(proj)["readable"],
                        "spend": cfg.get("spend"), "instructions": cfg.get("instructions") or "",
                        "priority": cfg.get("priority", []),
                        # (a suggestion its own check disproved isn't one: older ones were filed)
@@ -82,8 +89,8 @@ class GuiMixin:
         if (fork := self.fork_slug(slug)):
             return self.forks.overview(fork, room_members=room_members)
         cfg = self.cfg(proj)
-        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
-                             f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = self.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
+            ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes','attempts'), 0)
         # a project made with a compiler decompdecomp doesn't have still opens: the page says so, and its Settings
         # let the user pick one that's here (#118)
         compiler_id = cfg["compiler"]["toolchain"]
@@ -114,13 +121,28 @@ class GuiMixin:
             "room": self._room_info(proj["slug"], refresh=room_members),
         }
 
+    @contextmanager
+    def summary_batch(self):
+        local = self.__dict__.setdefault('_summary_local', threading.local())
+        previous = getattr(local, 'rows', None)
+        rows = self.store.all("SELECT p.*,t.total,t.matched,t.bytes,t.matched_bytes,t.set_aside,t.set_aside_bytes, "
+                              "(SELECT MAX(created_at) FROM events e WHERE e.project_id=p.id) AS last_activity "
+                              "FROM projects p LEFT JOIN project_totals t ON t.project_id=p.id ORDER BY p.id DESC")
+        local.rows = {row['slug']:dict(row) for row in rows}
+        try:
+            yield rows
+        finally:
+            local.rows = previous
+
     def summary(self, slug: str) -> dict:
         """A project for the project list (the sidebar asks every 5 s, for every project): what it is and how far it
         got, from the database alone. It used to be each project's whole overview, a fork's files included, and with
         agents at work the list took 2.5-3.7 s."""
-        proj = Network._project(self, slug)
+        batch = getattr(getattr(self, '_summary_local', None), 'rows', None)
+        proj = batch[slug] if batch is not None and slug in batch else Network._project(self, slug)
         cfg = self.cfg(proj)
-        agg = self.store.one(f"SELECT {PROGRESS_COLUMNS} FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = proj if batch is not None and slug in batch else self.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
+            ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes'), 0)
         console = self.console(proj)
         if cfg.get("kind") == "fork":
             about = {"kind": "fork", "origin": cfg.get("origin"), "version": cfg.get("version"),
@@ -133,9 +155,9 @@ class GuiMixin:
                 "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
                 "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
                 "set_aside_bytes": agg["set_aside_bytes"] or 0,
-                "last_activity": self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?",
-                                                proj["id"])["t"],
-                "room": (self._room_info(slug) or {}).get("role"),
+                "last_activity": proj['last_activity'] if batch is not None and slug in batch else self.store.one(
+                    "SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj['id'])['t'],
+                "room": 'guest' if slug in self.links else 'host' if slug in self.rooms else None,
                 "autopilot": (self.autopilots.get(slug) or {}).get("state") or ("done" if cfg.get("autopilot") else None),
                 "progress_error": self.progress.errors.get(slug)} | about
 
@@ -166,17 +188,8 @@ class GuiMixin:
         from ..function_names import state as name_state
         from ..history_summary import summary as history_summary
         recency = history_summary(self.store, proj['id'])['recency']
-        # Exact target bytes, independent of whether either project has matching C.
-        # Read only targets, not attempts/source; compare within the same processor and byte order.
-        peers = self.store.all(
-            f"SELECT f.id,f.project_id,f.target FROM functions f JOIN projects p ON p.id=f.project_id "
-            f"WHERE p.arch=? AND p.big_endian=? AND f.{IN_BUILD} AND length(f.target)>0",
-            proj['arch'], proj['big_endian'])
-        owners = {}
-        for peer in peers:
-            owners.setdefault(peer['target'], set()).add(peer['project_id'])
-        cross_project = {peer['id'] for peer in peers if peer['project_id'] == proj['id']
-                         and len(owners[peer['target']]) > 1}
+        from ..view_snapshots import cross_project_ids
+        cross_project = cross_project_ids(self, proj)
         sdk = self.sdk_functions(proj)
         return [{"cross_project": r["id"] in cross_project, **name_state(r), **{k: recency.get(r["id"], {}).get(k) for k in ("last_checked", "last_improved")}, "sdk": sdk.get(r["id"]), "name": r["name"], "vram": r["vram"], "size": r["size"], "insns": r["n_insns"], "unit": r["unit"],
                  "status": r["status"] if r["status"] in ("matched", "asm") else "working" if (r["agent"] or key(r) in remote) else "open",
@@ -216,20 +229,15 @@ class GuiMixin:
                 for r in cfg.get("compiler_ranges", [])]
 
     def map_signature(self, slug: str) -> str:
-        """What the function map shows, summed up: it changes when a function is added, matched, tried better,
-        polished or set aside. A few sums over indexed rows, so the GUI can ask "anything new?" every few seconds
-        without fetching tens of thousands of functions (renames and splits come with events, which refetch anyway).
-        Not the claims or how many attempts: the live poll brings both every second and the GUI applies them; with them
-        here, agents at work changed it every few seconds and a big game's whole map (3 MB) came again each time."""
+        """Constant-time map/layout revisions, changed by committed edits rather than repeated table scans.
+
+        Claims and attempts stay on the incremental live feed; names, metadata, target and build-membership
+        edits invalidate the snapshot even when aggregate totals happen to remain identical.
+        """
         proj = self._project(slug)
-        f = self.store.one("SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS hi, "
-                           "COALESCE(SUM(status='matched'), 0) AS m, COALESCE(SUM(best_score), 0) AS bs, "
-                           "COALESCE(MAX(matched_at), 0) AS ma, COALESCE(SUM(readable), 0) AS rd, "
-                           "COALESCE(SUM(status='asm'), 0) AS sa FROM functions WHERE project_id=?", proj["id"])
-        peers = self.store.all("SELECT p.id,COUNT(f.id) AS n,MAX(f.id) AS hi FROM projects p "
-                               "LEFT JOIN functions f ON f.project_id=p.id GROUP BY p.id ORDER BY p.id")
-        cross_stamp = hashlib.sha1(repr([tuple(r) for r in peers]).encode()).hexdigest()[:12]
-        return f"{cross_stamp}.{f['n']}.{f['hi']}.{f['m']}.{f['bs']}.{f['ma']}.{f['rd']}.{f['sa']}"
+        revision = self.store.one("SELECT map_revision FROM project_totals WHERE project_id=?", proj['id'])
+        layout = self.store.one("SELECT revision FROM layout_revision WHERE id=1")['revision']
+        return f"{proj['id']}.{layout}.{revision['map_revision'] if revision else 'empty'}"
 
     def function_diff(self, slug: str, name: str, which: str = "latest") -> dict:
         """The target next to an attempt, instruction by instruction, for the GUI: the matched C, else the latest
@@ -419,11 +427,19 @@ class GuiMixin:
             "JOIN functions f ON f.id=c.function_id JOIN agents a ON a.id=c.agent_id WHERE f.project_id=?", proj["id"])
         claims = [dict(c) for c in claims]
         if slug in self.links:
-            for c in self.links[slug].claims:
-                row = self.store.one("SELECT name, n_insns, best_score, attempts FROM functions WHERE project_id=? AND vram=?",
-                                     proj["id"], c["vram"])
-                if row:
-                    claims.append(dict(row) | {"agent": "@" + c["agent"], "claimed_at": None})
+            link = self.links[slug]
+            key = 'name' if link.fork else 'vram'
+            remote = link.claims
+            if remote:
+                rows = self.store.all(f"SELECT name,n_insns,best_score,attempts,{key} AS lookup FROM functions "
+                                      f"WHERE project_id=? AND {key} IN (SELECT value FROM json_each(?)) ORDER BY id",
+                                      proj['id'],json.dumps([c[key] for c in remote]))
+                by_key = {}
+                for row in rows:
+                    by_key.setdefault(row['lookup'], {k:row[k] for k in ('name','n_insns','best_score','attempts')})
+                for claim in remote:
+                    if row := by_key.get(claim[key]):
+                        claims.append(row | {'agent':'@'+claim['agent'],'claimed_at':None})
         # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
         return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
                 "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug, room_members=False)}

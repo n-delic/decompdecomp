@@ -1,5 +1,11 @@
 # Roadmap
 
+Implemented: transactional project progress rollups for ROM/imported projects; batched sidebar and
+room claim reads; bounded overview/map/cross-project snapshots; changed-row map transfers; separate
+lightweight UI capacity and a reserved foreground compiler slot. Simultaneous deterministic sandboxed
+ROM compiles share only the compilation; linking, judging, attribution and persistence remain per request.
+Private diagnostic/cancellation and custom filesystem compilation paths are not shared.
+
 Implemented: bounded matched callback-owner discovery across selected/saved MIPS ROM source,
 private-header declaration renaming during repository sync, and separately verified supplied
 assembly through installed ROM compiler drivers. Source proofs retain provenance but are

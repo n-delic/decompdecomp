@@ -515,6 +515,26 @@ cleared; disabling access on the host cannot erase a disconnected phone. Sign-in
 uploads are not cached. Browser storage is bounded and may also be cleared by the operating system. A normal
 desktop app window does not register the service worker or store these browser snapshots.
 
+## Responsiveness with many projects
+
+Project progress totals are maintained transactionally as functions change, so sidebar polls read
+small saved summaries instead of rescanning every function. The sidebar batches its project reads.
+Overview diagnostics and cross-project byte identity use bounded local snapshots; relevant edits
+invalidate them. No Cloudflare cache is involved.
+
+Map refreshes reuse unchanged snapshots and transfer only changed rows when the layout is stable.
+Renames, splits, removed functions and missing snapshots fall back to a complete map. Live claims and
+attempts remain incremental. Sidebar and live requests have capacity separate from heavier detail reads;
+background compiler jobs leave one compiler slot available to foreground work.
+
+Simultaneous identical sandboxed ROM compilation requests can share one compiler invocation. The key
+includes project/function/target identity, compiler settings, environment and staged header contents.
+Every request still links, judges and records independently. Later requests compile again; custom
+commands/mounts/includes, explicit cancellation, diagnostics capture and time-dependent macros retain
+private invocations. Imported project builds retain their normal build locks and verification.
+
+See [the performance measurements](docs/APP_PERFORMANCE.md) for the synthetic benchmark and checks.
+
 ## Run without a desktop window
 
 ```sh

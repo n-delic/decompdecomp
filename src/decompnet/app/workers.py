@@ -46,6 +46,8 @@ _lock = threading.Lock()
 
 def lower_priority() -> None:
     """Lower only this worker, without lowering the GUI or the agent threads beside it."""
+    from ..compiler import background_thread
+    background_thread()
     if os.name == "nt":
         import ctypes
 

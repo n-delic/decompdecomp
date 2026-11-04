@@ -639,6 +639,12 @@ class Network:
         if fn is not None and cfg.get("compiler_ranges"):
             cfg = {**cfg, "compiler": compiler_for(cfg, fn["vram"])}
         invocation = compiler_config(Path(proj["root"]), cfg)
+        identity = dict(fn) if fn is not None else {}
+        c = cfg['compiler']
+        if 'toolchain' in c and not c.get('ro_paths') and not any(
+                flag.startswith(('-I','-include','-imacros','/I','/FI')) for flag in c.get('flags',[])):
+            invocation.identity = (proj['id'], proj['root'], proj['config'],
+                                   *(identity.get(k) for k in ('id','name','vram','meta','target','relocs')))
         result = compile_source(invocation, header, source)
         result.effective_settings = {'compiler':cfg['compiler'], 'effective_command':list(invocation.cmd),
                                      'language':getattr(result,'language','unknown'), 'settings_source':'compile invocation snapshot'}

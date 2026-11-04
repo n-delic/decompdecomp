@@ -44,10 +44,8 @@ from ..forks.project import EDITABLE, GAME, PROGRAM, SCOPES, STATE, ForkError, F
 from ..hostenv import NO_WINDOW
 from ..network import (
     GAME_CODE,
-    IN_BUILD,
     NOT_C_AGENTS,
     NOT_C_MODELS,
-    PROGRESS_COLUMNS,
     Agent,
     Network,
     NetworkError,
@@ -4002,8 +4000,8 @@ class ForkEngine:
         proj, fp, cfg = self.get(slug)
         if cfg.get("ready"):
             self._preflight_once(slug)
-        agg = self.net.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
-                                 f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
+        agg = self.net.store.one("SELECT * FROM project_totals WHERE project_id=?", proj["id"]) or dict.fromkeys(
+            ('total','matched','bytes','matched_bytes','set_aside','set_aside_bytes','attempts'),0)
         m = cfg.get("measures") or {}
         need = fp.needs(cfg.get("version")) if not cfg.get("ready") else None
         return {

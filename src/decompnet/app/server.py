@@ -234,12 +234,20 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
             return {}
 
     ui_limiter = anyio.CapacityLimiter(4)
+    fast_limiter = anyio.CapacityLimiter(2)
 
     async def ui_call(fn, *args):
         def snapshot():
             with net.progress.view():
                 return fn(*args)
         return await anyio.to_thread.run_sync(snapshot, limiter=ui_limiter)
+
+    async def fast_call(fn, *args):
+        # Sidebar and live counters must not wait behind four expensive function/diff requests.
+        def snapshot():
+            with net.progress.view():
+                return fn(*args)
+        return await anyio.to_thread.run_sync(snapshot, limiter=fast_limiter)
 
     async def call(fn, *args):
         return await anyio.to_thread.run_sync(fn, *args)
@@ -255,7 +263,7 @@ def build(net: RomNetwork, home: Path, port: int, secret: str, *, headless: bool
     # the app's parts add their routes (routes/__init__.py says which is where); forks come after state and projects,
     # whose autopilot and with_project they use
     app = routes.App(net, mcp, home, port, secret, mcp_url, build_id, manager, jobs, settings, allowed_hosts,
-                     guard, body, call, fail, ui_call=ui_call, updater=updates.Updater(before_restart, port, secret),
+                     guard, body, call, fail, ui_call=ui_call, fast_call=fast_call, updater=updates.Updater(before_restart, port, secret),
                      busy=busy, quit_app=quit_app, web_login=net.web_login, headless=headless)
     from . import web_login
     web_login.register(app)

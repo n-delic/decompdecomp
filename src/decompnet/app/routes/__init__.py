@@ -48,6 +48,7 @@ class App:
     call: Callable[..., Any]  # await call(fn, *args): fn run in a thread
     fail: Callable[..., Any]  # fail(error, code=400): the error as JSON
     ui_call: Callable[..., Any] | None = None  # reserved capacity for snapshot-only UI reads
+    fast_call: Callable[..., Any] | None = None  # lightweight counters, isolated from diff/map work
     updater: updates.Updater | None = None
     busy: Callable[[], bool] | None = None  # whether helpers or a job are working
     quit_app: Callable[[], None] | None = None  # quit: the window, every helper, the server

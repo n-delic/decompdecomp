@@ -46,7 +46,8 @@ def register(app: App) -> None:
                     if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
-                return JSONResponse(await ((app.ui_call or call) if request.method == "GET" else call)(perform))
+                reader = app.fast_call if request.url.path == '/api/live' else app.ui_call
+                return JSONResponse(await ((reader or call) if request.method == "GET" else call)(perform))
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
             finally:

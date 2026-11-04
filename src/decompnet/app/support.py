@@ -133,6 +133,8 @@ class Jobs:
         def run():
             job["thread_id"] = threading.get_native_id()
             try:
+                from ..compiler import background_thread
+                background_thread()
                 result = fn(log)
                 with self._lock:
                     check_cancel()

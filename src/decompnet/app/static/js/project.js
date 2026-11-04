@@ -146,10 +146,24 @@ document.querySelectorAll("[data-goto]").forEach((a) => {
 async function refreshMap(force = true, prefetched = null) {
   const slug = S.slug, gen = S.gen;
   const request = S.mapRequestToken = (S.mapRequestToken || 0) + 1;
-  const data = await (prefetched || api(`/api/map?slug=${slug}${!force && S.mapSig ? `&since=${encodeURIComponent(S.mapSig)}` : ""}`));
+  const data = await (prefetched || api(`/api/map?slug=${slug}${!force && S.mapSig ? `&since=${encodeURIComponent(S.mapSig)}&delta=1` : ""}`));
   if (slug !== S.slug || gen !== S.gen || request !== S.mapRequestToken) return;
   S.lastMapFetch = Date.now();
   if (data.same) return;
+  if (data.delta) {
+    if (data.base !== S.mapSig) return refreshMap(true);
+    for (const [index, row] of data.delta) {
+      const f = S.map[index];
+      if (!f) return refreshMap(true);
+      data.keys.forEach((key, i) => { f[key] = row[i]; });
+      mapChanged(index);
+    }
+    S.mapSig = data.sig;
+    applyClaims(false);
+    if (S.tab === "overview") drawMap();
+    renderList(); renderProgress(); renderOverview();
+    return;
+  }
   S.mapSig = data.sig;
   const was = new Map(S.map.map((f) => [f.vram, f]));  // its compiler colours until loadMapColumns brings new ones
   S.map = data.rows.map((r) => {

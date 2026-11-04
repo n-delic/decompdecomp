@@ -207,8 +207,9 @@ def test_the_project_list_and_page_count_from_indexes_not_every_functions_row(tm
     net.map_signature("game")
     plans = {sql: [row[3] for row in net.store.conn.execute(f"EXPLAIN QUERY PLAN {sql}", args)]
              for sql, args in asked if (" functions" in sql or " events" in sql)
-             and not sql.startswith("SELECT a.outcome")}  # donor detail reads names, not just counts
-    assert len(plans) >= 5
+             and not sql.startswith("SELECT a.outcome")
+             and "json_type(meta,'$.verified_assembly')" not in sql}  # donor detail reads names, not just counts
+    assert len(plans) >= 2  # Summary totals and map revisions no longer scan functions.
     for sql, plan in plans.items():
         steps = [step for step in plan if " functions" in step or " events" in step or " f " in step]
         assert steps and all("COVERING INDEX" in step for step in steps), (f"SQLite {sqlite3.sqlite_version}", sql, plan)
@@ -267,6 +268,9 @@ def test_the_counts_marks_follow_meta_and_come_to_an_older_database_once(tmp_pat
     marks = lambda s: {r["name"]: (r["aside_mark"], r["gone_mark"]) for r in s.all("SELECT * FROM functions")}  # noqa: E731
     assert marks(store) == {"lib": ("the C runtime", None), "own": (None, "1"), "odd": (None, None)}
     # a database from before the marks: its functions get theirs when it opens
+    for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'view_%'").fetchall():
+        store.conn.execute(f'DROP TRIGGER {row[0]}')
+    store.conn.execute('DROP TABLE project_totals')
     store.conn.executescript("DROP TRIGGER functions_marks_insert; DROP TRIGGER functions_marks_update; "
                              "DROP INDEX idx_functions_tally; ALTER TABLE functions DROP COLUMN aside_mark; "
                              "ALTER TABLE functions DROP COLUMN gone_mark")

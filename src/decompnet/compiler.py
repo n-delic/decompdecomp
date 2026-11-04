@@ -7,6 +7,7 @@ every match is produced here, on the coordinator, with the project's pinned tool
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import importlib
 import os
 import re
@@ -28,8 +29,33 @@ MAX_SOURCE_BYTES = 64 * 1024
 # concurrency cap, so a hostile submission can't take the host down with it.
 LIMITS = ["--as=2147483648", "--cpu=30", "--fsize=67108864"]
 _SLOTS = threading.BoundedSemaphore(max(2, (os.cpu_count() or 4) - 1))
+# Background jobs cannot occupy the last compiler slot needed by an interactive request.
+_BACKGROUND_SLOTS = threading.BoundedSemaphore(max(1, max(2, (os.cpu_count() or 4) - 1) - 1))
+_SCHEDULING = threading.local()
 _ARTIFACT_SINK = contextvars.ContextVar("compiler_artifact_sink", default=None)
 _CANCEL_CHECK = contextvars.ContextVar("compiler_cancel_check", default=None)
+
+
+def background_thread():
+    _SCHEDULING.background = True
+
+
+@contextmanager
+def _slot():
+    acquired = []
+    gates = ([_BACKGROUND_SLOTS] if getattr(_SCHEDULING, 'background', False) else []) + [_SLOTS]
+    try:
+        for gate in gates:
+            while not gate.acquire(timeout=0.1):
+                if check := _CANCEL_CHECK.get():
+                    check()
+            acquired.append(gate)
+        if check := _CANCEL_CHECK.get():
+            check()
+        yield
+    finally:
+        for gate in reversed(acquired):
+            gate.release()
 
 
 @contextmanager
@@ -96,6 +122,7 @@ class CompilerConfig:
     linux_vm: bool = False  # Linux-only compiler on macOS, isolated local VM jobs
     assembly_preprocess: tuple[str, ...] = ()
     assembly_compile: tuple[str, ...] = ()
+    identity: tuple | None = None  # coordinator's project/function/target snapshot; enables in-flight sharing
 
 
 @dataclass
@@ -242,13 +269,35 @@ def compile_source(cfg: CompilerConfig, context_header: str, source: str, truste
         # LF on every platform: to the old GCCs a backslash before CRLF doesn't continue a line ("stray '\' in program")
         (inc / "context.h").write_text(context_header, encoding="utf-8", newline="\n")
         root = _root(cfg, work)
-        result = _compile_as(cfg, work, root, source, "c")
-        # C++ for what doesn't compile as C (a class's method, new, templates): C stays C, so what matched as C
-        # still compiles exactly as it did (GTA San Andreas is C++; 1,222 of its functions matched as C)
-        if not result.ok and cfg.cplusplus and not result.log.startswith("compiler timed out") and "Compiler or build process exceeded" not in result.log:
-            cpp = _compile_as(cfg, work, root, source, "cpp")
-            if cpp.ok or _CPP.search(source):
-                result = cpp
+        def build():
+            result = _compile_as(cfg, work, root, source, "c")
+            # C++ for what doesn't compile as C (a class's method, new, templates): C stays C, so what matched as C
+            # still compiles exactly as it did (GTA San Andreas is C++; 1,222 of its functions matched as C)
+            if not result.ok and cfg.cplusplus and not result.log.startswith("compiler timed out") and "Compiler or build process exceeded" not in result.log:
+                cpp = _compile_as(cfg, work, root, source, "cpp")
+                if cpp.ok or _CPP.search(source):
+                    result = cpp
+            return result
+        # Capture the actual staged headers, configuration and environment, never a guessed source-only key.
+        # Explicit cancellation and artifact readers need their own process/private directory.
+        share = cfg.identity is not None and _ARTIFACT_SINK.get() is None and _CANCEL_CHECK.get() is None
+        staged = [(str(path.relative_to(inc)).encode(), path.read_bytes()) for path in sorted(inc.rglob('*')) if path.is_file()] if share else []
+        intrinsic = importlib.import_module(cfg.intrinsics).header().encode() if share and cfg.intrinsics else b''
+        inputs = [source.encode(), cfg.prelude.encode(), intrinsic, *(part for entry in staged for part in entry)]
+        if share and not any(word in part for part in inputs for word in (b'__TIME__',b'__DATE__',b'__TIMESTAMP__')):
+            from .compile_sharing import run as shared_compile
+            digest = hashlib.sha256(repr((cfg, sorted(os.environ.items()))).encode())
+            for part in inputs:
+                digest.update(len(part).to_bytes(8,'little'))
+                digest.update(part)
+            # Mutable custom tool executables cannot reuse a running invocation after replacement.
+            for arg in cfg.cmd:
+                if os.path.isabs(arg) and Path(arg).is_file():
+                    st = Path(arg).stat()
+                    digest.update(repr((arg, st.st_size, st.st_mtime_ns)).encode())
+            result = shared_compile(digest.digest(), build)
+        else:
+            result = build()
         if sink := _ARTIFACT_SINK.get():
             sink(work)
         return result
@@ -267,18 +316,9 @@ def _compile_as(cfg: CompilerConfig, work: Path, root: str, source: str, ext: st
     argv = [a.replace("{include}", subst["{include}"]) for a in argv]
     (work / "func.o").unlink(missing_ok=True)
     try:
-        # A restore must also be cancellable while other jobs occupy every compiler slot.
-        check = _CANCEL_CHECK.get()
-        while not _SLOTS.acquire(timeout=0.1):
-            if check:
-                check()
-        try:
-            if check:
-                check()
+        with _slot():
             proc = _exec(cfg, work, argv, cfg.timeout,
                          **({"outputs": ["func.o"], "stage": root} if _sandbox_mode(cfg) in ("wsl", "linux-vm") else {}))
-        finally:
-            _SLOTS.release()
     except subprocess.TimeoutExpired:
         return CompileResult(False, None, f"compiler timed out after {cfg.timeout}s")
     log = (proc.stdout + proc.stderr).replace(root + "/", "")
@@ -317,13 +357,8 @@ def compile_assembly(cfg: CompilerConfig, prelude: str, source: str) -> CompileR
                 if not pp and re.search(r'(?i)\.(?:include|incbin)\b',_COMMENTS_AND_STRINGS.sub(' ',(work/src).read_text())):
                     raise SourceRejected('Preprocessed assembly must not include files or binary data.')
                 args=argv(src,obj,pp)
-                check=_CANCEL_CHECK.get()
-                while not _SLOTS.acquire(timeout=0.1):
-                    if check:check()
-                try:
-                    if check:check()
+                with _slot():
                     proc=_exec(cfg,work,args,cfg.timeout,**({'inputs':[src],'outputs':[obj],'stage':root} if _sandbox_mode(cfg) in ('wsl','linux-vm') else {}))
-                finally:_SLOTS.release()
                 log=(proc.stdout+proc.stderr).replace(root+'/','')
                 # IDO writes -E output to stdout even with -o; GCC writes the file.
                 if pp and proc.returncode==0 and not (work/obj).is_file() and proc.stdout:
