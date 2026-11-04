@@ -624,16 +624,27 @@ setTimeout(() => checkUpdate(false, true), 4000);
 setInterval(() => checkUpdate(false, true), 10 * 60 * 1000);
 
 /* Manual clients have project-scoped credentials, independent of managed helper processes. */
-let manualMcpRead = 0;
+let manualMcpRead = 0, manualMcpProjectsRead = 0;
 async function loadManualMcp() {
   loadGlobalPrompts();
   loadGlobalAgentTools();
   const select = $("mcpProject"), previous = select.value;
-  select.innerHTML = S.projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join("");
-  if (S.projects.some(p => p.slug === previous)) select.value = previous;
+  select.innerHTML='<option value="">Loading projects…</option>';select.disabled=true;
+  const read=++manualMcpProjectsRead, log=$("mcpLog");
+  const done=beginWork(log,'Loading MCP projects');
+  $("mcpCreate").disabled=true;
+  let projects;
+  try { projects=await api('/api/projects?brief=1'); }
+  catch(error){if(read===manualMcpProjectsRead){select.innerHTML='<option value="">Could not load projects — try Refresh</option>';showJobError(log,error.message);}return;}
+  finally{done();}
+  if(read!==manualMcpProjectsRead)return;
+  select.innerHTML = projects.map(p => `<option value="${esc(p.slug)}">${esc(p.title || p.name || p.slug)}</option>`).join("");
+  select.disabled=!projects.length;
+  if(!projects.length)select.innerHTML='<option value="">No open projects</option>';
+  select.value=projects.some(p=>p.slug===previous) ? previous : projects[0]?.slug || "";
   $("mcpCreate").disabled = !select.value;
-  select.onchange = () => { $("mcpConfig").replaceChildren(); refreshManualMcp(); };
-  $("mcpRefresh").onclick = refreshManualMcp;
+  select.onchange = () => { $("mcpCreate").disabled=!select.value; $("mcpConfig").replaceChildren(); refreshManualMcp(); };
+  $("mcpRefresh").onclick = loadManualMcp;
   $("mcpCreate").onclick = async () => {
     const slug = select.value, button = $("mcpCreate"), log = $("mcpLog");
     const finish = beginWork(log, "Creating MCP connection", [], "Connection created.");
@@ -660,6 +671,7 @@ async function refreshManualMcp() {
     disclosureContext('agMcpContext', `${info.connections.length} connection${info.connections.length===1 ? '' : 's'} · local server`);
     $("mcpStatus").innerHTML = `<p><b>Running locally</b> · ${esc(info.transport)} · Port ${esc(port)}</p>${cmdBox(info.url)}<p class="small muted">Local clients only (127.0.0.1). No public endpoint or OAuth sign-in. Choose a project to see its tools.</p>`;
     wireCopies($("mcpStatus"));
+    if(!slug)$("mcpStatus").insertAdjacentHTML?.('beforeend','<p class="small muted">No projects are open. Add a project before creating an MCP connection.</p>');
     $("mcpToolCount").textContent = `(${info.tools.length})`;
     $("mcpTools").replaceChildren(toolCatalog(info.tools));
     $("mcpConnections").innerHTML = info.connections.length ? info.connections.map(c => `<div class="row mcp-connection"><code class="grow">${esc(c.name)} · ${esc(c.slug)}</code><button class="ghost small-btn" data-revoke-mcp="${c.id}" type="button">Revoke</button></div>`).join("") : `<p class="muted small">No manual connections yet.</p>`;

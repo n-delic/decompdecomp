@@ -6,8 +6,8 @@ const $=id=>{
   return elements.get(id);
 };
 let completed=0;
-const ctx=vm.createContext({$,URL,JSON,Number,S:{projects:[{slug:'game',name:'Game'}]},
-  loadGlobalPrompts:()=>{},
+const ctx=vm.createContext({$,URL,JSON,Number,S:{projects:[]},
+  disclosureContext:()=>{},loadGlobalPrompts:()=>{},
   loadGlobalAgentTools:()=>{},toolCatalog:tools=>tools,
   esc:s=>String(s).replaceAll('<','&lt;'),cmdBox:s=>String(s),wireCopies:()=>{},
   beginWork:()=>()=>{completed++;},showJobError:(log,error)=>{log.textContent=error;},
@@ -17,6 +17,11 @@ vm.runInContext(source.slice(source.indexOf('let manualMcpRead')),ctx);
 (async()=>{
   $('mcpProject').value='game';
   const load=ctx.loadManualMcp();
+  assert.equal(requests[0].url,'/api/projects?brief=1');
+  requests.shift().resolve([{slug:'game',name:'Game'}]);
+  for(let i=0;i<8;i++)await Promise.resolve();
+  assert.equal($('mcpProject').value,'game');
+  assert.match(requests[0].url,/slug=game/);
   requests[0].resolve({url:'http://127.0.0.1:6464/mcp',transport:'Streamable HTTP',tools:[{name:'<unsafe>',description:'<script>',inputSchema:{type:'object'}}],connections:[]});
   await load;
   assert.match($('mcpStatus').innerHTML,/6464/);
@@ -32,5 +37,5 @@ vm.runInContext(source.slice(source.indexOf('let manualMcpRead')),ctx);
   assert.equal($('mcpCreate').disabled,false);
   const failure=$('mcpCreate').onclick(); requests.at(-1).reject(Error('Cannot connect')); await failure;
   assert.equal($('mcpLog').textContent,'Cannot connect');
-  assert.equal($('mcpCreate').disabled,false); assert.equal(completed,4);
+  assert.equal($('mcpCreate').disabled,false); assert.equal(completed,5);
 })().catch(e=>{console.error(e);process.exitCode=1;});

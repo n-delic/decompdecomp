@@ -90,7 +90,11 @@ def register(app: App) -> None:
 
     @mcp.custom_route("/api/projects", methods=["GET"])
     async def api_projects(request: Request) -> Response:
-        return guard(request) or JSONResponse(await (app.ui_call or call)(project_list))
+        if (bad := guard(request)):
+            return bad
+        if request.query_params.get('brief') == '1':
+            return JSONResponse(await (app.ui_call or call)(lambda: [dict(r) for r in net.store.all("SELECT slug,name FROM projects ORDER BY id DESC")]))
+        return JSONResponse(await (app.ui_call or call)(project_list))
 
     @mcp.custom_route("/api/state", methods=["GET"])
     async def api_state(request: Request) -> Response:
@@ -192,9 +196,11 @@ def register(app: App) -> None:
                 item = await call(manual_mcp.create, net, settings, str(data.get('slug') or ''))
                 return JSONResponse({**item, 'url': mcp_url, 'instructions': prompt_settings.effective(net, {})['instructions']})
             slug = request.query_params.get('slug')
-            if slug:
-                await call(net.project_row, slug)
-            keep = set(tools.project_tools(net, slug)) if slug else set()
+            def project_tool_names():
+                if slug:
+                    net.project_row(slug)
+                return set(tools.project_tools(net, slug)) if slug else set()
+            keep = await (app.ui_call or call)(project_tool_names)
             definitions = await mcp.list_tools()
             return JSONResponse({'url': mcp_url, 'transport': 'Streamable HTTP',
                                  'connections': manual_mcp.connections(settings),
