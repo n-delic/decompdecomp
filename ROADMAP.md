@@ -2184,3 +2184,8 @@ only, with no guessed attribution of shared pools or compiler subprocesses.
 Completed: contributor statistics and function-map recency share revision-invalidated project history
 summaries, backed by a covering measurement index. Live updates reuse cached room statistics. Slow
 UI/database diagnostics identify the route/caller without recording private inputs.
+
+
+Completed: live agent metrics are scoped before querying, use narrow measurement-only history,
+refresh on project attempt revisions, and share concurrent refreshes. Helper-session billing lookups
+have a worker-specific index. Global agent views and reset/lifetime accounting remain available.

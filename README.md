@@ -1558,3 +1558,9 @@ The app log reports database reads taking at least 250 ms and project UI GET req
 500 ms (including worker queue time and response encoding). Messages are rate limited per query/route
 to once a minute. Database messages identify the caller and a query fingerprint; neither SQL bindings,
 SQL text nor URL query parameters are logged.
+
+
+Live agent cards calculate metrics only for the selected project. Their reset-aware history query
+reads measurement columns, never saved C source, and overlapping polls share one refresh. New
+attempts invalidate the cache immediately; a five-second refresh also picks up non-attempt changes
+such as polishing or restored match attribution. The global agents overview still covers all projects.

@@ -71,7 +71,7 @@ def register(app: App) -> None:
             since = json.loads(q.get("s") or "{}")
         except ValueError:
             since = {}
-        out["sessions"] = [s for s in manager.snapshot(since) if s["slug"] == slug]
+        out["sessions"] = manager.snapshot(since, project=slug)
         return out
 
     def p_transcript(slug, request, data):

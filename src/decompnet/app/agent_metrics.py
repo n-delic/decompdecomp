@@ -11,7 +11,7 @@ def results(net, slug, sessions):
     placeholders = ','.join('(?,?)' for _ in boundaries)
     rows = net.store.all(
         f'WITH boundary(agent,after_id) AS (VALUES {placeholders}), history AS ('
-        'SELECT t.*,f.n_insns,f.status,f.matched_agent_id, '
+        'SELECT t.id,t.function_id,t.agent_id,t.score,t.compiled,t.created_at,f.n_insns,f.status,f.matched_agent_id, '
         'MIN(CASE WHEN t.compiled THEN t.score END) OVER (PARTITION BY t.function_id ORDER BY t.id '
         'ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous '
         'FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) '

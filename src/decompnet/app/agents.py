@@ -166,6 +166,7 @@ SCHEMA = (
       turns INTEGER NOT NULL DEFAULT 0, tool_calls INTEGER NOT NULL DEFAULT 0, compiles INTEGER NOT NULL DEFAULT 0,
       matches INTEGER NOT NULL DEFAULT 0, task TEXT NOT NULL DEFAULT '')""",
     "CREATE INDEX IF NOT EXISTS idx_helper_sessions_model ON helper_sessions(project, model)",
+    "CREATE INDEX IF NOT EXISTS idx_helper_sessions_worker ON helper_sessions(helper_id,agent,ended_at)",
 )
 TOKEN_KINDS = ("input", "output", "cache_read", "cache_write")  # what agents report, as `usage` items say it
 # A model spinning on a project: in the last SPIN_WINDOW its helpers compiled at least SPIN_COMPILES times, and either
@@ -543,6 +544,7 @@ class Manager:
         self.sessions: dict[str, Session] = {}
         self.assignments: dict[int, str] = {}  # agent id -> project slug
         self._lock = threading.RLock()
+        self._metrics_locks = {}
         self._prep: dict[str, threading.Event] = {}  # slug -> giving its code source files before agents claim
         self._found: list[dict] | None = None  # the agents installed, as last found (detected)
         self._finding: threading.Thread | None = None
@@ -994,20 +996,27 @@ class Manager:
         from .agent_metrics import reset
         reset(self, sid)
 
-    def snapshot(self, since: dict | None = None) -> list[dict]:
+    def snapshot(self, since: dict | None = None, *, project: str | None = None) -> list[dict]:
         from .agent_metrics import results
         since = since or {}
-        cache = getattr(self, '_metrics_cache', {})
-        sessions = list(self.sessions.values())
+        sessions = [s for s in list(self.sessions.values()) if project is None or s.slug == project]
         board = {}
         for slug in {s.slug for s in sessions}:
-            key = tuple(s.id for s in sessions if s.slug == slug)
-            old = cache.get(slug)
-            if old is None or old[0] != key or time.monotonic() - old[1] > 5:
-                old = (key, time.monotonic(), results(self.net, slug, [s for s in sessions if s.slug == slug]))
-                cache[slug] = old
-            board.update(old[2])
-        self._metrics_cache = cache
+            selected = [s for s in sessions if s.slug == slug]
+            # A global overview and a project poll can overlap. Share one refresh per project.
+            with self._metrics_locks.setdefault(slug, threading.RLock()):
+                cache = getattr(self, '_metrics_cache', {})
+                key = tuple((s.id, s.agent_name, s.options.get('_metrics', {}).get('attempt', 0),
+                             s.options.get('_metrics', {}).get('event', 0)) for s in selected)
+                pid = self.net.project_row(slug)['id']
+                revision = self.net.store.one('SELECT revision FROM history_revisions WHERE project_id=?', pid)
+                signature = revision['revision'] if revision else 0
+                old = cache.get(slug)
+                if old is None or old[0] != (key, signature) or time.monotonic() - old[1] > 5:
+                    old = ((key, signature), time.monotonic(), results(self.net, slug, selected))
+                    cache[slug] = old
+                board.update(old[2])
+                self._metrics_cache = cache
         out = []
         for s in sessions:
             row = s.snapshot(int(since.get(s.id, 0)))
