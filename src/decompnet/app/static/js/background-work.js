@@ -11,12 +11,32 @@ function renderBackgroundWork(data){
   $('backgroundThreads').textContent=data.threads.length.toLocaleString();
   $('backgroundCount').textContent=`— ${data.items.length} active jobs & services`;
   $('backgroundCpuNote').textContent=data.cpu_note;
-  backgroundThreadDetails=data.thread_details || data.threads.map(name=>({name,role:'Other',purpose:'Thread details unavailable; update the app.',cpu_state:'unavailable'}));
-  renderBackgroundThreads();
-  $('backgroundRows').innerHTML=data.items.length ? `<div class="background-table"><table><thead><tr><th>Work</th><th>Project</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.items.map((item,index)=>`<tr><td><b>${esc(item.title)}</b><div class="small muted">${esc(item.detail)}</div></td><td>${item.project ? `<a href="#/p/${encodeURIComponent(item.project)}/settings">${esc(item.project)}</a>` : 'App'}</td><td>${esc(item.state)}</td><td>${item.stoppable ? `<button class="ghost small-btn" type="button" data-stop-background="${index}"${item.state==='stopping' ? ' disabled' : ''}>${item.state==='stopping' ? 'Stopping…' : 'Stop'}</button>` : (item.project ? `<a class="small" href="#/p/${encodeURIComponent(item.project)}/settings">Project controls</a>` : '<span class="small muted">Read only</span>')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No tracked background work is active.</p>';
+  backgroundThreadDetails=mergeBackgroundActivity(data);
+  renderBackgroundActivity();
+}
+function mergeBackgroundActivity(data){
+  const threads=data.thread_details || data.threads.map(name=>({name,role:'Other',purpose:'Thread details unavailable; update the app.',cpu_state:'unavailable'}));
+  const used=new Set(), rows=[];
+  for(const item of data.items){
+    const associated=threads.filter(t=>t.native_id!=null && (item.thread_ids || []).includes(t.native_id) && !used.has(t.native_id));
+    associated.forEach(t=>used.add(t.native_id));
+    const complete=associated.length && associated.every(t=>t.cpu_percent!=null);
+    rows.push({...item,role:item.title,threads:associated,cpu_percent:complete ? associated.reduce((n,t)=>n+t.cpu_percent,0) : null,
+      cpu_state:complete ? 'measured' : associated.some(t=>t.cpu_state==='measuring') ? 'measuring' : 'unavailable'});
+  }
+  for(const thread of threads){
+    if(thread.native_id!=null && used.has(thread.native_id))continue;
+    rows.push({title:thread.name,role:thread.role,detail:thread.purpose,threads:[thread],cpu_percent:thread.cpu_percent,cpu_state:thread.cpu_state,state:'thread',stoppable:false,threadOnly:true});
+  }
+  return rows;
+}
+function renderBackgroundActivity(){
+  const sort=$('backgroundThreadSort').value;
+  const rows=[...backgroundThreadDetails].sort((a,b)=>sort==='name' ? a.title.localeCompare(b.title) : sort==='role' ? a.role.localeCompare(b.role) || a.title.localeCompare(b.title) : (b.cpu_percent ?? -1)-(a.cpu_percent ?? -1) || a.title.localeCompare(b.title));
+  $('backgroundRows').innerHTML=rows.length ? `<div class="background-table"><table><thead><tr><th>Work / thread</th><th>Purpose &amp; threads</th><th>Project</th><th>Status</th><th>CPU</th><th>Action</th></tr></thead><tbody>${rows.map((item,index)=>`<tr><td><b>${esc(item.title)}</b></td><td>${item.threadOnly ? `<b>${esc(item.role)}</b>` : ''}<div class="small muted">${esc(item.detail)}</div>${item.threads.map(t=>`<div class="small mono">${item.threadOnly ? '' : esc(t.name)+' · '}ID ${esc(String(t.native_id ?? 'unavailable'))}</div>${!item.threadOnly && t.purpose ? `<div class="small muted">${esc(t.purpose)}</div>` : ''}`).join('')}</td><td>${item.project ? `<a href="#/p/${encodeURIComponent(item.project)}/settings">${esc(item.project)}</a>` : 'App'}</td><td>${esc(item.state)}</td><td class="thread-cpu">${item.cpu_percent!=null ? `${item.cpu_percent.toFixed(1)}%` : item.cpu_state==='measuring' ? 'Measuring…' : 'Unavailable'}${!item.threadOnly && item.threads.length ? '<div class="small muted">Listed threads</div>' : ''}</td><td>${item.stoppable ? `<button class="ghost small-btn" type="button" data-stop-background="${index}"${item.state==='stopping' ? ' disabled' : ''}>${item.state==='stopping' ? 'Stopping…' : 'Stop'}</button>` : item.threadOnly ? '<span class="small muted">Read only</span>' : (item.project ? `<a class="small" href="#/p/${encodeURIComponent(item.project)}/settings">Project controls</a>` : '<span class="small muted">Read only</span>')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">No background work or Python-managed threads are visible.</p>';
   $('backgroundRows').querySelectorAll('[data-stop-background]').forEach(button=>{
     button.onclick=async()=>{
-      const item=data.items[Number(button.dataset.stopBackground)];button.disabled=true;
+      const item=rows[Number(button.dataset.stopBackground)];button.disabled=true;
       const finish=beginWork($('backgroundWorkStatus'),'Requesting stop',[],'Stop requested. Saved work is kept.');
       try{await api('/api/background-work',{method:'POST',body:{kind:item.kind,key:item.key}});await readBackgroundWork();}
       catch(error){showJobError($('backgroundWorkStatus'),error.message);button.disabled=false;}
@@ -24,10 +44,11 @@ function renderBackgroundWork(data){
     };
   });
 }
+
 async function readBackgroundWork(){
   if(backgroundReading || $('backgroundPage').hidden || document.hidden)return;
   backgroundReading=true;
-  const finish=backgroundReady ? ()=>{} : beginWork($('backgroundWorkStatus'),'Reading background work');
+  const finish=backgroundReady ? ()=>{} : beginWork($('backgroundWorkStatus'),'Reading background work',[],'Activity refreshed.');
   try{
     const data=await api('/api/background-work');
     if(!$('backgroundPage').hidden){renderBackgroundWork(data);backgroundReady=true;}
@@ -45,9 +66,4 @@ $('backgroundLimitSave').onclick=async()=>{
 };
 setInterval(readBackgroundWork,3000);
 
-function renderBackgroundThreads(){
-  const sort=$('backgroundThreadSort').value;
-  const rows=[...backgroundThreadDetails].sort((a,b)=>sort==='name' ? a.name.localeCompare(b.name) : sort==='role' ? a.role.localeCompare(b.role) || a.name.localeCompare(b.name) : (b.cpu_percent ?? -1)-(a.cpu_percent ?? -1) || a.name.localeCompare(b.name));
-  $('backgroundThreadNames').innerHTML=`<table><thead><tr><th>Thread</th><th>Purpose</th><th>CPU</th></tr></thead><tbody>${rows.map(t=>`<tr><td><code>${esc(t.name)}</code><div class="small muted">${t.native_id ? `ID ${esc(String(t.native_id))}` : 'No native thread ID'}</div></td><td><b>${esc(t.role)}</b><div class="small muted">${esc(t.purpose)}</div></td><td class="thread-cpu">${t.cpu_percent!=null ? `${t.cpu_percent.toFixed(1)}%` : t.cpu_state==='measuring' ? 'Measuring…' : 'Unavailable'}</td></tr>`).join('')}</tbody></table>`;
-}
-$('backgroundThreadSort').onchange=renderBackgroundThreads;
+$('backgroundThreadSort').onchange=renderBackgroundActivity;

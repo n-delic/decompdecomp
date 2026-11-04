@@ -131,6 +131,7 @@ class Jobs:
         log.cancel_event = cancel
 
         def run():
+            job["thread_id"] = threading.get_native_id()
             try:
                 result = fn(log)
                 with self._lock:

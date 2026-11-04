@@ -1591,8 +1591,11 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .background-table td .small { margin-top:5px; max-width:65ch; overflow-wrap:anywhere; }
 
 .background-thread-sort { max-width:220px; margin:14px 0; }
-#backgroundThreadNames { margin-top:10px; }
-#backgroundThreadNames table { min-width:620px; }
-#backgroundThreadNames td:first-child { min-width:190px; }
-#backgroundThreadNames code { background:transparent; padding:0; overflow-wrap:anywhere; }
 .thread-cpu { min-width:100px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.background-table table { table-layout:fixed; min-width:1100px; }
+.background-table th:nth-child(1) { width:20%; }
+.background-table th:nth-child(2) { width:34%; }
+.background-table th:nth-child(3) { width:14%; }
+.background-table th:nth-child(4), .background-table th:nth-child(5) { width:10%; }
+.background-table th:nth-child(6) { width:12%; }
+.background-table td:first-child b, .background-table .mono { overflow-wrap:anywhere; }

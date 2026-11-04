@@ -10,7 +10,13 @@ vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/background-work.js'
  resolve({cpu_percent:125.5,threads:['worker'],cpu_note:'Process only',items:[{title:'<unsafe>',state:'running',kind:'job',key:'x',stoppable:true,detail:'Checking'}]});await p;
  assert.equal($('backgroundCpu').textContent,'125.5%');assert.match($('backgroundRows').innerHTML,/&lt;unsafe>/);assert.match($('backgroundRows').innerHTML,/Stop/);
  ctx.renderBackgroundWork({cpu_percent:0,threads:['x'],cpu_note:'',thread_details:[{name:'<thread>',native_id:1,role:'Server',purpose:'<purpose>',cpu_percent:12.5,cpu_state:'measured'},{name:'pending',role:'Other',purpose:'',cpu_percent:null,cpu_state:'measuring'}],items:[]});
- assert.match($('backgroundThreadNames').innerHTML,/12.5%/);assert.match($('backgroundThreadNames').innerHTML,/Measuring…/);assert.match($('backgroundThreadNames').innerHTML,/&lt;thread>/);
+ assert.match($('backgroundRows').innerHTML,/12.5%/);assert.match($('backgroundRows').innerHTML,/Measuring…/);assert.match($('backgroundRows').innerHTML,/&lt;thread>/);
+ const merged=ctx.mergeBackgroundActivity({threads:[],items:[{title:'Search',kind:'job',key:'j',thread_ids:[1],stoppable:true}],thread_details:[{name:'coordinator',native_id:1,cpu_percent:2,cpu_state:'measured'},{name:'pool',native_id:2,cpu_percent:30,cpu_state:'measured'}]});
+ assert.equal(merged.length,2);assert.equal(merged[0].cpu_percent,2);assert.equal(merged[0].threads[0].name,'coordinator');assert.equal(merged[1].title,'pool');assert.equal(merged[1].stoppable,false);
+ const unavailable=ctx.mergeBackgroundActivity({threads:[],items:[{title:'No mapping',thread_ids:[]}],thread_details:[]});assert.equal(unavailable[0].cpu_percent,null);
+ const stopButton={dataset:{stopBackground:'0'}};$('backgroundRows').querySelectorAll=()=>[stopButton];
+ ctx.renderBackgroundWork({cpu_percent:0,threads:[],cpu_note:'',items:[{title:'Lower CPU',kind:'job',key:'low',thread_ids:[10],stoppable:true},{title:'Higher CPU',kind:'job',key:'high',thread_ids:[11],stoppable:true}],thread_details:[{name:'low-thread',native_id:10,cpu_percent:1},{name:'high-thread',native_id:11,cpu_percent:20}]});
+ let stopped;ctx.document.hidden=true;ctx.api=async(url,options)=>{stopped=options.body.key;};await stopButton.onclick();assert.equal(stopped,'high');
  ctx.document.hidden=true;await ctx.readBackgroundWork();assert.equal(reads,1);
  console.log('background visibility, request deduplication and escaping passed');
 })().catch(e=>{console.error(e);process.exitCode=1;});

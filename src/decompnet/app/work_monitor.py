@@ -68,6 +68,29 @@ class Monitor:
                 if state.get('state') == 'running':
                     add('service',f'survey:{label}:{slug}',label,'running',slug,'No safe stop available for this automatic check',False)
         thread_details = self.thread_sampler.snapshot()
+        claimed = set()
+        for row in rows:
+            kind, key = row['kind'], row['key']
+            ids, names = [], []
+            if kind == 'job':
+                job = self.jobs.jobs.get(key, {})
+                ids = [job.get('thread_id')]
+            elif kind == 'agent':
+                thread = getattr(self.manager.sessions.get(key), 'thread', None)
+                ids = [getattr(thread, 'native_id', None)]
+            elif kind in ('drafter','permuter','twins','autopilot'):
+                names = [f"{'drafts' if kind == 'drafter' else kind}-{key}"]
+            elif kind == 'service' and key.startswith('links:'):
+                slug = key.partition(':')[2]
+                names = [f'link-{slug}', f'room-heartbeat-{slug}']
+            # Named controllers have one thread per project. Ambiguous names stay separate.
+            for name in names:
+                matches = [t for t in thread_details if t['name'] == name]
+                if len(matches) == 1:
+                    ids.append(matches[0]['native_id'])
+            row['thread_ids'] = [t['native_id'] for t in thread_details
+                                 if t['native_id'] is not None and t['native_id'] in ids and t['native_id'] not in claimed]
+            claimed.update(row['thread_ids'])
         threads = [t['name'] for t in thread_details]
         return dict(items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads, thread_details=thread_details,
                     workers=workers.WORKERS, default_workers=workers.default_workers(),

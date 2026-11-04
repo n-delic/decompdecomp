@@ -2167,3 +2167,9 @@ by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO
 uses /proc/self/task counters. First observations show Measuring; unsupported/failed reads show
 Unavailable. Metrics exclude compiler subprocesses and do not attribute shared pool work to
 individual jobs. Windows per-thread counters remain planned work.
+
+Background activity and thread details now share one CPU-sortable table. GUI jobs record their
+native thread ID; agents use their worker thread, and unique project-controller/room thread
+names are associated where reliable. Associated threads appear once on their work row; shared,
+unknown and ambiguous threads remain separate read-only rows. CPU totals cover listed threads
+only, with no guessed attribution of shared pools or compiler subprocesses.

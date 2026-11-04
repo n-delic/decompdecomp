@@ -51,3 +51,33 @@ def test_jobs_stop_requested_not_claimed_finished():
     assert event.is_set()
     assert m.jobs.jobs['j']['state']=='running'
     assert next(x for x in m.snapshot()['items'] if x['kind']=='job')['state']=='stopping'
+
+
+def test_thread_association_keeps_shared_pool_and_ambiguous_names_separate():
+    m,_=monitor()
+    m.jobs.jobs['j']={'state':'running','kind':'Search','thread_id':20}
+    m.thread_sampler.snapshot=lambda:[
+        {'name':'drafts-game','native_id':10}, {'name':'job-Search','native_id':20},
+        {'name':'background-worker_0','native_id':30}]
+    rows=m.snapshot()['items']
+    assert next(r for r in rows if r['kind']=='job')['thread_ids']==[20]
+    assert next(r for r in rows if r['kind']=='drafter')['thread_ids']==[10]
+    assert all(30 not in r['thread_ids'] for r in rows)
+    m.thread_sampler.snapshot=lambda:[{'name':'drafts-game','native_id':10},{'name':'drafts-game','native_id':11}]
+    assert next(r for r in m.snapshot()['items'] if r['kind']=='drafter')['thread_ids']==[]
+
+
+def test_gui_job_records_its_actual_native_thread():
+    m,_=monitor()
+    started,release=threading.Event(),threading.Event()
+    seen=[]
+    def work(log):
+        seen.append(threading.get_native_id())
+        started.set()
+        release.wait(3)
+    jid=m.jobs.start('thread registration',work)
+    try:
+        assert started.wait(2)
+        assert m.jobs.jobs[jid]['thread_id']==seen[0]
+    finally:
+        release.set()
