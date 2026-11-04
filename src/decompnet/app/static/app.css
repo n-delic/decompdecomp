@@ -1491,3 +1491,39 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 .pwa-status:not([hidden]) { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .pwa-status span { flex:1; min-width:200px; }
+
+/* Give the function name its own row; actions must never squeeze it into a narrow column. */
+#drawer .drawer-head { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px 20px; align-items:start; }
+#drawer .dh-title { min-width:0; }
+#drawer .dh-title h2 { margin:6px 0; overflow-wrap:anywhere; line-height:1.3; }
+#drawer .dh-title .eyebrow { line-height:1.5; }
+#drawer .fn-header-navigation { grid-column:2; grid-row:1; }
+#drawer .fn-header-actions { grid-column:1 / -1; grid-row:2; flex-wrap:wrap; align-items:center; gap:8px; }
+#drawer .fn-header-actions .badge { margin-right:4px; }
+#drawer .fn-header-actions > * { max-width:100%; }
+#drawer .fn-header-actions #fnStatus { display:inline-flex; }
+#fnCompilerTest .collapsible-box-body { gap:16px; }
+#fnCurrentCompiler p { margin:0; }
+#fnCurrentCompiler .compiler-arguments { margin-top:8px; line-height:1.7; }
+#fnCompilerMatches .compiler-table table { min-width:740px; }
+#fnCompilerMatches .compiler-table td { overflow-wrap:normal; word-break:normal; line-height:1.6; }
+#fnCompilerMatches .compiler-table td:nth-child(2) { min-width:160px; }
+#fnCompilerMatches .compiler-table td:nth-child(3) { min-width:180px; }
+.fn-compiler-controls { display:flex; flex-wrap:wrap; align-items:center; gap:12px 20px; padding-top:4px; }
+.fn-compiler-controls .check { margin:0; border:0; padding:0; background:transparent; flex:1 1 260px; }
+#fnCompilerTest .fn-compiler-explainer { margin:0; max-width:78ch; }
+#fnCompilerHistory { margin:0; font-size:12px; }
+#fnCompilerSummary:empty { display:none; }
+#fnCompilerTest .more { margin:0; border-top:1px solid var(--line); padding-top:14px; }
+#fnCompilerTest .more > summary { color:var(--ink-2); font-size:12px; }
+#fnCompilerLog { margin-top:12px; line-height:1.7; white-space:pre-wrap; }
+@media (max-width:540px) {
+  #drawer .drawer-head { gap:12px; padding:16px; }
+  #drawer .dh-title h2 { font-size:20px; }
+  #drawer .fn-header-actions { gap:6px; }
+  #drawer .fn-header-actions #fnStatus { font-size:12px; padding:8px; }
+  .fn-compiler-controls { align-items:stretch; }
+  .fn-compiler-controls > button { width:100%; }
+}
+#fnCompilerTest .collapsible-box-body > * { min-width:0; max-width:100%; }
+#fnCompilerMatches { width:100%; overflow:hidden; }

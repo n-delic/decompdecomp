@@ -704,10 +704,12 @@
         <h2 id="fnName" class="mono"></h2>
         <p class="muted small" id="fnNaming" hidden></p>
       </div>
-      <div class="row">
+      <div class="row fn-header-actions">
         <span class="badge" id="fnStatus"></span><button class="ghost small-btn" id="fnClaimHandover" type="button" hidden>Let agents work on this</button>
         <button class="ghost small-btn pin" id="fnPin" type="button" title="Agents take this function next">★ Next</button>
         <button class="ghost small-btn" id="fnSetAside" type="button" hidden title="You know no C makes this function (hand-written assembly, a piece of another function): set it aside now, without waiting for agents to agree. It turns red, leaves agents' work and the percentage, and Give it back to the agents undoes it.">Set aside: no C makes it</button>
+      </div>
+      <div class="row fn-header-navigation">
         <button class="ghost icon" id="fnPrev" type="button" aria-label="Previous function" title="Previous function (K)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.3 2.7 11.4 3.8 7.2 8l4.2 4.2-1.1 1.1L5 8z"/></svg></button>
         <button class="ghost icon" id="fnNext" type="button" aria-label="Next function" title="Next function (J)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.7 2.7 4.6 3.8 8.8 8l-4.2 4.2 1.1 1.1L11 8z"/></svg></button>
         <button class="ghost icon" data-close type="button" aria-label="Close" title="Close (Esc)">✕</button>
@@ -719,9 +721,9 @@
       <p class="set-aside" id="fnAside" hidden><span id="fnAsideWhy"></span> <button class="link-btn" id="fnReopen" type="button">Give it back to the agents</button></p>
       <details id="fnCompilerTest" class="collapsible-box" hidden>
         <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
-        <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Flag variations only — use this function’s current compiler</span></label>
-        <button class="ghost small-btn" id="fnTestCompilers" type="button">Test installed compilers &amp; flags</button>
-        <p class="small muted">Tests this function’s saved C attempt locally with every installed compiler and supported flag-search variant. No AI tokens; settings stay unchanged. This is not every possible compiler option.</p>
+        <div class="fn-compiler-controls"><button class="primary small-btn" id="fnTestCompilers" type="button">Test installed compilers &amp; flags</button>
+        <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Current compiler only · test flag variations</span></label></div>
+        <p class="small muted fn-compiler-explainer">Local compiler search · no AI tokens. Tests the saved C against supported compiler and flag combinations. Settings change only when you apply a result.</p>
         <p class="small muted" id="fnCompilerHistory">Not tested yet.</p>
         <p class="compiler-result" id="fnCompilerSummary" role="status" hidden></p>
         <button class="primary small-btn" id="fnApplyCompiler" type="button" hidden>Apply these settings to this function</button>
