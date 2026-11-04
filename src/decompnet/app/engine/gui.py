@@ -44,7 +44,7 @@ class GuiMixin:
             db.execute("UPDATE projects SET config=? WHERE id=?", (json.dumps(cfg), proj["id"]))
         return res
 
-    def overview(self, slug: str) -> dict:
+    def overview(self, slug: str, *, room_members=True) -> dict:
         proj = self._project(slug)
         last = self.store.one("SELECT MAX(created_at) AS t FROM events WHERE project_id=?", proj["id"])["t"]
         from .. import function_profile_suggestions
@@ -54,7 +54,7 @@ class GuiMixin:
             "SELECT COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id WHERE f.project_id=? "
             "AND f.status='matched' AND a.origin='local' AND a.name NOT IN ('you','autopilot')", proj["id"])["n"]
         twins = self.twins.jobs.get(proj["slug"])
-        base = self._overview(slug, proj)
+        base = self._overview(slug, proj, room_members=room_members)
         from ..libultra import report as libultra_report
         from ..source_assembly import breakdown
         from ..source_preparation import settings as source_settings
@@ -78,9 +78,9 @@ class GuiMixin:
                        "compiler_ranges": base.get("compiler_ranges") or self._range_rows(cfg),
                        "auto_compiler": self.auto_adjusts(proj)}
 
-    def _overview(self, slug: str, proj) -> dict:
+    def _overview(self, slug: str, proj, *, room_members=True) -> dict:
         if (fork := self.fork_slug(slug)):
-            return self.forks.overview(fork)
+            return self.forks.overview(fork, room_members=room_members)
         cfg = self.cfg(proj)
         agg = self.store.one(f"SELECT {PROGRESS_COLUMNS}, SUM(attempts) AS attempts "
                              f"FROM functions WHERE project_id=? AND {IN_BUILD}", proj["id"])
@@ -111,7 +111,7 @@ class GuiMixin:
             "coverage_notes": cfg.get('coverage_notes', []),
             "export": cfg.get("export"),
             "exportable": consoles.EXPORT in console.features,
-            "room": self._room_info(proj["slug"]),
+            "room": self._room_info(proj["slug"], refresh=room_members),
         }
 
     def summary(self, slug: str) -> dict:
@@ -139,14 +139,14 @@ class GuiMixin:
                 "autopilot": (self.autopilots.get(slug) or {}).get("state") or ("done" if cfg.get("autopilot") else None),
                 "progress_error": self.progress.errors.get(slug)} | about
 
-    def _room_info(self, slug: str) -> dict | None:
+    def _room_info(self, slug: str, *, refresh=True) -> dict | None:
         if slug in self.links:
             link = self.links[slug]
             status = link.status()
             return {"role": "guest", "host": link.url, "member": link.member, "error": link.error,
                     "members": link.members, "connected": status["state"] in ("syncing", "connected"), **status}
         if slug in self.rooms:
-            return {"role": "host", "members": self.rooms[slug].members()}
+            return {"role": "host", "members": self.rooms[slug].members(refresh=refresh)}
         return None
 
     def function_map(self, slug: str) -> list[dict]:
@@ -164,14 +164,8 @@ class GuiMixin:
         key = (lambda r: r["name"]) if link is not None and link.fork else (lambda r: r["vram"])
         remote = {key(c): "@" + c["agent"] for c in (link.claims if link is not None else [])}
         from ..function_names import state as name_state
-        recency = {r['function_id']: dict(r) for r in self.store.all(
-            'WITH history AS (SELECT t.id,t.function_id,t.compiled,t.score,t.created_at,f.n_insns, '
-            'MIN(CASE WHEN t.compiled THEN t.score END) OVER (PARTITION BY t.function_id ORDER BY t.id '
-            'ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous '
-            'FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) '
-            'SELECT function_id,MAX(created_at) AS last_checked, '
-            'MAX(CASE WHEN compiled AND score>=0 AND score<COALESCE(previous,n_insns*100) '
-            'THEN created_at END) AS last_improved FROM history GROUP BY function_id', proj['id'])}
+        from ..history_summary import summary as history_summary
+        recency = history_summary(self.store, proj['id'])['recency']
         # Exact target bytes, independent of whether either project has matching C.
         # Read only targets, not attempts/source; compare within the same processor and byte order.
         peers = self.store.all(
@@ -338,9 +332,11 @@ class GuiMixin:
         """Who did what and how fast: the overview's numbers (asked every few seconds, not every second)."""
         pid = self._project(slug)["id"]
         now = time.time()
-        rows = self.store.all(
-            "SELECT a.name AS agent, COUNT(t.id) AS compiles, COUNT(DISTINCT t.function_id) AS worked, MAX(t.created_at) AS last FROM attempts t "
-            "JOIN functions f ON f.id=t.function_id JOIN agents a ON a.id=t.agent_id WHERE f.project_id=? GROUP BY a.id", pid)
+        from ..history_summary import summary as history_summary
+        history = history_summary(self.store, pid)['agents']
+        names = {r['id']: r['name'] for r in self.store.all('SELECT id,name FROM agents')}
+        rows = [{'agent': names[aid], 'compiles': r['compiles'], 'worked': len(r['worked']), 'last': r['last']}
+                for aid, r in history.items() if aid in names]
         matched = {r["agent"]: r["n"] for r in self.store.all(
             "SELECT a.name AS agent, COUNT(*) AS n FROM functions f JOIN agents a ON a.id=f.matched_agent_id "
             "WHERE f.project_id=? AND f.status='matched' GROUP BY a.id", pid)}
@@ -357,14 +353,7 @@ class GuiMixin:
                   for a, n in polished.items()]
         # Running best before each attempt credits every contributor, not just the final owner.
         # Failed compiles and ties earn nothing; an initial candidate must improve on 0%.
-        improved = {r["agent"]: r["n"] for r in self.store.all(
-            "WITH history AS (SELECT t.agent_id,t.function_id,t.score,t.compiled,f.n_insns, "
-            "MIN(CASE WHEN t.compiled THEN t.score END) OVER (PARTITION BY t.function_id ORDER BY t.id "
-            "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous "
-            "FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) "
-            "SELECT a.name AS agent,COUNT(DISTINCT h.function_id) AS n FROM history h "
-            "JOIN agents a ON a.id=h.agent_id WHERE h.compiled AND h.score >= 0 "
-            "AND h.score < COALESCE(h.previous,h.n_insns * 100) GROUP BY h.agent_id", pid)}
+        improved = {names[aid]: len(r['improved']) for aid, r in history.items() if aid in names}
         for row in board:
             row["improved"] = improved.get(row["agent"], 0)
         board.sort(key=lambda r: (-r["matched"], -r["compiles"]))
@@ -437,7 +426,7 @@ class GuiMixin:
                     claims.append(dict(row) | {"agent": "@" + c["agent"], "claimed_at": None})
         # (`cut`: more attempts than it sends, so the map's counts need the whole map again)
         return {"events": [dict(e) for e in reversed(events)], "attempts": [dict(t) for t in reversed(attempts)],
-                "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug)}
+                "cut": len(attempts) == LIVE_ATTEMPTS, "claims": claims, "overview": self.overview(slug, room_members=False)}
 
     def events_after(self, after: int | None, limit: int = EVENTS_PER_ASK) -> dict:
         """The notification centre's feed, for every project at once: what happened after event `after`, oldest

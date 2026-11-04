@@ -160,9 +160,9 @@ class Room:
     def origin(self) -> str:
         return f"collab:{self.slug}"
 
-    def members(self) -> list[dict]:
+    def members(self, *, refresh=True) -> list[dict]:
         at, cached = self._members
-        if time.time() - at < 3:
+        if not refresh or time.time() - at < 3:
             return cached
         out = self._members_now()
         self._members = (time.time(), out)
@@ -178,15 +178,11 @@ class Room:
         # compile. Keep credit after another contributor improves or matches it.
         # Older/fork attempts lack the recorded verdict: compare their score with
         # the preceding project-wide history, never just that member's attempts.
-        improvements = {r['owner']: r['n'] for r in self.net.store.all(
-            "WITH history AS (SELECT t.*, f.n_insns, "
-            "MIN(CASE WHEN t.compiled AND t.score>=0 THEN t.score END) OVER ("
-            "PARTITION BY t.function_id ORDER BY t.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS previous "
-            "FROM attempts t JOIN functions f ON f.id=t.function_id WHERE f.project_id=?) "
-            "SELECT a.owner, COUNT(DISTINCT h.function_id) AS n FROM history h JOIN agents a ON a.id=h.agent_id "
-            "WHERE a.origin=? AND a.owner IS NOT NULL AND h.compiled AND h.score>=0 "
-            "AND COALESCE(h.score_improved, h.score<COALESCE(h.previous,h.n_insns*100))=1 GROUP BY a.owner",
-            self.proj['id'], self.origin)}
+        from .history_summary import summary as history_summary
+        history = history_summary(self.net.store, self.proj['id'])['agents']
+        improvements = {}
+        for agent in self.net.store.all('SELECT id,owner FROM agents WHERE origin=? AND owner IS NOT NULL', self.origin):
+            improvements.setdefault(agent['owner'], set()).update(history.get(agent['id'], {}).get('verified_improved', ()))
         out = []
         for r in rows:
             agents = self.net.store.all("SELECT id, name FROM agents WHERE origin=? AND owner=?", self.origin, r["name"])
@@ -198,7 +194,7 @@ class Room:
                 f"({','.join('?' * len(ids))})", *ids)]
             out.append({"name": r["name"], "joined": r["created_at"], "last_seen": r["last_seen"],
                         "online": bool(r["last_seen"]) and time.time() - r["last_seen"] < 30,
-                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "improved": improvements.get(r["name"], 0), "working": working})
+                        "agents": [a["name"].split(".", 1)[1] for a in agents], "matched": matched, "improved": len(improvements.get(r["name"], ())), "working": working})
         return out
 
     def join(self, name: str, sha1: str) -> tuple[str, str]:

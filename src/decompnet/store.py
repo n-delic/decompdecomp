@@ -4,8 +4,12 @@ agents on two games made every GUI request wait behind the others (the GUI's pol
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import sqlite3
+import sys
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -340,10 +344,49 @@ class Store:
         self.conn.executescript(MARK_TRIGGERS)
         if "aside_mark" in added:  # once: the marks of every function there is
             self.conn.execute(f"UPDATE functions SET {MARKS.replace('NEW.', '')} WHERE meta IS NOT NULL")
+        # Project-local revisions invalidate cached contributor history in constant time, including
+        # restores and score corrections that do not append a new attempt.
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS history_revisions(project_id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, rewritten INTEGER NOT NULL);
+            CREATE TRIGGER IF NOT EXISTS history_attempt_insert AFTER INSERT ON attempts BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,(NEW.id < (SELECT MAX(id) FROM attempts))
+                FROM functions WHERE id=NEW.function_id
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,
+                    rewritten=rewritten+(NEW.id < (SELECT MAX(id) FROM attempts));
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_attempt_delete AFTER DELETE ON attempts BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,1 FROM functions WHERE id=OLD.function_id
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_attempt_update AFTER UPDATE OF
+                function_id,agent_id,score,compiled,score_improved,created_at ON attempts
+                WHEN OLD.function_id IS NOT NEW.function_id OR OLD.agent_id IS NOT NEW.agent_id
+                OR OLD.score IS NOT NEW.score OR OLD.compiled IS NOT NEW.compiled
+                OR OLD.score_improved IS NOT NEW.score_improved OR OLD.created_at IS NOT NEW.created_at BEGIN
+                INSERT INTO history_revisions SELECT project_id,1,1 FROM functions WHERE id IN (OLD.function_id,NEW.function_id)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_update AFTER UPDATE OF n_insns,project_id ON functions
+                WHEN OLD.n_insns IS NOT NEW.n_insns OR OLD.project_id IS NOT NEW.project_id BEGIN
+                INSERT INTO history_revisions VALUES(OLD.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+                INSERT INTO history_revisions VALUES(NEW.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_insert AFTER INSERT ON functions BEGIN
+                INSERT INTO history_revisions VALUES(NEW.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+            CREATE TRIGGER IF NOT EXISTS history_function_delete AFTER DELETE ON functions BEGIN
+                INSERT INTO history_revisions VALUES(OLD.project_id,1,1)
+                ON CONFLICT(project_id) DO UPDATE SET revision=revision+1,rewritten=rewritten+1;
+            END;
+        """)
         # Map recency needs scores/timestamps, never saved C. Cover the window query so opening
         # a project does not read hundreds of MB of historical source from attempt table pages.
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_recency ON "
-                          "attempts(function_id,id,compiled,score,created_at)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_history ON "
+                          "attempts(function_id,id,agent_id,compiled,score,score_improved,created_at)")
+        self.conn.execute("DROP INDEX IF EXISTS idx_attempts_recency")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id, created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_unit ON functions(project_id, unit, status)")
         # the room looks a function up by its address for every match, best attempt and note the host sends: without
@@ -393,6 +436,7 @@ class Store:
                 COMMIT;""")
         # what the last run left in the log goes into the database now, and the log starts empty
         self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
 
@@ -427,6 +471,24 @@ class Store:
         return reader.conn
 
     def _read(self, sql: str, args: tuple, single: bool):
+        started = time.monotonic()
+        try:
+            return self._read_rows(sql, args, single)
+        finally:
+            elapsed = time.monotonic() - started
+            if elapsed >= 0.25:
+                # Never log bindings or SQL text: either can contain private source or credentials.
+                key = hashlib.sha256(sql.encode()).hexdigest()[:12]
+                if started - self._slow_queries.get(key, float('-inf')) >= 60:
+                    if len(self._slow_queries) >= 128:
+                        self._slow_queries.clear()
+                    self._slow_queries[key] = started
+                    caller = sys._getframe(2)
+                    logging.getLogger('decompdecomp').warning(
+                        'Slow database read %.3fs [%s] at %s:%s (%s)', elapsed, key,
+                        Path(caller.f_code.co_filename).name, caller.f_lineno, caller.f_code.co_name)
+
+    def _read_rows(self, sql: str, args: tuple, single: bool):
         conn = self._reader()
         if conn is None:
             with self.lock:

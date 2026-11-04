@@ -3996,7 +3996,7 @@ class ForkEngine:
 
     # ------------------------------------------------------------------ for the GUI
 
-    def overview(self, slug: str) -> dict:
+    def overview(self, slug: str, *, room_members=True) -> dict:
         from .libultra import report as libultra_report
 
         proj, fp, cfg = self.get(slug)
@@ -4023,7 +4023,7 @@ class ForkEngine:
             "functions": agg["total"] or 0, "matched": agg["matched"] or 0, "bytes": agg["bytes"] or 0,
             "matched_bytes": agg["matched_bytes"] or 0, "set_aside": agg["set_aside"] or 0,
             "set_aside_bytes": agg["set_aside_bytes"] or 0, "attempts": agg["attempts"] or 0,
-            "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug),
+            "context_version": 0, "folder": proj["root"], "room": self.net._room_info(slug, refresh=room_members),
             "coverage_notes": fp.objdiff_config().get("coverage_notes", []) if cfg.get("ready") else [],
             "progress_populations": cfg.get("progress_populations", []),
             "measures": m, "uncovered": self.uncovered(slug) if cfg.get("ready") and fp.linkable() else None,

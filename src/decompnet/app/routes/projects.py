@@ -26,12 +26,15 @@ def register(app: App) -> None:
     net, mcp, manager, jobs = app.net, app.mcp, app.manager, app.jobs
     settings, guard, body, call, fail = app.settings, app.guard, app.body, app.call, app.fail
 
+    slow_requests = {}
+
     def with_project(fn):
         async def handler(request: Request) -> Response:
             if (bad := guard(request, write=request.method == "POST")):
                 return bad
             data = await body(request) if request.method == "POST" else {}
             slug = data.get("slug") or request.query_params.get("slug", "")
+            started = time.monotonic()
             try:
                 def perform():
                     if request.method == "GET":
@@ -46,6 +49,12 @@ def register(app: App) -> None:
                 return JSONResponse(await ((app.ui_call or call) if request.method == "GET" else call)(perform))
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
+            finally:
+                elapsed = time.monotonic() - started
+                path = request.url.path
+                if request.method == 'GET' and elapsed >= 0.5 and started - slow_requests.get(path, float('-inf')) >= 60:
+                    slow_requests[path] = started
+                    jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
 
     def p_overview(slug, request, data):

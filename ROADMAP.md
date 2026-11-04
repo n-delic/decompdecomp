@@ -2180,3 +2180,7 @@ native thread ID; agents use their worker thread, and unique project-controller/
 names are associated where reliable. Associated threads appear once on their work row; shared,
 unknown and ambiguous threads remain separate read-only rows. CPU totals cover listed threads
 only, with no guessed attribution of shared pools or compiler subprocesses.
+
+Completed: contributor statistics and function-map recency share revision-invalidated project history
+summaries, backed by a covering measurement index. Live updates reuse cached room statistics. Slow
+UI/database diagnostics identify the route/caller without recording private inputs.

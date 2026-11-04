@@ -121,9 +121,9 @@ def test_function_map_recency_reads_covering_index_without_saved_source(tmp_path
     try:
         row = net.function_map('game')[0]
         assert row['last_checked'] == 40 and row['last_improved'] == 20
-        history = next(query for query in queries if query.startswith('WITH history'))
+        history = next(query for query in queries if query.startswith('SELECT t.id,t.function_id,t.agent_id'))
         plan = net.store.all('EXPLAIN QUERY PLAN '+history)
-        assert any('COVERING INDEX idx_attempts_recency' in r['detail'] for r in plan)
+        assert any('COVERING INDEX idx_attempts_history' in r['detail'] for r in plan)
     finally:
         reader.set_authorizer(None)
         reader.set_trace_callback(None)

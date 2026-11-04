@@ -43,3 +43,23 @@ def test_distinct_member_improvements_include_legacy_and_matches(tmp_path):
     assert (board['lee']['improved'], board['lee']['matched']) == (2, 1)
     assert (board['idle']['improved'], board['idle']['matched']) == (0, 0)
     assert room.members() == list(board.values())
+
+
+def test_live_room_info_uses_cached_members_without_history_queries(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('first', 40, 'open')])
+    room = Room(net, 'game')
+    net.rooms['game'] = room
+    room._members = (0, [{'name': 'sam', 'improved': 2}])
+    def unexpected():
+        raise AssertionError('Live updates must not rebuild room contributor statistics')
+    monkeypatch.setattr(room, '_members_now', unexpected)
+    assert net._room_info('game', refresh=False)['members'][0]['improved'] == 2
+
+
+def test_live_poll_does_not_request_fresh_room_statistics(tmp_path, monkeypatch):
+    net, _ = _game(tmp_path, [('first', 40, 'open')])
+    seen = []
+    monkeypatch.setattr(net, 'overview', lambda slug, **kwargs: seen.append(kwargs) or {})
+    with net.progress.view():
+        net.live('game')
+    assert seen == [{'room_members': False}]

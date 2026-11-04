@@ -1544,3 +1544,17 @@ Start with a clean checkout, a configured Git author and an upstream branch. If 
 has commits missing locally, pull them first. A failed push keeps the local commit; fix the
 credentials or upstream and retry. Nothing is force-pushed. Imported projects already work
 in their own source checkout; this export-sync button is currently for ROM projects.
+
+
+### UI statistics and slow-request diagnostics
+
+Contributor counts and map recency share a project-local history cache. New attempts update it
+incrementally; database revisions invalidate it when attempts are corrected or removed, or functions
+move between projects. Other projects' work
+does not invalidate it. The history index covers measurement columns without loading historical C source.
+Live project updates reuse cached room member counts; opening the room panel refreshes those separately.
+
+The app log reports database reads taking at least 250 ms and project UI GET requests taking at least
+500 ms (including worker queue time and response encoding). Messages are rate limited per query/route
+to once a minute. Database messages identify the caller and a query fingerprint; neither SQL bindings,
+SQL text nor URL query parameters are logged.
