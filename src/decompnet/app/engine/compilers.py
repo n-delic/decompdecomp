@@ -199,16 +199,42 @@ class CompilerMixin:
         return sorted((p for p in used if toolchains.installed(p[0]) and toolchains.get(p[0]).supported
                        and not toolchains.runtime_error(p[0])), key=lambda p: (p != default, p))
 
-    def _comparison_digest(self, proj, fn, source, candidates):
-        contexts = [list(r) for r in self.store.all(
-            "SELECT unit,version,header FROM context_versions WHERE project_id=? AND unit IN ('',?) ORDER BY unit",
-            proj["id"], fn["unit"])]
-        symbols = [list(r) for r in self.store.all("SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name", proj["id"])]
-        cfg = self.cfg(proj)
-        tools = [[tid, toolchains.installed(tid)] for tid in sorted({tc for tc, _ in candidates})]
-        data = [source, candidates, contexts, symbols, tools, (fn["target"] or b"").hex(), fn["relocs"],
-                fn["vram"], cfg.get("gp"), cfg.get("big_endian"), compiler_for(cfg, fn["vram"]), cfg["compiler"]]
-        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+    def _comparison_inputs(self, proj, candidates):
+        """Read and encode project-wide inputs once per eligibility pass."""
+        encode = lambda value: json.dumps(value, sort_keys=True).encode()
+        return {'contexts': [list(r) for r in self.store.all(
+                    "SELECT unit,version,header FROM context_versions WHERE project_id=? ORDER BY unit", proj['id'])],
+                'symbols': encode([list(r) for r in self.store.all(
+                    "SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name", proj['id'])]),
+                'tools': {tid: toolchains.installed(tid) for tid in sorted({tc for tc, _ in candidates})},
+                'units': {}, 'options': {}, 'cfg': self.cfg(proj)}
+
+    def _comparison_digest(self, proj, fn, source, candidates, shared=None):
+        shared = shared if shared is not None else self._comparison_inputs(proj, candidates)
+        encode = lambda value: json.dumps(value, sort_keys=True).encode()
+        unit = fn['unit']
+        if unit not in shared['units']:
+            shared['units'][unit] = encode([r for r in shared['contexts'] if r[0] in ('', unit)])
+        key = tuple((tc, tuple(flags)) for tc, flags in candidates)
+        if key not in shared['options']:
+            shared['options'][key] = (encode(candidates), encode([[tid, shared['tools'][tid]]
+                                                     for tid in sorted({tc for tc, _ in candidates})]))
+        options, tools = shared['options'][key]
+        cfg = shared['cfg']
+        # Stream the same canonical JSON as before. Existing completed comparisons stay valid;
+        # shared headers/symbols/options are serialized once rather than once per function.
+        fields = [encode(source), options, shared['units'][unit], shared['symbols'], tools,
+                  encode((fn['target'] or b'').hex()), encode(fn['relocs']), encode(fn['vram']),
+                  encode(cfg.get('gp')), encode(cfg.get('big_endian')),
+                  encode(compiler_for(cfg, fn['vram'])), encode(cfg['compiler'])]
+        digest = hashlib.sha256()
+        digest.update(b'[')
+        for index, field in enumerate(fields):
+            if index:
+                digest.update(b', ')
+            digest.update(field)
+        digest.update(b']')
+        return digest.hexdigest()
 
     def _comparison_source(self, fn):
         return fn["matched_source"] if fn["status"] == "matched" and fn["matched_source"] else self._source_of(fn)
@@ -305,8 +331,21 @@ class CompilerMixin:
         planned_digests = {}
         if all_installed:
             pending = []
-            for fn in rows:
+            report = getattr(log, 'progress', lambda value: None)
+            scanned = 0
+            def preparing():
+                report({'phase': 'eligibility', 'checked': scanned, 'scan_total': len(rows),
+                        'eligible': len(pending), 'skipped': skipped})
+            preparing()
+            check_cancel()
+            shared = self._comparison_inputs(proj, available_candidates)
+            previous_tests = {r['function_id']: r['input_digest'] for r in self.store.all(
+                "SELECT t.function_id,t.input_digest FROM compiler_tests t JOIN functions f ON f.id=t.function_id "
+                "WHERE f.project_id=?", proj['id'])} if untested_only else {}
+            for scanned, fn in enumerate(rows):
                 check_cancel()
+                if scanned and scanned % 25 == 0:
+                    preparing()
                 source = self._comparison_source(fn)
                 if not source:
                     continue
@@ -316,13 +355,14 @@ class CompilerMixin:
                 if not options:
                     skipped += 1
                     continue
-                digest = self._comparison_digest(proj, fn, source, options)
-                previous = self.store.one("SELECT input_digest FROM compiler_tests WHERE function_id=?", fn["id"])
-                if untested_only and previous and previous["input_digest"] == digest:
+                digest = self._comparison_digest(proj, fn, source, options, shared)
+                if untested_only and previous_tests.get(fn['id']) == digest:
                     skipped += 1
                     continue
                 planned_digests[fn["id"]] = digest
                 pending.append(fn)
+            scanned = len(rows)
+            preparing()
             rows = pending
         total = min(limit, len(rows))
         deferred = max(0, len(rows) - total)

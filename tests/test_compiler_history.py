@@ -170,12 +170,14 @@ def test_comparison_queue_counts_exclude_completed_and_respect_run_limit(compari
 
     first = net.survey_compilers('demo', all_installed=True, untested_only=True, limit=1, log=Log())
     assert first['total'] == 1 and first['remaining'] == 0 and first['deferred'] == 1
-    assert snapshots[0]['completed'] == 0 and snapshots[0]['remaining'] == 1
+    assert snapshots[0]['phase'] == 'eligibility' and snapshots[0]['checked'] == 0
+    compiling = [s for s in snapshots if s.get('phase') != 'eligibility']
+    assert compiling[0]['completed'] == 0 and compiling[0]['remaining'] == 1
     assert snapshots[-1]['completed'] == 1 and snapshots[-1]['remaining'] == 0
     snapshots.clear()
     second = net.survey_compilers('demo', all_installed=True, untested_only=True, log=Log())
     assert second['total'] == 1 and second['skipped'] == 1 and second['deferred'] == 0
-    assert snapshots[0]['total'] == 1
+    assert next(s for s in snapshots if s.get('phase') != 'eligibility')['total'] == 1
 
 
 def test_auto_apply_uses_best_completed_profile_and_records_outcomes(comparison, monkeypatch):
@@ -270,3 +272,46 @@ def test_used_profiles_only_tests_exact_assignments_and_invalidates_history(comp
     with net.store.tx() as db:
         db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
     assert net.compiler_test_result(net.project_row('demo'), fn)['stale']
+
+
+def test_shared_eligibility_digest_preserves_existing_fingerprints(comparison):
+    import hashlib
+
+    from decompnet.project import compiler_for
+    net, profiles, _, _ = comparison
+    proj = net._project('demo')
+    fn = net._function('f0', 'demo')
+    source = net._comparison_source(fn)
+    cfg = net.cfg(proj)
+    contexts = [list(r) for r in net.store.all(
+        "SELECT unit,version,header FROM context_versions WHERE project_id=? AND unit IN ('',?) ORDER BY unit",
+        proj['id'], fn['unit'])]
+    symbols = [list(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
+    tools = [[tid, toolchains.installed(tid)] for tid in sorted({tc for tc, _ in profiles})]
+    original = [source, profiles, contexts, symbols, tools, (fn['target'] or b'').hex(), fn['relocs'], fn['vram'],
+                cfg.get('gp'), cfg.get('big_endian'), compiler_for(cfg, fn['vram']), cfg['compiler']]
+    expected = hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest()
+    shared = net._comparison_inputs(proj, profiles)
+    assert net._comparison_digest(proj, fn, source, profiles, shared) == expected
+    assert net._comparison_digest(proj, fn, source, profiles) == expected
+
+
+def test_eligibility_batches_shared_reads_and_reports_scan(comparison):
+    net, _, _, _ = comparison
+    queries, snapshots = [], []
+    net.store._reader().set_trace_callback(queries.append)
+    class Log:
+        def __call__(self, line):
+            pass
+        def progress(self, value):
+            snapshots.append(dict(value))
+    net.survey_compilers('demo', all_installed=True, untested_only=True, limit=0, log=Log())
+    net.store._reader().set_trace_callback(None)
+    assert sum('SELECT name,address,size,kind FROM symbols' in q for q in queries) == 1
+    assert sum('SELECT unit,version,header FROM context_versions' in q for q in queries) == 1
+    assert sum('SELECT t.function_id,t.input_digest' in q for q in queries) == 1
+    assert not any('SELECT input_digest FROM compiler_tests WHERE function_id' in q for q in queries)
+    assert not any('SELECT source FROM attempts' in q for q in queries)
+    scans = [s for s in snapshots if s.get('phase') == 'eligibility']
+    assert scans[0]['checked'] == 0 and scans[-1]['checked'] == scans[-1]['scan_total'] == 2
+    assert scans[-1]['eligible'] == 2

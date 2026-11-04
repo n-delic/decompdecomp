@@ -15,6 +15,10 @@ vm.createContext(ctx);
 vm.runInContext(read("compiler-progress"), ctx);
 ctx.renderCompilerProgress(null);
 assert.equal(fields.get("[data-best]").textContent, "—");
+ctx.renderCompilerProgress({phase:'eligibility',checked:250,scan_total:4000,eligible:20,skipped:230});
+assert.equal(fields.get('[data-queue]').textContent, 'Checking eligibility: 250 / 4,000 · 6%');
+assert.equal(fields.get('[data-queue-bar]').value, 250);
+assert.equal(fields.get('[data-queue-bar]').max, 4000);
 ctx.renderCompilerProgress({ function: "<synthetic>", tested: 80, combinations: 196, before: 99.72, best: 99.94,
   completed: 3, total: 10, remaining: 7, deferred: 2, improved: 2, exact: 1, profile: ["Example GCC", ["-O2", "-g3"]] });
 assert.equal(fields.get("[data-current]").textContent, "<synthetic>");

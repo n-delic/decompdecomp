@@ -2230,6 +2230,9 @@ external imported-project expiry, explicit checks and the ordinary byte judge ar
   records, coalesce worker snapshots, move response encoding to workers with bounded
   full-map wire caching, and add opt-in request/SQL/browser timing diagnostics.
 
+- Done: batched compiler-comparison eligibility preparation with live checked/total/percentage progress,
+  shared input encoding and preserved completed-comparison fingerprints. Saved best C avoids a needless
+  latest-attempt lookup.
 - Done: incremental agent card measurement counters with correction/reset invalidation, batched polishing
   totals, compact live sections and deferred hidden map refreshes, persistent revision-checked ROM fingerprints
   and cross-project map identities, narrow SDK naming reads with bounded unchanged-check reuse, and scoped

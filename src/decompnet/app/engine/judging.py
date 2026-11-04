@@ -451,6 +451,8 @@ class JudgeMixin:
 
     def _source_of(self, fn) -> str | None:
         """A function's best C, else its latest attempt."""
+        if fn['best_source']:
+            return canonical_source(fn, fn['best_source'])
         row = self.store.one("SELECT source FROM attempts WHERE function_id=? AND source IS NOT NULL ORDER BY id DESC "
                              "LIMIT 1", fn["id"])
         source = fn["best_source"] or (row["source"] if row else None)

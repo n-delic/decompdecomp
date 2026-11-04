@@ -14,8 +14,18 @@ function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
   wireCompilerResultCounts(box);
   const set = (key, text) => { box.querySelector(`[data-${key}]`).textContent = text; };
   const tally = result || progress;
+  if (progress?.phase === 'eligibility' && !result) {
+    const checked = progress.checked || 0, total = progress.scan_total || 0;
+    const percent = total ? Math.round(100 * checked / total) : 0;
+    set('queue', `Checking eligibility: ${checked.toLocaleString()} / ${total.toLocaleString()} · ${percent}%`);
+    const bar = box.querySelector('[data-queue-bar]'); bar.max = total || 1; bar.value = checked;
+    set('current', 'Preparing comparison');
+    set('tested', `${progress.eligible || 0} eligible · ${progress.skipped || 0} unchanged or unavailable`);
+    set('profile', 'Checking saved C, headers and compiler profiles against previous comparisons. No compilation yet.');
+    return;
+  }
   const total = tally?.total, completed = result ? result.tried : (progress?.completed || 0);
-  set("queue", total == null ? "Counting eligible functions…" : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
+  set("queue", total == null ? "Preparing eligibility checks…" : `${completed} of ${total} functions done · ${Math.max(0, total - completed)} left${tally.deferred ? ` · ${tally.deferred} queued for another run` : ""}`);
   const queueBar = box.querySelector("[data-queue-bar]");
   queueBar.max = total || 1; queueBar.value = completed || 0;
   if (!progress && !result) {
