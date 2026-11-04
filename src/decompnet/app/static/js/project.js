@@ -585,7 +585,7 @@ function renderNext(ov) {
   const compilerOk = ov.kind === "fork" || ov.compiler.installed;
   if (ov.code_coverage?.queue_empty) {
     box.hidden=false;
-    setHtml(box, `<div class="next-text"><b>Detected queue resolved — coverage still needs review.</b><span class="muted small">Raw bytes and incomplete boundaries may contain undiscovered functions. Use Code coverage review above; exporting an identical game does not establish complete source recovery.</span></div>`);
+    setHtml(box, `<div class="next-text"><b>Detected queue resolved — coverage still needs review.</b><span class="muted small">Raw bytes and incomplete boundaries may contain undiscovered functions. Open <a href="#/p/${encodeURIComponent(S.slug)}/settings">Settings → Code coverage review</a>; exporting an identical game does not establish complete source recovery.</span></div>`);
     return;
   }
   if (done) {
@@ -1340,14 +1340,24 @@ function renderCodeCoverage(ov) {
   const c=ov.code_coverage, panel=$("codeCoveragePanel"), box=$("codeCoverageSummary");
   panel.hidden=!c;
   if (!c) return;
-  $("coverageAuditLog").hidden=coverageAuditSlug!==ov.slug;
-  const states={required:"CPU coverage audit required",needs_review:"Coverage findings need review",no_pending_findings:"No pending findings in the bounded audit",unsupported:"Coverage audit is not supported for this project format yet"};
-  const entries=c.incomplete_entries || [];
-  setHtml(box, `<p><b>${esc(states[c.audit_state] || "Coverage not established")}</b> · ${esc(c.scope)}.</p><p class="small">${esc(c.note)}</p><p>${entries.length} incomplete / boundary-review entries · ${c.unresolved_candidates} unresolved raw-region candidates${c.raw_bytes!=null ? ` · ${bytes(c.raw_bytes)} raw gaps · ${bytes(c.interior_bytes)} unclassified segment interiors` : " · raw-region bytes not yet audited"}${c.search_limited ? " · search limits reached" : ""}.</p>${entries.length ? `<details><summary>Review incomplete entries (${entries.length})</summary>${entries.map(r=>`<p><button class="link-btn" data-coverage-function="${esc(r.function)}">${esc(r.function)}</button> <button class="ghost small-btn" data-recover-function="${esc(r.function)}" data-recover-start="${r.vram}" data-recover-size="${r.size}">Review extension</button> · ${r.size} bytes · incomplete (saved status: ${esc(r.stored_status)})<br><span class="small">${esc(r.reason)}</span></p>`).join("")}</details>` : ""}`);
+  const sameAudit=coverageAuditSlug===ov.slug;
+  $("coverageAuditLog").hidden=!sameAudit;
+  if (!sameAudit) { $("coverageAuditStatus").textContent=""; $("coverageAuditStatus").hidden=true; }
+  const states={required:"Ready for a first scan",needs_review:"Findings need your review",no_pending_findings:"No pending findings",unsupported:"Scan unavailable for this project format"};
+  const entries=c.incomplete_entries || [], candidates=c.unresolved_candidates || 0;
+  $("coverageReviewContext").textContent=states[c.audit_state] || "Coverage not established";
+  const guidance=!c.supported ? "You can inspect incomplete functions below. Raw-region scanning is not supported for this project format yet."
+    : c.raw_bytes==null ? "Run a scan to find possible code outside the detected functions."
+    : entries.length || candidates ? "Review incomplete functions below, or inspect raw-region candidates and record what you find."
+    : "No unresolved findings in this bounded scan. This is not a whole-game coverage guarantee.";
+  setHtml(box, `<section class="coverage-verdict"><h3>${esc(states[c.audit_state] || "Coverage not established")}</h3><p>${esc(guidance)}</p>${c.audit_stale ? '<p class="coverage-warning">The saved scan predates layout changes. Scan again for current findings.</p>' : ""}${c.search_limited ? '<p class="coverage-warning">Search limits were reached. Some regions remain unchecked.</p>' : ""}</section><div class="coverage-counts"><div><b>${entries.length}</b><span>Incomplete functions</span></div><div><b>${candidates}</b><span>Unresolved candidates</span></div><div><b>${c.raw_bytes==null ? "—" : bytes((c.raw_bytes || 0)+(c.interior_bytes || 0))}</b><span>Unclassified bytes · not all code</span></div></div>${entries.length ? `<details class="coverage-boundaries"><summary>Incomplete functions <span class="muted">(${entries.length})</span></summary><p class="small muted">Inspect the function and its reachable paths. Extend its boundary only when you have evidence for the additional bytes.</p><ul>${entries.map(r=>`<li><header><button class="link-btn mono" data-coverage-function="${esc(r.function)}">${esc(r.function)}</button><span class="small muted">${r.size} bytes · saved as ${esc(r.stored_status)}</span></header><p>${esc(r.reason)}</p><button class="ghost small-btn" data-recover-function="${esc(r.function)}" data-recover-start="${r.vram}" data-recover-size="${r.size}">Review boundary extension</button></li>`).join("")}</ul></details>` : ""}`);
   box.querySelectorAll("[data-coverage-function]").forEach(b=>b.onclick=()=>openFn(b.dataset.coverageFunction));
   box.querySelectorAll("[data-recover-function]").forEach(b=>b.onclick=()=>reviewCodeExtension(b.dataset.recoverFunction,Number(b.dataset.recoverStart),Number(b.dataset.recoverSize)));
   const button=$("coverageAuditBtn");button.hidden=!c.supported;
   button.onclick=()=>runCoverageAudit();
+  const review=$("coverageReviewBtn"); review.hidden=!c.supported || !candidates;
+  review.textContent=`Review ${candidates} candidate${candidates===1 ? "" : "s"}`;
+  review.onclick=()=>{ $("codeAuditPanel").open=true; $("codeAuditPanel").scrollIntoView({behavior:"smooth",block:"start"}); };
   const key=ov.slug+":"+c.audit_revision;
   if (c.completion_audit_required && !coverageAuditRunning && !completionAuditAttempts.has(key)) {
     completionAuditAttempts.add(key);
@@ -1358,16 +1368,19 @@ async function runCoverageAudit() {
   if (coverageAuditRunning) return;
   coverageAuditRunning=true;coverageAuditSlug=S.slug;
   const slug=S.slug, button=$("coverageAuditBtn"), log=$("coverageAuditLog");
-  const finish=beginWork(log,"Auditing code coverage",[button,$("codeAuditBtn")]);
+  const status=$("coverageAuditStatus");status.hidden=false;
+  status.innerHTML='<span class="spin-dot" aria-hidden="true"></span> Scanning original bytes for possible missing code…';
+  const finish=beginWork(log,"Auditing code coverage",[button,$("codeAuditBtn")],"Coverage scan complete.");
   try {
     const {job}=await api("/api/code-audit",{method:"POST",body:{slug}});
     const result=await followJob(job,log);
     if (S.slug!==slug) return;
     renderCodeAudit(result);
+    status.textContent=result.candidates?.length ? `Scan complete. ${result.candidates.length} candidate${result.candidates.length===1 ? "" : "s"} found. Open Raw-region candidates to review the evidence.` : "Scan complete. No raw-region candidates found in this bounded scan.";
     const ov=await api("/api/project?slug="+encodeURIComponent(slug));
     if (S.slug!==slug) return;
     S.ov=ov;renderStats(ov);renderNext(ov);
-  } catch(error) {showJobError(log,error.message);} finally {coverageAuditRunning=false;finish();}
+  } catch(error) {if(S.slug===slug) {status.textContent="Scan failed: "+error.message+". You can try again.";showJobError(log,error.message);}} finally {coverageAuditRunning=false;finish();}
 }
 
 

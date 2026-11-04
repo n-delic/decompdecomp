@@ -222,12 +222,6 @@
   </header>
 
   <div class="notice" id="coverageNotice" hidden></div>
-  <section class="panel" id="codeCoveragePanel" hidden aria-label="Code coverage review">
-    <div class="pad"><h3>Code coverage review</h3><div id="codeCoverageSummary" aria-live="polite"></div>
-      <button class="ghost small-btn" type="button" id="coverageAuditBtn">Audit coverage with CPU</button>
-      <pre class="joblog" id="coverageAuditLog" hidden></pre>
-    </div>
-  </section>
   <div class="panel" id="progressPopulations" hidden></div>
   <div class="notice" id="compilerNotice" hidden></div>
   <section class="fork-setup" id="forkSetup" hidden></section>
@@ -400,6 +394,28 @@
 
   <!-- settings -->
   <section class="ptab" data-pane="settings">
+    <details class="panel settings-disclosure" id="codeCoveragePanel" hidden>
+      <summary class="panel-head"><h2>Code coverage review</h2><span class="disclosure-context small muted" id="coverageReviewContext">Find missing code</span></summary>
+      <div class="pad coverage-review">
+        <p class="small muted coverage-intro">Look for code missing from the function list, then review the evidence before recovering it.</p>
+        <div id="codeCoverageSummary" aria-live="polite"></div>
+        <div class="coverage-actions">
+          <button class="primary small-btn" type="button" id="coverageAuditBtn">Scan for missing code</button>
+          <button class="ghost small-btn" type="button" id="coverageReviewBtn" hidden>Review candidates</button>
+          <span class="small muted">CPU only · no AI tokens · does not change code</span>
+        </div>
+        <p class="small coverage-audit-status" id="coverageAuditStatus" role="status" hidden></p>
+        <details id="codeAuditPanel" class="coverage-findings" hidden>
+          <summary>Raw-region candidates <span class="muted small">— inspect evidence and save your review</span></summary>
+          <p class="small muted">These regions may contain code, data or microcode. Save a review and notes for each lead; confirming code does not import it.</p>
+          <button id="codeAuditBtn" type="button" hidden>Scan again</button><pre id="codeAuditLog" hidden></pre>
+          <div id="codeAuditResult" aria-live="polite"></div>
+        </details>
+        <details class="coverage-help"><summary>What these results mean</summary><p>Progress percentages cover detected functions. A clean scan, an empty queue or an identical rebuild does not prove every function has been found. Raw-byte totals are unclassified space, not confirmed missing code.</p></details>
+        <details id="coverageAuditTechnical" class="coverage-help"><summary>Technical output</summary><pre class="joblog" id="coverageAuditLog" hidden></pre></details>
+      </div>
+    </details>
+
     <details class="panel settings-disclosure" id="sourcePrepPanel">
       <summary class="panel-head"><h2>Local source preparation</h2><span class="muted small">optional · no AI tokens</span></summary>
       <div class="pad">
@@ -585,12 +601,6 @@
           <div class="pad">
             <dl class="facts one" id="projFacts"></dl>
             <div class="row"><button class="ghost small-btn" id="folderBtn" type="button">Open project folder</button></div>
-            <div id="codeAuditPanel" hidden>
-              <p class="muted small">Audit binary gaps for incoming transfers and possible code. This reads original bytes without changing targets or using AI. Save evidence and review states here; confirming a lead does not import it. Data and microcode can resemble code.</p>
-              <button class="ghost small-btn" id="codeAuditBtn" type="button">Audit unanalysed code</button>
-              <pre class="joblog" id="codeAuditLog" hidden></pre>
-              <div id="codeAuditResult" aria-live="polite"></div>
-            </div>
             <div id="reimportGame">
               <p class="muted small">Choose your copy of the game again and replace its analysis. Matched C is kept only for functions whose target bytes are unchanged; changed functions reopen. Notes, settings and saved progress are kept. Helpers stop while the game is reimported.</p>
               <div class="row"><button class="ghost small-btn" id="reimportBtn" type="button">Choose game and reimport</button></div>

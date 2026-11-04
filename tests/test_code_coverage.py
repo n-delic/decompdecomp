@@ -121,3 +121,14 @@ def test_coverage_polling_reuses_decoded_boundaries_and_invalidates_target_edits
         db.execute('UPDATE functions SET target=?', (words(0x03e00008, 0),))
     assert not code_coverage.snapshot(net, proj)['incomplete_entries']
     assert len(calls) == 2
+
+
+def test_coverage_review_and_results_belong_to_collapsible_project_settings():
+    from pathlib import Path
+    html = (Path(__file__).parents[1] / 'src/decompnet/app/static/index.html').read_text()
+    settings = html.index('data-pane="settings"')
+    coverage = html.index('id="codeCoveragePanel"')
+    results = html.index('id="codeAuditResult"')
+    assert settings < coverage < results < html.index('id="sourcePrepPanel"')
+    assert '<details class="panel settings-disclosure" id="codeCoveragePanel"' in html
+    assert '<details id="coverageAuditTechnical"' in html
