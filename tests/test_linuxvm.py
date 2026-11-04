@@ -252,8 +252,8 @@ def test_vm_installs_are_separate_and_keep_dependency_routing(vm, monkeypatch):
     from dataclasses import replace
 
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'macos-arm64')
-    monkeypatch.setattr(linuxvm, 'setup', lambda **_: {'ready': True})
-    monkeypatch.setattr(linuxvm, 'status', lambda: (True, ''))
+    monkeypatch.setattr(linuxvm, 'setup', lambda **_: pytest.fail('install must not prepare the VM'))
+    monkeypatch.setattr(linuxvm, 'status', lambda refresh=False: (True, ''))
     original = toolchains.registry()
     profiles = {}
     for tid in ['ee-gcc-2.96', 'runtime-i386']:
