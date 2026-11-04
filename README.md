@@ -1389,6 +1389,8 @@ reachable LAN/Tailscale/server address and its room port. Share that fixed link 
 must remain assigned/reachable and any external proxy/named tunnel must be running. This serves only
 the room API, not the app GUI or agent MCP endpoint. A fixed endpoint does not make an offline host
 available; clients reconnect when the host and endpoint return.
+The sharing dialog remembers the address, port and connection type on this computer for new rooms,
+even when closed before sharing. Existing rooms keep their own saved settings.
 
 Agent creation in **Add agents** is a background job. Its progress bar, elapsed time and log distinguish
 request acceptance, project/model checks, project preparation, identity reservation and worker launch.

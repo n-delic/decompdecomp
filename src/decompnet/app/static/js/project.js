@@ -693,6 +693,18 @@ function renderGuest(box, room) {
   };
 }
 
+// Sharing preferences belong to this computer; each project's saved room still takes precedence.
+function roomAddressPreferences() {
+  try { return JSON.parse(localStorage.getItem("room-address-preferences") || "null") || {}; }
+  catch { return {}; }
+}
+
+function rememberRoomAddress(box) {
+  const value = {mode: box.querySelector('[name="mode"]:checked')?.value || "tunnel",
+    address: box.querySelector("#addrIn").value, port: box.querySelector("#addrPort").value};
+  try { localStorage.setItem("room-address-preferences", JSON.stringify(value)); } catch { /* storage off */ }
+}
+
 function renderHost(box, info) {
   if (box._working) return;
   if (info.restoring && !info.sharing) {
@@ -705,6 +717,11 @@ function renderHost(box, info) {
       <div class="seg" id="visSeg"><button type="button" data-vis="private" class="${inf.settings.visibility !== "public" ? "on" : ""}">Private: invite link</button><button type="button" data-vis="public" class="${inf.settings.visibility === "public" ? "on" : ""}">Public: anyone with the address</button></div>
       <label class="check"><input type="checkbox" id="apprChk" ${inf.settings.approve ? "checked" : ""}><span>I let each new member in (they wait until you approve)</span></label></div>`;
   if (!info.sharing) {
+    if (!info.address && !info.was_sharing) {
+      const saved = roomAddressPreferences();
+      info = {...info, mode: saved.mode === "address" ? "address" : info.mode,
+        address: typeof saved.address === "string" ? saved.address : "", port: saved.port || info.port};
+    }
     const sugg = (info.addresses || []).map((a) => `<button type="button" class="chip" data-addr="${esc(a.address)}">${esc(a.label)}: <span>${esc(a.address)}</span></button>`).join("");
     setHtml(box, `${teamJoinHtml()}${intro}${info.was_sharing ? `<div class="notice"><span>${info.changing_address ? "Choose a reachable fixed address. The room stays online while you edit; members and the invite will be kept." : info.restore_error ? `Automatic room restore failed: ${esc(info.restore_error)}. Retry below; members and the invite are kept.` : "This saved room is not online. Reopen it below; members and the invite are kept."}</span></div>` : ""}
       <div class="setup-group"><h3>How teammates reach this computer</h3>
@@ -721,8 +738,9 @@ function renderHost(box, info) {
       box._editingAddress = false;
       renderHost(box, await api(`/api/collab?slug=${S.slug}`));
     };
-    box.querySelectorAll('[name="mode"]').forEach((r) => { r.onchange = () => { box.querySelector("#addrBox").hidden = r.value !== "address" || !r.checked; }; });
-    box.querySelectorAll("[data-addr]").forEach((b) => { b.onclick = () => { box.querySelector("#addrIn").value = b.dataset.addr; }; });
+    box.querySelectorAll('[name="mode"]').forEach((r) => { r.onchange = () => { box.querySelector("#addrBox").hidden = r.value !== "address" || !r.checked; rememberRoomAddress(box); }; });
+    box.querySelectorAll("[data-addr]").forEach((b) => { b.onclick = () => { box.querySelector("#addrIn").value = b.dataset.addr; rememberRoomAddress(box); }; });
+    ["#addrIn", "#addrPort"].forEach((id) => { box.querySelector(id).oninput = () => rememberRoomAddress(box); });
     box.querySelectorAll("[data-vis]").forEach((b) => { b.onclick = () => box.querySelectorAll("[data-vis]").forEach((x) => x.classList.toggle("on", x === b)); });
     box.querySelector("#startShare").onclick = async () => {
       const mode = box.querySelector('[name="mode"]:checked')?.value || "tunnel";
