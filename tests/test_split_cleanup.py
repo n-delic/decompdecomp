@@ -56,3 +56,39 @@ def test_split_marks_a_pure_padding_head_done(net):
     head = net._function("padfn", SLUG)
     assert head["status"] == "asm", head["status"]   # pure padding -> marked done, out of the open pool
     assert head["best_source"] is None               # and its stale best cleared
+
+
+def _insert_padding(net):
+    """Insert 'padfn' = three alignment NOPs carrying a stale best; return its vram."""
+    pid = net._function(FN, SLUG)["project_id"]
+    unit = net._function(FN, SLUG)["unit"]
+    vram, rom = 0x80010000, 0x10000
+    lines = "".join(f"/* {rom + 4 * i:X} {vram + 4 * i:08X} 00000000 */  nop\n" for i in range(3))
+    asm = f"glabel padfn\n{lines}endlabel padfn\n"
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                   "status,best_source,best_score) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, "padfn", 12, 3, b"\x00" * 12, "[]", asm, None, unit, vram, rom, "open",
+                    "int was_here(void){return 1;}", 400))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "padfn", vram, 12, "func"))
+    net._syms.pop(pid, None)  # the symbol cache predates the row we just inserted
+    return vram
+
+
+def test_padding_head_reply_points_at_tail(net):
+    agent, _ = net.local_agent("tester")
+    vram = _insert_padding(net)
+    reply = net.split_function(agent, SLUG, "padfn", f"0x{vram + 8:08X}")  # head = the leading NOPs
+    assert "func_80010008" in reply, reply           # the reply sends the user to the tail...
+    assert "Continue with padfn" not in reply, reply  # ...not back to the retired padding head
+
+
+def test_padding_head_shows_alignment_reason(net):
+    from decompnet.network import set_aside
+    agent, _ = net.local_agent("tester")
+    vram = _insert_padding(net)
+    net.split_function(agent, SLUG, "padfn", f"0x{vram + 8:08X}")
+    aside = set_aside(net._function("padfn", SLUG))
+    assert "padding" in aside["set_aside"].lower(), aside   # a real reason, not the
+    assert aside["set_aside"] != "hand-written assembly"    # generic fallback
