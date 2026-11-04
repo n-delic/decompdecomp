@@ -51,6 +51,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Rebuildable export | ✓ | ✓ | ✓ | — | ✓ | ✓ | the project | the project (`ninja rebuild`) | the project (`ninja rebuild` writes your default.xbe back, byte for byte) | the project | the project |
 | Progress bars for foreground jobs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Public project build prerequisite hints | — | — | — | — | — | — | — | — | — | — | ✓ (observed missing cross tools; Make-specific checks) |
+| Verified objdiff references for public Splat projects | — | — | — | — | — | — | — | — | — | — | ✓ N64 and PS1 simple code splits; — overlays and nested builds |
 | Find a game in a local library by declared SHA-1 | — | — | — | — | — | — | — | — | — | — | ✓ N64, including supported original ROM versions and byte orders; exact-file splat; — dtk, configure and whole-disc PS |
 | Rooms: decompile together | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 

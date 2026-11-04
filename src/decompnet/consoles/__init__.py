@@ -107,6 +107,7 @@ class Console:
     # ROM mode's export: the assembler's flags for its processor, the rebuilt image's extension, and what every
     # assembly file of the export starts with
     as_flags: tuple[str, ...] = ()
+    reference_tools: tuple[str, str, str] = ()
     # ROM mode, a program that's an ELF: the platform splat's config names, when it isn't the PS2's (splat's
     # create_config reads ELF programs as PS2 ones: rom/split.py)
     splat_platform = ""
@@ -121,6 +122,14 @@ class Console:
 
     def __repr__(self) -> str:
         return f"<console {self.id}>"
+
+    def generate_objdiff(self, project, config_path, config, version: str | None = None, log=print) -> bool:
+        """Generate byte-verified Splat references for consoles with pinned assembler tools."""
+        if not self.reference_tools:
+            return False
+        from ..forks.splatrefs import generate
+
+        return generate(project, config_path, config, self, version=version, log=log)
 
     @property
     def features(self) -> frozenset[str]:
