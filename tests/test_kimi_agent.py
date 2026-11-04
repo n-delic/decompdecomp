@@ -99,10 +99,10 @@ def test_usage_bridge_reads_only_new_records_and_ignores_duplicate_step_events(t
     assert json.loads(parsed[0][1]) == {'input': 10, 'output': 4, 'cache_read': 30, 'cache_write': 2, 'turns': 1}
 
 
-def test_legacy_kimi_launcher_has_an_actionable_error(tmp_path):
+def test_non_npm_kimi_launcher_has_an_actionable_error(tmp_path):
     old = tmp_path / 'kimi'
     old.write_text('#!/usr/bin/env python3')
-    with pytest.raises(RuntimeError, match='legacy Python'):
+    with pytest.raises(RuntimeError, match='needs the npm build'):
         KIMI.launch_command([str(old)])
 
 

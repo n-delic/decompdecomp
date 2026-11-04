@@ -61,7 +61,6 @@ class KimiCode(Agent):
     install = 'npm install -g @moonshot-ai/kimi-code'
     signin = 'Run `kimi login` in a terminal, then start this agent again.'
     docs = 'https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html'
-    family = 'kimi'
     takes_effort = True
     efforts = ('low', 'high', 'max')
 
@@ -79,7 +78,7 @@ class KimiCode(Agent):
         data = config()
         selected, _, effort = (model or data.get('default_model') or '').partition('#')
         kept = {k: data[k] for k in ('providers', 'models', 'thinking') if k in data}
-        kept.update(default_model=selected, telemetry=False, auto_session_title=False,
+        kept.update(default_model=selected, telemetry=False,
                     builtin_product_skills=False, merge_all_available_skills=False,
                     tools={'enabled': ['mcp__decomp__*']})
         if effort:
@@ -115,7 +114,7 @@ class KimiCode(Agent):
         empty.mkdir(exist_ok=True)
         return [exe, '--output-format', 'stream-json', '--skills-dir', str(empty), '--agent-file', str(profile)] + (['-m', selected] if selected else []), {
             'KIMI_CODE_HOME': str(private), TOKEN_ENV: token, 'KIMI_DISABLE_TELEMETRY': '1',
-            'KIMI_CODE_TRUST_WORKSPACE': '1', 'KIMI_LOOP_MAX_STEPS_PER_TURN': '100', 'KIMI_MODEL_NAME': ''}
+            'KIMI_CODE_TRUST_WORKSPACE': '1', 'KIMI_LOOP_MAX_STEPS_PER_TURN': '100'}
 
     def launch_command(self, cmd):
         if Path(cmd[0]).name.lower() in ('node', 'node.exe'):
@@ -128,7 +127,7 @@ class KimiCode(Agent):
         # cli_argv can prepend Node while retaining npm's extensionless symlink.
         entry = str(Path(entry).resolve())
         if Path(entry).suffix not in ('.mjs', '.cjs', '.js'):
-            raise RuntimeError('Install the current Kimi Code CLI with npm install -g @moonshot-ai/kimi-code; the legacy Python kimi-cli is not supported.')
+            raise RuntimeError('decompdecomp needs the npm build of Kimi Code for its stdin prompt bridge: npm install -g @moonshot-ai/kimi-code.')
         if not node:
             raise RuntimeError('Kimi Code needs Node.js 22.19 or later. Install Node.js and reinstall Kimi Code.')
         return [node, '-e', STDIN_LAUNCHER, entry, *args]
@@ -157,7 +156,7 @@ class KimiCode(Agent):
 
     def fatal(self, error):
         return any(s in error.lower() for s in ('model not found', 'unknown model', 'unsupported effort', 'unsupported option',
-                                               'no provider configured', 'no default model', 'kimi login'))
+                                               'no provider configured', 'no default model'))
 
 
 KIMI = KimiCode()

@@ -25,7 +25,8 @@ def config_home() -> Path:
 
 
 class Cursor(Agent):
-    id = 'cursor-cli'
+    id = 'cursor'
+    aliases = ('cursor-cli',)
     name = 'Cursor Agent'
 
     @property
@@ -76,7 +77,7 @@ class Cursor(Agent):
         settings = {'version': 1, 'editor': {'vimMode': False}, 'approvalMode': 'allowlist',
                     'permissions': {'allow': ['Mcp(decomp:*)'],
                                     'deny': ['Shell(*)', 'Read(**)', 'Read(/**)', 'Write(**)', 'Write(/**)',
-                                             'WebFetch(*)']}, 'notifications': False}
+                                             'WebFetch(*)', 'WebSearch(*)']}, 'notifications': False}
         network = read_json(config_home() / 'cli-config.json').get('network')
         if isinstance(network, dict):
             settings['network'] = {k: v for k, v in network.items() if k == 'useHttp1ForAgent' and isinstance(v, bool)}
@@ -107,7 +108,7 @@ class Cursor(Agent):
         return cmd, env
 
     def fatal(self, error):
-        return bool(re.search(r"authentication required|not authenticated|invalid model|unknown model|unknown option|couldn't access.*keychain", error, re.I))
+        return bool(re.search(r"invalid model|unknown model|unknown option", error, re.I))
 
     def parse(self, event, state):
         kind = event.get('type')

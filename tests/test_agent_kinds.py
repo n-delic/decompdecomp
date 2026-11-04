@@ -120,6 +120,17 @@ def test_an_agent_that_runs_one_makers_models_names_their_family():
     assert network.model_family("gemini-2") == network.model_family("antigravity-1") == "gemini"
     assert network.model_family("opencode-deepseek-v4.1-flash-1") == "deepseek"  # the model in its name says
     assert network.model_family("zcode-glm-5.3-1") == "glm"
+    assert network.model_family("cursor-claude-sonnet-5-1") == "claude"
+    assert network.model_family("cursor-gpt-5-1") == "gpt"
+    assert network.model_family("kimi-claude-sonnet-5-1") == "claude"
+    assert network.model_family("kimi-gemini-3-1") == "gemini"
+
+
+def test_real_cli_signin_errors_are_recognized_from_stderr():
+    assert helpers._SIGNED_OUT.search("Error: Authentication required. Please run 'agent login' first")
+    assert helpers._SIGNED_OUT.search("No model configured. Run kimi and use /login to sign in")
+    assert not agents.get('cursor').fatal("Error: Authentication required. Please run 'agent login' first")
+    assert not agents.get('kimi').fatal("No model configured. Run kimi and use /login to sign in")
 
 
 def test_antigravity_loads_decomps_tools_up_front():
@@ -142,6 +153,8 @@ def test_nothing_outside_agents_asks_an_agents_name():
         if SRC / "agents" in path.parents:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if path.name == 'collab.py' and 'info.get("cursor")' in line:
+                continue  # collaboration event cursor, unrelated to Cursor Agent
             if _NAME_CHECK.search(line):
                 found.append(f"{path.relative_to(SRC)}:{number}: {line.strip()}")
     assert not found, "\n".join(found)
