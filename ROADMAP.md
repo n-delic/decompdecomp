@@ -2089,3 +2089,7 @@ Cross-project name actions reject these placeholders server-side and hide their 
 automatic name inference ignores them. ROM batch/single renames and PROJECT-mode renames also
 reject descriptive-to-placeholder downgrades. Source-reuse provenance comments remain intact:
 they record donor history and do not themselves change a function's symbol.
+
+- Done: a common “Join an existing room” entry in Decompile together for open projects, including
+  hosting, guest, unfinished-project and room-restoration states; reuses the existing verified join
+  flow with file selection and progress.

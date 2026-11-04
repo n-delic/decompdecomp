@@ -1482,3 +1482,8 @@ pointer-field null tests, byte-array address association inside candidate-owned 
 (including helpers reached through wrapper macros), and trailing stores placed inside both branch
 arms. Searches keep these alternatives bounded, preserve protected macro regions and volatile
 accesses, and require the normal compiler and byte/object judge before keeping any improvement.
+
+With any project open, choose **Decompile together → Join room…** to join someone else's existing
+room. Paste their invite link or public room address, enter your room name and select your own game
+copy. Existing projects remain in the sidebar. The join option is also available while hosting,
+waiting for a room, or restoring a hosted room.

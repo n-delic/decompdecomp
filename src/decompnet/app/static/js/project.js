@@ -381,7 +381,8 @@ let teamTimer = null;
 const TEAM_HOST_EVERY_MS = 5000, TEAM_GUEST_EVERY_MS = 4000;
 const ROOM_PORT = 6481;  // the port a room shared at your own address listens on, unless you pick another
 function openTeam() {
-  const box = dialog("Decompile together", `<p class="muted">Looking at this computer's network…</p>`, "team");
+  const box = dialog("Decompile together", `${teamJoinHtml()}<p class="muted">Looking at this computer's network…</p>`, "team");
+  wireTeamJoin(box);
   renderTeam(box);
 }
 const teamOpen = () => S.dialogKind === "team" && !$("dialog").hidden && !!S.slug;
@@ -615,6 +616,16 @@ function wireRoomMatchReview(box) {
   if(button)button.onclick=openRoomMatchReview;
 }
 
+function teamJoinHtml() {
+  return `<div class="note"><h3>Join an existing room</h3>
+    <p class="muted small">Have an invite link or a public room address? Join someone else's room using your own copy of the game. Your existing projects stay in the sidebar.</p>
+    <button class="ghost" type="button" data-team-join>Join room…</button></div>`;
+}
+function wireTeamJoin(box) {
+  const button = box.querySelector('[data-team-join]');
+  if (button) button.onclick = openJoin;
+}
+
 async function renderTeam(box) {
   clearInterval(teamTimer);
   if (!S.ov) return;
@@ -625,12 +636,17 @@ async function renderTeam(box) {
     return;
   }
   if (S.ov.kind === "fork" && !S.ov.ready) {
-    box.innerHTML = `<p class="muted">Set the project up first (Overview): then friends who own the game can join it from their own decompdecomp.</p>
-      <div class="row"><button class="ghost" id="tmJoin" type="button">Join a team's room</button></div>`;
-    $("tmJoin").onclick = openJoin;
+    box.innerHTML = `${teamJoinHtml()}<p class="muted">Set the project up first (Overview): then friends who own the game can join it from their own decompdecomp.</p>`;
+    wireTeamJoin(box);
     return;
   }
-  const info = await api(`/api/collab?slug=${S.slug}`).catch((e) => { box.innerHTML = `<p class="bad">${esc(e.message)}</p>`; return null; });
+  const info = await api(`/api/collab?slug=${S.slug}`).catch((e) => {
+    if (teamOpen()) {
+      setHtml(box, `${teamJoinHtml()}<p class="bad">${esc(e.message)}</p>`);
+      wireTeamJoin(box);
+    }
+    return null;
+  });
   if (!info || !teamOpen()) return;
   renderHost(box, info);
   teamTimer = setInterval(async () => {
@@ -649,13 +665,14 @@ function renderGuest(box, room) {
       <span>${m.agents && m.agents.length ? esc(m.agents.join(", ")) : "no agents yet"} · ${m.matched || 0} matched · <span title="Distinct functions improved by this person’s agents, including matches">${m.improved || 0} improved</span>${m.working && m.working.length ? ` · on ${esc(m.working.slice(0, 3).join(", "))}` : ""}</span></div></div>`).join("");
   $("dialogTitle").textContent = waiting ? "Waiting for the host to let you in" : room.state === "out" ? "Not in the room"
     : room.connected ? "In a team room" : "The room is offline";
-  setHtml(box, `<p class="muted">${waiting ? `You asked to join as <b>${esc(room.member)}</b>. Your agents start working with the room as soon as the host lets you in.`
+  setHtml(box, `${teamJoinHtml()}<p class="muted">${waiting ? `You asked to join as <b>${esc(room.member)}</b>. Your agents start working with the room as soon as the host lets you in.`
       : room.connected ? `You're <b>${esc(room.member)}</b>. Your agents claim functions through the room, so nobody does the same one twice; matches are checked and shared by the host.`
       : `${esc(room.error || "Waiting for the host…")} Your agents wait and carry on when it's back.`}</p>
     <dl class="facts"><div><dt>Host</dt><dd>${esc(room.host)}</dd></div><div><dt>Members</dt><dd>${members.length}</dd></div><div><dt>Online</dt><dd>${members.filter((m) => m.online).length}</dd></div></dl>
     ${people ? `<div class="setup-group"><h3>In the room</h3>${people}</div>` : ""}
     <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="ghost" id="roomReconnect" type="button">${room.connected ? "The host shared a new link?" : "Reconnect with a new link"}</button><button class="ghost danger" id="roomLeave" type="button">Leave room</button></div>`);
   wireRoomMatchReview(box);
+  wireTeamJoin(box);
   $("roomReconnect").onclick = openReconnect;
   $("roomLeave").onclick = async () => {
     if (!confirm("Leave this room? Your local copy of the project stays; it stops syncing.")) return;
@@ -666,7 +683,8 @@ function renderGuest(box, room) {
 function renderHost(box, info) {
   if (box._working) return;
   if (info.restoring && !info.sharing) {
-    setHtml(box, '<p role="status">Reopening your hosted room… Saved members and the invite are being restored.</p><div class="workbar" role="progressbar" aria-label="Reopening room"><i></i></div>');
+    setHtml(box, `${teamJoinHtml()}<p role="status">Reopening your hosted room… Saved members and the invite are being restored.</p><div class="workbar" role="progressbar" aria-label="Reopening room"><i></i></div>`);
+    wireTeamJoin(box);
     return;
   }
   const intro = `${info.sharing ? `<p class="notice">${info.stable_link ? "This room reopens automatically after restart. Clients can reconnect using this same link while the configured address remains reachable." : "This room reopens automatically after restart and remembers members. Quick tunnels get a new address each time; for a permanent reconnect link, use an address you control (LAN, Tailscale or a server)."}</p>` : ""}<p class="muted">Your team works on this game from their own computers, each with <b>their own copy of exactly this game</b> (decompdecomp checks it's identical) using a browser or their own app and agents. This computer is the room's host: it keeps the shared work and checks every match against your copy.${S.ov.kind === "fork" ? " Members get this project's source tree from you (only what git tracks: never your game or its extracted files) and follow every commit made here." : ""} Only the work travels, never ROM data. You host the room and decide who's in.</p>`;
@@ -675,7 +693,7 @@ function renderHost(box, info) {
       <label class="check"><input type="checkbox" id="apprChk" ${inf.settings.approve ? "checked" : ""}><span>I let each new member in (they wait until you approve)</span></label></div>`;
   if (!info.sharing) {
     const sugg = (info.addresses || []).map((a) => `<button type="button" class="chip" data-addr="${esc(a.address)}">${esc(a.label)}: <span>${esc(a.address)}</span></button>`).join("");
-    setHtml(box, `${intro}${info.was_sharing ? `<div class="notice"><span>${info.changing_address ? "Choose a reachable fixed address. The room stays online while you edit; members and the invite will be kept." : info.restore_error ? `Automatic room restore failed: ${esc(info.restore_error)}. Retry below; members and the invite are kept.` : "This saved room is not online. Reopen it below; members and the invite are kept."}</span></div>` : ""}
+    setHtml(box, `${teamJoinHtml()}${intro}${info.was_sharing ? `<div class="notice"><span>${info.changing_address ? "Choose a reachable fixed address. The room stays online while you edit; members and the invite will be kept." : info.restore_error ? `Automatic room restore failed: ${esc(info.restore_error)}. Retry below; members and the invite are kept.` : "This saved room is not online. Reopen it below; members and the invite are kept."}</span></div>` : ""}
       <div class="setup-group"><h3>How teammates reach this computer</h3>
         <label class="check"><input type="radio" name="mode" value="tunnel" ${info.mode !== "address" ? "checked" : ""} ${info.tunnel_supported ? "" : "disabled"}><span><b>Quick tunnel</b>: works from anywhere, nothing to set up (Cloudflare's free tunnel). Reopens automatically after restart and keeps members and the invite, but Cloudflare assigns a new address; members must paste the new link. Choose an address you control to keep the same link.</span></label>
         <label class="check"><input type="radio" name="mode" value="address" ${info.mode === "address" ? "checked" : ""}><span><b>An address you control</b>: this network, Tailscale, or a server with its own domain. It stays the same, so the room reopens by itself after a restart.</span></label>
@@ -685,6 +703,7 @@ function renderHost(box, info) {
       ${opts(info)}
       <div class="row"><button class="ghost" data-room-matches>Review pending matches</button><button class="primary" id="startShare" type="button">${info.changing_address ? "Use this address" : "Start sharing"}</button>${info.changing_address ? `<button class="ghost" id="cancelAddress" type="button">Keep current link</button>` : ""}</div><pre class="joblog" id="shareLog" hidden></pre>`);
     wireRoomMatchReview(box);
+    wireTeamJoin(box);
     if (info.changing_address) box.querySelector('#cancelAddress').onclick = async () => {
       box._editingAddress = false;
       renderHost(box, await api(`/api/collab?slug=${S.slug}`));
@@ -719,7 +738,7 @@ function renderHost(box, info) {
       <button class="ghost small-btn danger" data-remove="${esc(m.name)}" type="button">Remove</button></div>`).join("");
   const waiting = (info.pending || []).map((p) => `<div class="line-item"><div class="txt"><b>${esc(p.name)}</b><span>asks to join</span></div>
       <button class="primary small-btn" data-approve="${esc(p.name)}" type="button">Let in</button><button class="ghost small-btn" data-decline="${esc(p.name)}" type="button">Decline</button></div>`).join("");
-  setHtml(box, `${intro}<label class="field"><span>${info.settings.visibility === "public" ? "The room's address (anyone with it and their own copy of the game can join)" : "Invite link (send it to teammates who own this game)"}</span></label>${cmdBox(info.link || "")}
+  setHtml(box, `${teamJoinHtml()}${intro}<label class="field"><span>${info.settings.visibility === "public" ? "The room's address (anyone with it and their own copy of the game can join)" : "Invite link (send it to teammates who own this game)"}</span></label>${cmdBox(info.link || "")}
     ${info.link ? `<a class="btn ghost" href="${esc(info.link)}" target="_blank" rel="noopener noreferrer">Open browser workspace ↗</a>` : ""}
     <p class="muted small">${info.mode === "address" ? "Shared at your own address: the room reopens by itself when this app restarts." : "Shared through a quick tunnel: the address changes if this app restarts."} Teammates can open this link in a browser and contribute without installing the app. They need their own copy of the game; checks run on your computer. Desktop users can also choose <i>New project → Join a team's room</i>.</p>
     ${waiting ? `<div class="setup-group"><h3>Waiting to join</h3>${waiting}</div>` : ""}
@@ -728,6 +747,7 @@ function renderHost(box, info) {
     <div class="row"><button class="ghost" data-room-matches>Review pending matches</button>${!info.stable_link ? `<button class="ghost" id="stableAddress" type="button">Use stable address…</button>` : ""}<button class="ghost" id="rotate" type="button">New invite link</button><button class="ghost danger" id="stopShare" type="button">Stop sharing</button></div>`);
   wireCopies(box);
   wireRoomMatchReview(box);
+  wireTeamJoin(box);
   const manage = async (payload) => {
     try { await api("/api/collab/manage", { method: "POST", body: { slug: S.slug, ...payload } }); renderHost(box, await api(`/api/collab?slug=${S.slug}`)); }
     catch (e) { toast(esc(e.message), "err"); }
