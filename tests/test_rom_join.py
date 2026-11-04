@@ -215,3 +215,16 @@ def test_apply_join_refuses_a_tail_that_matched_since_the_vote(net):
         net._apply_join(proj, first, last, agent, ["aa-1", "aa-2", "bb-1"])
     assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?",
                          first["project_id"], TAIL) is not None   # the matched tail was not deleted
+
+
+def test_join_writes_a_decompdecomp_joined_note(net):
+    # The join records a decompdecomp "joined" note on the head, so a later "check again" (not_c_from_notes)
+    # discounts no-C notes that were about a piece instead of setting the whole function aside again -- the same
+    # note the fork join path writes. This is exactly the note not_c_from_notes keys on.
+    agent, _ = net.local_agent("tester")
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    assert _agree(net, FN, TAIL).startswith("✅")
+    head = net._function(FN, SLUG)
+    note = net.store.one("SELECT 1 FROM notes n JOIN agents a ON a.id=n.agent_id WHERE n.function_id=? "
+                         "AND a.name='decompdecomp' AND n.text LIKE '%joined%'", head["id"])
+    assert note is not None, "no decompdecomp joined-note on the head"
