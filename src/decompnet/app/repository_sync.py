@@ -19,6 +19,7 @@ from ..project import compiler_for
 from . import repository_sync_build
 
 STATE = 'decompdecomp-sync.json'
+MAX_CHECKOUT_CHANGES = 40
 _LOCK = threading.Lock()
 
 
@@ -76,13 +77,48 @@ def git(root, *args):
     return res.stdout
 
 
+def checkout_changes(raw):
+    """Describe staged and working-tree changes, preserving renamed and unusual file names."""
+    records = iter(raw.split(b'\0'))
+    changes = []
+    labels = {'M': 'modified', 'A': 'added', 'D': 'deleted', 'R': 'renamed',
+              'C': 'copied', 'T': 'type changed', 'U': 'conflicted'}
+    for record in records:
+        if not record:
+            continue
+        code = record[:2].decode('ascii', errors='replace')
+        name = json.dumps(record[3:].decode('utf-8', errors='replace'), ensure_ascii=True)
+        if 'R' in code or 'C' in code:
+            original = json.dumps(next(records).decode('utf-8', errors='replace'), ensure_ascii=True)
+            name = f'{original} -> {name}'
+        if code == '??':
+            state = 'untracked'
+        elif code in {'DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU'}:
+            state = 'conflicted'
+        else:
+            state = '; '.join(f"{labels.get(flag, 'changed')} ({area})"
+                              for flag, area in zip(code, ('staged', 'unstaged')) if flag != ' ')
+        changes.append(f'  {state}: {name}')
+    return changes
+
+
 def checkout(folder):
     """Require a clean checkout root before starting or publishing verified work."""
     root = Path(folder).expanduser().resolve()
     if not root.is_dir() or Path(git(root,'rev-parse','--show-toplevel').decode().strip()).resolve() != root:
         raise NetworkError('Choose the root folder of a local Git checkout.')
-    if git(root,'status','--porcelain','--untracked-files=normal').strip():
-        raise NetworkError('Commit or move the checkout’s existing changes before syncing. Nothing was overwritten.')
+    raw = git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+    if raw:
+        changes = checkout_changes(raw)
+        # Large autosaved projects can have thousands of dirty files; keep the error readable.
+        shown = changes[:MAX_CHECKOUT_CHANGES]
+        count = f"{len(changes)} path{'s' if len(changes) != 1 else ''}"
+        location = json.dumps(str(root), ensure_ascii=True)
+        details = f'\n\nExisting changes in {location} ({count}):\n' + '\n'.join(shown)
+        if len(changes) > len(shown):
+            details += f'\n  ... and {len(changes) - len(shown)} more. Open this checkout in Git to see all changes.'
+        raise NetworkError(f'Commit or move the checkout’s existing changes ({count}) before syncing. '
+                           'Nothing was overwritten.' + details)
     return root
 
 

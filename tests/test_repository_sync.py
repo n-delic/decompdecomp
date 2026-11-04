@@ -127,7 +127,9 @@ def test_wrong_image_is_rejected(project):
 
 def test_dirty_checkout_is_not_touched(project):
     root,net,_=project;(root/'README.md').write_text('my edit')
-    with pytest.raises(NetworkError,match='existing changes'):run(project)
+    with pytest.raises(NetworkError,match='existing changes') as error:run(project)
+    assert 'modified (unstaged): \"README.md\"' in str(error.value)
+    assert str(root) in str(error.value)
     assert (root/'README.md').read_text()=='my edit'
 
 
@@ -360,3 +362,43 @@ def test_status_recovers_worktree_checkout_and_does_not_guess_from_repository_ur
     (root / '.git').unlink()
     cfg['repo_url'] = 'https://example.test/project'
     assert sync.status(net, 'game')['folder'] == ''
+
+
+def test_checkout_error_lists_staged_renames_deletions_and_untracked_files(project):
+    root, _, _ = project
+    sync.git(root, 'mv', 'README.md', 'guide with spaces.md')
+    (root / 'objdiff.json').unlink()
+    (root / 'new draft.c').write_text('draft')
+    before = sync.git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+    with pytest.raises(NetworkError) as error:
+        sync.checkout(root)
+    message = str(error.value)
+    assert 'renamed (staged): "README.md" -> "guide with spaces.md"' in message
+    assert 'deleted (unstaged): "objdiff.json"' in message
+    assert 'untracked: "new draft.c"' in message
+    assert before == sync.git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all')
+    assert (root / 'new draft.c').read_text() == 'draft'
+
+
+def test_checkout_change_names_cannot_inject_status_lines():
+    raw = b'UU conflict.c\0MM both.c\0?? new\nfile.c\0R  destination.c\0old\nname.c\0'
+    assert sync.checkout_changes(raw) == [
+        '  conflicted: "conflict.c"',
+        '  modified (staged); modified (unstaged): "both.c"',
+        '  untracked: "new\\nfile.c"',
+        '  renamed (staged): "old\\nname.c" -> "destination.c"',
+    ]
+
+
+def test_large_checkout_error_counts_changes_and_limits_the_preview(project):
+    root, _, _ = project
+    count = sync.MAX_CHECKOUT_CHANGES + 5
+    for index in range(count):
+        (root / f'draft-{index:03}.c').write_text('draft')
+    with pytest.raises(NetworkError) as error:
+        sync.checkout(root)
+    message = str(error.value)
+    assert f'({count} paths)' in message and 'and 5 more' in message
+    assert message.count('untracked:') == sync.MAX_CHECKOUT_CHANGES
+    assert 'draft-000.c' in message
+    assert f'draft-{count-1:03}.c' not in message
