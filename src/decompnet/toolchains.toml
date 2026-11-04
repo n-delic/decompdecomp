@@ -783,6 +783,7 @@ url = "https://github.com/decompals/wibo/releases/download/1.2.0/wibo-macos"
 sha256 = "2b3000ef6a7a490c24ccd71967735ae0005e218922e51806cca1b8d77fd3cf7c"
 binary = "wibo"
 platforms = ["macos-x86_64", "macos-arm64"]
+rosetta = true
 
 [gc-wii-binutils]
 name = "GNU binutils for GameCube and Wii"

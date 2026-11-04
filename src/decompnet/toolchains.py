@@ -284,7 +284,9 @@ def runtime_error(tid: str) -> str | None:
         from . import wine
 
         return wine.problem(get(tid).name)
-    if current_platform() != "macos-arm64" or not any(p.get("rosetta") for p in get(tid).parts_for()):
+    if current_platform() != "macos-arm64" or not any(
+            p.get("rosetta") for pack in (get(tid), *(get(d) for d in get(tid).requires))
+            for p in pack.parts_for()):
         return None
     if _intel_mac_runtime_ready():
         return None
@@ -530,10 +532,9 @@ def _install(tid: str, *, accept_license: bool, force: bool, log, linux: bool | 
             f"{tid} ({tc.name}) is proprietary software. Running it on your coordinator is your own licensing "
             f"decision; re-run with --accept-license if you accept that.")
     if vm:
-        try:
-            linuxvm.setup(log=log)
-        except linuxvm.VMError as error:
-            raise ToolchainError(str(error)) from error
+        ok, why = linuxvm.status(refresh=True)
+        if not ok:
+            raise ToolchainError(why)
     elif linux:
         ok, why = wsl.status()
         if not ok:

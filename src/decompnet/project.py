@@ -49,6 +49,10 @@ def compiler_config(root: Path, cfg: dict) -> CompilerConfig:
         prelude, cplusplus = tc.prelude, tc.cplusplus
         vm = tc.via_vm
         linux = tc.via_wsl  # Windows: a Linux toolchain, run inside WSL 2
+        if own and vm:
+            raise toolchains.ToolchainError(
+                f"{tc.name} needs the Linux runner, which cannot read your own compiler kit in place. "
+                "Choose a locally supported compiler or use this kit on Linux.")
         if linux and not (ok := wsl.status())[0]:
             raise toolchains.ToolchainError(f"{tc.name} is a Linux program: on Windows it runs in WSL 2. {ok[1]}")
         dirs = ((own.root, *(toolchains.require(d, linux) for d in tc.requires)) if own
