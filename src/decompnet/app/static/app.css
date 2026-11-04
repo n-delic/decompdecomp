@@ -1589,3 +1589,10 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .background-table td,.background-table th { border-bottom:1px solid var(--line-soft); padding:12px 10px; vertical-align:top; }
 .background-table td:first-child { min-width:220px; }
 .background-table td .small { margin-top:5px; max-width:65ch; overflow-wrap:anywhere; }
+
+.background-thread-sort { max-width:220px; margin:14px 0; }
+#backgroundThreadNames { margin-top:10px; }
+#backgroundThreadNames table { min-width:620px; }
+#backgroundThreadNames td:first-child { min-width:190px; }
+#backgroundThreadNames code { background:transparent; padding:0; overflow-wrap:anywhere; }
+.thread-cpu { min-width:100px; font-variant-numeric:tabular-nums; white-space:nowrap; }

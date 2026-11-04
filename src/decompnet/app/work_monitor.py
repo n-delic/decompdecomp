@@ -5,12 +5,14 @@ import time
 
 from ..network import NetworkError
 from . import workers
+from .thread_activity import Sampler
 
 
 class Monitor:
     def __init__(self, net, jobs, manager):
         self.net, self.jobs, self.manager = net, jobs, manager
         self._sample = None
+        self.thread_sampler = Sampler()
         self._lock = threading.Lock()
 
     def snapshot(self):
@@ -65,8 +67,9 @@ class Monitor:
             for slug, state in list(surveys.items()):
                 if state.get('state') == 'running':
                     add('service',f'survey:{label}:{slug}',label,'running',slug,'No safe stop available for this automatic check',False)
-        threads = sorted(t.name for t in threading.enumerate() if t.is_alive())
-        return dict(items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads,
+        thread_details = self.thread_sampler.snapshot()
+        threads = [t['name'] for t in thread_details]
+        return dict(items=rows, cpu_percent=percent, cores=os.cpu_count() or 1, threads=threads, thread_details=thread_details,
                     workers=workers.WORKERS, default_workers=workers.default_workers(),
                     cpu_note='App Python process only; 100% means one CPU core. Compiler subprocesses and the window are excluded. Jobs share threads and cannot be assigned accurate individual CPU percentages.')
 

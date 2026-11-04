@@ -2149,3 +2149,9 @@ services, plus all live app thread names. It delegates Stop to existing safe wor
 exposes the shared draft/permuter thread limit. CPU is measured for the Python process only
 (100% per core); accurate per-job and compiler-subprocess attribution remains planned work.
 Automatic evidence checks and room services remain read-only here and use their project controls.
+
+The background-work thread table explains registered thread roles, shows native IDs and sorts
+by measured CPU, name or purpose. macOS uses proc_pidinfo(PROC_PIDTHREADID64INFO); Linux
+uses /proc/self/task counters. First observations show Measuring; unsupported/failed reads show
+Unavailable. Metrics exclude compiler subprocesses and do not attribute shared pool work to
+individual jobs. Windows per-thread counters remain planned work.

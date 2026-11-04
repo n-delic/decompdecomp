@@ -623,7 +623,7 @@
     <div class="row"><label class="field"><span>Shared background worker limit</span><input id="backgroundLimit" type="number" min="0" step="1" placeholder="Automatic"></label><button class="ghost small-btn" id="backgroundLimitSave" type="button">Apply limit</button></div>
     <p class="small muted">0 = automatic. Limits machine drafts and the background permuter across projects. Already queued work finishes at the old limit; new work uses the new limit. Agents, deep passes and imports have separate concurrency. Stopped automatic workers can start again when you open their project.</p>
     <div id="backgroundWorkStatus" role="status"></div><div id="backgroundRows"></div>
-    <details class="more"><summary>All app threads (includes services and idle workers)</summary><pre class="joblog" id="backgroundThreadNames"></pre></details>
+    <details class="more"><summary>All app threads <span class="small muted">— purpose &amp; CPU</span></summary><p class="small muted">Lists Python-managed threads; native library threads may not appear. CPU is measured between refreshes on macOS and Linux; 100% means one core. Compiler subprocesses are excluded. Low CPU does not prove a thread is idle. Purposes describe the thread’s role, not its current call stack.</p><label class="field background-thread-sort"><span>Sort threads</span><select id="backgroundThreadSort"><option value="cpu">Highest CPU first</option><option value="name">Thread name</option><option value="role">Purpose</option></select></label><div class="background-table" id="backgroundThreadNames"></div></details>
   </div></section>
 </main>
 
