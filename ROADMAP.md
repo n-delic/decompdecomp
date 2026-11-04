@@ -2133,3 +2133,9 @@ own build configuration needs a separate temporary-build implementation.
 - Done: project map first-paint ordering and canvas-cache reset on navigation, with stale-response
   ordering guards and lazy compiler-colour loading. Maps no longer wait for a resize after being
   measured under a hidden loading cover or display cached pixels from the previous project.
+
+ROM compiler profiles can replace the default while retaining previous-default overrides for
+saved matches that fail the new profile. The guarded compiler commit rechecks affected matches
+and rescores attempts before publishing. A separate read-only trial checks all non-matches'
+saved C against a selected profile, reporting exact matches and unavailable sources. PROJECT
+mode still needs the temporary own-build implementation described above.

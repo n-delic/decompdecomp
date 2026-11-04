@@ -37,3 +37,7 @@ ctx.renderCompilerParts({parts});
 assert.doesNotMatch(elements.get('compilerParts').innerHTML, /Compare all matches with default/);
 
 assert.doesNotMatch(elements.get('compilerParts').innerHTML, /Test this profile as default/);
+
+ctx.S.ov.kind=undefined;ctx.renderCompilerParts({parts});
+assert.match(elements.get('compilerParts').innerHTML, /Replace default with this profile/);
+assert.match(elements.get('compilerParts').innerHTML, /Test all non-matches/);

@@ -87,3 +87,51 @@ def test_cancellation_never_changes_config(net, monkeypatch):
     log.check_cancel=cancelled
     with pytest.raises(RuntimeError,match='cancelled'):trial.run(net,'game',PROFILE,log)
     assert net._project('game')['config']==before
+
+
+def test_nonmatches_checks_saved_attempts_from_other_profiles(net, monkeypatch):
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
+    out=trial.run(net, 'game', PROFILE, nonmatches=True)
+    assert out['total']==1 and out['passed']==1 and out['matches']==['f3']
+    assert net._project('game')['config'] == net.store.one('SELECT config FROM projects')['config']
+
+
+def test_replacement_preserves_failed_default_matches_and_existing_profiles(net, monkeypatch):
+    import contextlib
+    monkeypatch.setattr(net.progress, 'judging', lambda slug:contextlib.nullcontext())
+    monkeypatch.setattr(net, '_judge_with', lambda proj, fn, *args:(fn['name']=='f0', NS(score=20), ''))
+    captured=[]
+    monkeypatch.setattr(net, '_apply_compiler_config', lambda proj, cfg, **kw:captured.append(cfg))
+    result=trial.replace_default(net, 'game', PROFILE)
+    from decompnet.project import compiler_for
+    cfg=captured[0]
+    assert trial.profile(cfg['compiler'])==trial.profile(PROFILE)
+    assert trial.profile(compiler_for(cfg,0x80001000))==trial.profile(PROFILE)
+    assert compiler_for(cfg,0x80001010)['flags']==['-O2']
+    assert compiler_for(cfg,0x80001020)['flags']==['-O1']
+    assert result=={'replaced':True,'preserved':1}
+
+
+def test_replacement_rejects_stale_trial(net, monkeypatch):
+    import contextlib
+    monkeypatch.setattr(net.progress, 'judging', lambda slug:contextlib.nullcontext())
+    monkeypatch.setattr(trial, 'run', lambda *args:{'stale':True})
+    with pytest.raises(NetworkError, match='changed'):
+        trial.replace_default(net, 'game', PROFILE)
+
+
+def test_replacement_commits_through_normal_guard_and_preserves_matches(net, monkeypatch):
+    import contextlib
+    monkeypatch.setattr(net.progress, 'judging', lambda slug:contextlib.nullcontext())
+    monkeypatch.setattr(net, '_judge_with', lambda proj, fn, *args:(fn['name']=='f0', NS(score=20), ''))
+    verified=[]
+    def regression(proj, agent, only, **kwargs):
+        verified.extend(f['name'] for f in only)
+        return []
+    monkeypatch.setattr(net, 'regression_test', regression)
+    trial.replace_default(net, 'game', PROFILE)
+    cfg=json.loads(net._project('game')['config'])
+    assert cfg['compiler']['flags']==['-O1']
+    assert verified==['f0']
+    assert net.store.one("SELECT count(*) AS n FROM functions WHERE status='matched'")['n']==3
+    assert net.store.one("SELECT matched_source FROM functions WHERE name='f1'")['matched_source']
