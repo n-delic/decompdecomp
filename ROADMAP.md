@@ -2109,3 +2109,10 @@ they record donor history and do not themselves change a function's symbol.
 
 - Done: room match verification offers Retry all for the full pending snapshot, with sequential checks,
   per-item error reporting, counted progress and immediate busy spinners on retry actions.
+
+
+Single-function compiler testing and the project-wide compiler search now share one progress
+template and renderer. The function drawer consumes live job progress for combination count,
+percentage, saved/best match, current best profile and exact-match count; project queue/result
+actions are hidden in function scope. Navigation guards prevent late results updating another
+function or overwriting the project-wide progress card.

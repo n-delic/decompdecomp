@@ -514,19 +514,7 @@
             <p class="small" id="compilerStopError" role="alert" hidden></p>
 
             <div id="installedCompilerWork"></div>
-            <section class="compiler-progress" id="compilerProgress" aria-label="Compiler comparison progress" hidden>
-              <div class="compiler-queue-count"><span data-queue>Counting eligible functions…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
-              <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
-              <div class="compiler-progress-count"><span data-tested>Waiting for the first result</span><progress data-bar max="1" value="0" aria-label="Settings tested for current function"></progress></div>
-              <dl class="compiler-progress-stats">
-                <div class="compiler-percent"><dt>Saved match</dt><dd data-before>—</dd></div>
-                <div class="compiler-percent"><dt>Best tested</dt><dd data-best>—</dd></div>
-                <div><dt>Functions finished</dt><dd><button class="compiler-stat" type="button" data-results-filter="completed" aria-label="View finished function results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-completed>0</span><span class="compiler-stat-action">View functions</span></button></dd></div>
-                <div><dt>Better settings found</dt><dd><button class="compiler-stat" type="button" data-results-filter="improved" aria-label="View functions with better settings" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-improved>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
-                <div><dt>Exact matches found</dt><dd><button class="compiler-stat" type="button" data-results-filter="exact" aria-label="View exact match results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-exact>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
-              </dl>
-              <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
-            </section>
+            <section class="compiler-progress" id="compilerProgress" aria-label="Compiler comparison progress" hidden></section>
             <div id="compilerImprovements" tabindex="-1" aria-label="Compiler comparison function results"></div>
             <details class="more"><summary>What gets tested?</summary><div class="more-body small muted">Up to 400 unmatched functions per run. Unless retesting is enabled, unchanged completed comparisons are skipped. Tests optimization, small-data and debug variants, using no AI tokens or downloads. This is a bounded search, not every possible flag combination.</div></details>
             <details class="more" id="compilerLogDetails" hidden><summary>Detailed output</summary><div class="more-body">
@@ -725,6 +713,7 @@
         <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Current compiler only · test flag variations</span></label></div>
         <p class="small muted fn-compiler-explainer">Local compiler search · no AI tokens. Tests the saved C against supported compiler and flag combinations. Settings change only when you apply a result.</p>
         <p class="small muted" id="fnCompilerHistory">Not tested yet.</p>
+        <section class="compiler-progress" id="fnCompilerProgress" data-mode="function" aria-label="Function compiler comparison progress" hidden></section>
         <p class="compiler-result" id="fnCompilerSummary" role="status" hidden></p>
         <button class="primary small-btn" id="fnApplyCompiler" type="button" hidden>Apply these settings to this function</button>
         <details class="more"><summary>Comparison details</summary><pre class="joblog" id="fnCompilerLog" hidden></pre></details>
@@ -847,6 +836,20 @@
 <script src="/assets/js/rewrite-performance.js"></script>
 <script src="/assets/js/source-mismatches.js"></script>
 <script src="/assets/js/function.js"></script>
+<template id="compilerProgressTemplate">
+              <div class="compiler-queue-count"><span data-queue>Counting eligible functions…</span><progress data-queue-bar max="1" value="0" aria-label="Functions completed in this run"></progress></div>
+              <div class="compiler-progress-heading"><span class="small muted compiler-current-label">Current function</span><b class="mono" data-current>Preparing…</b></div>
+              <div class="compiler-progress-count"><span data-tested>Waiting for the first result</span><progress data-bar max="1" value="0" aria-label="Settings tested for current function"></progress></div>
+              <dl class="compiler-progress-stats">
+                <div class="compiler-percent"><dt>Saved match</dt><dd data-before>—</dd></div>
+                <div class="compiler-percent"><dt>Best tested</dt><dd data-best>—</dd></div>
+                <div><dt>Functions finished</dt><dd><button class="compiler-stat" type="button" data-results-filter="completed" aria-label="View finished function results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-completed>0</span><span class="compiler-stat-action">View functions</span></button></dd></div>
+                <div><dt>Better settings found</dt><dd><button class="compiler-stat" type="button" data-results-filter="improved" aria-label="View functions with better settings" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-improved>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
+                <div><dt>Exact matches found</dt><dd><button class="compiler-stat" type="button" data-results-filter="exact" aria-label="View exact match results" aria-controls="compilerImprovements" aria-expanded="false" disabled><span data-exact>0</span><span class="compiler-stat-action">Review &amp; apply</span></button></dd></div>
+              </dl>
+              <p class="small muted compiler-single-exact"><b data-single-exact>0</b> exact compiler/flag matches found</p>
+              <p class="small muted compiler-progress-profile" data-profile>Comparing the saved C. Compiler settings stay unchanged.</p>
+</template>
 <script src="/assets/js/compiler-progress.js"></script>
 <script src="/assets/js/compiler-groups.js"></script>
 <script src="/assets/js/code-audit.js"></script>

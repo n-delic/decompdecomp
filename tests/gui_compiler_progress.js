@@ -201,3 +201,27 @@ assert.equal(scopeFields.get('testInstalledCompilers').textContent, 'Retest comp
 ctx.renderCompilerProgress(null, {tried:1, total:1, auto_apply:true, applied_count:1, results:[{function:'applied',applied:true,best:99,improved:true}],improvements:[{}]});
 assert.match(fields.get('[data-profile]').textContent, /1 function profiles applied and rechecked/);
 assert.ok(box._compilerApplied.has('applied'));
+
+
+// The same renderer supports an isolated function panel without wiring project result buttons.
+const singleFields=new Map();
+const single={hidden:true,dataset:{mode:'function',function:'test_function'},querySelector(key){if(!singleFields.has(key))singleFields.set(key,{});return singleFields.get(key);}};
+ctx.renderCompilerProgress(null,null,single);
+assert.equal(single.hidden,false);
+assert.equal(singleFields.get('[data-bar]').value,0);
+ctx.renderCompilerProgress({function:'test_function',tested:37,combinations:100,before:86.25,best:94.5,profile:['test-compiler',['-O2']],exact_matches_current:3},null,single);
+assert.match(singleFields.get('[data-tested]').textContent,/37 \/ 100.*37%/);
+assert.equal(singleFields.get('[data-before]').textContent,'86.25%');
+assert.equal(singleFields.get('[data-best]').textContent,'94.50%');
+assert.equal(singleFields.get('[data-single-exact]').textContent,3);
+assert.equal(singleFields.get('[data-bar]').max,100);
+assert.equal(singleFields.get('[data-bar]').value,37);
+assert.equal(single.dataset.improved,'true');
+assert.notEqual(fields.get('[data-current]').textContent,'test_function','Function progress cannot overwrite project progress');
+ctx.renderCompilerProgress(null,{comparison:{tested:100,before:86.25,best:100,exact_matches:5}},single);
+assert.equal(singleFields.get('[data-bar]').value,100);
+assert.equal(singleFields.get('[data-single-exact]').textContent,5);
+assert.match(singleFields.get('[data-profile]').textContent,/not been applied/);
+const markup=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
+assert.equal((markup.match(/id="compilerProgressTemplate"/g)||[]).length,1);
+assert(markup.includes('id="fnCompilerProgress" data-mode="function"'));

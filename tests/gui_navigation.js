@@ -59,16 +59,22 @@ const detail = name => ({name,unit:'u',insns:1,status:'open',best:100,source:`so
   assert.equal(f.el('functionLoading').hidden,true);
 
   // Background jobs keep running but must not paint another function's shared DOM.
-  let update, finishJob, finishes=0;
+  let update, finishJob, finishes=0, compilerPaints=0;
+  f.ctx.renderCompilerProgress=()=>{compilerPaints++;};
   f.ctx.beginWork = (log, label, controls) => { log._workStatus={dataset:{},remove(){}}; controls.forEach(c=>c.disabled=true); return () => {finishes++; controls.forEach(c=>c.disabled=false);}; };
   f.ctx.showJobError = () => {};
   f.ctx.followJob = (job,log,callback) => { assert.equal(log,null); update=callback; return new Promise(resolve => {finishJob=resolve;}); };
   vm.runInContext(source.slice(source.indexOf('$("fnTestCompilers").onclick'),source.indexOf('async function followFunctionDeep(')),f.ctx);
   const compiler=f.el('fnTestCompilers').onclick();
   f.calls.at(-1).resolve({job:1}); await flush();
+  const firstPaints=compilerPaints;
+  update(['CURRENT COMPILER LOG'],{progress:{tested:1,combinations:374}});
+  assert.equal(compilerPaints,firstPaints+1);
+  assert.equal(f.el('fnCompilerLog').textContent,'CURRENT COMPILER LOG');
+  const beforeOldUpdate=compilerPaints;
   const other=f.ctx.openFn('other'); f.calls.at(-1).resolve(detail('other')); await other;
   update(['OLD COMPILER LOG']); finishJob({comparison:{}}); await compiler;
-  assert.equal(f.el('fnCompilerLog').textContent,''); assert.equal(finishes,0);
+  assert.equal(f.el('fnCompilerLog').textContent,''); assert.equal(finishes,0); assert.equal(compilerPaints,beforeOldUpdate);
   let progressPaints=0;
   f.ctx.deepProgressView=()=>()=>{progressPaints++;};
   vm.runInContext(source.slice(source.indexOf('async function followFunctionDeep('),source.indexOf('$("fnDeepStop").onclick')),f.ctx);

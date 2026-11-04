@@ -1527,3 +1527,9 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 }
 #fnCompilerTest .collapsible-box-body > * { min-width:0; max-width:100%; }
 #fnCompilerMatches { width:100%; overflow:hidden; }
+
+.compiler-single-exact { display:none; }
+.compiler-progress[data-mode="function"] .compiler-queue-count,
+.compiler-progress[data-mode="function"] .compiler-progress-stats > :not(.compiler-percent) { display:none; }
+.compiler-progress[data-mode="function"] .compiler-single-exact { display:block; }
+#fnCompilerTest:has(#fnCompilerProgress:not([hidden])) #fnCompilerHistory { display:none; }

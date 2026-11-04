@@ -1,6 +1,10 @@
 /* A stable summary outside the raw log: no focus changes or scrolling as results arrive. */
-function renderCompilerProgress(progress, result) {
-  const box = $("compilerProgress");
+function renderCompilerProgress(progress, result, box = $("compilerProgress")) {
+  if (!box.querySelector('[data-current]')) box.append($("compilerProgressTemplate").content.cloneNode(true));
+  if (box.dataset.mode === 'function') {
+    renderSingleCompilerProgress(box, progress, result);
+    return;
+  }
   box.hidden = false;
   box.dataset.finished = String(!!result);
   if (!progress && !result) { box._compilerRows = []; box._compilerApplied = new Set(); }
@@ -43,6 +47,24 @@ function renderCompilerProgress(progress, result) {
   box.dataset.improved = progress.best != null && (progress.before == null || progress.best > progress.before + .001) ? "true" : "false";
   set("profile", progress.profile ? `Best settings: ${progress.profile[0]} ${progress.profile[1].join(" ")} · ${progress.applied ? "applied and rechecked" : progress.auto_apply ? "auto-apply after this function finishes" : "not applied"}` : "Comparing the saved C. Compiler settings stay unchanged.");
   const bar = box.querySelector("[data-bar]"); bar.max = progress.combinations || 1; bar.value = progress.tested;
+}
+
+/* Both scopes share the template, meter and result styling; function scope has no project queue/actions. */
+function renderSingleCompilerProgress(box, progress, result) {
+  box.hidden = false;
+  box.dataset.finished = String(!!result);
+  const c = result?.comparison, tally = c || progress;
+  const set = (key, value) => { box.querySelector(`[data-${key}]`).textContent = value; };
+  set('current', progress?.function || box.dataset.function || 'Preparing…');
+  const tested = tally?.tested || 0, total = progress?.combinations || c?.tested || 0;
+  set('tested', total ? `${tested.toLocaleString()} / ${total.toLocaleString()} compiler and flag combinations · ${Math.round(100 * tested / total)}%` : 'Counting compiler and flag combinations…');
+  const bar = box.querySelector('[data-bar]'); bar.max = total || 1; bar.value = tested;
+  set('before', tally?.before == null ? '—' : `${tally.before.toFixed(2)}%`);
+  set('best', tally?.best == null ? '—' : `${tally.best.toFixed(2)}%`);
+  set('single-exact', c?.exact_matches ?? progress?.exact_matches_current ?? 0);
+  box.dataset.improved = String(tally?.best != null && (tally.before == null || tally.best > tally.before + .001));
+  const profile = progress?.profile;
+  set('profile', result ? 'Comparison complete. Review the results above; settings have not been applied.' : profile ? `Best settings: ${profile[0]} ${profile[1].join(' ')} · not applied` : 'Comparing the saved C. Compiler settings stay unchanged.');
 }
 
 function compilerResultRows(rows, filter) {

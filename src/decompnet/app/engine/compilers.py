@@ -345,7 +345,7 @@ class CompilerMixin:
                 ranked = []
                 report = getattr(log, 'progress', lambda value: None)
                 progress = {"function": fn["name"], "tested": 0, "combinations": len(candidates),
-                            "before": baseline, "best": best, "profile": best_profile,
+                            "before": baseline, "best": best, "profile": best_profile, "exact_matches_current": 0,
                             "total": total, "remaining": total - (n - 1), "deferred": deferred,
                             "completed": n - 1, "improved": len(improvements), "exact": found,
                             "skipped": skipped, "results": list(results), "auto_apply": auto_apply, "applied_count": applied_count}
@@ -373,7 +373,7 @@ class CompilerMixin:
                         matches.append([tc, list(flags)])
                         log(f"{fn['name']}: MATCH {self._short((tc, flags))}"
                             + (" (current settings)" if (tc, flags) == today else ""))
-                    progress = {**progress, "tested": index, "best": best, "profile": best_profile}
+                    progress = {**progress, "tested": index, "best": best, "profile": best_profile, "exact_matches_current": len(matches)}
                     report(progress)
                     if index % 10 == 0:
                         best_text = f"{best:.2f}%" if best is not None else "no usable result"
@@ -425,7 +425,7 @@ class CompilerMixin:
                     found += 1
                 elif function:
                     log(f"{fn['name']}: no exact matches among the tested combinations.")
-                report({"function": fn["name"], "tested": len(candidates), "combinations": len(candidates),
+                report({"function": fn["name"], "tested": len(candidates), "combinations": len(candidates), "exact_matches_current": len(matches),
                         "before": baseline, "best": best, "profile": best_profile,
                         "total": total, "remaining": total - n, "deferred": deferred,
                         "completed": n, "improved": len(improvements), "exact": found, "skipped": skipped,

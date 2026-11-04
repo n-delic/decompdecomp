@@ -119,6 +119,9 @@ def test_installed_compiler_comparison_is_local_and_report_only(tmp_path, monkey
     result = net.survey_compilers("demo", all_installed=True, function=function, log=log)
     assert snapshots[0]["tested"] == 0 and snapshots[0]["completed"] == 0
     assert snapshots[1]["tested"] == 1 and snapshots[1]["best"] == 100
+    assert snapshots[0]["exact_matches_current"] == 0
+    assert snapshots[1]["exact_matches_current"] == 1
+    assert snapshots[-1]["exact_matches_current"] == len(judged)
     assert snapshots[-1]["tested"] == snapshots[-1]["combinations"]
     assert snapshots[-1]["completed"] == snapshots[-1]["improved"] == snapshots[-1]["exact"] == 1
     assert snapshots[0]["results"] == []

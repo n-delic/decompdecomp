@@ -193,6 +193,7 @@ async function openFn(name) {
       const log = $(id); if (log._workStatus) { log._workStatus.remove(); log._workStatus = null; }
     }
     document.querySelectorAll("#fnCompilerTest .workbar").forEach(bar => bar.remove());
+    $("fnCompilerProgress").hidden = true;
     $("tryBtn").disabled = false;
     $("fnEdit").value = "";
     setEditorSourceMapping(null);
@@ -820,14 +821,25 @@ $("fnTestCompilers").onclick = async () => {
   const active = () => S.gen === gen && S.fnNav === nav && S.slug === slug && S.fn === name && !$("drawer").hidden;
   const target = compilerComparisonTarget = {};
   log.hidden = false;
-  summary.hidden = false;
+  summary.hidden = true;
+  const progressBox = $("fnCompilerProgress"); progressBox.dataset.function = name;
+  renderCompilerProgress(null, null, progressBox);
   compilerComparisonBusy = true;
   const finish = beginWork(summary, `Testing compilers for ${name}`, [button], "Comparison complete.");
+  const waitingBar = summary.previousElementSibling;
   showJobError(log, "");
   try {
     const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("fnCompilerFlagsOnly").checked, function: name } });
-    const result = await followJob(job, null, lines => { if (active()) log.textContent = lines.join("\n"); });
+    const result = await followJob(job, null, (lines, state) => {
+      if (!active()) return;
+      log.textContent = lines.join("\n");
+      if (state?.progress) {
+        renderCompilerProgress(state.progress, null, progressBox);
+        if (waitingBar?.classList.contains('workbar')) waitingBar.hidden = true;
+      }
+    }, active);
     if (!active()) return;
+    renderCompilerProgress(null, result, progressBox);
     renderFunctionCompilerComparison(result.comparison, slug, name);
   } catch (e) { if (active()) { summary.textContent = e.message; showJobError(log, e.message); } }
   finally { if (compilerComparisonTarget === target) { compilerComparisonBusy = false; compilerComparisonTarget = null; } if (active()) { finish(); await refreshFn(false); } }
