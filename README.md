@@ -1636,6 +1636,11 @@ queues batch their reads, and worker progress updates coalesce while improvement
 completion remain immediate. Optional request and browser timings are documented in
 [interactive app performance](docs/APP_PERFORMANCE.md#queue-and-inspector-throughput).
 
+Agent sessions now return structured waiting state for empty queues, share scoped saved-C
+rechecks, include focused instruction feedback, retain explicit correctness alternatives,
+and hand released work to bounded background CPU repairs. See
+[agent workflow efficiency](docs/AGENT_WORKFLOW_EFFICIENCY.md) for limits and verification.
+
 Compiler-comparison preparation reports checked functions, total functions and a percentage while checking
 eligibility. Each pass batches previous-result lookups and reads shared headers, symbols and compiler
 installations once. Shared JSON encoding is reused without changing the comparison digest format, so

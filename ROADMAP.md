@@ -2230,6 +2230,11 @@ external imported-project expiry, explicit checks and the ordinary byte judge ar
   records, coalesce worker snapshots, move response encoding to workers with bounded
   full-map wire caching, and add opt-in request/SQL/browser timing diagnostics.
 
+Completed: transcript-driven agent workflow improvements: structured empty-queue waiting,
+shared scoped saved-C diagnostics, normalized assembly focus and inline mismatch windows,
+broader unverified correctness-report capture with explicit alternative references, and
+bounded asynchronous CPU handoffs with cancellation and existing repair-trial history.
+
 - Done: batched compiler-comparison eligibility preparation with live checked/total/percentage progress,
   shared input encoding and preserved completed-comparison fingerprints. Saved best C avoids a needless
   latest-attempt lookup.

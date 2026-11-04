@@ -1,4 +1,5 @@
 """Scoped baseline evidence and an independent unchanged-instruction budget; never verdict shortcuts."""
+import copy
 import hashlib
 import json
 import re
@@ -17,10 +18,45 @@ def scope(net,agent,fn):
 
 def baseline(net,agent,slug,fn,source):
     try:
-        return _baseline(net,agent,slug,fn,source)
+        return shared_baseline(net,agent,slug,fn,source)
     except (ForkError,NetworkError,ValueError,KeyError,OSError):
         # Unavailable build inputs leave the historical baseline explicitly unverified; never cache an error.
         return None
+
+
+def build_key(net, fn):
+    from ..candidate_scope import key
+    from .baseline_status import revision
+    proj=net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
+    return key(net,proj,fn),hashlib.sha256((fn['best_source'] or '').encode()).hexdigest(),revision()
+
+
+def shared_baseline(net, agent, slug, fn, source, diagnostic=False):
+    """Recheck saved C once per input scope; misses/errors never become shared verdicts."""
+    if source!=fn['best_source'] or not source or not hasattr(net.store,'read_cache') or getattr(net.store._local,'in_tx',False):
+        return _baseline(net,agent,slug,fn,source,diagnostic)
+    stamp=build_key(net,fn)
+    class Unavailable(Exception):
+        def __init__(self, report):
+            self.report=report
+    def measure():
+        result=_baseline(net,agent,slug,fn,source,diagnostic)
+        if not result or result.get('score') is None:
+            raise Unavailable(result)
+        return result
+    # Imported build files can change externally; key hashes them, expiry also bounds restoration state.
+    try:
+        result=net.store.read_cache.get(('agent-saved-baseline',fn['id']),stamp,measure,ttl=10 if net.fork_slug(slug) else None)
+    except Unavailable as error:
+        return error.report if diagnostic else None
+    fresh=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    if not fresh or build_key(net,fresh)!=stamp:
+        return None  # Inputs changed during the diagnostic; no comparable score is inferred.
+    saved=net.__dict__.setdefault('_saved_rechecks',{})
+    saved[fn['id']]=(stamp,result)
+    while len(saved)>64:
+        del saved[next(iter(saved))]
+    return copy.deepcopy(result)
 
 
 def _baseline(net,agent,slug,fn,source,diagnostic=False):
@@ -78,10 +114,14 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
         measured['line_note'] = render(mapped, source, limit=4)
         measured['header_sha256']=hashlib.sha256(context['header'].encode()).hexdigest()
         measured['compiler']=(getattr(compiled,'effective_settings',None) or {}).get('compiler')
+        if not measured['compiler']:
+            from ..project import compiler_for
+            measured['requested_compiler']=compiler_for(net.cfg(proj),fn['vram'])
 
     # Imported diagnostic restoration can advance the compile generation. Cache against the
     # restored state, so the next read reuses evidence for that state rather than rebuilding.
     key=scope(net,agent,fn)+(hashlib.sha256(source.encode()).hexdigest(),)
+    measured['input_scope']=build_key(net,fn)[0]
     cache[key]=measured
     if measured.get('rows') is not None:
         states=getattr(net,'_unchanged_output',{})
@@ -96,7 +136,7 @@ def _baseline(net,agent,slug,fn,source,diagnostic=False):
 def preflight(net,agent,slug,fn,source):
     """One scoped baseline check before machine-generated variants; failures do not consume a claim try."""
     try:
-        return _baseline(net,agent,slug,fn,source,diagnostic=True)
+        return shared_baseline(net,agent,slug,fn,source,diagnostic=True)
     except (toolchains.ToolchainError,ForkError,NetworkError,OSError) as error:
         return {'score':None, 'rows':None, 'source':source, 'error':str(error)[:1000]}
     except (ValueError,KeyError):
@@ -163,13 +203,27 @@ def concise_warnings(text):
 def baseline_note(fn, measured, net=None):
     if not measured or measured.get('score') is None:
         return ''
+    if net is not None and measured.get('input_scope') is not None and measured['input_scope']!=build_key(net,fn)[0]:
+        return 'Current candidate score needs rechecking after build inputs changed. Historical saved score retained; no current comparison inferred.'
     source=measured.get('source') or ''
     saved=fn['best_source'] or ''
     historical=fn['best_score']
     current=measured['score']
     identity='same source' if source==saved else 'different source'
     text=f'Baseline comparison: current rechecked score {current}; saved historical best {historical if historical is not None else "unavailable"} ({identity}).'
-    if net is not None and historical is not None and current!=historical:
+    saved_check=getattr(net,'_saved_rechecks',{}).get(fn['id']) if net is not None else None
+    if saved_check and (saved_check[0]!=build_key(net,fn) or saved_check[1].get('source')!=saved):
+        saved_check=None
+    if saved_check:
+        checked=saved_check[1]['score']
+        text+=f' Saved C rechecked with current inputs: {checked}.'
+        if source!=saved:
+            change=current-checked
+            text+=(f' Exploratory candidate is {abs(change)} points '+('worse' if change>0 else 'better')+' than that rechecked saved C.' if change else ' Exploratory candidate has the same score as the rechecked saved C.')
+
+    if saved_check and historical is not None and current!=historical:
+        text+=' Historical score retained for reference; current comparisons use rechecked saved C.'
+    if not saved_check and net is not None and historical is not None and current!=historical:
         row=net.store.one('SELECT s.settings FROM attempts a JOIN repair_attempt_settings s ON s.attempt_id=a.id '
                           'WHERE a.function_id=? AND a.score=? AND a.source=? ORDER BY a.id DESC LIMIT 1',
                           fn['id'],historical,saved)
@@ -184,7 +238,7 @@ def baseline_note(fn, measured, net=None):
             text+=' Compiler profile '+('matches recorded saved inputs.' if same else 'differs from recorded saved inputs.')
         else:
             text+=' Saved/current compiler comparison unavailable.'
-    if historical is not None and current!=historical:
+    if historical is not None and current!=historical and not saved_check:
         text+=' Historical and current scores are not automatically comparable: source, compiler/header inputs or scoring rules may differ. Current trials use the rechecked baseline; no regression or match is inferred.'
     return text
 

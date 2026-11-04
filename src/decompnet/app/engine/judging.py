@@ -297,7 +297,7 @@ class JudgeMixin:
         if not not_c and need is None and progress is not None and progress['compiles']:
             from .. import release_repairs
             slug = self.store.one('SELECT slug FROM projects WHERE id=?',fn['project_id'])['slug']
-            said += release_repairs.run(self,slug,self._function(fn['name'],slug))
+            said += release_repairs.handoff(self,slug,self._function(fn['name'],slug))
         if need is not None:
             self.wait_for(agent, fn, need)
             said += (f"\n{fn['name']} now waits for {need['name']}: it's claimed after everything else until "

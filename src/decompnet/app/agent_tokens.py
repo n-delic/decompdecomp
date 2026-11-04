@@ -336,7 +336,8 @@ def assembly(net, slug, function, start=0, limit=60, focus="", agent=None):
         automatic = False
     if automatic:
         kept=net._last_diffs.get((agent.id,fn['id'])) if agent else None
-        focus='mismatch' if kept and any(r[0]!=' ' and r[1].strip() for r in kept[0]) else 'body'
+        from .efficiency_feedback import target_anchor
+        focus='mismatch' if kept and target_anchor(kept[0]) else 'body'
     if net.fork_slug(slug):
         _, fp, _ = net.forks.get(slug)
         unit = fp.unit(fn['unit'])
@@ -359,8 +360,8 @@ def assembly(net, slug, function, start=0, limit=60, focus="", agent=None):
             hits=[min(20,max(0,len(lines)-1))]
         elif focus.startswith('mismatch'):
             kept=net._last_diffs.get((agent.id,fn['id'])) if agent else None
-            different=[r[1] for r in kept[0] if r[0]!=' ' and r[1].strip()] if kept else []
-            target=different[region-1] if region<=len(different) else ''
+            from .efficiency_feedback import target_anchor
+            target=target_anchor(kept[0],region) if kept else ''
             hits=[i for i,line in enumerate(lines) if target and normalized(target) in normalized(line)]
         else:
             if len(focus)>160:
@@ -447,7 +448,7 @@ def feedback(net, agent, slug, function, text, previous):
     measured_baseline=getattr(net,'_agent_outcomes',{}).get((agent.id,fn['id']))
     note=baseline_note(fn,measured_baseline,net)
     if note:head+=note+'\n'
-    head += mismatch(rows)+'\n'
+    head += mismatch(diagnostic)+'\n'
     positions = [text.index(marker) for marker in ('\ncompiler output:', '\nwhen linking your code') if marker in text]
     warn = text[min(positions):] if positions else ''
     if warn:
@@ -558,6 +559,11 @@ def outcome(net, agent, fn, source, text):
     offsets = [text.index(mark) for mark in ('\ncompiler output:', '\nwhen linking your code') if mark in text]
     warnings = text[min(offsets):] if offsets else ''
     value = {'source': source, 'score': score, 'rows': list(kept[0]) if kept else None, 'legend': kept[1] if kept else scoring.LEGEND, 'warnings': warnings}
+    from .agent_evidence import build_key
+    current=net.store.one('SELECT * FROM functions WHERE id=?',fn['id'])
+    if current is not None:
+        value['input_scope']=build_key(net,current)[0]
+
     if not hasattr(net, '_agent_outcomes'):
         net._agent_outcomes = {}
     net._agent_outcomes[agent.id, fn['id']] = value

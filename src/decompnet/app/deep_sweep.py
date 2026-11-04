@@ -314,6 +314,8 @@ class Sweeps:
                     db.execute('UPDATE settings SET value=? WHERE key=?', (json.dumps(cfg), row['key']))
 
     def shutdown(self):
+        from . import release_repairs
+        release_repairs.shutdown(self.net,self.jobs)
         # Stop current searches; their completed records remain available for a manual restart.
         with self.lock:
             for current in self.active.values():

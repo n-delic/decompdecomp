@@ -14,6 +14,7 @@ class Budget:
         self.char_limit = max(1000,int(chars))
         self.calls = self.chars = self.active = 0
         self.lock = threading.Lock()
+        self.waiting = False
 
     def begin(self):
         with self.lock:
@@ -29,7 +30,7 @@ class Budget:
 
     def ready(self):
         with self.lock:
-            return not self.active and (self.calls >= self.tool_limit or self.chars >= self.char_limit)
+            return not self.active and (self.waiting or self.calls >= self.tool_limit or self.chars >= self.char_limit)
 
 
 def current(net, agent, slug):

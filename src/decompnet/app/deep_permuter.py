@@ -56,10 +56,10 @@ class Search(Permuter):
     def __init__(self, net, minutes, max_variants, log, fn=None):
         super().__init__(net)
         self.room_holds = {}
-        self.parallel_claims = True
+        self.parallel_claims = getattr(log,'parallel_claims',True)
         self.started_at = time.monotonic()
-        self.deadline = time.monotonic()+minutes*60
-        self.seconds = minutes*60
+        self.seconds = min(minutes*60,getattr(log,'maximum_seconds',minutes*60))
+        self.deadline = self.started_at+self.seconds
         self.limit = max_variants
         self.log = log
         self.tested = self.skipped = self.visited = self.rejected = 0
@@ -104,6 +104,8 @@ class Search(Permuter):
             claim = self.net.store.one('SELECT agent_id FROM claims WHERE function_id=? AND expires_at>?',
                                        fn['id'], time.time())
             if claim and claim['agent_id'] != agent.id:
+                if not self.parallel_claims:
+                    return False
                 # A side search never takes, renews or releases the other worker's lease.
                 if kwargs.get('count_turn', True):
                     with self.net.store.tx() as db:

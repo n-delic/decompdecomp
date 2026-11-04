@@ -17,7 +17,42 @@ def mismatch(rows):
     categories = ', '.join(f'{n} {key.replace("_", " ")}' for key,n in counts.items() if n)
     return (f'Mismatch focus: {category}; first differing row {index}; {len(different)} differing rows ({categories}; advisory).\n'
             f'Target: {row[1][:180]}\nCandidate: {row[2][:180]}\n'
-            'Use get_assembly(focus="mismatch") for nearby instructions.')
+            + instruction_window(rows,index))
+
+
+def instruction_window(rows, index=None):
+    """A small normalized view, including insertions; raw evidence remains available by paging."""
+    rows=normalized(rows)
+    if index is None:
+        index=next((i for i,r in enumerate(rows) if r[0]!=' '),None)
+    if index is None:
+        return ''
+    window=rows[max(0,index-2):index+3]
+    def display(row):
+        if row[0]==' ':
+            # One equivalent context instruction, so normalized noise does not reappear as an apparent mismatch.
+            text=row[2] if '%' not in row[2] else row[1]
+            return '  = '+text[:120]
+        return f'{row[0]} T: {row[1][:120]} | C: {row[2][:120]}'
+    return ('Advisory instruction window (normalized; exact-byte verdict unchanged):\n'+
+            '\n'.join(display(r) for r in window)+
+            '\nMore target instructions: get_assembly(focus="mismatch"). Raw/paged diff: last_diff.')
+
+
+def target_anchor(rows, region=1):
+    """Use the same real differences as the advice; an insertion anchors at its nearest target row."""
+    rows=normalized(rows)
+    indices=[i for i,r in enumerate(rows) if r[0]!=' ']
+    if not 1<=region<=len(indices):
+        return ''
+    index=indices[region-1]
+    if rows[index][1].strip():
+        return rows[index][1]
+    for distance in range(1,len(rows)):
+        for at in (index+distance,index-distance):
+            if 0<=at<len(rows) and rows[at][1].strip():
+                return rows[at][1]
+    return ''
 
 
 def continuation(net,agent,slug,function,*,applied=None,base=None):

@@ -4,7 +4,7 @@ import json
 import re
 import time
 
-CONCERN=re.compile(r'uninitialized|undefined behavio[u]?r|semantically (?:incorrect|invalid)|invalid historical|historical[^.\n]{0,100}(?:invalid|incorrect)',re.I)
+CONCERN=re.compile(r'\bwrong (?:C|logic|code)\b|\b(?:missing|omits?|never resets?) (?:the )?(?:counter|reset|store|initialization)\b|uninitialized|undefined behavio[u]?r|semantically (?:incorrect|invalid)|invalid historical|historical[^.\n]{0,100}(?:invalid|incorrect)',re.I)
 PREFIX='candidate-quality:'
 
 
@@ -30,6 +30,16 @@ def capture(net,fn,agent,notes,progress):
             break
     report={'source_hash':hashlib.sha256((current['best_source'] or '').encode()).hexdigest(),
             'warning':notes[:600], 'agent':agent.name, 'alternatives':ids}
+    reference=re.search(r'(?:start from|corrected (?:revision|version)|use revision)[^\n]{0,50}?\b([a-f0-9]{20}|[a-f0-9]{64})\b',notes,re.I)
+    if reference:
+        revision=reference[1].lower()
+        recent=net.store.all('SELECT id,source FROM attempts WHERE function_id=? AND compiled=1 AND score IS NOT NULL '
+                             'AND source IS NOT NULL ORDER BY id DESC LIMIT 200',fn['id'])
+        linked=next((r for r in recent if hashlib.sha256(r['source'].encode()).hexdigest().startswith(revision)
+                     and r['source']!=current['best_source']),None)
+        if linked:
+            report.update(structured=True,issue='other',corrected_attempt=linked['id'])
+            report['alternatives']=list(dict.fromkeys([linked['id']]+ids))[:3]
     saved=records(net,fn)
     for previous in saved:
         if previous['source_hash']==report['source_hash']:

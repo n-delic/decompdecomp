@@ -96,6 +96,9 @@ class Api(Agent):
             headers["Authorization"] = f"Bearer {s.options['api_key']}"
         schema = api_tool_schemas(fork=bool(net.fork_slug(s.slug)), names=tools.project_tools(net, s.slug, agent))
         manager.prepare_session(s, agent)
+        if s.context_budget and s.context_budget.waiting:
+            s.rotated=True
+            return True
         messages = [{"role": "system", "content": manager.app_instructions(s)},
                     {"role": "user", "content": manager.prompt(s)}]
         if s.record:

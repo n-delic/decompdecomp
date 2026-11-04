@@ -1303,6 +1303,10 @@ class Manager:
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
             if s.stop.is_set():
                 break
+            if s.context_budget and s.context_budget.waiting:
+                why,todo=self.net.selection_wait_reason(s.slug,agent)
+                self._wait(s,why,time.time()+30,todo)
+                continue
             if s.signed_out:
                 self._pause(s, s.error)
                 break
@@ -1603,6 +1607,10 @@ class Manager:
             raise Fatal(why)
         self._preflight_tools(token)
         self.prepare_session(s, token=token)
+        if s.context_budget and s.context_budget.waiting:
+            s.rotated=True
+            s.push('info','No eligible work; waiting without starting a model request.')
+            return True
         cmd, env, prompt = self._command(s, token, workdir)
         if s.record:
             previous = s.record
@@ -1680,7 +1688,7 @@ class Manager:
                 s.push(kind, text)
             if not s.options.get('focus_id') and s.context_budget and s.context_budget.ready() and not s.stop.is_set():
                 s.rotated=True
-                s.push('info','Starting a fresh session to keep context small; saved work and claims are retained.')
+                s.push('info','No eligible work; ending this conversation so the app can wait without model requests.' if s.context_budget.waiting else 'Starting a fresh session to keep context small; saved work and claims are retained.')
             if s.stop.is_set() or s.rotated:
                 reason = 'budget rotation' if s.rotated else 'stop request ('+str(s.stopped_by)+')'
                 s.push('termination', 'App requested termination: '+reason)
