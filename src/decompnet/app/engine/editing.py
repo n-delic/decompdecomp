@@ -90,9 +90,12 @@ class EditMixin:
             meta = console.function_meta(tail)
             if tail_meta:
                 meta.update(tail_meta)
-            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL "
-                       "WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
-                                      console.function_asm(head), fn["id"]))
+            head_meta = json.loads(fn["meta"] or "{}")
+            head_meta.pop("joins", None)  # the head's extent changed: any pending join votes for it are now void
+            db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
+                       "meta=? WHERE id=?", (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),
+                                             console.function_asm(head), json.dumps(head_meta) if head_meta else None,
+                                             fn["id"]))
             db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
                        "status,meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (proj["id"], new_name, tail.size, console.function_insns(tail), tt.code, json.dumps(tt.to_json()),
@@ -235,6 +238,8 @@ class EditMixin:
         if len(rows) < 2 or rows[0]["id"] != first["id"]:
             raise NetworkError("the functions between them changed; look again and report the pair afresh")
         tails = rows[1:]
+        if any(t["status"] == "matched" or t["matched_source"] for t in tails):
+            raise NetworkError("a function between them now matches; look again and report the pair afresh")
         key = f"{first['name']}+{last['name']}"
         try:
             joined = console.join_saved_functions(rows, start, end, lambda address, n: self.reader(proj)(address, n))
@@ -256,7 +261,8 @@ class EditMixin:
                 db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (tail["id"], tail["id"]))
                 db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (first["id"], tail["id"]))
                 db.execute("DELETE FROM functions WHERE id=?", (tail["id"],))
-                db.execute("DELETE FROM symbols WHERE project_id=? AND address=? AND kind='func'", (pid, tail["vram"]))
+                db.execute("DELETE FROM symbols WHERE project_id=? AND name=? AND address=? AND kind='func'",
+                           (pid, tail["name"], tail["vram"]))
             db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=? AND kind='func'",
                        (joined.size, pid, first["name"]))
             self._event(db, pid, agent.id, "merge", f"{first['name']} + {', '.join(t['name'] for t in tails)}: joined")

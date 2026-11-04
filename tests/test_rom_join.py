@@ -165,3 +165,53 @@ def test_refuses_a_join_that_skips_a_symbol_between(net):
     _, tail2 = _three_pieces(net, agent)
     with pytest.raises(NetworkError):                             # the middle sits between FN and tail2
         net.join_functions(agent, SLUG, FN, tail2, "skip the middle piece")
+
+
+def test_split_after_a_join_clears_stale_votes(net):
+    # Undo-by-split must really undo. After a join fires, its votes stay in the head's meta; splitting the function
+    # again must clear them, or a single fresh vote would re-fire the join at once (the names repeat on a re-split).
+    agent, _ = net.local_agent("tester")
+    pid = net._function(FN, SLUG)["project_id"]
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    assert _agree(net, FN, TAIL).startswith("✅")               # head+tail joined (3 agents, 2 models)
+    net.split_function(agent, SLUG, FN, "0x800007D0")           # split it again -> TAIL recreated under its name
+    ag, _ = net.local_agent("solo-1")
+    out = net.join_functions(ag, SLUG, FN, TAIL, "one fresh vote")
+    assert "counted" in out.lower(), out                        # a single vote must NOT re-join
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?", pid, TAIL) is not None  # still split
+
+
+def test_join_keeps_an_alias_symbol_at_the_tails_address(net):
+    # The absorbed tail's symbol is removed; an aliased copy at the same vram (a different overlay instance) must
+    # keep its own symbol -- delete by name AND address, not address alone.
+    agent, _ = net.local_agent("tester")
+    pid = net._function(FN, SLUG)["project_id"]
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    tail = net._function(TAIL, SLUG)
+    with net.store.tx() as db:   # an aliased copy of the tail: same vram, a far ROM copy, its own name+symbol
+        db.execute("INSERT INTO functions(project_id,name,size,n_insns,target,relocs,asm,seed,unit,vram,rom_offset,"
+                   "status) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (pid, "alias_tail", tail["size"], tail["n_insns"], tail["target"], tail["relocs"], tail["asm"],
+                    None, tail["unit"], tail["vram"], (tail["rom_offset"] or 0) + 0x100000, "asm"))
+        db.execute("INSERT INTO symbols(project_id,name,address,size,kind) VALUES(?,?,?,?,?)",
+                   (pid, "alias_tail", tail["vram"], tail["size"], "func"))
+    net._syms.pop(pid, None)
+    assert _agree(net, FN, TAIL).startswith("✅")
+    sym = net.store.one("SELECT 1 FROM symbols WHERE project_id=? AND name=? AND address=? AND kind='func'",
+                        pid, "alias_tail", tail["vram"])
+    assert sym is not None       # the alias kept its symbol; only the absorbed tail's was removed
+
+
+def test_apply_join_refuses_a_tail_that_matched_since_the_vote(net):
+    # Defense in depth, as the saved-layout join does: if a piece matches by the time the merge runs, refuse rather
+    # than delete a matched function. (The per-call guard checks first/last; a concurrent match can still slip in.)
+    agent, _ = net.local_agent("tester")
+    proj = net._project(SLUG)
+    net.split_function(agent, SLUG, FN, "0x800007D0")
+    first, last = net._function(FN, SLUG), net._function(TAIL, SLUG)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET status='matched' WHERE id=?", (last["id"],))
+    with pytest.raises(NetworkError):
+        net._apply_join(proj, first, last, agent, ["aa-1", "aa-2", "bb-1"])
+    assert net.store.one("SELECT 1 FROM functions WHERE project_id=? AND name=?",
+                         first["project_id"], TAIL) is not None   # the matched tail was not deleted
