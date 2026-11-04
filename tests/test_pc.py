@@ -510,14 +510,18 @@ def test_an_agents_constructor_and_destructor_name_the_functions_they_are(tmp_pa
         net.attempt(agent, "_func_00401060", "CBaz::CBaz() {\n}\nCBaz::~CBaz() {\n}\n", "p")
 
 
-def test_only_32_bit_x86_programs():
+def test_windows_programs_are_32_or_64_bit_x86():
+    """32-bit x86 programs and 64-bit x64 ones, which the console reads alike; another processor's machine isn't."""
     assert not scratch_pe.is_pe(b"MZ" + bytes(0x3E))
     head = bytearray(0x200)
     head[:2], head[0x3C:0x40], head[0x80:0x84] = b"MZ", struct.pack("<I", 0x80), b"PE\0\0"
     struct.pack_into("<H", head, 0x84, 0x14C)
     struct.pack_into("<H", head, 0x98, 0x10B)
     assert scratch_pe.is_pe(bytes(head))
-    struct.pack_into("<H", head, 0x84, 0x8664)  # x64
+    struct.pack_into("<H", head, 0x84, 0x8664)  # x64 (PE32+)
+    struct.pack_into("<H", head, 0x98, 0x20B)
+    assert scratch_pe.is_pe(bytes(head))
+    struct.pack_into("<H", head, 0x84, 0xAA64)  # ARM64: not this console's
     assert not scratch_pe.is_pe(bytes(head))
 
 
@@ -1104,8 +1108,8 @@ def test_every_visual_cpp_the_import_picks_is_in_a_compiler_pack():
     from decompnet.consoles.pc import MSVC_VERSIONS
 
     picked = scratch_pe.RICH_BUILDS.values()
-    # every one but 2005 RTM, whose Rich build is SP1's, and 2017's 64-bit one (64-bit games aren't imported yet):
-    # they're chosen by file (try_compiler, Settings)
+    # every one but 2005 RTM, whose Rich build is SP1's, and 2017's 64-bit one (64-bit games pick it by their
+    # program's machine, and 32-bit files choose it by file in Settings)
     by_file = ["8.0", "14.16-x64"]
     assert sorted([*picked, *by_file]) == sorted(v.removeprefix("MSVC/") for v in MSVC_VERSIONS)
     assert {scratch_pe.compiler_pack(v) for v in [*picked, *by_file]} == set(scratch_pe.MSVC_PACKS)
@@ -1326,21 +1330,14 @@ def test_whole_program_optimisation_is_named_and_a_mostly_ltcg_game_refused():
     assert "10 of its 310 compiled files with whole-program optimisation" in some.summary()
 
 
-def test_a_64_bit_program_is_the_pcs_and_told_why_it_cant_start(tmp_path):
-    """The drop refused every 64-bit .exe with "decompdecomp starts PC games from their 32-bit x86 .exe"."""
-    from decompnet.forks.project import ForkError
-
+def test_a_64_bit_program_builds_with_its_x64_compiler(tmp_path):
+    """A 64-bit .exe is the PC console's now, and its project builds with its Visual C++'s x64 compiler."""
     game = tmp_path / "game.exe"
-    game.write_bytes(_windows_program(machine=0x8664, rich=[(0xCF, 60610, 1204), (0xCC, 50727, 1)]))
+    game.write_bytes(_windows_program(machine=0x8664, rich=[(0x104, 27023, 1204)]))
     assert consoles.identify(game).id == "pc"
-    from decompnet.app.engine import RomNetwork
-
-    net = RomNetwork(tmp_path / "app.db", tmp_path / "work")
-    with pytest.raises(ForkError) as e:  # the import, before it installs or runs anything
-        net.import_rom(game, confirmed=True, log=lambda *_: None)
-    assert "64-bit (x64) program" in str(e.value) and "Newer Windows games" in str(e.value)
-    assert not list((tmp_path / "work").glob("game*"))
-    assert "Visual C++ 2012 Update 3 (11.0, build 60610)" in scratch_pe.describe(game.read_bytes()).summary()
+    info = scratch_pe.game_info(game)
+    assert info["target"] == "x64" and info["compiler"] == "14.16-x64"
+    assert info["summary"].startswith("64-bit (x64), built with Visual C++ 2017 (14.1, build 27023)")
     game.write_bytes(_windows_program(rich=[(0x0B, 8966, 148)]))
     info = scratch_pe.game_info(game)
     assert info["compiler"] == "6.0" and info["cannot_match"] == []
@@ -2784,11 +2781,11 @@ def test_a_forwarded_export_is_another_dlls_code():
 
 def test_a_folder_imports_its_biggest_program_decompdecomp_can_start(tmp_path):
     """Pointing at a game's folder: its .exe is the biggest program decompdecomp can start (a launcher or an
-    uninstaller is smaller; a 64-bit tool can't start), and the GUI knows a PC game's DLLs come with its path, not a
+    uninstaller is smaller; an ARM64 tool can't start), and the GUI knows a PC game's DLLs come with its path, not a
     dropped file."""
     top = _game_folder(tmp_path)
     (top / "setup.exe").write_bytes(_tiny_program(bytes.fromhex("c3"), 0x400000, dll=False)[:0x400])
-    (top / "tool64.exe").write_bytes(_windows_program(machine=0x8664) + bytes(0x10000))
+    (top / "toolarm.exe").write_bytes(_windows_program(machine=0xAA64) + bytes(0x10000))
     assert consoles.game_in(top) == top / "game.exe"
     with pytest.raises(Exception, match="holds no game file"):
         consoles.game_in(top / "data")

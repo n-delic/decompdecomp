@@ -696,6 +696,8 @@ class ForkEngine:
             shutil.rmtree(dest, ignore_errors=True)
             raise
         cfg = {"kind": "fork", "origin": "scratch", "repo_url": None, "platform": facts["platform"],
+               # the program's width (PC's 64-bit games: "x64"), for the readers that are 32-bit only so far
+               "target": facts.get("target", "x86"),
                "version": facts["id"], "fork_kind": "manifest", "ready": False, "compiler": facts["compiler"],
                "program_sha1": sha1,
                "legal": {"basis": "personal-copy", "license": "personal use only",

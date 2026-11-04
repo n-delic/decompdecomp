@@ -6,6 +6,7 @@
 /* What the C runtime would bring: the floating-point marker and the float-to-int helper (hand-written assembly) */
 int _fltused = 0x9875;
 
+#if defined(_M_IX86)  /* x64 has no inline assembly, and its float-to-int conversion needs none */
 __declspec(naked) void _ftol(void) {
     __asm {
         push ebp
@@ -18,6 +19,7 @@ __declspec(naked) void _ftol(void) {
         ret
     }
 }
+#endif
 
 const char *g_level_names[4] = {"meadow", "cave", "castle", "keep"};
 s32 g_settings[6];

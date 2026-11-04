@@ -73,10 +73,11 @@ Where to start on a gap:
   its folder or .exe is given by path; a dropped .exe comes alone (a browser doesn't hand over the folder), a project
   made before can't take its DLLs in yet (Reimport analyses the programs a project has), a project restored or cloned
   asks only for the .exe (`ForkProject.needs` names one file: the DLLs go in `orig/` by hand, as its README says),
-  and a game whose .exe can't start (64-bit, mostly /GL, protected) can't start from its DLLs either. Visual C++ 2017
+  and a game whose .exe can't start (mostly /GL, protected) can't start from its DLLs either. Visual C++ 2017
   inlines a file's small functions into their callers, defined before them or after: a project's file that holds two
   of the original's (about 4 KiB of functions each) needs `split_file` where the second starts before its callers
-  match (the guide says so).
+  match (the guide says so). A 64-bit game has the pipeline but not all the readers yet: classes, struct layouts,
+  exact drafts, its PDB/map and the x64 guide are 32-bit (`Newer Windows games`, F).
 - **Windows PC debug symbols** (`consoles/pc/debuginfo.py`): Ghidra's function boundaries stay Ghidra's, though a
   PDB gives each function's size; CodeView embedded in the program (NB09, NB11: Visual C++ 4-5 with /PDB:NONE) and
   Visual C++ 4's 16-bit type records aren't read; a class's methods aren't written into its struct (C++ calls a
@@ -100,6 +101,17 @@ Where to start on a gap:
   weren't tried); what's missing is opening a save's best attempts in a new copy of the project.
 
 ## Recently done
+
+- **64-bit Windows games (x64).** A PE32+ program and its DLLs import, build and match. Their functions come from
+  the program's exception directory (`.pdata`: exact start and end, including the switch table after a function's
+  code) and from the calls between them, since a leaf nothing calls has no record; the code's references are
+  delinked as AMD64 relocations (REL32 for calls and RIP-relative data, ADDR32NB for a switch table's address and its
+  4-byte entries, ADDR64 for a whole address), with x64's undecorated names (`func_140001000`, `D_140008010`,
+  `__imp_Name`, `__ImageBase`); the project builds with the game's x64 compiler (`MSVC/14.16-x64`) and its
+  rebuildable export puts every program back together byte for byte. Measured on a Visual C++ 2022 x64 program: all
+  six functions the import found are byte- and relocation-identical to the compiler's own objects, and the project
+  rebuilt byte for byte (the exe's and its DLL's). `projects/demo-pc/build.py 14.16-x64` builds the demo as a
+  64-bit game (needs the `msvc2015` pack). What's left is the 32-bit-only readers: Newer Windows games, F.
 
 - **Games built with Visual C++ 2017 (and 2015, 2019 and newer, with it).** The import's block for 2017 and newer is
   gone: 2017's Rich builds lead to the pack's `14.16` (build 27027 is its very own; another 2017 update's builds with
@@ -301,7 +313,8 @@ Where to start on a gap:
   the game's own code (the Rich header's compilers, the build its linker shares; without a Rich header, the linker's
   version), how many files were built with whole-program optimisation (/GL), 32 or 64-bit, and the DRM or packer
   its sections show (SteamStub, SecuROM, SafeDisc, StarForce, Themida, VMProtect, Enigma, Denuvo, UPX), only named,
-  never removed. 64-bit programs, mostly-/GL games and wrapped ones aren't started, each with what it means (games
+  never removed. A 64-bit program imports like a 32-bit one and builds with its Visual C++'s x64 compiler (see
+  "64-bit Windows games" above); mostly-/GL games and wrapped ones aren't started, each with what it means (games
   built with Visual C++ 2017 and newer were too, until they built with 2017's: see above); a game of a version the
   packs don't have imports with the nearest they do, told what can't match until its compiler comes.
 - **C++ classes on Windows PC, by their own names.** A program built with `/GR` keeps each polymorphic class's
@@ -652,10 +665,14 @@ naming its SDK in `headers`), and goes into `RICH_BUILDS`, so its games build wi
   file with /GL and linking it with /LTCG against stubs; until then a mostly-/GL game isn't started.
 - **Visual C++ 2017 on Windows, and /Zi under wine.** On a Windows computer the 2017 pack is untested. Under wine,
   /Zi with /FS fails (C1902: no mspdbsrv), which no project's build uses.
-- **F, 64-bit.** Read PE32+ programs and delink their relocations (nearly all relative), with the x64 calling
-  convention. A 64-bit program lists every function's start and end in its exception directory (`.pdata`), so
-  functions come from the program, not Ghidra's guess. Done when a 64-bit demo, then a real game, imports and
-  matches.
+- **F, 64-bit: the readers.** The import, delinking and matching are done (Recently done), but the readers that are
+  32-bit only don't know x64 yet: C++ classes (`consoles/pc/rtti.py`: x64's Complete Object Locator, 8-byte vtables),
+  struct layouts (`arch/x86_fields.py` reads 32-bit pointers), the exact drafts of tiny shapes
+  (`consoles/pc/drafts.py`), the game's PDB, linker map and COFF symbols (`debuginfo.py`, `pdb.py`'s register
+  numbers), an x64 guide for agents, and a copy of the user's own x64 Visual C++ (`kits/visualcpp.py` finds only
+  32-bit-target cl.exe). Then: a real 64-bit game, imported and matched end to end (the check so far is a hand-made
+  x64 program whose six functions came out byte- and relocation-identical to Visual C++'s own objects, and whose
+  project rebuilt byte for byte).
 
 ### PSP: encrypted programs, ZSO images, imported names
 Most retail PSP programs (EBOOT.BIN) are encrypted, and decrypting them takes Sony's keys: decompdecomp doesn't
