@@ -212,3 +212,8 @@ def method_draft(draft: str, key: str, cls: str, name: str, role: str, why: str)
             f"   A method gets `this` in ecx (__thiscall){f': Ghidra called it {this}' if this else ''}; get_class has "
             "the class. */")
     return f"{draft[:found.start()]}{note}\n{found.group('ret')}{cls}::{name}({', '.join(params)}){body}"
+
+
+def is_padding(code: bytes, big_endian: bool) -> bool:
+    """VC++/linker padding between functions is nop (0x90) or int3 (0xCC) bytes (multi-byte nops not covered)."""
+    return bool(code) and all(b in (0x90, 0xCC) for b in code)

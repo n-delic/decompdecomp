@@ -94,14 +94,14 @@ class EditMixin:
             if tail_meta:
                 meta.update(tail_meta)
             # The head's extent changed, so its old best attempt no longer describes it (reset seed/best, not just
-            # the score). A head trimmed down to pure 0x00 padding (all nops) is not a function to match — mark it
-            # done ('asm'), with an alignment-padding reason for its page, so it leaves the open pool instead of
-            # lingering as an open sliver. This recognises MIPS zero padding (nop = 0x00000000); x86 (0xCC/0x90) and
-            # ARM/PPC nops aren't caught, so their padding heads stay 'open' — harmless, a missed cleanup (ROADMAP).
-            head_padding = bool(head.size) and not any(th.code)
+            # the score). A head trimmed down to pure alignment padding (the processor's nop/filler) is not a
+            # function to match — mark it done ('asm'), with a reason for its page, so it leaves the open pool
+            # instead of lingering as an open sliver. arm/thumb have no padding reader yet, so their heads stay
+            # 'open' (harmless; ROADMAP).
+            head_padding = bool(head.size) and console.is_padding(th.code)
             head_meta = json.loads(fn["meta"] or "{}")
             if head_padding:
-                head_meta["asm_code"] = "alignment padding (all nops)"
+                head_meta["asm_code"] = "alignment padding"
             db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, best_score=NULL, "
                        "best_source=NULL, status=?, meta=? WHERE id=?",
                        (head.size, console.function_insns(head), th.code, json.dumps(th.to_json()),

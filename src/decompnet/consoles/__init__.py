@@ -496,6 +496,12 @@ class Console:
         reason = arch.get(self.arch).asm_reason
         return reason(code, self.big_endian, cpu=self.cpu_variant) if reason else None
 
+    def is_padding(self, code: bytes) -> bool:
+        """Whether `code` is all this processor's alignment padding (its nop/filler), so a function trimmed
+        down to it is nothing to match. A processor with no padding reader (arm/thumb) says no."""
+        pad = arch.get(self.arch).is_padding
+        return bool(pad and pad(code, self.big_endian))
+
     def up_front_guide(self, compiler: str) -> str:
         """The guide every helper gets before its first claim: on matching `compiler`'s code ("" for none)."""
         return self.compiler_guide

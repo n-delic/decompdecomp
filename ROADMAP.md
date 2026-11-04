@@ -743,9 +743,9 @@ The answer goes here: build it, build part of it, or not, and why.
 
 ## Later
 
-- **Padding by processor.** Retiring a pure-padding split head (editing.py `_cut`) recognises only MIPS zero
-  padding (`nop` = `0x00000000`); ask the processor (`arch/`) for its own filler — x86 `0xCC`/`0x90`, ARM and PPC
-  nops — so their padding heads are retired too instead of lingering open.
+- **ARM/Thumb padding.** `Arch.is_padding` covers MIPS, x86 and PowerPC; ARM and Thumb nop encodings vary by
+  ISA version and aren't grounded against a console here, so their padding heads stay open. Add their fillers
+  when there's an ARM console to test against.
 - **Better look-alikes.** A second measure (edit distance over opcodes) next to today's, and shared runs of
   instructions, which find inlined helpers and macros. Needs PowerPC and x86 opcode readers.
 - **Decoders for data formats.** Tools that decode N64 display lists, PS2 GS/VIF packets and GameCube GX command
