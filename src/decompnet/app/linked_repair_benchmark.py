@@ -121,7 +121,7 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
         if baseline.get('score') is None or baseline.get('matched'):
             raise ValueError('Every frozen case must compile and be unresolved under the copied judge.')
         prepared.append(dict(source=item['source'],baseline_score=baseline['score'],arch=arch,
-            scope=hashlib.sha256(repr(scope).encode()).hexdigest(),
+            scope=hashlib.sha256(repr((scope,item['id']) if 'id' in item else scope).encode()).hexdigest(),
             name=item['name'],header=item['header'],asm=asm,flags=scope['compiler'].get('flags',[]),
             evaluate=evaluate,selection={},pool_cache={}))
     def generate(case,source,report):

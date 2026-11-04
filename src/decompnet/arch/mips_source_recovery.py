@@ -175,3 +175,16 @@ def private_abi(asm, rows):
             if re.search(r'\b\w+\s+'+re.escape(register)+r',',live):continue
             return {'kind':'retained-caller-saved-temporary','message':'Target keeps an incoming pointer in a caller-saved temporary across a call without a spill/reload. Try actual same-unit callee/clobber context; this does not invent a register binding.'}
     return None
+
+
+def pointer_snapshot_order(asm):
+    """Require the named target pointer load followed by byte stores in the same straight-line region."""
+    # The source retains its existing global expression. A target's canonical relocation may
+    # render the same load as another symbol plus an addend; this is load-order evidence only.
+    for hit in re.finditer(r'\blw\s+[^\n]*%lo\([^)]+\)',asm):
+        tail=[]
+        for line in asm[hit.end():].splitlines()[1:18]:
+            if re.search(r'\b(?:b\w*|j\w*)\s',line):break
+            tail.append(line)
+        if sum(bool(re.search(r'\bsb\b',line)) for line in tail)>=2:return True
+    return False

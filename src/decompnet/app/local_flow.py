@@ -257,4 +257,7 @@ def hints(source, name):
              if left['type'] == right['type']
              and re.sub(r'_\d+$', '', left['name']) == re.sub(r'_\d+$', '', right['name'])
              and disjoint(flow, left, right)]
-    return [f'{a} / {b}: non-overlapping scalar lifetimes; try a shared local and verify.' for a, b in pairs[:3]]
+    result=[f'{a} / {b}: non-overlapping scalar lifetimes; try a shared local and verify.' for a, b in pairs[:3]]
+    if re.search(r'\bif\s*\(',flow.part.body) and re.search(r'\(\s*(?:s16|short)\s*\)',flow.part.body):
+        result.append('A branch-specific scalar is narrowed later. If register allocation or call setup is the remaining miss, try separate branch-local lifetimes, then dependency-safe embedded assignments or a typed inlined call/count helper. Keep original m2c names until the normal judge verifies a candidate; this hint does not rewrite the draft.')
+    return result

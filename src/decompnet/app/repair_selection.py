@@ -11,6 +11,10 @@ class Page(list):
 FOLLOWUP_WINDOW = 16
 
 COMPLEMENTS = {
+    'branch_scalar_lifetime': ('inline_call_count','embedded_call_assignment','typed_pointer_snapshot'),
+    'inline_call_count': ('branch_scalar_lifetime','embedded_call_assignment','typed_pointer_snapshot'),
+    'embedded_call_assignment': ('branch_scalar_lifetime','inline_call_count'),
+    'typed_pointer_snapshot': ('branch_scalar_lifetime','inline_call_count','embedded_call_assignment'),
     'loop_weight_scope': ('cfg_equal_value_increment', 'equal_value_increment'),
     'cfg_equal_value_increment': ('loop_weight_scope',),
     'equal_value_increment': ('loop_weight_scope',),

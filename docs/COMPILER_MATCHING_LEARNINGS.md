@@ -3223,3 +3223,59 @@ disabling caller saves, expensive optimizations or strength reduction did not
 improve either tested seed. Do not generalize IDO line-layout findings to this
 GCC case. These are one-function observations, not an automated-repair success
 rate or a proof of the original source's spelling.
+
+### Automating the branch/call recovery
+
+The shared repair pipeline now offers `branch_scalar_lifetime`, `inline_call_count`,
+`embedded_call_assignment` / `extracted_call_assignment`, and `typed_pointer_snapshot`.
+These are bounded source candidates, not new acceptance rules. Scalar phases use the
+existing CFG to reject a value live beyond an arm. Unrelated switches/loops elsewhere
+no longer disable the selected straight-line arm. Incoming values retain their types;
+escaped/shadowed/qualified scalars, opaque macros and source-line directives are excluded.
+
+Count helpers require a consistent explicit ANSI prototype. They retain narrowing at
+its original callee boundary, move only across independent scalar updates, and leave
+one real call. Assignment embedding keeps intermediate scalar conversions and rejects
+cross-argument dependencies, other effects and unbraced-control captures. Pointer
+snapshots retain the exact existing global expression, require known byte-array stores
+and target MIPS load-before-byte-store evidence, and never cross a call. Canonical
+relocation aliases guide ordering only; they do not establish a new symbol identity.
+The compiler must inline a helper and the ordinary judge must still accept the result.
+
+The existing frontier already retains measured regional repairs. New complementary
+family priorities and residual follow-ups combine the branch, count and argument
+hypotheses within that same compile/time allowance. No AI request or new search phase
+is introduced. Machine drafts retain their names and get advisory lifetime/call-order
+hints rather than unconditional generated wrappers. Shared scalar/call generators reach
+ROM and imported-project local search; target-guided snapshots currently require MIPS
+assembly. Imported projects keep their own compiler and objdiff build workflow.
+
+Private regression manifests can now give multiple precursors of the same function
+unique `id` values. An optional `control` path is hashed and rechecked as exact by the
+copied judge before replay; `expect_recovery` makes the opt-in private pytest gate assert
+known recoveries. Keep those manifests, C, headers and exported ROMs outside this repo.
+Use `python -m decompnet.app.linked_repair_benchmark --project <private-copy> --cases
+<private-manifest> --freeze --output <frozen-manifest>`, then replay the frozen manifest
+without `--freeze` under identical `--trials` / `--seconds` limits for both revisions.
+The ordinary synthetic CI tests cover eligibility and rejection boundaries without game
+content. The private gate uses `DECOMPNET_FROZEN_REPAIR_SUITE` and
+`DECOMPNET_FROZEN_REPAIR_PROJECT` with `tests/test_frozen_repair_cases.py`.
+
+Equal-budget private replay against main `7ba9dc2b`, on the same isolated exported
+image and frozen source/header/profile inputs: **64 candidates / 45 seconds per
+precursor**, four saved precursors of the one 253-instruction function. Main recovered
+none and retained scores **1355, 725, 525, 270**. This revision recovered three, with
+best scores **800, 0, 0, 0** and first exact trials **none, 14, 17, 1**. Both runs
+evaluated 256 candidates because the suite continues collecting exact alternatives.
+These are three rediscoveries of one known function, not three new game functions.
+The earliest precursor still fails under this budget; its retained failure belongs
+in the benchmark. No AI helper was started and the live project/database was not
+changed. Single-run timings are not a speed guarantee.
+
+Direct generator checks also reproduced the isolated stages with the copied linked
+judge: typed snapshot 1355→820, inline count 725→525, grouped scalar branches
+525→270, embedded assignment 270→0. The composed search independently generated
+the three-step branch/count/argument exact path from the score-725 precursor.
+The opt-in frozen private test checks the exact control and asserts all three
+expected recoveries within 20 candidates / 30 seconds each. No target, data check,
+compiler setting or match-acceptance gate was weakened.

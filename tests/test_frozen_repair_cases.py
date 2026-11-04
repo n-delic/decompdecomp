@@ -43,3 +43,25 @@ def test_private_frozen_suite_when_supplied():
     report=bench.suite(root,cases,trials=20,seconds=30)
     assert report['functions']==len(cases) and report['candidate_compiles']<=20*len(cases)
     assert all(not c['baseline_exact'] for c in report['cases'])
+    assert all(not case.get('expect_recovery') or result['first_exact_trial'] is not None
+               for case,result in zip(cases,report['cases']))
+
+
+def test_distinct_precursors_of_one_function_can_share_a_verified_exact_control(tmp_path):
+    manifest=tmp_path/'cases.json'
+    (tmp_path/'context.h').write_text('')
+    (tmp_path/'exact.c').write_text('exact')
+    (tmp_path/'a.c').write_text('before a')
+    (tmp_path/'b.c').write_text('before b')
+    manifest.write_text(json.dumps({'cases':[dict(name='f',id=n,before=n+'.c',header='context.h',control='exact.c',expect_recovery=True) for n in ['a','b']]}))
+    def evaluator(*a):return lambda s:dict(matched=s=='exact'),{'compiler':'pinned'},None,None,None
+    cases,frozen=frozen_repair_cases.load(manifest,tmp_path,evaluator,freeze=True)
+    assert [c['id'] for c in cases]==['a','b']
+    assert all(c['expect_recovery'] for c in cases)
+    manifest.write_text(json.dumps(frozen))
+    assert frozen_repair_cases.load(manifest,tmp_path,evaluator)[0]==cases
+    (tmp_path/'exact.c').write_text('changed')
+    with pytest.raises(ValueError,match='exact control changed'):
+        frozen_repair_cases.load(manifest,tmp_path,evaluator)
+    with pytest.raises(ValueError,match='no longer passes'):
+        frozen_repair_cases.load(manifest,tmp_path,evaluator,freeze=True)

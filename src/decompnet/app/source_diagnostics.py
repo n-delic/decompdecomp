@@ -20,6 +20,10 @@ def hints(source, name, asm='', arch='', rows=None):
     if classify(rows) == 'register':
         result.append('Only register operands differ in the displayed instructions. Prioritise local lifetimes and declaration shapes over constants: try branch_tail_lifetimes, staged_call_arguments or combined_call_lifetimes when offered. Inline helpers can enlarge the frame; check instruction count and frame size before expanding that direction. This is search advice, not an exact verdict.')
 
+    # m2c drafts and saved C receive the same advice; no helper is emitted unconditionally.
+    if rows and any(r[0]!=' ' for r in rows) and re.search(r'\bif\s*\(',body) and re.search(r'\b(?:s16|short)\s*\)',body):
+        result.append('A branch-specific wide value is narrowed for a later use. Try branch_scalar_lifetime inside the selected arm, even if other parts contain switches or loops. For call-setup ordering, compare embedded_call_assignment and inline_call_count; preserve argument dependencies and exact prototypes. Explicit shift spelling alone may be optimized into the same temporary. These are bounded source hypotheses, not match verdicts.')
+
     from .target_local_repairs import call_arguments
     if arch == "mips" and call_arguments(source, name, asm):
         result.append("The target supplies a first call argument that a candidate-owned void prototype omits. "
