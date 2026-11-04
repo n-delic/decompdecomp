@@ -124,12 +124,14 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             continue
         paired_local_repairs.offer(state,node,report,arch,header)
         score = report.get('score')
+        repaired = search_frontier.mismatch_positions(node.get('baseline_rows')) - search_frontier.mismatch_positions(report.get('rows'))
+        pattern = bool(repaired) and isinstance(score,(int,float)) and score<=node['ceiling']*2
         regional = regional_detour(node,report,arch)
         allocation = allocation_detour(node,report,arch)
         structural = (isinstance(score,(int,float)) and score<=node['ceiling']*2
                       and search_frontier.structure_recovery(node.get('baseline_rows'),report.get('rows'),arch))
-        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural)
-                and (regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
+        if (isinstance(score, (int, float)) and 0 < score and (score <= node['ceiling'] * DETOUR_RATIO or regional or allocation or structural or pattern)
+                and (pattern or regional or score < node['ceiling'] or not search_frontier.unhelpful_detour(arch, node.get('baseline_rows'), report.get('rows') or []))):
             # Keep two source shapes per identical output at each depth: a later source edit can distinguish them.
             # This only prunes search branches, never supplies a match verdict.
             output = output_key(report)
@@ -141,7 +143,8 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             if output is None or outputs.get(str(node['depth'])+':'+output, 0) < 2:
                 regions = region_repairs.snapshot(report.get('rows'),arch)
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
-                                      'region_gain': region_repairs.gain(node.get('region_baseline'), regions)})
+                                      'region_gain': region_repairs.gain(node.get('region_baseline'), regions),
+                                      'repaired':sorted(repaired) if pattern else []})
                 if allocation and node['depth'] < DEPTH and state.get('allocation_bursts',0)<3:
                     if children(state,state['next'][-1],variants,priority=2):
                         state['allocation_bursts']=state.get('allocation_bursts',0)+1
@@ -201,6 +204,8 @@ def expand_wave(state, variants, arch):
     retained += [n for n in ordinary if n not in retained]
     structural = [n for n in ranked if n['score']<=n['ceiling']*2 and
                   search_frontier.structure_recovery(n.get('baseline_rows'),n['report'].get('rows'),arch)][:1]
+    repaired = sorted((n for n in ranked if n.get('repaired')),
+                      key=lambda n:(-len(n['repaired']),n.get('region_damage',0),n['score']))[:1]
     regional = search_frontier.regional_choices(state['next'])[:1]
     # Keep the numeric winner, a regionally recovered detour and one distinct sibling.
     fallback = retained[:WIDTH-1]+detours[:1] if detours else retained[:WIDTH]
@@ -211,7 +216,7 @@ def expand_wave(state, variants, arch):
         output=output_key(numeric['report'])
         diverse=[n for n in ordinary if n['score']==numeric['score'] and output is not None
                  and output_key(n['report']) is not None and output_key(n['report'])!=output][:1]
-    best = list(dict.fromkeys(n['source'] for n in retained[:1]+structural+regional+diverse+fallback))[:WIDTH]
+    best = list(dict.fromkeys(n['source'] for n in retained[:1]+repaired+structural+regional+diverse+fallback))[:WIDTH]
     by_source = {n['source']:n for n in ranked}
     best = [by_source[source] for source in best]
     state['next'] = []
@@ -375,7 +380,7 @@ def _run(twins, slug, job):
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v10', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v11', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

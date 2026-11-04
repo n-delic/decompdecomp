@@ -1,7 +1,7 @@
 """Relocate an existing, proven zero identity; never invent padding reads or new identities."""
 import re
 
-from . import local_flow
+from . import integer_abi, local_flow
 from .allocator_call_guards import context, dominators
 from .call_lifetime_repairs import block_path
 from .integer_repair_support import IDENT, edit, locals_for, split_args
@@ -15,11 +15,9 @@ SCALAR = r'(?:[su]32|int|unsigned\s+int|signed\s+int)'
 def variants(source, name, header='', arch=None):
     if arch not in {'mips','ppc','x86','arm','thumb'}:
         return []
-    types = {'u32':r'unsigned\s+int', 's32':r'(?:signed\s+)?int', 's16':r'(?:signed\s+)?short(?:\s+int)?'}
-    for alias,allowed in types.items():
-        definitions = re.findall(r'\btypedef\s+([^;{}]+?)\s+'+alias+r'\s*;',header+'\n'+source)
-        if not definitions or any(not re.fullmatch(allowed,v.strip()) for v in definitions):
-            return []
+    expected = {'u32':(32,False), 's32':(32,True), 's16':(16,True)}
+    if any(integer_abi.scalar(alias,header+'\n'+source,arch)!=kind for alias,kind in expected.items()):
+        return []
     part,_,macros = context(source,name,header)
     if not part:
         return []

@@ -27,6 +27,21 @@ def regional_choices(nodes):
     return selected
 
 
+def mismatch_positions(rows):
+    """Target-indexed residuals; advisory only, never a substitute for linked-byte judging."""
+    rows = permuter_focus.normalized(rows)
+    if any(not isinstance(row,(tuple,list)) or len(row)!=3 or not all(isinstance(v,str) for v in row) for row in rows):
+        return set()
+    positions = set()
+    index = 0
+    for marker,target,_ in rows:
+        if target:
+            if marker != ' ':
+                positions.add((index,target))
+            index += 1
+    return positions
+
+
 def structure(rows):
     rows = permuter_focus.normalized(rows)
     if not rows or any(not isinstance(row, (list, tuple)) or len(row) != 3 for row in rows):
@@ -68,14 +83,17 @@ class Frontier:
         """Keep the numeric winner and distinct structural shapes, with bounded source/output counts."""
         if score is None or score <= 0:
             return
-        if (baseline_score is None or score >= baseline_score) and unhelpful_detour(arch, baseline, rows):
+        repaired = mismatch_positions(baseline) - mismatch_positions(rows)
+        if baseline_score is not None and score>baseline_score*2:
+            repaired = set()  # do not reserve the new slot for a large unrelated regression
+        if not repaired and (baseline_score is None or score >= baseline_score) and unhelpful_detour(arch, baseline, rows):
             return
         rows = permuter_focus.normalized(rows)
         from ..diff_summary import summarize
         summary = summarize(rows)
         node = {'rows':rows, 'summary': summary, 'source': source, 'score': score, 'fitness': structure(rows),
                 'frame_distance': permuter_focus.stack_distance(rows),
-                'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
+                'repaired':tuple(sorted(repaired)), 'kind': permuter_focus.classify(rows), 'regions': region_repairs.snapshot(rows,arch),
                 'allocation': allocation_evidence.signature(rows,arch),
                 'region_gain': region_repairs.gain(region_repairs.snapshot(baseline,arch),region_repairs.snapshot(rows,arch)),
                 'damage': region_repairs.damage(region_repairs.snapshot(baseline,arch), region_repairs.snapshot(rows,arch)),
@@ -85,6 +103,12 @@ class Frontier:
         structural = sorted(pool, key=lambda n: (n['damage'], n['fitness'], n['frame_distance'], n['score']))
         # Preserve distinct failure shapes: a moved load can be a useful sibling of a register miss.
         selected = numeric[:1]
+        # Reserve one sibling that repairs the original target locations even when a new
+        # scheduling difference raises its score. Still bounded by WIDTH and ordinary budgets.
+        repaired_nodes = sorted((n for n in pool if n.get('repaired')),
+                                key=lambda n:(-len(n['repaired']),n['damage'],n['fitness'],n['score']))
+        if repaired_nodes and repaired_nodes[0] not in selected:
+            selected.append(repaired_nodes[0])
         recovered = [n for n in structural if baseline_score is not None and n['score']<=baseline_score*2
                      and structure_recovery(baseline,rows if n is node else n.get('rows',[]),arch)]
         selected += [n for n in recovered[:1] if n not in selected]

@@ -83,7 +83,7 @@ def plan(rows, arch=None):
     """Small evidence record for agents/replays; categories do not establish a compiler cause."""
     d=diagnose(rows,arch)
     if d['register_only']:
-        category='allocation';families=['allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
+        category='allocation';families=['later_local_reuse','allocation_schedule_bridge','pointer_index_scope','equal_value_increment','loop_weight_scope','paired_operand_reuse']
     elif d['scheduling'] or d['allocation_schedule']:
         category='scheduling';families=['initialization_cluster','paired_operand_reuse','affine_counter_guard']
     elif d['spill_offsets'] or d['target_frame']!=d['candidate_frame']:

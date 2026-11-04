@@ -23,7 +23,7 @@ def order(families, rows):
         preferred = ('argument_home_slot', 'callee_array_extent', 'spill_normalization', 'split_narrow_lifetime', 'call_return_normalization',
                      'stack_address_temporary', 'combined_scheduling', 'stack_padding')
     elif diagnose(rows)['register_only'] or diagnose(rows)['copy_near_miss']:
-        preferred = ('cfg_equal_value_increment','equal_value_increment','loop_weight_scope',
+        preferred = ('later_local_reuse','cfg_equal_value_increment','equal_value_increment','loop_weight_scope',
                      'shared_branch_locals','paired_operand_reuse','allocation_schedule_bridge','copy_register_reuse','masked_value_reuse') + register_priority
     elif diagnose(rows)['scheduling']:
         preferred = ('typed_global_identity', 'block_accumulator_lifetime', 'shared_branch_locals', 'loop_exit_value', 'success_pointer_update', 'affine_counter_guard', 'affine_counter', 'initialization_cluster','allocation_initialization_order','byte_fill_constant','scalar_schedule_order','combined_scheduling')

@@ -392,3 +392,33 @@ Keep structurally different near misses: the lowest numeric score can be a poor
 starting point for a declaration/context repair. Deep search now reserves half
 its remaining time and compile allowance for random rewriting after the initial
 local phase (one in-flight compile can cross the time boundary).
+
+## An exact operation can still need a different temporary lifetime
+
+A measured 567-instruction function under KMC GCC 2.7.2,
+`-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, had just one remaining addition with reversed
+source operands. Commutativity did not make its bytes an exact match. A fresh
+subtotal preserved operand order, but the local allocator merged the dying
+subtotal with the result. Reusing an earlier handle prevented that merge but
+changed the early instruction schedule. Reusing a compatible scalar with a
+separate **later** lifetime reproduced the complete function exactly.
+
+The `later_local_reuse` family now tries this bounded repair before broad mutation
+for register-only cycle misses. It checks CFG liveness: the donor's old value must
+be dead, its declaration must be in scope, and its later value must be assigned
+before use on every path. It rejects escaped storage, incompatible/unknown widths,
+qualified locals and unknown macro effects. It can pair a compound sum's separate
+subtotal with the reused destination. No padding operations or fixed registers
+are introduced. All candidates still require the normal exact judge.
+
+Retain alternatives that repair the original target locations even if a new
+scheduling difference raises their score; neither score nor source equivalence is
+an acceptance verdict. The search reserves one such alternative within its
+existing beam and budget. Recognize integer typedefs through the target ABI, not
+the host: a verified 32-bit `long` alias can be compatible with `int`, while a
+64-bit/qualified/ambiguous alias is not.
+
+A private frozen pre-match replay recovered this case in three candidate compiles
+plus one baseline compile (about 1.7 seconds locally). This is a regression result
+for one saved source/context/profile, not a general runtime guarantee or a new
+match. The real accepted source also passed the complete cartridge rebuild.

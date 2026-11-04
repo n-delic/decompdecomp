@@ -2884,3 +2884,50 @@ Synthetic controls use the pinned KMC GCC 2.7.2 compiler with `-O2`, comparing g
 bytes with independently written target shapes. They test generation, not ROM-linked acceptance.
 All production candidates still require the ordinary linked-byte or objdiff judge. Macro-heavy
 inputs, unsupported syntax and unsafe lifetimes yield no new candidates.
+
+## Separate later scalar lifetimes prevent unwanted local coalescing (3 November 2026)
+
+**Evidence: verified case and controlled private replay.** Native KMC GCC 2.7.2,
+32-bit MIPS, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`. The unresolved 567-instruction /
+2,268-byte function already agreed everywhere except the operand order of one
+commutative addition. A fresh subtotal and fresh result retained the intended
+operand order, but local allocation tied the dying subtotal to the result. Reusing
+a separate later scalar lifetime prevented that tie without disturbing the rest
+of the function. The ordinary running-app API accepted score zero, linked bytes
+and instructions exact; independent linking and a complete cartridge comparison
+also passed. Target bytes, extents, profile and judge were unchanged.
+
+Useful failed alternatives: reusing an earlier display handle fixed the addition
+but moved an early mask before an argument move. Type/mask spellings, line changes,
+unused-return declarations, inline helpers and synthetic branch boundaries did not
+resolve that alternate. An overall worse score could therefore contain the crucial
+local repair. Do not repeatedly broaden random search or compiler flags for this
+specific register-only residual.
+
+Implementation: `later_local_repairs.py` pairs subtotal separation with a compatible
+existing scalar whose old value is dead and whose later reads follow redefinition
+on every CFG path. It uses the shared liveness model, rejects escapes/unknown
+macros/unsupported widths, and emits at most 20 hypotheses. `allocation_search`
+puts it before broad mutation; the shared draft path reaches ROM and project mode.
+The ordinary and iterative frontiers reserve a bounded slot for a candidate that
+repairs original target positions even when its scalar score worsens. Nothing is
+adopted on that basis. ABI checks resolve aliases with the target's 32-bit layout,
+not the host's `long` width.
+
+The generated repair recovered the frozen pre-match source on candidate 3 (four
+compiler invocations including baseline), approximately 1.7 seconds on this Mac.
+This replay did not alter the live app or create an additional match; it does not
+measure all prior exploratory work or prove a general speedup. Homemade safety,
+execution, type, lane-priority, beam and budget regressions live in
+`tests/test_later_local_repairs.py`. The optional private case pins source/header
+hashes, target, manifest and compiler identity, and skips in CI without game data:
+
+```
+DECOMPNET_LIFETIME_REPLAY=/private/frozen-case.json uv run pytest tests/test_later_local_repairs.py -q
+```
+
+The private JSON has `project`, `function`, `before`, `header`, `source_sha256`,
+`header_sha256` and `scope` (the full scope from `linked_repair_benchmark`). Keep the
+JSON, source, header, target and ROM outside this repository. The existing benchmark
+CLI also supports `--families later_local_reuse --trials 20 --seconds 120`; use a
+saved unresolved draft rather than today's matched source.
