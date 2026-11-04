@@ -201,6 +201,49 @@ class RoomMixin:
 
     def _mirror_layout(self, proj, console, functions, symbols, local, by_vram, rename, free_name) -> None:
         pid = proj["id"]
+        # Mirror the host's joins (the reverse of the split pass below): where the host has one function spanning
+        # what we hold as several -- an over-split head plus tails -- join them back, as the saved-layout join does.
+        for h in sorted(functions, key=lambda f: f["vram"]):
+            inside = sorted((r for r in local.values() if h["vram"] <= r["vram"] < h["vram"] + h["size"]),
+                            key=lambda r: r["vram"])
+            if len(inside) < 2 or inside[0]["vram"] != h["vram"]:
+                continue  # not over-split against the host, or the head doesn't start where the host's function does
+            head, tails = inside[0], inside[1:]
+            if any(t["status"] == "matched" or t["matched_source"] for t in tails):
+                continue  # never fold a matched function away
+            try:
+                joined = console.join_saved_functions([head, *tails], h["vram"], h["vram"] + h["size"],
+                                                       lambda address, n: self.reader(proj)(address, n))
+            except ValueError:
+                continue  # a real gap between them in this analysis; leave the layout as it is
+            tgt = self._make_target(proj, joined, self.symbols(pid))
+            with self.store.tx() as db:
+                db.execute("UPDATE functions SET size=?, n_insns=?, target=?, relocs=?, asm=?, seed=NULL, "
+                           "attempts=attempts+? WHERE id=?",
+                           (joined.size, console.function_insns(joined), tgt.code, json.dumps(tgt.to_json()),
+                            console.function_asm(joined), sum(t["attempts"] or 0 for t in tails), head["id"]))
+                for t in tails:
+                    db.execute("UPDATE attempts SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("UPDATE OR IGNORE twin_misses SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("DELETE FROM twin_misses WHERE function_id=?", (t["id"],))
+                    db.execute("DELETE FROM claims WHERE function_id=?", (t["id"],))
+                    db.execute("DELETE FROM waits WHERE function_id=? OR needs_id=?", (t["id"], t["id"]))
+                    db.execute("UPDATE notes SET function_id=? WHERE function_id=?", (head["id"], t["id"]))
+                    db.execute("DELETE FROM functions WHERE id=?", (t["id"],))
+                    db.execute("DELETE FROM symbols WHERE project_id=? AND name=? AND address=? AND kind='func'",
+                               (pid, t["name"], t["vram"]))
+                db.execute("UPDATE symbols SET size=? WHERE project_id=? AND name=? AND kind='func'",
+                           (joined.size, pid, head["name"]))
+            local[head["id"]] = {**head, "size": joined.size}
+            for t in tails:
+                local.pop(t["id"], None)
+                if t["vram"] in by_vram:
+                    by_vram[t["vram"]] = [i for i in by_vram[t["vram"]] if i["id"] != t["id"]]
+            by_vram[head["vram"]] = [local[head["id"]] if i["id"] == head["id"] else i
+                                     for i in by_vram.get(head["vram"], [])]
+            self._syms.pop(pid, None)
+            self._xrefs.pop(pid, None)
+
         for f in sorted(functions, key=lambda f: f["vram"]):
             at = by_vram.get(f["vram"], [])
             if any(row["name"] == f["name"] for row in at):
