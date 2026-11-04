@@ -1,11 +1,20 @@
 """Parent-specific output feedback: defer ineffective siblings, never discard their source shapes."""
 import hashlib
 
+DEFER_INTERVAL = 8
+HISTORY_LIMIT = 256
+
 
 def key(node):
     if not node.get('parent_source') or not node.get('path'):
         return None
     return hashlib.sha256(repr((node['parent_source'], node['path'][-1])).encode()).hexdigest()
+
+
+def output_scope(node):
+    """Equivalent compiler outputs share feedback, while changed build/source output starts fresh."""
+    if node.get('parent_output') is None or not node.get('path'):return None
+    return hashlib.sha256(repr((node['parent_output'],node['path'][-1])).encode()).hexdigest()
 
 
 def observe(state, node, output):
@@ -14,24 +23,36 @@ def observe(state, node, output):
         return
     history = state.setdefault('family_no_effect', {})
     history[scope] = history.get(scope, 0)+1 if output == node['parent_output'] else 0
-    while len(history) > 256:
+    shared=state.setdefault('output_no_effect',{})
+    shared_scope=output_scope(node)
+    shared[shared_scope]=shared.get(shared_scope,0)+1 if output==node['parent_output'] else 0
+    while len(shared)>HISTORY_LIMIT:del shared[next(iter(shared))]
+    while len(history) > HISTORY_LIMIT:
         del history[next(iter(history))]
 
 
 def rotate(state):
-    """After two unchanged builds, reserve one in three slots for deferred exploration.
+    """After two unchanged builds, reserve one in eight slots for deferred exploration.
 
-    Only already queued siblings of this exact parent are affected. Persist the count with the
-    frontier, whose outer scope includes compiler, flags, target, headers and repair rules.
+    Feedback also follows identical parent machine code across different source spellings.
+    Nothing is discarded: source changes can unlock a family, so deferred probes remain fair.
+    The persisted frontier's outer scope includes compiler, flags, target, headers and repair rules.
     """
     history = state.get('family_no_effect', {})
     pending = state['pending']
-    ordinary = [n for n in pending if history.get(key(n), 0) < 2]
-    deferred = [n for n in pending if history.get(key(n), 0) >= 2]
+    shared=state.get('output_no_effect',{})
+    def ineffective(node):
+        local=history.get(key(node),0)
+        # Preserve the third direct sibling: two identical outputs can precede the useful
+        # cast/assignment placement. Equivalent *other* parents still share deferral immediately.
+        if local==2:return False
+        return local>=3 or shared.get(output_scope(node),0)>=2
+    ordinary = [n for n in pending if not ineffective(n)]
+    deferred = [n for n in pending if ineffective(n)]
     if not ordinary or not deferred:
         return
     # Advance fairness only for measured trials, not repeated proposal generation.
     slot = state.get('counts', {}).get('matched', 0)+state.get('counts', {}).get('scored', 0)+state.get('counts', {}).get('compile_failed', 0)
-    first = deferred if slot % 3 == 2 else ordinary
+    first = deferred if slot % DEFER_INTERVAL == DEFER_INTERVAL-1 else ordinary
     other = ordinary if first is deferred else deferred
     state['pending'] = first[:1]+other+first[1:] if first is deferred else ordinary+deferred

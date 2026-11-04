@@ -18,10 +18,12 @@ from . import (
     agent_tokens,
     allocation_evidence,
     allocation_search,
+    deep_repair_feedback,
     draft_repairs,
     permuter_focus,
     permuter_local,
     repair_ranking,
+    repair_sequence_lane,
     repair_sequences,
     residual_followups,
     search_frontier,
@@ -76,6 +78,8 @@ class Search(Permuter):
         self.refinement_rounds = 0
         self.winner_diff = None
         self.winner_source = None
+        self.winner_output = None
+        self.winner_scope = None
         self.trace_variants = True
         self.recipe_counts = {}
         self.measurement_counts = {}
@@ -360,6 +364,8 @@ class Search(Permuter):
         initial_rows = self.winner_diff[0] if self.winner_diff else repair_ranking.evidence(self.net,fn['id'],agent.id)
         source_rows = {source:initial_rows}
         lineage = repair_sequences.Lineage(self.net,proj,fn,source,initial_rows)
+        current_scope=agent_tokens.target_scope(self.net,{**dict(fn),'best_source':source},'')
+        feedback=deep_repair_feedback.Feedback(source,best,initial_rows,self.winner_output if self.winner_source==source and self.winner_scope==current_scope else None)
         expanded = set()
         residual_bursts = 0
         counters = {'compile_failed': 0, 'frontier_pruned': 0, 'depth_limit': 0}
@@ -370,7 +376,8 @@ class Search(Permuter):
                 return best, self.net._function(fn['name'], proj['slug'])['best_source']
             self.check()
             path = lineage.paths.get(source, [])
-            if len(path) >= repair_sequences.MAX_STEPS:
+            loan=len(path)>=repair_sequences.MAX_STEPS
+            if loan and not feedback.eligible(source,repair_sequences.MAX_STEPS,proj['arch']):
                 counters['depth_limit'] += 1
                 break
             expanded.add(source)
@@ -401,8 +408,11 @@ class Search(Permuter):
             choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
 
             queue = list(dict.fromkeys(choices))
+            if loan:queue=feedback.continuation(source,queue,labels,self.local_seen)
             parents = {}
-            for candidate in queue:
+            while queue:
+                feedback.order(queue,labels,source,parents)
+                candidate=queue.pop(0)
                 if phase_deadline is not None and time.monotonic() >= phase_deadline:
                     self.local_status = {'reason': 'phase_budget', **counters}
                     self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
@@ -429,6 +439,10 @@ class Search(Permuter):
                         score = self._score(agent, proj, fn, candidate, best, fork)
                 finally:
                     del self._parent_rows
+                measured_output=None if getattr(self,'_trial_reused',False) else getattr(self,'_trial_output',None)
+                measured_rows=(self._cached_rows if getattr(self,'_trial_reused',False) else repair_ranking.evidence(self.net,fn['id'],agent.id))
+                feedback.record(parent_source,candidate,labels.get(candidate,'local_repair'),parent_path,score,measured_rows,measured_output,getattr(self,'_trial_reused',False))
+                if candidate in feedback.loan_sources:counters['sequence_evaluations']=counters.get('sequence_evaluations',0)+1
                 if score is None:
                     counters['compile_failed'] += 1
                 if score is not None and score > 0:
@@ -440,7 +454,7 @@ class Search(Permuter):
                     if not any(n['source'] == candidate for n in alternatives.nodes):
                         counters['frontier_pruned'] += 1
                     source_rows[candidate] = measured_rows
-                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'))
+                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
                     if (score<=best*2 and len(parent_path)+1<repair_sequences.MAX_STEPS
                             and residual_bursts<residual_followups.BURSTS
                             and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
@@ -456,7 +470,7 @@ class Search(Permuter):
                             for family,child in selected:
                                 labels[child] = family
                                 parents[child] = (candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
-                            offset = queue.index(candidate)+1
+                            offset = 0
                             # Preserve the short direct-family lane before trying a residual detour.
                             siblings=[c for c in queue[offset:] if c not in parents
                                       and labels.get(c)==labels.get(candidate)][:3]
@@ -466,7 +480,7 @@ class Search(Permuter):
                             queue[offset:offset] = [c for _,c in selected]
                 if score is not None and score < best:
                     source_rows[candidate] = repair_ranking.evidence(self.net,fn['id'],agent.id)
-                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),exact=score==0)
+                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),exact=score==0,max_steps=repair_sequences.MAX_STEPS+repair_sequence_lane.EXTRA_DEPTH if candidate in feedback.loan_sources else repair_sequences.MAX_STEPS)
                     best = score
                     fresh = self.net._function(fn['name'], proj['slug'])
                     if score > 0 and fresh['best_source'] == candidate:
@@ -483,6 +497,7 @@ class Search(Permuter):
                         source_rows = {source:[]}
                         expanded.clear()
                         lineage = repair_sequences.Lineage(self.net,proj,fn,source,[])
+                        feedback=deep_repair_feedback.Feedback(source,best,[])
                         self.winner_diff = None
                     break
             else:
@@ -569,6 +584,7 @@ class Search(Permuter):
         self._cached_rows = feedback.get('rows', []) if isinstance(feedback, dict) else []
         reused = not self.measuring_baseline and isinstance(score, int) and score >= best
         self._trial_reused = reused
+        self._trial_output = feedback.get('output') if reused and isinstance(feedback,dict) else None
         elapsed_ms = 0
         if reused:
             self.skipped += 1
@@ -599,6 +615,7 @@ class Search(Permuter):
                 feedback = ({'score': score, 'rows': own[0]} if own and provenance.get('kind') == 'deep local repair'
                             and (best <= score <= best*1.25 or permuter_focus.classify(own[0]) != policy_focus or
                                  best <= score <= best*2 and search_frontier.structure_recovery(rows,own[0],proj['arch'])) else score)
+                if isinstance(feedback,dict):feedback['output']=getattr(self,'_trial_output',None)
                 with self.net.store.tx() as db:
                     db.execute('INSERT OR REPLACE INTO reuse_trials(function_id,signature,outcome,reason,feedback) VALUES(?,?,?,?,?)',
                                (fn['id'], key, 'miss', 'deep function search; path: '+ ' → '.join((current_trial() or {}).get('lineage', [])),
@@ -624,6 +641,8 @@ class Search(Permuter):
             if winner:
                 self.winner_diff = getattr(self.net, '_last_diffs', {}).get((agent.id, fn['id']))
                 self.winner_source = source
+                self.winner_output = getattr(self,'_trial_output',None)
+                self.winner_scope = scope
         self.report()
         return score
 

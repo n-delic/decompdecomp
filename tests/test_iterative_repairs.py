@@ -448,10 +448,11 @@ def test_unchanged_family_rotates_before_spending_the_whole_parent_page():
         calls.append(source)
         return dict(score=20, matched=False, candidate_target='00', candidate_relocs='[]')
     def variants(source, report):
-        return [('flat', 'a'), ('flat', 'b'), ('flat', 'c'), ('other', 'd')] if source=='seed' else []
-    search.advance(state,judge,variants,lambda: len(calls)>=5)
+        return [('flat', 'a'), ('flat', 'b'), ('flat', 'c'), ('flat', 'fourth'), ('other', 'd')] if source=='seed' else []
+    search.advance(state,judge,variants,lambda: len(calls)>=6)
     assert calls[:3] == ['seed','a','b']
-    assert calls.index('d') < calls.index('c')
+    assert calls[:4] == ['seed','a','b','c']
+    assert calls.index('d') < calls.index('fourth')
     assert len(calls)==len(set(calls))
 
 
@@ -499,9 +500,9 @@ def test_unchanged_family_moves_behind_fresh_work_without_losing_siblings():
         calls.append(source)
         return dict(score=20,matched=False,candidate_target=b'unchanged')
     def variants(source,report):
-        return [('flat',s) for s in ('a','b','c')]+[('fresh','other')] if source=='seed' else []
-    search.advance(state,judge,variants,lambda:len(calls)>=5)
-    assert calls==['seed','a','b','other','c']
+        return [('flat',s) for s in ('a','b','c','fourth')]+[('fresh','other')] if source=='seed' else []
+    search.advance(state,judge,variants,lambda:len(calls)>=6)
+    assert calls==['seed','a','b','c','other','fourth']
 
 
 def test_unscored_output_does_not_poison_family_effect_history():

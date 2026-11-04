@@ -6,7 +6,7 @@ PROBES = 2
 FAMILIES = {
     'scheduling': ('embedded_call_assignment','inline_call_count','typed_pointer_snapshot','call_one_shot_scope','debug_initialization_group','debug_constant_initialization','allocation_initialization_order','scalar_schedule_order','paired_load_order',
                    'combined_scheduling','local_declaration_order','declaration_order','byte_fill_constant'),
-    'allocation': ('branch_scalar_lifetime','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse',
+    'allocation': ('narrow_call_destination','branch_scalar_lifetime','later_local_reuse','later_operation_reuse','later_call_reuse','branch_local_reuse',
                    'split_integer_phase','split_integer_lifetime','merge_integer_lifetimes','loop_weight_scope'),
 }
 

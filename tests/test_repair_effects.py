@@ -7,14 +7,14 @@ def node(family, parent='parent'):
     return dict(source=family, parent_source=parent, parent_output='same', path=[family])
 
 
-def test_two_unchanged_results_defer_only_same_parent_and_keep_exploration():
+def test_two_unchanged_results_defer_same_output_and_keep_exploration():
     a, b, c = node('a'), node('b'), node('a', 'different')
     state = dict(pending=[a,b,c])
-    effects.observe(state,a,'same');effects.observe(state,a,'same')
+    effects.observe(state,a,'same');effects.observe(state,a,'same');effects.observe(state,a,'same')
     state = json.loads(json.dumps(state))
     effects.rotate(state)
-    assert state['pending'] == [b,c,a]
-    state['counts'] = {'scored':2}
+    assert state['pending'] == [b,a,c]
+    state['counts'] = {'scored':effects.DEFER_INTERVAL-1}
     effects.rotate(state)
     assert state['pending'] == [a,b,c]
     effects.observe(state,a,'changed')

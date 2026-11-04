@@ -194,6 +194,12 @@ accepts code. MIPS stack diagnostics separate saved slots from local operands. E
 for non-MIPS architectures and imported-project GUI diagnostics remain planned. Experimental
 bitfield frame hypotheses require explicit local-family selection.
 
+Narrow call-argument donor staging is shared by local search. Iterative and one-function deep
+search share output-scoped ineffective-family rotation and an earned two-level continuation
+for measured complementary repairs, within their existing time/compile limits. Imported
+builds without function-output fingerprints retain ordinary ordering/depth: add genuine
+per-function output/relocation readers before enabling this feedback/continuation there.
+
 Connected exact repair sequences now guide shared family ordering and deep local follow-ups.
 Each candidate retains its own mismatch advice. Compact build-scoped evidence reaches agents;
 failed rechecks of locally captured exact source raise deduplicated regression alerts.

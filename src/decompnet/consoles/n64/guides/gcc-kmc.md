@@ -532,3 +532,18 @@ Controlled private replay recovered three saved precursors of this **same known
 equal 64-candidate allowance. The earliest precursor improved but stayed unresolved.
 This demonstrates coverage of these source shapes, not three new matches or a
 recovery rate for other games. Keep the failed precursor in future comparisons.
+
+### Stage a narrow call argument through a dead word local
+
+When the target already has the correct signed/unsigned short conversion but its
+intermediate register differs, try `narrow_call_destination`. It uses the existing
+callee prototype and a CFG-proven dead scalar; it can stage the same phase in
+separate branches. Even a numerically redundant conversion can expose a useful
+new lifetime. Do not discard it solely because its C value is unchanged.
+
+Autopilot and deep search can earn a small continuation beyond the normal four
+steps after repeated, measured complementary progress. The allowance is at most
+two extra levels and four proposals, inside the existing budget. Unchanged output
+families are deferred across equivalent source parents, retaining a third direct
+probe and occasional exploration. None of this supplies an exact verdict; the
+ordinary compiler/link/data checks remain mandatory.

@@ -18,6 +18,7 @@ from . import (
     region_repairs,
     repair_effects,
     repair_selection,
+    repair_sequence_lane,
     residual_followups,
     search_frontier,
     workers,
@@ -59,13 +60,19 @@ def allocation_detour(node, report, arch=None):
                 and allocation_evidence.signature(node.get('baseline_rows'),arch)!=allocation_evidence.signature(report.get('rows'),arch))
 
 
+def expandable(parent, arch=None):
+    return parent['depth']<DEPTH or repair_sequence_lane.eligible(parent,DEPTH,arch)
+
+
 def children(state, parent, variants, *, priority=0, arch=None):
     """Keep the pending wave, but reserve a tiny burst for a structurally promising two-step repair."""
-    if parent['depth'] >= DEPTH or parent['source'] in state.setdefault('expanded', []):
+    if not expandable(parent,arch) or parent['source'] in state.setdefault('expanded', []):
         return 0
     report = {**parent['report'], 'repair_path': parent.get('path', [])}
     proposals = variants(parent['source'], report)
     proposals = residual_followups.order(proposals,parent.get('baseline_rows'),report.get('rows'),arch)
+    loan=parent['depth']>=DEPTH
+    if loan:proposals=repair_sequence_lane.select(state,parent,proposals)
     deferred = state.setdefault('deferred', [])
     if getattr(proposals, 'more', False):
         if not any(p['source'] == parent['source'] for p in deferred):
@@ -83,7 +90,8 @@ def children(state, parent, variants, *, priority=0, arch=None):
                         region_baseline=parent.get('regions'), baseline_rows=parent['report'].get('rows'),
                         path=parent.get('path', [])+[family], parent_source=parent['source'],
                         parent_output=output_key(parent['report']),
-                        unchanged_steps=parent.get('unchanged_steps', 0)))
+                        unchanged_steps=parent.get('unchanged_steps', 0),
+                        productive_steps=parent.get('productive_steps',0),sequence_loan=loan))
     # Finish up to three direct siblings before an immediate residual burst. The measured
     # short donor lane already recovers exact results; follow-ups must not interrupt it.
     siblings=[]
@@ -112,6 +120,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
         if isinstance(report.get('score'), (int, float)):
             repair_effects.observe(state, node, output_key(report))
         counts = state.setdefault('counts', {})
+        if node.get('sequence_loan'):counts['sequence_evaluations']=counts.get('sequence_evaluations',0)+1
         if (node.get('path') or [''])[-1]=='paired_local':
             counts['paired_evaluations']=counts.get('paired_evaluations',0)+1
         outcome = 'matched' if report.get('matched') else 'compile_failed' if report.get('score') is None else 'scored'
@@ -146,35 +155,37 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
             outputs = state.setdefault('outputs', {})
             unchanged = node.get('unchanged_steps', 0)+1 if output is not None and output == node.get('parent_output') else 0
             node['unchanged_steps'] = unchanged
+            if output is not None and node.get('parent_output') is not None and output!=node['parent_output'] and score<node['ceiling']:
+                node['productive_steps']=node.get('productive_steps',0)+1
             if unchanged:
                 counts['unchanged_output'] = counts.get('unchanged_output', 0)+1
             if output is None or outputs.get(str(node['depth'])+':'+output, 0) < 2:
                 regions = region_repairs.snapshot(report.get('rows'),arch)
-                state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
+                state['next'].append({**node, 'score': score, 'report': report, 'regions': regions, 'output':output,
                                       'region_gain': region_repairs.gain(node.get('region_baseline'), regions),
                                       'repaired':sorted(repaired) if pattern else []})
                 if (pattern and residual_followups.kind(node.get('baseline_rows'),report.get('rows'),arch)
                         and state.get('residual_bursts',0)<residual_followups.BURSTS):
                     if children(state,state['next'][-1],variants,priority=residual_followups.PROBES,arch=arch):
                         state['residual_bursts']=state.get('residual_bursts',0)+1
-                if allocation and node['depth'] < DEPTH and state.get('allocation_bursts',0)<3:
-                    if children(state,state['next'][-1],variants,priority=2):
+                if allocation and expandable(state['next'][-1],arch) and state.get('allocation_bursts',0)<3:
+                    if children(state,state['next'][-1],variants,priority=2,arch=arch):
                         state['allocation_bursts']=state.get('allocation_bursts',0)+1
                 state['next'][-1]['region_damage'] = region_repairs.damage(node.get('region_baseline'), regions)
                 if (score < node['ceiling'] and node.get('path') and node.get('baseline_rows')
-                        and report.get('rows') and node['depth'] < DEPTH
+                        and report.get('rows') and expandable(state['next'][-1],arch)
                         and search_frontier.structure(report['rows']) >= search_frontier.structure(node['baseline_rows'])
                         and not state['next'][-1]['region_damage']
                         and state.get('productive_bursts', 0) < 3):
-                    if children(state, state['next'][-1], variants, priority=2):
+                    if children(state, state['next'][-1], variants, priority=2,arch=arch):
                         state['productive_bursts'] = state.get('productive_bursts', 0)+1
                 # A measured structure improvement earns two immediate combination probes, not
                 # an unbounded recursive search. The original wave remains queued and resumable.
-                if (node.get('baseline_rows') and report.get('rows') and node['depth'] < DEPTH
+                if (node.get('baseline_rows') and report.get('rows') and expandable(state['next'][-1],arch)
                         and score <= node['ceiling'] and state.get('bridge_bursts', 0) < 3
                         and search_frontier.structure(report['rows']) < search_frontier.structure(node['baseline_rows'])
                         and not state['next'][-1]['region_damage']):
-                    if children(state, state['next'][-1], variants, priority=2):
+                    if children(state, state['next'][-1], variants, priority=2,arch=arch):
                         state['bridge_bursts'] = state.get('bridge_bursts', 0)+1
                 # Flat scores often hide the first half of a combined repair. Reserve
                 # one child probe for two distinct families, while preserving the wave.
@@ -182,7 +193,7 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 bridges = state.setdefault('plateau_families', [])
                 if (state.get('explore_plateaus') and node['depth'] == 1 and score == node['ceiling']
                         and family and family not in bridges and len(bridges) < 2):
-                    if children(state, state['next'][-1], variants, priority=1):
+                    if children(state, state['next'][-1], variants, priority=1,arch=arch):
                         bridges.append(family)
                 if output is not None:
                     key = str(node['depth'])+':'+output
@@ -200,7 +211,7 @@ def expand_wave(state, variants, arch):
     """Retain numeric and structural alternatives between bounded search waves."""
     deferred = state.pop('deferred', [])
     for parent in deferred:
-        children(state, parent, variants)
+        children(state, parent, variants,arch=arch)
     ranked = sorted(state['next'], key=lambda n: (*region_repairs.priority(n)[:2], n.get('unchanged_steps', 0), search_frontier.structure(n['report'].get('rows') or []),
                                                     stack_distance(n['report'].get('rows') or []), n['score']))
     ordinary = [n for n in ranked if n['score'] <= n['ceiling']]
@@ -235,13 +246,13 @@ def expand_wave(state, variants, arch):
     recovered = [n for n in best if n.get('region_gain',0)>0]
     burst_parent = min(recovered,key=region_repairs.priority) if recovered else None
     for parent in best:
-        if parent['depth'] >= DEPTH:
+        if not expandable(parent,arch):
             state.setdefault('counts', {})['depth_limit'] = state.get('counts', {}).get('depth_limit', 0) + 1
             continue
         # Probe the best recovered region first, after comparing the entire wave.
         burst = (parent is burst_parent and
                  state.get('regional_bursts', 0)<REGION_COMBINATIONS)
-        if children(state, parent, variants, priority=2 if burst else 0) and burst:
+        if children(state, parent, variants, priority=2 if burst else 0,arch=arch) and burst:
             state['regional_bursts'] = state.get('regional_bursts', 0)+1
 
 

@@ -618,3 +618,38 @@ def test_structurally_distinct_high_score_seed_can_recover_exact_match(monkeypat
     monkeypatch.setattr(Permuter,'_score',judge)
     search = deep_permuter.Search(net,1,10,Log())
     assert search.local_repairs(AGENT,net.project_row('game'),net.function(),80,None)==(0,'exact')
+
+
+@pytest.mark.parametrize('imported',[False,True])
+def test_deep_search_has_the_same_earned_complementary_sequence_limits(monkeypatch,imported):
+    net=setup(monkeypatch,imported)
+    original=net.function()['best_source']
+    sources=[original,'stage1','stage2','stage3','stage4','stage5','exact']
+    families=['narrow_call_destination','branch_scalar_lifetime','inline_call_count',
+              'narrow_call_destination','typed_pointer_snapshot','embedded_call_assignment']
+    rows=[[' ','addiu $sp, $sp, -0x20','addiu $sp, $sp, -0x20'],
+          ['r','move $s0, $a0','move $s1, $a0'],[' ','jr $ra','jr $ra']]
+    net._last_diffs={}
+    def variants(source,*args,**kwargs):
+        index=sources.index(source)
+        if index==len(families):return []
+        kwargs['labels'][sources[index+1]]=families[index]
+        return [sources[index+1]]
+    monkeypatch.setattr(draft_repairs,'variants',variants)
+    monkeypatch.setattr(deep_permuter.Search,'_repair_preflight',lambda self,agent,proj,fn,best,fork:best)
+    tested=[]
+    def judge(self,agent,proj,fn,source,best,fork):
+        tested.append(source);index=sources.index(source);score=40-index*6 if index<6 else 0
+        self._trial_output=source
+        self._trial_outcome='scored'
+        net._last_diffs[agent.id,fn['id']]=(rows,'')
+        with net.store.tx() as db:
+            db.execute('UPDATE functions SET best_score=?,best_source=?,status=? WHERE id=?',
+                       (score,source,'matched' if score==0 else 'open',fn['id']))
+        return score
+    monkeypatch.setattr(Permuter,'_score',judge)
+    search=deep_permuter.Search(net,1,16,Log())
+    best,_=search.local_repairs(AGENT,net.project_row('game'),net.function(),40,'fork' if imported else None)
+    assert best==0 and tested==sources[1:]
+    assert search.local_status['sequence_evaluations']==2
+    assert deep_permuter.repair_sequences.MAX_STEPS==4

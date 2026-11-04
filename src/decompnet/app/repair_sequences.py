@@ -22,9 +22,11 @@ def prepare(net):
         db.execute(SCHEMA)
 
 
-def learn(net, profile, focus, steps):
+def learn(net, profile, focus, steps, *, max_steps=MAX_STEPS):
     """The caller must have an ordinary exact verdict for this connected source lineage."""
-    if not 2 <= len(steps) <= MAX_STEPS or any(not isinstance(s,str) or not s for s in steps):
+    from .repair_sequence_lane import EXTRA_DEPTH
+    if not MAX_STEPS<=max_steps<=MAX_STEPS+EXTRA_DEPTH:return
+    if not 2 <= len(steps) <= max_steps or any(not isinstance(s,str) or not s for s in steps):
         return
     prepare(net)
     with net.store.tx() as db:
@@ -73,15 +75,17 @@ class Lineage:
         self.legacy_focus = permuter_focus.classify(rows)
         self.paths = {source: []}
 
-    def retain(self, parent, source, family, exact=False):
+    def retain(self, parent, source, family, exact=False, *, max_steps=MAX_STEPS):
         """Keep a real tested edge; unknown parents cannot be spliced into unrelated victories."""
         if parent not in self.paths or source == parent:
             return
         path = self.paths[parent]+[family]
-        if len(path) <= MAX_STEPS:
+        from .repair_sequence_lane import EXTRA_DEPTH
+        if not MAX_STEPS<=max_steps<=MAX_STEPS+EXTRA_DEPTH:return
+        if len(path) <= max_steps:
             self.paths[source] = path
             if exact:
-                learn(self.net,self.profile,self.focus,path)
+                learn(self.net,self.profile,self.focus,path,max_steps=max_steps)
                 expression_recipes.learn(self.net,self.profile,parent,source)
 
     def preferred(self, source):
