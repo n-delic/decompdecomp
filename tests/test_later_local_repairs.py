@@ -50,7 +50,6 @@ def test_later_reuse_is_bounded_preserves_calls_and_separate_value():
     SOURCE.replace('int later;','volatile int later;'),
     SOURCE.replace('int later;','short later;'),
     SOURCE.replace('value=3;','if(a) value=3;'),
-    SOURCE.replace('answer=value;','if(a) answer=value; else observe(value);'),
     SOURCE.replace('later=9;','if(a) goto skip; later=9; skip:;'),
     SOURCE.replace('value=3;', 'again: observe(later); value=3;').replace('later=9;','if(a) goto again; later=9;'),
     SOURCE.replace('value += a+b;', 'value += update()+b;'),

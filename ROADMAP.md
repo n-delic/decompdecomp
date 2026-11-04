@@ -1,5 +1,12 @@
 # Roadmap
 
+Implemented: bounded residual follow-ups in iterative and deep search; typed later-local reuse for
+subtraction, bitwise operations, unsigned literal shifts and scalar call results; dominated acyclic
+branch regions and optional unambiguous GCC donor ranking. Shared source hypotheses retain the
+normal judge and budget. Private frozen multi-case MIPS export comparisons pin all inputs; other
+architectures/imported builds retain copied-evaluator replay. Wider shifts and cyclic live regions
+remain unsupported.
+
 Implemented: bounded single-call one-shot scopes, debug-aware initialization grouping and
 repeated-float staging, and disjoint pointer/integer scratch unions. Closed register cycles
 prioritize these lifetime hypotheses. One private KMC known-match replay recovered exact
@@ -236,6 +243,8 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 
 | Feature | N64 | PS1 | PS2 | PSP | GameCube · Wii | Windows PC | DS | Public decomps |
 | :-- | :-: | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| Typed later-local reuse and bounded residual follow-ups | ✓ | ✓ | ✓ 32-bit scalars | ✓ | ✓ 32-bit scalars | ✓ 32-bit scalars | ✓ | ✓ by target ABI |
+| Frozen multi-case exported-ROM repair CLI | ✓ MIPS | ✓ MIPS | ✓ MIPS | ✓ MIPS | — copied evaluator | — copied evaluator | — copied evaluator | — copied evaluator |
 | Targeted scalar scheduling repairs and experiment costs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Portable last-exact evidence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ historical, own build |
 | Stack slot layout diagnostics | ✓ | ✓ | ✓ | ✓ | — reader planned | — reader planned | — reader planned | — GUI adapter planned |

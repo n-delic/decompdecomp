@@ -18,6 +18,7 @@ from . import (
     region_repairs,
     repair_effects,
     repair_selection,
+    residual_followups,
     search_frontier,
     workers,
 )
@@ -58,12 +59,13 @@ def allocation_detour(node, report, arch=None):
                 and allocation_evidence.signature(node.get('baseline_rows'),arch)!=allocation_evidence.signature(report.get('rows'),arch))
 
 
-def children(state, parent, variants, *, priority=0):
+def children(state, parent, variants, *, priority=0, arch=None):
     """Keep the pending wave, but reserve a tiny burst for a structurally promising two-step repair."""
     if parent['depth'] >= DEPTH or parent['source'] in state.setdefault('expanded', []):
         return 0
     report = {**parent['report'], 'repair_path': parent.get('path', [])}
     proposals = variants(parent['source'], report)
+    proposals = residual_followups.order(proposals,parent.get('baseline_rows'),report.get('rows'),arch)
     deferred = state.setdefault('deferred', [])
     if getattr(proposals, 'more', False):
         if not any(p['source'] == parent['source'] for p in deferred):
@@ -82,7 +84,13 @@ def children(state, parent, variants, *, priority=0):
                         path=parent.get('path', [])+[family], parent_source=parent['source'],
                         parent_output=output_key(parent['report']),
                         unchanged_steps=parent.get('unchanged_steps', 0)))
-    state['pending'] = new[:priority]+state['pending']+new[priority:]
+    # Finish up to three direct siblings before an immediate residual burst. The measured
+    # short donor lane already recovers exact results; follow-ups must not interrupt it.
+    siblings=[]
+    if priority and residual_followups.kind(parent.get('baseline_rows'),report.get('rows'),arch):
+        siblings=[n for n in state['pending'] if n.get('parent_source')==parent.get('parent_source')
+                  and n.get('path')==parent.get('path')][:3]
+    state['pending'] = siblings+new[:priority]+[n for n in state['pending'] if n not in siblings]+new[priority:]
     repair_effects.rotate(state)
     return len(new)
 
@@ -145,6 +153,10 @@ def advance(state, evaluate, variants, stopped, *, arch=None, stop_on_match=True
                 state['next'].append({**node, 'score': score, 'report': report, 'regions': regions,
                                       'region_gain': region_repairs.gain(node.get('region_baseline'), regions),
                                       'repaired':sorted(repaired) if pattern else []})
+                if (pattern and residual_followups.kind(node.get('baseline_rows'),report.get('rows'),arch)
+                        and state.get('residual_bursts',0)<residual_followups.BURSTS):
+                    if children(state,state['next'][-1],variants,priority=residual_followups.PROBES,arch=arch):
+                        state['residual_bursts']=state.get('residual_bursts',0)+1
                 if allocation and node['depth'] < DEPTH and state.get('allocation_bursts',0)<3:
                     if children(state,state['next'][-1],variants,priority=2):
                         state['allocation_bursts']=state.get('allocation_bursts',0)+1
@@ -380,7 +392,7 @@ def _run(twins, slug, job):
         donor_signature=(prototype_reuse.signature(net,proj,fn['best_source']),
                          verified_unit_context.signature(net,proj,fn,fn['best_source']))
         recipe_profile=repair_sequences.profile(net,proj,fn)
-        context = similar_matches.trial_key('', header, settings, fn, ['beam-v11', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
+        context = similar_matches.trial_key('', header, settings, fn, ['beam-v12', donor_signature, candidate_scope.key(net, proj, fn), symbols, rules, expression_recipes.signature(net,recipe_profile)])
         saved = net.store.one('SELECT context,state FROM repair_frontiers WHERE function_id=?', fn['id'])
         state = json.loads(saved['state']) if saved and saved['context'] == context else None
         if state is None or fn['best_source'] not in state['seen']:

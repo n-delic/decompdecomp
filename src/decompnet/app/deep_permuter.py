@@ -23,6 +23,7 @@ from . import (
     permuter_local,
     repair_ranking,
     repair_sequences,
+    residual_followups,
     search_frontier,
     search_turns,
     stack_padding_repairs,
@@ -357,6 +358,7 @@ class Search(Permuter):
         source_rows = {source:initial_rows}
         lineage = repair_sequences.Lineage(self.net,proj,fn,source,initial_rows)
         expanded = set()
+        residual_bursts = 0
         counters = {'compile_failed': 0, 'frontier_pruned': 0, 'depth_limit': 0}
         self.local_status = {'reason': 'searching', **counters}
         while best > 0:
@@ -395,7 +397,9 @@ class Search(Permuter):
 
             choices,allocation_lane = self.allocation_choices(proj,fn,source,rows,choices,labels,header,fork)
 
-            for candidate in dict.fromkeys(choices):
+            queue = list(dict.fromkeys(choices))
+            parents = {}
+            for candidate in queue:
                 if phase_deadline is not None and time.monotonic() >= phase_deadline:
                     self.local_status = {'reason': 'phase_budget', **counters}
                     self.log('Local phase budget reached; reserving the remaining search for random rewrites.')
@@ -413,11 +417,12 @@ class Search(Permuter):
                     self.phase = ordinary_phase
                 self.local_seen.add(candidate)
                 trials += 1
-                self._parent_rows = rows
+                parent_source,parent_rows,parent_path = parents.get(candidate,(source,rows,path))
+                self._parent_rows = parent_rows
                 try:
                     with repair_trial({'kind': 'deep local repair', 'family': labels.get(candidate, 'local_repair'),
-                                       'lineage': path+[labels.get(candidate, 'local_repair')],
-                                       'base_source_sha256': hashlib.sha256(source.encode()).hexdigest()}):
+                                       'lineage': parent_path+[labels.get(candidate, 'local_repair')],
+                                       'base_source_sha256': hashlib.sha256(parent_source.encode()).hexdigest()}):
                         score = self._score(agent, proj, fn, candidate, best, fork)
                 finally:
                     del self._parent_rows
@@ -428,14 +433,37 @@ class Search(Permuter):
                                      else repair_ranking.evidence(self.net, fn['id'], agent.id))
                     if getattr(self, '_trial_reused', False) and not measured_rows:
                         continue
-                    alternatives.offer(candidate, score, measured_rows, arch=proj['arch'], baseline=rows, baseline_score=best)
+                    alternatives.offer(candidate, score, measured_rows, arch=proj['arch'], baseline=parent_rows, baseline_score=best)
                     if not any(n['source'] == candidate for n in alternatives.nodes):
                         counters['frontier_pruned'] += 1
                     source_rows[candidate] = measured_rows
-                    lineage.retain(source,candidate,labels.get(candidate,'local_repair'))
+                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'))
+                    if (score<=best*2 and len(parent_path)+1<repair_sequences.MAX_STEPS
+                            and residual_bursts<residual_followups.BURSTS
+                            and residual_followups.kind(parent_rows,measured_rows,proj['arch'])):
+                        followup_labels = {}
+                        followup = draft_repairs.variants(candidate,fn['name'],proj['arch'],fn['asm'] or '',flags,
+                            followup_labels,limit=None,header=header)
+                        selected = residual_followups.select([(followup_labels[c],c) for c in followup
+                            if c not in self.local_seen and c not in queue],parent_rows,measured_rows,proj['arch'])
+                        if selected:
+                            residual_bursts += 1
+                            self.log('Original mismatch repaired; trying two bounded follow-ups on the remaining '+
+                                     residual_followups.kind(parent_rows,measured_rows,proj['arch'])+' difference.')
+                            for family,child in selected:
+                                labels[child] = family
+                                parents[child] = (candidate,measured_rows,parent_path+[labels.get(candidate,'local_repair')])
+                            offset = queue.index(candidate)+1
+                            # Preserve the short direct-family lane before trying a residual detour.
+                            siblings=[c for c in queue[offset:] if c not in parents
+                                      and labels.get(c)==labels.get(candidate)][:3]
+                            for sibling in siblings:queue.remove(sibling)
+                            queue[offset:offset] = siblings
+                            offset += len(siblings)
+                            queue[offset:offset] = [c for _,c in selected]
                 if score is not None and score < best:
                     source_rows[candidate] = repair_ranking.evidence(self.net,fn['id'],agent.id)
-                    lineage.retain(source,candidate,labels.get(candidate,'local_repair'),exact=score==0)
+                    lineage.retain(parent_source,candidate,labels.get(candidate,'local_repair'),exact=score==0)
                     best = score
                     fresh = self.net._function(fn['name'], proj['slug'])
                     if score > 0 and fresh['best_source'] == candidate:

@@ -3014,3 +3014,86 @@ The private JSON has `project`, `function`, `before`, `header`, `source_sha256`,
 JSON, source, header, target and ROM outside this repository. The existing benchmark
 CLI also supports `--families later_local_reuse --trials 20 --seconds 120`; use a
 saved unresolved draft rather than today's matched source.
+
+## Follow the repaired region into its remaining mismatch (4 November 2026)
+
+The prior scalar-lifetime case demonstrated why overall score alone is insufficient:
+reusing one dead handle fixed the intended addition but moved an earlier mask. Shared
+iterative search and single-function deep search now prioritize at most two residual
+hypotheses per burst, at most three bursts. The parent must repair an original target
+location, preserve displayed instruction count and frame, and leave a recognized
+allocation or scheduling residual. Trials consume the existing deadline/compile budget;
+a worse intermediate never replaces saved best C. Lineage records the actual intermediate
+parent. Homemade regressions recover a two-step result from a 115-to-170 detour within
+three evaluations including baseline, and exercise the real deep-search loop separately.
+This establishes search behavior, not a new game match or a general speedup.
+
+The same local-reuse generator now covers subtraction, bitwise operations, unsigned
+32-bit literal shifts, and explicit same-width scalar call results. Subtraction preserves
+operand order; shifts require a literal count in 0–31. Call arguments remain single
+evaluations; unknown/conflicting/variadic/pointer return types are excluded. Dominated,
+acyclic branch regions may reuse a dead local; bypass joins, live loops, escapes,
+shadowing, unknown macros and incompatible widths are rejected. All candidates still
+pass the normal linked-byte/data judge. Synthetic C execution checks observable call
+counts and return values against the original source.
+
+Donor ordering may use same-input GCC source-line/allocation evidence: only a uniquely
+mapped future definition is ranked by call crossings and allocation rank. Stale,
+truncated, ambiguous or line-remapped evidence falls back to declaration order. A GCC
+pseudo or physical register is never treated as proof of a C variable's identity.
+
+### Frozen multi-case comparison
+
+The read-only MIPS export benchmark accepts a private manifest with 2–16 unique cases,
+each with `name`, `before` and `header` paths. Freeze it first to pin source/header hashes,
+target bytes, manifest and compiler identity. Replays reject changed inputs. Keep all
+manifests and game material outside this repository:
+
+```sh
+uv run python -m decompnet.app.linked_repair_benchmark --project /private/export \
+  --cases /private/input.json --freeze --output /private/frozen.json
+uv run python -m decompnet.app.linked_repair_benchmark --project /private/export \
+  --cases /private/frozen.json --trials 20 --seconds 30 --output /private/after.json \
+  --reference /private/before.json
+```
+
+The reference must use the same frozen cases and budgets. Reports include failed trials,
+recovery positions, scores, compile counts and elapsed time; no source is emitted into
+reports. The frozen manifest itself contains private paths and must remain private.
+Optional local coverage uses `DECOMPNET_FROZEN_REPAIR_SUITE` and
+`DECOMPNET_FROZEN_REPAIR_PROJECT`; CI skips without private inputs. This adapter reads an
+existing exported MIPS build; other architectures/imported builds retain their existing
+copied-evaluator benchmark entry points.
+
+Controlled four-case replay against main `07902a70`, with 20 candidates / 30 seconds per
+function: both revisions recovered **one of four**, on candidate **3**, and used **74**
+candidate evaluations overall. Baseline/best scores were 115→0, 790→790, 60→60 and
+230→230 on both revisions. All trials compiled/scored; none failed compilation or linking.
+Observed summed trial times were 58.39 seconds before / 56.89 after; these single local
+observations do not establish a speedup. The 999-instruction case reached its time budget
+with 14 trials; the other three reached 20 (replay intentionally collects after recovery).
+No live state was changed and no additional game match was produced.
+
+The first implementation delayed the known recovery from candidate 3 to 5 by interrupting
+direct sibling proposals with residual probes. Preserving up to three same-parent/family
+siblings restored candidate 3; retain this regression. The unchanged cases identify useful
+next work: a 30-instruction acyclic register-chain mismatch currently misses the cycle-only
+allocation lane, and a 54-instruction jump/delay-slot residual is classified as a constant
+miss. Broader lifetime syntax alone did not solve either one. Use these frozen failures to
+measure future chain-allocation and control-flow classification changes before increasing
+budgets.
+
+Integration check: the newly merged call-scope family displaced saved-draft ABI/type
+refinement in three existing priority regressions on unchanged main. Keep the first
+`m2c_refinement` proposal ahead of scope speculation while still rotating all remaining
+families; the existing regressions and call-scope tests pass together. A later live-export
+manifest update correctly invalidated the old private fixture. Repeat comparisons against
+an isolated export snapshot instead of weakening the input guard or updating a fixture
+silently to fit the current live project.
+
+Final isolated-export repetition, including the restored refinement priority: 20 candidates /
+30 seconds per case recovered the same one of four on candidate 3 in both main and this
+revision. Both evaluated 80 candidates with no compile/link failures; the other three
+scores remained 790, 60 and 230. Observed summed trial times were 49.57 seconds before /
+49.13 after. The changed per-case counts versus the earlier live-export run reflect the
+time cap and local load; they are not additional recovery evidence or a speed claim.

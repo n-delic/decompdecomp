@@ -17,7 +17,7 @@ from ..match_bundle import compiler_identity
 from ..project import compiler_config, compiler_for
 from ..rom import match, split
 from ..rom.symbols import Symbol, SymbolTable
-from . import draft_repairs, region_repairs, repair_benchmark
+from . import draft_repairs, frozen_repair_cases, region_repairs, repair_benchmark
 
 
 def evaluator(root, name, header):
@@ -136,17 +136,31 @@ def suite(root, cases, *, trials=16, seconds=30, focused=True):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--project',type=Path,required=True)
-    parser.add_argument('--function',required=True)
-    parser.add_argument('--before',type=Path,required=True)
-    parser.add_argument('--header',type=Path,required=True)
+    parser.add_argument('--function')
+    parser.add_argument('--cases',type=Path,help='Private JSON list of name/before/header paths, frozen before replay.')
+    parser.add_argument('--freeze',action='store_true')
+    parser.add_argument('--reference',type=Path)
+    parser.add_argument('--before',type=Path)
+    parser.add_argument('--header',type=Path)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--trials',type=int,default=128)
     parser.add_argument('--seconds',type=int,default=120)
     parser.add_argument('--families',default='')
     args = parser.parse_args()
     try:
-        report = benchmark(args.project,args.function,args.before.read_text(),args.header.read_text(),
-                           trials=args.trials,seconds=args.seconds,families=tuple(filter(None,args.families.split(','))))
+        if args.cases:
+            if args.function or args.before or args.header or args.families:
+                raise ValueError('Choose either frozen cases or single-function arguments.')
+            cases,frozen=frozen_repair_cases.load(args.cases,args.project,evaluator,freeze=args.freeze)
+            report=frozen if args.freeze else suite(args.project,cases,trials=args.trials,seconds=args.seconds)
+            if args.reference:
+                if args.freeze:raise ValueError('Compare replay reports, not freeze manifests.')
+                report['comparison']=repair_benchmark.compare(json.loads(args.reference.read_text()),report)
+        else:
+            if args.freeze or args.reference or not all((args.function,args.before,args.header)):
+                raise ValueError('Supply frozen --cases, or --function, --before and --header.')
+            report = benchmark(args.project,args.function,args.before.read_text(),args.header.read_text(),
+                               trials=args.trials,seconds=args.seconds,families=tuple(filter(None,args.families.split(','))))
     except (ValueError,KeyError,OSError) as error:
         parser.error(str(error))
     args.output.write_text(json.dumps(report,indent=2)+'\n')

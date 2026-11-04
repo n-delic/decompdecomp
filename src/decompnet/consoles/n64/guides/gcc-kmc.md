@@ -453,3 +453,25 @@ A private frozen pre-match replay recovered this case in three candidate compile
 plus one baseline compile (about 1.7 seconds locally). This is a regression result
 for one saved source/context/profile, not a general runtime guarantee or a new
 match. The real accepted source also passed the complete cartridge rebuild.
+
+### Follow the new residual, and keep reuse type-safe
+
+When a measured alternative fixes the original operation but exposes a new schedule or
+allocation miss, try a small follow-up on that alternative before broad mutation. The
+search reserves up to two probes in each of three bursts within its existing budget;
+a worse intermediate is retained only as a hypothesis, never adopted as a match.
+
+Later-local reuse also supports ordered subtraction, bitwise operations, unsigned
+32-bit literal shifts and explicit same-width call results. A dominated acyclic branch
+can be safe; a live loop or bypass join is not. Keep operand order, conversions and
+single call evaluations. Unknown macros, escaped locals, uncertain widths and ambiguous
+prototypes disable these hypotheses. Same-input, uniquely mapped GCC allocation lines
+can rank donor lifetimes by call crossings; stale or ambiguous mappings give no advice.
+See the matching-learnings ledger for frozen multi-case replay commands and limitations.
+
+A four-case equal-budget replay retained the existing candidate-3 exact recovery, with
+no additional recoveries or score gains on the other three. Keep the short direct donor
+lane ahead of residual detours. A remaining acyclic register chain needs different
+allocation targeting; a jump/delay-slot residual should not be treated as a literal
+constant change. The wider hypotheses are supported/tested, not evidence of a general
+speedup or extra matches.

@@ -61,13 +61,13 @@ def proposals(source, name, arch, rows, choices, labels, evidence=None, header='
     if not diagnosis['register_only'] or not diagnosis['register_cycles']:
         return []
     from . import identity_lifetime_repairs, later_local_repairs, value_trace_repairs
-    extra = later_local_repairs.variants(source,name,header,arch)
+    extra = later_local_repairs.variants(source,name,header,arch,evidence)
     extra += identity_lifetime_repairs.variants(source,name,header,arch) if arch in {'mips','ppc','x86','arm','thumb'} else []
     trace = (evidence or {}).get('value_trace',{})
     extra += value_trace_repairs.variants(source,name,trace,rows,header)
     for family,candidate in extra:
         labels[candidate] = family
-    allowed = {'later_local_reuse','split_integer_phase','paired_integer_lifetimes','split_narrow_lifetime','narrow_definition_lifetime',
+    allowed = {*later_local_repairs.FAMILIES,'split_integer_phase','paired_integer_lifetimes','split_narrow_lifetime','narrow_definition_lifetime',
                'merge_integer_lifetimes','split_integer_lifetime','value_lifetime','loop_weight_scope',
                'allocation_initialization_order','local_declaration_order','declaration_order',
                'value_trace_bundle','existing_identity_lifetime'}
