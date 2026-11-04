@@ -24,6 +24,6 @@ Static functions
 - `static` functions may be called with a different convention only in the same file; for matching a
   single function it rarely matters, but keep the name the ROM uses.
 
-## Other SGI comparison profiles
+## Early SGI comparison profile
 
-`ido-5.3-cxx` uses a separate old C++ frontend. `ido-4.1`, `ido-5.2`, `ido-6.0` and `mipspro-7.4.4` are explicit comparison profiles; their presence does not establish that a retail N64 game used them. Their checksum-pinned packs run through a bundled IRIX emulator on Linux x86_64. These archives have case-sensitive paths, so this upstream implementation does not offer them on Windows or macOS. The normal linked-byte judge still decides a match. Installing these proprietary packs requires license acceptance.
+`ido-4.1` is an explicit comparison profile. Its presence does not establish retail N64 use. Its checksum-pinned pack runs through a bundled IRIX emulator on Linux x86_64. The normal linked-byte judge decides a match, and installation requires license acceptance. Other proprietary SGI builds need a user-supplied kit until a permitted source can be identified.

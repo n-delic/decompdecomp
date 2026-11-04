@@ -14,7 +14,7 @@ from decompnet.project import compiler_config
 from decompnet.rom.match import RomTarget, link
 from decompnet.rom.symbols import Symbol, SymbolTable
 
-EXTRA = ['gcc-2.8.1-pm-sn-as', 'gcc-2.8.1-pm', 'gcc-egcs-2.91.66', 'sn-n64-272-0004', 'sn-n64-272-0006', 'sn-n64-272-970404']
+EXTRA = ['gcc-2.8.1-pm-sn-as', 'gcc-2.8.1-pm', 'gcc-egcs-2.91.66', 'sn-n64-272-0006', 'sn-n64-272-970404']
 
 
 @pytest.mark.parametrize('tid', EXTRA)

@@ -1197,35 +1197,6 @@ subdir = "dtk-template-95a941f755919ebe50c1725a4ce73524470e7a02"
 # platforms = ["linux-x86_64"]
 
 
-["sn-n64-281"]
-family = "gcc"
-name = "SN Systems N64 GCC 2.8.1"
-arch = "mips"
-platform = "N64"
-license = "proprietary"
-source = "marijnvdwerf/sn64 release 1,0,0,2"
-description = "Original SN64 GCC 2.8.1, preprocessor and ASN64 2.78. Matching uses wibo and the pinned PsyQ-to-ELF converter."
-requires = ["wibo", "psyq-obj-parser"]
-driver = "consoles/n64/sn64.py"
-flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mcpu=VR4300", "-mhard-float", "-mfp64"]
-cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
-[["sn-n64-281".parts]]
-url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cc1n64.exe"
-sha256 = "d90df1028c46d826e37146dbcc3e3385f78c59e05a9ddd952daa94c9ad379d9c"
-binary = "cc1n64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-
-[["sn-n64-281".parts]]
-url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/asn64.exe"
-sha256 = "53e3a9f8b7b9a06c8f5a781f01074441df3469e6bbe2df5438ba4e2d8fcf3819"
-binary = "asn64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-[["sn-n64-281".parts]]
-url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cppn64.exe"
-sha256 = "277f1db571ab963df68a07af8b128995493208776dd68a69979809e45d912595"
-binary = "cppn64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-
 
 ["sn-n64-272-0001"]
 family = "gcc"
@@ -1340,34 +1311,6 @@ build = "sn64-gcc"
 platforms = ["macos-x86_64", "macos-arm64"]
 
 
-["sn-n64-272-0004"]
-family = "gcc"
-name = "SN Systems N64 GCC 2.7.2 (0004)"
-arch = "mips"
-platform = "N64"
-license = "proprietary"
-source = "Mr-Wiseguy/pcsx-redux n64 preserved build 0004; SN64 2.8.1 preprocessor"
-description = "Preserved SN64 build 0004 with its paired ASN64 assembler. Distinct from build 0001."
-requires = ["wibo", "psyq-obj-parser"]
-driver = "consoles/n64/sn64.py"
-flags = ["-G0", "-mips3", "-O2", "-mgas", "-meb", "-mhard-float"]
-cmd = ["{python}", "{driver}", "--cc", "{tc}/cc1n64.exe", "--cpp", "{tc}/cppn64.exe", "--assembler", "{tc}/asn64.exe", "--converter", "{tc:psyq-obj-parser}/psyq-obj-parser", "--runner", "{tc:wibo}/wibo", "{src}", "{obj}", "{include}", "{flags}"]
-[["sn-n64-272-0004".parts]]
-url = "https://github.com/Mr-Wiseguy/pcsx-redux/releases/download/n64/cc1n64.exe"
-sha256 = "17b0d9dc6a80b2aaec90f912bb442321ec8bc5cecaf7071f5bd187e1d6525d49"
-binary = "cc1n64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-[["sn-n64-272-0004".parts]]
-url = "https://github.com/Mr-Wiseguy/pcsx-redux/releases/download/n64/asn64.exe"
-sha256 = "1e04e1195f6504fe711c3db67ad94eb50d47f2a0f21e87dbbe20cbac4d83db39"
-binary = "asn64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-[["sn-n64-272-0004".parts]]
-url = "https://github.com/marijnvdwerf/sn64/releases/download/1%2C0%2C0%2C2/cppn64.exe"
-sha256 = "277f1db571ab963df68a07af8b128995493208776dd68a69979809e45d912595"
-binary = "cppn64.exe"
-platforms = ["linux-x86_64", "macos-x86_64", "macos-arm64"]
-
 
 ["sn-n64-272-0006"]
 family = "gcc"
@@ -1443,81 +1386,8 @@ sha256 = "16008087602fe1a39cdd7880a3c6987891ddb594cce4416670f2e96456e9b4d4"
 platforms = ["linux-x86_64"]
 
 
-["ido-5.2"]
-case_sensitive = true
-name = "IDO 5.2 (IRIX emulation)"
-platform = "N64"
-arch = "mips"
-family = "ido"
-license = "proprietary"
-source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.2.tar.xz"
-description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; This profile currently runs on Linux x86_64. Install only after license acceptance."
-requires = ["runtime-irix-host"]
-driver = "consoles/n64/irix.py"
-flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
-cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.2", "{src}", "{obj}", "{include}", "{flags}"]
-[["ido-5.2".parts]]
-url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.2.tar.xz"
-sha256 = "870cd946d31d6abee24d47926328d15909771520240a0a4f5cb7d27aea90e1ad"
-platforms = ["linux-x86_64"]
 
 
-["ido-5.3-cxx"]
-case_sensitive = true
-name = "IDO 5.3 C++ (IRIX emulation)"
-platform = "N64"
-arch = "mips"
-family = "ido"
-license = "proprietary"
-source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.3_c++.tar.xz"
-description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; This profile currently runs on Linux x86_64. Install only after license acceptance."
-requires = ["runtime-irix-host"]
-driver = "consoles/n64/irix.py"
-flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
-cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-5.3-cxx", "{src}", "{obj}", "{include}", "{flags}"]
-cplusplus = true
-[["ido-5.3-cxx".parts]]
-url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido5.3_c++.tar.xz"
-sha256 = "851426c63ffb0688c702793113c2d9aa3c703c7a4e9d4240fc99d1862f79e4b9"
-platforms = ["linux-x86_64"]
-
-
-["ido-6.0"]
-case_sensitive = true
-name = "IDO 6.0 (IRIX emulation)"
-platform = "N64"
-arch = "mips"
-family = "ido"
-license = "proprietary"
-source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido6.0.tar.xz"
-description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; This profile currently runs on Linux x86_64. Install only after license acceptance."
-requires = ["runtime-irix-host"]
-driver = "consoles/n64/irix.py"
-flags = ["-O2", "-mips2", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
-cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "ido-6.0", "{src}", "{obj}", "{include}", "{flags}"]
-[["ido-6.0".parts]]
-url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/ido6.0.tar.xz"
-sha256 = "c56d4be020bdaf76310ceec455ebc0d443fb7a46c740491f74898b04f6a60356"
-platforms = ["linux-x86_64"]
-
-
-["mipspro-7.4.4"]
-case_sensitive = true
-name = "MIPSpro 7.4.4 (IRIX emulation)"
-platform = "N64"
-arch = "mips"
-family = "ido"
-license = "proprietary"
-source = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/mipspro7.4.4.tar.xz"
-description = "Explicit SGI comparison profile. Bundled emulator is a Linux x86_64 program; This profile currently runs on Linux x86_64. Install only after license acceptance."
-requires = ["runtime-irix-host"]
-driver = "consoles/n64/irix.py"
-flags = ["-O2", "-mips3", "-G", "0", "-32", "-non_shared", "-Xcpluscomm", "-woff", "649,838,712"]
-cmd = ["/usr/bin/env", "LD_LIBRARY_PATH={tc:runtime-irix-host}", "{python}", "{driver}", "--root", "{tc}", "--profile", "mipspro-7.4.4", "{src}", "{obj}", "{include}", "{flags}"]
-[["mipspro-7.4.4".parts]]
-url = "https://raw.githubusercontent.com/LLONSIT/qemu-irix-helpers/n/qemu/mipspro7.4.4.tar.xz"
-sha256 = "df33be0d9605b00b44070e567121fc00283a9b1f97763403f0898d2216028d24"
-platforms = ["linux-x86_64"]
 
 
 ["gcc-2.8.1-pm-sn-as"]

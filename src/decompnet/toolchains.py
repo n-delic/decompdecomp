@@ -36,7 +36,7 @@ MANIFEST = ".decompnet-toolchain.json"
 INCLUDES = "includes.txt"
 # what of a toolchain's entry decides what its install holds on disk (its fingerprint, installed()); a part's
 # `platforms` only says which computers take it
-INSTALLED_FROM = ("requires", "git", "commit", "pip_extra")
+INSTALLED_FROM = ("requires", "git", "commit", "pip_extra", "build")
 LINUX = "linux-x86_64"
 # Parts for WSL: Linux programs packed in a format Windows can unpack (a .deb, not a .zst)
 WSL_PLATFORM = "wsl-x86_64"

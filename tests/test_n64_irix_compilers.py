@@ -12,7 +12,7 @@ from decompnet.project import compiler_config
 from decompnet.rom.match import RomTarget, link
 from decompnet.rom.symbols import Symbol, SymbolTable
 
-SGI = ['ido-4.1', 'ido-5.2', 'ido-5.3-cxx', 'ido-6.0', 'mipspro-7.4.4']
+SGI = ['ido-4.1']
 GNU = ['gcc-egcs-1.1.2-4', 'gcc-4.4.0-n64']
 
 
@@ -145,14 +145,3 @@ def test_installed_comparison_compilers_reach_the_normal_link_judge(tmp_path, ti
             symbols = SymbolTable([Symbol('target', 0x80010000, kind='func'), Symbol('value', 0x80028000)])
             verdict = link(result.obj, 'probe', RomTarget('probe', 0x80001000, bytes(linked), references), symbols, lambda *_: None)
             assert verdict.exact, verdict.problems
-
-
-def test_installed_sgi_cxx_frontend_accepts_a_class(tmp_path):
-    tid = 'ido-5.3-cxx'
-    if not toolchains.get(tid).supported or not toolchains.installed(tid):
-        pytest.skip('needs accepted SGI C++ pack on Linux/WSL')
-    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': tid, 'sandbox': 'none'}})
-    assert cfg.cplusplus
-    result = compile_source(cfg, '', 'class Value { public: int x; }; extern "C" int probe(Value *v) { return v->x; }')
-    assert result.ok, result.log
-    assert extract_function(result.obj, 'probe').big_endian

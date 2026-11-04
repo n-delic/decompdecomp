@@ -14,7 +14,7 @@ from decompnet.elfobj import extract_function
 from decompnet.project import compiler_config
 
 
-@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+@pytest.mark.parametrize('tid', ['sn-n64-272-0001', 'sn-n64-272-0006'])
 def test_sn64_registered_as_full_n64_compiler(tid):
     tc = toolchains.get(tid)
     assert tid in [c.id for c in N64.compilers]
@@ -61,13 +61,13 @@ def test_sn64_pipeline_order_and_failed_steps(tmp_path, monkeypatch):
         sn_compile(**tools, source=src, output=out, include=inc, flags=[])
 
 
-@pytest.mark.parametrize('tid', ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006'])
+@pytest.mark.parametrize('tid', ['sn-n64-272-0001', 'sn-n64-272-0006'])
 def test_original_sn64_compiles_and_preserves_relocations(tmp_path, tid):
     required = [tid, 'wibo', 'psyq-obj-parser']
     if any(toolchains.installed(t) is None for t in required):
         pytest.skip('needs accepted local SN64 compilers, wibo and the pinned converter')
-    if not all((toolchains.require(tid) / name).is_file() for name in ['cc1n64.exe', 'cppn64.exe', 'asn64.exe']):
-        pytest.skip('older compiler-only pack needs reinstalling with its preprocessor and assembler')
+    assert all((toolchains.require(tid) / name).is_file() for name in ['cc1n64.exe', 'cppn64.exe', 'asn64.exe']), (
+        'installed SN64 pack must contain its preprocessor and assembler')
     cfg = compiler_config(tmp_path, {'compiler': {'toolchain': tid}})
     assert '{driver}' not in cfg.cmd and any('sn64.py' in arg for arg in cfg.cmd)
     result = compile_source(cfg, '', 'int probe(int a,int b){return a+b;}')
@@ -86,7 +86,7 @@ def test_original_sn64_compiles_and_preserves_relocations(tmp_path, tid):
 def test_sn64_uses_gcc_flag_search_and_permuter_weights():
     from decompnet.app.engine.compilers import CompilerMixin
     from decompnet.app.permute import weight_family
-    for tid in ['sn-n64-281', 'sn-n64-272-0001', 'sn-n64-272-0004', 'sn-n64-272-0006']:
+    for tid in ['sn-n64-272-0001', 'sn-n64-272-0006']:
         assert weight_family({'compiler': {'toolchain': tid}}, None, False) == 'gcc'
         assert ['-O3'] in CompilerMixin.flag_variants(None, tid, ['-O2'])
 
@@ -105,6 +105,13 @@ def test_pinned_converter_build_uses_bounded_source_only_command(tmp_path, monke
     assert all('source/pcsx/' in arg for arg in argv if arg.endswith('.cc'))
 
 
+def test_converter_recipe_change_invalidates_installed_fingerprint():
+    from dataclasses import replace
+
+    tc = toolchains.get('psyq-obj-parser')
+    assert toolchains.fingerprint(tc) != toolchains.fingerprint(replace(tc, build='changed-recipe'))
+
+
 def test_sn64_driver_and_all_tools_are_staged_for_wsl(tmp_path, monkeypatch):
     from decompnet import wsl
     monkeypatch.setattr(toolchains, 'current_platform', lambda: 'windows-x86_64')
@@ -117,7 +124,7 @@ def test_sn64_driver_and_all_tools_are_staged_for_wsl(tmp_path, monkeypatch):
         seen.extend(paths)
         return tuple('/tools/' + p.name for p in paths)
     monkeypatch.setattr(wsl, 'prepare_tools', prepare)
-    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'sn-n64-281'}})
+    cfg = compiler_config(tmp_path, {'compiler': {'toolchain': 'sn-n64-272-0001'}})
     assert cfg.wsl
     assert seen[:3] == list(directories)
     assert seen[-1].name == 'n64'
