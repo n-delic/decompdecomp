@@ -847,7 +847,7 @@ function renderFunctionCompilerComparison(c, slug, name) {
   else {
     const before = c.before == null ? "no previous score" : `${c.before.toFixed(2)}%`;
     summary.dataset.improved = String(c.improved);
-    summary.textContent = `${c.flags_only ? "Flag variations only. " : ""}${before} → ${c.best.toFixed(2)}% best tested. ${c.tested} combinations tested; ${c.exact_matches} exact matches. ${matched ? "Only an exact match can replace this function’s current settings." : "Choose any compiled result to apply to this function only."}${c.stale ? " These results are outdated; test again before applying." : ""}`;
+    summary.textContent = `${c.used_profiles_only ? "Project profiles only (exact flags). " : c.flags_only ? "Flag variations only. " : ""}${before} → ${c.best.toFixed(2)}% best tested. ${c.tested} combinations tested; ${c.exact_matches} exact matches. ${matched ? "Only an exact match can replace this function’s current settings." : "Choose any compiled result to apply to this function only."}${c.stale ? " These results are outdated; test again before applying." : ""}`;
   }
 }
 function wireFunctionCompilerTable(table, ranked, slug, name) {
@@ -872,6 +872,8 @@ function wireFunctionCompilerTable(table, ranked, slug, name) {
     finally { if (compilerComparisonTarget === target) { compilerComparisonBusy = false; compilerComparisonTarget = null; } if (active()) { done(); await refreshFn(false); } }
   };
 }
+$("fnCompilerUsedProfilesOnly").onchange = () => { if ($("fnCompilerUsedProfilesOnly").checked) $("fnCompilerFlagsOnly").checked = false; };
+$("fnCompilerFlagsOnly").onchange = () => { if ($("fnCompilerFlagsOnly").checked) $("fnCompilerUsedProfilesOnly").checked = false; };
 $("fnTestCompilers").onclick = async () => {
   const button = $("fnTestCompilers"), log = $("fnCompilerLog"), summary = $("fnCompilerSummary");
   const slug = S.slug, name = S.fn, gen = S.gen, nav = S.fnNav;
@@ -886,7 +888,7 @@ $("fnTestCompilers").onclick = async () => {
   const waitingBar = summary.previousElementSibling;
   showJobError(log, "");
   try {
-    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("fnCompilerFlagsOnly").checked, function: name } });
+    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("fnCompilerFlagsOnly").checked, used_profiles_only: $("fnCompilerUsedProfilesOnly").checked, function: name } });
     const result = await followJob(job, null, (lines, state) => {
       if (!active()) return;
       log.textContent = lines.join("\n");

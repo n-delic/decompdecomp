@@ -554,6 +554,7 @@
             <summary>Find better compiler settings</summary><div class="compiler-test-body">
             <div><p class="small muted">Test saved C locally, then review and apply the results. No AI tokens are used.</p></div>
             <div class="compiler-test-options"><label class="check"><input type="checkbox" id="compilerFlagsOnly"><span><b>Flag variations only</b><small>Faster: keep each function’s compiler and test different flags.</small></span></label>
+            <label class="check"><input type="checkbox" id="compilerUsedProfilesOnly"><span><b>Only profiles used in this project</b><small>Faster: test exact compiler and flag combinations already assigned to functions.</small></span></label>
             <label class="check"><input type="checkbox" id="compilerRetest"><span><b>Retest completed functions</b><small>Leave off to continue with new or changed attempts.</small></span></label>
             <label class="check"><input type="checkbox" id="compilerAutoApply"><span><b>Automatically apply better settings</b><small>Apply each function’s best settings when its comparison finishes. Each change is rechecked; busy or changed functions stay available for review.</small></span></label></div>
             <p class="small muted" id="compilerTestScope">All installed compilers and supported flag variations · new or changed attempts only.</p>
@@ -778,7 +779,8 @@
       <details id="fnCompilerTest" class="collapsible-box" hidden>
         <summary>Compiler settings</summary><div class="collapsible-box-body"><div id="fnCurrentCompiler" class="small"></div><div id="fnCompilerMatches"></div>
         <div class="fn-compiler-controls"><button class="primary small-btn" id="fnTestCompilers" type="button">Test installed compilers &amp; flags</button>
-        <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Current compiler only · test flag variations</span></label></div>
+        <label class="check"><input type="checkbox" id="fnCompilerFlagsOnly"><span>Current compiler only · test flag variations</span></label>
+        <label class="check"><input type="checkbox" id="fnCompilerUsedProfilesOnly"><span>Only profiles used in this project · exact flags</span></label></div>
         <p class="small muted fn-compiler-explainer">Local compiler search · no AI tokens. Tests the saved C against supported compiler and flag combinations. Settings change only when you apply a result.</p>
         <p class="small muted" id="fnCompilerHistory">Not tested yet.</p>
         <section class="compiler-progress" id="fnCompilerProgress" data-mode="function" aria-label="Function compiler comparison progress" hidden></section>

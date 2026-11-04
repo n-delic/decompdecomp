@@ -965,12 +965,16 @@ $("deleteBtn").onclick = () => {
 };
 
 function updateCompilerTestScope() {
-  const flagsOnly = $("compilerFlagsOnly").checked, retest = $("compilerRetest").checked;
-  $("compilerTestScope").textContent = `${flagsOnly ? "Current compiler only, with supported flag variations" : "All installed compilers and supported flag variations"} · ${retest ? "including completed attempts" : "new or changed attempts only"}.`;
+  const usedOnly = $("compilerUsedProfilesOnly").checked, flagsOnly = $("compilerFlagsOnly").checked, retest = $("compilerRetest").checked;
+  $("compilerTestScope").textContent = `${usedOnly ? "Only profiles used in this project, with exact flags" : flagsOnly ? "Current compiler only, with supported flag variations" : "All installed compilers and supported flag variations"} · ${retest ? "including completed attempts" : "new or changed attempts only"}.`;
   if ($("testInstalledCompilers")._compilerRun) return;
   $("testInstalledCompilers").textContent = retest ? "Retest compiler settings" : "Find better settings";
 }
-for (const id of ["compilerFlagsOnly", "compilerRetest"]) $(id).onchange = updateCompilerTestScope;
+for (const id of ["compilerFlagsOnly", "compilerUsedProfilesOnly", "compilerRetest"]) $(id).onchange = () => {
+  if (id === "compilerUsedProfilesOnly" && $(id).checked) $("compilerFlagsOnly").checked = false;
+  if (id === "compilerFlagsOnly" && $(id).checked) $("compilerUsedProfilesOnly").checked = false;
+  updateCompilerTestScope();
+};
 $("testInstalledCompilers").onclick = async () => {
   const slug = S.slug;
   const button = $("testInstalledCompilers"), log = $("installedCompilerLog");
@@ -978,7 +982,7 @@ $("testInstalledCompilers").onclick = async () => {
   const work = $("installedCompilerWork");
   const stop = button, stopError = $("compilerStopError");
   let jobId = null;
-  const controls = [$("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
+  const controls = [$("compilerUsedProfilesOnly"), $("compilerFlagsOnly"), $("compilerRetest"), $("compilerAutoApply")];
   const disabled = controls.map(control => control.disabled);
   controls.forEach(control => { control.disabled = true; });
   button.disabled = true; button.textContent = "Starting…";
@@ -1016,7 +1020,7 @@ $("testInstalledCompilers").onclick = async () => {
   renderCompilerProgress(null);
   showJobError(work, "");
   try {
-    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
+    const { job } = await api("/api/compilermap", { method: "POST", body: { slug, all_installed: true, flags_only: $("compilerFlagsOnly").checked, used_profiles_only: $("compilerUsedProfilesOnly").checked, untested_only: !$("compilerRetest").checked, auto_apply: $("compilerAutoApply").checked } });
     jobId = job; stop.disabled = false; stop.textContent = "Stop comparison";
     const result = await followJob(job, log, (_lines, snapshot) => {
       if (S.slug === slug && snapshot.progress) renderCompilerProgress(snapshot.progress);

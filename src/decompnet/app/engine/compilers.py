@@ -191,6 +191,14 @@ class CompilerMixin:
         default = (cfg["compiler"]["toolchain"], tuple(cfg["compiler"]["flags"]))
         return sorted(candidates, key=lambda item: item != default)
 
+    def _used_comparison_candidates(self, proj):
+        """Exact profiles assigned to functions today, without generated flag variants."""
+        cfg = self.cfg(proj)
+        used = {(p['toolchain'], tuple(p['flags'])) for p in self.compiler_profile_usage(proj)}
+        default = (cfg['compiler']['toolchain'], tuple(cfg['compiler']['flags']))
+        return sorted((p for p in used if toolchains.installed(p[0]) and toolchains.get(p[0]).supported
+                       and not toolchains.runtime_error(p[0])), key=lambda p: (p != default, p))
+
     def _comparison_digest(self, proj, fn, source, candidates):
         contexts = [list(r) for r in self.store.all(
             "SELECT unit,version,header FROM context_versions WHERE project_id=? AND unit IN ('',?) ORDER BY unit",
@@ -222,8 +230,8 @@ class CompilerMixin:
         row = self.store.one("SELECT * FROM compiler_tests WHERE function_id=?", fn["id"])
         if row is None:
             return None
-        candidates = self._comparison_candidates(proj)
         comparison = json.loads(row["result"])
+        candidates = self._used_comparison_candidates(proj) if comparison.get("used_profiles_only") else self._comparison_candidates(proj)
         if comparison.get("flags_only"):
             own = compiler_for(self.cfg(proj), fn["vram"])
             candidates = [p for p in candidates if p[0] == own["toolchain"]]
@@ -233,7 +241,7 @@ class CompilerMixin:
             result["default"] = result["toolchain"] == default["toolchain"] and result["flags"] == default["flags"]
         return {"completed_at": row["completed_at"], "stale": digest != row["input_digest"], "comparison": comparison}
 
-    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False, auto_apply=False):
+    def run_compiler_comparison(self, slug, log=print, function="", untested_only=True, flags_only=False, auto_apply=False, used_profiles_only=False):
         lock = self._compiler_comparison_locks.setdefault(slug, threading.Lock())
         if not lock.acquire(blocking=False):
             raise NetworkError("A compiler comparison is already running for this project. Wait for it to finish.")
@@ -243,13 +251,13 @@ class CompilerMixin:
                 if check:
                     check()
                 return self.survey_compilers(slug, log=log, all_installed=True, function=function,
-                                             untested_only=untested_only and not function, flags_only=flags_only, auto_apply=auto_apply)
+                                             untested_only=untested_only and not function, flags_only=flags_only, auto_apply=auto_apply, used_profiles_only=used_profiles_only)
         finally:
             lock.release()
 
     def survey_compilers(self, slug: str, log=lambda line: None, limit: int = 400, state: dict | None = None,
                          all_installed: bool = False, function: str = "", untested_only: bool = False, flags_only: bool = False,
-                         auto_apply: bool = False) -> dict:
+                         auto_apply: bool = False, used_profiles_only: bool = False) -> dict:
         """The judge's part of the compiler map. Agents' C for functions that don't match yet, built with each other
         compiler the project uses: C that matches the game with another compiler (and not with today's) confirms that
         compiler for its function. Contradicted functions first, then the closest attempts; C already tried is
@@ -266,7 +274,7 @@ class CompilerMixin:
         cfg = self.cfg(proj)
         if function and not all_installed:
             raise NetworkError("Single-function comparison needs installed-compiler mode.")
-        candidates = self._comparison_candidates(proj, all_installed)
+        candidates = self._used_comparison_candidates(proj) if used_profiles_only else self._comparison_candidates(proj, all_installed)
         if all_installed and not candidates:
             raise NetworkError("Install at least one usable compiler in Compilers & tools before testing.")
         if all_installed and not function:
@@ -289,6 +297,8 @@ class CompilerMixin:
         results = []
         n = found = skipped = applied_count = 0
         available_candidates = candidates
+        if used_profiles_only:
+            log("Only exact compiler profiles currently assigned to project functions; no generated flag variations.")
         if flags_only:
             log("Flag variations only: each function uses its currently selected compiler; other compilers are skipped.")
         # Plan the bounded queue before compiling so the GUI can show an honest remaining count.
@@ -387,7 +397,7 @@ class CompilerMixin:
                 ranked.sort(key=lambda r: (not (r["exact"] and r["default"]), r["percent"] is None, -(r["percent"] or 0), r["toolchain"], r["flags"]))
                 completed = {"before": baseline, "best": best, "profile": best_profile,
                              "tested": len(candidates), "exact_matches": len(matches),
-                             "improved": improved, "ranked": ranked, "flags_only": flags_only}
+                             "improved": improved, "ranked": ranked, "flags_only": flags_only, "used_profiles_only": used_profiles_only}
                 check_cancel()
                 with self.store.tx() as db:
                     db.execute("INSERT OR REPLACE INTO compiler_tests VALUES(?,?,?,?)",

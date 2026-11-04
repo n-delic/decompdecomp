@@ -243,3 +243,30 @@ def test_auto_apply_changes_only_function_ranges_and_rechecks_current_c(comparis
     assert cfg['compiler']==original
     assert compiler_for(cfg,0x80001040)==original
     assert net.run_compiler_comparison('demo',auto_apply=True)['tried']==0
+
+
+def test_used_profiles_only_tests_exact_assignments_and_invalidates_history(comparison, monkeypatch):
+    net, _, _, _ = comparison
+    cfg = net.cfg(net.project_row('demo'))
+    cfg['compiler_ranges'] = [
+        {'start':0x80001020, 'end':0x80001040, 'toolchain':'sn-n64-281', 'flags':['-O1']},
+        {'start':0x90000000, 'end':0x90000010, 'toolchain':'unused', 'flags':['-O3']}]
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    monkeypatch.setattr(toolchains, 'get', lambda tc:SimpleNamespace(supported=True))
+    monkeypatch.setattr(toolchains, 'runtime_error', lambda tc:None)
+    tested = []
+    def judge(proj, fn, tc, flags, source):
+        tested.append((tc, tuple(flags)))
+        return False, SimpleNamespace(percent=80.0, score=80), ''
+    monkeypatch.setattr(net, '_judge_with', judge)
+    result = net.run_compiler_comparison('demo', function='f0', used_profiles_only=True)
+    assert result['comparison']['tested'] == 2
+    assert tested == [('gcc-2.7.2-kmc', ('-O2',)), ('sn-n64-281', ('-O1',))]
+    fn = net._function('f0', 'demo')
+    history = net.compiler_test_result(net.project_row('demo'), fn)
+    assert not history['stale'] and history['comparison']['used_profiles_only']
+    cfg['compiler_ranges'][0]['flags'] = ['-O3']
+    with net.store.tx() as db:
+        db.execute('UPDATE projects SET config=?', (json.dumps(cfg),))
+    assert net.compiler_test_result(net.project_row('demo'), fn)['stale']
