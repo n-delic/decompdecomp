@@ -71,13 +71,20 @@ def run(net,slug,changes,log=print):
     if not net.is_rom(proj) or proj['arch']!='mips' or net.fork_slug(slug):raise NetworkError('Reviewed raw-tail recovery currently requires a local MIPS ROM project.')
     if slug in net.links or slug in net.rooms:raise NetworkError('Leave the shared room before changing code boundaries.')
     image,_=net._rom(proj);cfg=net.cfg(proj)
-    if hashlib.sha1(image).hexdigest()!=cfg['rom']['sha1']:raise NetworkError('The analysis image does not match its recorded hash.')
     plans=_plans(net,proj,changes,image)
     configs=sorted(Path(proj['root']).glob('*.yaml'))
     if len(configs)!=1:raise NetworkError('This project needs one original split configuration for reviewed recovery.')
+    split_config=yaml.safe_load(configs[0].read_text())
+    image_sha1=hashlib.sha1(image).hexdigest()
+    if image_sha1!=split_config.get('sha1',cfg['rom']['sha1']):
+        raise NetworkError('The analysis image does not match its recorded hash.')
+    if program:=cfg['rom'].get('program'):
+        original=Path(proj['root'])/program
+        if not original.is_file() or hashlib.sha1(original.read_bytes()).hexdigest()!=cfg['rom']['sha1']:
+            raise NetworkError('The original cartridge does not match its recorded hash.')
     known={r['vram']:dict(r) for r in net.store.all(f'SELECT vram,size FROM functions WHERE project_id=? AND {IN_BUILD}',proj['id']) if r['vram'] is not None}
     known.update({p['vram']:p for p in plans})
-    config=extend_config(yaml.safe_load(configs[0].read_text()),list(known.values()))
+    config=extend_config(split_config,list(known.values()))
     log('Staging reviewed original ranges; no live targets have changed.')
     additions=_stage(net,proj,plans,image,config,log)
     syms=SymbolTable([Symbol(s.name,s.address,s.size,s.kind) for s in net.symbols(proj['id']).by_name.values()])
@@ -97,7 +104,7 @@ def run(net,slug,changes,log=print):
         for p,target in zip(plans,targets):
             meta=json.loads(p['row']['meta'] or '{}')
             meta.setdefault('reviewed_extents',[]).append({'old_size':p['row']['size'],'size':p['size'],'reason':p['reason'],
-                'prefix_sha256':hashlib.sha256(p['row']['target']).hexdigest(),'image_sha1':cfg['rom']['sha1']})
+                'prefix_sha256':hashlib.sha256(p['row']['target']).hexdigest(),'image_sha1':image_sha1})
             for key in ('asm_code','not_c','boundary_review','verified_assembly','asm_twin','set_aside'):meta.pop(key,None)
             meta['reopened']=True
             db.execute("UPDATE functions SET size=?,n_insns=?,target=?,relocs=?,asm=?,status='open',meta=?,best_source=NULL,best_score=NULL,seed=NULL,seed_key=NULL WHERE id=?",

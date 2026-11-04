@@ -122,3 +122,26 @@ def test_partial_scan_cannot_replace_completion_evidence(tmp_path):
     net,proj,image=fixture(tmp_path)
     with pytest.raises(NetworkError,match='partial range'):
         record(net,proj['id'],{'partial':True,'candidates':[]},image)
+
+
+def test_expanded_image_and_original_cartridge_have_separate_hashes(tmp_path,monkeypatch):
+    import yaml
+
+    net,proj,image=fixture(tmp_path)
+    original=b'original cartridge'
+    (tmp_path/'rom.z64').write_bytes(original)
+    cfg=json.loads(proj['config'])
+    cfg['rom'].update(program='rom.z64',sha1=hashlib.sha1(original).hexdigest())
+    with net.store.tx() as db:db.execute('UPDATE projects SET config=? WHERE id=?',(json.dumps(cfg),proj['id']))
+    split_config=config();split_config['sha1']=hashlib.sha1(image).hexdigest()
+    (tmp_path/'reviewed.yaml').write_text(yaml.safe_dump(split_config))
+    net._rom=lambda p:(image,[])
+    def staged(*args):raise NetworkError('reached staging')
+    monkeypatch.setattr(reviewed_code,'_stage',staged)
+    change=[{'function':'cut','end':0x8000000c,'reason':'Reviewed complete original return.'}]
+    with pytest.raises(NetworkError,match='reached staging'):reviewed_code.run(net,'game',change)
+    (tmp_path/'rom.z64').write_bytes(b'changed')
+    with pytest.raises(NetworkError,match='original cartridge'):reviewed_code.run(net,'game',change)
+    split_config['sha1']='0'*40
+    (tmp_path/'reviewed.yaml').write_text(yaml.safe_dump(split_config))
+    with pytest.raises(NetworkError,match='analysis image'):reviewed_code.run(net,'game',change)
