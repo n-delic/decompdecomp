@@ -1,4 +1,5 @@
 """Bounded, per-engine view snapshots; no source code or game bytes are retained here."""
+import json
 import threading
 import time
 from collections import OrderedDict
@@ -56,7 +57,7 @@ def cache(net):
 
 
 def cross_project_ids(net, proj):
-    revision = net.store.one('SELECT revision FROM layout_revision WHERE id=1')['revision']
+    revision = net.store.read_version('targets')
     def build():
         rows = net.store.all('SELECT f.id,f.project_id,f.target FROM functions f JOIN projects p ON p.id=f.project_id '
                              'WHERE p.arch=? AND p.big_endian=? AND f.gone_mark IS NULL AND length(f.target)>0',
@@ -65,7 +66,10 @@ def cross_project_ids(net, proj):
         for row in rows:
             owners.setdefault(row['target'], set()).add(row['project_id'])
         return frozenset(row['id'] for row in rows if len(owners[row['target']]) > 1)
-    return cache(net).get(('peers',revision,proj['arch'],proj['big_endian']),build,weight=len)
+    def persisted():
+        return frozenset(persistent(net.store, ('map-peers', proj['arch'], proj['big_endian']), revision,
+                                    lambda: list(build())))
+    return net.store.read_cache.get(('map-peers', proj['arch'], proj['big_endian']), revision, persisted)
 
 
 def map_payload(net, slug, since=None, delta=False):
@@ -102,3 +106,21 @@ def map_payload(net, slug, since=None, delta=False):
                 if len(changed) < len(rows) // 2:
                     return {'sig':sig,'base':since,'keys':keys,'delta':changed}
     return full
+
+
+def persistent(store, key, version, build):
+    """Private, revision-checked derived metadata survives a restart; uncommitted reads never publish."""
+    if getattr(store._local, 'in_tx', False):
+        return build()
+    key, version = json.dumps(key), json.dumps(version)
+    row = store.one('SELECT value FROM read_snapshots WHERE key=? AND version=?', key, version)
+    if row:
+        try:
+            return json.loads(row['value'])
+        except ValueError:
+            pass
+    value = build()
+    with store.tx() as db:
+        db.execute('INSERT INTO read_snapshots VALUES(?,?,?) ON CONFLICT(key) DO UPDATE '
+                   'SET version=excluded.version,value=excluded.value', (key, version, json.dumps(value)))
+    return value

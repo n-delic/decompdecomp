@@ -24,7 +24,7 @@ async function openProject(slug, tab = "overview") {
   $("projectLoading").querySelector(".workbar").hidden = false;
   S.slug = slug; S.lastEvent = 0; S.lastAttempt = 0; S.seq = {}; S.scores = new Map(); S.flash = new Map(); S.sessions = []; S.claims = []; S.covered = false; S.roomSig = null;
   S.apFeed = null; S.stats = null; S.map = []; S.byName = new Map(); S.mapSig = null; resetMap();
-  S.primed = false; S.openedAt = Date.now() / 1000;
+  S.mapPending = false; S.liveVersions = {}; S.primed = false; S.openedAt = Date.now() / 1000;
   $("activity").innerHTML = ""; $("thoughts").innerHTML = ""; $("now").innerHTML = ""; S.logFor = null; renderLog();
   const expectedFunctions = (S.projects || []).find(p => p.slug === slug)?.functions;
   const startedAt = Date.now(), steps = {settings:!!S.st, summary:false, functions:false, view:false};
@@ -134,6 +134,10 @@ function setTab(tab) {
   if (tab === "functions") renderList();
   if (tab === "agents") { renderSessions(S.sessions); renderLog(); loadStats(); }
   if (tab === "settings") renderProjectSettings();
+  if ((tab === "overview" || tab === "functions") && S.primed &&
+      (S.mapPending || Date.now() - S.lastMapFetch > MAP_EVERY_MS)) {
+    refreshMap(!!S.mapPending).catch(() => {});
+  }
 }
 document.querySelectorAll("[data-goto]").forEach((a) => {
   a.onclick = (e) => {
@@ -197,8 +201,13 @@ async function poll() {
   if (pollingGen === S.gen || !S.slug || ((document.hidden || window.decompIsOffline?.()) && S.primed)) return;  // (minimised: nobody sees it)
   const gen = pollingGen = S.gen, slug = S.slug, first = !S.primed;
   try {
-    const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}`);
+    const live = await api(`/api/live?slug=${slug}&e=${S.lastEvent}&a=${S.lastAttempt}&s=${encodeURIComponent(JSON.stringify(S.seq))}&compact=1&v=${encodeURIComponent(JSON.stringify(S.liveVersions || {}))}`);
     if (gen !== S.gen) return;
+    const changed = {overview: !!live.overview, claims: !!live.claims, sessions: !!live.sessions};
+    S.liveVersions = live.versions || {};
+    live.overview = live.overview || S.ov;
+    live.claims = live.claims || S.claims;
+    live.sessions = live.sessions || S.sessions;
     S.ov = live.overview;
     let mapDirty = false;
     for (const ev of live.events) {
@@ -220,15 +229,20 @@ async function poll() {
       if (s.feed.length) S.seq[s.id] = s.feed[s.feed.length - 1].seq;
     }
     addThoughts(live.sessions, first);
-    if (S.tab === "agents") renderSessions(live.sessions);
-    renderNow(live.claims);
-    renderStats(live.overview);
+    if (S.tab === "agents" && (changed.sessions || changed.claims)) renderSessions(live.sessions);
+    if (changed.claims || live.claims.some(c => c.best_score == null && !c.attempts)) renderNow(live.claims);
+    if (changed.overview) renderStats(live.overview);
     const claimSig = live.claims.map((c) => c.name + "\u0000" + c.agent).join("\n");
     if (live.cut && !first) mapDirty = true;  // (attempts it didn't send: the map's counts come again)
-    if (mapDirty || Date.now() - S.lastMapFetch > MAP_EVERY_MS) await refreshMap(mapDirty);
+    S.mapPending = S.mapPending || mapDirty;
+    const mapVisible = S.tab === "overview" || S.tab === "functions";
+    if (mapVisible && (S.mapPending || Date.now() - S.lastMapFetch > MAP_EVERY_MS)) {
+      await refreshMap(!!S.mapPending);
+      if (gen === S.gen) S.mapPending = false;
+    }
     else {
       applyClaims();
-      if (claimSig !== S.claimSig || live.attempts.length) renderList();
+      if (S.tab === "functions" && (claimSig !== S.claimSig || live.attempts.length)) renderList();
     }
     if (gen !== S.gen) return;
     S.claimSig = claimSig;

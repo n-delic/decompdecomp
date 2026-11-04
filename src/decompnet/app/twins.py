@@ -22,7 +22,7 @@ import re
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from io import BytesIO
 from pathlib import Path
 
@@ -313,7 +313,9 @@ class Twins:
         # synchronize progress and wait for a project lock whose owner needs this index
         # to record a restored match. Read the kind from the caller's project snapshot.
         fork = self.net.cfg(proj).get("kind") == "fork"
-        layout = None if fork else self.net._layout_key(proj)
+        if not fork and getattr(self.net.store._local, 'in_tx', False):
+            return self._build_rom_prints(proj)  # Never publish values from a transaction that may roll back.
+        layout = None if fork else self.net.store.read_version('fingerprints', proj['id'])
         with self._lock:
             hit = self._prints.get(proj["id"])
         if hit and (hit[1] == layout if layout is not None else time.time() - hit[0] < FORK_PRINTS_TTL):
@@ -324,6 +326,14 @@ class Twins:
         return prints
 
     def _rom_prints(self, proj) -> dict[int, Print]:
+        from .view_snapshots import persistent
+        revision = self.net.store.read_version('fingerprints', proj['id'])
+        def build():
+            return {str(fid): asdict(p) for fid, p in self._build_rom_prints(proj).items()}
+        values = persistent(self.net.store, ('rom-fingerprints', proj['id']), (1, revision), build)
+        return {int(fid): Print(**value) for fid, value in values.items()}
+
+    def _build_rom_prints(self, proj) -> dict[int, Print]:
         cfg = self.net.cfg(proj)
         syms = self.net.symbols(proj["id"])
         return {r["id"]: rom_print(r, proj["arch"] or "mips", bool(cfg.get("big_endian", True)), syms.label) for r in self.net.store.all(

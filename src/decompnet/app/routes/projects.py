@@ -77,6 +77,9 @@ def register(app: App) -> None:
         except ValueError:
             since = {}
         out["sessions"] = manager.snapshot(since, project=slug)
+        if q.get('compact') == '1':
+            from ..live_sections import compact
+            out = compact(out, q.get('v'))
         return out
 
     def p_transcript(slug, request, data):

@@ -67,7 +67,9 @@ def test_slow_read_diagnostics_are_rate_limited_and_do_not_log_values(tmp_path, 
     from decompnet import store as module
     store = populated(tmp_path)
     stamps = iter([0, .5, 1, 1.5])
-    monkeypatch.setattr(module.time, 'monotonic', lambda: next(stamps))
+    from types import SimpleNamespace
+    # Do not replace the process-wide clock used by background test workers.
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: next(stamps)))
     monkeypatch.setattr(store, '_read_rows', lambda *_: [])
     with caplog.at_level(logging.WARNING, logger='decompdecomp'):
         store.all('SELECT secret FROM private_table WHERE credential=?', 'sensitive value')

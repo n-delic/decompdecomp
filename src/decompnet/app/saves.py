@@ -270,7 +270,9 @@ def _function_rows(net, project_id: int, *, sources: bool) -> list:
 def _manifest_from_rows(net, proj, cfg: dict, rows, folder: Path) -> tuple[dict, dict, set[str]]:
     """The progress manifest and its function index from function rows (with or without their source text)."""
     pid = proj["id"]
-    names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
+    agent_ids = sorted({r[k] for r in rows for k in ('matched_agent_id', 'best_agent_id') if r[k] is not None})
+    names = {r["id"]: r["name"] for r in net.store.all(
+        "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     functions = {}
     for r in rows:
         if r["status"] == "matched" and r["has_matched"]:
@@ -450,10 +452,12 @@ def _render_partial(net, proj, folder: Path, names: list[str], *, headers: bool 
 def _save_best(net, proj, folder: Path) -> dict:
     """A project-mode game's save: each open function's closest attempt as best/<function>.c, with how close it is,
     who wrote it and its source file in a comment at its top. Its matched C is in the project's own files."""
-    names = {r["id"]: r["name"] for r in net.store.all("SELECT id, name FROM agents")}
     rows = net.store.all("SELECT name, unit, n_insns, best_source, best_score, best_agent_id, meta FROM functions WHERE "
                          "project_id=? AND status='open' AND best_source IS NOT NULL AND best_score IS NOT NULL "
                          "ORDER BY unit, name", proj["id"])
+    agent_ids = sorted({r['best_agent_id'] for r in rows if r['best_agent_id'] is not None})
+    names = {r['id']: r['name'] for r in net.store.all(
+        "SELECT id,name FROM agents WHERE id IN (SELECT value FROM json_each(?))", json.dumps(agent_ids))}
     folder.mkdir(parents=True, exist_ok=True)
     files = {}
     for r in rows:
@@ -987,7 +991,13 @@ class Autosave:
     def run_once(self) -> list[str]:
         """Synchronize every ROM project, including file changes that have no database event."""
         saved = []
-        for row in self.net.store.all("SELECT slug,root,config FROM projects"):
+        store = self.net.store
+        if hasattr(store, 'read_cache'):
+            projects = store.read_cache.get('autosave-projects', store.read_version('project_list'),
+                                            lambda: store.all("SELECT slug,root,config FROM projects"))
+        else:
+            projects = store.all("SELECT slug,root,config FROM projects")
+        for row in projects:
             if time.monotonic() < self.retry_after.get(row['slug'], 0):
                 continue
             try:

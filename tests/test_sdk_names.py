@@ -77,3 +77,23 @@ def test_names_are_not_guessed_or_overwritten(sdk_case, monkeypatch, reason):
         monkeypatch.setattr(net.twins, 'prints', lambda _: prints)
     monkeypatch.setattr(net, 'rename_symbols', lambda *args: pytest.fail('unsafe rename'))
     assert name_functions(net, 'demo') == 0
+
+
+def test_rejected_unchanged_sdk_names_wait_but_changed_inputs_retry(sdk_case, monkeypatch):
+    net, pid, fid = sdk_case
+    monkeypatch.setattr(net, 'fork_slug', lambda _: None)
+    calls = []
+    def reject(*args):
+        calls.append(1)
+        return 'Rejected: declarations conflict'
+    monkeypatch.setattr(net, 'rename_symbols', reject)
+    assert name_functions(net, 'demo') == name_functions(net, 'demo') == 0
+    assert len(calls) == 1
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET best_source='changed declarations' WHERE id=?", (fid,))
+    name_functions(net, 'demo')
+    assert len(calls) == 2
+    with net.store.tx() as db:
+        db.execute("UPDATE sdk_signatures SET corpus='updated library'")
+    name_functions(net, 'demo')
+    assert len(calls) == 3

@@ -2229,3 +2229,8 @@ external imported-project expiry, explicit checks and the ordinary byte judge ar
 - Done: batch deep-pass queue reads, bound inspector chart/note payloads, reuse function
   records, coalesce worker snapshots, move response encoding to workers with bounded
   full-map wire caching, and add opt-in request/SQL/browser timing diagnostics.
+
+- Done: incremental agent card measurement counters with correction/reset invalidation, batched polishing
+  totals, compact live sections and deferred hidden map refreshes, persistent revision-checked ROM fingerprints
+  and cross-project map identities, narrow SDK naming reads with bounded unchanged-check reuse, and scoped
+  autosave project/contributor reads. External progress-file checks and byte verification are preserved.

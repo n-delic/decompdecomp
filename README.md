@@ -1635,3 +1635,20 @@ Function inspectors now bound chart payloads and load older notes on demand. Dee
 queues batch their reads, and worker progress updates coalesce while improvements and
 completion remain immediate. Optional request and browser timings are documented in
 [interactive app performance](docs/APP_PERFORMANCE.md#queue-and-inspector-throughput).
+
+### Incremental live views and restart caches
+
+Agent card counters consume only new attempt measurements after the first load. Historical corrections,
+deletions, function moves, and metric resets rebuild their counters; match ownership is checked separately.
+Polishing totals are fetched for all displayed workers together. The cache does not retain historical C.
+
+Live polls opt into section signatures: unchanged overview, claims, and session sections are omitted, while
+events and attempts retain their normal cursors. Older API clients receive full responses. Hidden map panels
+defer refreshes until opened. Cross-project byte-comparison IDs and normalized ROM fingerprints persist as
+private derived metadata in SQLite and rebuild when their input revisions change; neither cache establishes
+a verified C match. Imported object fingerprints keep their existing file-based expiry.
+
+SDK naming reads narrow metadata and briefly reuses unchanged ROM naming checks (at most 60 seconds; imported
+projects and active claims retain retry checks). Autosave reuses the project inventory and scopes contributor
+lookups to agents referenced by the saved functions. It still checks for external file edits every second,
+and existing dirty-function tracking still controls what is rendered and written.

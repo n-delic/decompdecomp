@@ -1,6 +1,7 @@
 """Name SDK functions through normal, regression-checked renames, independently of C matching."""
 import logging
 import re
+import time
 from collections import Counter
 
 from ..network import NetworkError
@@ -11,6 +12,23 @@ log = logging.getLogger('decompdecomp')
 
 
 def name_functions(net, slug, job=None):
+    """Reuse rejected ROM naming checks only while all their inputs are unchanged."""
+    proj = net.project_row(slug)
+    if net.fork_slug(slug):
+        return _name_functions(net, slug, job)  # Imported source files can change outside the database.
+    version = (net.store.read_version('inputs', proj['id']), net.store.read_version('sdk_names'))
+    cache = net.__dict__.setdefault('_sdk_name_checks', {})
+    previous = cache.get(proj['id'])
+    if previous and previous[0] == version and time.monotonic() - previous[1] < 60 and job is None:
+        return 0
+    result = _name_functions(net, slug, job)
+    busy = net.store.one('SELECT 1 FROM claims c JOIN functions f ON f.id=c.function_id WHERE f.project_id=? LIMIT 1', proj['id'])
+    if not busy and (job is None or not job.stop.is_set()):
+        cache[proj['id']] = (version, time.monotonic())
+    return result
+
+
+def _name_functions(net, slug, job=None):
     """Use a unique full-size identity from selected libraries; preserve deliberate names.
 
     ROM names are changed as a batch with matched-code checks. Imported builds use their normal
@@ -30,7 +48,7 @@ def name_functions(net, slug, job=None):
         return 0
     prints = net.twins.prints(proj)
     multiplicity = Counter(p.key for p in prints.values())
-    rows = net.store.all('SELECT * FROM functions WHERE project_id=?', proj['id'])
+    rows = net.store.all('SELECT id,name,meta,size FROM functions WHERE project_id=?', proj['id'])
     taken = {r['name'] for r in rows}
     if not fork:
         taken |= set(net.symbols(proj['id']).by_name)

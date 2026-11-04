@@ -457,6 +457,18 @@ class Store:
                           "functions(project_id,status,gone_mark,(best_source IS NOT NULL),best_score)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_functions_compiler_rows ON "
                           "functions(project_id,vram,id,name,size,n_insns,status)")
+        self.conn.execute("CREATE TABLE IF NOT EXISTS read_snapshots(key TEXT PRIMARY KEY, version TEXT NOT NULL, value TEXT NOT NULL)")
+        for table, columns in (('functions', 'target,relocs,status,project_id'),
+                               ('projects', 'arch,big_endian,config'), ('symbols', None)):
+            self._track_reads(table, 'fingerprints', columns,
+                "OLD.target IS NOT NEW.target OR OLD.relocs IS NOT NEW.relocs OR OLD.project_id IS NOT NEW.project_id OR "
+                "(OLD.status='asm') != (NEW.status='asm')" if table == 'functions' else None)
+        # SDK inventory is global, unlike the project-owned tables tracked above.
+        for event in ('INSERT', 'UPDATE', 'DELETE'):
+            self.conn.execute(f"CREATE TRIGGER IF NOT EXISTS read_sdk_inventory_{event} AFTER {event} ON sdk_signatures "
+                              "BEGIN INSERT INTO read_revisions VALUES('sdk_names',1) "
+                              "ON CONFLICT(kind) DO UPDATE SET revision=revision+1; END")
+        self._track_reads('projects', 'project_list', 'slug,name,root,config,arch,big_endian')
         self._slow_queries = {}
         self.lock = threading.RLock()
         self._local = threading.local()  # per thread: its reading connection, and whether it's inside tx()
