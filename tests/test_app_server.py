@@ -2044,3 +2044,29 @@ def test_failed_compiler_suggestion_keeps_job_error_visible(app, monkeypatch):
             break
         time.sleep(.01)
     assert status['state'] == 'error' and 'Narrow the range' in status['error']
+
+
+def test_join_existing_project_passes_stored_copy_to_normal_join(app, tmp_path, monkeypatch):
+    from decompnet.app import collab
+    client, net, *_ = app
+    stored = tmp_path / 'game.z64'
+    stored.write_bytes(b'own copy')
+    calls = []
+    monkeypatch.setattr(collab,'project_game',lambda n, slug: stored if slug == 'existing' else None)
+    def join(n, link, name, game, log):
+        calls.append((link,name,game))
+        return 'joined-existing'
+    monkeypatch.setattr(collab,'join_room',join)
+    response = client.post('/api/collab/join?project=existing&confirmed=1&link=http://host/join/open&name=sam',
+                           content=b'', headers={'X-Decomp':'1'})
+    assert response.status_code == 200
+    for _ in range(100):
+        job = client.get('/api/job',params={'id':response.json()['job']}).json()
+        if job['state'] != 'running':
+            break
+        time.sleep(.01)
+    assert job['state'] == 'done' and job['result']['slug'] == 'joined-existing'
+    assert calls == [('http://host/join/open','sam',stored)] and stored.is_file()
+    rejected = client.post('/api/collab/join?project=existing&link=http://host/join/open&name=sam',
+                           content=b'', headers={'X-Decomp':'1'})
+    assert rejected.status_code == 400

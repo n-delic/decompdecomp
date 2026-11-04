@@ -1139,6 +1139,30 @@ def _in_batches(net, items: list, apply_one, size: int = 500) -> None:
             raise
 
 
+def project_game(net, slug: str) -> Path:
+    """Use an existing project's local game; joining still verifies its identity with the host."""
+    proj = net.project_row(slug)
+    if proj is None:
+        raise NetworkError("This project is no longer open. Open it again or choose a game file when joining.")
+    cfg = json.loads(proj['config'])
+    root = Path(proj['root'])
+    if net.fork_slug(slug):
+        _, fp, own = net.forks.get(slug)
+        relative = fp.needs(own.get('version')).get('path')
+    else:
+        relative = cfg.get('rom', {}).get('file')
+    if relative and (root / relative).is_file():
+        return root / relative
+    if relative and net.fork_slug(slug) and (root / relative).is_dir():
+        folder = root / relative
+        candidates = [folder / 'sys' / 'main.dol'] + sorted(p for p in folder.iterdir() if p.is_file())[:32]
+        identity = forkroom.project_identity(cfg)
+        for candidate in candidates:
+            if candidate.is_file() and identity and forkroom.game_identity(candidate) == identity:
+                return candidate
+    raise NetworkError("This project's original game file is no longer available. Restore its game copy, or use New project → Join a team's room to choose a file.")
+
+
 def join_room(net, link: str, name: str, rom: bytes | Path, log=print, client: httpx.Client | None = None,
               start: bool = True) -> str:
     """Guest: check the invite, check the ROM is the same game, import it locally, join, link. Returns the slug.

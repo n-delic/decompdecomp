@@ -623,7 +623,7 @@ function teamJoinHtml() {
 }
 function wireTeamJoin(box) {
   const button = box.querySelector('[data-team-join]');
-  if (button) button.onclick = openJoin;
+  if (button) button.onclick = () => openJoin(S.slug);
 }
 
 async function renderTeam(box) {
@@ -804,19 +804,21 @@ function joinProblem({ link, name, copy, own }) {
       : !own ? "Confirm it's your own copy of the game." : "");
 }
 
-function openJoin() {
-  const body = dialog("Join a team's room", `<p class="muted">Paste the invite link (or a public room's address), then pick <b>your own copy</b> of the same game. decompdecomp checks it's identical to the host's; your copy itself is never sent.</p>
+function openJoin(project = null) {
+  project = typeof project === "string" ? project : null;
+  const body = dialog("Join a team's room", `<p class="muted">${project ? "Using the game copy already stored in your current project. Paste the invite link or public room address; decompdecomp will check your game matches the host's." : "Paste the invite link (or a public room's address), then pick <b>your own copy</b> of the same game. decompdecomp checks it's identical to the host's; your copy itself is never sent."}</p>
     <label class="field"><span>Invite link</span><input id="jLink" class="mono" placeholder="https://….trycloudflare.com/join/…"></label>
     <label class="field"><span>Your name in the room</span><input id="jName" maxlength="24" placeholder="e.g. alex"></label>
-    <label class="field"><span>Your copy of the game: its path on this computer (it's read where it is)</span><span class="pick-row"><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="jPath" data-title="Your copy of the game">Choose…</button></span></label>
+    <label class="field" ${project ? "hidden" : ""}><span>Your copy of the game: its path on this computer (it's read where it is)</span><span class="pick-row"><input id="jPath" class="mono" placeholder="/home/you/games/game.iso"><button class="ghost small-btn" type="button" data-pick="file" data-for="jPath" data-title="Your copy of the game">Choose…</button></span></label>
     <label class="check"><input type="checkbox" id="jOwn"><span>This is my own copy of this game, obtained legally. I'll keep what the room makes private.</span></label>
     <p class="muted small">A GameCube, Wii or PC project comes with its whole source tree from the host, and is then built here with your copy and your compilers: the first time takes a few minutes.</p>
     <div class="row"><button class="primary" id="jGo" type="button" disabled>Join</button><span class="muted small" id="jWhy"></span></div><pre class="joblog" id="jLog" hidden></pre>`);
-  const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: $("jPath").value.trim(), own: $("jOwn").checked });
+  const fields = () => ({ link: $("jLink").value, name: $("jName").value, copy: project || $("jPath").value.trim(), own: $("jOwn").checked });
   // the sentence waits until something is typed: a fresh dialog shouldn't open on a complaint
   const check = () => { const f = fields(), why = joinProblem(f); $("jGo").disabled = !!why; $("jWhy").textContent = f.link.trim() || f.name ? why : ""; };
   body.querySelectorAll("input").forEach((el) => { el.oninput = check; el.onchange = check; });
   body.querySelector("#jGo").onclick = async () => {
+    const existingProject = typeof project === "string" ? project : null;
     const path = $("jPath").value.trim();
     if (joinProblem(fields())) return check();
     const log = body.querySelector("#jLog");
@@ -825,7 +827,7 @@ function openJoin() {
     try {
       // by its path, never through the page: a GameCube disc picked as a file turned the window black on Join
       const q = `link=${encodeURIComponent($("jLink").value.trim())}&name=${encodeURIComponent($("jName").value)}`
-        + `&confirmed=1&path=${encodeURIComponent(path)}`;
+        + `&confirmed=1&${existingProject ? `project=${encodeURIComponent(existingProject)}` : `path=${encodeURIComponent(path)}`}`;
       const { job } = await api(`/api/collab/join?${q}`, { method: "POST", raw: new Blob([]) });
       const res = await followJob(job, log);
       if ($("jLog") === log) closeDialog();

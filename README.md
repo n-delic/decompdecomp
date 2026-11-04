@@ -1484,6 +1484,6 @@ arms. Searches keep these alternatives bounded, preserve protected macro regions
 accesses, and require the normal compiler and byte/object judge before keeping any improvement.
 
 With any project open, choose **Decompile together → Join room…** to join someone else's existing
-room. Paste their invite link or public room address, enter your room name and select your own game
-copy. Existing projects remain in the sidebar. The join option is also available while hosting,
+room. Paste their invite link or public room address and enter your room name. Joining from a project
+uses its stored game copy automatically; New project → Join a team’s room still offers a file picker. Existing projects remain in the sidebar. The join option is also available while hosting,
 waiting for a room, or restoring a hosted room.

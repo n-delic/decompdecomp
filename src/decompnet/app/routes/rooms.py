@@ -237,11 +237,13 @@ def register(app: App) -> None:
             return fail(ValueError("confirm that this is your own legally obtained copy of the game"))
         link, name = q.get("link", ""), q.get("name", "")
         game: Path | None = None
-        if q.get("path"):  # a file on this computer (a disc is gigabytes: not through the browser)
+        uploaded = False
+        project = q.get("project", "")
+        if not project and q.get("path"):  # a file on this computer (a disc is gigabytes: not through the browser)
             game = hostenv.local_path(q["path"])
             if not game.is_file():
                 return fail(ValueError(f"no file at {game}"))
-        else:  # the browser's upload, streamed to disk
+        elif not project:  # the browser's upload, streamed to disk
             upload = home / "uploads" / uuid.uuid4().hex[:8]
             upload.mkdir(parents=True, exist_ok=True)
             game = upload / (Path(q.get("filename") or "game.bin").name or "game.bin")
@@ -257,11 +259,14 @@ def register(app: App) -> None:
             if size == 0:
                 shutil.rmtree(upload, ignore_errors=True)
                 game = None
-        uploaded = game is not None and game.parent.parent == home / "uploads"
+            uploaded = game is not None
 
         def work(log):
             try:
-                slug = collab.join_room(net, link, name, game or b"", log=log)
+                copy = collab.project_game(net, project) if project else game
+                if project:
+                    log("Using the game copy already stored in your project; checking it against the host's game.")
+                slug = collab.join_room(net, link, name, copy or b"", log=log)
             finally:
                 if uploaded:
                     shutil.rmtree(game.parent, ignore_errors=True)

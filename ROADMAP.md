@@ -2096,3 +2096,8 @@ they record donor history and do not themselves change a function's symbol.
 - Done: a common “Join an existing room” entry in Decompile together for open projects, including
   hosting, guest, unfinished-project and room-restoration states; reuses the existing verified join
   flow with file selection and progress.
+
+- Done: joining a room from an open project reuses its stored game automatically, with host identity
+  verification and no repeated file selection. Source projects use their declared original file or
+  an identity-verified program in their configured original directory; missing originals report an
+  actionable error rather than selecting unrelated files.
