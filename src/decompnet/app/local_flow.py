@@ -27,7 +27,7 @@ class Flow:
     def __init__(self, part, declarations=None):
         self.part = part
         self.locals = [decl for decl in (locals_for(part) if declarations is None else declarations)
-                       if not re.search(rf'&\s*(?:\(\s*)*{decl["name"]}\b', part.body)]
+                       if not re.search(rf'(?<!&)&(?!&)\s*(?:\(\s*)*{decl["name"]}\b', part.body)]
         if len(self.locals) > MAX_LOCALS:
             raise ValueError('too many locals')
         self.names = {d['name'] for d in self.locals}

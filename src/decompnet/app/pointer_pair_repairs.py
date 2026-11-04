@@ -8,7 +8,7 @@ from .integer_repair_support import IDENT, edit, locals_for, refs, split_args, v
 from .pattern_repairs import close
 
 POINTER = re.compile(rf'\b(?P<type>(?:struct\s+)?{IDENT}\s*\*+)\s*(?P<name>{IDENT})\s*;')
-FAMILIES = ('pointer_load_inline', 'pointer_call_staging', 'pointer_local_reuse', 'paired_pointer_declarations')
+FAMILIES = ('pointer_load_inline', 'pointer_conditional_load_inline', 'pointer_call_staging', 'pointer_local_reuse', 'paired_pointer_declarations')
 LIMIT = 24
 
 
@@ -24,7 +24,7 @@ def declarations(part):
         shadows=[m for m in re.finditer(rf'\b({IDENT})(?:\s+\**\s*|\s*\*+\s*){re.escape(name)}\s*(?=[;=,\[])',part.body)
                  if m[1] not in {'return','goto','case','break','continue','else','do'}]
         if len(shadows) != 1:continue
-        if re.search(rf'&\s*\(*\s*{re.escape(name)}\b',part.body):continue
+        if re.search(rf'(?<!&)&(?!&)\s*\(*\s*{re.escape(name)}\b',part.body):continue
         if re.search(rf'\b{re.escape(name)}\b',signature):continue
         result.append(decl)
     return result
@@ -157,6 +157,43 @@ def inline_loads(source,name,header=''):
     return out
 
 
+def conditional_loads(source, name, header=''):
+    """Inline a dead field-load temporary across its immediate null test only.
+
+    No intervening statements or calls can change the field between its repeated
+    reads. Qualified record types, escaped/shadowed locals and hidden macro uses
+    are excluded by the same context as the other pointer families.
+    """
+    part, ds, macros = context(source, name, header)
+    if not part:
+        return []
+    flow = local_flow.analyze(source, name, declarations=ds)
+    if not flow:
+        return []
+    out = []
+    for decl in ds:
+        var = re.escape(decl['name'])
+        pattern = re.compile(rf'(?<=[;{{}}])\s*{var}\s*=\s*(?P<base>{IDENT})\s*->\s*(?P<field>{IDENT})\s*;'
+                             rf'\s*if\s*\(\s*{var}\s*!=\s*(?P<null>NULL|0)\s*\)\s*'
+                             rf'(?P<brace>{{\s*)?(?P=base)\s*=\s*{var}\s*;')
+        for hit in pattern.finditer(part.clean, decl.end()-1, part.end-1):
+            if hit['base'] == decl['name'] or hit['base'] in macros or hit['field'] in macros:
+                continue
+            if hit['null'] in macros and not pure(hit['null'], macros):
+                continue
+            if hit['brace'] and not re.match(r'\s*}', part.clean[hit.end():]):
+                continue
+            uses = refs(part, decl)
+            selected = [use for use in uses if hit.start() <= use.start() < hit.end()]
+            node = flow.at(hit.end()-1)
+            if (len(selected) != 3 or node is None or any(decl['name'] in flow.nodes[n].live for n in node.successors)):
+                continue
+            expr = f"{hit['base']}->{hit['field']}"
+            replacement = f"\nif ({expr} != {hit['null']}) " + ('{ ' if hit['brace'] else '') + f"{hit['base']} = {expr};"
+            out.append(('pointer_conditional_load_inline', edit(source, [(hit.start(), hit.end(), replacement)])))
+    return out[:4]
+
+
 def call_stages(source,name,header=''):
     part,ds,macros=context(source,name,header)
     if not part:return []
@@ -249,7 +286,7 @@ def reuse(source,name,header=''):
 
 
 def variants(source,name,header=''):
-    singles=inline_loads(source,name,header)+call_stages(source,name,header)+reuse(source,name,header)
+    singles=inline_loads(source,name,header)+conditional_loads(source,name,header)+call_stages(source,name,header)+reuse(source,name,header)
     pools=[]
     for family,text in singles[:6]:
         pools.append([(FAMILIES[-1],candidate) for candidate in declaration_orders(text,name)])

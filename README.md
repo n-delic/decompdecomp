@@ -1476,3 +1476,9 @@ Applying a compiler suggestion opens a progress dialog immediately. It reports a
 checks, saved-score updates and progress-file saving while the work runs in the background. Errors
 remain in the dialog, and repeated clicks reuse the running job. Closing the dialog does not cancel
 the checks. Existing matches must still pass the normal byte checks before settings change.
+
+Captured repair patterns also guide shared scaled offsets across nearby stores, immediate
+pointer-field null tests, byte-array address association inside candidate-owned inline helpers
+(including helpers reached through wrapper macros), and trailing stores placed inside both branch
+arms. Searches keep these alternatives bounded, preserve protected macro regions and volatile
+accesses, and require the normal compiler and byte/object judge before keeping any improvement.

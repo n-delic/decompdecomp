@@ -34,6 +34,21 @@ def variants(source, name):
     spans = [span]
     # A helper must be a candidate-owned inline definition called by this function, not another game body.
     calls = set(re.findall(rf'\b({IDENT})\s*\(', clean[span[0]:span[1]]))
+    # Candidate-owned inline helpers are often reached through one-line wrapper
+    # macros. Follow invocation dependencies only; never rewrite the macro itself.
+    macros = {m[1]: m[2] for m in re.finditer(r'^\s*#\s*define\s+('+IDENT+r')(?:\([^\n)]*\))?[ \t]+([^\n]+)', clean, re.M)
+              if not re.search(r'[#\\]', m[2])}
+    pending = list(calls)
+    seen = set()
+    while pending:
+        key = pending.pop()
+        if key in seen:
+            continue
+        seen.add(key)
+        if key in macros:
+            nested = set(re.findall(rf'\b({IDENT})\s*\(', macros[key]))
+            calls.update(nested)
+            pending.extend(nested)
     for helper in re.finditer(rf'\binline\b[^;{{}}]*?\b({IDENT})\s*\([^;{{}}]*\)\s*{{', clean):
         if helper[1] in calls and (owned := find(source, helper[1])):
             spans.append(owned)
@@ -77,6 +92,12 @@ def variants(source, name):
                         result.append(candidate)
                 if len(result) >= LIMIT:
                     return [('address_association', text) for text in result]
+            # Array subscript association also matters inside candidate-owned
+            # inline helpers. Keep the base and index evaluations exactly once.
+            subscript = re.compile(rf'\b{base}\s*\[\s*(?P<index>{IDENT})\s*\+\s*(?P<n>{NUMBER})\s*\]')
+            for hit in subscript.finditer(clean, opening, end):
+                result.append(edit(source, [(hit.start(), hit.end(),
+                    f"({base} + {hit['index']})[{hit['n']}]")]))
         grouped = re.compile(rf'\(\s*(?P<base>{IDENT})\s*\+\s*(?P<index>{IDENT}(?:\s*\*\s*{NUMBER})?)\s*\)\s*\+\s*(?P<n>{NUMBER})(?!\w)')
         for hit in grouped.finditer(clean, opening, end):
             if hit['base'] in pointers and not re.match(r'\s*(?:[\w*+/%&|^.<>=?-]|->)', clean[hit.end():end]):

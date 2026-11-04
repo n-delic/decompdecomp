@@ -201,3 +201,46 @@ def variants(source, name):
                                                           ''.join(chunks[index] for index in order))])))
         break  # bounded per function, not factorial permutations of every nested switch
     return list(dict.fromkeys(result))
+
+
+
+def store_tails(source, name, header=''):
+    """Duplicate a trailing store in both arms without moving its evaluation on either path."""
+    from . import pointer_pair_repairs
+    part, _, macros = pointer_pair_repairs.context(source, name, header)
+    if not part:
+        return []
+    out = []
+    lhs = rf'{IDENT}(?:\s*->\s*{IDENT}|\s*\[\s*{NUMBER}\s*\])+'
+    store = re.compile(rf'\s*(?P<store>(?:{lhs}\s*=(?!=)\s*)+{IDENT}\s*;)')
+    for hit in re.finditer(r'\bif\s*\(', part.body):
+        cond = close(part.clean, part.opening+hit.end())
+        left = re.match(r'\s*{', part.clean[cond:]) if cond else None
+        if not left:
+            continue
+        a = cond+left.end()-1
+        b = close(part.clean, a, '{', '}')
+        other = re.match(r'\s*else\s*{', part.clean[b:]) if b else None
+        if not other:
+            continue
+        c = b+other.end()-1
+        d = close(part.clean, c, '{', '}')
+        tail = store.match(part.clean, d) if d else None
+        if not tail:
+            continue
+        arms = part.clean[a+1:b-1]+'\n'+part.clean[c+1:d-1]
+        if re.search(r'\b(?:goto|return|break|continue|case|default|asm|setjmp|longjmp)\b|'+IDENT+r'\s*:(?!:)', arms):
+            continue
+        names = set(re.findall(IDENT, tail['store']))
+        if names & macros.keys():
+            continue
+        # A name declared inside an arm would acquire a different meaning when
+        # the store moves into that arm. Reject declarations rather than guessing.
+        if re.search(rf'(?:^|[;{{}}])\s*(?:struct\s+)?{IDENT}\s+\**\s*{IDENT}\s*(?=[=;,\[])', arms):
+            continue
+        text = source[tail.start('store'):tail.end('store')]
+        out.append(('branch_store_tail', edit(source, [(b-1, b-1, '\n'+text+'\n'),
+                                                       (d-1, d-1, '\n'+text+'\n'), (d, tail.end(), '')])))
+        if len(out) >= 4:
+            break
+    return out

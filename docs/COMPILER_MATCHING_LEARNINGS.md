@@ -2885,6 +2885,34 @@ bytes with independently written target shapes. They test generation, not ROM-li
 All production candidates still require the ordinary linked-byte or objdiff judge. Macro-heavy
 inputs, unsupported syntax and unsafe lifetimes yield no new candidates.
 
+## Shared offsets, conditional loads and branch stores (3 November 2026)
+
+Evidence level: captured verified cases plus controlled synthetic regressions. All four captures
+used KMC GCC 2.7.2, `-G0 -mips3 -mgp32 -mfp32 -O2 -g3`, 32-bit big-endian MIPS.
+
+- Capture 21602: score 110 to exact after computing a shared `index * 32` offset once for two
+  word stores, also commuting their pointer additions. The index was a byte local with an unrelated
+  same-named inner-scope local. The generator resolves the applicable lexical scope and uses the
+  promoted word type; it retains intervening pure pointer rebases and rejects index writes/calls.
+- Capture 21601: score 15 to exact after replacing an immediate field-load temporary/null test/
+  assignment with field reads in the condition and assignment. The temporary was used earlier in
+  the function. CFG successor liveness, rather than whole-function textual uniqueness, proves the
+  removed definition is no longer needed. Volatile/qualified types and real address escapes skip.
+  An existing `&& ((temporary ...))` condition had been misclassified as address-taking; escape
+  checks now distinguish logical-and from a single address-of operator.
+- Capture 21599: score 20 to exact after changing `base[index + displacement]` to
+  `(base + index)[displacement]` in a candidate-owned inline helper reached through a wrapper macro.
+  The generator preserves the wrapper macro and every other definition. Pointer bounds and integer
+  wrap make association a compiler-judged hypothesis, not a universal algebraic equivalence.
+- Capture 21597: score 120 to exact after duplicating a trailing pair of stores at the end of both
+  branch arms. Existing branch rules handled calls, not stores. The new rule rejects early control
+  transfers, arm-local declarations and macro-dependent store operands.
+
+Read-only generation checks produced candidates for all four original captures. This is not a new
+live linked-byte replay. Synthetic controls compiled with pinned KMC GCC 2.7.2 `-O2` recover the
+independently written control function bytes for all four shapes. New ROM acceptance still requires
+ordinary linked bytes; source projects retain their ordinary objdiff acceptance check.
+
 ### KMC: call scopes, mixed scratch phases and initialization groups
 
 Measured context: a private 519-instruction / 2,076-byte sound-update routine;
