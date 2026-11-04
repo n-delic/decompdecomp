@@ -76,7 +76,7 @@ class Fatal(RuntimeError):
 
 
 class ToolConnectionUnavailable(RuntimeError):
-    """A local connection failure: retry without starting or charging a model session."""
+    """A recoverable tool connection failure; a CLI handshake retry may require a model request."""
 
 
 def connection_failure(error, token):
@@ -386,6 +386,8 @@ class Session:
     session_id: int = 0
     prompt_config: dict | None = field(default=None, repr=False)
     startup_context: str | None = field(default=None, repr=False)
+    tool_handshake_failures: int = 0
+    tool_handshake_required: bool = False
     context_budget: object | None = field(default=None, repr=False)
     rotated: bool = False
     stop: threading.Event = field(default_factory=threading.Event)
@@ -1200,6 +1202,7 @@ class Manager:
             self._set(s, "starting", "first setting hand-written assembly aside and putting the functions in order "
                                      "(seconds; a minute the first time)")
             twins.ordered.wait(ORDER_WAIT)
+        s.tool_handshake_failures = 0
         failures = fast = throttles = limits = auths = connection_failures = 0
         while not s.stop.is_set():
             if not focused_agents.ready(self,s,agent):continue
@@ -1272,7 +1275,7 @@ class Manager:
                 s.push('error', s.error)
                 self._session_end(s, row, agent, began, 'connection_retry')
                 delay = min(60, 5 * 2 ** min(connection_failures-1, 4))
-                self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. No model request started.',
+                self._wait(s, f'Local tool connection unavailable; retry {connection_failures} in {delay}s. '+('The CLI session did not complete its handshake.' if s.tool_handshake_failures else 'No model request started.'),
                            time.time()+delay, 'This helper reconnects automatically; saved work is retained.')
                 continue
             except Fatal as e:  # needs the user first: retrying can't help
@@ -1291,7 +1294,8 @@ class Manager:
                 ok = False
             connection_failures = 0
             compiled = self._progress(agent.id) - before
-            followup = ok and session_followups.premature(self, s, agent, compiled)
+            investigation = session_followups.investigation_outcome(self.net, agent, began) if compiled == 0 else None
+            followup = ok and not investigation and session_followups.premature(self, s, agent, compiled)
             if compiled >= 2:
                 s.continuation_attempts = 0
             if followup:
@@ -1300,11 +1304,13 @@ class Manager:
                 s.push('info', 'Session ended early; continuing once with explicit compilation guidance.')
             readable_progress = task == 'readable' and self.net.store.one('SELECT COUNT(*) AS n FROM events WHERE agent_id=?',agent.id)['n'] > activity_before
             work_remains = self._left(s.slug,task) > 0
-            if ok and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
+            if ok and not investigation and not followup and not readable_progress and work_remains and not s.stop.is_set() and not s.rotated and compiled == 0:
                 s.error = "the session ended without compiling anything (its messages are in its details)"
                 s.push("error", s.error)
                 ok = False
-            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "ok" if ok else
+            if investigation and ok:
+                s.push("info", investigation+"; no compilation was needed for this report.")
+            self._session_end(s, row, agent, began, "stopped" if s.stop.is_set() else "rotated" if s.rotated else "early_finish" if followup else "investigated" if ok and investigation else "ok" if ok else
                               "limit" if s.limited else "signin" if s.auth_failed else "failed")
             if s.stop.is_set():
                 break
@@ -1455,7 +1461,7 @@ class Manager:
         from .session_efficiency import finish
         finish(self.net,agent,s.slug,row,began)
         spent = f", ${u['usd']:.2f}" if u["usd"] else f", {u['tokens'] // 1000}k tokens" if u["tokens"] else ""
-        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; helper continues' if outcome in ('ok', 'rotated') and not s.stop.is_set() else 'ended ('+outcome+')'
+        ending = 'ended early; helper continues with compilation guidance' if outcome == 'early_finish' else 'completed; helper continues' if outcome in ('ok', 'rotated', 'investigated') and not s.stop.is_set() else 'ended ('+outcome+')'
         s.push("info", f"session {s.runs} {ending}: {u['tool_calls']} tool calls, {compiles} compiles, {matches} "
                        f"matched{spent}")
         self._save(s)
@@ -1470,6 +1476,9 @@ class Manager:
             return
         if agent is None:
             agent = self.net.authenticate(token)
+        if (agent.id, s.slug) in getattr(self.net, '_pending_tool_handshakes', set()):
+            s.startup_context = 'Connection check required: first call project_info(detail=false). Then claim_function to receive your function. No new claim has been handed over by this startup.'
+            return
         facts = tools._project_info(self.net, s.slug, detail=False).split('Next:')[0][:STARTUP_FACTS_CHARS]
         parts = ['App-provided startup context (already fetched; no project_info call needed):', facts]
         if s.options.get('task') != 'readable':
@@ -1498,7 +1507,9 @@ class Manager:
         ov = self.net.overview(s.slug)  # (only its platform's parts: tools.for_platform)
         text += "\nGuides to load when needed:\n\n" + tools.up_front(
             ov.get("platform") or "", ov.get("kind") or "", ov["compiler"]["toolchain"])
-        if (known := self.net.knowledge.for_prompt(s.slug)):
+        knowledge_agent = self.net.store.one('SELECT id,name,owner,trusted FROM agents WHERE name=?',s.agent_name)
+        knowledge_agent = network.Agent(knowledge_agent['id'],knowledge_agent['name'],knowledge_agent['owner'],bool(knowledge_agent['trusted'])) if knowledge_agent else None
+        if (known := self.net.knowledge.for_prompt(s.slug, knowledge_agent)):
             text += f"\n{known}\n"
         if (wish := self.net.instructions(s.slug)):
             text += f"\nThe user's instructions for this project (they come first):\n{wish}\n"
@@ -1551,6 +1562,8 @@ class Manager:
             prompt = focus_prompt(s) + '\nContinue from your existing context; retrieve current saved C if needed.'
         else:
             prompt = self.prompt(s)
+        if s.tool_handshake_required:
+            prompt += '\nFirst call project_info(detail=false) to confirm tools in this CLI session, before claiming or editing. If unavailable, end immediately and report the connection failure. The app will retry once.'
         try:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
@@ -1611,6 +1624,15 @@ class Manager:
         if why := k.validate_model(s.model):
             raise Fatal(why)
         self._preflight_tools(token)
+        if s.context_budget and s.context_budget.waiting:
+            s.rotated = True
+            s.push('info','No eligible work; waiting without starting a model request.')
+            return True
+        agent = self.net.authenticate(token)
+        pending = self.net.__dict__.setdefault('_pending_tool_handshakes', set())
+        if self.net.selection_remaining(s.slug, agent, available_only=True) or self.net.store.one('SELECT 1 FROM claims WHERE agent_id=?',agent.id):
+            pending.add((agent.id, s.slug))
+            s.tool_handshake_required = True
         self.prepare_session(s, token=token)
         if s.context_budget and s.context_budget.waiting:
             s.rotated=True
@@ -1722,7 +1744,7 @@ class Manager:
             return False
         elif code != 0 and (why := no_credit(everything)):
             raise Fatal(why)  # every agent on this account fails the same way until it's topped up
-        if re.search(r"invalid API token|(?:decomp tools|decomp MCP server)[^\n]{0,100}(?:not available|aren't available|not connected|unavailable)|none of the decomp tools|no decomp tools", everything, re.I):
+        if (agent.id, s.slug) not in pending and re.search(r"invalid API token|(?:decomp tools|decomp MCP server)[^\n]{0,100}(?:not available|aren't available|not connected|unavailable)|none of the decomp tools|no decomp tools", everything, re.I):
             raise Fatal("The helper lost access to the app's tools. Restart this helper to reconnect; repeated paid retries are paused.")
         if "Toolchain infrastructure failure" in everything:
             raise Fatal("The compiler/converter setup failed. Fix the toolchain before restarting this helper; repair retries are paused.")
@@ -1739,6 +1761,17 @@ class Manager:
             s.error = said_it.strip()[:200] or "its sign-in failed"
             s.push("error", f"{k.name}'s sign-in failed (exit code {code}): {s.error}")
             return False
+        if s.throttled:
+            return False  # provider concurrency backoff must not spend the handshake retry
+        if (agent.id, s.slug) in pending and not s.limited and not s.auth_failed:
+            s.tool_handshake_failures += 1
+            message = 'CLI tool handshake was not completed: the server preflight passed, but this agent never successfully called project_info. No new function was handed over.'
+            if s.tool_handshake_failures <= 1:
+                raise ToolConnectionUnavailable(message+' Reconnecting once; this requires another model request.')
+            raise Fatal(message+' Automatic retries paused after two attempts. Review the CLI MCP startup diagnostics.')
+        s.tool_handshake_failures = 0
+        if s.tool_handshake_required and (agent.id, s.slug) not in pending:
+            saw_tool = True  # the authenticated server observed the actual CLI, even if its stdout omitted tool events
         if code != 0:
             if code < 0:
                 try:

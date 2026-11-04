@@ -137,7 +137,7 @@ def test_cli_rotation_does_not_stop_active_tools(tmp_path,monkeypatch):
     kind=kinds.get('claude')
     monkeypatch.setattr(kind,'validate_model',lambda model:None)
     monkeypatch.setattr(kind,'parse_line',lambda line,state:[('info',line)])
-    assert manager._run_cli(session,'fake-token',tmp_path)
+    assert manager._run_cli(session,net.local_agent(session.agent_name)[1],tmp_path)
     assert session.rotated and ended==[987654] and budget.active==0
 
 

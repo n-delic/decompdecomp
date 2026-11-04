@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: overlay-scoped data-region review with reversible new-claim pauses, explicit investigation
+outcomes, independent-model verification requests, function-scoped prepared compiler evidence with a bounded
+fresh byte recheck, and actual CLI tool handshakes before function handoff. See docs/AGENT_WORKFLOW_EFFICIENCY.md.
+
 Implemented: room verification resolves compact automatic overlay names and can independently recompile an
 entry from a small multi-function C submission, retaining declarations and line positions. Exact linked bytes/data
 remain required; updated host builds invalidate failed-profile caches and pending explanations do not accumulate.

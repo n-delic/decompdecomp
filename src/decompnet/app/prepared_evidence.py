@@ -196,7 +196,53 @@ def recheck_exact(net, proj, log, limit=20):
     return result
 
 
+INPUT_LABELS = ('compiler/build settings', 'unit', 'target bytes', 'relocations', 'address', 'saved source',
+                'header', 'symbols', 'extent', 'name', 'project root', 'build files')
+
+
+def changed_inputs(expected, current):
+    if not isinstance(expected, (list, tuple)) or len(expected) != len(current):
+        return ['evidence format']
+    return [label for label, a, b in zip(INPUT_LABELS, expected, current) if a != b]
+
+
+def retry_inputs(expected, current):
+    # A different source/header/target or chosen compiler needs a new explicit proposal. Symbol/build changes
+    # may retry once because the entire explicit bundle is freshly compiled and byte judged against them.
+    changed = changed_inputs(expected, current)
+    return bool(changed) and set(changed) <= {'symbols', 'build files'}
+
+
 def promote_measured(net, proj, fn, source, header, settings, agent, expected):
+    """At most two full checks; never bypass a lost claim or a changed source/header/target."""
+    if not net.is_rom(proj) or net.fork_slug(proj['slug']):
+        raise NetworkError('Automatic prepared bundles require a local ROM project.')
+    for attempt in range(2):
+        fresh = net.project_row(proj['slug'])
+        current = net._function(fn['name'], proj['slug'])
+        claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', current['id'])
+        if not agent or not claim or claim['agent_id'] != agent.id or claim['expires_at'] <= time.time():
+            raise NetworkError('The prepared bundle claim expired or changed. Claim the function and submit a fresh proposal.')
+        actual = prep.inputs(net, fresh, current)
+        if actual != expected and retry_inputs(expected, actual):
+            expected = actual
+        try:
+            return _promote_measured(net, fresh, current, source, header, settings, agent, expected)
+        except NetworkError as error:
+            latest = net._function(fn['name'], proj['slug'])
+            state = prep.inputs(net, net.project_row(proj['slug']), latest)
+            changed = changed_inputs(expected, state)
+            if attempt == 0 and latest['status'] == 'open' and retry_inputs(expected, state):
+                claim = net.store.one('SELECT agent_id,expires_at FROM claims WHERE function_id=?', latest['id'])
+                if claim and claim['agent_id'] == agent.id and claim['expires_at'] > time.time():
+                    expected = state
+                    continue
+            if changed:
+                raise NetworkError('Prepared inputs changed: '+', '.join(changed)+'. Evidence retained; submit a fresh proposal.') from error
+            raise
+
+
+def _promote_measured(net, proj, fn, source, header, settings, agent, expected):
     """Caller holds the claim. Recompile under frozen inputs; only an explicit ROM byte/data verdict wins."""
     from .compiler_context import acceptable, single_source
     if not net.is_rom(proj) or net.fork_slug(proj['slug']):

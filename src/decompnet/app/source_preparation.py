@@ -376,7 +376,13 @@ def inputs(net, proj, fn):
     ctx = net._context(proj['id'], fn['unit'])
     symbols = [tuple(r) for r in net.store.all('SELECT name,address,size,kind FROM symbols WHERE project_id=? ORDER BY name', proj['id'])]
     from .permuter_inputs import build_state
-    return (proj['config'], fn['unit'], fn['target'], fn['relocs'], fn['vram'], fn['best_source'], ctx['version'], symbols,
+    cfg = json.loads(proj['config'])
+    from ..project import compiler_for
+    own = compiler_for(cfg, fn['vram'], fn) if 'compiler' in cfg else None
+    for key in ('compiler_ranges', 'function_compilers', 'boundaries', 'suggestions', 'knowledge_auto'):
+        cfg.pop(key, None)
+    cfg['compiler'] = own
+    return (json.dumps(cfg, sort_keys=True), fn['unit'], fn['target'], fn['relocs'], fn['vram'], fn['best_source'], ctx['version'], symbols,
             fn['size'],fn['name'],proj['root'],build_state(proj))
 
 

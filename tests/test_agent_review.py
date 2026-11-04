@@ -127,7 +127,7 @@ def test_cli_limit_publishes_account_cooldown_before_session_exit(tmp_path,monke
         {'type':'result','is_error':True,'result':"You've hit your 5-hour limit. Try again in 1 hour."})+'\n'),
         stderr=io.StringIO(),wait=lambda:1)
     monkeypatch.setattr(agents.subprocess,'Popen',lambda *args,**kwargs:proc)
-    assert manager._run_cli(s,'test-token',tmp_path) is False
+    assert manager._run_cli(s,net.local_agent(s.agent_name)[1],tmp_path) is False
     peer=manager._record('game','claude','peer','peer',{'model':'other'})
     assert session_followups.cooldown(manager,peer)>time.time()
     assert not any('exited with code' in row['text'] for row in s.feed)

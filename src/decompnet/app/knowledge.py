@@ -16,6 +16,7 @@ with evidence, not by agents agreeing.
 from __future__ import annotations
 
 import difflib
+import json
 import re
 import time
 
@@ -216,9 +217,34 @@ class Knowledge:
         return {"auto": self.auto(proj), "models_to_agree": MODELS_TO_AGREE,
                 "items": [{"id": r["id"], "text": r["text"], "status": r["status"], "t": r["created_at"],
                            "models": sorted(support.get(r["id"], ())),
+                           "verification": self._verification(proj['id'],r['id']),
                            "evidence": [dict(e) for e in self.net.store.all('SELECT e.text,a.name AS agent FROM knowledge_evidence e LEFT JOIN agents a ON a.id=e.agent_id WHERE e.knowledge_id=? ORDER BY e.id',r['id'])]} for r in rows]}
 
-    def for_prompt(self, slug: str) -> str:
+    def _verification(self, pid, kid):
+        row = self.net.store.one('SELECT value FROM settings WHERE key=?',f'knowledge-review:{pid}:{kid}')
+        return json.loads(row['value']) if row else None
+
+    def request_verification(self, slug, kid, sessions):
+        from .agent_review import view
+        with view(self.net):
+            proj = self.net._project(slug)
+            item = next((i for i in self.listing(slug)['items'] if i['id']==kid), None)
+            if not item or item['status'] != PROPOSED:
+                raise NetworkError('Choose a proposal still waiting for a second model.')
+            def model_for(session):
+                return self._model_of(Agent(0, session.agent_name, None))
+            eligible = [s for s in sessions if s.slug==slug and s.state in {'working','starting','waiting'}
+                        and not s.stop.is_set() and not s.options.get('focus_id') and model_for(s) not in item['models']]
+            if not eligible:
+                raise NetworkError('No active helper with a different model is available. Start one, then request verification again. Focused agents stay on their function.')
+            session = min(eligible, key=lambda s: s.id)
+            model = model_for(session)
+            key = f'knowledge-review:{proj["id"]}:{kid}'
+            with self.net.store.tx() as db:
+                db.execute('INSERT OR REPLACE INTO settings VALUES(?,?)', (key, json.dumps({'model':model,'agent':session.agent_name})))
+            return {'message':f'Queued for {session.label} ({model}) at its next session. It must independently verify examples before backing the proposal.', 'model':model}
+
+    def for_prompt(self, slug: str, agent=None) -> str:
         """What every agent starts with: the accepted knowledge, then the open proposals it can back."""
         proj = self.net._project(slug)
         out, used = [], 0
@@ -231,10 +257,26 @@ class Knowledge:
             out.append(f"- {r['text']}")
             used += len(r["text"])
         text = ("Accepted matching knowledge for this game (user-approved or model consensus):\n" + "\n".join(out)) if out else ""
-        open_ = [r for r in self._open(proj) if not self._rule_mentions(proj, r["text"])][:OPEN_SHOWN]
+        model = self._model_of(agent) if agent else None
+        supported = {r['knowledge_id'] for r in self.net.store.all('SELECT knowledge_id FROM knowledge_support WHERE model=?',model)} if model else set()
+        queued = {}
+        for r in self.net.store.all('SELECT key,value FROM settings WHERE key LIKE ?',f'knowledge-review:{proj["id"]}:%'):
+            item = json.loads(r['value'])
+            if item['model'] == model and agent and item['agent'] == agent.name:
+                queued[int(r['key'].rsplit(':',1)[1])] = item
+        open_ = [r for r in self._open(proj) if r['id'] not in supported and not self._rule_mentions(proj, r["text"])]
+        open_.sort(key=lambda r: r['id'] not in queued)
+        open_ = open_[:OPEN_SHOWN]
         if open_:
             text += ("\n\nProposals waiting for a second model (back one with share_knowledge(supports=N) only when "
                      "your own work shows it):\n" + "\n".join(f"- #{r['id']}: {r['text']}" for r in open_))
+        assigned = [r for r in open_ if r['id'] in queued]
+        if assigned:
+            text += '\nRequested independent verification (do not assume earlier claims are true):'
+            for row in assigned:
+                evidence = self.net.store.all('SELECT text FROM knowledge_evidence WHERE knowledge_id=? ORDER BY id DESC LIMIT 3',row['id'])
+                text += f"\n- #{row['id']}: inspect cited functions and reproduce the relevant compile/diff evidence. Back with share_knowledge(supports=N, evidence=...) only if your own results support the rule; otherwise report the counterexample."
+                text += ''.join('\n  Prior example to verify: '+e['text'][:1000] for e in evidence)
         return text.strip()
 
 

@@ -12,9 +12,10 @@ def version(net, agent, slug):
     pauses=net.store.all("SELECT s.key,s.value FROM settings s JOIN functions f ON "
                          "s.key=? || f.id OR s.key GLOB ? || f.id || ':*' WHERE f.project_id=? ORDER BY s.key",
                          claim_stalls.PREFIX,claim_stalls.PREFIX,pid)
+    regions=net.store.all('SELECT key,value FROM settings WHERE key LIKE ? ORDER BY key',f'data-region:{pid}:%')
     link=net.links.get(slug)
     return hashlib.sha256(repr((net.store.read_version('inputs',pid),net.selection(slug,agent.name),
-                               [tuple(r) for r in pauses],repr(claim_stalls.repair_rules()),
+                               [tuple(r) for r in pauses],[tuple(r) for r in regions],repr(claim_stalls.repair_rules()),
                                [tuple(r) for r in claims],repr(link.claims) if link else '')).encode()).hexdigest()[:20]
 
 

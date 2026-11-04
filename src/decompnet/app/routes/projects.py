@@ -44,7 +44,7 @@ def register(app: App) -> None:
                         with net.progress.view():
                             return fn(slug, request, data)
                     result = fn(slug, request, data)
-                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default", "/api/agent-review", "/api/data-regions", "/api/knowledge/verify") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if request.url.path == '/api/live' or (request.url.path == '/api/function' and request.query_params.get('quick') == '1') else app.ui_call
@@ -61,6 +61,12 @@ def register(app: App) -> None:
                     slow_requests[path] = started
                     jobs.logger.warning('Slow UI request %s %.3fs (includes worker queue and response encoding)', path, elapsed)
         return handler
+
+    def p_data_regions(slug, request, data):
+        from .. import data_regions
+        if request.method == 'POST':
+            return data_regions.decide(net,slug,data.get('id',''),data.get('action',''))
+        return data_regions.listing(net,slug)
 
     def g_agent_reviews(slug, request, data):
         from ..agent_review import listing
@@ -590,6 +596,9 @@ def register(app: App) -> None:
         """Save the project's work as plain files (app/saves.py): to its progress/ folder, or one the user picks."""
         return saves.save(net, slug, hostenv.local_path(data["folder"]) if data.get("folder") else None)
 
+    def p_knowledge_verify(slug, request, data):
+        return net.knowledge.request_verification(slug,int(data.get('id') or 0),list(manager.sessions.values()))
+
     def p_knowledge(slug, request, data):
         """What agents learned: GET lists it; POST accepts or rejects one ({id, accept}), or sets whether agreed
         knowledge is added by itself ({auto})."""
@@ -619,6 +628,7 @@ def register(app: App) -> None:
         "/api/project": (p_overview, ["GET"]),
         "/api/split-rom": (p_split_rom, ["POST"]),
         "/api/join-rom": (p_join_rom, ["POST"]),
+        "/api/knowledge/verify": (p_knowledge_verify, ["POST"]),
         "/api/knowledge": (p_knowledge, ["GET", "POST"]),
         "/api/modelcosts": (lambda s, r, d: manager.costs(s), ["GET"]),
         "/api/save": (p_save, ["POST"]),
@@ -633,6 +643,7 @@ def register(app: App) -> None:
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/recover-code": (p_recover_code, ["POST"]),
+        "/api/data-regions": (p_data_regions, ["GET", "POST"]),
         "/api/agent-reviews": (g_agent_reviews, ["GET"]), "/api/agent-review": (p_agent_review, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),

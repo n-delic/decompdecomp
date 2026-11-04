@@ -382,7 +382,7 @@
         <div class="pad">
           <p class="muted small">Reusable matching tips for this game and compiler, useful across functions. Function-specific notes belong on the function. You can accept a proposal immediately; automatic acceptance requires two different models to agree independently.</p>
           <label class="check"><input type="checkbox" id="knowAuto"><span>Give agents what two models agree on without asking me</span></label>
-          <div id="knowList"></div>
+          <div id="knowList"></div><div id="knowledgeVerifyWork" role="status"></div>
         </div>
       </section>
     </div>
@@ -394,6 +394,7 @@
 
   <!-- settings -->
   <section class="ptab" data-pane="settings">
+          <details class="panel settings-disclosure" id="dataRegionReviews"><summary class="panel-head"><h2>Data region review <span class="disclosure-context" id="dataRegionContext">— Loading</span></h2><button class="disclosure-action" type="button" id="dataRegionRefresh">↻ Refresh</button></summary><div class="pad"><p class="small muted">Agent reports of data mistaken for code. Regions belong to one unit and original image. Pausing prevents new claims; existing work and saved matches continue. No entry is classified as data automatically.</p><div id="dataRegionItems" class="profile-failure-cards"></div><div id="dataRegionWork" role="status"></div></div></details>
     <details class="panel settings-disclosure" id="codeCoveragePanel" hidden>
       <summary class="panel-head"><h2>Code coverage review</h2><span class="disclosure-context small muted" id="coverageReviewContext">Find missing code</span></summary>
       <div class="pad coverage-review">

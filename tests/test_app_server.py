@@ -683,7 +683,9 @@ def test_an_agent_nobody_signed_in_to_stops_and_says_so(tmp_path, monkeypatch):
     code = "print('Not logged in \\u00b7 Please run /login'); raise SystemExit(1)"
     monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
     s = agents.Session("claude-1", "claude", "Claude Code #1", "game", "claude-1", {})
-    assert manager._run_cli(s, "token", tmp_path) is False
+    monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+    token = manager.net.local_agent(s.agent_name)[1]
+    assert manager._run_cli(s, token, tmp_path) is False
     assert s.signed_out and "isn't signed in" in s.error and "/login" in s.error
 
 
@@ -695,15 +697,19 @@ def test_an_agent_out_of_credit_stops_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(manager, "prepare_session", lambda *a, **kw: None)
     s = agents.Session("opencode-1", "opencode", "opencode #1", "game", "opencode-1", {})
 
+    monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+
     def says(text: str) -> None:
         code = f"print({text!r}); raise SystemExit(1)"
         monkeypatch.setattr(manager, "_command", lambda s, token, workdir: ([sys.executable, "-c", code], dict(os.environ), ""))
 
     says("AI_APICallError: Insufficient Balance (request_id: 3e759c3b)")
     with pytest.raises(agents.Fatal, match="out of credit .*Insufficient Balance.*top it up"):
-        manager._run_cli(s, "token", tmp_path)
+        manager._run_cli(s, manager.net.local_agent(s.agent_name)[1], tmp_path)
     says("AI_APICallError: Too many requests. Your current concurrency is 5, which exceeds your concurrency limit of 5")
-    assert manager._run_cli(s, "token", tmp_path) is False and s.throttled
+    monkeypatch.setattr(manager.net, "selection_remaining", lambda *a, **kw: 1)
+    token = manager.net.local_agent(s.agent_name)[1]
+    assert manager._run_cli(s, token, tmp_path) is False and s.throttled
 
 
 @needs_demo
@@ -2215,6 +2221,27 @@ def test_agent_blocker_review_routes_are_guarded_and_acknowledgment_keeps_status
     assert response.status_code==200 and response.json()['reviewed']
     assert client.get('/api/agent-reviews',params={'slug':slug}).json()['items']==[]
     assert net.store.one('SELECT status FROM functions WHERE id=?',fid)['status']=='open'
+
+
+def test_data_region_metadata_routes_are_guarded_and_do_not_reverify(app,tmp_path,monkeypatch):
+    from decompnet.app import data_regions
+    client,net,_=app
+    with net.store.tx() as db:
+        pid=db.execute('INSERT INTO projects(slug,name,root,config) VALUES(?,?,?,?)',
+                       ('region-test','Review',str(tmp_path),json.dumps({'kind':'rom','platform':'n64'}))).lastrowid
+        db.execute("INSERT INTO functions(project_id,name,status,vram,rom_offset,size,unit) VALUES(?,'table_entry','open',4096,100,8,'image')",(pid,))
+    agent,_=net.local_agent('region-worker')
+    net.claim_row(agent,'region-test','table_entry')
+    data_regions.report(net,agent,'region-test','table_entry','0x1000','0x1008','Pointer table hypothesis')
+    result=client.get('/api/data-regions?slug=region-test')
+    assert result.status_code==200
+    key=result.json()['items'][0]['id']
+    body={'slug':'region-test','id':key,'action':'pause'}
+    assert client.post('/api/data-regions',json=body).status_code==403
+    assert client.post('/api/knowledge/verify',json={'slug':'region-test','id':1}).status_code==403
+    monkeypatch.setattr(net.progress,'sync',lambda *args,**kw:pytest.fail('Review metadata must not reverify code'))
+    assert client.post('/api/data-regions',json=body,headers={'X-Decomp':'1'}).status_code==200
+    assert net.store.one("SELECT status FROM functions WHERE name='table_entry' AND project_id=?",pid)['status']=='open'
 
 
 def test_project_overview_serializes_running_source_preparation(app,monkeypatch):

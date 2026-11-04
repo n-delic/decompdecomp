@@ -89,3 +89,16 @@ def configuration_error(manager, session, reason=None):
         if reason is not None:
             errors[key] = reason
         return errors.get(key)
+
+
+def investigation_completed(net, agent, slug, tool):
+    """Successful structured reports count as investigation, never as compilation or a verified match."""
+    proj = net.store.one('SELECT id FROM projects WHERE slug=?', slug)
+    with net.store.tx() as db:
+        net._event(db, proj['id'], agent.id, 'investigation', tool)
+
+
+def investigation_outcome(net, agent, began):
+    row = net.store.one("SELECT detail FROM events WHERE agent_id=? AND kind='investigation' AND created_at>=? ORDER BY id DESC LIMIT 1", agent.id, began)
+    return {'report_boundary':'Boundary review submitted', 'report_data_region':'Data investigation completed',
+            'report_candidate_issue':'Candidate concern submitted'}.get(row['detail']) if row else None

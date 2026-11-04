@@ -528,6 +528,9 @@ def api_tool_schemas(fork: bool = False, names: list[str] | None = None) -> list
                             s(function=st("function", True), end=st("where it really ends: an address (PC: or +offset)",
                                                                      True),
                               reason=st("what follows and how you can tell", True))),
+        "report_data_region": ("Report an entire suspected data region for user review, not a matching verdict. Claim a representative function; its unit and original image scope the overlay. The user may pause new claims. Use this when the whole entry is data, rather than report_boundary.",
+                               s(function=st("claimed representative function", True), start=st("hex address", True),
+                                 end=st("exclusive hex end address", True), reason=st("byte evidence for review", True))),
         "read_data": ("Hex dump of the original's data at an address or symbol.", s(what=st("address or symbol", True),
                                                                                     length=it("bytes, up to 512"))),
         "get_class": ("C++ class layout found in the game's code: fields by offset and virtual functions by slot. "

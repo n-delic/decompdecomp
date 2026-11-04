@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/js/steering.js'),'utf8');
+const ctx=vm.createContext({esc:value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;')});
+vm.runInContext(source.slice(source.indexOf('function dataRegionHTML'),source.indexOf('async function loadDataRegions')),ctx);
+const item={id:'data-region:1:a',unit:'overlay_001',image:100,start:4096,end:4112,status:'review',stale:false,evidence:[{agent:'worker',reason:'Pointer words <unsafe>'}],functions:[{name:'f',status:'open'},{name:'g',status:'matched'}]};
+let html=ctx.dataRegionHTML([item]);
+assert.match(html,/Pause new claims for review/);assert.match(html,/exclusive end/);assert.match(html,/data-region-function="f"/);
+assert.match(html,/&lt;unsafe>/);assert(!html.includes('<unsafe>'));assert.match(html,/matched/);
+html=ctx.dataRegionHTML([{...item,status:'paused'}]);assert.match(html,/Resume new claims/);
+html=ctx.dataRegionHTML([{...item,stale:true}]);assert.match(html,/Changed inputs/);assert.match(html,/disabled/);
+assert.match(ctx.dataRegionHTML([]),/No data regions reported/);

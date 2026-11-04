@@ -102,3 +102,46 @@ Provider-account cooldowns already persist across restarts and are credential/en
 API workers. CLI limit detection now publishes the wait immediately before session exit handling,
 so sibling workers see it before starting another request. The generic exit-code error is not also
 emitted for the same quota stop. Already-running workers are not killed.
+
+## Data-region review and independent verification
+
+`report_data_region(function, start, end, reason)` reports a whole suspected data table, with
+an exclusive end address. The representative function must be claimed. Its unit and original
+image position identify the overlay; equal RAM addresses in other images are unaffected.
+Repeated identical reports share one card in Settings → Data region review. The user may
+pause new claims, resume them or dismiss the report. Held claims may finish, saved matches
+stay matched, and no automatic data/assembly verdict is made. Changed target bytes or
+boundaries lift the pause and require fresh evidence. This metadata workflow shares the
+ordinary claim path across ROM and imported projects; entries without a known address cannot
+form a region. Region changes invalidate cached idle receipts.
+
+Successful structured boundary, data-region and candidate-concern reports count as investigation
+outcomes, separately from compilation. An ordinary note, release, failed report or model assertion
+does not count. Investigation sessions do not receive the no-compilation failure or automatic
+compilation nudge. Recorded matches still require the ordinary byte judge.
+
+Knowledge prompts omit pending proposals already supported by that model. “Verify with another
+model” queues the proposal and its cited examples for an existing active, non-focused helper of
+a different model, at its next session. It does not create another paid agent, interrupt a current
+conversation, or accept the proposal. With no eligible helper, the UI explains how to start one.
+Independent reproduction is still required before backing; manual acceptance remains available.
+
+## Prepared compiler evidence and CLI startup
+
+Prepared bundles watch their function's effective compiler profile rather than unrelated ranges,
+per-function selectors or boundary/knowledge review metadata. Other configuration and all symbols
+remain conservative dependencies. Changed-input errors identify components without exposing source
+or symbol values. A symbol/build-file race may trigger one additional complete compile and linked
+byte/data verification while the same claim is valid. A changed saved source, header, target,
+profile or expired claim needs a fresh explicit proposal; no retry bypasses the final atomic guard.
+
+CLI startup has two checks: the app-only authenticated server preflight, then an actual
+`project_info(detail=false)` call by the spawned CLI. No new function brief is handed over before
+the second check; mutation and claim tools reject calls until it succeeds. Failed handshakes
+reconnect once, then pause. That retry requires another model request, unlike a server preflight
+failure. Provider limits, sign-in failures and explicit configuration errors retain their own
+handling. A completed handshake is recorded through the existing tool transcript. Existing focused
+claims and conversations are retained; the resumed conversation confirms access before continuing.
+Room clients send region evidence to their host, whose project controls claims; a client cannot impose a
+local pause on the host's queue. The startup availability check also excludes other agents' live claims,
+so an entirely busy queue retains the existing wait-without-model-request behavior.

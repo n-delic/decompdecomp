@@ -439,7 +439,13 @@ def _get_context(net, agent, slug, function=""):
     return net.get_context(slug, function or None)
 
 
+def _report_data_region(net, agent, slug, function, start, end, reason):
+    from .data_regions import report
+    return report(net, agent, slug, function, start, end, reason)
+
+
 HANDLERS: dict[str, Callable[..., str]] = {
+    "report_data_region": _report_data_region,
     "project_info": lambda net, agent, slug, detail=False: project_info(net, slug, detail),
     "get_candidate": agent_tokens.get_candidate,
     "compile_patch": agent_tokens.patch,
@@ -556,6 +562,10 @@ def _invoke(net: RomNetwork, agent: Agent, slug: str, name: str, args: dict) -> 
 
 
 def _dispatch(net,agent,slug,name,args, *, count_usage=True):
+    pending = getattr(net, '_pending_tool_handshakes', set())
+    handshake = (agent.id, slug) in pending
+    if handshake and name != 'project_info':
+        raise NetworkError('First call project_info(detail=false) to verify tools in this CLI session. No work was changed.')
     from .tool_policy import record
     record(net, agent, slug, name, count=count_usage)
     if not count_usage:
@@ -569,9 +579,14 @@ def _dispatch(net,agent,slug,name,args, *, count_usage=True):
     try:
         named=_named(net,agent,slug,args)
         result=HANDLERS[name](net,agent,slug,**named)
+        if handshake and name == 'project_info':
+            pending.discard((agent.id, slug))
         if name == 'try_compiler':
             from .session_followups import diagnostic_completed
             diagnostic_completed(net,agent,named.get('function',''),slug)
+        if name in {'report_boundary', 'report_data_region', 'report_candidate_issue'}:
+            from .session_followups import investigation_completed
+            investigation_completed(net, agent, slug, name)
         result=after_tool(net,agent,slug,name,named,result)
         if name in {'compile_patch','compile_and_diff','try_local_repairs','compile_family','compile_variants','compiler_experiments'}:
             function=named.get('function','')
@@ -814,6 +829,14 @@ def build_mcp(net: RomNetwork, agent_of: Callable[[Context], tuple[Agent, str]],
         cut at `end` (an address, or an offset into it: +0x20) and the rest is a function of its own, set aside
         when it isn't code, kept only if the game still builds byte for byte. Say how you can tell."""
         return await run(ctx, "report_boundary", function=function, end=end, reason=reason)
+
+    @tool
+    async def report_data_region(ctx: Context, function: str, start: str, end: str, reason: str) -> str:
+        """Report a whole suspected data table, including entries mistaken for functions. Claim a representative
+        function first; its unit and original image identify the overlay. Use an exclusive end address and explain
+        byte evidence. One review covers the region. No match/status changes; the user can pause its new claims
+        in Settings. Do not misuse report_boundary to leave one word of a table pretending to be code."""
+        return await run(ctx, "report_data_region", function=function, start=start, end=end, reason=reason)
 
     @tool
     async def read_data(ctx: Context, what: str, length: int = 64) -> str:

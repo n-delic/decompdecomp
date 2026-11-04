@@ -238,18 +238,26 @@ async function renderKnowledge(force = false) {
   $("knowAuto").checked = k.auto;
   const evidence = (it) => it.evidence?.length ? `<details><summary>Supporting examples · ${it.evidence.length}</summary>${it.evidence.map(e => `<p class="small muted">${esc(e.agent || 'Agent')}: ${esc(e.text)}</p>`).join('')}</details>` : '';
   const row = (it) => {
+    const verification=it.verification ? `<p class="small muted">Independent review queued for ${esc(it.verification.agent)} · ${esc(it.verification.model)} · next session</p>` : '';
     if (it.status === "agreed") return `<div class="note">${saidHead("agreed · waiting for you", it.models, it.t)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Give it to agents</button>
       <button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
     if (it.status === "accepted") return `<div class="note">${saidHead("agents get this", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}
       <div class="row"><button class="ghost small-btn" data-know="${it.id}" type="button">Take it back</button></div></div>`;
-    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
+    return `<div class="note">${saidHead("waiting for a second model", it.models, it.t, true)}${saidText(it.text)}${evidence(it)}${verification}<div class="row"><button class="primary small-btn" data-know="${it.id}" data-accept="1" type="button">Accept for all agents</button><button class="ghost small-btn" data-verify-knowledge="${it.id}" type="button">Verify with another model</button><button class="ghost small-btn" data-know="${it.id}" type="button">Reject</button></div></div>`;
   };
   const waiting = k.items.filter((it) => it.status === "agreed").length;
   $("knowState").textContent = waiting ? `${waiting} waiting for you` : k.items.length ? "" : "nothing yet";
   setHtml($("knowList"), k.items.map(row).join(""));
 }
 $("knowList").onclick = async (e) => {
+  const verify=e.target.closest('[data-verify-knowledge]');
+  if(verify?.dataset.verifyKnowledge){
+    const slug=S.slug, work=$('knowledgeVerifyWork'), finish=beginWork(work,'Queueing independent verification',[verify],'');
+    try {const result=await api('/api/knowledge/verify',{method:'POST',body:{slug,id:Number(verify.dataset.verifyKnowledge)}});if(S.slug===slug){toast(esc(result.message));await renderKnowledge(true);}}
+    catch(error){showJobError(work,error.message);}finally{finish();}
+    return;
+  }
   const b = e.target.closest("[data-know]");
   if (!b) return;
   try {
@@ -579,7 +587,32 @@ $("agentBlockerItems").onclick=async event=>{
   catch(error){showJobError(work,error.message);}finally{finish();}
 };
 
+function dataRegionHTML(items) {
+  return items.length ? items.map(item=>`<article class="profile-failure-card"><div class="profile-failure-heading"><b>${esc(item.unit || 'Default unit')}</b><span class="small muted">${item.stale ? 'Changed inputs · pause lifted' : item.status==='paused' ? 'New claims paused' : item.status==='dismissed' ? 'Dismissed' : 'Needs review'}</span></div><p class="mono small">0x${Number(item.start).toString(16).toUpperCase()}–0x${Number(item.end).toString(16).toUpperCase()} <span class="muted">· exclusive end · ${item.functions.length} entries</span></p><p class="small muted">ROM ${item.rom_start==null ? 'address unavailable' : '0x'+Number(item.rom_start).toString(16).toUpperCase()} · ${item.evidence.length} ${item.evidence.length===1 ? 'report' : 'reports'}</p><details class="more"><summary>Evidence and affected entries</summary>${item.evidence.map(e=>`<p class="small"><b>${esc(e.agent)}</b><br>${esc(e.reason)}</p>`).join('')}<div class="row wrap">${item.functions.map(f=>`<button type="button" class="link mono small" data-region-function="${esc(f.name)}">${esc(f.name)}</button><span class="small muted">${esc(f.status)}</span>`).join('')}</div></details><div class="row wrap">${item.status!=='dismissed' ? `<button type="button" class="ghost small-btn" data-region-id="${esc(item.id)}" data-region-action="${item.status==='paused' ? 'resume' : 'pause'}" ${item.stale ? 'disabled' : ''}>${item.status==='paused' ? 'Resume new claims' : 'Pause new claims for review'}</button><button type="button" class="ghost small-btn" data-region-id="${esc(item.id)}" data-region-action="dismiss">Dismiss report</button>` : ''}</div></article>`).join('') : '<p class="small muted">No data regions reported. Agents can report a whole suspected table with its overlay and byte evidence.</p>';
+}
+async function loadDataRegions() {
+  const slug=S.slug, gen=S.gen, work=$('dataRegionWork'), finish=beginWork(work,'Loading data region reviews',[], '');
+  try {
+    const result=await api(`/api/data-regions?slug=${encodeURIComponent(slug)}`);
+    if(S.slug!==slug || S.gen!==gen)return;
+    const reviewCount=result.items.filter(i=>i.status==='review').length;
+    $('dataRegionContext').textContent=`— ${reviewCount} ${reviewCount===1 ? 'needs' : 'need'} review · ${result.items.filter(i=>i.status==='paused'&&!i.stale).length} paused`;
+    $('dataRegionItems').innerHTML=dataRegionHTML(result.items);
+  }catch(error){if(S.slug===slug)showJobError(work,error.message);}finally{finish();}
+}
+$('dataRegionRefresh').onclick=event=>{event.preventDefault();event.stopPropagation();loadDataRegions();};
+$('dataRegionItems').onclick=async event=>{
+  const link=event.target.closest('[data-region-function]');
+  if(link){openFn(link.dataset.regionFunction);return;}
+  const button=event.target.closest('[data-region-action]');
+  if(!button)return;
+  const slug=S.slug, work=$('dataRegionWork'), finish=beginWork(work,'Updating region review',[button],'');
+  try {await api('/api/data-regions',{method:'POST',body:{slug,id:button.dataset.regionId,action:button.dataset.regionAction}});if(S.slug===slug)await loadDataRegions();}
+  catch(error){showJobError(work,error.message);}finally{finish();}
+};
+
 async function renderProjectSettings() {
+  loadDataRegions();
   loadBlockerReviews();
   $("codeAuditPanel").hidden = !S.ov?.code_audit;
   loadCodeAudit();
