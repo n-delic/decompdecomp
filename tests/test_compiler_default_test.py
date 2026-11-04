@@ -135,3 +135,38 @@ def test_replacement_commits_through_normal_guard_and_preserves_matches(net, mon
     assert verified==['f0']
     assert net.store.one("SELECT count(*) AS n FROM functions WHERE status='matched'")['n']==3
     assert net.store.one("SELECT matched_source FROM functions WHERE name='f1'")['matched_source']
+
+
+def test_apply_rechecks_successes_and_uses_normal_compiler_match_path(net, monkeypatch):
+    checked, applied = [], []
+    monkeypatch.setattr(net, '_comparison_source', lambda fn:'saved C')
+    monkeypatch.setattr(net, '_judge_with', lambda proj, fn, tc, flags, source:(checked.append((fn['name'], source)) or True, NS(score=0), ''))
+    monkeypatch.setattr(net, 'apply_function_compiler', lambda *args:applied.append(args) or {'newly_matched':True})
+    result = trial.apply_matches(net, 'game', PROFILE, ['f3', 'f3', 'f0'])
+    assert checked == [('f3', 'saved C')]
+    assert applied == [('game', 'f3', PROFILE['toolchain'], PROFILE['flags'])]
+    assert result['passed'] == 1 and result['failed'] == 1
+    assert 'No longer unmatched' in result['failures'][0]['reason']
+
+
+def test_apply_rejects_stale_source_and_overlay_addresses(net, monkeypatch):
+    monkeypatch.setattr(net, '_comparison_source', lambda fn:'changed C')
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(False, NS(score=1), ''))
+    monkeypatch.setattr(net, 'apply_function_compiler', lambda *args:pytest.fail('must not apply a failed recheck'))
+    result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    assert result['failed'] == 1 and 'no longer matches' in result['failures'][0]['reason']
+    with net.store.tx() as db:
+        db.execute("INSERT INTO functions(project_id,name,vram,size,status) VALUES(1,'overlay',?,16,'open')", (0x80001030,))
+    result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    assert 'overlay' in result['failures'][0]['reason']
+
+
+def test_apply_refuses_active_claims(net, monkeypatch):
+    agent, _ = net.local_agent('test-worker')
+    fn = net._function('f3', 'game')
+    import time
+    with net.store.tx() as db:
+        db.execute('INSERT INTO claims(function_id,agent_id,expires_at) VALUES(?,?,?)', (fn['id'],agent.id,time.time()+3600))
+    monkeypatch.setattr(net, '_judge_with', lambda *args:pytest.fail('busy functions must be skipped'))
+    result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    assert result['failed'] == 1 and 'agent is working' in result['failures'][0]['reason']

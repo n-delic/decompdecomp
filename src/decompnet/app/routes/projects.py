@@ -88,7 +88,7 @@ def register(app: App) -> None:
 
     def p_compiler_default_test(slug, request, data):
         from .. import compiler_default_test
-        return {"job": jobs.start("Test compiler profile as default", lambda log:(compiler_default_test.replace_default(net, slug, data.get('profile'), log) if data.get('action') == 'replace' else compiler_default_test.run(net, slug, data.get('profile'), log, nonmatches=data.get('action') == 'nonmatches')))}
+        return {"job": jobs.start("Test compiler profile as default", lambda log:(compiler_default_test.apply_matches(net, slug, data.get('profile'), data.get('functions'), log) if data.get('action') == 'apply-matches' else compiler_default_test.replace_default(net, slug, data.get('profile'), log) if data.get('action') == 'replace' else compiler_default_test.run(net, slug, data.get('profile'), log, nonmatches=data.get('action') == 'nonmatches')))}
 
     def p_compiler_cleanup(slug, request, data):
         limit = int(data.get("rare_limit", 3))
