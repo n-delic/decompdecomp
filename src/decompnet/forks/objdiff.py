@@ -26,8 +26,9 @@ REPORT_OPTIONS = {"functionRelocDiffs": "none", "combineDataSections": True, "co
 # Symbol names compilers make up for literals and pools, which never have to match the original's names. Visual C++'s
 # $L and $T label its own exception-handling code and tables in the object (.text$x, .xdata$x): a function with a
 # local object's destructor pushes its handler, $L278, where the delinked original names the stub func_006450E8, and
-# the code still links, with its own handler.
-_GENERATED = re.compile(r"^(@\d+|\$LC\d+|\$[LT]\d+|_\$E\d+|\.\.\..*|@stringBase\d*|\.L.*)$")
+# the code still links, with its own handler. A jump table's labels too: Visual C++ 2017's $LN4, and $L0040101B, the
+# label a PC project's delinked function names a place in itself by (tools/delink.py): local to the function.
+_GENERATED = re.compile(r"^(@\d+|\$LC\d+|\$[LT]\d+|\$LN\d+|\$L[0-9A-F]{8,16}|_\$E\d+|\.\.\..*|@stringBase\d*|\.L.*)$")
 
 
 class ObjdiffError(NetworkError):
