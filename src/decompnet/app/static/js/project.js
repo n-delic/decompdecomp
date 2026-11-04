@@ -1343,8 +1343,9 @@ function renderCodeCoverage(ov) {
   $("coverageAuditLog").hidden=coverageAuditSlug!==ov.slug;
   const states={required:"CPU coverage audit required",needs_review:"Coverage findings need review",no_pending_findings:"No pending findings in the bounded audit",unsupported:"Coverage audit is not supported for this project format yet"};
   const entries=c.incomplete_entries || [];
-  setHtml(box, `<p><b>${esc(states[c.audit_state] || "Coverage not established")}</b> · ${esc(c.scope)}.</p><p class="small">${esc(c.note)}</p><p>${entries.length} incomplete / boundary-review entries · ${c.unresolved_candidates} unresolved raw-region candidates${c.raw_bytes!=null ? ` · ${bytes(c.raw_bytes)} raw gaps · ${bytes(c.interior_bytes)} unclassified segment interiors` : " · raw-region bytes not yet audited"}${c.search_limited ? " · search limits reached" : ""}.</p>${entries.length ? `<details><summary>Review incomplete entries (${entries.length})</summary>${entries.map(r=>`<p><button class="link-btn" data-coverage-function="${esc(r.function)}">${esc(r.function)}</button> · ${r.size} bytes · incomplete (saved status: ${esc(r.stored_status)})<br><span class="small">${esc(r.reason)}</span></p>`).join("")}</details>` : ""}`);
+  setHtml(box, `<p><b>${esc(states[c.audit_state] || "Coverage not established")}</b> · ${esc(c.scope)}.</p><p class="small">${esc(c.note)}</p><p>${entries.length} incomplete / boundary-review entries · ${c.unresolved_candidates} unresolved raw-region candidates${c.raw_bytes!=null ? ` · ${bytes(c.raw_bytes)} raw gaps · ${bytes(c.interior_bytes)} unclassified segment interiors` : " · raw-region bytes not yet audited"}${c.search_limited ? " · search limits reached" : ""}.</p>${entries.length ? `<details><summary>Review incomplete entries (${entries.length})</summary>${entries.map(r=>`<p><button class="link-btn" data-coverage-function="${esc(r.function)}">${esc(r.function)}</button> <button class="ghost small-btn" data-recover-function="${esc(r.function)}" data-recover-start="${r.vram}" data-recover-size="${r.size}">Review extension</button> · ${r.size} bytes · incomplete (saved status: ${esc(r.stored_status)})<br><span class="small">${esc(r.reason)}</span></p>`).join("")}</details>` : ""}`);
   box.querySelectorAll("[data-coverage-function]").forEach(b=>b.onclick=()=>openFn(b.dataset.coverageFunction));
+  box.querySelectorAll("[data-recover-function]").forEach(b=>b.onclick=()=>reviewCodeExtension(b.dataset.recoverFunction,Number(b.dataset.recoverStart),Number(b.dataset.recoverSize)));
   const button=$("coverageAuditBtn");button.hidden=!c.supported;
   button.onclick=()=>runCoverageAudit();
   const key=ov.slug+":"+c.audit_revision;
@@ -1367,4 +1368,23 @@ async function runCoverageAudit() {
     if (S.slug!==slug) return;
     S.ov=ov;renderStats(ov);renderNext(ov);
   } catch(error) {showJobError(log,error.message);} finally {coverageAuditRunning=false;finish();}
+}
+
+
+function reviewCodeExtension(name,start,size) {
+  const slug=S.slug;
+  const body=dialog("Review original code extent", `<p>Extend <code>${esc(name)}</code> beyond its current ${size} bytes. Inspect every reachable path and the original bytes first. This reopens the candidate; it does not infer a C match.</p><label>Exclusive end address (hex)<input data-reviewed-end value="${hex8(start+size)}"></label><label>Boundary evidence<textarea data-reviewed-reason rows="4"></textarea></label><button class="primary" data-reviewed-apply>Recover reviewed bytes</button><pre class="joblog" data-reviewed-log hidden></pre>`);
+  const button=body.querySelector("[data-reviewed-apply]"),log=body.querySelector("[data-reviewed-log]");
+  button.onclick=async()=>{
+    const text=body.querySelector("[data-reviewed-end]").value.trim(), reason=body.querySelector("[data-reviewed-reason]").value.trim();
+    if (!/^(?:0x)?[0-9a-f]+$/i.test(text) || !reason) {showJobError(log,"Supply an exclusive hex end and the boundary evidence.");return;}
+    const end=parseInt(text.replace(/^0x/i,""),16);
+    if (end<=start+size || end%4 || end>start+0x10000) {showJobError(log,"Use an aligned extension of at most 64 KiB.");return;}
+    const finish=beginWork(log,"Recovering reviewed original extent",[button]);
+    try {
+      const {job}=await api("/api/recover-code",{method:"POST",body:{slug,changes:[{function:name,end,reason}]}});
+      await followJob(job,log);
+      if (S.slug===slug) {await refreshMap(true);const ov=await api("/api/project?slug="+encodeURIComponent(slug));if(S.slug===slug){S.ov=ov;renderStats(ov);renderNext(ov);}}
+    } catch(error) {showJobError(log,error.message);} finally {finish();}
+  };
 }

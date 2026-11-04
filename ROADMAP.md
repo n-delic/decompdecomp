@@ -1,5 +1,9 @@
 # Roadmap
 
+Implemented: explicit reviewed MIPS raw-tail recovery with staged disassembly, original-prefix and overlap guards,
+saved progress, and raw/export boundary reconciliation. Added a source-independent corruption benchmark
+and bounded leaf review hints. New-function adoption and other-processor/imported-build extent recovery remain planned.
+
 Implemented: source-free MIPS fallthrough/delay-slot review, legacy incomplete-entry visibility,
 derived boundary-review filters and map state, raw/interior audit metrics, and a bounded
 completion audit in the overview. Detected progress is never whole-image completion proof.
@@ -306,6 +310,7 @@ folder, `src/decompnet/consoles/<id>/`; a new console adds a column (CONTRIBUTIN
 | Agents' verdict "no C makes this" (3 agents of 2 models: set aside, red in the map) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Check again (and before helpers start, once after each update) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kernel stubs set aside and named | — | set aside (BIOS calls) | ✓ | set aside, named by library and NID | — | ✓ import thunks | — | — |
+| Reviewed existing raw-tail recovery (local ROM) | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Derived incomplete state / raw coverage / completion audit | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Read-only gap/pointer/interior audit / incomplete-target warnings | ✓ | ✓ | ✓ (scalar decoder) | ✓ | — | — | — | — |
 | Guarded jump-table / local callback-consumer audit (scalar MIPS ROM) | ✓ | ✓ | ✓ | ✓ | — | — | — | — |

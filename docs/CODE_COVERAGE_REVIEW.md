@@ -78,3 +78,50 @@ The audit keeps its existing candidate, mapping, pointer and flow bounds. Hittin
 a bound is visible and cannot be treated as a clean completion audit. A partial
 or compressed image does not reveal code that has not been unpacked/mapped; a
 whole-image coverage claim needs a separate validated code/data inventory.
+
+## Recovering a reviewed raw tail
+
+Each incomplete overview entry has **Review extension**. Enter the exclusive hex
+end address and the evidence for it. The local operator API also accepts a batch
+at `POST /api/recover-code`: `changes` is a list of `{function, end, reason}`.
+No source is needed to review control flow, but original source/objects can be
+additional evidence when available. Never infer a boundary from source size alone.
+
+Recovery preserves the original prefix and reads all new bytes from the verified
+analysis image. It rejects matched or claimed entries, overlaps, mixed mappings,
+and boundaries crossing a different code/data parent. A private Splat run must
+retain exactly the reviewed extent before anything is published. Input rows,
+settings and claims are checked again after that run. The entry reopens, prior
+attempts and review evidence remain, and the changed layout is saved through the
+normal progress workflow. Rebuildable export moves the consumed raw-tail boundary
+so those bytes cannot be included both as code and as an incbin.
+
+An independent leaf hint now also considers small, complete, ABI-compatible
+intervals bounded by known function bodies, allowing up to 12 bytes of zero
+alignment. It remains weaker review-only evidence, not an automatic function.
+
+## Measuring missed-code detection
+
+`python -m decompnet.app.coverage_benchmark --image <owned-demo-ROM> --elf
+<matching-debug-ELF> --output <report.json>` runs controlled corruptions. The ELF
+text must match the ROM mapping exactly. Ground-truth symbols construct and score
+cases; the audit receives only original bytes and the damaged detection layout.
+
+On 4 November 2026, a deterministic size-spread sample of 24 among 96 functions
+in the owned N64 demo produced 72 cases:
+
+| Corruption | Before the bounded-leaf hint | After |
+| --- | ---: | ---: |
+| Entire function hidden | 22 / 24 detected | 24 / 24 detected |
+| Only a 4-byte opening retained | 24 / 24 detected | 24 / 24 detected |
+| Opening incorrectly classified as assembly | 24 / 24 detected | 24 / 24 detected |
+
+The final sample had zero candidate starts outside the ground-truth function
+bodies and no search limits. This is one small demo sample, not an estimate of
+retail recall or false-positive rate. Detection also does not prove the proposed
+end address, semantic identity, source language or a C match. Raw data and microcode
+remain possible false positives. Keep reporting bounds and unresolved regions.
+
+The low-level audit accepts disjoint `review_ranges` to examine every raw block
+individually when a global candidate cap fills. Such results are explicitly
+partial; a partial scan cannot replace the saved whole-project completion audit.

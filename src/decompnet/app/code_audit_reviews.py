@@ -36,6 +36,7 @@ def decorated(state):
 def record(net,pid,result,image):
     # Include the whole image and the examined bounds: reviews cannot silently
     # follow an address into another ROM revision or changed candidate extent.
+    if result.get('partial'):raise NetworkError('A partial range scan cannot replace the whole-project coverage audit.')
     result.setdefault('input_revision',revision(net,pid))
     identity=hashlib.sha256(image).hexdigest()
     for r in result['candidates']:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 import struct
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -103,7 +104,11 @@ def segments_from_config(path: Path) -> list[Segment]:
     """Code segments (ROM range + load address) from a splat config."""
     import yaml
 
-    cfg = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return segments_from_config_data(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def segments_from_config_data(cfg: dict) -> list[Segment]:
+    """The same validated code-parent mappings from a staged split configuration."""
     raw = cfg.get("segments", [])
 
     def start_of(seg):
@@ -172,13 +177,16 @@ def _add_symbols(path: Path, lines: list[str]) -> None:
     path.write_text(text.rstrip("\n") + "\n" + "".join(f"{line}\n" for line in keep), encoding="utf-8")
 
 
-def _splat(args: list[str], cwd: Path, log=print) -> str:
+def _splat(args: list[str], cwd: Path, log=print, *, timeout: float | None = None) -> str:
     check_cancel = getattr(log, "check_cancel", lambda: None)
-    proc = subprocess.Popen([console_python(), "-m", "splat", *args], cwd=cwd, stdout=subprocess.PIPE,
+    from ..limits import capped
+    deadline=time.monotonic()+timeout if timeout is not None else None
+    proc = subprocess.Popen(capped([console_python(), "-m", "splat", *args]), cwd=cwd, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     try:
         while True:
             check_cancel()
+            if deadline is not None and time.monotonic()>=deadline:raise RomError('Staged disassembly exceeded its time limit; no reviewed changes were published.')
             try:
                 stdout, stderr = proc.communicate(timeout=0.2)
                 break

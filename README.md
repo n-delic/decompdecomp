@@ -31,6 +31,9 @@ under a tenth of a second (1.4 s before), and agents restart by themselves after
 
 ## Match through the live app
 
+Reviewed MIPS raw tails can be recovered through the coverage panel or operator API, with staged disassembly, unchanged original prefixes and export guards. A known-demo corruption benchmark measures detection independently of matching; see [coverage review](docs/CODE_COVERAGE_REVIEW.md).
+
+
 Local MIPS ROM projects expose incomplete function boundaries and raw-region
 coverage separately from matching progress. When the detected queue empties, the
 overview runs a bounded CPU coverage audit; it never infers whole-game completion

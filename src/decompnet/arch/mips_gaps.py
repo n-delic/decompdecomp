@@ -2,7 +2,7 @@
 from bisect import bisect_right
 from collections import Counter
 
-from .mips import JR_RA, boundary_reason, is_frame, rabbitizer_category
+from .mips import JR_RA, asm_reason, boundary_reason, is_frame, rabbitizer_category
 
 MAX_STEPS = 4096
 MAX_CANDIDATES = 128
@@ -64,7 +64,7 @@ def extent(image, start, end, vram, order, cpu="", *, table_ranges=(), mapping_c
             'extent_bytes':highest-start,'step_limit':bool(pending),'unresolved_transfers':indirect}
 
 
-def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=()):
+def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambda _:None, data_mappings=(), review_ranges=()):
     """Frozen image + known code ranges. Even closed direct flow remains review-only."""
     order='big' if big_endian else 'little'
     spans=sorted((s['rom_start'],s['rom_end'],s['vram']) for s in segments)
@@ -97,6 +97,10 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
             pos=max(pos,b)
         if pos<hi:interiors.append((pos,hi))
     regions=sorted([(a,b,'raw gap') for a,b in gaps]+[(a,b,'unowned segment interior') for a,b in interiors])
+    if review_ranges:
+        if any(not isinstance(r,(list,tuple)) or len(r)!=2 or any(type(x) is not int for x in r) or not 0<=r[0]<r[1]<=len(image) or r[0]%4 or r[1]%4 for r in review_ranges):
+            raise ValueError('Review ranges must be aligned original-image intervals.')
+        regions=sorted(set((max(a,lo),min(b,hi),kind) for a,b,kind in regions for lo,hi in review_ranges if a<hi and lo<b))
     starts=[a for a,_,_ in regions]
     candidates={};references=0;overflow=False
     def region_at(offset):
@@ -161,6 +165,25 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
                 if row is None:continue
                 pointer_count+=1
                 if len(row['pointer_references'])<8:row['pointer_references'].append({'rom_offset':at,'value':value})
+    # A small complete gap between known bodies can hold an uncalled leaf with
+    # no frame. Keep this weaker, ABI-compatible evidence review-only: data can
+    # also encode instructions. Never scan arbitrary offsets as leaf starts.
+    known_ends={f['rom']+f['size'] for f in functions}
+    known_starts={f['rom'] for f in functions}
+    leaf_hints=0
+    for lo,hi,kind in regions:
+        if hi-lo>0x1000 or lo not in known_ends or hi not in known_starts or leaf_hints>=32:continue
+        leaf_start=lo
+        while leaf_start+4<=min(hi,lo+12) and not any(image[leaf_start:leaf_start+4]):leaf_start+=4
+        for mapping in mapping_choices[:1]:
+            info=extent(image,leaf_start,hi,leaf_start+mapping,order,cpu)
+            size=info['extent_bytes'];body=image[leaf_start:leaf_start+size]
+            if not info['direct_flow_closed'] or size<12 or hi-leaf_start-size>12 or any(image[leaf_start+size:hi]):continue
+            if asm_reason(body,big_endian,cpu=cpu):continue
+            ws=[int.from_bytes(body[i:i+4],order) for i in range(0,len(body),4)]
+            if any(w>>26==3 or (w>>26==0 and w&63==9) for w in ws):continue
+            row=seed(leaf_start,leaf_start+mapping,'closed leaf in a bounded unowned interval')
+            if row is not None:leaf_hints+=1
     # Quiet framed bodies with no incoming transfer are weaker hints; cap them separately.
     hints=0;hint_limit=False
     for lo,hi,region_name in regions:
@@ -184,7 +207,7 @@ def audit(image, segments, functions, *, big_endian=True, cpu="", progress=lambd
     unresolved_callbacks=[]
     consumer_limit=consumers(image,functions,rows,order,table_ranges,mapping_choices,unresolved_callbacks)
     rows.sort(key=lambda r:(not bool(r['incoming']),not r['direct_flow_closed'],r['rom_offset'],r['vram']))
-    return {'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
+    return {'review_ranges':list(review_ranges),'partial':bool(review_ranges),'gaps':len(gaps),'gap_bytes':sum(b-a for a,b in gaps),'candidates':rows,'incoming_references':references,
             'unresolved_callbacks':unresolved_callbacks,'callback_scan_limit':consumer_limit,'boundary_candidates':boundary_candidates,'interior_bytes':sum(b-a for a,b in interiors),'interior_regions':len(interiors),'pointer_references':pointer_count,'pointer_probe_limit':pointer_limit,
             'hint_scan_limit':hint_limit,'candidate_limit':overflow,'mapping_limit':len(mappings)>8,
             'note':'Review evidence only. Valid instructions, calls and returns can occur in data or microcode. No targets, statuses, source or compiler settings changed.'}

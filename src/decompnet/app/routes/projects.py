@@ -130,6 +130,10 @@ def register(app: App) -> None:
         from .. import rom_gap_audit
         return {"job": jobs.start("code-audit",lambda log:rom_gap_audit.run(net,slug,log))}
 
+    def p_recover_code(slug, request, data):
+        from ..reviewed_code import run
+        return {"job":jobs.start('reviewed-code-recovery',lambda log:run(net,slug,data.get('changes'),log))}
+
     def g_code_audit(slug, request, data):
         from ..code_audit_reviews import decorated, load
         return decorated(load(net,net.project_row(slug)['id']))
@@ -616,6 +620,7 @@ def register(app: App) -> None:
         "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
+        "/api/recover-code": (p_recover_code, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
         "/api/delete": (p_delete, ["POST"]),
         "/api/try": (p_try, ["POST"]), "/api/release": (p_release, ["POST"]), "/api/claim/handover": (p_claim_handover, ["POST"]), "/api/reopen": (p_reopen, ["POST"]), "/api/setaside": (p_set_aside, ["POST"]),

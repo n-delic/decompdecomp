@@ -112,7 +112,8 @@ def _export_segments(config: dict, functions) -> dict:
     already recovered that word in the function; exporting the old boundary
     would put it in both the compiled function and a data object.
     """
-    config = json.loads(json.dumps(config))
+    from .reviewed import extend_config
+    config = extend_config(config, functions)
     for segment in _segments(config):
         if segment.get('type') != 'code' or 'vram' not in segment:
             continue
