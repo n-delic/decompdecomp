@@ -1216,9 +1216,10 @@ async function renderDeepSweep() {
     $("deepSweepProgressText").textContent = "";
   }
   const version = deepSweepProjectVersion;
+  if (panel.dataset.resetting === slug) return;
   try {
     const status = await api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`);
-    if (S.slug !== slug || version !== deepSweepProjectVersion) return;
+    if (S.slug !== slug || version !== deepSweepProjectVersion || panel.dataset.resetting === slug) return;
     if (panel.dataset.loadedSlug !== slug) {
       panel.dataset.loadedSlug = slug;
       $("deepSweepMinutes").value = status.minutes;
@@ -1310,14 +1311,27 @@ $("deepSweepStop").onclick = async () => {
 };
 
 $("deepSweepReset").onclick = async () => {
+  const button = $("deepSweepReset"), panel = $("deepSweepPanel");
+  if (button.disabled || panel.dataset.resetting) return;
   if (!confirm("Reset this project’s deep permuter totals and visible improvement lists? Saved code, matches, completed passes and rewrite evidence are kept. Stop active deep searches first.")) return;
   const slug = S.slug, log = $("deepSweepLog");
-  const done = beginWork(log, "Resetting deep permuter metrics", [$("deepSweepReset")], "Metrics reset");
+  panel.dataset.resetting = slug;
+  deepSweepProjectVersion++; // Discard status requests that started before this reset.
+  const previousLabel = button.innerHTML;
+  button.innerHTML = '<span class="spin-dot" aria-hidden="true"></span> Resetting…';
+  button.setAttribute("aria-busy", "true");
+  $("deepSweepLogSection").hidden = false;
+  const done = beginWork(log, "Resetting deep permuter metrics", [button, $("deepSweepStart")], "Metrics reset");
   try {
     const status = await api("/api/permuter/pass", {method:"POST", body:{slug, action:"reset-metrics"}});
     if (S.slug === slug) { renderDeepSweepResults(status); renderDeepActivity({}); }
   } catch (error) { showJobError(log, error.message); }
-  finally { done(); }
+  finally {
+    done();
+    delete panel.dataset.resetting;
+    button.innerHTML = previousLabel;
+    button.removeAttribute("aria-busy");
+  }
 };
 
 
