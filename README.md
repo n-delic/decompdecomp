@@ -39,14 +39,19 @@ move files, or start a build. It stops after 5,000 files, 2 GiB read or 30 secon
 the file manually if it stops. Clear the folder setting to disable searches. If a verified game is already in the
 project, **Retry setup** reuses it.
 
+For supported versioned N64 Splat projects, the search checks every original ROM hash declared by the build's
+versioned configs, or the original cartridge hashes listed in a decompressed-image project's README. It reports the
+matching version; setup puts the ROM at that version's path and passes `VERSION=…` to Make. A byte-swapped ROM already
+at the destination is converted before setup instead of being treated as ready.
+
 This works for public projects whose declared SHA-1 is the original file's hash. dtk and configure projects do not
 declare a game SHA-1 in their setup metadata yet, so select their game files manually. PlayStation splat projects
 often hash an extracted file rather than the whole disc; a library of disc images will not match that hash.
 
 ## Install
 
-decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with one command. The installer also gets
-the free compilers and keeps decompdecomp up to date:
+decompdecomp runs on **Linux and Windows 10/11** on x86-64, and **macOS 12+** on Intel or Apple Silicon. On Linux, install it with
+one command. The installer also gets the free compilers and keeps decompdecomp up to date:
 
 ```
 curl -fsSL https://decomp.ndelic.com/install.sh | bash
@@ -76,8 +81,8 @@ decomp shortcut
 decomp
 ```
 
-The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon
-brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp` folder.
+The app opens in a native Windows window. Its shortcuts appear on the desktop and in Start, and its tray icon brings back a window closed while helpers work. Free tools use Windows builds where available. Projects stay in your Windows `Decomp`
+folder.
 
 > [!IMPORTANT]
 > **PS1, PS2 and most N64 games need WSL 2 on Windows.** Their period compilers (GCC for PlayStation, EE-GCC and
@@ -256,15 +261,16 @@ game's code is its rights holder's: keep it to yourself.
 | 3DS, Switch, Xbox 360 | Community decomps only |
 
 1.0.3 rewrote most of the app, so every platform needs testing again, Nintendo 64 too. Try it on a game you own and
-[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes
-from beta to recommended.
+[tell us how it went](https://github.com/n-delic/decompdecomp/issues): what worked, what didn't, what was confusing. Reports are how a platform goes from beta to
+recommended.
 
 Proprietary compilers (CodeWarrior, Visual C++, IDO) are installed only after you accept their licenses in the app.
-Visual C++ 2017 runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install yourself (your distribution's `wine`
-package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple Silicon): the app says
-so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the packs don't
-have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder (it's
-read where it is, never copied).
+
+Visual C++ 2017 (which builds PC games of 2015 and newer) runs through [wine](https://www.winehq.org/) on Linux and macOS, which you install
+yourself (your distribution's `wine` package; on a Mac, Wine Stable from [Gcenx's builds](https://github.com/Gcenx/macOS_Wine_builds/releases), which needs Rosetta 2 on Apple
+Silicon): the app says so when you install that pack. The older Visual C++ run without it. A game built with a Visual C++ the
+packs don't have (2012, 2013, 2019, 2022...) builds with your own copy of it: point Setup at your Visual Studio's VC folder
+(it's read where it is, never copied).
 
 ## Questions people ask
 
@@ -340,9 +346,7 @@ decompdecomp continues [decomp.wtf](https://github.com/i12bp8/decomp.wtf) by
 [Sam Wolfs (@i12bp8)](https://github.com/i12bp8), who made it up to version 0.10.6 and then archived it. Thank you,
 Sam. decompdecomp is not related to decomp.wtf, and its author does not endorse it.
 
-decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals
-compilers. The
-[guide](docs/GUIDE.md#built-on) lists them.
+decompdecomp uses splat, spimdisasm, objdiff, decomp-toolkit, m2c, Ghidra, decomp-permuter, wibo, wine and the decompals compilers. The [guide](docs/GUIDE.md#built-on) lists them.
 
 ## License
 

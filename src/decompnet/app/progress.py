@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import threading
 import time
@@ -27,7 +28,6 @@ from pathlib import Path
 
 from .. import toolchains
 from ..network import NetworkError
-from ..rom.symbols import IDENT
 from . import saves
 
 CHECK_SECONDS = 0.25  # a non-forced check of an unchanged folder is this rare per project
@@ -161,6 +161,10 @@ def _repair(net, pid: int, folder: Path, disk: dict[str, str], report) -> dict[s
     return disk
 
 
+# #158: spimdisasm names a piece that starts at a jump target by its label, `.L80129B10`, and the app saves it so.
+NAME = re.compile(r"[A-Za-z_]\w*|\.L[0-9A-F]+")
+
+
 def _manifest(files: dict[str, str], cfg: dict) -> dict:
     try:
         manifest = json.loads(files[saves.MANIFEST])
@@ -173,10 +177,12 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         if len(layout) != len(manifest.get("layout", [])):
             raise ValueError("a function is listed twice in layout")
         for name, entry in layout.items():
-            if (not IDENT.fullmatch(name) or not isinstance(entry["vram"], int)
+            if not NAME.fullmatch(name):
+                raise ValueError(f"layout entry {name!r} is not a function name")
+            if (not isinstance(entry["vram"], int)
                     or not isinstance(entry["size"], int) or entry["size"] <= 0
                     or entry.get("status", "open") not in ("open", "asm")):
-                raise ValueError(f"layout entry {name!r} needs a name, an integer vram and a size above 0")
+                raise ValueError(f"layout entry {name!r} needs an integer vram and a size above 0")
         compiler = manifest.get("compiler")
         if compiler is not None and not isinstance(compiler, dict):
             raise ValueError("compiler is not an object")
@@ -185,7 +191,7 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
                 or not isinstance(manifest.get("set_aside", []), list):
             raise ValueError("symbols, notes, knowledge and set_aside must be lists")
         for symbol in manifest.get("symbols", []):
-            if (not isinstance(symbol, dict) or not IDENT.fullmatch(symbol.get("name", ""))
+            if (not isinstance(symbol, dict) or not NAME.fullmatch(symbol.get("name", ""))
                     or not isinstance(symbol.get("address"), int) or not isinstance(symbol.get("size", 0), int)
                     or symbol.get("kind", "data") not in ("func", "data", "string", "jtbl", "bss")):
                 raise ValueError(f"symbol {symbol.get('name')!r} has an invalid name, address, size or kind")
@@ -197,7 +203,7 @@ def _manifest(files: dict[str, str], cfg: dict) -> dict:
         if any(not isinstance(item, str) for item in manifest.get("knowledge", [])):
             raise ValueError("knowledge must be a list of text")
         for item in manifest.get("set_aside", []):
-            if (not isinstance(item, dict) or not IDENT.fullmatch(item.get("name", ""))
+            if (not isinstance(item, dict) or not NAME.fullmatch(item.get("name", ""))
                     or not isinstance(item.get("vram"), int)
                     or any(key in item and not isinstance(item[key], str) for key in ("asm_code", "asm_twin"))
                     or "not_c" in item and (not isinstance(item["not_c"], dict)

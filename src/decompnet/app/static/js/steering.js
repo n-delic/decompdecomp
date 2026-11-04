@@ -365,7 +365,7 @@ async function renderProjectSettings() {
     : "Every function is built with this compiler and these flags. If almost nothing matches, the game was probably built with another compiler or flags.";
   if (!$("compilerPanel").hidden) {
     if (!S.st) await loadState();
-    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform);
+    fillCompilers($("setTc"), ov.compiler.toolchain, ov.platform, fork ? ov.compilers : null);
     $("setFlags").value = ov.compiler.flags.join(" ");
     $("autoAdjust").checked = !!ov.auto_compiler;
     $("setRanges").value = "";
