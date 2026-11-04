@@ -31,6 +31,9 @@ const steering = fs.readFileSync('src/decompnet/app/static/js/steering.js','utf8
 vm.runInContext(steering.slice(steering.indexOf('function compilerFunctionLinks'), steering.indexOf('for (const id of ["compilerGroup"')), ctx);
 ctx.renderCompilerParts({parts});
 assert.match(elements.get('compilerParts').innerHTML, /Compare all matches with default/);
+assert.match(elements.get('compilerParts').innerHTML, /Test this profile as default/);
 ctx.S.ov.kind = 'fork';
 ctx.renderCompilerParts({parts});
 assert.doesNotMatch(elements.get('compilerParts').innerHTML, /Compare all matches with default/);
+
+assert.doesNotMatch(elements.get('compilerParts').innerHTML, /Test this profile as default/);

@@ -658,6 +658,8 @@ $("autoAdjust").onchange = async () => {
 $("compilerParts").onclick = async (e) => {
   const fn = e.target.closest("[data-compiler-function]");
   if (fn) { openFn(fn.dataset.compilerFunction); return; }
+  const testDefault = e.target.closest("button[data-profile-test-default]");
+  if (testDefault) { await testProfileAsDefault(testDefault); return; }
   const profileButton = e.target.closest("button[data-profile-default]");
   if (profileButton) { await compareProfileWithDefault(profileButton); return; }
   const b = e.target.closest("button[data-unrange]");
@@ -825,6 +827,44 @@ async function compareProfileWithDefault(button) {
     if (S.slug === slug) { renderCompilerParts(compilerPartsAnswer); await loadCompilerAnswer(); }
   }
 }
+async function testProfileAsDefault(button) {
+  const group = compilerDisplayedGroups[Number(button.dataset.profileTestDefault)], part = group?.parts[0];
+  if (!part || group.default) return;
+  const slug = S.slug;
+  const profile = {toolchain:part.toolchain, flags:part.flag_list || part.flags.split(/\s+/).filter(Boolean)};
+  const body = dialog('Test compiler profile as default', `<p>Check currently matched functions that use the project default against <b>${esc(group.compiler)}</b>.</p>
+    <code class="compiler-arguments">${esc(profile.flags.join(' '))}</code>
+    <p class="small muted">Test only. Compiler settings, ranges and saved matches stay unchanged. Functions using other profiles are excluded.</p>
+    <section class="default-profile-test" aria-label="Default profile test progress"><p data-default-status role="status">Counting default-profile matches…</p>
+    <progress class="deep-sweep-bar" data-default-bar value="0" max="1" aria-label="Functions checked"></progress>
+    <dl class="default-profile-counts"><div><dt>Passed</dt><dd class="ok" data-default-passed>0</dd></div><div><dt>Did not pass</dt><dd data-default-failed>0</dd></div><div><dt>Remaining</dt><dd data-default-left>—</dd></div></dl></section>
+    <p data-default-verdict></p><details data-default-failures hidden><summary>Functions that did not pass</summary><div class="compiler-table" data-default-failure-list></div></details>
+    <div data-default-work></div><details class="more"><summary>Test log</summary><pre class="joblog" data-default-log></pre></details>`, 'compiler-default-test');
+  const get = selector=>body.querySelector(selector), log=get('[data-default-log]'), work=get('[data-default-work]');
+  const active=()=>S.dialogKind==='compiler-default-test' && !$("dialog").hidden && get('[data-default-log]')===log;
+  const finish=beginWork(work,'Preparing compatibility test',[button],'Test complete; no settings changed.');
+  const waitingBar=work.previousElementSibling;
+  const render=p=>{
+    if(!p)return;
+    if(work._workStatus)work._workStatus.textContent='Testing default-profile matches…';
+    get('[data-default-status]').textContent=`${p.checked.toLocaleString()} / ${p.total.toLocaleString()} functions checked · ${p.total ? Math.round(100*p.checked/p.total) : 100}%`;
+    get('[data-default-bar]').max=p.total || 1;get('[data-default-bar]').value=p.checked;
+    get('[data-default-passed]').textContent=p.passed.toLocaleString();get('[data-default-failed]').textContent=p.failed.toLocaleString();
+    get('[data-default-left]').textContent=Math.max(0,p.total-p.checked).toLocaleString();
+    if(waitingBar?.classList.contains('workbar'))waitingBar.hidden=true;
+    get('[data-default-failures]').hidden=!p.failures?.length;
+    get('[data-default-failure-list]').innerHTML=`<table><thead><tr><th>Function</th><th>Result</th></tr></thead><tbody>${(p.failures || []).map(f=>`<tr><td class="mono">${esc(f.function)}</td><td>${esc(f.reason)}</td></tr>`).join('')}</tbody></table>`;
+  };
+  try {
+    const {job}=await api('/api/compiler/test-default',{method:'POST',body:{slug,profile}});
+    const out=await followJob(job,log,(_lines,state)=>{if(active())render(state.progress);},active);
+    if(!active() || !out)return;
+    render(out);
+    get('[data-default-verdict]').textContent=out.stale ? 'Inputs changed while testing. Results are outdated; rerun before deciding.' : !out.total ? 'No matched functions currently use the default. No compatibility conclusion can be drawn.' : out.compatible ? 'All tested default-profile matches still match byte for byte. This profile is a compatible default candidate for this population. Nothing has been changed.' : `${out.failed} functions did not pass. This profile cannot replace the default without addressing them. Nothing has been changed.`;
+  } catch(error){if(active())showJobError(work,error.message);}
+  finally{finish();}
+}
+
 const compilerGroupsOpen = new Set();
 const compilerReasonsOpen = new Set();
 function renderCompilerParts(a) {
@@ -848,7 +888,7 @@ function renderCompilerParts(a) {
   setHtml($("compilerParts"), mode === "range" ? `<ol class="compiler-range-list">${groups.flatMap(g => g.parts).map(p => row(p, true)).join("")}</ol>`
     : groups.map((g, index) => `<details class="compiler-profile" data-compiler-group="${esc(g.id)}"${compilerGroupsOpen.has(g.id) ? " open" : ""}>
       <summary><span><b>${esc(mode === "family" ? g.family.toUpperCase() : g.compiler)}</b>${g.default ? ` <span class="chip-s">${mode === "family" && g.profiles > 1 ? "Includes default" : "Default"}</span>` : ""}${mode === "settings" ? `<code class="compiler-arguments">${esc(g.flags || "No arguments")}</code>` : ""}<span class="compiler-profile-count">${plural(g.parts.length, "range")}${g.functions != null ? ` · ${plural(g.functions, "function")}` : ""}${mode === "family" ? ` · ${plural(g.profiles, "argument profile")}` : ""}</span></span></summary>
-      ${mode === "settings" && !g.default && S.ov.kind !== "fork" ? `<div class="compiler-profile-action"><button class="ghost small-btn" type="button" data-profile-default="${index}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? " disabled" : ""}>Compare all matches with default</button><p class="small muted">Only exact byte matches move to the project default. Drafts and non-matches keep their settings.</p><p class="small" role="status">${esc(compilerProfileJobs.get(`${S.slug}:${g.id}`)?.message || "")}</p></div>` : ""}
+      ${mode === "settings" && !g.default && S.ov.kind !== "fork" ? `<div class="compiler-profile-action"><button class="ghost small-btn" type="button" data-profile-default="${index}"${compilerProfileJobs.get(`${S.slug}:${g.id}`)?.running ? " disabled" : ""}>Compare all matches with default</button><button class="ghost small-btn" type="button" data-profile-test-default="${index}">Test this profile as default</button><p class="small muted">Only exact byte matches move to the project default. Drafts and non-matches keep their settings.</p><p class="small" role="status">${esc(compilerProfileJobs.get(`${S.slug}:${g.id}`)?.message || "")}</p></div>` : ""}
       <ol class="compiler-range-list">${g.parts.map(p => row(p, mode === "family")).join("")}</ol></details>`).join(""));
   $("compilerParts").querySelectorAll("details[data-range-reason]").forEach(d => d.ontoggle = () => {
     if (!d.isConnected) return;

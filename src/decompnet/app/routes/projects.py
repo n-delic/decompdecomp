@@ -40,7 +40,7 @@ def register(app: App) -> None:
                         with net.progress.view():
                             return fn(slug, request, data)
                     result = fn(slug, request, data)
-                    if request.method == "POST" and request.url.path != "/api/verification" and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
+                    if request.method == "POST" and request.url.path not in ("/api/verification", "/api/compiler/test-default") and not (request.url.path == "/api/suggestion" and data.get("background") and data.get("action") == "apply") and net.store.one("SELECT 1 FROM projects WHERE slug=?", slug):
                         net.progress.sync(slug, force=True)
                     return result
                 return JSONResponse(await ((app.ui_call or call) if request.method == "GET" else call)(perform))
@@ -71,6 +71,10 @@ def register(app: App) -> None:
             return manager.transcripts.export(slug, int(data.get('helper', 0)))
         return manager.transcript(slug, int(q.get('helper', 0)), int(q.get('session', 0)),
                                   int(q.get('after', 0)), int(q.get('before', 0)), whole=q.get('whole') == '1')
+
+    def p_compiler_default_test(slug, request, data):
+        from .. import compiler_default_test
+        return {"job": jobs.start("Test compiler profile as default", lambda log:compiler_default_test.run(net, slug, data.get('profile'), log))}
 
     def p_compiler_cleanup(slug, request, data):
         limit = int(data.get("rare_limit", 3))
@@ -558,6 +562,7 @@ def register(app: App) -> None:
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]),
+        "/api/compiler/test-default": (p_compiler_default_test, ["POST"]),
         "/api/compiler/cleanup": (p_compiler_cleanup, ["POST"]), "/api/export": (p_export, ["POST"]), "/api/open": (p_open, ["POST"]),
         "/api/reimport": (p_reimport, ["POST"]), "/api/code-audit": (p_code_audit, ["POST"]),
         "/api/code-audit-results": (g_code_audit, ["GET"]), "/api/code-audit-review": (p_code_audit_review, ["POST"]),
