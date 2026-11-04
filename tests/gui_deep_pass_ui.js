@@ -58,6 +58,15 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   ctx.renderDeepSweepResults({has_activity:false,attention:[]});
   assert.equal(element("deepSweepAttention").hidden,true);
   assert.equal(element("deepSweepAttentionList").innerHTML,"");
+  ctx.renderDeepQueueState({state:"done", has_activity:true, queue_left:19, queue_rotated:19, queue_blocked:2, awaiting_source:1});
+  assert.match(element("deepSweepQueueTitle").textContent, /paused/);
+  assert.match(element("deepSweepQueueReason").textContent, /19 paused early/);
+  assert.match(element("deepSweepQueueReason").textContent, /2 blocked by errors/);
+  assert.match(element("deepSweepQueueReason").textContent, /No workers are running/);
+  assert.equal(element("deepSweepContinue").hidden, false);
+  ctx.renderDeepQueueState({state:"running",progress:{phase:"waiting for host claims or scored C"}});
+  assert.match(element("deepSweepQueueReason").textContent, /Waiting for host claims/);
+  assert.equal(element("deepSweepContinue").hidden, true);
   await ctx.renderDeepSweep();
   for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) assert.equal(element(id).hidden,false);
 

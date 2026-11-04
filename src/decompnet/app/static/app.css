@@ -1592,6 +1592,24 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 
 .background-thread-sort { max-width:220px; margin:14px 0; }
 .thread-cpu { min-width:100px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+/* Explain the queue before presenting historical results. */
+.deep-queue-state { display:flex; align-items:center; justify-content:space-between; gap:20px;
+  border:1px solid var(--line-soft); border-left:3px solid var(--hl); border-radius:var(--r); padding:16px 18px; background:var(--raise); }
+.deep-queue-state h3 { margin:0 0 6px; font-size:15px; }
+.deep-queue-state p { margin:0; font-size:12px; line-height:1.65; color:var(--muted); max-width:95ch; }
+.deep-queue-state button { flex-shrink:0; }
+.deep-queue-state[data-state="running"] { border-left-color:var(--match); }
+.deep-sweep-results { min-width:0; }
+.deep-sweep-results > p:first-child { margin:0 0 14px; font-size:15px; }
+.deep-sweep-results .compiler-table { border:1px solid var(--line-soft); border-radius:var(--r); }
+.deep-sweep-results td { padding:14px 12px; vertical-align:top; }
+.deep-sweep-results td time { font-size:11px; color:var(--muted); white-space:nowrap; }
+.deep-result-help { margin-top:12px; font-size:12px; color:var(--muted); }
+.deep-result-help p { max-width:100ch; line-height:1.65; }
+.deep-activity-section { border-top:1px solid var(--line-soft); padding-top:18px; }
+.deep-activity-empty { margin:0 0 10px; }
+@media (max-width:700px) { .deep-queue-state { align-items:flex-start; flex-direction:column; gap:12px; } }
 .background-table table { table-layout:fixed; min-width:1100px; }
 .background-table th:nth-child(1) { width:20%; }
 .background-table th:nth-child(2) { width:34%; }

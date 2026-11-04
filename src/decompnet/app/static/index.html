@@ -456,12 +456,16 @@
           <label class="deep-sweep-repeat"><input id="deepSweepRepeat" type="checkbox"><span>Repeat completed passes<small>Otherwise, continue with untested or changed functions.</small></span></label>
           <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Deep permute untested functions</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop deep pass</button><button id="deepSweepReset" type="button" class="ghost small-btn">Reset metrics…</button></div>
         </div>
+        <section class="deep-queue-state" id="deepSweepQueueState" role="status">
+          <div><h3 id="deepSweepQueueTitle">Ready to start</h3><p id="deepSweepQueueReason"></p></div>
+          <button id="deepSweepContinue" type="button" class="ghost" hidden>Continue remaining functions</button>
+        </section>
         <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep pass progress">
           <div><b id="deepSweepMatched">0</b><span>Matched</span></div>
           <div><b id="deepSweepImproved">0</b><span>Improved</span></div>
           <div><b id="deepSweepActive">0</b><span>Searching now</span></div>
           <div><b id="deepSweepDone">0</b><span>Passes completed</span></div>
-          <div><b id="deepSweepLeft">0</b><span>Ready to search</span></div>
+          <div><b id="deepSweepLeft">0</b><span>Available for another turn</span></div>
           <div><b id="deepSweepWaiting">0</b><span>Waiting for scored C</span></div>
         </div>
         <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Deep pass functions completed"></progress>
@@ -473,8 +477,10 @@
         </details>
         <details id="deepSweepAttention" hidden><summary id="deepSweepAttentionTitle"></summary><p class="deep-issue-intro">Grouped by reason. Select a function to inspect its saved C and settings.</p><div id="deepSweepAttentionList"></div><p class="deep-issue-footer">After fixing an issue, start the pass again. To retry unchanged inputs, enable <b>Repeat completed passes</b>. This list covers errors for the current inputs; matched and set-aside functions are excluded.</p></details>
         <div id="deepSweepRecipes"></div>
-        <div id="deepSweepResults" aria-live="polite"></div>
-        <div id="deepActivitySection" hidden>
+        <div class="deep-sweep-results" id="deepSweepResults" aria-live="polite"></div>
+        <div class="deep-activity-section" id="deepActivitySection" hidden>
+        <p class="deep-activity-empty small muted" id="deepActivityEmpty" hidden></p>
+        <button id="deepActivityShowRecent" class="ghost small-btn" type="button" hidden>Show recent results</button>
         <h3>Function activity <span class="muted small" id="deepActivityCount"></span></h3>
         <div class="deep-activity-controls">
           <label><input id="deepActivityOnlyActive" type="checkbox" checked> Active only</label>

@@ -209,7 +209,7 @@ class Sweeps:
     def status(self, slug):
         proj = self.net.project_row(slug)
         counts = self.net.store.one("SELECT COUNT(*) total, SUM(best_source IS NOT NULL AND best_score IS NOT NULL) ready "
-                                    "FROM functions WHERE project_id=? AND status='open'", proj['id'])
+                                    f"FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD}", proj['id'])
         completed = self.net.store.one("SELECT COUNT(*) n FROM deep_permutation_passes d JOIN functions f ON f.id=d.function_id "
                                       "WHERE f.project_id=? AND d.state='completed'", proj['id'])['n']
 
@@ -225,22 +225,26 @@ class Sweeps:
             cached = self.queue_cache.get(cache_key)
             current = dict(self.active.get(slug, {}))
         if cached and cached[0] > time.monotonic():
-            done_open, done_matched = cached[1:]
+            done_open, done_matched, rotated, blocked = cached[1:]
         else:
-            done_open = done_matched = 0
+            done_open = done_matched = rotated = blocked = 0
             rows = self.net.store.all("""SELECT f.*,d.scope AS pass_scope,d.minutes AS pass_minutes,
-                d.max_variants AS pass_variants FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
-                WHERE f.project_id=? AND d.state='completed' AND f.status IN ('open','matched')""", proj['id'])
+                d.max_variants AS pass_variants,d.state AS pass_state FROM functions f JOIN deep_permutation_passes d ON d.function_id=f.id
+                WHERE f.project_id=? AND f.gone_mark IS NULL AND f.status IN ('open','matched')""", proj['id'])
             for row in rows:
                 if (row['best_source'] and row['best_score'] is not None
                         and row['pass_minutes'] == cfg['minutes'] and row['pass_variants'] == cfg['max_variants']
                         and row['pass_scope'] == signature(self.net, proj, row, cfg['minutes'], cfg['max_variants'])):
-                    if row['status'] == 'open':
-                        done_open += 1
-                    else:
-                        done_matched += 1
+                    if row['pass_state'] == 'completed':
+                        if row['status'] == 'open':
+                            done_open += 1
+                        else:
+                            done_matched += 1
+                    elif row['status'] == 'open':
+                        rotated += int(row['pass_state'] == 'rotated')
+                        blocked += int(row['pass_state'] == 'error')
             with self.lock:
-                self.queue_cache[cache_key] = (time.monotonic() + QUEUE_CACHE_SECONDS, done_open, done_matched)
+                self.queue_cache[cache_key] = (time.monotonic() + QUEUE_CACHE_SECONDS, done_open, done_matched, rotated, blocked)
         job = self.jobs.jobs.get(current.get('job'), {})
         recipes, measurements, wins = self.recipes(proj['id']), self.measurements(proj['id']), self.recipe_wins(proj['id'])
         reset = self.net.store.one('SELECT value FROM settings WHERE key=?', f'deep-metrics-reset:{proj["id"]}')
@@ -248,7 +252,7 @@ class Sweeps:
                             or cfg.get('metrics_started', bool((completed or errors) and not reset)))
         return cfg | {'has_activity': has_activity, 'threads_default': workers.default_workers(),
                       'total': counts['total'], 'ready': ready, 'queue_done': done_open + done_matched,
-                      'queue_left': max(0, ready - done_open), 'awaiting_source': max(0, counts['total'] - ready),
+                      'queue_left': max(0, ready - done_open - blocked), 'queue_rotated': rotated, 'queue_blocked': blocked, 'awaiting_source': max(0, counts['total'] - ready),
                                    'improved': len(improvements), 'improvements': improvements, 'recipes': recipes, 'recipe_wins': wins,
                                    'measurements': measurements,
                                    'completed': completed, 'errors': errors, 'attention': attention, 'state': job.get('state', 'idle'), **current,
@@ -331,7 +335,7 @@ class Sweeps:
             proj = self.net.project_row(slug)
             pending = waiting = 0
             batch = []
-            rows = self.net.store.all("SELECT * FROM functions WHERE project_id=? AND status='open' ORDER BY size,id", proj['id'])
+            rows = self.net.store.all(f"SELECT * FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD} ORDER BY size,id", proj['id'])
             for row in rows:
                 log.check_cancel()
                 fn = self.net._function(row['name'], slug)

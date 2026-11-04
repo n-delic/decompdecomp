@@ -529,3 +529,21 @@ def test_attention_omits_unscored_candidates(sweep):
     with net.store.tx() as db:
         db.execute("UPDATE functions SET best_score=NULL WHERE name='f0'")
     assert obj.status('game')['attention'] == []
+
+
+def test_queue_separates_rotated_errors_and_removed_functions(sweep):
+    obj, net, calls, _ = sweep
+    obj.save('game', {'enabled':False, 'minutes':1, 'max_variants':10})
+    proj = net.project_row('game')
+    for name, state in [('f0','rotated'), ('f1','error')]:
+        fn = net._function(name, 'game')
+        obj.record(fn, deep_sweep.signature(net, proj, fn, 1, 10), state, 1, 10, error='compile failed' if state == 'error' else '')
+    status = obj.status('game')
+    assert (status['queue_left'], status['queue_rotated'], status['queue_blocked']) == (1, 1, 1)
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET gone_mark='removed' WHERE name='f0'")
+    obj.queue_cache.clear()
+    status = obj.status('game')
+    assert (status['queue_left'], status['queue_rotated'], status['queue_blocked']) == (0, 0, 1)
+    assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
+    assert calls == []

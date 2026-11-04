@@ -4,8 +4,9 @@ function element(){return {dataset:{},children:[],fields:new Map(),textContent:'
  querySelector(key){if(!this.fields.has(key))this.fields.set(key,element());return this.fields.get(key);},
  querySelectorAll(){return this.children;},replaceChildren(){this.children=[];},insertBefore(child,before){this.children=this.children.filter(c=>c!==child);const i=this.children.indexOf(before);this.children.splice(i<0?this.children.length:i,0,child);},append(child){this.children=this.children.filter(c=>c!==child);this.children.push(child);child.remove=()=>{this.children=this.children.filter(c=>c!==child);};}};}
 const host=element(), count=element(), opened=[], active=element(), sort=element();
+const empty=element(), showRecent=element();
 active.checked=true; sort.value="function";
-const ctx=vm.createContext({$:id=>({deepActivity:host,deepActivityCount:count,deepActivityOnlyActive:active,deepActivitySort:sort}[id]),S:{slug:'a'},document:{createElement:element},openFn:name=>opened.push(name)});
+const ctx=vm.createContext({$:id=>({deepActivity:host,deepActivityCount:count,deepActivityOnlyActive:active,deepActivitySort:sort,deepActivityEmpty:empty,deepActivityShowRecent:showRecent}[id]),S:{slug:'a'},document:{createElement:element},openFn:name=>opened.push(name)});
 vm.runInContext(fs.readFileSync('src/decompnet/app/static/js/deep-activity.js','utf8'),ctx);
 const worker=(name,lines)=>({function:name,phase:'random rewrites',tested:4,variant_limit:10,starting_percent:90,best_percent:95,improvements:1,elapsed_seconds:75,seconds_left:20,lines});
 ctx.renderDeepActivity({workers:[worker('<a>',['a only']),worker('b',['b only'])]});
@@ -41,3 +42,12 @@ assert.equal(host.children[0].querySelector('[data-result]').textContent,'Saved 
 ctx.renderDeepActivity({recent_workers:[{...worker('done',[]),phase:'finished',reason:'Variant limit reached'}]});
 assert.equal(host.children[0].querySelector('[data-state]').textContent,'Turn complete');
 assert.equal(host.children[0].querySelector('[data-result]').textContent,'Variant limit reached');
+
+active.checked=true;
+ctx.renderDeepActivity({recent_workers:[worker('a', ['finished'])]});
+assert.equal(empty.hidden, false);
+assert.match(empty.textContent, /filter is hiding/);
+assert.equal(showRecent.hidden, false);
+showRecent.onclick();
+assert.equal(active.checked, false);
+assert.equal(host.children[0].hidden, false);

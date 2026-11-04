@@ -1451,7 +1451,10 @@ native keyboard navigation and use the current light or dark theme.
 
 The Deep permutation pass groups its limits in a compact form and shows live result
 cards with a completed-function count and percentage. Search behavior and resume
-details are available under **How this search works**.
+details are available under **How this search works**. A queue summary explains whether the pass is
+running, waiting, stopped or ready for another turn. Early rotations remain available for a fresh
+bounded turn through **Continue remaining functions**; unchanged errors are counted separately
+under **need attention**, and functions removed from the build are excluded.
 
 Deep-pass search errors are grouped by reason and next step, with compact links to
 the affected functions. Large error lists scroll within the panel.

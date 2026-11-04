@@ -50,5 +50,10 @@ function renderDeepActivity(progress = {}) {
       (worker.active && worker.seconds_left != null ? ` · ${duration(worker.seconds_left)} left` : "");
     card.querySelector("[data-output]").textContent = (worker.lines || []).join("\n");
   }
-  $("deepActivityCount").textContent = `${(progress.workers || []).length} active · ${(progress.recent_workers || []).length} recent results (not running)`;
+  const hiddenHistory = activeOnly.checked && !(progress.workers || []).length && (progress.recent_workers || []).length;
+  $("deepActivityEmpty").hidden = !!(progress.workers || []).length || (!activeOnly.checked && !!rows.length);
+  $("deepActivityEmpty").textContent = hiddenHistory ? "No searches are active. Your filter is hiding the recent results." : "No function searches are active.";
+  $("deepActivityShowRecent").hidden = !hiddenHistory;
+  $("deepActivityShowRecent").onclick = () => { activeOnly.checked = false; renderDeepActivity(deepActivitySnapshot); };
+  $("deepActivityCount").textContent = `${(progress.workers || []).length} active · ${(progress.recent_workers || []).length} recent results`;
 }

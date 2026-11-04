@@ -1177,7 +1177,7 @@ function renderDeepSweepResults(status) {
   $("deepSweepMatched").textContent = (status.improvements || []).filter(r => r.new_score === 0).length.toLocaleString();
   $("deepSweepImproved").textContent = (status.improved || (status.improvements || []).length || 0).toLocaleString();
   $("deepSweepResults").innerHTML = (rows.length || status.improved ? `<p><b>${status.improved || rows.length} functions improved</b> by deep permutation</p>` : "")
-    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td>${esc(r.starting_score)}</td><td><b>${esc(r.new_score)}</b></td><td>${esc(r.starting_score - r.new_score)}</td><td>${esc(r.starting_percent_text)}</td><td><b>${esc(r.new_percent_text)}</b></td><td>${r.created_at ? `<time datetime="${esc(new Date(r.created_at * 1000).toISOString())}">${esc(new Date(r.created_at * 1000).toLocaleString())}</time>` : "—"}</td><td>${r.history.length ? `<details><summary>${esc(r.history.length)} verified improvement${r.history.length === 1 ? "" : "s"}</summary>${r.history.map(w => `<p><time datetime="${esc(new Date(w.created_at * 1000).toISOString())}">${esc(new Date(w.created_at * 1000).toLocaleString())}</time> · ${esc(w.previous_score)} → ${esc(w.new_score)}<br>${esc((w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</p>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table></div><p class="small muted">Lower scores and higher match percentages are better. Score difference is starting minus new score. Saved across restarts and repeat passes; each function appears once, from its first recorded improvement to its best deep-pass result. Expand rewrite history for individual verified changes. History covers the latest 50 improvements across functions; older details remain stored locally. Rewrites in each history build on one another.</p>` : "");
+    + (rows.length ? `<div class="compiler-table"><table><thead><tr>${headings}</tr></thead><tbody>${rows.map((r, i) => `<tr><td><button type="button" class="ghost small-btn mono" data-deep-result="${i}">${esc(r.function)}</button></td><td>${esc(r.starting_score)}</td><td><b>${esc(r.new_score)}</b></td><td>${esc(r.starting_score - r.new_score)}</td><td>${esc(r.starting_percent_text)}</td><td><b>${esc(r.new_percent_text)}</b></td><td>${r.created_at ? `<time datetime="${esc(new Date(r.created_at * 1000).toISOString())}">${esc(new Date(r.created_at * 1000).toLocaleString())}</time>` : "—"}</td><td>${r.history.length ? `<details><summary>${esc(r.history.length)} verified improvement${r.history.length === 1 ? "" : "s"}</summary>${r.history.map(w => `<p><time datetime="${esc(new Date(w.created_at * 1000).toISOString())}">${esc(new Date(w.created_at * 1000).toLocaleString())}</time> · ${esc(w.previous_score)} → ${esc(w.new_score)}<br>${esc((w.provenance?.lineage || []).join(" → ") || w.family.replaceAll("_", " "))}</p>`).join("")}</details>` : "—"}</td></tr>`).join("")}</tbody></table></div><details class="deep-result-help"><summary>About these results</summary><p class="small muted">Lower scores and higher match percentages are better. Score difference is starting minus new score. Saved across restarts and repeat passes; each function appears once, from its first recorded improvement to its best deep-pass result. Expand rewrite history for individual verified changes. History covers the latest 50 improvements across functions; older details remain stored locally. Rewrites in each history build on one another.</p></details>` : "");
   ["deepSweepRecipes", "deepSweepResults"].forEach((id, group) => {
     $(id).querySelectorAll(".compiler-table").forEach((table, i) => {
       const position = scrollPositions[group][i];
@@ -1194,6 +1194,32 @@ function renderDeepSweepResults(status) {
     button.onclick = () => openFn(rows[Number(button.dataset.deepResult)].function);
   });
 }
+function renderDeepQueueState(status) {
+  const running = status.state === "running", left = status.queue_left || 0;
+  const rotated = status.queue_rotated || 0, blocked = status.queue_blocked || 0;
+  const waiting = status.awaiting_source || 0;
+  const active = running ? (status.progress?.workers || []).length : 0;
+  $("deepSweepQueueState").dataset.state = running ? "running" : status.error ? "error" : "idle";
+  $("deepSweepQueueTitle").textContent = running ? active ? `Searching ${active} functions` : "Checking remaining functions"
+    : status.error ? "Deep pass stopped with an error" : left ? "Pass paused · more turns available"
+    : blocked ? "Remaining functions need attention" : status.has_activity ? "Pass complete" : "Ready to start";
+  const reasons = [];
+  if (status.error) reasons.push(status.error);
+  if (rotated) reasons.push(`${rotated} paused early after repeated output or no improvement; another run gives them a fresh turn.`);
+  if (left > rotated) reasons.push(`${left - rotated} untested or changed functions available.`);
+  if (blocked) reasons.push(`${blocked} blocked by errors; see the reasons below.`);
+  if (waiting) reasons.push(`${waiting} waiting for saved C with a measured score.`);
+  if (running && !active) reasons.push(status.progress?.phase === "waiting for host claims or scored C"
+    ? "Waiting for host claims to be released or scored C to become available. The queue is checked automatically."
+    : "Preparing the next search. Progress will appear when a worker starts.");
+  if (!running && left) reasons.push("No workers are running. Continue below; completed passes stay saved.");
+  $("deepSweepQueueReason").textContent = reasons.join(" ") || (running ? "Verified improvements save immediately." : status.has_activity ? "Every eligible function has finished its bounded turn." : "Start a deep pass to search saved C with a measured score.");
+  if (!running) $("deepSweepStart").textContent = left && status.has_activity ? "Continue remaining functions" : "Deep permute untested functions";
+  const resume = $("deepSweepContinue");
+  resume.hidden = running || !left;
+  resume.onclick = () => { $("deepSweepRepeat").checked = false; $("deepSweepStart").click(); };
+}
+
 async function renderDeepSweep() {
   const slug = S.slug;
   if (!slug) return;
@@ -1234,6 +1260,7 @@ async function renderDeepSweep() {
       $("deepSweepRepeat").checked = false;
     }
     renderDeepSweepResults(status);
+    renderDeepQueueState(status);
     renderDeepActivity(status.state === "running" ? status.progress || {} : {...(status.progress || {}), workers:[]});
     $("deepSweepThreads").placeholder = status.threads_default ? `auto (${status.threads_default})` : "auto";
     $("deepSweepStart").disabled = false;
@@ -1242,13 +1269,13 @@ async function renderDeepSweep() {
     $("deepSweepActive").textContent = status.state === "running" ? (status.progress?.workers || []).length.toLocaleString() : "0";
     if (status.state !== "running") { $("deepSweepStop").disabled = false; $("deepSweepStop").textContent = "Stop deep pass"; }
     $("deepSweepStop").hidden = status.state !== "running";
-    const done = status.queue_done || 0, left = status.queue_left || 0;
+    const done = status.queue_done || 0, left = status.queue_left || 0, blocked = status.queue_blocked || 0;
     $("deepSweepDone").textContent = done.toLocaleString();
     $("deepSweepLeft").textContent = left.toLocaleString();
     $("deepSweepWaiting").textContent = (status.awaiting_source || 0).toLocaleString();
-    $("deepSweepBar").max = Math.max(1, done + left);
+    $("deepSweepBar").max = Math.max(1, done + left + blocked);
     $("deepSweepBar").value = done;
-    $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left).toLocaleString()} functions completed · ${done + left ? Math.floor(100 * done / (done + left)) : 0}%`;
+    $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left + blocked).toLocaleString()} completed · ${done + left + blocked ? Math.floor(100 * done / (done + left + blocked)) : 0}% · ${left.toLocaleString()} available · ${blocked.toLocaleString()} need attention${status.queue_rotated ? ` · ${status.queue_rotated} paused early` : ""}`;
     $("deepSweepStatus").textContent = status.error ? `Deep pass stopped: ${status.error}` : "";
     $("deepSweepStatus").hidden = !$("deepSweepStatus").textContent;
     if (status.state === "running" && deepSweepFollowing?.job !== status.job) followDeepSweep(slug, status.job);
@@ -1277,13 +1304,13 @@ async function followDeepSweep(slug, job) {
         api(`/api/permuter/pass?slug=${encodeURIComponent(slug)}`).then(status => {
           if (S.slug === slug && deepSweepFollowing === following) {
             renderDeepSweepResults(status);
-            const done = status.queue_done || 0, left = status.queue_left || 0;
+            const done = status.queue_done || 0, left = status.queue_left || 0, blocked = status.queue_blocked || 0;
             $("deepSweepDone").textContent = done.toLocaleString();
             $("deepSweepLeft").textContent = left.toLocaleString();
             $("deepSweepWaiting").textContent = (status.awaiting_source || 0).toLocaleString();
-            $("deepSweepBar").max = Math.max(1, done + left);
+            $("deepSweepBar").max = Math.max(1, done + left + blocked);
             $("deepSweepBar").value = done;
-                $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left).toLocaleString()} functions completed · ${done + left ? Math.floor(100 * done / (done + left)) : 0}%`;
+                $("deepSweepProgressText").textContent = `${done.toLocaleString()} of ${(done + left + blocked).toLocaleString()} completed · ${done + left + blocked ? Math.floor(100 * done / (done + left + blocked)) : 0}% · ${left.toLocaleString()} available · ${blocked.toLocaleString()} need attention${status.queue_rotated ? ` · ${status.queue_rotated} paused early` : ""}`;
           }
         }).catch(() => {}).finally(() => { refreshing = false; });
       }
