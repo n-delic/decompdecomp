@@ -237,3 +237,19 @@ assert.match(singleFields.get('[data-profile]').textContent,/not been applied/);
 const markup=fs.readFileSync(path.join(__dirname,'../src/decompnet/app/static/index.html'),'utf8');
 assert.equal((markup.match(/id="compilerProgressTemplate"/g)||[]).length,1);
 assert(markup.includes('id="fnCompilerProgress" data-mode="function"'));
+
+const failureContext={esc:value=>String(value).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;')};
+vm.createContext(failureContext);
+vm.runInContext(scopeSource.slice(scopeSource.indexOf('function profileFailureGroups'),scopeSource.indexOf('async function testProfileAsDefault')),failureContext);
+const grouped=failureContext.profileFailureGroups([
+ {function:'candidate',category:'affected_matches',reason:'blocked',blockers:[{function:'affected'}]},
+ {function:'busy',category:'busy',reason:'claimed'},
+ {function:'other',category:'busy',reason:'claimed'}]);
+assert.match(grouped,/data-profile-function="affected"/);
+assert.match(grouped,/not necessarily callers/);
+assert.match(grouped,/data-check-profile-blockers=/);
+assert.match(grouped,/data-safe-profile-range="candidate"/);
+assert.match(grouped,/Fix range &amp; apply match/);
+assert.match(grouped,/Functions currently claimed/);
+assert.match(grouped,/— 2/);
+assert(!failureContext.profileFailureGroups([{function:'<unsafe>',reason:'<unsafe>'}]).includes('<unsafe>'));

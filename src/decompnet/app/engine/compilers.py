@@ -892,7 +892,7 @@ class CompilerMixin:
             "status", "applied" if apply else "dismissed"))
 
     def apply_function_compiler(self, slug: str, function: str, toolchain: str, flags: list[str],
-                                allow_non_improving: bool = False) -> dict:
+                                allow_non_improving: bool = False, preserve_other_profiles: bool = False) -> dict:
         """Revalidate a selected profile, apply one function's range, and recheck its C."""
         self._rom_only(slug, "applying function compiler settings")
         proj = self._project(slug)
@@ -915,7 +915,15 @@ class CompilerMixin:
             raise NetworkError("These settings no longer improve this function. Run a fresh comparison.")
         default = self.cfg(proj)["compiler"]
         use_default = toolchain == default["toolchain"] and flags == default["flags"]
-        self.set_compiler_ranges(slug, [[fn["vram"], fn["vram"] + fn["size"]]], None if use_default else toolchain, flags)
+        end = fn["vram"] + fn["size"]
+        if preserve_other_profiles:
+            rows = self.store.all("SELECT id,vram FROM functions WHERE project_id=? AND vram IS NOT NULL", proj['id'])
+            if any(row['id'] != fn['id'] and row['vram'] == fn['vram'] for row in rows):
+                raise NetworkError("This overlay shares its start address. An address-only range cannot safely isolate it.")
+            # Compiler profiles are selected by function start address. Stop before
+            # the next start, even when a legacy extent overlaps another overlay.
+            end = min([max(fn['vram'] + 1, end)] + [row['vram'] for row in rows if row['vram'] > fn['vram']])
+        self.set_compiler_ranges(slug, [[fn["vram"], end]], None if use_default else toolchain, flags)
         if fn["status"] == "matched":
             return {"said": f"Compiler settings applied to {function}; its matching C is preserved.",
                     "matched": True, "newly_matched": False, "score": 0, "match_cause": "already_matched"}
@@ -1007,8 +1015,10 @@ class CompilerMixin:
                                      header_for=lambda f: self._context(proj["id"], f["unit"])["header"],
                                      progress=matched_progress) if matched else []
         if broken and not reopen:
-            raise NetworkError(f"{len(broken)} matched function(s) wouldn't match with it any more "
+            error = NetworkError(f"{len(broken)} matched function(s) wouldn't match with it any more "
                                f"({', '.join(n for n, _ in broken[:5])}): narrow the ranges or keep their compiler settings; when removing a range, reopen those functions explicitly")
+            error.compiler_blockers = [{"function": name, "reason": reason} for name, reason in broken]
+            raise error
         broken_names = {n for n, _ in broken}
         scores = {}
         rescored = [f for f in affected if f["status"] == "open" or f["name"] in broken_names]

@@ -170,3 +170,64 @@ def test_apply_refuses_active_claims(net, monkeypatch):
     monkeypatch.setattr(net, '_judge_with', lambda *args:pytest.fail('busy functions must be skipped'))
     result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
     assert result['failed'] == 1 and 'agent is working' in result['failures'][0]['reason']
+
+
+def test_apply_returns_structured_affected_matches(net, monkeypatch):
+    monkeypatch.setattr(net, '_comparison_source', lambda fn:'saved C')
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
+    def blocked(*args):
+        error = NetworkError('Existing match would fail')
+        error.compiler_blockers = [{'function':'f0', 'reason':'different bytes'}]
+        raise error
+    monkeypatch.setattr(net, 'apply_function_compiler', blocked)
+    result = trial.apply_matches(net, 'game', PROFILE, ['f3'])
+    failure = result['failures'][0]
+    assert failure['category'] == 'affected_matches'
+    assert failure['blockers'][0]['function'] == 'f0'
+
+
+def test_check_affected_uses_matched_source_and_changes_nothing(net, monkeypatch):
+    before = [dict(row) for row in net.store.all('SELECT * FROM functions')]
+    config = net._project('game')['config']
+    seen = []
+    def judge(proj, fn, tc, flags, source):
+        seen.append((fn['name'], source, tc, flags))
+        return fn['name'] == 'f0', NS(score=0), ''
+    monkeypatch.setattr(net, '_judge_with', judge)
+    out = trial.check_affected(net, 'game', PROFILE, ['f0','f1','f0'])
+    assert out['passed'] == 1 and out['total'] == 2
+    assert seen[0][1] == before[0]['matched_source']
+    assert seen[0][2:] == (PROFILE['toolchain'], PROFILE['flags'])
+    assert [dict(row) for row in net.store.all('SELECT * FROM functions')] == before
+    assert net._project('game')['config'] == config
+
+
+def test_safe_range_isolates_overlapping_extent_and_preserves_other_match(net, monkeypatch):
+    from decompnet.project import compiler_for
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET size=64 WHERE name='f3'")
+        db.execute("INSERT INTO functions(project_id,name,vram,size,status,matched_source) VALUES(1,'neighbor',?,16,'matched','saved neighbor')", (0x80001040,))
+    before = net.cfg(net._project('game'))
+    monkeypatch.setattr(net, '_comparison_source', lambda fn:'saved candidate')
+    monkeypatch.setattr(net, '_judge_with', lambda *args:(True, NS(score=0), ''))
+    verified = []
+    def regression(proj, agent, only, **kwargs):
+        verified.extend(fn['name'] for fn in only)
+        return [(fn['name'], 'different bytes') for fn in only if fn['name'] == 'neighbor']
+    monkeypatch.setattr(net, 'regression_test', regression)
+    def save(agent, proj, fn, source):
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched',matched_source=? WHERE id=?", (source, fn['id']))
+    monkeypatch.setattr(net, 'try_quietly', save)
+    selected = {'toolchain':'ido-5.3','flags':['-O3']}
+    with pytest.raises(NetworkError, match="wouldn't match"):
+        net.apply_function_compiler('game', 'f3', **selected)
+    assert net.cfg(net._project('game')) == before
+    result = trial.apply_matches(net, 'game', selected, ['f3'], safe_ranges=True)
+    assert result['passed'] == 1
+    after = net.cfg(net._project('game'))
+    assert compiler_for(after, 0x80001030)['flags'] == ['-O3']
+    assert compiler_for(after, 0x80001040) == compiler_for(before, 0x80001040)
+    assert net._function('neighbor', 'game')['matched_source'] == 'saved neighbor'
+    assert net._function('neighbor', 'game')['status'] == 'matched'
+    assert next(r for r in after['compiler_ranges'] if r['start'] == 0x80001030)['end'] == 0x80001040
