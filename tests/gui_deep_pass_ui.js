@@ -3,12 +3,12 @@ const fs = require("fs"), vm = require("vm"), assert = require("assert");
 const elements = new Map();
 function element(id) {
   if (!elements.has(id)) {
-    let html = "", tables = [], sorts = [], attention = [];
+    let html = "", tables = [], sorts = [], attention = [], metricFunctions = [];
     elements.set(id, {dataset:{}, textContent:"", value:0, hidden:false, disabled:false,
       get innerHTML() { return html; }, set innerHTML(value) {
-        html = value; attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
+        html = value; metricFunctions = Array.from(value.matchAll(/data-deep-metric-function="(\d+)">([^<]+)/g), m => ({dataset:{deepMetricFunction:m[1]},textContent:m[2],focus(){}})); attention = Array.from(value.matchAll(/data-deep-attention="(\d+)"/g), m => ({dataset:{deepAttention:m[1]}})); sorts = Array.from(value.matchAll(/data-deep-sort="([^"]+)"/g), m => ({dataset:{deepSort:m[1]}})); tables = Array.from(value.matchAll(/class="compiler-table"/g), () => ({scrollTop:0, scrollLeft:0}));
       },
-      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
+      querySelector:()=>null, querySelectorAll(selector) { return selector === "[data-deep-metric-function]" ? metricFunctions : selector === "[data-deep-attention]" ? attention : selector === ".compiler-table" ? tables : selector === "[data-deep-sort]" ? sorts : []; },
       replaceChildren() { this.innerHTML = ""; this.textContent = ""; },
       append() {},
     });
@@ -24,6 +24,8 @@ const ctx = {renderDeepActivity:()=>{}, $:element, S:{slug:"game-a"}, esc:String
   api:async url=>({state:url.includes("game-a")?"running":"idle",job:7,minutes:5,max_variants:100,
     errors:0,completed:0,improvements:[{function:"one",starting_score:10,starting_percent_text:"90%",new_score:5,new_percent_text:"95%"}]}),
 };
+ctx.dialog = (title, html, kind) => {element("dialogTitle").textContent=title; element("dialogBody").innerHTML=html; element("dialog").hidden=false; ctx.S.dialogKind=kind; return element("dialogBody");};
+ctx.closeDialog = () => {element("dialog").hidden=true; ctx.S.dialogKind="";};
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync("src/decompnet/app/static/js/rewrite-performance.js","utf8"),ctx);
 const source = fs.readFileSync("src/decompnet/app/static/js/steering.js", "utf8");
@@ -114,6 +116,40 @@ vm.runInContext(source.slice(source.indexOf("let deepSweepFollowing"), source.in
   assert.doesNotMatch(element("deepSweepResults").innerHTML,/class="link-btn"[^>]*data-deep-sort/);
   assert.match(element("deepSweepResults").innerHTML, /<details class="deep-result-detail" data-result-detail="a"><summary>Scores & rewrites/);
   assert.match(element("deepSweepResults").innerHTML, /\+30 points/);
+  element("deepSweepMetricImproved").onclick();
+  assert.equal(element("dialogTitle").textContent,"Improved by deep permuter");
+  assert.match(element("dialogBody").innerHTML,/3 functions/);
+  assert.match(element("dialogBody").innerHTML,/Score 100 → 50/);
+  assert.equal(element("dialogBody").querySelectorAll("[data-deep-metric-function]").length,3);
+  ctx.closeDialog();
+  ctx.openDeepMetric("improved");
+  assert.match(element("dialogBody").innerHTML,/3 functions/,"reopening must repopulate the drawer");
+  element("dialogBody").scrollTop=177;
+  ctx.renderDeepSweepResults({improvements:[status.improvements[0]]});
+  assert.match(element("dialogBody").innerHTML,/1 function/);
+  assert.equal(element("dialogBody").scrollTop,177);
+  ctx.renderDeepSweepResults(status);
+  element("deepSweepMetricMatched").onclick();
+  assert.equal(element("dialogBody").querySelectorAll("[data-deep-metric-function]").length,1);
+  assert.match(element("dialogBody").innerHTML,/Byte-for-byte match/);
+  element("dialogBody").querySelectorAll("[data-deep-metric-function]")[0].onclick();
+  assert.equal(opened.at(-1),"a");
+  assert.equal(element("dialog").hidden,true);
+  ctx.renderDeepQueueState({state:"running",progress:{workers:[{function:"working",starting_percent:90,best_percent:95,tested:42,phase:"Local repairs"}]}});
+  element("deepSweepMetricActive").onclick();
+  assert.match(element("dialogBody").innerHTML,/working/);
+  assert.match(element("dialogBody").innerHTML,/42 candidates tested/);
+  ctx.renderDeepQueueState({state:"done",progress:{workers:[{function:"stale"}]}});
+  assert.match(element("dialogBody").innerHTML,/No functions are being searched right now/);
+  ctx.closeDialog();
+  ctx.renderDeepSweepResults({improvements:[]});
+  ctx.openDeepMetric("matched");
+  assert.match(element("dialogBody").innerHTML,/No matches from the deep permuter yet/);
+  ctx.S.slug="other"; ctx.renderDeepMetricDrawer();
+  assert.equal(element("dialog").hidden,true,"close results when navigating to a different project");
+  ctx.S.slug="game-a";
+  ctx.renderDeepSweepResults(status);
+  ctx.renderDeepQueueState({state:"running",progress:{workers:[]}});
   status.recipe_wins = [
     {function:"a",created_at:20,previous_score:5,new_score:0,family:"last_fix",provenance:{lineage:["first", "last"]}},
     {function:"a",created_at:10,previous_score:10,new_score:5,family:"first_fix",provenance:{}},

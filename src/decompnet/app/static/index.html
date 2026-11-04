@@ -461,9 +461,9 @@
           <div class="deep-sweep-actions"><button id="deepSweepStart" type="button" class="primary">Start search</button><button id="deepSweepStop" type="button" class="primary" hidden>Stop</button></div>
         </section>
         <div class="deep-sweep-counts" id="deepSweepCounts" aria-label="Deep permuter results">
-          <div><b id="deepSweepMatched">0</b><span>Matched</span></div>
-          <div><b id="deepSweepImproved">0</b><span>Improved</span></div>
-          <div><b id="deepSweepActive">0</b><span>Searching now</span></div>
+          <button type="button" class="deep-metric" id="deepSweepMetricMatched" aria-haspopup="dialog" title="View matched functions"><b id="deepSweepMatched">0</b><span>Matched<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="deep-metric" id="deepSweepMetricImproved" aria-haspopup="dialog" title="View improved functions"><b id="deepSweepImproved">0</b><span>Improved<span aria-hidden="true">↗</span></span></button>
+          <button type="button" class="deep-metric" id="deepSweepMetricActive" aria-haspopup="dialog" title="View searching now functions"><b id="deepSweepActive">0</b><span>Searching now<span aria-hidden="true">↗</span></span></button>
         </div>
         <div class="deep-progress-heading"><span>Saved search coverage</span><span class="small" id="deepSweepRunChecked"></span></div>
         <progress class="deep-sweep-bar" id="deepSweepBar" hidden max="1" value="0" aria-label="Saved completed search turns"></progress>

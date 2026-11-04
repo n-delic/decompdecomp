@@ -329,7 +329,7 @@ main().catch((error) => { console.error(error); process.exitCode = 1; });
   const end = source.indexOf("async function renderDeepSweep()", start);
   const result = {dataset:{}, innerHTML:"", replaceChildren(){this.innerHTML="";}, querySelector:()=>null, querySelectorAll:selector=>selector === "[data-deep-result]" ? [button] : []}, button = {dataset:{deepResult:"0"}};
   let opened;
-  const ctx = {S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
+  const ctx = {renderDeepMetricDrawer:()=>{}, deepMetricRows:[], S:{slug:"game"}, $:()=>result, esc:s=>String(s).replaceAll("<", "&lt;"), openFn:name=>{opened=name;}};
   vm.createContext(ctx); vm.runInContext(read("rewrite-performance"),ctx); vm.runInContext(source.slice(start,end), ctx);
   ctx.renderDeepSweepResults({improved:1, improvements:[{function:"f<0", starting_score:50,
     new_score:25, starting_percent_text:"95.0%", new_percent_text:"97.5%"}]});

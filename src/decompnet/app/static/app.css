@@ -1232,7 +1232,7 @@ details.more[open] > summary::before { content: "− "; }
 .deep-sweep-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .deep-sweep-actions #deepSweepReset { margin-left: auto; }
 .deep-sweep-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--line-soft); background: var(--line-soft); border-radius: var(--r); overflow: hidden; }
-.deep-sweep-counts div { padding: 16px 14px; background: var(--panel); display: grid; align-content: start; gap: 7px; }
+.deep-sweep-counts > button { padding: 16px 14px; background: var(--panel); display: grid; align-content: start; gap: 7px; }
 .deep-sweep-counts b { font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
 #deepSweepMatched, #deepSweepImproved { color: var(--match); }
 .deep-sweep-counts span { color: var(--muted); font-size: 11px; line-height: 1.4; }
@@ -1267,7 +1267,7 @@ details.more[open] > summary::before { content: "− "; }
   #deepSweepPanel > summary h2 { flex: 1 1 calc(100% - 32px); }
   #deepSweepPanel > summary > span { margin-left: 20px; }
   .deep-sweep-settings { grid-template-columns: 1fr; gap: 14px; }
-  .deep-sweep-counts div { padding: 14px 10px; }
+  .deep-sweep-counts > button { padding: 14px 10px; }
   .deep-sweep-actions #deepSweepReset { margin-left: 0; }
 }
 .deep-recipe-results { margin: 14px 0; }
@@ -1701,8 +1701,8 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
 .deep-dashboard .deep-queue-state[data-state="error"] h3::before { background:var(--miss); }
 .deep-dashboard .deep-queue-state p { font-size:12px; padding-left:17px; }
 .deep-dashboard .deep-sweep-counts { border:0; background:transparent; gap:0; border-radius:0; }
-.deep-dashboard .deep-sweep-counts div { background:transparent; padding:2px 20px; gap:5px; border-left:1px solid var(--line-soft); }
-.deep-dashboard .deep-sweep-counts div:first-child { border:0; padding-left:0; }
+.deep-dashboard .deep-sweep-counts > button { background:transparent; padding:2px 20px; gap:5px; border-left:1px solid var(--line-soft); }
+.deep-dashboard .deep-sweep-counts > button:first-child { border:0; padding-left:0; }
 .deep-dashboard .deep-sweep-counts b { font-size:30px; font-weight:650; letter-spacing:-.04em; }
 .deep-dashboard #deepSweepImproved { color:var(--ink); }
 .deep-dashboard #deepSweepActive { color:var(--ink); }
@@ -1732,12 +1732,26 @@ body:has(.pwa-status:not([hidden])) { padding-bottom:80px; }
  .deep-dashboard .deep-queue-state h3 { font-size:14px; }
  .deep-sweep-settings { grid-template-columns:1fr; gap:12px; }
  .deep-advanced { padding-top:0; }
- .deep-dashboard .deep-sweep-counts div { padding:2px 12px; }
+ .deep-dashboard .deep-sweep-counts > button { padding:2px 12px; }
  .deep-dashboard .deep-sweep-counts b { font-size:26px; }
 }
 @media(max-width:420px) {
  .deep-dashboard .deep-queue-state { flex-wrap:wrap; }
  .deep-dashboard .deep-queue-state p { padding-left:0; }
  .deep-main-budget { flex-wrap:wrap; }
- .deep-dashboard .deep-sweep-counts div { padding:2px 8px; }
+ .deep-dashboard .deep-sweep-counts > button { padding:2px 8px; }
 }
+
+.deep-sweep-counts > .deep-metric { border:0; border-radius:0; text-align:left; color:var(--ink); cursor:pointer; box-shadow:none; }
+.deep-sweep-counts > .deep-metric > span { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.deep-metric > span > span { opacity:.45; font-size:14px; }
+.deep-dashboard .deep-sweep-counts > .deep-metric:hover { background:var(--bg-alt); }
+.deep-metric:hover > span > span { opacity:1; color:var(--ink); }
+.deep-metric:focus-visible { outline:2px solid var(--hl); outline-offset:-2px; }
+.deep-metric-list { list-style:none; padding:0; margin:18px 0 0; display:grid; gap:10px; }
+.deep-metric-list li { padding:14px; border:1px solid var(--line-soft); border-radius:var(--r); min-width:0; }
+.deep-metric-list header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+.deep-metric-list header button { overflow-wrap:anywhere; text-align:left; }
+.deep-metric-list p { margin:8px 0 0; font-size:12px; line-height:1.6; }
+.deep-metric-list .deep-metric-match { font-variant-numeric:tabular-nums; font-size:13px; white-space:nowrap; }
+.deep-metric-empty { padding:24px 16px; border:1px dashed var(--line-soft); border-radius:var(--r); color:var(--muted); }

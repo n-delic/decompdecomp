@@ -375,7 +375,7 @@ def test_deep_trial_outcomes_and_followup_summary_are_visible():
     function = source[source.index('function renderDeepSweepResults('):source.index('async function renderDeepSweep(')]
     script = """const assert=require('node:assert/strict');
 const S={slug:'game'}, boxes={}; function $(id) { return boxes[id] ||= {dataset:{},innerHTML:'',querySelector:()=>null,querySelectorAll:()=>[]}; }
-function esc(x){return String(x)}; function openFn(){};
+function esc(x){return String(x)}; function openFn(){}; function renderDeepMetricDrawer(){}; let deepMetricRows=[];
 """ + (Path(__file__).parents[1] / "src/decompnet/app/static/js/rewrite-performance.js").read_text() + function + """
 renderDeepSweepResults({measurements:[{family:'typed_temporary',phase:'local repairs after random improvement',attempted:5,compile_failed:1,unscored:1,unchanged:1,worse:0,improved:2,matched:1,elapsed_ms:1500,score_gain:40}]});
 assert.match(boxes.deepSweepRecipes.innerHTML,/typed temporary/);

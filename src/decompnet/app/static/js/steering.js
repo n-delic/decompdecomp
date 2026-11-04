@@ -1119,7 +1119,52 @@ $("sourcePrepExportRun").onclick = async () => {
 };
 
 let deepSweepFollowing = null, deepSweepProjectVersion = 0, deepSweepSnapshot = null;
+let deepMetricRows = [], deepMetricSlug = null;
+function openDeepMetric(kind) {
+  const slug = S.slug;
+  if (!slug || $("deepSweepPanel").dataset.slug !== slug) return;
+  const titles = {matched:"Matched by deep permuter", improved:"Improved by deep permuter", active:"Searching now"};
+  if (!titles[kind]) return;
+  dialog(titles[kind], "", "deep-metric:" + kind);
+  deepMetricSlug = slug;
+  $("dialogBody")._deepMetricHtml = null;
+  renderDeepMetricDrawer();
+}
+function renderDeepMetricDrawer() {
+  if (!S.dialogKind?.startsWith("deep-metric:") || $("dialog").hidden) return;
+  if (deepMetricSlug !== S.slug) { closeDialog(); return; }
+  const kind = S.dialogKind.slice("deep-metric:".length), status = deepSweepSnapshot || {};
+  const active = kind === "active", body = $("dialogBody");
+  const source = active ? status.state === "running" ? status.progress?.workers : null : deepMetricRows;
+  if (body._deepMetricHtml && body._deepMetricSource === source && body._deepMetricKind === kind) return;
+  body._deepMetricSource = source; body._deepMetricKind = kind;
+  const rows = active ? source || [] : deepMetricRows.filter(row => kind === "matched" ? row.new_score === 0 : row.new_score < row.starting_score);
+  const intro = active ? "Live searches for this project. Select a function to inspect it."
+    : "Saved deep-permuter results since the last metrics reset, across runs. Improved includes functions that reached a match.";
+  const html = `<p class="small muted">${intro}</p><p><b>${rows.length.toLocaleString()} function${rows.length === 1 ? "" : "s"}</b></p>` + (rows.length
+    ? `<ul class="deep-metric-list">${rows.map((row, i) => {
+      const percent = n => n == null ? "—" : `${Number(n).toFixed(1)}%`;
+      const before = active ? percent(row.starting_percent) : row.starting_percent_text || "—";
+      const after = active ? percent(row.best_percent) : row.new_percent_text || "—";
+      const info = active ? `${row.phase || "Searching"}${row.current_family ? " · " + row.current_family : ""} · ${(row.tested || 0).toLocaleString()} candidates tested`
+        : `Score ${row.starting_score} → ${row.new_score}${row.new_score === 0 ? " · Byte-for-byte match" : ""}`;
+      const updated = !active && row.updated_at ? `<p class="small muted">Last improvement: <time datetime="${esc(new Date(row.updated_at * 1000).toISOString())}">${esc(new Date(row.updated_at * 1000).toLocaleString())}</time></p>` : "";
+      return `<li><header><button type="button" class="ghost small-btn mono" data-deep-metric-function="${i}">${esc(row.function)}</button><span class="deep-metric-match">${esc(before)} → <b>${esc(after)}</b></span></header><p class="muted">${esc(info)}</p>${updated}</li>`;
+    }).join("")}</ul>` : `<p class="deep-metric-empty">${active ? "No functions are being searched right now." : kind === "matched" ? "No matches from the deep permuter yet. Verified matches will appear here." : "No improvements from the deep permuter yet. Verified improvements will appear here."}</p>`);
+  if (body._deepMetricHtml === html) return;
+  const scrollTop = body.scrollTop;
+  const focused = document.activeElement?.dataset?.deepMetricFunction;
+  const focusedFunction = focused != null ? body.querySelector(`[data-deep-metric-function="${focused}"]`)?.textContent : null;
+  body.innerHTML = html; body._deepMetricHtml = html; body.scrollTop = scrollTop;
+  body.querySelectorAll("[data-deep-metric-function]").forEach(button => {
+    const name = rows[Number(button.dataset.deepMetricFunction)].function;
+    button.onclick = () => { if (S.slug === deepMetricSlug) { closeDialog(); openFn(name); } };
+    if (focusedFunction === name) button.focus({preventScroll:true});
+  });
+}
 function renderDeepSweepResults(status) {
+  deepMetricRows = status.improvements || [];
+  renderDeepMetricDrawer();
   const attention = status.attention || [];
   $("deepSweepAttention").hidden = !attention.length;
   $("deepSweepAttentionTitle").textContent = `${attention.length} function${attention.length === 1 ? "" : "s"} could not be searched — view reasons`;
@@ -1202,6 +1247,7 @@ function renderDeepSweepResults(status) {
 }
 function renderDeepQueueState(status) {
   deepSweepSnapshot = status;
+  renderDeepMetricDrawer();
   const running = status.state === "running", left = status.queue_left || 0;
   // A previous job's error must never contradict the current live state.
   $("deepSweepStatus").textContent = "";
@@ -1251,6 +1297,8 @@ async function renderDeepSweep() {
     panel.dataset.slug = slug;
     deepSweepProjectVersion++;
     deepSweepSnapshot = null;
+    deepMetricRows = [];
+    renderDeepMetricDrawer();
     delete panel.dataset.loadedSlug;
     for (const id of ["deepSweepBar", "deepActivitySection", "deepSweepLogSection"]) $(id).hidden = true;
     $("deepActivity").replaceChildren();
@@ -1332,6 +1380,9 @@ async function followDeepSweep(slug, job) {
     }
   }
 }
+$("deepSweepMetricMatched").onclick = () => openDeepMetric("matched");
+$("deepSweepMetricImproved").onclick = () => openDeepMetric("improved");
+$("deepSweepMetricActive").onclick = () => openDeepMetric("active");
 $("deepSweepStart").onclick = async () => {
   const slug = S.slug, log = $("deepSweepLog");
   $("deepSweepLogSection").hidden = false;
