@@ -316,6 +316,7 @@ connector, `agents/__init__.py`.
 | `agents/antigravity.py` | Antigravity CLI | `agy` with stream-json in and out; its models from `agy models`; once Gemini CLI |
 | `agents/opencode.py` | opencode | `opencode run`, its own server per helper (opencode 2); its models from `opencode models` |
 | `agents/zcode.py` | ZCode CLI | `zcode --output-format stream-json`, its own settings file for the app's MCP server, the prompt in an attached file |
+| `agents/ohmy.py` | Oh My Pi | `omp -p --mode json`, a settings overlay that keeps the user's own MCP servers out and the session's `.mcp.json` in |
 | `agents/api.py` | API helper | No program: the app's own loop for any OpenAI-compatible API, and the saved endpoints' presets |
 
 Around them:
@@ -329,11 +330,11 @@ Around them:
 
 An agent is one of two sorts:
 
-- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI). The app
-  runs it headless, a session at a time, in a private folder. It connects only to the app's own MCP server, with a
-  token of its own, and may use only decompdecomp's tools. The prompt goes in on stdin, or in a file the agent is
-  given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text on the command line; what it
-  prints is read into the feed.
+- **A program** the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI, Oh My
+  Pi). The app runs it headless, a session at a time, in a private folder. It connects only to the app's own MCP
+  server, with a token of its own, and may use only decompdecomp's tools. The prompt goes in on stdin, or in a file
+  the agent is given by path when its CLI has no stdin prompt (zcode's `--attach`), never as text on the command
+  line; what it prints is read into the feed.
 - **A loop in the app** (the API helper). It talks to a model's API itself and calls the tools directly.
 
 ### Improving an agent
