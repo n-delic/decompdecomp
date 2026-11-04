@@ -97,7 +97,7 @@ def test_paused_queue_explains_how_to_resume(tmp_path):
     net,_=_game(tmp_path,[('f',10,'open')]);a,_=net.local_agent('a')
     with net.store.tx() as db:db.execute('UPDATE functions SET best_source=?,best_score=10',('void f(){}',))
     fn=net._function('f','game')
-    for _ in range(3):claim_stalls.released(net,fn)
+    for _ in range(3):claim_stalls.released(net,fn,agent=a)
     assert net.claim_row(a,'game') is None
     assert 'unchanged candidates are paused' in net.nothing_to_claim(a,net._project('game'))
 

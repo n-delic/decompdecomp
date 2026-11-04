@@ -166,6 +166,14 @@ why. Run several helpers, of different models: they work on different functions 
 models** in the launcher to pick several at once; the app remembers the choice. One start can begin at most 24
 helpers in total.
 
+**Paused candidates are model-specific.** An unchanged function pauses after three releases or
+reported exhaustion for that recorded model. A different model can still attempt it. Use the worker's
+**⋮ → Retry paused functions**, or the button on a waiting card, to grant one fresh turn to up to five
+functions by default (maximum 50). Existing work filters, active claims and compile limits remain.
+Grants are consumed when claimed and persist across restart. Waiting workers check within 30 seconds;
+stopped workers stay stopped. Running workers may resume normal paid model calls. See the README's
+work-selection section for model identity and legacy-pause behavior.
+
 Agents get only the tools of decompdecomp. They get no shell. They cannot access your files, except the source tree
 of a fork. The app installs missing agents and tells you how to sign in.
 

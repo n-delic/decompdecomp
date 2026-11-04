@@ -275,6 +275,22 @@ claim one function at a time so neighbouring batches cannot bypass the filter. T
 an updated host. Polishing uses its separate queue.
 
 
+**Paused unchanged candidates.** Three unchanged releases, or reported exhaustion, pause automatic
+selection for that recorded model. Other models can still try; workers using the same model share the
+pause, including explicit effort qualifiers. Switching a worker to another recorded model does not
+inherit the previous model’s release cooldown. Unspecified models use a worker-local pause. Source,
+build/header, symbol, project-instruction or repair-rule changes make new inputs eligible. Old global
+pause records are retained but are not attributed to models without evidence.
+
+On a worker's **Agents → ⋮ → Retry paused functions** action (also on waiting cards), choose up to
+50 functions; the default is five. Each free function meeting that worker's filters gets **one fresh
+automatic claim** for that model. Grants survive restart and are consumed atomically when claimed,
+including if a worker subsequently crashes. This bypasses only those functions' recent-release
+cooldown. Active claims, compile/attempt limits, match filters and never-tried filters remain in place.
+Waiting workers check within 30 seconds; stopped workers stay stopped. Normal provider charges apply
+when running agents resume. The button does not start an agent itself.
+
+
 For local library research, see [Comparing local SDK libraries and source](docs/local-sdk-comparisons.md).
 
 ## RetroReversing fork

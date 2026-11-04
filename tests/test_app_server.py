@@ -2141,3 +2141,24 @@ def test_manual_mcp_catalog_uses_read_only_ui_snapshot(app, monkeypatch, tmp_pat
     response=client.get('/api/manual-mcp?slug=catalog-snapshot')
     assert response.status_code==200
     assert [t['name'] for t in response.json()['tools']]==['project_info']
+
+
+def test_retry_paused_route_is_bounded_guarded_and_does_not_start_helpers(tmp_path):
+    from decompnet import claim_stalls
+
+    from .test_loading import tiny_game
+    net=RomNetwork(tmp_path/'decomp.db',tmp_path);tiny_game(net)
+    mcp,manager,security,_=build(net,tmp_path,PORT,SECRET)
+    session=manager._record('game','codex','worker','Worker',{'model':'model-a'})
+    agent,_=net.local_agent(session.agent_name)
+    with net.store.tx() as db:db.execute("UPDATE functions SET best_source='void f(){}',best_score=10")
+    for fn in net.store.all('SELECT * FROM functions'):claim_stalls.released(net,fn,agent=agent,exhausted=True)
+    client=TestClient(mcp.streamable_http_app(transport_security=security,host='127.0.0.1'),base_url=f'http://127.0.0.1:{PORT}',headers=WINDOW)
+    payload={'id':session.id,'limit':1}
+    assert client.post('/api/agents/retry-paused',json=payload).status_code==403
+    assert client.post('/api/agents/retry-paused',json={**payload,'limit':True},headers={'X-Decomp':'1'}).status_code==400
+    response=client.post('/api/agents/retry-paused',json=payload,headers={'X-Decomp':'1'})
+    assert response.status_code==200,response.text
+    assert response.json()['resumed']==1
+    assert session.runs==0 and not net.store.all('SELECT * FROM claims')
+    assert client.post('/api/agents/retry-paused',json={'id':'missing'},headers={'X-Decomp':'1'}).status_code==400

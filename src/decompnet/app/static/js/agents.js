@@ -252,11 +252,13 @@ function renderSessions(sessions) {
         <details class="agent-menu" data-agent-menu="${id}" ${agentMenusOpen.has(s.id) ? 'open' : ''}><summary aria-label="Actions for ${esc(s.label)}" title="Agent actions">⋮</summary><div class="agent-menu-items">
           <button data-rename="${id}" type="button">Rename</button><button data-queue="${id}" type="button">Work settings</button><button data-agent-prompts="${id}" type="button">Prompts</button><button data-agent-tools="${id}" type="button">Tools</button>
           <button data-log="${id}" type="button" aria-pressed="${S.logFor === s.id}">${S.logFor === s.id ? 'Back to everything' : 'What it said and did'}</button>
+          ${s.task === "readable" ? "" : `<button data-retry-paused="${id}" type="button">Retry paused functions</button>`}
           <button data-reset-metrics="${id}" type="button" class="agent-menu-reset">Reset metrics</button>
           ${live ? '' : `<button data-remove="${id}" type="button">Remove agent</button>`}</div></details></div>
       ${agentMetrics(s, b)}
       <span class="state ${s.state === 'paused' ? 'err' : ''}">${helperState(s, claim)}</span>
       ${todo ? `<span class="todo-line">${esc(todo)}</span>${s.can_login && !live && /login|sign.?in/i.test(s.todo || "") ? `<button class="ghost" type="button" data-login="${id}">Sign in to ${esc(s.kind_name)}</button>` : ""}` : ''}
+      ${s.task !== "readable" && s.state === "waiting" ? `<button class="ghost" data-retry-paused="${id}" type="button">Retry paused functions</button>` : ""}
       ${agentUsage(s)}
       <details class="agent-details" data-agent-details="${id}" ${agentDetailsOpen.has(s.id) ? 'open' : ''}><summary>Details</summary><div class="agent-details-body">
       <span class="facts-line">${facts.join(' · ')}</span>
@@ -294,6 +296,7 @@ function renderSessions(sessions) {
     };
   });
   box.querySelectorAll('[data-agent-prompts]').forEach(button => { button.onclick = () => showAgentPrompts(sessions.find(s => s.id === button.dataset.agentPrompts)); });
+  box.querySelectorAll('[data-retry-paused]').forEach(button => { button.onclick = () => showRetryPaused(sessions.find(s => s.id === button.dataset.retryPaused)); });
   box.querySelectorAll('[data-agent-tools]').forEach(button => { button.onclick = () => showAgentTools(sessions.find(s => s.id === button.dataset.agentTools)); });
   box.querySelectorAll("[data-queue]").forEach((b) => { b.onclick = () => {
     const s = sessions.find((x) => x.id === b.dataset.queue);
@@ -1090,4 +1093,24 @@ function addThoughts(sessions, first) {
     while (list.children.length > FEED_KEEP) list.lastChild.remove();
   }
   if (first) renderLog();
+}
+
+
+function showRetryPaused(session) {
+  if (!session) return;
+  const panel = dialog("Retry paused functions", `<p>Give ${esc(session.model || session.label)} one fresh turn on each selected paused function. Workers using the same recorded model share this allowance.</p><label class="field"><span>Maximum functions</span><input data-retry-limit type="number" min="1" max="50" step="1" value="5"></label><p class="muted small">Existing compile limits, work filters and active claims stay in place. Running workers may use AI credits when they next check. Stopped workers stay stopped.</p><button class="primary" data-confirm-retry>Retry paused functions</button><button class="ghost" data-cancel-retry>Cancel</button>`);
+  panel.querySelector('[data-cancel-retry]').onclick = closeDialog;
+  const button = panel.querySelector('[data-confirm-retry]');
+  button.onclick = async () => {
+    const limit = Number(panel.querySelector('[data-retry-limit]').value);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) { toast('Choose a whole number from 1 to 50.', 'err'); return; }
+    const finish = beginWork(panel, 'Preparing fresh candidate turns', [button]);
+    try {
+      const result = await api('/api/agents/retry-paused', {method:'POST',body:{id:session.id,limit}});
+      closeDialog();
+      toast(result.resumed ? `${result.resumed} functions ready for one fresh turn. Waiting workers check within 30 seconds.` : 'No paused functions meet this worker’s filters or are free to retry.', result.resumed ? 'match' : '');
+      poll(false);
+    } catch (error) { showJobError(panel,error); }
+    finally { finish(); }
+  };
 }

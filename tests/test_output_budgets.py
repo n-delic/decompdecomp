@@ -24,7 +24,7 @@ def test_unchanged_output_budget_is_independent_and_claim_scoped(tmp_path):
     assert '1/2' in agent_evidence.track(net,agent,'game',fn)
     assert 'Unchanged-output limit reached' in agent_evidence.track(net,agent,'game',fn)
     assert not net.store.one('SELECT 1 FROM claims WHERE function_id=?',fn['id'])
-    assert claim_stalls.blocked(net,net._project('game'))==[fn['id']]
+    assert claim_stalls.blocked(net,net._project('game'),agent)==[fn['id']]
     net.claim_row(agent,'game','f')
     assert '0/2' in agent_evidence.track(net,agent,'game',fn)
     assert net.selection('game','a')['stall_compiles']==200

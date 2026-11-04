@@ -694,6 +694,15 @@ class Manager:
             self._save(s)
             return s.label
 
+    def retry_paused(self, sid, limit=5):
+        from . import retry_paused
+        with self._lock:
+            session=self.sessions.get(sid)
+            if session is None:raise ValueError('This agent no longer exists. Refresh the agents list.')
+            if session.options.get('task')=='readable':raise ValueError('Retry paused functions applies to matching agents.')
+            agent,_=self.net.local_agent(session.agent_name)
+            return retry_paused.retry(self.net,session.slug,agent,limit)
+
     def set_selection(self, sid: str, policy: dict, per_session: int | None = None) -> dict:
         with self._lock:
             s = self.sessions.get(sid)

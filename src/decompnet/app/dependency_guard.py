@@ -8,9 +8,9 @@ from ..forks.project import ForkError
 from ..network import NetworkError
 
 
-def validate(net, fn, need):
+def validate(net, fn, need, agent=None):
     proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
-    if need['id'] in claim_stalls.blocked(net,proj):
+    if need['id'] in claim_stalls.blocked(net,proj,agent):
         raise NetworkError('needs: this candidate is paused after exhausting unchanged work. Release without needs; '
                            'automatic pivots cannot override pauses. The user can review it in Repair examples.')
     meta = json.loads(need['meta'] or '{}')
@@ -35,9 +35,9 @@ def pivot_key(net, fn, need):
     return f'dependency-pivot:{fn["id"]}:{need["id"]}',stamp
 
 
-def permitted(net, fn, need):
+def permitted(net, fn, need, agent=None):
     proj = net.store.one('SELECT * FROM projects WHERE id=?',fn['project_id'])
-    if need['id'] in claim_stalls.blocked(net,proj):
+    if need['id'] in claim_stalls.blocked(net,proj,agent):
         return False
     key,stamp = pivot_key(net,fn,need)
     row = net.store.one('SELECT value FROM settings WHERE key=?',key)

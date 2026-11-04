@@ -314,7 +314,7 @@ class JudgeMixin:
     def _pivot(self, agent: Agent, project: str | None, need, caller=None) -> str:
         """The function a release said it needs, claimed for the agent when it's free: what to tell it."""
         from .. import dependency_guard
-        if caller is not None and not dependency_guard.permitted(self,caller,need):
+        if caller is not None and not dependency_guard.permitted(self,caller,need,agent):
             return '\nDependency pivot skipped: paused or already investigated for these inputs. Claim another eligible function.'
         fork = self.fork_slug(project)
         try:
@@ -362,7 +362,7 @@ class JudgeMixin:
                 break
             seen.add(at)
         from .. import dependency_guard
-        dependency_guard.validate(self,fn,need)
+        dependency_guard.validate(self,fn,need,agent)
         return need
 
     def _push_back(self, agent: Agent, fn, progress: dict, project: str | None) -> str | None:

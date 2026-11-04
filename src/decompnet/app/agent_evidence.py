@@ -138,7 +138,7 @@ def track(net,agent,slug,fn):
         if held:
             result=net.release(agent,fn['name'],f'Moved on after {count} trials returning previously seen scored instruction diffs. Best source retained.',slug)
             from .. import claim_stalls
-            claim_stalls.released(net,fn,exhausted=True)
+            claim_stalls.released(net,fn,exhausted=True,agent=agent)
             return 'Unchanged-output limit reached. '+result+' Automatic claims pause until the candidate, build context or repair rules change.'
     return f'Repeated instruction outputs without novelty: {count}/{limit}.' if limit else None
 

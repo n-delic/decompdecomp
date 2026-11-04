@@ -468,9 +468,9 @@ def test_rewrite_metrics_merge_sort_and_csv_round_trip():
 def test_manual_mcp_panel_is_a_collapsed_native_disclosure():
     html = (Path(__file__).parent.parent / 'src/decompnet/app/static/index.html').read_text()
     start = html.index('<details class="panel manual-mcp settings-disclosure"')
-    panel = html[start:html.index('<div class="cols ag-cols">', start)]
+    panel = html[start:html.index('<details class="panel settings-disclosure" open>', start)]
     assert 'open' not in panel.split('>', 1)[0]
-    assert '<summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP</h2></summary>' in panel
+    assert '<summary class="panel-head"><h2 id="mcpHeading">Connect another AI tool with MCP' in panel
     assert 'id="mcpCreate"' in panel and panel.rstrip().endswith('</details>')
 
 
@@ -486,3 +486,8 @@ def test_function_suggestion_card_shows_narrow_scope():
         pytest.skip('needs node to run GUI scripts')
     subprocess.run([NODE, str(Path(__file__).with_name('gui_function_suggestion.js'))], check=True,
                    capture_output=True, text=True, encoding='utf-8', timeout=GUI_TIMEOUT_SECONDS)
+
+
+def test_retry_paused_dialog_validates_allowance_and_cleans_up_progress():
+    if NODE is None:pytest.skip('needs node')
+    subprocess.run([NODE,str(Path(__file__).with_name('gui_retry_paused.js'))],check=True,capture_output=True,text=True,timeout=GUI_TIMEOUT_SECONDS)

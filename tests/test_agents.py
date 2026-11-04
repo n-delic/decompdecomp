@@ -1170,10 +1170,11 @@ def test_paused_unchanged_queue_waits_without_starting_paid_session(tmp_path,mon
     net=_game(tmp_path)
     with net.store.tx() as db:
         db.execute("UPDATE functions SET best_source='void f(){}',best_score=10")
-    for fn in net.store.all('SELECT * FROM functions'):
-        claim_stalls.released(net,fn,exhausted=True)
     m=agents.Manager(net,tmp_path,URL)
     s=m._record('game','claude','claude-1','Claude',{'selection':policy})
+    worker,_=net.local_agent(s.agent_name)
+    for fn in net.store.all('SELECT * FROM functions'):
+        claim_stalls.released(net,fn,exhausted=True,agent=worker)
     waits=[]
     def wait(session,why,*args):
         waits.append(why);session.stop.set()

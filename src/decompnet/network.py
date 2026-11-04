@@ -731,12 +731,15 @@ class Network:
                 "your claim on it, not a new one. Compile the next step; release_function goes through once you've "
                 "compiled it, when you ask again.\n\n")
 
-    def _own_release_cutoff(self, db, agent_id: int, now: float) -> float:
+    def _own_release_cutoff(self, db, agent_id: int, now: float, proj=None) -> float:
         """Releases by this agent after this time keep it off those functions: the last SELF_RELEASE_WINDOW, and
         only since its run started (its last 'freed' event, release_stopped's, or 'stopped', a helper's own)."""
         row = db.execute("SELECT MAX(created_at) AS t FROM events WHERE agent_id=? AND kind IN ('freed', 'stopped')",
                          (agent_id,)).fetchone()
-        return max(now - SELF_RELEASE_WINDOW, (row["t"] if row else None) or 0)
+        from .pause_scope import cooldown_start
+        worker=db.execute('SELECT id,name FROM agents WHERE id=?',(agent_id,)).fetchone()
+        boundary=cooldown_start(self,proj,worker) if proj is not None and worker else 0
+        return max(now - SELF_RELEASE_WINDOW, (row["t"] if row else None) or 0, boundary)
 
     def nothing_to_claim(self, agent: Agent, proj, scope: str = "") -> str:
         """What a claim that found nothing tells the agent: whether the open functions are held (by whom, for how
@@ -752,7 +755,7 @@ class Network:
             "LEFT JOIN agents a ON a.id=c.agent_id WHERE f.project_id=? AND f.status='open' ORDER BY c.expires_at",
             proj["id"])
         with self.store.tx() as db:
-            cutoff = self._own_release_cutoff(db, agent.id, now)
+            cutoff = self._own_release_cutoff(db, agent.id, now, proj)
         mine = self.store.all(
             "SELECT DISTINCT f.name FROM functions f JOIN events e ON e.project_id=f.project_id AND e.detail=f.name "
             "WHERE f.project_id=? AND f.status='open' AND e.agent_id=? AND e.kind='release' AND e.created_at > ? "
@@ -766,7 +769,7 @@ class Network:
         lines = [f"Nothing to claim in {proj['slug']} right now: {n_open} function{'s' * (n_open != 1)} "
                  f"{'are' if n_open != 1 else 'is'} open, but none is free for you.{selection_note}"]
         from . import claim_stalls
-        paused = claim_stalls.blocked(self,proj)
+        paused = claim_stalls.blocked(self,proj,agent)
         if paused:
             lines.append(f'{len(paused)} unchanged candidates are paused after repeated releases. Quality warnings do not block work. Exhausted candidates retry when '
                          'source, build context, symbols or repair rules change. Explicit claim_function(function=name) '
@@ -912,7 +915,7 @@ class Network:
         excluded = tried(self, project, agent) if policy.get('model_untried') else set()
         from . import claim_stalls
         if not include_paused:
-            excluded.update(claim_stalls.blocked(self,self._project(project)))
+            excluded.update(claim_stalls.blocked(self,self._project(project),agent))
         return self.store.one(
             "SELECT COUNT(*) AS n FROM functions f JOIN projects p ON p.id=f.project_id WHERE p.slug=? "
             "AND f.id NOT IN (SELECT value FROM json_each(?)) "
@@ -940,9 +943,9 @@ class Network:
                               "AND c.expires_at>?", project, time.time())["n"]
         why = "; ".join(facts) + f". Project: {total} open functions, {held} currently claimed (counts can overlap)."
         todo = ("No AI request is running. Checks again every 30 seconds; this does not reset paused candidates. "
-                "Candidate pauses are shared across agents after repeated releases or reported exhaustion. "
+                "Candidate pauses are shared across agents using the same recorded model after repeated releases or reported exhaustion; other models can still try. "
                 "Work resumes when source, build context, symbols, project instructions or repair rules change. "
-                "An agent can still claim an individual function explicitly by name. Change Work selection if functions are filtered out.")
+                "Use Retry paused functions for a bounded fresh turn with this model, or claim an individual function explicitly by name. Change Work selection if functions are filtered out.")
         return why, todo
 
     def sdk_functions(self, proj) -> dict:
@@ -965,7 +968,8 @@ class Network:
         if batch_from is not None and agent.id in getattr(self,'_agent_focus',{}):return None
         sdk = self.sdk_functions(proj) if proj is not None and not function else {}
         from . import claim_stalls
-        blocked = claim_stalls.blocked(self,proj) if proj is not None and not function else []
+        blocked = claim_stalls.blocked(self,proj,agent) if proj is not None and not function else []
+        retry_grants = claim_stalls.grants(self,proj,agent) if proj is not None else []
         now = time.time()
         with self.store.tx() as db:
             self.ensure_agent_active(agent)
@@ -1050,8 +1054,8 @@ class Network:
                         AND f.id NOT IN (SELECT function_id FROM claims)
                         AND f.id NOT IN (SELECT value FROM json_each(:stalled))
                         AND f.id NOT IN (SELECT value FROM json_each(:model_tried))
-                        AND f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
-                                           AND kind='release' AND created_at > :mine)
+                        AND (f.id IN (SELECT value FROM json_each(:retry_grants)) OR f.name NOT IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
+                                           AND kind='release' AND created_at > :mine))
                         ORDER BY CASE WHEN :custom THEN 0 ELSE f.id IN (SELECT value FROM json_each(:sdk)) END,
                                  CASE WHEN :custom THEN 0 ELSE f.id IN ({WAITING}) END,
                                  CASE WHEN :custom THEN 0 ELSE f.name IN (SELECT detail FROM events WHERE project_id=:pid AND agent_id=:agent
@@ -1065,18 +1069,21 @@ class Network:
                                  CASE WHEN :custom THEN 0 ELSE f.id IN ({READY}) END DESC, CASE WHEN :custom THEN 0 ELSE f.id IN ({WANTED}) END DESC,
                                  :strong AND f.abandons >= :escalate DESC, {STRATEGIES[strategy]} LIMIT 1""")
                 escalate = self._escalation(db, proj["id"]) if route else ESCALATE_AFTER
-                args = {"batch_sdk": json.dumps(batch_from.get("deferred",[]) if batch_from is not None else []), "batch_unit": batch_from["unit"] if batch_from is not None else None,
+                args = {"retry_grants":json.dumps(retry_grants), "batch_sdk": json.dumps(batch_from.get("deferred",[]) if batch_from is not None else []), "batch_unit": batch_from["unit"] if batch_from is not None else None,
                         "batch_limit": batch_from["limit"] if batch_from is not None else None, "model_tried": json.dumps(list(excluded)), "stalled":json.dumps(blocked), "sdk": json.dumps(list(sdk)), "pid": proj["id"], "agent": agent.id, "kin": json.dumps(kin), "cooled": now - RELEASE_COOLDOWN,
                         "overall": overall, "escalate": escalate, "weak": route == "weak", "strong": route == "strong",
-                        "mine": self._own_release_cutoff(db, agent.id, now), "custom": custom,
+                        "mine": self._own_release_cutoff(db, agent.id, now, proj), "custom": custom,
                         "below": policy.get("match_below"), "tries": policy.get("max_tries")}
                 fn = db.execute(query, args).fetchone()
                 if fn is None and route == "weak":  # only what stronger models are for is left: better tried than idle
                     fn = db.execute(query, args | {"weak": False}).fetchone()
                 if fn is None:
                     return None
+                if fn['id'] in retry_grants and fn['id'] not in claim_stalls.grants(self,proj,agent):
+                    return None  # a same-model worker consumed this grant before our claim transaction
                 db.execute("INSERT INTO claims VALUES(?,?,?,?)", (fn["id"], agent.id, now, now + self.claim_ttl))
                 self._event(db, fn["project_id"], agent.id, "claim", fn["name"])
+            if proj is not None and fn['id'] in retry_grants:claim_stalls.consume(self,proj,fn,agent,db)
             # a wait that's over has had its turn at the front once it's claimed
             db.execute("DELETE FROM waits WHERE function_id=? AND needs_id IN (SELECT id FROM functions "
                        "WHERE status='matched')", (fn["id"],))
@@ -1142,7 +1149,7 @@ class Network:
             self._event(db, fn["project_id"], agent.id, "release", fn["name"])
             said = self._not_c(db, fn, agent, notes.strip()) if not_c else ""
         from . import claim_stalls
-        claim_stalls.released(self,fn,exhausted=bool(progress and progress['compiles'] and progress['no_better'] >= progress['after']))
+        claim_stalls.released(self,fn,agent=agent,exhausted=bool(progress and progress['compiles'] and progress['no_better'] >= progress['after']))
         from . import candidate_quality
         candidate_quality.capture(self,fn,agent,notes,progress)
         return (f"Released {fn['name']}. Your best attempt and notes are saved so the next agent starts "
