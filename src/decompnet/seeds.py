@@ -81,9 +81,9 @@ _CPLUSPLUS = re.compile(r"^\s*(?:defined\s*\(?\s*)?__cplusplus\b\s*\)?\s*$")
 
 def c_only(header: str, cxx: bool = False) -> str:
     """The header as a C compiler sees it, as far as m2c needs: what's only for C++ (`#ifdef __cplusplus` blocks,
-    which drafts are C, and `#if 0` blocks) taken out. Other conditionals keep both their branches, as before. GTA San
-    Andreas's header keeps its classes in an `#ifdef __cplusplus` block: kept, every draft's context failed to parse
-    and m2c ran a second time without any of it (October 2026: none of its drafts had the header).
+    which drafts are C, and `#if 0` blocks) taken out. Other conditionals keep both their branches, as before. A PC
+    game's header kept its classes in an `#ifdef __cplusplus` block: kept, every draft's context failed to parse and
+    m2c ran a second time without any of it (October 2026: none of its drafts had the header).
     `cxx`: as a C++ compiler sees it instead, for a C++ function (decomp-permuter reads its classes' data)."""
     out = []
     open_: list[list[bool]] = []  # per open conditional: [this branch is left out, the #else branch is]

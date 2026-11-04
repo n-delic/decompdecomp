@@ -608,6 +608,43 @@ def test_decomp_permuter_reads_a_method_whose_class_is_cxx_only():
     assert variants and all("float Vec2::Len()" in v for v in variants)
 
 
+EXTERN_C_GUARDED = ("#ifdef __cplusplus\nextern \"C\" {\n#endif\ntypedef struct Player { int hp; } Player;\n"
+                    "int Score(Player *p);\n#ifdef __cplusplus\n}\nclass Widget {\npublic:\n    int n;\n"
+                    "    int Get(Player *p);\n};\n#endif\n")
+
+
+def test_a_cxx_header_keeps_the_c_declarations_its_extern_c_block_wraps():
+    """`extern "C" {` lost its `extern "C"` (the word's lookahead let the space before `{` through), leaving a bare
+    `{ ... };` that pycparser refused, so a method in such a header got no variants at all."""
+    from decompnet.permuter_gen import cxx_as_c
+
+    text = cxx_as_c(seeds.c_only(EXTERN_C_GUARDED, cxx=True))
+    assert "int Score(Player *p);" in text and "struct Widget" in text and not re.search(r"^\s*\{", text, re.M)
+
+
+@needs_tool
+def test_decomp_permuter_reads_a_method_whose_header_wraps_its_c_in_extern_c(monkeypatch):
+    net = FakeNet()
+    net._context = lambda project_id, unit: {"header": EXTERN_C_GUARDED, "version": 1}
+    source = "int Widget::Get(Player *p)\n{\n    int a = p->hp;\n    return a + n;\n}\n"
+    fn = {**net.function(), "name": "Widget::Get", "best_source": source}
+    generator = permute.Generator
+    jobs = batches(monkeypatch, [])  # the job a turn hands the generator, as the app makes it
+    ScriptedPermuter(net, {})._permute(AGENT, net.project_row("game"), fn, State())
+    gen = generator()
+    try:
+        variants = gen.batch({**jobs[0], "count": 8})
+    finally:
+        gen.close()
+    assert variants and all("int Widget::Get(Player *p)" in v for v in variants)
+
+
+def test_a_c_function_that_says_this_in_a_comment_or_string_isnt_cxx():
+    assert not permute.is_cxx('int f(int a)\n{\n    /* this adds one */\n    puts("this");  // this too\n'
+                              "    return a + 1;\n}\n")
+    assert permute.is_cxx("int Widget::Get(int a)\n{\n    return this->n + a; /* a C one */\n}\n")
+
+
 @needs_tool
 @pytest.mark.parametrize("source", [
     "int f(int a)\n{\n    enum class K { A, B };\n    return a + (int) K::B;\n}\n",
