@@ -1135,7 +1135,9 @@ class Manager:
             prompt_file = k.prompt_file(workdir, prompt)
         except ValueError as e:
             raise Fatal(str(e)) from e
-        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model)
+        # an agent that runs a saved endpoint (Hermes Agent) is given it, as the API helper is
+        endpoint = {"options": s.options} if k.uses_endpoints else {}
+        cmd, more = k.session_command(exe, workdir, self.mcp_url, token, s.model, **endpoint)
         cmd = agents.cli_argv(cmd)
         # PWD too: opencode 2 works in $PWD, not the folder it starts in, and the app's PWD was the user's home, so
         # Mario Kart 64's helpers worked there without their folder's settings: no tools, and a free shell
@@ -1145,6 +1147,7 @@ class Manager:
     def _run_cli(self, s: Session, token: str, workdir: Path) -> bool:
         k = agents.get(s.kind)
         cmd, env, prompt = self._command(s, token, workdir)
+        k.end_leftovers(env)  # what a session before this one left running (a crash, or the app restarting)
         s.push("info", f"session {s.runs}: {k.name} started")
         if os.name == "nt":
             import sys
@@ -1209,6 +1212,7 @@ class Manager:
         code = proc.wait()
         _close_windows_job(proc.pid)
         s.proc = None
+        k.end_leftovers(env)
         if s.stop.is_set():
             return True
         everything = " ".join([*said, *errors])

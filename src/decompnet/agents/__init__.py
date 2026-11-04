@@ -1,11 +1,12 @@
 """The connector: how decompdecomp talks to a helper agent. Every agent the app can start is a module in this folder
-(agents/claude.py, codex.py, antigravity.py, opencode.py, zcode.py, api.py) that makes an `Agent` below and fills in
+(agents/claude.py, codex.py, antigravity.py, opencode.py, hermes.py, zcode.py, api.py) that makes an `Agent` below and fills in
 its parts; the list at the end of this file registers them. The rest of the app (the helpers' manager in
 app/agents.py, the routes, the GUI) asks the agent of a helper, `agents.get(kind)`, and never compares agent names.
 A person or an agent adding support for another agent reads its module and this file, nothing else.
 
 An agent is one of two sorts:
-- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI). The app
+- A program the user installs and signs in to (Claude Code, Codex, Antigravity CLI, opencode, ZCode CLI), or that
+  runs an API endpoint the user saved (Hermes Agent). The app
   runs it headless, once per session, in a private working folder, connected only to the app's own MCP endpoint on
   127.0.0.1 with a token of its own (`session_command`): MCP is the app's private wiring to it. The prompt goes in
   on stdin (`stdin`), or in a file the agent is given by path when its CLI has no stdin prompt (`prompt_file`,
@@ -183,7 +184,8 @@ class Agent:
         """One session's command line (`exe`: its program, found), and what it adds to the environment. The session
         runs in `workdir`, where it writes its own config files. It connects only to `mcp_url`, the app's MCP server,
         with `token` (never to the user's own MCP servers), and may use only decompdecomp's tools there. `model`: ""
-        for the agent's default."""
+        for the agent's default. An agent that `uses_endpoints` is also given `options=`: the helper's endpoint
+        (base_url, api_key, effort), as the API helper gets them."""
         raise RuntimeError(f"{self.name} isn't a program the app runs")
 
     def stdin(self, prompt: str) -> str:
@@ -224,6 +226,11 @@ class Agent:
         """Whether an error it said is one every try would meet the same way (Antigravity refusing decompdecomp's
         tools): the helper pauses with it, instead of starting again."""
         return False
+
+    def end_leftovers(self, env: dict) -> None:
+        """End what a session of it leaves running outside its process group (`env`: the session's environment, as
+        `session_command` made it): Hermes Agent starts a gateway that daemonises and outlives its session. Called
+        before a session starts and after it ends."""
 
     # ------------------------------------------------------------------ an agent built into the app
 
@@ -305,11 +312,12 @@ def _registry() -> list[Agent]:
     from .api import API
     from .claude import CLAUDE
     from .codex import CODEX
+    from .hermes import HERMES
     from .opencode import OPENCODE
     from .zcode import ZCODE
 
     # the order the Agents page lists them in (the launcher puts the recommended one first)
-    return [CLAUDE, CODEX, ANTIGRAVITY, OPENCODE, ZCODE, API]
+    return [CLAUDE, CODEX, ANTIGRAVITY, OPENCODE, HERMES, ZCODE, API]
 
 
 AGENTS: list[Agent] = _registry()
