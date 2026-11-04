@@ -217,19 +217,22 @@ different build, which is planned.
 - **GameCube and Wii** projects are dtk-template projects, as most community decomps are. Each build makes the game
   again and compares it byte for byte. The homemade demo game passes every step, but no real game is tested from
   start to end yet.
-- **Windows PC** passes every step on the homemade demo game. It is tested on few real games. Its import says what
-  a program is from its headers: the Visual C++ version and build that made it, whether it's 64-bit, how much of it
-  was built with whole-program optimisation (/GL), and the DRM or packer it's wrapped in. Games built with Visual
-  C++ 6.0 to 2010 can match, each with the very build of its compiler the program names (2005 to 2010 come in a
-  pack of their own); 2012 to 2015 import but can't match until their compilers come; 64-bit programs,
-  programs built with Visual C++ 2017 or newer, mostly-/GL ones and protected ones aren't started, and the import
-  says why. Visual C++ 2017 itself (32- and 64-bit) is a pack of its own, chosen per file in Settings: on Linux and
-  macOS it runs through wine, which you install. decompdecomp never removes or gets around DRM. A game that
-  keeps code in DLLs of its own comes with them when you give its path (the game's folder, or its .exe; a dropped file
-  comes alone): each DLL is a program of the project, with its source files in `src/auto/<its name>/`, its exports' names
-  and its own Visual C++. The C runtime, DirectX wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI
-  plugins and DLLs built long after the game (mods) are left out, and the import's log says which and why.
-  [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds decompdecomp has, how it picks one, and where their code changes.
+- **Windows PC** passes every step on the homemade demo game. It is tested on few real games. Its import says what a
+  program is from its headers: the Visual C++ version and build that made it, whether it's 64-bit, how much of it was
+  built with whole-program optimisation (/GL), and the DRM or packer it's wrapped in. Games built with Visual C++ 6.0 to
+  2010 and 2017 can match, each with the build of its compiler the program names, or the closest the packs have (2017's
+  15.9 for any 2017 update; 2005 to 2010, and 2017, come in packs of their own). A game built with a Visual C++
+  decompdecomp doesn't have yet builds with your own copy of it, when you set one up in Setup, else with the nearest
+  decompdecomp has, and the import says so: 2015's with 2017's (much of its code is the same), 2019 and newer with
+  2017's (what their compilers generate differently can't match until they come), 2012 and 2013 with 2010's (little
+  matches). 64-bit programs, mostly-/GL ones and protected ones aren't started, and the import says why. Visual C++ 2017
+  (32- and 64-bit, the 64-bit one for 64-bit games, which come next) runs through wine on Linux and macOS, which you
+  install. decompdecomp never removes or gets around DRM. A game that keeps code in DLLs of its own comes with them when
+  you give its path (the game's folder, or its .exe; a dropped file comes alone): each DLL is a program of the project,
+  with its source files in `src/auto/<its name>/`, its exports' names and its own Visual C++. The C runtime, DirectX
+  wrappers, middleware (Miles, Bink, FMOD...), copy protection, ASI plugins and DLLs built long after the game (mods)
+  are left out, and the import's log says which and why. [VISUAL-CPP.md](VISUAL-CPP.md) lists the Visual C++ builds
+  decompdecomp has, how it picks one, and where their code changes.
 
 Please [report problems](https://github.com/n-delic/decompdecomp/issues). The status of a public decomp is the status of its own project.
 
@@ -242,17 +245,18 @@ Please [report problems](https://github.com/n-delic/decompdecomp/issues). The st
 | Windows PC | [Ghidra](https://github.com/NationalSecurityAgency/ghidra). decompdecomp cuts each function out of the .exe and the game's own DLLs into a project for Visual C++ and objdiff (`consoles/pc/scratch.py`). |
 
 **C and C++.** GameCube, Wii, PS2 and Windows PC games are often C++. On these platforms, agents can write
-classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use C. Public decomps use the language of their project.
+classes and methods, and decompdecomp changes the C++ names back to the names of the game. N64 games use
+C. Public decomps use the language of their project.
 
 **Proprietary compilers** (IDO, CodeWarrior, Visual C++) install only after you accept them. Heavy tools operate
 with a memory limit. Visual C++ 2017 needs wine on Linux and macOS (installing it says how to get wine).
 
 ## The export
 
-**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a linker script
-and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are not in git.
-The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template projects. They
-build the game again on each build.
+**Export**, in the project's header, writes a usual decomp tree: matched functions as C, other functions as assembly, a
+linker script and `build.py`. The export proves that the tree builds your game byte for byte. Game code and data are
+not in git. The build makes them again from your copy of the game. GameCube and Wii projects are dtk-template
+projects. They build the game again on each build.
 
 ## Installation details
 
@@ -271,18 +275,17 @@ compilers run through WSL 2; run `wsl --install` in an
 administrator PowerShell, restart if asked, and open Ubuntu once before importing a game that needs one.
 
 **macOS (Intel and Apple Silicon).** Install the current source with
-`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable release is
-tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit window and
-Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
+`curl -fsSL https://decomp.ndelic.com/install.sh | bash -s -- --source branch:main` until a Mac-capable
+release is tagged. The installer creates `~/Applications/decompdecomp.app`; the app uses a native Cocoa/WebKit
+window and Finder file dialogs. On Apple Silicon, the pinned Intel KMC compiler and binutils need Rosetta 2: run
 `softwareupdate --install-rosetta` and accept Apple's license if you agree. PS1/PS2 period compilers are Linux-only,
 and there is no macOS menu bar tray icon yet. Running `decomp` reopens the window while helpers continue.
 
 **Its window and the tray.** decompdecomp opens in a window of its own. Linux uses GTK and WebKitGTK from your
-system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address does
-nothing in a browser. There is only one
-window: `decomp` or the apps menu shows the open one. When you close it while helper agents work, the app asks: stop
-them and quit, or keep them working. They keep working without the window; the tray icon where available (or `decomp`) brings it
-back. **Quit** ends the app and every helper agent it started.
+system, macOS uses Cocoa and WebKit, and Windows uses WebView2. Only that window can open the app: its address
+does nothing in a browser. There is only one window: `decomp` or the apps menu shows the open one. When you close it
+while helper agents work, the app asks: stop them and quit, or keep them working. They keep working without the
+window; the tray icon where available (or `decomp`) brings it back. **Quit** ends the app and every helper agent it started.
 
 **Updates.** When a new version is available, the app asks you one time. One click installs it and restarts the app.
 Helper agents continue their work. To change this behavior, go to Settings.

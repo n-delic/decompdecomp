@@ -354,9 +354,14 @@ def test_an_xbox_build_is_given_wine_where_it_is_and_a_pc_build_only_when_a_pack
 
     monkeypatch.setattr(wine, "find", lambda: "/usr/bin/wine")
     monkeypatch.setenv("DECOMPNET_WINE_PREFIX", str(tmp_path))
+    monkeypatch.setattr(toolchains, "installed", lambda tid: None)  # (no pack: what a computer has varies)
     assert consoles.get("xbox").build_env() == {"DECOMPNET_WINE": "/usr/bin/wine", "DECOMPNET_WINE_PREFIX": str(tmp_path)}
-    monkeypatch.setattr(toolchains, "installed", lambda tid: None)
     assert consoles.get("pc").build_env() == {}
+    # with Visual C++ 2017 installed (a pack wine runs): both get it, and which packs wine runs for configure.py
+    monkeypatch.setattr(toolchains, "installed", lambda tid: {} if tid == "msvc2015" else None)
+    packs = {"DECOMPNET_WINE": "/usr/bin/wine", "DECOMPNET_WINE_PREFIX": str(tmp_path),
+             "DECOMPNET_WINE_PACKS": str(toolchains.path("msvc2015"))}
+    assert consoles.get("xbox").build_env() == packs and consoles.get("pc").build_env() == packs
 
 
 @pytest.fixture(scope="module")

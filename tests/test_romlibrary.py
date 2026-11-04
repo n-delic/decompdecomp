@@ -58,11 +58,12 @@ def test_setup_accepts_verified_file_already_at_destination(tmp_path):
         fork.place_game(game, game.name)
 
 
-def test_byte_swapped_file_in_project_is_not_offered_for_self_copy(tmp_path):
+def test_byte_swapped_file_in_project_is_offered_for_conversion(tmp_path):
     original = b'\x80\x37\x12\x40' + bytes(range(12))
     swapped = b''.join(original[i:i+2][::-1] for i in range(0, len(original), 2))
     (tmp_path / 'baserom.z64').write_bytes(swapped)
-    assert romlibrary.find(project(tmp_path), needs(original), '')['path'] is None
+    found = romlibrary.find(project(tmp_path), needs(original), '')
+    assert found['path'] == str(tmp_path / 'baserom.z64') and not found['in_project']
 
 
 def test_n64_target_extension_does_not_control_console_identity(tmp_path):
@@ -200,3 +201,19 @@ def test_windows_rehashes_after_same_size_overwrite_with_unchanged_timestamps(tm
     assert romlibrary.fingerprint(file, 'raw') == hashlib.sha1(b'first').hexdigest()
     file.write_bytes(b'other')
     assert romlibrary.fingerprint(file, 'raw') == hashlib.sha1(b'other').hexdigest()
+
+
+@pytest.mark.parametrize('platform', ['xbox', ''])
+def test_files_that_arent_the_projects_game_are_passed_over(tmp_path, platform):
+    """An Xbox project's search (and one with no platform, whose files every console is asked about) goes on past
+    files that aren't Xbox games to the one that matches."""
+    library = tmp_path / 'library'
+    library.mkdir()
+    (library / 'a readme.txt').write_bytes(b'not a game')
+    (library / 'b other.exe').write_bytes(b'MZ' + bytes(0x200))
+    wanted = library / 'c wanted.bin'
+    wanted.write_bytes(b'the bytes the project declares')
+    root = tmp_path / 'project'
+    root.mkdir()
+    found = romlibrary.find(project(root, platform), needs(wanted.read_bytes()), str(library), log=lambda *_: None)
+    assert found['path'] == str(wanted) and found['scanned'] == 3
