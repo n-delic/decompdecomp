@@ -169,25 +169,26 @@ def retry(net,slug,key, *, recover_profiles=True):
     if not agent_row:raise NetworkError('Room submission agent no longer exists.')
     agent=Agent(agent_row['id'],agent_row['name'],agent_row['owner'],bool(agent_row['trusted']))
     result={'matched':False,'score':None,'pending':True,'submission':key}
+    verification_claim=False
     try:
         if fn['status']=='matched':
             result.update(matched=True,pending=False)
         else:
+            # Recovered submissions share one attribution identity. Verification is
+            # scoped to this candidate, not that identity's ongoing work elsewhere.
+            with net.store.tx() as db:
+                net._expire_claims(db)
+                claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
+                if claim and claim['agent_id']!=agent.id:
+                    raise NetworkError('This function is claimed by another worker; retry when released.')
+                if not claim:
+                    now=time.time()
+                    db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],agent.id,now,now+net.claim_ttl))
+                    verification_claim=True
             own=compiler_for(net.cfg(proj),fn['vram'])
             if toolchains.installed(own['toolchain']):
                 res=net.attempt(agent,fn['name'],item['source'],slug)
             else:
-                # An installed submitted profile may still verify without the host's default compiler.
-                with net.store.tx() as db:
-                    net._expire_claims(db)
-                    claim=db.execute('SELECT agent_id FROM claims WHERE function_id=?',(fn['id'],)).fetchone()
-                    if claim and claim['agent_id']!=agent.id:
-                        raise NetworkError('This function is claimed by another worker; retry when released.')
-                    if not claim and db.execute('SELECT 1 FROM claims WHERE agent_id=?',(agent.id,)).fetchone():
-                        raise NetworkError('Submission agent holds another claim; retry when released.')
-                    if not claim:
-                        db.execute('INSERT INTO claims VALUES(?,?,?,?)',(fn['id'],agent.id,time.time(),time.time()+net.claim_ttl))
-                        net._event(db,proj['id'],agent.id,'claim',fn['name'])
                 res={'matched':False,'score':None}
             result.update(score=res['score'],matched=res['matched'])
             fn=net._function(fn['name'],slug);proj=net.project_row(slug)
@@ -231,6 +232,10 @@ def retry(net,slug,key, *, recover_profiles=True):
                     item['reason']='Host has not verified this source/header/profile. '+item.get('reason','')+f" Tried {len(item['tried'])}/{len(profiles)} profiles in this context. Retry continues the bounded search or rechecks changed inputs; evidence retained."
     except (NetworkError,ValueError,toolchains.ToolchainError) as error:
         item['reason']=str(error)
+    finally:
+        if verification_claim:
+            with net.store.tx() as db:
+                db.execute('DELETE FROM claims WHERE function_id=? AND agent_id=?',(fn['id'],agent.id))
     if result['matched']:
         attach_baseline(net,fn,agent,item['source'],item.get('evidence'))
         item.update(status='accepted',reason='Host verified exact bytes',source='',evidence=None,tried=[])
