@@ -5,6 +5,13 @@ from collections import OrderedDict
 from concurrent.futures import Future
 
 
+class MapPayload(dict):
+    """A cached immutable-by-convention map has a unique wire-cache identity."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.wire_key = object()
+
+
 class Snapshots:
     def __init__(self, limit=100_000):
         self.limit = limit
@@ -67,7 +74,8 @@ def map_payload(net, slug, since=None, delta=False):
         return {'sig':sig, 'same':True}
     snapshots = cache(net)
     # A direct SQL/transactional caller must never publish a snapshot that could roll back.
-    if getattr(net.store._local, 'in_tx', False):
+    transactional = getattr(net.store._local, 'in_tx', False)
+    if transactional:
         rows = net.function_map(slug)
     else:
         freshness = net.store.one("SELECT COALESCE(h.revision,0),COALESCE(h.rewritten,0),COALESCE(t.attempts,0) "
@@ -79,7 +87,9 @@ def map_payload(net, slug, since=None, delta=False):
         fingerprint = (tuple(freshness),tuple(tuple(c) for c in claims),repr(link.claims) if link else '')
         rows = snapshots.get(('map',slug,sig,fingerprint),lambda:net.function_map(slug),weight=len)
     keys = list(rows[0]) if rows else []
-    full = {'sig':sig,'keys':keys,'rows':[[r[k] for k in keys] for r in rows]}
+    def arrays():
+        return MapPayload(sig=sig,keys=keys,rows=[[r[k] for k in keys] for r in rows])
+    full = arrays() if transactional else snapshots.get(('map-arrays',slug,sig,fingerprint), arrays, weight=lambda value:len(rows))
     if delta and since:
         with snapshots.lock:
             previous = next((value for key,value in reversed(snapshots.ready.items()) if key[:3] == ('map',slug,since)),None)

@@ -173,8 +173,11 @@ function drawBase(cells = null) {
 /* What the canvas shows besides `base`: a frame where only working cells pulse redraws just those, not the whole
    canvas (megapixels for a big game, 30 times a second while agents work). */
 let shown = null;
+let mapTimingAt=0;
 function drawMap() {
   if (!geo || S.tab !== "overview") return;
+  const timing=typeof uiTimingEnabled==='function' && uiTimingEnabled() && performance.now()-mapTimingAt>1000 ? performance.now() : null;
+  if (timing!=null) mapTimingAt=timing;
   if (!colors) readColors();
   let whole = !shown;
   if (baseDirty || !base || base.width !== $("map").width || base.height !== $("map").height) { drawBase(); whole = true; }
@@ -218,6 +221,7 @@ function drawMap() {
   }
   if (sel != null) { const [x, y] = at(sel); ctx.strokeStyle = rgb(colors.ink, 0.9); ctx.lineWidth = 1.5; ctx.strokeRect(x - 1.5, y - 1.5, size + 3, size + 3); }
   shown = { sel, flash: flashed };
+  if (timing!=null) uiTiming('map render',timing,{cells:S.map.length,whole});
   if (live && !animating) {  // about 30 frames a second is plenty for a pulse
     animating = true;
     setTimeout(() => requestAnimationFrame(() => { animating = false; drawMap(); }), 33);

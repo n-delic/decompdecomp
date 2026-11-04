@@ -45,3 +45,48 @@ project file analysis can still dominate real workloads.
 Regression checks cover totals versus the original SQL after edits/moves/deletion, migration, rollback,
 map snapshot/delta/fallback behaviour, fresh attempt counts, shared compile identity and result isolation,
 cancellation, and foreground capacity while background/detail requests are blocked.
+
+## Queue and inspector throughput
+
+Deep-pass selection reads at most 128 function input rows at a time, joining pass state and
+host claims. It retains only identities and scope hashes while waiting for dispatch. Each
+worker reloads the current function and scope before searching; removed or already matched
+functions are skipped. Eligibility checks still inspect the actual source/build inputs.
+
+Both ROM and imported-project inspectors return at most 800 chart points. Each of up to
+160 ID-range buckets preserves its first/last attempts, best/worst scores and a failed
+compile. The chart identifies representative sampling and displays the full attempt count;
+all attempts remain stored. Notes load 40 raw records per page, then apply the existing
+handoff grouping/filtering. **Load older notes** uses a timestamp/ID cursor and preserves
+loading state across polling; changing function or project ignores old responses.
+
+Ordinary deep-search progress snapshots coalesce over 200 ms, including a trailing flush.
+New workers, phase changes, improvements, errors and completion publish immediately. Full
+technical logs are still recorded. Search progress callbacks use this same coalescing path.
+
+Project GET response encoding and map JSON/gzip encoding run in workers. Full maps reuse
+their array representation and encoded bytes while their exact snapshot remains cached.
+The wire cache has an 8 MiB encoded-byte budget and 30-second expiry; unique snapshot tokens
+prevent ID reuse or cross-project collisions. Delta/unchanged replies are small and encoded
+directly. Map arrays count against the existing row budget.
+
+### Optional timing diagnostics
+
+Start a checkout with `DECOMP_PERF=1` to add numeric `Server-Timing` headers and application
+log entries for project requests and maps. `queue` measures time before the request worker
+starts; `work` includes SQL and other handler work; `sql` is its subset of SQLite read time;
+`encode` covers JSON/gzip response construction (including cache hits). Query counts are
+logged too. These timings exclude network transport and SQL outside the request thread.
+SQL text, bindings, invite URLs and source contents are not included.
+
+For browser diagnostics, run `localStorage.setItem('decomp.perf','1')` in its developer console.
+Subsequent API calls log total fetch/JSON time and server timing headers. Function rendering,
+charts and map drawing log local durations (map animation samples at most once a second).
+Disable with `localStorage.removeItem('decomp.perf')` and by removing `DECOMP_PERF` on the server.
+The browser diagnostics remain in its console.
+
+Run `PYTHONPATH=src python tools/benchmark_function_history.py` for a scratch-only synthetic
+comparison. On the development Mac, 20,000 attempts produced 20,000 points / 786,721 JSON bytes
+with the full-history path versus 485 points / 24,248 bytes with sampling. Median query,
+Python conversion and JSON encoding time over 12 warm runs was 12.03 ms versus 10.44 ms.
+This is a component benchmark: it does not measure browser rendering or claim faster judging.

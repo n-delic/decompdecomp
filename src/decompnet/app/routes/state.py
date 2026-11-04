@@ -8,6 +8,7 @@ import json
 import platform
 import secrets
 import shutil
+import time
 import uuid
 from pathlib import Path
 
@@ -340,13 +341,23 @@ def register(app: App) -> None:
     COLUMN_KEYS = ("vram", "cc", "ccx")
     GZIP_FROM_BYTES = 4096  # smaller answers aren't worth compressing
 
+    from ..view_snapshots import MapPayload, Snapshots
+    encoded_maps = Snapshots(limit=8*1024*1024)
+
     def packed(request: Request, data: dict) -> Response:
-        raw = json.dumps(data, separators=(",", ":")).encode()
-        if len(raw) > GZIP_FROM_BYTES and "gzip" in request.headers.get("accept-encoding", ""):
-            import gzip
-            return Response(gzip.compress(raw, 1), media_type="application/json",
-                            headers={"Content-Encoding": "gzip", "Vary": "Accept-Encoding"})
-        return Response(raw, media_type="application/json")
+        gzip_ok = 'gzip' in request.headers.get('accept-encoding', '')
+        def encode():
+            raw = json.dumps(data, separators=(",", ":")).encode()
+            compressed = len(raw) > GZIP_FROM_BYTES and gzip_ok
+            if compressed:
+                import gzip
+                raw = gzip.compress(raw, 1)
+            return raw, compressed
+        # Unique tokens avoid retaining entire map inputs or reusing another object's cached bytes.
+        raw, compressed = (encoded_maps.get((data.wire_key,gzip_ok),encode,weight=lambda value:len(value[0]))
+                           if isinstance(data,MapPayload) else encode())
+        return Response(raw, media_type='application/json', headers={
+            'Vary':'Accept-Encoding', **({'Content-Encoding':'gzip'} if compressed else {})})
 
     @mcp.custom_route('/api/project-loading', methods=['GET'])
     async def api_project_loading(request: Request) -> Response:
@@ -372,10 +383,14 @@ def register(app: App) -> None:
             def snapshot():
                 with net.progress.view():
                     return build()
-            data = await (app.ui_call or call)(snapshot)
+            from ...request_timing import response
+            queued = time.monotonic()
+            def respond():
+                return response(snapshot, queued, lambda data: packed(request, data), '/api/map')
+            result = await (app.ui_call or call)(respond)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        return packed(request, data)
+        return result
 
     @mcp.custom_route("/api/mapcolumns", methods=["GET"])
     async def api_map_columns(request: Request) -> Response:
@@ -386,10 +401,14 @@ def register(app: App) -> None:
             def snapshot():
                 with net.progress.view():
                     return net.map_columns(request.query_params.get("slug", ""))
-            rows = await (app.ui_call or call)(snapshot)
+            from ...request_timing import response
+            queued = time.monotonic()
+            def respond():
+                return response(snapshot, queued, lambda rows: packed(request, {"keys": COLUMN_KEYS, "rows": rows}), '/api/mapcolumns')
+            result = await (app.ui_call or call)(respond)
         except (NetworkError, ValueError) as e:
             return fail(e)
-        return packed(request, {"keys": COLUMN_KEYS, "rows": rows})
+        return result
 
     @mcp.custom_route("/api/log", methods=["GET"])
     async def api_log(request: Request) -> Response:

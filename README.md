@@ -1595,3 +1595,8 @@ such as polishing or restored match attribution. The global agents overview stil
 Opening a function loads its core detail without waiting for cross-project/SDK name searches.
 Expand **Other projects and local SDKs** to load those suggestions through its separate progress
 indicator. This applies to both ROM and imported projects; agent detail requests can still include hints.
+
+Function inspectors now bound chart payloads and load older notes on demand. Deep-pass
+queues batch their reads, and worker progress updates coalesce while improvements and
+completion remain immediate. Optional request and browser timings are documented in
+[interactive app performance](docs/APP_PERFORMANCE.md#queue-and-inspector-throughput).

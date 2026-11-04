@@ -2162,3 +2162,33 @@ def test_retry_paused_route_is_bounded_guarded_and_does_not_start_helpers(tmp_pa
     assert response.json()['resumed']==1
     assert session.runs==0 and not net.store.all('SELECT * FROM claims')
     assert client.post('/api/agents/retry-paused',json={'id':'missing'},headers={'X-Decomp':'1'}).status_code==400
+
+
+def test_map_encoding_runs_in_worker_reuses_bytes_and_invalidates_on_edit(app, monkeypatch):
+    from decompnet.app.routes import state
+    from tests.test_loading import tiny_game
+    client, net, *_ = app
+    tiny_game(net,'wire-cache')
+    worker_threads=[]
+    def rows(slug):
+        worker_threads.append(threading.get_ident())
+        return [dict(name='wire-fn',vram=1,unit='',size=4,
+                     best=net.store.one("SELECT SUM(attempts) FROM functions WHERE project_id=(SELECT id FROM projects WHERE slug=?)",slug)[0])]
+    monkeypatch.setattr(net,'function_map',rows)
+    encoded=[]
+    dumps=state.json.dumps
+    def encode(value,*args,**kwargs):
+        if isinstance(value,dict) and 'sig' in value and 'rows' in value:
+            encoded.append(threading.get_ident())
+        return dumps(value,*args,**kwargs)
+    monkeypatch.setattr(state.json,'dumps',encode)
+    monkeypatch.setenv('DECOMP_PERF','1')
+    first=client.get('/api/map?slug=wire-cache').json()
+    second=client.get('/api/map?slug=wire-cache')
+    assert second.json()==first
+    assert encoded==worker_threads and len(encoded)==1
+    assert 'encode;dur=' in second.headers['Server-Timing']
+    with net.store.tx() as db:
+        db.execute("UPDATE functions SET attempts=attempts+1 WHERE project_id=(SELECT id FROM projects WHERE slug='wire-cache')")
+    assert client.get('/api/map?slug=wire-cache').json()['rows'] != first['rows']
+    assert len(encoded)==2

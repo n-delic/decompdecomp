@@ -64,6 +64,13 @@ function duration(h) { return h < 1 ? `${Math.max(1, Math.round(h * 60))}\u00a0m
 function bytes(n) { return n >= MIB ? `${(n / MIB).toFixed(1)} MB` : n >= KIB ? `${(n / KIB).toFixed(1)} KB` : `${n} bytes`; }
 function money(usd) { return usd >= 10 ? `$${usd.toFixed(0)}` : `$${usd.toFixed(2)}`; }
 
+function uiTimingEnabled() {
+  try { return typeof localStorage!=='undefined' && localStorage.getItem('decomp.perf')==='1'; } catch { return false; }
+}
+function uiTiming(label, started, extra={}) {
+  if (started!=null) console.debug('[decompdecomp timing]',label,{ms:Math.round((performance.now()-started)*10)/10,...extra});
+}
+
 async function api(path, { method = "GET", body, raw, signal } = {}) {
   const serverMode = typeof document !== "undefined" && document.body?.dataset?.serverMode;
   if (serverMode && path === "/api/pick" && method === "POST") {
@@ -75,10 +82,12 @@ async function api(path, { method = "GET", body, raw, signal } = {}) {
   if (method !== "GET") opts.headers["X-Decomp"] = "1";
   if (raw !== undefined) { opts.body = raw; opts.headers["Content-Type"] = "application/octet-stream"; }
   else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+  const timing=uiTimingEnabled() ? performance.now() : null;
   const res = await fetch(path, opts);
   if (typeof window !== "undefined") window.decompConnection?.(res);
   let data = null;
   try { data = await res.json(); } catch { /* not json */ }
+  uiTiming(path.split('?')[0],timing,{server:res.headers?.get?.('Server-Timing') || ''});
   if (res.status === 401 && serverMode) location.assign("/login");
   if (!res.ok) throw new Error((data && data.error) || `request failed (${res.status})`);
   return data;

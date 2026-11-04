@@ -24,7 +24,7 @@ from collections import defaultdict
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
-from .. import agent_notes, arch, classes, coffobj, consoles, similarity, structs, toolchains
+from .. import arch, classes, coffobj, consoles, similarity, structs, toolchains
 from ..forks import (
     compiler_info,
     convention,
@@ -4280,9 +4280,9 @@ class ForkEngine:
                 "mismatch_summary": summary_text(d.rows),
                 "score": None, "percent": _floor_pct(d.match_percent, d.matched), "problems": problems}
 
-    def function_detail(self, slug: str, name: str, *, include_hints=True) -> dict:
+    def function_detail(self, slug: str, name: str, *, include_hints=True, function=None) -> dict:
         proj, fp, cfg = self.get(slug)
-        fn = self._fn(slug, name)
+        fn = function if function is not None else self._fn(slug, name)
         meta = self._meta(fn)
         unit = fp.unit(fn["unit"])
         asm, current, pct = "", None, None
@@ -4295,14 +4295,11 @@ class ForkEngine:
             text = (fp.root / unit.source).read_text(errors="replace", encoding="utf-8")
             _, span = self._find(text, self._names(meta, fn))
             current = text[span[0]:span[1]] if span else None
-        attempts = self.net.store.all("SELECT t.score, t.created_at, a.name AS agent FROM attempts t LEFT JOIN agents a "
-                                      "ON a.id=t.agent_id WHERE t.function_id=? ORDER BY t.id", fn["id"])
-        notes = self.net.store.all("SELECT n.*, a.name AS agent FROM notes n LEFT JOIN agents a "
-                                   "ON a.id=n.agent_id WHERE n.function_id=? ORDER BY n.id DESC", fn["id"])
+        from .function_history import history
+        saved_history = history(self.net.store, fn)
         return {"name": fn["name"], "vram": fn["vram"] or 0, "rom_offset": 0, "size": fn["size"], "insns": fn["n_insns"],
                 "status": fn["status"], "best": fn["best_score"], "asm": asm, "unit": fn["unit"], **set_aside(fn),
                 "source": current or fn["best_source"], "source_kind": "matched" if fn["status"] == "matched" else
                 ("latest" if current else "best" if fn["best_source"] else None),
-                "match_percent": pct, "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
-                "notes": agent_notes.grouped(self.net.store, notes, fn["project_id"])[:10], "calls": [], "called_by": [],
+                "match_percent": pct, **saved_history, "calls": [], "called_by": [],
                 "cross_game_hints": self.net.twins.suggestions(slug, fn["name"]) if include_hints else []}

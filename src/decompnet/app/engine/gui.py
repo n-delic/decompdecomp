@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from ... import agent_notes, compilermap, consoles, scoring, toolchains
+from ... import compilermap, consoles, scoring, toolchains
 from ...network import IN_BUILD, Network, set_aside
 from ...project import compiler_for
 
@@ -23,7 +23,6 @@ NOTIFY_KINDS = ("match", "link", "autopilot", "compiler", "reopen", "not_c", "kn
 EVENTS_PER_ASK = 200  # events the notification centre gets per ask (it asks again for more)
 # what the project's page gets on each poll (about once a second): the newest since its last ask, at most
 LIVE_EVENTS, LIVE_ATTEMPTS = 60, 80
-FUNCTION_NOTES = 10  # the newest notes the function panel shows
 EVENT_ROWS = ("SELECT e.id, e.kind, e.detail, e.created_at, a.name AS agent, p.slug, p.name AS project FROM events e "
               "JOIN projects p ON p.id=e.project_id LEFT JOIN agents a ON a.id=e.agent_id "
               f"WHERE e.kind IN ({', '.join(repr(k) for k in NOTIFY_KINDS)})")
@@ -298,21 +297,15 @@ class GuiMixin:
         from ..baseline_status import status as baseline_status
         from ..function_names import state as name_state
         sweep = getattr(self, 'deep_sweeps', None)
-        deep_pass = sweep.history(slug, self._function(name, slug)) if sweep else {'state': 'not tried', 'completed': False}
-        if (fork := self.fork_slug(slug)):
-            return self.forks.function_detail(fork, name, include_hints=include_hints) | name_state(self._function(name, slug)) | {'deep_pass': deep_pass, 'verification': bundle_status(self,self._function(name,slug))}
         fn = self._function(name, slug)
+        deep_pass = sweep.history(slug, fn) if sweep else {'state': 'not tried', 'completed': False}
+        if (fork := self.fork_slug(slug)):
+            return self.forks.function_detail(fork, name, include_hints=include_hints, function=fn) | name_state(fn) | {'deep_pass': deep_pass, 'verification': bundle_status(self,fn)}
         proj = self.store.one("SELECT * FROM projects WHERE id=?", fn["project_id"])
-        attempts = self.store.all(
-            "SELECT t.score, t.created_at, a.name AS agent FROM attempts t LEFT JOIN agents a ON a.id=t.agent_id "
-            "WHERE t.function_id=? ORDER BY t.id", fn["id"])
+        from ..function_history import history
+        saved_history = history(self.store, fn)
         latest = self.store.one("SELECT source, score FROM attempts WHERE function_id=? AND source IS NOT NULL "
                                 "ORDER BY id DESC LIMIT 1", fn["id"])
-        from ...search_notes import useful
-        notes = self.store.all("SELECT n.*, a.name AS agent FROM notes n LEFT JOIN agents a "
-                               "ON a.id=n.agent_id WHERE n.function_id=? "
-                               "AND n.text != 'Deep permutation turn ended; improvements shared.' "
-                               "ORDER BY n.created_at DESC,n.id DESC", fn["id"])
         x = self.xrefs(proj)
         syms = self.symbols(proj["id"])
         if not (fn["matched_source"] or fn["best_source"] or latest) and fn["status"] == "open":
@@ -333,8 +326,7 @@ class GuiMixin:
             "source": fn["matched_source"] or fn["best_source"] or (latest["source"] if latest else None) or fn["seed"],
             "source_kind": "matched" if fn["matched_source"] else "best" if fn["best_source"] else
                            "latest" if latest else "draft" if fn["seed"] else None,
-            "scores": [{"score": a["score"], "t": a["created_at"], "agent": a["agent"]} for a in attempts],
-            "notes": agent_notes.grouped(self.store, useful(notes), proj["id"])[:FUNCTION_NOTES],
+            **saved_history,
             "calls": [syms.label(a) for a in sorted(x["calls"].get(fn["vram"], ()))],
             "called_by": [syms.label(a) for a in sorted(x["called_by"].get(fn["vram"], ()))],
             "cross_game_hints": self.twins.suggestions(slug, fn["name"]) if include_hints and fn["status"] == "open" else [],

@@ -547,3 +547,22 @@ def test_queue_separates_rotated_errors_and_removed_functions(sweep):
     assert (status['queue_left'], status['queue_rotated'], status['queue_blocked']) == (0, 0, 1)
     assert obj.run('game', 1, 10, Log())['functions_tested'] == 0
     assert calls == []
+
+
+def test_queue_batches_state_and_loads_fresh_function_at_dispatch(sweep, monkeypatch):
+    obj, net, calls, _ = sweep
+    reads=[]
+    original=net.store.all
+    def read(sql,*args):
+        reads.append(sql)
+        return original(sql,*args)
+    monkeypatch.setattr(net.store,'all',read)
+    def shuffle(batch):
+        assert all(set(fn) == {'id','name','size'} for fn,scope in batch)
+        # A concurrent worker removes this candidate after the queue snapshot.
+        with net.store.tx() as db:
+            db.execute("UPDATE functions SET status='matched' WHERE name='f0'")
+    monkeypatch.setattr(deep_sweep.random,'shuffle',shuffle)
+    obj.run('game',1,10,Log())
+    assert calls == ['f1']
+    assert any('LEFT JOIN deep_permutation_passes' in sql and 'LIMIT 128' in sql for sql in reads)

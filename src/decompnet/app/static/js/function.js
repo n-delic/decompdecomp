@@ -14,6 +14,53 @@ function functionNotesHTML(notes) {
     return rows.length ? `<details class="panel settings-disclosure function-notes-section" data-note-section="${mine ? 'mine' : 'agents'}" open><summary class="panel-head"><h3>${title} <span class="disclosure-context">— ${rows.length} ${rows.length===1 ? 'note' : 'notes'}</span></h3></summary><div class="agent-note-list">${rows.map(functionNoteCard).join('')}</div></details>` : '';
   }).join('');
 }
+function renderFunctionNotes(d) {
+  const host=$("fnNotes"), slug=S.slug, gen=S.gen, nav=S.fnNav;
+  const same=host.dataset.function===d.name && host.dataset.project===slug && host._notesGen===gen && host._notesNav===nav;
+  const expanded=same ? new Set([...host.querySelectorAll('[data-note-key][open]')].map(el=>el.dataset.noteKey)) : new Set();
+  const closed=same ? new Set([...host.querySelectorAll('[data-note-section]:not([open])')].map(el=>el.dataset.noteSection)) : new Set();
+  if (!same) { host._older=[]; host._cursor=d.notes_next; host._loaded=false; host._loadingOlder=null; }
+  if (!host._loaded) host._cursor=d.notes_next;
+  const ids=new Set(d.notes.flatMap(n=>n.ids || [n.id]));
+  const older=(host._older || []).filter(n=>!(n.ids || [n.id]).some(id=>ids.has(id)));
+  host.innerHTML=functionNotesHTML([...d.notes,...older]);
+  host.dataset.function=d.name; host.dataset.project=slug; host._notesGen=gen; host._notesNav=nav;
+  host.querySelectorAll('[data-note-key]').forEach(el=>{el.open=expanded.has(el.dataset.noteKey);});
+  host.querySelectorAll('[data-note-section]').forEach(el=>{el.open=!closed.has(el.dataset.noteSection);});
+  const active=()=>S.slug===slug && S.fn===d.name && S.gen===gen && S.fnNav===nav;
+  if (host._cursor) {
+    const more=document.createElement('button'); more.type='button'; more.className='small';
+    more.disabled=!!host._loadingOlder; more.textContent=host._loadingOlder ? 'Loading older notes…' : 'Load older notes';
+    host.append(more);
+    more.onclick=async()=>{
+      if (host._loadingOlder) return;
+      const cursor=host._cursor, request={}; host._loadingOlder=request;
+      more.disabled=true; more.textContent='Loading older notes…'; more.setAttribute('aria-busy','true');
+      try {
+        const page=await api(`/api/function-notes?slug=${encodeURIComponent(slug)}&name=${encodeURIComponent(d.name)}&before=${encodeURIComponent(cursor)}`);
+        if (!active() || host._loadingOlder!==request) return;
+        host._older=[...(host._older || []),...page.notes]; host._cursor=page.notes_next; host._loaded=true;
+      } catch(e) { if (active()) toast(esc(e.message),'err'); }
+      finally {
+        if (active() && host._loadingOlder===request) {
+          host._loadingOlder=null;
+          renderFunctionNotes(S.fnDetail || d);
+        }
+      }
+    };
+  }
+  host.querySelectorAll('[data-remove-note]').forEach(button=>{button.onclick=async()=>{
+    button.disabled=true;
+    try {
+      const ids=JSON.parse(button.dataset.removeNote);
+      await api('/api/note',{method:'POST',body:{slug,function:d.name,action:'remove',ids}});
+      if (active()) {
+        host._older=(host._older || []).filter(n=>!(n.ids || [n.id]).some(id=>ids.includes(id)));
+        await refreshFn(false);
+      }
+    } catch(e) { if (active()) { toast(esc(e.message),'err'); button.disabled=false; } }
+  };});
+}
 // Copy the source assembly, never the highlighted DOM's address column.
 function assemblyForClipboard(text) {
   return text.split("\n").map(line => line
@@ -386,6 +433,7 @@ async function refreshFn(first) {
         refreshFn(false);
       } catch (e) { toast(esc(e.message), "err"); }
     };
+    const renderTiming=typeof uiTimingEnabled==='function' && uiTimingEnabled() ? performance.now() : null;
     $("fnAsm").innerHTML = highlightAsm(d.asm);
     $("copyAsm").onclick = () => copyTargetAssembly(d.asm);
     const kinds = { matched: "Matching C", best: "Best attempt so far", latest: S.ov.kind === "fork" ? "In the source now" : "Latest attempt", draft: "Machine draft (m2c)" };
@@ -404,27 +452,14 @@ async function refreshFn(first) {
     $("diffWhich").hidden = d.status === "matched" || S.ov.kind === "fork" || d.scores.filter((x) => x.score != null).length < 2;
     renderFunctionCalls(d);
     prepareProjectPeers(d);
-    const notesHost=$("fnNotes"), sameNotes=notesHost.dataset.function===d.name && notesHost.dataset.project===S.slug;
-    const expanded=sameNotes ? new Set([...notesHost.querySelectorAll('[data-note-key][open]')].map(el=>el.dataset.noteKey)) : new Set();
-    const closed=sameNotes ? new Set([...notesHost.querySelectorAll('[data-note-section]:not([open])')].map(el=>el.dataset.noteSection)) : new Set();
-    notesHost.innerHTML=functionNotesHTML(d.notes);
-    notesHost.dataset.function=d.name; notesHost.dataset.project=S.slug;
-    notesHost.querySelectorAll('[data-note-key]').forEach(el=>{el.open=expanded.has(el.dataset.noteKey);});
-    notesHost.querySelectorAll('[data-note-section]').forEach(el=>{el.open=!closed.has(el.dataset.noteSection);});
-    $("fnNotes").querySelectorAll('[data-remove-note]').forEach(button => { button.onclick = async () => {
-      const slug = S.slug, name = d.name;
-      button.disabled = true;
-      try {
-        await api('/api/note', {method:'POST', body:{slug, function:name, action:'remove', ids:JSON.parse(button.dataset.removeNote)}});
-        if (S.slug === slug && S.fn === name) await refreshFn(false);
-      } catch (error) { toast(esc(error.message), 'err'); button.disabled = false; }
-    }; });
+    renderFunctionNotes(d);
 
     const tab = S.ftab || (d.status === "matched" || !d.scores.length ? "code" : "diff");
     showFnTab(tab);
     $("drawer").removeAttribute("data-loading");
     $("drawer").setAttribute("aria-busy", "false");
     $("functionLoading").hidden = true; S.fnLoading = false;
+    if (renderTiming!=null) uiTiming('function render',renderTiming);
   } catch (e) {
     if (gen !== S.gen || slug !== S.slug || requested !== S.fn || fnBusy !== request) return;
     if (first) {
@@ -509,6 +544,7 @@ function giveBack(next) {
 
 /* Score per compile, as a match percentage: dots for each compile, a line for the best so far. */
 function renderFnChart(d) {
+  const timing=typeof uiTimingEnabled==='function' && uiTimingEnabled() ? performance.now() : null;
   const wrap = $("fnChartWrap"), svg = $("fnChart");
   const pts = d.scores;
   wrap.hidden = !pts.length;
@@ -516,7 +552,7 @@ function renderFnChart(d) {
   const w = Math.max(300, svg.clientWidth || 600), h = 92, padL = 34, padR = 10, padT = 8, padB = 16;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   const n = pts.length;
-  const X = (i) => padL + (n === 1 ? (w - padL - padR) / 2 : (i * (w - padL - padR)) / (n - 1));
+  const X = (i) => padL + (n === 1 ? (w - padL - padR) / 2 : ((d.scores_sampled ? (pts[i].id-pts[0].id)/(pts[n-1].id-pts[0].id) : i/(n-1)) * (w-padL-padR)));
   const Y = (p) => padT + (1 - p) * (h - padT - padB);
   let out = "";
   for (const g of [0, 0.5, 1]) out += `<line class="grid" x1="${padL}" x2="${w - padR}" y1="${Y(g)}" y2="${Y(g)}"/><text class="axis" x="${padL - 6}" y="${Y(g) + 3.5}">${g * 100}%</text>`;
@@ -536,9 +572,10 @@ function renderFnChart(d) {
     else out += `<circle class="${p.score === 0 ? "hit" : "pt"} a${agents.indexOf(p.agent) % 4}" cx="${X(i).toFixed(1)}" cy="${Y(pctOf(p.score, d.insns)).toFixed(1)}" r="${p.score === 0 ? 4.5 : 3}">${title}</circle>`;
   });
   svg.innerHTML = out;
+  if (timing!=null) uiTiming('function chart render',timing,{points:pts.length});
   const fails = pts.filter((p) => p.score == null).length;
   const bp = best == null ? null : pctOf(best, d.insns);
-  $("fnChartNote").innerHTML = `<b>${plural(n, "compile")}</b>${bp != null ? ` · best ${best === 0 ? "byte-identical" : pctText(bp)}` : ""}${fails ? ` · ${fails} didn't compile` : ""}${agents.length > 1 ? ` · ${agents.map(esc).join(", ")}` : ` · ${esc(agents[0] || "")}`}`;
+  $("fnChartNote").innerHTML = `<b>${plural(d.scores_total ?? n, "compile")}</b>${bp != null ? ` · best ${best === 0 ? "byte-identical" : pctText(bp)}` : ""}${d.scores_sampled ? ` · chart shows ${n} representative attempts; full history retained` : fails ? ` · ${fails} didn't compile` : ""}${agents.length > 1 ? ` · ${agents.map(esc).join(", ")}` : ` · ${esc(agents[0] || "")}`}`;
 }
 
 /* The judge's diff: target and attempt side by side, instruction by instruction. */
@@ -643,7 +680,7 @@ function renderDiff(d) {
 async function loadDiff() {
   const d0 = S.fnDetail, slug = S.slug, gen = S.gen, which = S.which, nav = S.fnNav;
   if (!d0) return;
-  const key = `${gen}|${nav}|${slug}|${d0.name}|${S.which}|${d0.scores.length}|${d0.status}`;
+  const key = `${gen}|${nav}|${slug}|${d0.name}|${S.which}|${d0.scores_total ?? d0.scores.length}|${d0.status}`;
   if (key === S.diffKey) return;
   S.diffKey = key;
   if (!$("diff").innerHTML) $("diffSum").textContent = "Compiling…";

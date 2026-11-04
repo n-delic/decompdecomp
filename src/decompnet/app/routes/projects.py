@@ -47,7 +47,10 @@ def register(app: App) -> None:
                         net.progress.sync(slug, force=True)
                     return result
                 reader = app.fast_call if request.url.path == '/api/live' else app.ui_call
-                return JSONResponse(await ((reader or call) if request.method == "GET" else call)(perform))
+                from ...request_timing import response
+                def respond():
+                    return response(perform, started, JSONResponse, request.url.path)
+                return await ((reader or call) if request.method == "GET" else call)(respond)
             except (NetworkError, ValueError, toolchains.ToolchainError, OSError) as e:
                 return fail(e)
             finally:
@@ -392,6 +395,11 @@ def register(app: App) -> None:
         return sweeps.start(slug, data.get('minutes', 5), data.get('max_variants', 10000), data.get('repeat', False),
                             data.get('threads', 0))
 
+    def p_function_notes(slug, request, data):
+        from ..function_history import notes_page
+        fn = net._function(request.query_params.get('name', ''), slug)
+        return notes_page(net.store, fn, request.query_params.get('before'))
+
     function_searches = {}
 
     def p_function(slug, request, data):
@@ -577,6 +585,7 @@ def register(app: App) -> None:
         "/api/live": (p_live, ["GET"]),
         "/api/transcript": (p_transcript, ["GET", "POST"]),
         "/api/function": (p_function, ["GET"]),
+        "/api/function-notes": (p_function_notes, ["GET"]),
         "/api/diff": (lambda s, r, d: net.function_diff(s, r.query_params.get("name", ""),
                                                         r.query_params.get("which", "latest")), ["GET"]),
         "/api/compiler": (p_compiler, ["POST"]),

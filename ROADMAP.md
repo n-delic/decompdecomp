@@ -2206,3 +2206,7 @@ have a worker-specific index. Global agent views and reset/lifetime accounting r
 
 Completed: the function drawer defers optional cross-project and SDK name similarity work to the
 existing peers disclosure request, for both ROM and imported projects.
+
+- Done: batch deep-pass queue reads, bound inspector chart/note payloads, reuse function
+  records, coalesce worker snapshots, move response encoding to workers with bounded
+  full-map wire caching, and add opt-in request/SQL/browser timing diagnostics.

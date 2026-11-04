@@ -335,30 +335,47 @@ class Sweeps:
             proj = self.net.project_row(slug)
             pending = waiting = 0
             batch = []
-            rows = self.net.store.all(f"SELECT * FROM functions WHERE project_id=? AND status='open' AND {IN_BUILD} ORDER BY size,id", proj['id'])
-            for row in rows:
-                log.check_cancel()
-                fn = self.net._function(row['name'], slug)
-                if fn['status'] != 'open' or fn['id'] in visited_turns:
-                    continue
-                if not fn['best_source'] or fn['best_score'] is None:
-                    waiting += 1
-                    continue
-                scope = signature(self.net, proj, fn, minutes, variants)
-                previous = self.net.store.one('SELECT * FROM deep_permutation_passes WHERE function_id=?', fn['id'])
-                if previous and previous['scope'] == scope and previous['state'] in ('completed', 'error'):
-                    continue
-                pending += 1
-                if slug in self.net.links and self.net.store.one('SELECT 1 FROM claims WHERE function_id=? AND expires_at>?', fn['id'], time.time()):
-                    waiting += 1
-                    continue
-                batch.append((fn, scope))
+            total = 0
+            offset = 0
+            while True:
+                rows = self.net.store.all(f"""SELECT f.id,f.project_id,f.name,f.size,f.vram,f.unit,f.status,f.best_score,
+                    f.best_source,f.target,f.relocs,f.asm,f.seed,d.scope AS pass_scope,d.state AS pass_state,
+                    c.expires_at AS claim_expires FROM functions f
+                    LEFT JOIN deep_permutation_passes d ON d.function_id=f.id
+                    LEFT JOIN claims c ON c.function_id=f.id
+                    WHERE f.project_id=? AND f.status='open' AND {IN_BUILD}
+                    AND f.id>? ORDER BY f.id LIMIT 128""", proj['id'], offset)
+                if not rows:
+                    break
+                offset = rows[-1]['id']
+                total += len(rows)
+                for fn in rows:
+                    log.check_cancel()
+                    if fn['id'] in visited_turns:
+                        continue
+                    if not fn['best_source'] or fn['best_score'] is None:
+                        waiting += 1
+                        continue
+                    scope = signature(self.net, proj, fn, minutes, variants)
+                    if fn['pass_scope'] == scope and fn['pass_state'] in ('completed', 'error'):
+                        continue
+                    pending += 1
+                    if slug in self.net.links and (fn['claim_expires'] or 0) > time.time():
+                        waiting += 1
+                        continue
+                    # Keep only identity/scope between selection and dispatch, not every source/target.
+                    batch.append(({'id': fn['id'], 'name': fn['name'], 'size': fn['size']}, scope))
+            batch.sort(key=lambda item: (item[0]['size'] or 0, item[0]['id']))
             # Random order without replacement: interrupted restarts do not always favor small functions.
             random.shuffle(batch)
-            total, blocked = len(rows), waiting
+            blocked = waiting
 
             def search(item, proj=proj, total=total, blocked=blocked):
-                self.search_one(slug, proj, item[0], item[1], minutes, variants, log, stats, lock, total, blocked)
+                fn = self.net.store.one('SELECT * FROM functions WHERE id=? AND project_id=?', item[0]['id'], proj['id'])
+                if not fn or fn['status'] != 'open' or fn['gone_mark'] is not None:
+                    return
+                scope = signature(self.net, proj, fn, minutes, variants)
+                self.search_one(slug, proj, fn, scope, minutes, variants, log, stats, lock, total, blocked)
                 previous = self.net.store.one('SELECT state FROM deep_permutation_passes WHERE function_id=?',item[0]['id'])
                 if previous and previous['state'] == 'rotated':
                     with lock:
@@ -382,7 +399,7 @@ class Sweeps:
             if batch:
                 continue  # Refill immediately; only genuinely blocked queues need a timed wait.
             stats['activity'].publish({'phase': 'waiting for host claims or scored C', 'functions_tested': stats['visited'],
-                          'matches': stats['matched'], 'waiting': waiting, 'total_unmatched': len(rows)})
+                          'matches': stats['matched'], 'waiting': waiting, 'total_unmatched': total})
             # Cancellation remains responsive while another worker owns the remaining functions.
             for _ in range(POLL_SECONDS):
                 log.check_cancel()
@@ -400,7 +417,7 @@ class Sweeps:
         def progress(value):
             activity.update(fn["name"], value)
             activity.publish({'function': fn['name'], 'functions_tested': stats['visited'], 'matches': stats['matched'],
-                          'total_unmatched': total, 'waiting': blocked} | value)
+                          'total_unmatched': total, 'waiting': blocked} | value, force=False)
 
         def function_log(line):
             activity.update(fn["name"], line=line)

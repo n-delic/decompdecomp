@@ -396,6 +396,7 @@ class Store:
         # note saved so far (3 ms each at 7,000 notes, so 60,000 incoming notes took over three minutes; now 0.01)
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attempts_agent_time ON attempts(agent_id,created_at)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_lookup ON notes(project_id, function_id)")
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_page ON notes(function_id,created_at DESC,id DESC)")
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_notes_session ON notes(function_id,agent_id,session_id)")
         # a function's events of one kind (polishing's tries on it: app/readable.py), without reading a game's whole feed
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_events_detail ON events(project_id, kind, detail)")
@@ -478,6 +479,8 @@ class Store:
             return self._read_rows(sql, args, single)
         finally:
             elapsed = time.monotonic() - started
+            from .request_timing import sql_read
+            sql_read(elapsed)
             if elapsed >= 0.25:
                 # Never log bindings or SQL text: either can contain private source or credentials.
                 key = hashlib.sha256(sql.encode()).hexdigest()[:12]
